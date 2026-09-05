@@ -9,10 +9,10 @@
 
 use std::io;
 use std::path::Path;
+use std::process::{Child, ExitStatus};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::error::VcsError;
 
@@ -91,36 +91,47 @@ fn run_internal(
         drop(stdin);
     }
 
-    // A thread, not a poll loop reading the pipes directly: `git` can fill
-    // stdout or stderr's OS pipe buffer and block on a write before this
-    // function ever looks at it, so anything that isn't
-    // `wait_with_output`'s own concurrent-drain has a deadlock built in.
-    //
-    // ponytail: on timeout the child is not killed — the thread above still
-    // owns it and reaps it whenever it eventually exits, so no zombie is
-    // left behind, but the process itself keeps running (e.g. a `git fetch`
-    // stuck on a slow network stays running after this function returns
-    // `GitTimedOut`). Upgrade path: hold the child's pid outside the thread
-    // and `kill()` it here on the timeout branch, or take a
-    // `wait-timeout`-style crate dependency if this bites in practice.
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
+    // One draining thread per pipe: `git` can fill stdout's or stderr's OS
+    // pipe buffer and block on a write before this function ever looks at
+    // it, so anything that does not drain both concurrently has a deadlock
+    // built in. Draining here rather than in a thread that owns the whole
+    // child is what lets this function keep the `Child` and therefore kill
+    // it — a timed-out `git fetch` used to keep running after this returned
+    // `GitTimedOut`, holding a network connection and, behind the bridge's
+    // single job queue, everything queued after it.
+    let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
+    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+    let stdout_reader = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        io::Read::read_to_end(&mut stdout_pipe, &mut buffer).map(|_| buffer)
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        io::Read::read_to_end(&mut stderr_pipe, &mut buffer).map(|_| buffer)
     });
 
-    let output = match rx.recv_timeout(timeout) {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => return Err(VcsError::Read(e.to_string())),
-        Err(mpsc::RecvTimeoutError::Timeout) => {
-            return Err(VcsError::GitTimedOut {
-                command: command_str,
-            })
-        }
-        Err(mpsc::RecvTimeoutError::Disconnected) => {
-            return Err(VcsError::Read(format!(
-                "`{command_str}` ended without reporting a result"
-            )))
-        }
+    let Some(status) = wait_with_timeout(&mut child, timeout)? else {
+        // The pipes are still owned by the reader threads; killing the
+        // child closes its ends, so they finish rather than blocking
+        // forever on a process nobody is waiting for any more.
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(VcsError::GitTimedOut {
+            command: command_str,
+        });
+    };
+
+    let join = |reader: thread::JoinHandle<io::Result<Vec<u8>>>| match reader.join() {
+        Ok(Ok(buffer)) => Ok(buffer),
+        Ok(Err(e)) => Err(VcsError::Read(e.to_string())),
+        Err(_) => Err(VcsError::Read(format!(
+            "reading `{command_str}`'s output failed"
+        ))),
+    };
+    let output = std::process::Output {
+        status,
+        stdout: join(stdout_reader)?,
+        stderr: join(stderr_reader)?,
     };
 
     if !output.status.success() {
@@ -157,6 +168,34 @@ fn dubious_ownership_path(stderr: &str) -> Option<std::path::PathBuf> {
     let rest = &after_marker[quote.len_utf8()..];
     let end = rest.find(quote)?;
     Some(std::path::PathBuf::from(&rest[..end]))
+}
+
+/// Wait for `child` for at most `timeout`, returning `None` if it outlives
+/// that.
+///
+/// Backs off from a tenth of a millisecond so an ordinary `git add` — which
+/// finishes in single-digit milliseconds — is not held up by the poll
+/// interval, while a `git fetch` sitting on a network timeout is not woken
+/// thousands of times a second either.
+fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Result<Option<ExitStatus>, VcsError> {
+    const MIN_POLL: Duration = Duration::from_micros(100);
+    const MAX_POLL: Duration = Duration::from_millis(20);
+
+    let deadline = Instant::now() + timeout;
+    let mut poll = MIN_POLL;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(Some(status)),
+            Ok(None) => {}
+            Err(e) => return Err(VcsError::Read(e.to_string())),
+        }
+        let remaining = match deadline.checked_duration_since(Instant::now()) {
+            Some(remaining) if !remaining.is_zero() => remaining,
+            _ => return Ok(None),
+        };
+        thread::sleep(poll.min(remaining));
+        poll = (poll * 2).min(MAX_POLL);
+    }
 }
 
 fn display_command(args: &[&str]) -> String {

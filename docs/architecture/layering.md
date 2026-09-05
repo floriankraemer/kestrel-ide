@@ -95,6 +95,7 @@ That test target is the one place `app-config` may be read from a test rather th
   Every entry point takes `text: &str`, never a `Document`: the rope is only refreshed on save, so it is one save behind the live Qt buffer.
 
 - **Which Git operations run in-process and which shell out** is `vcs-core`'s, and is stated in ADR-0031: pure reads of object/index state (discovery, HEAD, status, branch listing, log) go through `gix`; anything touching the user's configuration, credentials, hooks or signing (staging, commit, branch create/checkout/delete, fetch/pull/push) shells out to `git`.
+  Two reads shell out as well, for the same measured reason in both cases — `git` has an implementation `gix` does not, and neither is on a hot path: blame (`git blame --porcelain`) and per-file history (`git log --follow`, 5.4× the in-process ancestry walk it replaced; see ADR-0031 §7).
   `ui-shell` never spawns `git` and never calls `gix` directly — both live behind `vcs-core`'s own API, wrapped in this crate's own types (`HeadInfo`, `RepoStatus`, `FileStatus`, `LogEntry`, `BlameLine`, `VcsError`) rather than `gix`'s, so a future backend swap stays inside this crate.
   Working-tree hunks (`hunks::HunkCache`) and a hunk revert (`revert::revert_hunk_edit`) reuse `editor_core::diff` rather than a second diff implementation, the same rule ADR-0028/0030 already established for the refactor preview and Replace in Files.
 

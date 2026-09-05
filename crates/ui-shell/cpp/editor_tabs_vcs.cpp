@@ -102,7 +102,15 @@ void EditorTabs::requestHunksFor(CodeEditor *editor)
         // gutter against.
         return;
     }
-    vcsService_->requestHunks(path, editor->toPlainText(), static_cast<qint64>(++vcsRevision_));
+    // The document's own revision, not a counter bumped per call: a counter
+    // that changes on every request can never equal the one that produced
+    // the cached answer, so `HunkCache`'s hit branch was unreachable and a
+    // tab switch or a settle tick after the buffer stopped changing rediffed
+    // the whole file. `QTextDocument::revision()` is the `doc_revision` the
+    // plan specified, Qt maintains it, and it makes the key correctly
+    // per-file instead of shared across every open tab.
+    vcsService_->requestHunks(
+      path, editor->toPlainText(), static_cast<qint64>(editor->document()->revision()));
 }
 
 void EditorTabs::applyVcsHunks(const QString &path)

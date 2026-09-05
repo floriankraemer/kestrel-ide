@@ -5154,9 +5154,10 @@ mod ffi {
         fn changed_files(self: &VcsService) -> Vec<FfiChangedFile>;
 
         /// Ask for `path`'s hunks against `HEAD`, diffed against
-        /// `workingText` (the live buffer) and cached by `revision` (a
-        /// caller-bumped counter, `HunkCache`'s cache key) — answers via
-        /// `hunksChanged(path)`.
+        /// `workingText` (the live buffer) and cached by `revision` — the
+        /// open document's own revision, which is what makes the cache
+        /// answer a repeat request for an unchanged buffer instead of
+        /// rediffing it. Answers via `hunksChanged(path)`.
         #[qinvokable]
         #[cxx_name = "requestHunks"]
         fn request_hunks(
@@ -5165,6 +5166,14 @@ mod ffi {
             working_text: &QString,
             revision: i64,
         );
+
+        /// Drop whatever `requestHunks`/`requestBlobAt` cached for `path`.
+        /// Called when a tab closes: the cached entries hold that file's
+        /// whole `HEAD` text and whole working text, so without this they
+        /// accumulate for every file opened in the life of a project.
+        #[qinvokable]
+        #[cxx_name = "forgetPath"]
+        fn forget_path(self: &VcsService, path: &QString);
 
         /// The hunks the last `requestHunks` for `path` found. Empty before
         /// an answer arrives or when `path` has never been asked about.

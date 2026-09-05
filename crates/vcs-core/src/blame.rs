@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use crate::cli;
 use crate::error::VcsError;
@@ -116,13 +117,40 @@ pub fn parse_porcelain(output: &str) -> Vec<BlameLine> {
     result
 }
 
-/// Caches [`Repository::blame`] per `(path, head_oid)`, the same shape as
-/// [`crate::history::HistoryCache`] and for the same reason: a blame view
-/// is opened on demand, so this exists to make re-opening it cheap, not to
-/// track a live buffer.
+/// Caches [`Repository::blame`] per `(path, head_oid, file stamp)`.
+///
+/// Nearly [`crate::history::HistoryCache`]'s shape, and for the same
+/// reason — a blame view is opened on demand, so this exists to make
+/// re-opening it cheap — with one difference that is not cosmetic.
+/// A file's history cannot change without `HEAD` moving, but
+/// [`Repository::blame`] blames the file *in the working tree*, whose
+/// uncommitted lines `git` attributes to the all-zero "not committed yet"
+/// commit. Keying on `HEAD` alone therefore served a saved-over-again file
+/// its pre-edit blame until the next commit. The stamp is the working
+/// file's length and modification time: the same evidence `git` itself
+/// uses to decide a tracked file may have changed.
 #[derive(Default)]
 pub struct BlameCache {
-    entries: Mutex<HashMap<(PathBuf, String), Vec<BlameLine>>>,
+    entries: Mutex<HashMap<BlameKey, Vec<BlameLine>>>,
+}
+
+/// `(repository-relative path, HEAD, working-file stamp)`. The stamp is
+/// `None` when the file cannot be stat'd, which keys every such call
+/// separately rather than sharing one bucket for "unknown".
+type BlameKey = (PathBuf, String, Option<(u64, Duration)>);
+
+/// The working file's length and modification time, as far as the
+/// filesystem will say. `None` rather than an error: a file that cannot be
+/// stat'd is a cache miss, not a failed blame — `git` is about to give its
+/// own verdict on it either way.
+fn file_stamp(work_dir: &Path, relative_path: &Path) -> Option<(u64, Duration)> {
+    let metadata = std::fs::metadata(work_dir.join(relative_path)).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    Some((metadata.len(), modified))
 }
 
 impl BlameCache {
@@ -135,7 +163,10 @@ impl BlameCache {
         repo: &Repository,
         relative_path: &Path,
     ) -> Result<Vec<BlameLine>, VcsError> {
-        let key = (relative_path.to_path_buf(), head_key(repo)?);
+        let stamp = repo
+            .work_dir()
+            .and_then(|work_dir| file_stamp(&work_dir, relative_path));
+        let key = (relative_path.to_path_buf(), head_key(repo)?, stamp);
         if let Some(cached) = self.entries.lock().unwrap().get(&key) {
             return Ok(cached.clone());
         }
@@ -278,6 +309,27 @@ filename f.txt
             DiscoverResult::Found(repo) => *repo,
             DiscoverResult::NotARepository => panic!("expected a repository"),
         }
+    }
+
+    #[test]
+    fn an_edited_working_file_is_blamed_again_rather_than_served_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("f.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "f.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        let repo = open(dir.path());
+        let cache = BlameCache::new();
+        assert_eq!(cache.blame(&repo, Path::new("f.txt")).unwrap().len(), 1);
+
+        // `HEAD` has not moved, but the file being blamed has. Keyed on
+        // `HEAD` alone this served the one-line answer for the file's
+        // previous contents.
+        std::fs::write(dir.path().join("f.txt"), "one\ntwo\n").unwrap();
+        let blame = cache.blame(&repo, Path::new("f.txt")).unwrap();
+        assert_eq!(blame.len(), 2);
+        assert_eq!(blame[1].content, "two");
     }
 
     #[test]

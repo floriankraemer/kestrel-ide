@@ -67,9 +67,9 @@ impl Repository {
         else {
             return Ok(None);
         };
-        let object = entry.object().map_err(|e| VcsError::Read(e.to_string()))?;
+        let mut object = entry.object().map_err(|e| VcsError::Read(e.to_string()))?;
         let oid = object.id.to_hex().to_string();
-        let text = String::from_utf8(object.data.clone()).map_err(|_| {
+        let text = String::from_utf8(std::mem::take(&mut object.data)).map_err(|_| {
             VcsError::Read(format!("{} is not valid UTF-8", relative_path.display()))
         })?;
         Ok(Some((oid, text)))
@@ -77,11 +77,17 @@ impl Repository {
 }
 
 /// Working-tree hunks for one file: `HEAD`'s blob id (`"none"` for a file
-/// `HEAD` does not have) and the line hunks between it and the working text
-/// handed in.
+/// `HEAD` does not have), that blob's text, and the line hunks between it
+/// and the working text handed in.
+///
+/// The text is carried out rather than left for the caller to read again:
+/// the gutter's caller needs it for the diff popup, and asking for it
+/// separately meant walking the `HEAD` tree and inflating the blob twice per
+/// settle tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkingHunks {
     pub head_oid: String,
+    pub before_text: String,
     pub hunks: Vec<Hunk>,
 }
 
@@ -139,6 +145,7 @@ impl HunkCache {
                 if entry.head_oid == head_oid && entry.revision == revision {
                     return Ok(WorkingHunks {
                         head_oid,
+                        before_text: before,
                         hunks: entry.hunks.clone(),
                     });
                 }
@@ -158,7 +165,11 @@ impl HunkCache {
             },
         );
 
-        Ok(WorkingHunks { head_oid, hunks })
+        Ok(WorkingHunks {
+            head_oid,
+            before_text: before,
+            hunks,
+        })
     }
 }
 
@@ -216,6 +227,31 @@ mod tests {
             .unwrap();
         assert_ne!(result.head_oid, NO_HEAD_BLOB);
         assert_eq!(result.hunks.len(), 1);
+    }
+
+    #[test]
+    fn the_same_revision_is_served_from_the_cache_rather_than_rediffed() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        let repo = open(dir.path());
+        let cache = HunkCache::new();
+        let first = cache
+            .hunks(&repo, Path::new("a.txt"), "one\nTWO\n", 7)
+            .unwrap();
+        // Same revision, different text: a cache that is actually consulted
+        // answers from the key it was given. Asking with text the caller
+        // says belongs to a revision already answered for is the only way
+        // to observe a hit from outside, and it is exactly the case the
+        // view hits on a tab switch or a settle tick after typing stops —
+        // which a per-call counter made unreachable.
+        let second = cache
+            .hunks(&repo, Path::new("a.txt"), "something else entirely\n", 7)
+            .unwrap();
+        assert_eq!(first.hunks, second.hunks);
     }
 
     #[test]

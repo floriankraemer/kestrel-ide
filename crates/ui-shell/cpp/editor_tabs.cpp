@@ -977,6 +977,12 @@ void EditorTabs::onTabClosed(quint64 tabId)
     const QString path = widget->property("lspPath").toString();
     if (!path.isEmpty()) {
         languageService_->documentClosed(path);
+        if (vcsService_) {
+            // Same reasoning as documentClosed above, for the gutter's own
+            // per-path state: the cached hunks hold this file's whole HEAD
+            // text and whole working text.
+            vcsService_->forgetPath(path);
+        }
     }
     loc.group->removeTab(loc.index);
     delete widget;

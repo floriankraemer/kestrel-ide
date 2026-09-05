@@ -78,15 +78,18 @@ pub enum ScopedField {
     RunConfigs,
     /// The index's exclude patterns.
     IndexExcludes,
+    /// The `[terminal]` section: shell, start directory and environment.
+    Terminal,
 }
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 4] = [
+    pub const ALL: [ScopedField; 5] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
         ScopedField::IndexExcludes,
+        ScopedField::Terminal,
     ];
 
     /// The stable id the view names this field by — the same string the
@@ -98,6 +101,7 @@ impl ScopedField {
             ScopedField::LanguageServers => "languageServers",
             ScopedField::RunConfigs => "runConfigs",
             ScopedField::IndexExcludes => "indexExcludes",
+            ScopedField::Terminal => "terminal",
         }
     }
 
@@ -126,6 +130,9 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     }
     if let Some(excludes) = &project.index_excludes {
         resolved.index_excludes = excludes.clone();
+    }
+    if let Some(terminal) = &project.terminal {
+        resolved.terminal = terminal.clone();
     }
     // Run configurations are deliberately *not* folded in: they have no
     // counterpart in the global layer at all (ADR-0029 — a run configuration
@@ -159,6 +166,7 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::LanguageServers => project.language_servers.is_some(),
         ScopedField::RunConfigs => project.run_configs.is_some(),
         ScopedField::IndexExcludes => project.index_excludes.is_some(),
+        ScopedField::Terminal => project.terminal.is_some(),
     };
     if overridden {
         return Scope::Project;
@@ -208,13 +216,14 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
         // one.
         ScopedField::RunConfigs => false,
         ScopedField::IndexExcludes => global.index_excludes != defaults.index_excludes,
+        ScopedField::Terminal => global.terminal != defaults.terminal,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app_config::EditingSettings;
+    use app_config::{EditingSettings, TerminalSettings};
 
     fn project_editing(tab_width: u32) -> ProjectSettings {
         ProjectSettings {
@@ -265,6 +274,58 @@ mod tests {
         );
     }
 
+    /// The case the terminal's shell picker rests on: a checkout whose
+    /// tooling only runs under one shell says so in its committed file, and
+    /// that beats whatever the person set globally.
+    #[test]
+    fn a_project_shell_overrides_the_persons_own() {
+        let global = Settings {
+            terminal: TerminalSettings {
+                shell_id: "fish".to_string(),
+                ..TerminalSettings::default()
+            },
+            ..Settings::default()
+        };
+        let project = ProjectSettings {
+            terminal: Some(TerminalSettings {
+                shell_id: "wsl:Ubuntu".to_string(),
+                ..TerminalSettings::default()
+            }),
+            ..ProjectSettings::default()
+        };
+
+        assert_eq!(resolve(&global, &project).terminal.shell_id, "wsl:Ubuntu");
+        assert_eq!(
+            origin(ScopedField::Terminal, &global, &project),
+            Scope::Project
+        );
+    }
+
+    #[test]
+    fn a_terminal_section_nobody_touched_reports_default_not_global() {
+        let global = Settings::default();
+        let project = ProjectSettings::default();
+
+        assert_eq!(
+            origin(ScopedField::Terminal, &global, &project),
+            Scope::Default
+        );
+        assert_eq!(
+            origin(
+                ScopedField::Terminal,
+                &Settings {
+                    terminal: TerminalSettings {
+                        shell_id: "zsh".to_string(),
+                        ..TerminalSettings::default()
+                    },
+                    ..Settings::default()
+                },
+                &project
+            ),
+            Scope::Global
+        );
+    }
+
     #[test]
     fn a_project_may_not_override_a_person_shaped_setting() {
         // The list is the type: there is no `ScopedField::Theme` to pass,
@@ -275,7 +336,7 @@ mod tests {
         assert!(ScopedField::from_id("keymap").is_none());
         assert!(ScopedField::from_id("aiProviders").is_none());
         assert!(ScopedField::from_id("editorFontSize").is_none());
-        assert_eq!(ScopedField::ALL.len(), 4, "ADR-0022 names four areas");
+        assert_eq!(ScopedField::ALL.len(), 5, "ADR-0022 names five areas");
     }
 
     #[test]

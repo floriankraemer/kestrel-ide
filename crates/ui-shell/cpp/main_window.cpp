@@ -764,6 +764,8 @@ void buildMainWindow(AppSettings *appSettings,
     // `SettingsContext::terminalPanel`'s `reapplyKeymap()` instead. `newSession`
     // is one QAction for the whole panel's lifetime, so it can sit here.
     actions->insert(QStringLiteral("terminal.newSession"), central.terminalPanel->newSessionAction());
+    actions->insert(QStringLiteral("terminal.selectShell"),
+                    central.terminalPanel->selectShellAction());
 
     QMenu *fileMenu = window->menuBar()->addMenu(QObject::tr("&File"));
     QAction *openFolderAction = registerAction(fileMenu, QStringLiteral("file.openFolder"),

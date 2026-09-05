@@ -58,6 +58,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan and 
 - [MVP implementation plan](architecture/mvp-implementation-plan.md) — MVP editor shell; marked historical.
 - [Settings, docking, theming, MCP plan](architecture/settings-docking-theming-mcp-plan.md) — settings, docking, theming, MCP foundation, line numbers, tab reorder, syntax foundation.
 - [Language, folding, Class View, terminal, search plan](architecture/language-folding-classview-terminal-search-plan.md) — language expansion, folding, Class View, terminal, project index and search.
+- [Terminal shells plan](architecture/terminal-shells-plan.md) — a shell catalogue in `pty-core`, a project-scoped `[terminal]` section, the "+" dropdown and the project root as the start directory.
 - [Find & Replace plan](architecture/find-replace-plan.md) — find and replace, in-editor and project-wide.
 - [Search Everywhere plan](architecture/search-everywhere-plan.md) — Search Everywhere popup and Search Results dock.
 - [Code navigation plan](architecture/code-navigation-plan.md) — Go to Declaration, Find Usages, Go to Implementation, jump history.

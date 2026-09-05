@@ -91,6 +91,14 @@ jobs:
           # clone does not contain.
           fetch-depth: 0
 
+      # This job runs in the builder container, whose user is not the one
+      # that owns the checkout on the host bind mount, so git refuses every
+      # command in it with "detected dubious ownership". The merge-base
+      # lookup in "Build report" is the first git call in the job and was
+      # failing the whole job on exit 128 before the report was ever built.
+      - name: Trust the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - uses: Swatinem/rust-cache@v2
         with:
           key: coverage

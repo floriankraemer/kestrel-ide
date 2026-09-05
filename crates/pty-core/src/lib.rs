@@ -16,6 +16,11 @@ use std::path::PathBuf;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize as NativePtySize};
 
+/// Which shells this machine offers, for the terminal's shell picker.
+pub mod shells;
+
+pub use shells::ShellCandidate;
+
 /// Terminal size in character cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PtySize {

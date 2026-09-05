@@ -41,8 +41,12 @@ A full mirror would have to be hand-synchronised forever and would leave room fo
 
 ### 4. What may be overridden, and what may not
 
-Project scope covers project-shaped settings: editing behaviour, language servers, run configurations, index excludes.
+Project scope covers project-shaped settings: editing behaviour, language servers, run configurations, index excludes, and the terminal's shell and start directory.
 Global scope keeps person-shaped ones: theme, fonts, keymap, AI providers.
+
+The terminal was added to that list after the shell picker was built.
+A repository whose tooling only runs under WSL, or under `bash` on a machine whose owner uses `fish`, is describing the checkout rather than the person — the same test every other project-scoped area passes.
+This is the "widening it later is additive" case the next paragraph anticipates, and it cost exactly one variant in `settings_model::scope::ScopedField`.
 
 The line is defensible in one sentence — **a project may configure the project, not you** — and it matters that it is drawn deliberately.
 Widening it later is additive; narrowing it is a breaking change to a file people have already committed.

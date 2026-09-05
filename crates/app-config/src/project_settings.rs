@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     load_toml, save_toml, update_toml, ConfigError, DebugAdapterSetting, EditingSettings,
-    LanguageServerSetting, RunConfigSetting,
+    LanguageServerSetting, RunConfigSetting, TerminalSettings,
 };
 
 /// Directory holding a project's IDE files, inside the project root.
@@ -157,6 +157,19 @@ pub struct ProjectSettings {
     )]
     pub index_excludes: Option<Vec<String>>,
 
+    /// The project's `[terminal]` overrides — which shell a terminal opened
+    /// in this checkout spawns, where it starts, and what it adds to the
+    /// environment.
+    ///
+    /// Project-shaped for the same reason as `[editing]`: a repository whose
+    /// tooling only runs under WSL, or under `bash` on a machine whose owner
+    /// uses `fish`, is describing the checkout, not the person.
+    ///
+    /// Sparse like the rest: `None` is "the project says nothing about the
+    /// terminal".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<TerminalSettings>,
+
     /// Keys this build does not understand, kept verbatim so a round trip
     /// through an older binary does not delete what a newer one wrote.
     ///
@@ -175,6 +188,7 @@ impl ProjectSettings {
             && self.debug_adapters.is_none()
             && self.remote_attach.is_none()
             && self.index_excludes.is_none()
+            && self.terminal.is_none()
             && self.unknown.is_empty()
     }
 }
@@ -420,6 +434,43 @@ mod tests {
             configs[0].env,
             vec![("RUST_LOG".to_string(), "debug".to_string())]
         );
+    }
+
+    #[test]
+    fn terminal_settings_round_trip() {
+        let root = project();
+        update(root.path(), |s| {
+            let mut terminal = TerminalSettings {
+                shell_id: "wsl:Ubuntu".into(),
+                start_directory: "sub/crate".into(),
+                ..TerminalSettings::default()
+            };
+            terminal.env.insert("RUST_LOG".into(), "debug".into());
+            s.terminal = Some(terminal);
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        let terminal = loaded.terminal.expect("terminal section");
+        assert_eq!(terminal.shell_id, "wsl:Ubuntu");
+        assert_eq!(terminal.start_directory, "sub/crate");
+        assert_eq!(
+            terminal.env.get("RUST_LOG").map(String::as_str),
+            Some("debug")
+        );
+    }
+
+    /// A project file written before this section existed still loads, and
+    /// says nothing about the terminal rather than defaulting it.
+    #[test]
+    fn absent_terminal_key_falls_back_to_none() {
+        let root = project();
+        update(root.path(), |s| {
+            s.index_excludes = Some(vec!["target/".into()]);
+        })
+        .unwrap();
+
+        assert!(load(root.path()).unwrap().terminal.is_none());
     }
 
     #[test]

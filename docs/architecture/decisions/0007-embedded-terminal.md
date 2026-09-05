@@ -63,7 +63,8 @@ No `tokio` or other async runtime in `pty-core` or `terminal-core`; `tokio` stay
   input, with zero VT100 or PTY logic to maintain in C++.
 - Negative / accepted risk: two new native-dependency crates (`portable-pty`, later
   `alacritty_terminal`) whose Windows/ConPTY and MXE cross-build behavior has not yet been
-  verified end to end — this is the open item this ADR stays Proposed on.
+  verified end to end — this was the open item this ADR was Proposed on, closed by the MXE
+  `windows-artifact` cross-build recorded in the Status section above.
   `pty-core`'s Linux build and unit tests (spawn/read, resize, kill/wait) are verified clean
   under the Docker `linux-builder` stage as of this task; the MXE cross-build path is not yet
   checked.
@@ -74,8 +75,8 @@ No `tokio` or other async runtime in `pty-core` or `terminal-core`; `tokio` stay
   `terminal-core` doesn't use `alacritty_terminal`'s `tty` module at all (it consumes bytes
   from `pty-core` instead), so this was purely a "does the crate compile" gate, not a feature
   gap. Its Linux build and unit tests (known VT100/SGR/CUP escape-sequence fixtures) are
-  verified clean under `linux-builder`; the MXE cross-build path is still unchecked, so this
-  ADR stays Proposed.
+  verified clean under `linux-builder`; the MXE cross-build path was checked afterwards, in
+  the `windows-artifact` build the Status section records.
 - Selection state, `http(s)` link detection, and paste sanitizing/bracketing (task F4) also
   live in `terminal-core` and are unit tested there.
   The widget contributes only pixel-to-cell arithmetic, clipboard access, and
@@ -91,6 +92,23 @@ No `tokio` or other async runtime in `pty-core` or `terminal-core`; `tokio` stay
 - The `WindowsShellKind` enum only names the shell; nothing in `pty-core` verifies the named
   executable actually exists on the target machine before spawning, that's a caller-side
   concern for whichever task builds the terminal dock widget's shell-picker (F3 or later).
+  That task has since landed — see the section below.
+
+## Shell selection and the start directory (later addition)
+
+The deferral above is closed.
+Which shells a machine offers is now `pty_core::shells`, a catalogue beside `ShellSpec`; which one the user wants is `app_config::TerminalSettings`, project-scoped like `[editing]` (ADR-0022); and which of the two wins for a given tab is `shell_for` in `ui-shell`'s `bridge/terminal.rs`.
+
+The rule this ADR set for `ShellSpec` still holds and is what shaped the catalogue: constructors do not probe the OS.
+Probing is a function a caller asks for by name, and each platform's list is built by a pure function taking the machine's answers — `$SHELL`, `/etc/shells`, `wsl.exe --list --quiet`, and a "can this be launched?" predicate — as arguments.
+That is what keeps the Windows catalogue, WSL distros included, covered by tests on Linux CI, which is the same property `WindowsShellKind` was introduced for and the reason there is still no Windows runner to need.
+
+Two consequences worth writing down:
+
+- A shell named in a settings file but since uninstalled falls back to the platform default rather than failing to spawn.
+  A machine that had `fish` yesterday is a normal thing to find, and a terminal that refuses to open because of it would be worse than one that opens `bash`.
+- A new terminal starts in the open project's root, not the IDE process's working directory.
+  The old behaviour also quietly contradicted `TerminalSupervisor::linkAt`, which resolves a relative `file:line` against the project root on the stated grounds that this is where a terminal starts.
 
 ## Related
 

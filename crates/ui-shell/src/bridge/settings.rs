@@ -288,6 +288,55 @@ impl ffi::AppSettings {
         let _ = app_config::save(&config_dir, &settings);
     }
 
+    /// The `[terminal]` section of the layer the settings dialog is
+    /// currently editing.
+    ///
+    /// Project scope shows the project's own override, defaulted when there
+    /// is none — the same rule `EditingEditor::begin_edit` follows, and for
+    /// the same reason: a project page pre-filled with global values would
+    /// turn "look at this layer" into "copy the other layer into it" on the
+    /// first OK.
+    pub fn terminal_settings(&self) -> ffi::FfiTerminalSettings {
+        let terminal = match *self.scope.borrow() {
+            settings_model::Scope::Project => crate::bridge::convert::load_project_settings()
+                .terminal
+                .unwrap_or_default(),
+            _ => load_settings().terminal,
+        };
+        to_ffi_terminal_settings(&terminal)
+    }
+
+    /// Write the `[terminal]` section back to the layer being edited.
+    ///
+    /// A project override that says nothing is removed rather than written
+    /// as an empty section: `.ide/settings.toml` is reviewed by people, and
+    /// a section that overrides nothing reads as one that does.
+    pub fn save_terminal_settings(&self, terminal: &ffi::FfiTerminalSettings) -> FfiResult {
+        let terminal = from_ffi_terminal_settings(terminal);
+        if *self.scope.borrow() == settings_model::Scope::Project {
+            let section = (terminal != app_config::TerminalSettings::default()).then_some(terminal);
+            return commit_to_project(|project| project.terminal = section);
+        }
+        let config_dir = app_core::resolve_config_dir();
+        match app_config::update(&config_dir, |settings| settings.terminal = terminal) {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_SETTINGS_IO, error.to_string()),
+        }
+    }
+
+    /// Every shell this machine offers, for the Terminal page's combo. The
+    /// same list the dock's "+" dropdown shows, from the same place — see
+    /// `TerminalSupervisor::available_shells`.
+    pub fn available_shells(&self) -> Vec<ffi::FfiShellCandidate> {
+        pty_core::shells::detect()
+            .into_iter()
+            .map(|candidate| ffi::FfiShellCandidate {
+                id: QString::from(candidate.id.as_str()),
+                label: QString::from(candidate.label.as_str()),
+            })
+            .collect()
+    }
+
     pub fn shortcut_for(&self, action_id: &QString) -> QString {
         let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
         QString::from(settings.keymap().shortcut_for(&action_id.to_string()))
@@ -1372,6 +1421,46 @@ impl ffi::EditingEditor {
 /// atomic write, the refusal to save over a file it could not read, and the
 /// unknown-key round trip with it (ADR-0022 §5, §6) — none of which the
 /// adapter should be re-implementing.
+/// `KEY=VALUE` lines, the convention `FfiRunConfig::env` already crosses
+/// the seam with — a `Vec` field on a shared struct is not a shape cxx
+/// supports, and a second one-field wrapper type for what is already a
+/// text area in the view would buy nothing.
+fn to_ffi_terminal_settings(terminal: &app_config::TerminalSettings) -> ffi::FfiTerminalSettings {
+    let env: Vec<String> = terminal
+        .env
+        .iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect();
+    ffi::FfiTerminalSettings {
+        shell_id: QString::from(terminal.shell_id.as_str()),
+        shell_path: QString::from(terminal.shell_path.as_str()),
+        shell_args: QString::from(terminal.shell_args.as_str()),
+        start_directory: QString::from(terminal.start_directory.as_str()),
+        env: QString::from(env.join("\n").as_str()),
+    }
+}
+
+fn from_ffi_terminal_settings(row: &ffi::FfiTerminalSettings) -> app_config::TerminalSettings {
+    app_config::TerminalSettings {
+        shell_id: row.shell_id.to_string().trim().to_string(),
+        shell_path: row.shell_path.to_string().trim().to_string(),
+        shell_args: row.shell_args.to_string().trim().to_string(),
+        start_directory: row.start_directory.to_string().trim().to_string(),
+        env: parse_env_lines(&row.env.to_string()),
+    }
+}
+
+/// One `KEY=VALUE` per line. A line with no `=`, or an empty key, is
+/// dropped rather than stored as a variable with no name — the view has a
+/// free-text area and a half-typed line is a normal thing to find in it.
+fn parse_env_lines(text: &str) -> std::collections::BTreeMap<String, String> {
+    text.lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(key, value)| (key.trim().to_string(), value.trim().to_string()))
+        .filter(|(key, _)| !key.is_empty())
+        .collect()
+}
+
 fn commit_to_project(
     edit: impl FnOnce(&mut app_config::project_settings::ProjectSettings),
 ) -> FfiResult {

@@ -13,6 +13,7 @@
 #include "plugins_page.h"
 #include "icon_decoration_proxy.h"
 #include "syntax_colors_page.h"
+#include "terminal_page.h"
 #include "terminal_sessions_panel.h"
 
 #include <QComboBox>
@@ -64,6 +65,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     categoryList->addItem(QObject::tr("Language Servers"));
     categoryList->addItem(QObject::tr("AI Providers"));
     categoryList->addItem(QObject::tr("Plugins"));
+    categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
     // nav width: the interface font scale below can make "Language Servers"
@@ -176,6 +178,16 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     // OK-shaped promise.
     pages->addWidget(buildPluginsPage(&dialog, context.pluginCatalog, refreshIcons));
 
+    // Terminal is project-scoped, so it is rebuilt when the scope changes
+    // like Editing and Language Servers. Held by handle rather than by
+    // value because that rebuild replaces the page — and with it the
+    // `commit` closure bound to its widgets — while the OK branch below
+    // has already been written to call one.
+    auto terminalPage =
+      std::make_shared<TerminalPage>(buildTerminalPage(&dialog, appSettings));
+    const int terminalIndex =
+      pages->addWidget(scopedPage(QStringLiteral("terminal"), terminalPage->widget));
+
     const McpPage mcp =
       buildMcpPage(&dialog, appSettings, context.docManager, *context.mcpStatus);
     pages->addWidget(mcp.widget);
@@ -244,7 +256,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
       [&dialog, appSettings, pages, editingIndex, languageServersIndex, scopeHint,
        scopeBox, scopedPage, editingEditor = context.editingEditor,
        languageServerEditor = context.languageServerEditor,
-       languageService = context.languageService]() {
+       languageService = context.languageService, terminalPage, terminalIndex]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -269,6 +281,13 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
                        buildLanguageServersPage(&dialog, languageServerEditor, languageService)));
           pages->removeWidget(staleServers);
           staleServers->deleteLater();
+
+          QWidget *staleTerminal = pages->widget(terminalIndex);
+          *terminalPage = buildTerminalPage(&dialog, appSettings);
+          pages->insertWidget(terminalIndex,
+                              scopedPage(QStringLiteral("terminal"), terminalPage->widget));
+          pages->removeWidget(staleTerminal);
+          staleTerminal->deleteLater();
 
           pages->setCurrentIndex(current);
 
@@ -359,6 +378,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
         context.keymapEditor->commit();
         applyKeymap(*context.actions, appSettings);
         context.terminalPanel->reapplyKeymap();
+        terminalPage->commit();
         mcp.commit();
         // The AI draft was already committed by the OK handler above; this
         // is the chat session re-reading the provider, the mode and the

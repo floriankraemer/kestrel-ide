@@ -21,6 +21,8 @@ use serde::{Deserialize, Serialize};
 pub mod editing;
 pub mod keymap;
 pub mod syntax_colors;
+/// The `[terminal]` section: which shell the embedded terminal spawns.
+pub mod terminal;
 
 /// Per-project settings layered over the global file (ADR-0022).
 pub mod project_settings;
@@ -42,6 +44,7 @@ pub use editing::EditingSettings;
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
+pub use terminal::TerminalSettings;
 
 /// File name used to persist settings inside the config directory.
 const SETTINGS_FILE: &str = "settings.toml";
@@ -335,6 +338,12 @@ pub struct Settings {
     /// crate's — see [`editing`].
     #[serde(default)]
     pub editing: EditingSettings,
+    /// Which shell the embedded terminal spawns, where it starts, and what
+    /// it adds to the environment. Project-scoped like [`Settings::editing`]
+    /// — see [`terminal`] for why the shell belongs to the checkout at least
+    /// as often as to the person.
+    #[serde(default)]
+    pub terminal: TerminalSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
     ///
@@ -843,6 +852,11 @@ mod tests {
                 tab_width: 2,
                 use_spaces: Some(false),
                 ..EditingSettings::default()
+            },
+            terminal: TerminalSettings {
+                shell_id: "wsl:Ubuntu".to_string(),
+                start_directory: "/srv/checkout".to_string(),
+                ..TerminalSettings::default()
             },
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),

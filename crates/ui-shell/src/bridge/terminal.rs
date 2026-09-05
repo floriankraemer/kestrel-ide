@@ -9,12 +9,88 @@ use cxx_qt_lib::QString;
 use crate::bridge::errors;
 use crate::bridge::ffi::{self, FfiResult};
 
-/// Resolve which shell to spawn (Task F3). Only Linux is in scope for this
-/// task (Windows shell-picker UI is a later task); the `cfg` branch just
-/// keeps the Rust side platform-correct rather than Linux-only, reusing
-/// `pty-core`'s own per-platform `ShellSpec` constructors instead of
-/// re-deciding shell resolution here.
-fn resolve_shell() -> pty_core::ShellSpec {
+/// The shell a new tab spawns, and where it starts.
+///
+/// Pure, and Qt-free, so the precedence rule below is unit-tested rather
+/// than reasoned about: everything the answer depends on arrives as an
+/// argument. The caller reads those from `convert::load_resolved_settings`
+/// (the global layer with the project's overrides already applied) and
+/// `convert::current_project_root`.
+///
+/// Precedence, highest first:
+///
+/// 1. `requested_id` — the shell this particular tab was opened with from
+///    the "+" dropdown, which is a one-off choice and must beat the
+///    configured default.
+/// 2. `settings.shell_path` — a shell named by path, the settings page's
+///    "Custom…" escape hatch for something this build's catalogue has never
+///    heard of.
+/// 3. `settings.shell_id` — the configured default, by catalogue id.
+/// 4. The platform default: `$SHELL` on Unix, PowerShell on Windows.
+///
+/// A configured shell that is no longer installed falls through to the
+/// platform default rather than failing to spawn: a machine that had `fish`
+/// yesterday is a normal thing to find, and an IDE whose terminal refuses
+/// to open because of it would be worse than one that opens `bash`.
+///
+/// The working directory is the project root unless the settings name one,
+/// which is the whole point of the change: before this, a terminal
+/// inherited the IDE process's own directory, which is never what someone
+/// opening a terminal in a project meant.
+fn shell_for(
+    settings: &app_config::TerminalSettings,
+    requested_id: &str,
+    project_root: Option<&std::path::Path>,
+) -> pty_core::ShellSpec {
+    let mut spec = requested_shell(settings, requested_id).unwrap_or_else(platform_default);
+
+    if !settings.start_directory.is_empty() {
+        spec = spec.with_cwd(&settings.start_directory);
+    } else if let Some(root) = project_root {
+        spec = spec.with_cwd(root);
+    }
+
+    let env = settings.env_pairs();
+    if env.is_empty() {
+        spec
+    } else {
+        spec.with_env(env)
+    }
+}
+
+/// Steps 1–3 of [`shell_for`]'s precedence list; `None` when none of them
+/// names a shell this machine still offers.
+fn requested_shell(
+    settings: &app_config::TerminalSettings,
+    requested_id: &str,
+) -> Option<pty_core::ShellSpec> {
+    if !requested_id.is_empty() {
+        if let Some(candidate) = pty_core::shells::find(requested_id) {
+            return Some(candidate.to_spec());
+        }
+    }
+    if !settings.shell_path.is_empty() {
+        return Some(pty_core::ShellSpec::new(
+            settings.shell_path.clone(),
+            split_args(&settings.shell_args),
+        ));
+    }
+    if !settings.shell_id.is_empty() {
+        if let Some(candidate) = pty_core::shells::find(&settings.shell_id) {
+            let mut spec = candidate.to_spec();
+            if !settings.shell_args.is_empty() {
+                spec.args = split_args(&settings.shell_args);
+            }
+            return Some(spec);
+        }
+    }
+    None
+}
+
+/// What the terminal opened before any of this was configurable, kept as
+/// the floor: `pty-core`'s own per-platform constructors, rather than a
+/// second shell-resolution rule living here.
+fn platform_default() -> pty_core::ShellSpec {
     #[cfg(windows)]
     {
         pty_core::ShellSpec::windows(pty_core::WindowsShellKind::PowerShellCore)
@@ -23,6 +99,13 @@ fn resolve_shell() -> pty_core::ShellSpec {
     {
         pty_core::ShellSpec::unix_default()
     }
+}
+
+/// Space-separated, the same convention `FfiRunConfig::args` crosses the
+/// seam with. Shell-style quoting is the upgrade if a literal space in an
+/// argument ever matters.
+fn split_args(args: &str) -> Vec<String> {
+    args.split_whitespace().map(str::to_string).collect()
 }
 
 fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell {
@@ -157,7 +240,26 @@ impl ffi::TerminalSupervisor {
         }
     }
 
-    pub fn start(self: Pin<&mut Self>, session_id: u64, rows: u32, cols: u32) -> FfiResult {
+    /// Every shell this machine offers, for the dock's "+" dropdown and the
+    /// settings page's combo. The view builds a menu from this and hands an
+    /// id back to `start()`; it never decides what is on the list.
+    pub fn available_shells(&self) -> Vec<ffi::FfiShellCandidate> {
+        pty_core::shells::detect()
+            .into_iter()
+            .map(|candidate| ffi::FfiShellCandidate {
+                id: QString::from(candidate.id.as_str()),
+                label: QString::from(candidate.label.as_str()),
+            })
+            .collect()
+    }
+
+    pub fn start(
+        self: Pin<&mut Self>,
+        session_id: u64,
+        shell_id: &QString,
+        rows: u32,
+        cols: u32,
+    ) -> FfiResult {
         let Some(entry) = self.handles(session_id) else {
             return FfiResult {
                 code: errors::CODE_TERMINAL,
@@ -165,7 +267,12 @@ impl ffi::TerminalSupervisor {
             };
         };
 
-        let shell = resolve_shell();
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let shell = shell_for(
+            &settings.terminal,
+            &shell_id.to_string(),
+            crate::bridge::convert::current_project_root().as_deref(),
+        );
         let pty_size = pty_core::PtySize::new(rows as u16, cols as u16);
         let mut session = match pty_core::PtySession::spawn(&shell, pty_size) {
             Ok(session) => session,
@@ -438,6 +545,104 @@ impl ffi::TerminalSupervisor {
             has_column: link.col.is_some(),
             column: link.col.unwrap_or(0),
         }
+    }
+}
+
+#[cfg(test)]
+mod shell_resolution_tests {
+    //! Qt-free: `shell_for` takes everything it depends on as an argument,
+    //! so the precedence rule the whole feature rests on is tested here
+    //! rather than by opening a terminal and looking at it.
+    use super::{shell_for, split_args};
+    use app_config::TerminalSettings;
+    use std::path::Path;
+
+    #[test]
+    fn a_new_terminal_starts_in_the_project_root() {
+        let spec = shell_for(
+            &TerminalSettings::default(),
+            "",
+            Some(Path::new("/home/dev/checkout")),
+        );
+        assert_eq!(spec.cwd.as_deref(), Some(Path::new("/home/dev/checkout")));
+    }
+
+    /// With no project open there is nothing better to offer than the IDE's
+    /// own directory, which is what leaving `cwd` unset inherits.
+    #[test]
+    fn with_no_project_open_the_working_directory_is_inherited() {
+        assert_eq!(shell_for(&TerminalSettings::default(), "", None).cwd, None);
+    }
+
+    #[test]
+    fn a_configured_start_directory_beats_the_project_root() {
+        let settings = TerminalSettings {
+            start_directory: "/srv/elsewhere".to_string(),
+            ..TerminalSettings::default()
+        };
+        let spec = shell_for(&settings, "", Some(Path::new("/home/dev/checkout")));
+        assert_eq!(spec.cwd.as_deref(), Some(Path::new("/srv/elsewhere")));
+    }
+
+    #[test]
+    fn a_custom_shell_path_beats_the_configured_id() {
+        let settings = TerminalSettings {
+            shell_id: "system".to_string(),
+            shell_path: "/opt/toolchain/bin/ash".to_string(),
+            shell_args: "-l -c true".to_string(),
+            ..TerminalSettings::default()
+        };
+        let spec = shell_for(&settings, "", None);
+        assert_eq!(spec.program, "/opt/toolchain/bin/ash");
+        assert_eq!(spec.args, vec!["-l", "-c", "true"]);
+    }
+
+    /// A shell named in a settings file but since uninstalled must not stop
+    /// the terminal from opening — the platform default stands in.
+    #[test]
+    fn an_uninstalled_configured_shell_falls_back_to_the_platform_default() {
+        let settings = TerminalSettings {
+            shell_id: "no-such-shell-anywhere".to_string(),
+            ..TerminalSettings::default()
+        };
+        let spec = shell_for(&settings, "", None);
+        assert!(!spec.program.is_empty());
+        assert_eq!(spec.program, super::platform_default().program);
+    }
+
+    /// Opening one tab with a specific shell must not be overruled by the
+    /// configured default — that is what the "+" dropdown means.
+    #[test]
+    fn the_requested_shell_beats_a_custom_path() {
+        // `system` is `$SHELL`, which the test environment always has.
+        let Some(system) = pty_core::shells::find("system") else {
+            return; // No `$SHELL` at all: nothing to assert against.
+        };
+        let settings = TerminalSettings {
+            shell_path: "/opt/toolchain/bin/ash".to_string(),
+            ..TerminalSettings::default()
+        };
+        assert_eq!(shell_for(&settings, "system", None).program, system.program);
+    }
+
+    #[test]
+    fn the_configured_environment_is_added_to_the_spec() {
+        let mut settings = TerminalSettings::default();
+        settings
+            .env
+            .insert("RUST_LOG".to_string(), "debug".to_string());
+        let spec = shell_for(&settings, "", None);
+        assert_eq!(
+            spec.env,
+            vec![("RUST_LOG".to_string(), "debug".to_string())]
+        );
+    }
+
+    #[test]
+    fn arguments_split_on_whitespace_and_an_empty_string_is_no_arguments() {
+        assert_eq!(split_args("-l  --norc"), vec!["-l", "--norc"]);
+        assert!(split_args("").is_empty());
+        assert!(split_args("   ").is_empty());
     }
 }
 

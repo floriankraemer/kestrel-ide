@@ -27,12 +27,13 @@
 
 namespace ui_shell {
 
-TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId,
+TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId, QString shellId,
                                 AppSettings *appSettings, OpenAt openAt, QWidget *parent)
   : QWidget(parent)
   , supervisor_(supervisor)
   , openAt_(std::move(openAt))
   , sessionId_(sessionId)
+  , shellId_(std::move(shellId))
   , appSettings_(appSettings)
 {
     setFocusPolicy(Qt::StrongFocus);
@@ -106,7 +107,7 @@ void TerminalWidget::syncGridSizeToWidget()
     rows_ = newRows;
     if (!started_) {
         started_ = true;
-        supervisor_->start(sessionId_, rows_, cols_);
+        supervisor_->start(sessionId_, shellId_, rows_, cols_);
     } else {
         supervisor_->resize(sessionId_, rows_, cols_);
     }

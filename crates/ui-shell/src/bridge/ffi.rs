@@ -660,6 +660,36 @@ mod ffi {
         author_time: i64,
     }
 
+    /// One shell this machine offers (`pty_core::ShellCandidate`), for the
+    /// terminal dock's "+" dropdown and the Terminal settings page. A
+    /// struct rather than a pair of parallel string lists for the same
+    /// reason `FfiBranch` below is one: `cxx`'s `Vec<T>` needs
+    /// `T: ImplVec`, which `QString` alone does not satisfy.
+    ///
+    /// `id` is what gets stored in `settings.toml` and handed back to
+    /// `start()`; `label` is only ever shown.
+    struct FfiShellCandidate {
+        id: QString,
+        label: QString,
+    }
+
+    /// The `[terminal]` section as one row, for the Settings > Terminal
+    /// page. `env` crosses as `KEY=VALUE` lines separated by `\n`, the same
+    /// convention `FfiRunConfig::env` uses, since a `Vec` field on a shared
+    /// struct is not a shape cxx supports.
+    #[derive(Default)]
+    struct FfiTerminalSettings {
+        /// A `FfiShellCandidate::id`, or empty for the platform default.
+        shell_id: QString,
+        /// A shell named by path, which beats `shell_id` when set.
+        shell_path: QString,
+        /// Space-separated, like `FfiRunConfig::args`.
+        shell_args: QString,
+        /// Empty means the open project's root.
+        start_directory: QString,
+        env: QString,
+    }
+
     /// One local branch name. `cxx`'s `Vec<T>` needs `T: ImplVec`, which
     /// `QString` alone does not satisfy — this one-field wrapper is what
     /// lets `branches()` cross as a list at all, the same reason
@@ -2051,6 +2081,28 @@ mod ffi {
         #[cxx_name = "saveMcpSettings"]
         fn save_mcp_settings(self: &AppSettings, enabled: bool, port: u16);
 
+        /// The `[terminal]` section of the layer the dialog is editing
+        /// (`settingsScope()`), for the Settings > Terminal page.
+        #[qinvokable]
+        #[cxx_name = "terminalSettings"]
+        fn terminal_settings(self: &AppSettings) -> FfiTerminalSettings;
+
+        /// Persist the whole `[terminal]` section together, on OK — one
+        /// load-modify-save, so a shell change and a start-directory change
+        /// cannot half-apply. Writes to the global file or the project's,
+        /// whichever `settingsScope()` names, and reports a typed error
+        /// (ADR-0003) rather than failing silently.
+        #[qinvokable]
+        #[cxx_name = "saveTerminalSettings"]
+        fn save_terminal_settings(self: &AppSettings, terminal: &FfiTerminalSettings) -> FfiResult;
+
+        /// Every shell this machine offers, for the Terminal page's combo —
+        /// the same list, from the same place, as the terminal dock's "+"
+        /// dropdown.
+        #[qinvokable]
+        #[cxx_name = "availableShells"]
+        fn available_shells(self: &AppSettings) -> Vec<FfiShellCandidate>;
+
         /// The shortcut `action_id` currently responds to, as `QKeySequence`
         /// portable text — the user's override if there is one, otherwise the
         /// default from `app_config::ACTIONS`. Empty means unbound. Menu
@@ -2721,14 +2773,31 @@ mod ffi {
         /// already established. Spawn failure (e.g. no shell resolvable, or
         /// an unknown `session_id`) returns a typed non-zero `code`
         /// (ADR-0003); no `QString` sentinel.
+        ///
+        /// `shell_id` is a `FfiShellCandidate::id` when the tab was opened
+        /// from the "+" dropdown, and empty for "whatever the settings say"
+        /// — the precedence between the two lives in `bridge/terminal.rs`'s
+        /// `shell_for`, not here and not in the view.
         #[qinvokable]
         #[cxx_name = "start"]
         fn start(
             self: Pin<&mut TerminalSupervisor>,
             session_id: u64,
+            shell_id: &QString,
             rows: u32,
             cols: u32,
         ) -> FfiResult;
+
+        /// Every shell this machine offers, most-preferred first, for the
+        /// dock's "+" dropdown and the Terminal settings page's combo.
+        ///
+        /// The list is Rust's answer (`pty_core::shells::detect`) and the
+        /// view only renders it: which shells exist, what they are called
+        /// and in what order are decisions, and none of them belongs in
+        /// `cpp/`.
+        #[qinvokable]
+        #[cxx_name = "availableShells"]
+        fn available_shells(self: &TerminalSupervisor) -> Vec<FfiShellCandidate>;
 
         /// Forward keystrokes (already translated to the byte sequence a
         /// shell expects by the view) to `session_id`'s PTY stdin.

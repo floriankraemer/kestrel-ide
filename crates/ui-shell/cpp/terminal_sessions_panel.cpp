@@ -4,6 +4,7 @@
 
 #include <QAction>
 #include <QKeySequence>
+#include <QMenu>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -22,11 +23,22 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
     tabs_->setTabsClosable(true);
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &TerminalSessionsPanel::closeTab);
 
-    auto *newTabButton = new QToolButton(tabs_);
-    newTabButton->setText(QStringLiteral("+"));
-    newTabButton->setToolTip(tr("New Terminal Tab"));
-    connect(newTabButton, &QToolButton::clicked, this, &TerminalSessionsPanel::addSession);
-    tabs_->setCornerWidget(newTabButton, Qt::TopRightCorner);
+    newTabButton_ = new QToolButton(tabs_);
+    newTabButton_->setText(QStringLiteral("+"));
+    newTabButton_->setToolTip(tr("New Terminal Tab"));
+    // MenuButtonPopup, not InstantPopup: the common case is "another one of
+    // what I already have", which stays a single click, and the dropdown
+    // arrow beside it is where picking a different shell lives.
+    newTabButton_->setPopupMode(QToolButton::MenuButtonPopup);
+    connect(newTabButton_, &QToolButton::clicked, this, [this]() { addSession(); });
+
+    shellMenu_ = new QMenu(newTabButton_);
+    // Rebuilt on every open: a WSL distro installed while the IDE is
+    // running should show up without a restart.
+    connect(shellMenu_, &QMenu::aboutToShow, this, &TerminalSessionsPanel::refreshShellMenu);
+    newTabButton_->setMenu(shellMenu_);
+
+    tabs_->setCornerWidget(newTabButton_, Qt::TopRightCorner);
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -39,8 +51,16 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
     // WithChildren: focus normally lives on a tab's TerminalWidget, a child
     // of this panel, not the panel itself.
     newSessionAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    connect(newSessionAction_, &QAction::triggered, this, &TerminalSessionsPanel::addSession);
+    connect(newSessionAction_, &QAction::triggered, this, [this]() { addSession(); });
     addAction(newSessionAction_);
+
+    selectShellAction_ = new QAction(tr("Select Shell..."), this);
+    selectShellAction_->setShortcut(QKeySequence(
+      appSettings_->shortcutFor(QStringLiteral("terminal.selectShell")),
+      QKeySequence::PortableText));
+    selectShellAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(selectShellAction_, &QAction::triggered, newTabButton_, &QToolButton::showMenu);
+    addAction(selectShellAction_);
 
     // A terminal dock is never empty: exactly like the single-session
     // predecessor of this class, there is always at least one shell ready
@@ -48,12 +68,28 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
     addSession();
 }
 
-void TerminalSessionsPanel::addSession()
+void TerminalSessionsPanel::refreshShellMenu()
+{
+    shellMenu_->clear();
+    for (const FfiShellCandidate &shell : supervisor_->availableShells()) {
+        const QString id = shell.id;
+        const QString label = shell.label;
+        connect(shellMenu_->addAction(label), &QAction::triggered, this,
+                [this, id, label]() { addSession(id, label); });
+    }
+}
+
+void TerminalSessionsPanel::addSession(const QString &shellId, const QString &label)
 {
     const quint64 sessionId = supervisor_->newSession();
-    auto *widget = new TerminalWidget(supervisor_, sessionId, appSettings_, openAt_, tabs_);
+    auto *widget =
+      new TerminalWidget(supervisor_, sessionId, shellId, appSettings_, openAt_, tabs_);
     ++sessionCounter_;
-    const int index = tabs_->addTab(widget, tr("Terminal %1").arg(sessionCounter_));
+    // A tab opened from the dropdown is named after the shell it runs,
+    // which is the only thing distinguishing it from its neighbours; the
+    // default tab keeps the plain counter.
+    const QString title = label.isEmpty() ? tr("Terminal %1").arg(sessionCounter_) : label;
+    const int index = tabs_->addTab(widget, title);
     tabs_->setCurrentIndex(index);
     widget->setFocus();
 }
@@ -67,9 +103,10 @@ void TerminalSessionsPanel::focusCurrent()
 
 void TerminalSessionsPanel::reapplyKeymap()
 {
-    // newSessionAction_ needs no update here: it lives in the app-wide
-    // `actions` map (see this panel's `newSessionAction()` doc comment), so
-    // `applyKeymap()` already re-reads its shortcut on the same OK click.
+    // newSessionAction_ and selectShellAction_ need no update here: both
+    // live in the app-wide `actions` map (see `newSessionAction()`'s doc
+    // comment), so `applyKeymap()` already re-reads their shortcuts on the
+    // same OK click.
     for (int i = 0; i < tabs_->count(); ++i) {
         if (auto *widget = qobject_cast<TerminalWidget *>(tabs_->widget(i))) {
             widget->reapplyKeymap();

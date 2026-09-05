@@ -46,8 +46,12 @@ public:
     // the sessions panel from `main_window`.
     using OpenAt = std::function<void(const QString &, int, int)>;
 
-    TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId, AppSettings *appSettings,
-                   OpenAt openAt, QWidget *parent = nullptr);
+    // `shellId` is a `FfiShellCandidate::id` when the tab was opened from
+    // the dock's "+" dropdown, and empty for "whatever the settings say".
+    // Carried, never interpreted: it is forwarded verbatim to `start()`,
+    // and which shell it resolves to is decided in `bridge/terminal.rs`.
+    TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId, QString shellId,
+                   AppSettings *appSettings, OpenAt openAt, QWidget *parent = nullptr);
 
     quint64 sessionId() const { return sessionId_; }
 
@@ -107,6 +111,7 @@ private:
     TerminalSupervisor *supervisor_;
     OpenAt openAt_;
     quint64 sessionId_;
+    QString shellId_;
     AppSettings *appSettings_;
     QAction *copyAction_ = nullptr;
     QAction *pasteAction_ = nullptr;

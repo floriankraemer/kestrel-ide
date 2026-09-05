@@ -7,7 +7,9 @@
 #include <functional>
 
 class QAction;
+class QMenu;
 class QTabWidget;
+class QToolButton;
 
 namespace ui_shell {
 
@@ -26,10 +28,12 @@ namespace ui_shell {
 // its session — closing the tab is the only way to end one, so the two
 // stay in lock-step here instead.
 //
-// No shell picker: `pty_core::ShellSpec::unix_default()`/`::windows(kind)`
-// only offer a real choice on Windows, and this codebase has no Windows CI
-// to exercise a picker UI against — see `resolve_shell()` in
-// `bridge/terminal.rs`. `"+"` always opens the platform default.
+// The "+" button is a split button: clicking it opens the configured
+// default shell, and its dropdown lists every shell this machine offers —
+// PowerShell, cmd and each WSL distro on Windows, `$SHELL` and the entries
+// of `/etc/shells` elsewhere. The list, its labels and its order all come
+// from `TerminalSupervisor::availableShells()`; this class only renders
+// them and hands the chosen id back, so no shell knowledge lives in C++.
 class TerminalSessionsPanel : public QWidget
 {
     Q_OBJECT
@@ -44,8 +48,12 @@ public:
                            QWidget *parent = nullptr);
 
     // Open a new tab and give it focus — the target of both the "+" button
-    // and the `terminal.newSession` action (Ctrl+Shift+T).
-    void addSession();
+    // and the `terminal.newSession` action (Ctrl+Shift+T). An empty
+    // `shellId` means the configured default; anything else is one of
+    // `availableShells()`' ids, forwarded verbatim. `label` names the tab
+    // when the shell was picked from the dropdown, and is empty for the
+    // default, which keeps the plain "Terminal N" counter.
+    void addSession(const QString &shellId = QString(), const QString &label = QString());
 
     // Focus the current tab's terminal, for the `view.terminal` action.
     void focusCurrent();
@@ -60,14 +68,28 @@ public:
     // Keymap and `applyKeymap()`.
     QAction *newSessionAction() const { return newSessionAction_; }
 
+    // `terminal.selectShell`: drops the "+" button's shell menu open from
+    // the keyboard. Long-lived like `newSessionAction_` and registered in
+    // the same app-wide map, so Settings > Keymap can rebind it.
+    QAction *selectShellAction() const { return selectShellAction_; }
+
 private:
     void closeTab(int index);
+
+    // Rebuild the "+" button's menu from `availableShells()`. Called each
+    // time the menu is about to show rather than once at construction: a
+    // WSL distro installed while the IDE is running should appear without
+    // a restart.
+    void refreshShellMenu();
 
     TerminalSupervisor *supervisor_;
     AppSettings *appSettings_;
     OpenAt openAt_;
     QTabWidget *tabs_ = nullptr;
     QAction *newSessionAction_ = nullptr;
+    QAction *selectShellAction_ = nullptr;
+    QToolButton *newTabButton_ = nullptr;
+    QMenu *shellMenu_ = nullptr;
     int sessionCounter_ = 0;
 };
 

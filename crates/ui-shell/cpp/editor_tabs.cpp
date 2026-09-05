@@ -950,6 +950,15 @@ void EditorTabs::addDiffTab(QTabWidget *group, quint64 tabId, const QString &tit
     };
     group->addTab(page, title);
     renderTabText(group, group->indexOf(page), title, false);
+    // The two pane lengths, so an E2E flow can tell "a diff tab opened" from
+    // "a diff tab opened over real text". Without it a compare that resolves
+    // to nothing on both sides is indistinguishable from a working one
+    // (#210), and the panes' own text is not reachable from outside.
+    e2eMark(QStringLiteral("{\"ev\":\"diff_tab_content\",\"tab_id\":%1,"
+                            "\"left\":%2,\"right\":%3}")
+              .arg(tabId)
+              .arg(docManager_->diffLeftText(tabId).size())
+              .arg(docManager_->diffRightText(tabId).size()));
     markTab("tab_added", tabId, group, group->indexOf(page), title);
 }
 

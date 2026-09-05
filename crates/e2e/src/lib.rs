@@ -248,6 +248,25 @@ impl Ide {
         self.wait_for_event(mark, &format!("a `{kind}` marker"), |e| e["ev"] == kind)
     }
 
+    /// Assert that the diff tab `tab_id` was built over panes of exactly
+    /// `left` and `right` characters.
+    ///
+    /// A diff tab existing says nothing about what is in it: a compare whose
+    /// two lookups both resolve to nothing still opens a tab, and reads as a
+    /// pass to any assertion that only counts tabs (#210). The panes' own
+    /// text is not reachable from outside the process, so `diff_tab_content`
+    /// carries their lengths.
+    pub fn assert_diff_panes(&self, mark: Mark, tab_id: u64, left: u64, right: u64) {
+        let content = self.wait_for_event(mark, "the diff tab's pane sizes", |e| {
+            e["ev"] == "diff_tab_content" && e["tab_id"].as_u64() == Some(tab_id)
+        });
+        assert_eq!(
+            (content["left"].as_u64(), content["right"].as_u64()),
+            (Some(left), Some(right)),
+            "diff tab {tab_id} was built over the wrong texts"
+        );
+    }
+
     // --- observation ------------------------------------------------------
 
     pub fn mcp(&self) -> mcp::Mcp {

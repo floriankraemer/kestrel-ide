@@ -1205,15 +1205,15 @@ fn e2e_file_history_lists_commits_and_survives_the_context_menu() {
 
     // A new diff tab, distinct from the plain editor tab, proves
     // `compareRevisions_` ran on the revision read before `exec()` rather
-    // than crashing or reading a dangling item.
+    // than crashing or reading a dangling item — and its panes have to carry
+    // the newest commit's `"v2\n"` and the working tree's `"v2\n"`, not the
+    // two empty ones this kept passing on (#210).
     let diff_tab = ide.wait_for_event(menu_mark, "a diff tab for history.txt", |e| {
         e["ev"] == "tab_added" && e["title"] == "history.txt"
     });
-    assert_ne!(
-        diff_tab["tab_id"].as_u64(),
-        Some(editor_tab_id),
-        "no new tab opened"
-    );
+    let diff_tab_id = diff_tab["tab_id"].as_u64().expect("tab_id");
+    assert_ne!(diff_tab_id, editor_tab_id, "no new tab opened");
+    ide.assert_diff_panes(menu_mark, diff_tab_id, 3, 3);
 
     assert_eq!(ide.quit(), 0);
 }

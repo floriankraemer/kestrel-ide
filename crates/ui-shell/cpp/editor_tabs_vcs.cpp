@@ -343,7 +343,13 @@ void EditorTabs::openCompareRevisions(const QString &path,
     // An empty revision means "the live working text" — the open buffer if
     // there is one (so an unsaved edit is what gets compared, matching
     // what the user actually sees), the file on disk otherwise.
-    auto textAt = [this, &path](const QString &revision) -> QString {
+    // `path` by value, not by reference: `build` below outlives this call —
+    // it runs from a `blobReady` slot, long after the caller's own `path`
+    // (a local in `FileHistoryPanel::showContextMenu`) is gone. Capturing
+    // the reference left every lookup reading freed memory, so both panes
+    // came out empty when it survived and the flow hung when it did not
+    // (#210).
+    auto textAt = [this, path](const QString &revision) -> QString {
         if (!revision.isEmpty()) {
             return vcsService_->blobAt(path, revision);
         }

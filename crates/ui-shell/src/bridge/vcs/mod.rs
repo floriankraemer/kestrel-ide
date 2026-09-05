@@ -234,27 +234,22 @@ impl ffi::VcsService {
         let job_text = working_text.clone();
         self.as_ref().push_job(move |worker: &VcsWorker| {
             // `job_path` is the tab's own path (`DocumentManager::tabPath`),
-            // which is absolute — `Repository::head_blob` and
-            // `HunkCache::hunks` both look a path up in the `HEAD` tree,
-            // which only ever holds repository-relative paths. Handing them
-            // the absolute one is a silent "this file does not exist in
+            // which is absolute — `HunkCache::hunks` looks a path up in the
+            // `HEAD` tree, which only ever holds repository-relative paths.
+            // Handing it the absolute one is a silent "this file does not exist in
             // HEAD", which reads as the whole file having just been added
             // (every line its own hunk) rather than "no changes" — the
             // Changes dock's own `changedFiles()` never has this bug because
             // `vcs_core::Repository::status` already returns repo-relative
             // paths.
             let relative = to_repo_relative(&worker.repo, Path::new(&job_path));
-            let head = worker.repo.head_blob(relative);
-            let hunks = worker
+            // One read: `HunkCache::hunks` carries the `HEAD` text it had to
+            // read anyway back out, so the popup's left pane does not cost a
+            // second tree walk and blob inflate on every settle tick.
+            let outcome = worker
                 .hunk_cache
-                .hunks(&worker.repo, relative, &job_text, revision);
-            let outcome = match (head, hunks) {
-                (Ok(head), Ok(working_hunks)) => {
-                    let before_text = head.map(|(_, text)| text).unwrap_or_default();
-                    Ok((before_text, working_hunks.hunks))
-                }
-                (Err(err), _) | (_, Err(err)) => Err(err),
-            };
+                .hunks(&worker.repo, relative, &job_text, revision)
+                .map(|working| (working.before_text, working.hunks));
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match outcome {
                 Ok((before_text, hunks)) => {
                     service.hunks.borrow_mut().insert(
@@ -275,6 +270,15 @@ impl ffi::VcsService {
                 }
             });
         });
+    }
+
+    pub fn forget_path(&self, path: &QString) {
+        let path = path.to_string();
+        self.hunks.borrow_mut().remove(&path);
+        // `blobs` is keyed by `(path, revision)`, so a closed tab's entries
+        // are every key whose path half matches — a diff tab asks for two
+        // revisions of the same file.
+        self.blobs.borrow_mut().retain(|(key, _), _| key != &path);
     }
 
     pub fn hunks(&self, path: &QString) -> Vec<ffi::FfiHunk> {

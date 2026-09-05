@@ -143,6 +143,13 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     // `UnmergedBranch` is excluded: the branch-delete flow above shows its
     // own actionable dialog for that one.
     QObject::connect(vcsService, &VcsService::vcsFailed, window, [window, vcsService](FfiResult error) {
+        // Before any early return and before any modal: a `vcsFailed` that
+        // ends in an `exec()` blocks the application for the rest of a flow,
+        // so an E2E run that hangs afterwards has to be able to see that
+        // this is what happened (#210).
+        e2eMark(QStringLiteral("{\"ev\":\"vcs_failed\",\"code\":%1,\"message\":%2}")
+                  .arg(error.code)
+                  .arg(e2eJson(error.message)));
         if (error.code == vcsErrorCode(FfiVcsErrorCode::UnmergedBranch)) {
             return;
         }

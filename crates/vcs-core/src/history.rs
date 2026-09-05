@@ -40,6 +40,11 @@ impl Repository {
         };
         let ancestors = head_id
             .ancestors()
+            // Reads parents and dates from `.git/objects/info/commit-graph`
+            // where the repository has one, instead of decoding a commit
+            // object per ancestor. Repositories that have never been `gc`'d
+            // have no such file and simply get the old path.
+            .use_commit_graph(true)
             .all()
             .map_err(|e| VcsError::Read(e.to_string()))?;
 
@@ -55,74 +60,75 @@ impl Repository {
         Ok(entries)
     }
 
-    /// Commits that changed `relative_path`, newest first.
+    /// Commits that touched `relative_path`, newest first, via
+    /// `git log --follow`.
     ///
-    /// `gix` 0.87 has no path-filtered revwalk (`rev_walk().selected(pred)`
-    /// takes a commit-id predicate, not a pathspec — checked directly in
-    /// `gix-0.87.1/src/revision/`), so this walks every ancestor and
-    /// compares the path's tree entry against its first parent's, which is
-    /// what "did this commit touch this path" reduces to without full
-    /// rename tracking. A merge commit's non-first parents are not
-    /// compared against — same simplification `git log --follow` avoids
-    /// but `git log <path>` without `-m` makes by default.
+    /// The one read in this crate other than blame that shells out, and for
+    /// the same kind of reason ADR-0031 §4 already accepted there: `gix`
+    /// 0.87 still has no path-filtered revwalk and no changed-path bloom
+    /// filters (`gix-0.87.1/src/revision/walk.rs` offers `sorting`,
+    /// `first_parent_only`, `use_commit_graph`, `with_boundary`,
+    /// `with_hidden` and a commit-id `selected` predicate — no pathspec),
+    /// so the in-process version was a walk-and-compare that decoded a
+    /// commit, its tree, its first parent and *that* tree for every
+    /// ancestor. Measured on a 50 000-commit repository whose target file
+    /// was touched in three of them, that walk cost 2.3 s against 0.69 s
+    /// for `git log`, and the gap is structural rather than a tuning
+    /// problem: `max` could only ever cap the *matches*, never the walk.
     ///
-    /// `max` caps how many matching commits are returned, the same shape
-    /// `log` has — without it, every ancestor commit is walked and both its
-    /// and its first parent's tree loaded, for a panel that only ever shows
-    /// the first page.
+    /// `--follow` also gives rename tracking the walk-and-compare
+    /// explicitly did not do.
+    ///
+    /// An unborn `HEAD` is "no history", not an error — the same judgement
+    /// [`Repository::log`] makes.
     pub fn file_history(
         &self,
         relative_path: &Path,
         max: Option<usize>,
     ) -> Result<Vec<LogEntry>, VcsError> {
-        let head_id = match self.inner.head_id() {
-            Ok(id) => id,
-            Err(_) => return Ok(Vec::new()),
-        };
-        let ancestors = head_id
-            .ancestors()
-            .all()
-            .map_err(|e| VcsError::Read(e.to_string()))?;
-
-        let mut entries = Vec::new();
-        for info in ancestors {
-            let info = info.map_err(|e| VcsError::Read(e.to_string()))?;
-            let commit = info.object().map_err(|e| VcsError::Read(e.to_string()))?;
-            let entry_oid = tree_entry_oid(&commit, relative_path)?;
-
-            let parent_oid = match info.parent_ids().next() {
-                Some(parent_id) => {
-                    let parent_commit = parent_id
-                        .object()
-                        .map_err(|e| VcsError::Read(e.to_string()))?
-                        .into_commit();
-                    tree_entry_oid(&parent_commit, relative_path)?
-                }
-                // A root commit has no parent to diff against: the path
-                // counts as changed exactly when it exists there at all.
-                None => None,
-            };
-
-            if entry_oid != parent_oid {
-                entries.push(log_entry(&commit)?);
-                if max.is_some_and(|max| entries.len() >= max) {
-                    break;
-                }
-            }
+        if self.inner.head_id().is_err() {
+            return Ok(Vec::new());
         }
-        Ok(entries)
+        let Some(work_dir) = self.work_dir() else {
+            return Ok(Vec::new());
+        };
+
+        let path = relative_path.to_string_lossy().into_owned();
+        let max = max.map(|max| max.to_string());
+        let mut args = vec!["log", "--follow", LOG_FORMAT];
+        if let Some(max) = max.as_deref() {
+            args.push("-n");
+            args.push(max);
+        }
+        args.push("--");
+        args.push(&path);
+
+        let output = crate::cli::run(&work_dir, &args)?;
+        Ok(output.lines().filter_map(parse_log_line).collect())
     }
 }
 
-fn tree_entry_oid(
-    commit: &gix::Commit<'_>,
-    relative_path: &Path,
-) -> Result<Option<gix::ObjectId>, VcsError> {
-    let tree = commit.tree().map_err(|e| VcsError::Read(e.to_string()))?;
-    Ok(tree
-        .lookup_entry_by_path(relative_path)
-        .map_err(|e| VcsError::Read(e.to_string()))?
-        .map(|entry| entry.object_id()))
+/// NUL between fields so no field can contain the separator, one commit per
+/// line so the subject (which cannot contain a newline) ends the record.
+const LOG_FORMAT: &str = "--format=%H%x00%an%x00%ae%x00%at%x00%s";
+
+/// One `LOG_FORMAT` line. A line that does not have the five fields is
+/// skipped rather than failing the whole history: the panel showing the
+/// commits that did parse beats showing nothing.
+fn parse_log_line(line: &str) -> Option<LogEntry> {
+    let mut fields = line.split('\0');
+    let id = fields.next()?.to_string();
+    let author_name = fields.next()?.to_string();
+    let author_email = fields.next()?.to_string();
+    let author_time = fields.next()?.parse().ok()?;
+    let summary = fields.next()?.to_string();
+    Some(LogEntry {
+        id,
+        summary,
+        author_name,
+        author_email,
+        author_time,
+    })
 }
 
 fn log_entry(commit: &gix::Commit<'_>) -> Result<LogEntry, VcsError> {

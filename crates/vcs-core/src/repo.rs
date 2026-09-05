@@ -23,6 +23,14 @@ pub enum DiscoverResult {
     NotARepository,
 }
 
+/// How much decoded-object cache each [`Repository`] handle gets.
+///
+/// One repository is open at a time (the worker owns it), so this is a
+/// per-process cost, not a per-file one. 16 MiB is enough to hold the trees
+/// an ancestry walk revisits without being a number anyone has to think
+/// about on a developer machine.
+const OBJECT_CACHE_BYTES: usize = 16 * 1024 * 1024;
+
 impl Repository {
     /// `git init` in `path`, then open what it just created.
     ///
@@ -50,7 +58,17 @@ impl Repository {
         use gix::discover::Error as DiscoverError;
 
         match gix::discover(path.as_ref()) {
-            Ok(inner) => Ok(DiscoverResult::Found(Box::new(Repository { inner }))),
+            Ok(mut inner) => {
+                // A `gix::Repository` starts with its decoded-object cache
+                // switched off, and clones itself empty, so the budget has
+                // to be set per handle — gix's own docs put the difference
+                // at "2x or more" for workloads that re-read objects, which
+                // is every workload in this crate: `file_history` walks an
+                // ancestry re-reading the same trees, and the gutter reads
+                // the same `HEAD` tree on every settle tick.
+                inner.object_cache_size(OBJECT_CACHE_BYTES);
+                Ok(DiscoverResult::Found(Box::new(Repository { inner })))
+            }
             Err(DiscoverError::Discover(
                 UpwardsError::NoGitRepository { .. }
                 | UpwardsError::NoGitRepositoryWithinCeiling { .. }

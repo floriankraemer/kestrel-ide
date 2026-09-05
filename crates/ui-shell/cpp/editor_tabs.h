@@ -785,11 +785,6 @@ private:
     PreviewProvider *previewProvider_ = nullptr;
     RunService *runService_ = nullptr;
     DebugService *debugService_ = nullptr;
-    // A monotonic counter bumped on every requestHunks call: `HunkCache`'s
-    // cache key needs only "same edit state or not", never real history, so
-    // one counter shared across every open file is enough (vcs-core's own
-    // doc comment on `HunkCache::hunks` says as much).
-    quint64 vcsRevision_ = 0;
     // F3-18: vcs.annotate's state, applied to whichever editor is active.
     bool annotateEnabled_ = false;
 

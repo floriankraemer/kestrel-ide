@@ -118,8 +118,17 @@ ADR-0021's constraint is satisfied by construction here, not by this crate's fea
 `cli::run` kept the 60-second timeout but left the process running — a `git fetch` on a dead network held a connection open after the error was already reported, and behind the bridge's single job queue, everything queued after it.
 It now drains both pipes in reader threads (the deadlock the old shape existed to avoid) while keeping the `Child` itself, so the timeout branch can kill it.
 
-**Still open, deliberately.** `file_history` at 632 ms on a 50 000-commit repository is better but not fast; `status` at 23 ms per whole-worktree dirwalk still runs on every save and after every stage, uncoalesced and unscoped, and no filesystem-watcher event refreshes it at all.
-Those are the next changes, and the second needs its own decision about the `project-model` watcher reaching `VcsService`.
+**Status is watcher-driven and coalesced; it is still a whole-worktree walk.**
+`refreshStatus` had exactly two callers — a save and repository discovery — plus one per write operation, and nothing else.
+Nothing outside the app could move the Changes dock: a `git pull`, a rebase, a branch switch or an edit made in a terminal changed the worktree and the dock went on showing what it last read.
+`project-model`'s filesystem watcher, which `ProjectTreeModel` already relays to `DocumentManager`, the language servers and the search index, now also asks `VcsService` to look again, through a 300 ms coalescing timer — the same window and the same reasoning as the search index's own reindex timer, since one save produces several events and a checkout produces thousands.
+The paths are deliberately not collected: `status` reads the whole worktree regardless of which file rang the bell.
+`VcsService` drops a status request that duplicates one already queued (an `AtomicBool` swapped before the job is pushed and cleared when the walk starts, so a change landing *during* a walk can still ask again), which is what turns staging five files from the Changes dock — five writes, each re-requesting status, each also producing watcher events — from five whole-worktree dirwalks into one or two.
+The save-time refresh stays rather than being replaced by the watcher: it costs nothing now that duplicates collapse, and it does not depend on the watcher having started.
+
+Scoping the walk itself was measured and *not* done. `gix::status::Platform::into_iter` takes pathspecs and `index_worktree_status`/`tree_index_status` are separate entry points, so a post-write refresh could read only the path it touched — but at 24 ms for the whole 20 000-file worktree, and with duplicates already collapsing, the remaining win did not justify teaching `RepoStatus` to merge a partial answer into a cached whole one.
+
+**Still open, deliberately.** `file_history` at 650 ms on a 50 000-commit repository is better but not fast, and `status` is still an unscoped walk — the two places left where this crate's cost is visible.
 
 
 ## Consequences

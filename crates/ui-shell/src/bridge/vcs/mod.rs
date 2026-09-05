@@ -2,7 +2,9 @@ use core::pin::Pin;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::Arc;
 
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;
@@ -51,6 +53,18 @@ struct CachedHunks {
 /// what stays out (ADR-0002).
 pub struct VcsServiceRust {
     jobs: RefCell<Option<Sender<VcsJob>>>,
+    /// Whether a `refreshStatus` job is queued and has not started yet.
+    ///
+    /// Status is the one job every write re-requests, and the watcher relay
+    /// asks for it again on the filesystem events those same writes
+    /// produce — staging five files from the Changes dock used to mean five
+    /// whole-worktree dirwalks queued behind each other on the one worker.
+    /// A request that arrives while another is still *waiting* asks the same
+    /// question, so it is dropped; one that arrives while a walk is already
+    /// *running* is a different question — that walk may have read the
+    /// worktree before the change landed — and queues a fresh job. Shared
+    /// with the worker thread, hence `Arc` rather than `Cell`.
+    status_pending: Arc<AtomicBool>,
     is_repository: Cell<bool>,
     status: RefCell<vcs_core::RepoStatus>,
     hunks: RefCell<HashMap<String, CachedHunks>>,
@@ -73,6 +87,7 @@ impl Default for VcsServiceRust {
     fn default() -> Self {
         VcsServiceRust {
             jobs: RefCell::default(),
+            status_pending: Arc::new(AtomicBool::new(false)),
             is_repository: Cell::new(false),
             status: RefCell::default(),
             project_root: RefCell::default(),
@@ -183,8 +198,16 @@ impl ffi::VcsService {
     }
 
     pub fn refresh_status(mut self: Pin<&mut Self>) {
+        if self.status_pending.swap(true, Ordering::SeqCst) {
+            // One is already queued and will read the same worktree.
+            return;
+        }
         let qt_thread = self.as_mut().qt_thread();
-        self.as_ref().push_job(move |worker: &VcsWorker| {
+        let pending = Arc::clone(&self.status_pending);
+        let queued = self.as_ref().push_job(move |worker: &VcsWorker| {
+            // Cleared before the walk, not after: a change that lands while
+            // this one is running has to be able to ask again.
+            pending.store(false, Ordering::SeqCst);
             let result = worker.repo.status();
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(status) => {
@@ -197,6 +220,13 @@ impl ffi::VcsService {
                 }
             });
         });
+        if !queued {
+            // No worker yet (discovery has not finished, or the project has
+            // no repository): nothing will run the job, so nothing would
+            // ever clear the flag, and every later request would be dropped
+            // as a duplicate of a job that does not exist.
+            self.status_pending.store(false, Ordering::SeqCst);
+        }
     }
 
     pub fn changed_files(&self) -> Vec<ffi::FfiChangedFile> {

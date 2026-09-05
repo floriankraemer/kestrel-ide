@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QVector>
 
@@ -76,6 +77,28 @@ void wireVcsService(VcsService *vcsService, ProjectTreeModel *treeModel, EditorT
             vcsService->refreshStatus();
         }
     });
+
+    // Until this relay existed, nothing outside the app could move the
+    // Changes dock: a `git pull`, a rebase, a branch switch or an edit made
+    // in a terminal changed the worktree and the dock went on showing what
+    // it last read. The tree's watcher already reports every one of those
+    // events on the Qt thread, and the search index already coalesces the
+    // same signal the same way (`main_window.cpp`'s reindex timer) — one
+    // save produces several events, and a checkout produces thousands, so
+    // the window matters more here than the individual paths do. The paths
+    // are not collected at all: `refreshStatus` reads the whole worktree
+    // regardless of which file rang the bell, and `VcsService` drops a
+    // request that duplicates one already queued.
+    auto *statusTimer = new QTimer(vcsService);
+    statusTimer->setSingleShot(true);
+    statusTimer->setInterval(300);
+    QObject::connect(statusTimer, &QTimer::timeout, vcsService, [vcsService]() {
+        if (vcsService->isRepository()) {
+            vcsService->refreshStatus();
+        }
+    });
+    QObject::connect(treeModel, &ProjectTreeModel::filesChangedExternally, statusTimer,
+                      [statusTimer](const QString &) { statusTimer->start(); });
     editorTabs->setVcsService(vcsService);
     QObject::connect(vcsService, &VcsService::hunksChanged, editorTabs,
                       [editorTabs](const QString &path) { editorTabs->applyVcsHunks(path); });

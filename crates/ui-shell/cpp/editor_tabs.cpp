@@ -805,11 +805,15 @@ bool EditorTabs::saveEditor(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdi
     }
     if (vcsService_ && vcsService_->isRepository()) {
         // A save is exactly what `changedFiles()` (the Changes dock, the
-        // status bar's branch widget) is supposed to answer about; nothing
-        // else asks `VcsService` to look again after one. The gutter's own
-        // hunks already track the live buffer via `requestHunksFor`'s
-        // didChange debounce — this is the same freshness rule for the
-        // whole-repo status, which only ever changes relative to disk.
+        // status bar's branch widget) is supposed to answer about. The
+        // filesystem watcher now reports this write too (`wireVcsService`'s
+        // relay), so this call is usually a duplicate — kept anyway,
+        // because `VcsService` drops a request that duplicates one already
+        // queued, and because it does not depend on the watcher having
+        // started. The gutter's own hunks already track the live buffer via
+        // `requestHunksFor`'s didChange debounce — this is the same
+        // freshness rule for the whole-repo status, which only ever changes
+        // relative to disk.
         vcsService_->refreshStatus();
     }
     return true;

@@ -52,6 +52,7 @@ void CodeEditor::setBreakpointLines(const QSet<int> &lines)
     }
     breakpointLines_ = lines;
     lineNumberArea_->update();
+    minimap_->update();
 }
 
 void CodeEditor::setExecutionLine(int blockNumber)
@@ -91,7 +92,7 @@ int CodeEditor::lineNumberAreaWidth() const
 
 void CodeEditor::updateLineNumberAreaWidth(int /*newBlockCount*/)
 {
-    setViewportMargins(lineNumberAreaWidth(), 0, 0, 0);
+    setViewportMargins(lineNumberAreaWidth(), 0, minimapWidth(), 0);
 }
 
 void CodeEditor::updateLineNumberArea(const QRect &rect, int dy)
@@ -113,6 +114,15 @@ void CodeEditor::resizeEvent(QResizeEvent *event)
 
     const QRect cr = contentsRect();
     lineNumberArea_->setGeometry(QRect(cr.left(), cr.top(), lineNumberAreaWidth(), cr.height()));
+    layoutMinimap();
+}
+
+void CodeEditor::layoutMinimap()
+{
+    const QRect cr = contentsRect();
+    const int width = minimapWidth();
+    const int x = cr.right() - width - verticalScrollBar()->width() + 1;
+    minimap_->setGeometry(QRect(x, cr.top(), width, cr.height()));
 }
 
 void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)

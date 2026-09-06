@@ -1,5 +1,6 @@
 #pragma once
 
+#include "minimap.h"
 #include "vcs_gutter.h"
 
 #include <QColor>
@@ -317,6 +318,21 @@ public:
     void setWhitespaceOptions(const WhitespaceOptions &options);
     const WhitespaceOptions &whitespaceOptions() const { return whitespaceOptions_; }
 
+    // Editor minimap (issue #199): which overlays paint, and the strip's
+    // own opinion of how much viewport margin it needs — `0` when disabled,
+    // so a file whose minimap is off keeps exactly the layout it had before
+    // this feature existed.
+    void setMinimapOptions(const MinimapOptions &options);
+    int minimapWidth() const;
+
+    // Read-only views the minimap's overlays paint from — the widget never
+    // computes any of these itself, it only mirrors what is already stored
+    // for the gutter's own painting.
+    const QHash<int, ChangeMarker> &changeMarkers() const { return changeMarkers_; }
+    const QVector<DiagnosticSpan> &diagnosticSpans() const { return diagnosticSpans_; }
+    const QVector<QPair<int, int>> &matchSelections() const { return matchSelections_; }
+    const QSet<int> &breakpointLines() const { return breakpointLines_; }
+
     // Classifies one multi-line slice of text (the widget's own currently
     // visible blocks, joined with '\n') into leading/inner/trailing
     // space-and-tab spans. Set once, at tab-open time, by whoever owns the
@@ -580,8 +596,13 @@ private:
     // otherwise crowd out the secondary-caret/inlay-hint painting above it.
     void paintWhitespace();
     void refreshTabStopDistance();
+    // Positions the minimap strip against the current viewport, so both
+    // resizeEvent and a live "Show minimap" toggle (which changes the
+    // strip's width without a widget resize) place it the same way.
+    void layoutMinimap();
 
     LineNumberArea *lineNumberArea_;
+    Minimap *minimap_;
     // R1-7: set from RunService::canRunFile; widens the gutter by one icon
     // column and puts the Run triangle on the first line.
     bool runnable_ = false;

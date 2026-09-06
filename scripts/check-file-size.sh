@@ -72,6 +72,11 @@ baseline() {
 	# 1371 -> 1686: the bridge-side call sites for the same feature chain
 	# (C5 watched files, C7 completion resolve, C9-C11 FFI methods).
 	crates/ui-shell/src/bridge/language/mod.rs) echo 1686 ;;
+	# Raised from the 1500 ceiling by 5 lines for minimapOptions/
+	# saveMinimapOptions (issue #199) — the same load/mutate/save pair
+	# whitespaceOptions/saveWhitespaceOptions just above them already uses.
+	# No split planned.
+	crates/ui-shell/src/bridge/settings.rs) echo 1505 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

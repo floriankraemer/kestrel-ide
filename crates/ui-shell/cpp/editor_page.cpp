@@ -151,10 +151,66 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
     QObject::connect(trailingCheck, &QCheckBox::toggled, editorPage, applyWhitespaceLive);
     QObject::connect(eolCheck, &QCheckBox::toggled, editorPage, applyWhitespaceLive);
 
+    // Editor minimap (issue #199): a master toggle plus five overlay
+    // sub-toggles, the same master/sub construction the whitespace group
+    // above uses. `editorMinimapEnabled` is this page's first object name —
+    // the E2E flow needs a stable target for the dialog-rects click.
+    const FfiMinimapOptions originalMinimap = appSettings->minimapOptions();
+    auto *minimapCheck = new QCheckBox(QObject::tr("Show minimap"), editorPage);
+    minimapCheck->setObjectName(QStringLiteral("editorMinimapEnabled"));
+    minimapCheck->setChecked(originalMinimap.enabled);
+    editorForm->addRow(minimapCheck);
+
+    auto *minimapSubLayout = new QVBoxLayout;
+    minimapSubLayout->setContentsMargins(20, 0, 0, 0);
+    auto *minimapSearchCheck = new QCheckBox(QObject::tr("Find matches"), editorPage);
+    minimapSearchCheck->setChecked(originalMinimap.search_matches);
+    auto *minimapDiagnosticsCheck = new QCheckBox(QObject::tr("Errors and warnings"), editorPage);
+    minimapDiagnosticsCheck->setChecked(originalMinimap.diagnostics);
+    auto *minimapVcsCheck = new QCheckBox(QObject::tr("VCS changes"), editorPage);
+    minimapVcsCheck->setChecked(originalMinimap.vcs_changes);
+    auto *minimapBreakpointsCheck = new QCheckBox(QObject::tr("Breakpoints"), editorPage);
+    minimapBreakpointsCheck->setChecked(originalMinimap.breakpoints);
+    auto *minimapCaretCheck = new QCheckBox(QObject::tr("Current line"), editorPage);
+    minimapCaretCheck->setChecked(originalMinimap.caret_line);
+    for (QCheckBox *sub : {minimapSearchCheck, minimapDiagnosticsCheck, minimapVcsCheck,
+                           minimapBreakpointsCheck, minimapCaretCheck}) {
+        sub->setEnabled(minimapCheck->isChecked());
+        minimapSubLayout->addWidget(sub);
+    }
+    editorForm->addRow(minimapSubLayout);
+    QObject::connect(
+      minimapCheck, &QCheckBox::toggled, editorPage,
+      [minimapSearchCheck, minimapDiagnosticsCheck, minimapVcsCheck, minimapBreakpointsCheck,
+       minimapCaretCheck](bool enabled) {
+          minimapSearchCheck->setEnabled(enabled);
+          minimapDiagnosticsCheck->setEnabled(enabled);
+          minimapVcsCheck->setEnabled(enabled);
+          minimapBreakpointsCheck->setEnabled(enabled);
+          minimapCaretCheck->setEnabled(enabled);
+      });
+
+    auto minimapOptionsFrom = [minimapCheck, minimapSearchCheck, minimapDiagnosticsCheck,
+                               minimapVcsCheck, minimapBreakpointsCheck, minimapCaretCheck]() {
+        return MinimapOptions{
+          minimapCheck->isChecked(),          minimapSearchCheck->isChecked(),
+          minimapDiagnosticsCheck->isChecked(), minimapVcsCheck->isChecked(),
+          minimapBreakpointsCheck->isChecked(), minimapCaretCheck->isChecked()};
+    };
+    auto applyMinimapLive = [editorTabs, minimapOptionsFrom]() {
+        editorTabs->setMinimapOptions(minimapOptionsFrom());
+    };
+    QObject::connect(minimapCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
+    QObject::connect(minimapSearchCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
+    QObject::connect(minimapDiagnosticsCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
+    QObject::connect(minimapVcsCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
+    QObject::connect(minimapBreakpointsCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
+    QObject::connect(minimapCaretCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
+
     return EditorPage{
       editorPage,
       [appSettings, fontFamilyEdit, fontSizeSpin, backgroundColor, foregroundColor,
-       currentLineColor, whitespaceOptionsFrom]() {
+       currentLineColor, whitespaceOptionsFrom, minimapOptionsFrom]() {
           appSettings->saveEditorFont(fontFamilyEdit->text(),
                                        static_cast<quint32>(fontSizeSpin->value()));
           appSettings->saveEditorColors(*backgroundColor, *foregroundColor, *currentLineColor);
@@ -162,8 +218,12 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
           appSettings->saveWhitespaceOptions(FfiWhitespaceOptions{
             options.enabled, options.leading, options.inner, options.trailing,
             options.eolMarkers});
+          const MinimapOptions minimap = minimapOptionsFrom();
+          appSettings->saveMinimapOptions(FfiMinimapOptions{
+            minimap.enabled, minimap.searchMatches, minimap.diagnostics, minimap.vcsChanges,
+            minimap.breakpoints, minimap.caretLine});
       },
-      [editorTabs, originalFont, originalColors, originalWhitespace]() {
+      [editorTabs, originalFont, originalColors, originalWhitespace, originalMinimap]() {
           editorTabs->setEditorFont(
             QFont(originalFont.family, static_cast<int>(originalFont.size)));
           editorTabs->setEditorColors(originalColors.background, originalColors.foreground,
@@ -171,6 +231,10 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
           editorTabs->setWhitespaceOptions(WhitespaceOptions{
             originalWhitespace.enabled, originalWhitespace.leading, originalWhitespace.inner,
             originalWhitespace.trailing, originalWhitespace.eol_markers});
+          editorTabs->setMinimapOptions(MinimapOptions{
+            originalMinimap.enabled, originalMinimap.search_matches, originalMinimap.diagnostics,
+            originalMinimap.vcs_changes, originalMinimap.breakpoints,
+            originalMinimap.caret_line});
       },
     };
 }

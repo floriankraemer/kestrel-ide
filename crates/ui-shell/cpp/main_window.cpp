@@ -599,6 +599,11 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                        [editorTabs]() { return editorTabs->currentPath(); },
                                        [editorTabs](const QString &left, const QString &right) {
                                            editorTabs->openCompareFiles(left, right);
+                                       },
+                                       vcsService,
+                                       fileHistoryPanel,
+                                       [editorTabs](const QString &path) {
+                                           editorTabs->showDiffForPath(path);
                                        }});
 
     return CentralWidgets{editorTabs,       dockManager,      docks,

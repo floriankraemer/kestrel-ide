@@ -1,7 +1,10 @@
 #include "project_tree_dock.h"
 
+#include "project_tree_git_menu.h"
+
 #include "ai_chat_panel.h"
 #include "dock_layout.h"
+#include "e2e_mark.h"
 #include "icon_cache.h"
 #include "icon_decoration_proxy.h"
 #include "keymap_page.h"
@@ -13,6 +16,7 @@
 #include "DockWidget.h"
 
 #include <QAbstractItemModel>
+#include <QEvent>
 #include <QAction>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -31,6 +35,7 @@
 #include <QSize>
 #include <QStatusBar>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -47,6 +52,94 @@ namespace {
 int treeRole(ProjectTreeModel::Roles role)
 {
     return Qt::UserRole + static_cast<int>(role);
+}
+
+// Turns the tree viewport's resize into the same coalesced row report every
+// other layout change already produces. An event filter rather than a
+// QTreeView subclass: the view is a plain QTreeView everywhere else, and one
+// signal's worth of behaviour does not earn a type.
+class ViewportResizeRelay : public QObject
+{
+public:
+    explicit ViewportResizeRelay(QTimer *coalesce)
+      : QObject(coalesce)
+      , m_coalesce(coalesce)
+    {
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (event->type() == QEvent::Resize || event->type() == QEvent::Show) {
+            m_coalesce->start();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+private:
+    QTimer *m_coalesce;
+};
+
+// Every visible (expanded, scrolled-into-view) tree row, as a path and a
+// screen rect.
+//
+// The project tree emitted no markers at all until the Git submenu needed
+// one: an E2E flow cannot right-click a row whose position it can only guess
+// from font metrics and indentation. Same shape as `changes_panel.cpp`'s
+// `changes_row` and `file_history_panel.cpp`'s `history_row`, and equally
+// free when `IDE_E2E_EVENTS` is unset.
+void markVisibleRows(QTreeView *treeView)
+{
+    QAbstractItemModel *model = treeView->model();
+    if (!model) {
+        return;
+    }
+    int count = 0;
+    // `indexBelow` walks exactly what the user can see — collapsed subtrees
+    // are skipped, which is the same set a click can reach.
+    for (QModelIndex index = treeView->indexAt(QPoint(0, 0)); index.isValid();
+          index = treeView->indexBelow(index)) {
+        const QRect rect = treeView->visualRect(index);
+        const QPoint origin =
+          rect.isEmpty() ? QPoint() : treeView->viewport()->mapToGlobal(rect.topLeft());
+        e2eMark(QStringLiteral("{\"ev\":\"project_tree_row\",\"path\":%1,"
+                                "\"rect\":[%2,%3,%4,%5]}")
+                  .arg(e2eJson(model->data(index, treeRole(ProjectTreeModel::Roles::Path))
+                                  .toString()))
+                  .arg(origin.x())
+                  .arg(origin.y())
+                  .arg(rect.width())
+                  .arg(rect.height()));
+        ++count;
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"project_tree_rows\",\"count\":%1}").arg(count));
+}
+
+// Re-emit the row markers after anything that can move a row, coalesced onto
+// the next event-loop turn: one project open is many `rowsInserted`, and a
+// marker per insertion would say nothing a reader could act on.
+void wireRowMarkers(QTreeView *treeView)
+{
+    auto *coalesce = new QTimer(treeView);
+    coalesce->setSingleShot(true);
+    coalesce->setInterval(0);
+    QObject::connect(coalesce, &QTimer::timeout, treeView,
+                      [treeView]() { markVisibleRows(treeView); });
+    const auto schedule = [coalesce]() { coalesce->start(); };
+
+    QAbstractItemModel *model = treeView->model();
+    QObject::connect(model, &QAbstractItemModel::modelReset, treeView, schedule);
+    QObject::connect(model, &QAbstractItemModel::layoutChanged, treeView, schedule);
+    QObject::connect(model, &QAbstractItemModel::rowsInserted, treeView, schedule);
+    QObject::connect(model, &QAbstractItemModel::rowsRemoved, treeView, schedule);
+    QObject::connect(treeView, &QTreeView::expanded, treeView, schedule);
+    QObject::connect(treeView, &QTreeView::collapsed, treeView, schedule);
+
+    // A resize moves every row, and the first rows are laid out before the
+    // dock has its final geometry — so without this the very first report is
+    // published with rects that are about to be wrong, and a reader has no
+    // way to tell it from the settled one that follows.
+    treeView->viewport()->installEventFilter(new ViewportResizeRelay(coalesce));
 }
 
 // Icon + tooltip for the title-bar sort toggle reflect its current state —
@@ -215,6 +308,8 @@ void wireProjectTree(QTreeView *treeView,
                          revealPathInTree(treeView, currentEditorPath());
                      });
 
+    wireRowMarkers(treeView);
+
     // Indexes from the view belong to the proxy, so every data() lookup goes
     // through the view's own model rather than the source directly.
     QAbstractItemModel *model = treeView->model();
@@ -274,6 +369,9 @@ void wireProjectTree(QTreeView *treeView,
               deleteAction = menu.addAction(QObject::tr("Delete"));
               if (!itemIsDir) {
                   compareAction = menu.addAction(QObject::tr("Compare with…"));
+                  // Files only: every entry under it is about one blob's
+                  // history or one blob's changes.
+                  appendGitSubmenu(menu, itemPath, actions);
               }
               // A folder attaches its contents, which is why the two entries
               // read the same for a file and a folder: what differs is the
@@ -283,7 +381,15 @@ void wireProjectTree(QTreeView *treeView,
               addToNewChatAction = menu.addAction(QObject::tr("Add to New AI Chat"));
           }
 
+          // The context menu is the only way into the Git submenu, and an
+          // E2E flow needs to know it is a live toplevel before it types —
+          // and where each entry is, since a popup has no model to ask.
+          e2eMarkMenuActions(&menu, "project_tree_menu_action");
+          e2eMark("{\"ev\":\"dialog_shown\",\"name\":\"project_tree_context_menu\"}");
           QAction *chosen = menu.exec(treeView->viewport()->mapToGlobal(pos));
+          e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\","
+                                  "\"name\":\"project_tree_context_menu\",\"accepted\":%1}")
+                    .arg(chosen ? "true" : "false"));
           if (!chosen) {
               return;
           }

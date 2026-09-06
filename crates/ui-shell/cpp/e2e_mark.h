@@ -18,6 +18,16 @@
 void e2eMark(const char *json);
 void e2eMark(const QString &json);
 
+// Reports every action in a menu — label, enabled state and screen rect —
+// once the menu is actually laid out.
+//
+// A popup menu is the one widget an E2E flow cannot locate any other way:
+// it is a separate toplevel with no model behind it, and counting `Down`
+// presses to reach an entry silently re-targets itself the day someone adds
+// an entry above it. Safe to call on any menu; free when `IDE_E2E_EVENTS` is
+// unset, like every other mark.
+void e2eMarkMenuActions(class QMenu *menu, const char *event);
+
 // A JSON string literal — quoted and escaped — for embedding in a mark.
 // Paths can contain quotes and backslashes, so no call site may interpolate
 // one raw. Deliberately not a JSON library: this is the only JSON the view

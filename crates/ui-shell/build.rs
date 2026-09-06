@@ -349,6 +349,9 @@ fn main() {
         // The Help menu and its About dialog. No Q_OBJECT (free functions and
         // a locally built QDialog), so only the source is listed.
         .cpp_file("cpp/help_menu.cpp")
+        // The project tree's Git submenu. No Q_OBJECT (one free function),
+        // so only the source is listed.
+        .cpp_file("cpp/project_tree_git_menu.cpp")
         .cpp_file("cpp/rounded_corners.cpp")
         .cpp_file("cpp/panel_shadow.cpp")
         // First hand-written (non-generated) QObject in this crate: header

@@ -6,6 +6,7 @@
 
 class AiChat;
 class ProjectTreeModel;
+class VcsService;
 
 class QAction;
 class QMainWindow;
@@ -22,6 +23,7 @@ namespace ui_shell {
 
 class AiChatPanel;
 class DockRegistry;
+class FileHistoryPanel;
 
 // Everything the project tree's context menu acts on.
 //
@@ -47,6 +49,17 @@ struct ProjectTreeActions
     // F3-14: "Compare with…" — opens a read-only diff tab over two files'
     // current contents, no Git involved. Same callback shape as `openFile`.
     std::function<void(const QString &, const QString &)> compareFiles;
+    // The Git submenu (project_tree_git_menu.cpp). Null when the app has no
+    // VCS service at all; the submenu also asks `isRepository()` before it
+    // offers anything.
+    VcsService *vcsService;
+    // Where "Show File History" points the dock. The dock itself is revealed
+    // through `docks`, like every other one.
+    FileHistoryPanel *fileHistoryPanel;
+    // "Compare with HEAD" — an editable working-tree-vs-HEAD diff for one
+    // path. A callback for the same reason `openFile` is: it is EditorTabs'
+    // job, and the tree does not depend on editor_tabs.h to say so.
+    std::function<void(const QString &)> showDiffAgainstHead;
 };
 
 // The tree view plus the toolbar's locate action, which the active-tab-

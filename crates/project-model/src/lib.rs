@@ -10,7 +10,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+mod rebuild;
 mod watcher;
+pub use rebuild::RebuildCoalescer;
 pub use watcher::{is_structural_change, EventKind, ProjectWatcher};
 
 /// File name used to persist the last-opened project path, per the plan's

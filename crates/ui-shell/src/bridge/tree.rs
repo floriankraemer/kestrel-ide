@@ -17,6 +17,12 @@ use crate::bridge::registry::{shared_icons, shared_session, SharedIcons};
 pub struct ProjectTreeModelRust {
     session: Rc<RefCell<AppSession>>,
     icons: Rc<SharedIcons>,
+    /// Whether a watcher event may start a tree rebuild, or belongs behind
+    /// the one already walking (`project_model::RebuildCoalescer`). Touched
+    /// only from the Qt thread — every `request`/`finished` call sits either
+    /// in a slot or in a `qt_thread.queue`d closure — so a `RefCell` is the
+    /// right cell here, as elsewhere in this adapter.
+    rebuild: RefCell<project_model::RebuildCoalescer>,
 }
 
 impl Default for ProjectTreeModelRust {
@@ -36,6 +42,7 @@ impl Default for ProjectTreeModelRust {
         Self {
             session,
             icons: shared_icons(),
+            rebuild: RefCell::new(project_model::RebuildCoalescer::new()),
         }
     }
 }
@@ -361,21 +368,48 @@ impl ffi::ProjectTreeModel {
             });
     }
 
+    /// A structural filesystem-watcher event says the tree may have moved.
+    ///
+    /// Rebuilds are coalesced rather than spawned one per event: a rebuild
+    /// re-walks the entire project, and the events arrive in bursts of
+    /// thousands (a `git checkout`, a `cargo build`, the watcher's own
+    /// registration sweep) that all ask the same question. Spawning a thread
+    /// each — which this used to do — put hundreds of concurrent full walks
+    /// on the machine, each holding its own copy of the tree: measured at 205
+    /// threads and 30 GB of resident memory within fifty seconds of opening
+    /// this repository, which the OOM killer then ended. See
+    /// `project_model::RebuildCoalescer`.
+    fn rebuild_tree_async(self: Pin<&mut Self>) {
+        let start = self.rebuild.borrow_mut().request();
+        if start {
+            self.spawn_tree_rebuild();
+        }
+    }
+
     /// Re-walk the current project's tree off the Qt thread and reset the
     /// model once it lands — the rebuild half of `open_folder_async`'s
-    /// worker-thread shape, triggered by a structural filesystem-watcher
-    /// event instead of an explicit open (ADR-0037). A no-op if no project
-    /// is open by the time this runs (the watcher was about to be replaced
-    /// or stopped anyway).
-    fn rebuild_tree_async(mut self: Pin<&mut Self>) {
-        let Some(root) = self.session.borrow().root_path().map(Path::to_path_buf) else {
+    /// worker-thread shape (ADR-0037). A no-op if no project is open by the
+    /// time this runs (the watcher was about to be replaced or stopped
+    /// anyway).
+    ///
+    /// Only ever called with the coalescer already holding the "running"
+    /// slot, and every path out of here reports back to it — including the
+    /// no-project and walk-failed paths, since a slot never given back would
+    /// silently drop every later rebuild for the life of the process.
+    fn spawn_tree_rebuild(mut self: Pin<&mut Self>) {
+        let root = self.session.borrow().root_path().map(Path::to_path_buf);
+        let Some(root) = root else {
+            self.as_mut().finish_tree_rebuild();
             return;
         };
         let order = self.session.borrow().tree_sort_order();
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
-            if let Ok(tree) = project_model::rebuild_tree_sorted(&root, order) {
-                let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+            let rebuilt = project_model::rebuild_tree_sorted(&root, order);
+            // A failed `queue` means the Qt thread is gone (the app is
+            // shutting down), so there is no later rebuild left to drop.
+            let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                if let Ok(tree) = rebuilt {
                     // `false` means the open project changed while this
                     // rebuild was in flight (a fresh `openFolder` landed
                     // first) — the stale result is dropped rather than
@@ -387,9 +421,21 @@ impl ffi::ProjectTreeModel {
                             model.as_mut().end_reset_model();
                         }
                     }
-                });
-            }
+                }
+                model.as_mut().finish_tree_rebuild();
+            });
         });
+    }
+
+    /// Hand the coalescer's "running" slot back, and start the one catch-up
+    /// rebuild it asks for when events arrived while this walk was running.
+    fn finish_tree_rebuild(self: Pin<&mut Self>) {
+        // The borrow ends before the call: the catch-up re-enters
+        // `spawn_tree_rebuild`, which reaches this same `RefCell` again.
+        let again = self.rebuild.borrow_mut().finished();
+        if again {
+            self.spawn_tree_rebuild();
+        }
     }
 
     pub fn root_path(&self) -> QString {

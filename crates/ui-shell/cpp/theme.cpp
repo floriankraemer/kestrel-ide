@@ -449,10 +449,18 @@ QTabBar {
     border: none;
 }
 
+/* Asymmetric padding on purpose: the right side carries the close button.
+   Qt lays a closable tab out as [padding-left][icon][label][reserved][x],
+   pinning the [x] a fixed 11px off the tab's edge and spending everything
+   else on the gap before it — a gap that measures padding-right + 13. At the
+   {sp-3} both sides the blend chrome introduced, that gap grew to 25px and
+   the [x] drifted away from the label it closes and up against the edge it
+   does not, which is the spacing #130 had already fixed once. {sp-2} on the
+   right restores it. */
 QTabBar::tab {
     background-color: {surface};
     color: {textDim};
-    padding: 0 {sp-3}px;
+    padding: 0 {sp-2}px 0 {sp-3}px;
     min-height: 32px;
     border: none;
     border-right: 1px solid {border};
@@ -470,10 +478,14 @@ QTabBar::tab:hover:!selected {
     color: {text};
 }
 
-QTabBar::close-button {
-    subcontrol-position: right;
-    margin: 0px 5px 0px -3px;
-}
+/* No `QTabBar::close-button` rule here, deliberately. Once the application
+   has a stylesheet, QStyleSheetStyle answers SE_TabBarTabRightButton itself:
+   it never delegates to the base style (a QProxyStyle override of it is not
+   called at all), and it ignores this subcontrol's own margins (a 60px margin
+   moves the [x] by zero pixels). #130's spacing fix lived here and stopped
+   doing anything the moment the blend chrome rewrote this sheet, without
+   anything turning red. The tab's own padding above is the only lever that
+   moves it — change the spacing there. */
 
 /* ---- splitters, scrollbars, status bar --------------------------- */
 QSplitter::handle {

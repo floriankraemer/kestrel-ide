@@ -395,6 +395,9 @@ public:
     // setEditorFont/setEditorColors above.
     void setWhitespaceOptions(const WhitespaceOptions &options);
 
+    // Editor minimap (issue #199), same S2 live-apply convention.
+    void setMinimapOptions(const MinimapOptions &options);
+
     // L6: the language-server settings were committed and stale servers
     // were stopped, so every open document has to be announced again — to a
     // replacement server for the languages that changed, and to nobody at
@@ -846,6 +849,7 @@ private:
     CodeEditor *inlayHintsEditor_ = nullptr;
     bool inlayHintsEnabled_ = false;
     WhitespaceOptions whitespaceOptions_;
+    MinimapOptions minimapOptions_;
 };
 
 } // namespace ui_shell

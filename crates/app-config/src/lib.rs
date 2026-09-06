@@ -166,6 +166,42 @@ pub(crate) fn is_false(b: &bool) -> bool {
     !*b
 }
 
+/// The `[minimap]` section: whether the editor's right-hand code map shows
+/// at all, and which overlays light up on it.
+///
+/// Every field defaults to `true`, via the hand-written [`Default`] below
+/// rather than the derived one, so a `settings.toml` written before this
+/// feature existed — no `[minimap]` table at all — resolves to "on with
+/// every overlay" once `#[serde(default)]` on the struct fills in the
+/// missing table from that default. This is the same problem
+/// [`Settings::mcp_enabled`] solves with `Option<bool>` (a derived default
+/// must not silently turn a feature off for existing users), solved here
+/// without that indirection because "never chosen" and "on" really are the
+/// same value for every field below, unlike `mcp_enabled`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(default)]
+pub struct MinimapSettings {
+    pub enabled: bool,
+    pub search_matches: bool,
+    pub diagnostics: bool,
+    pub vcs_changes: bool,
+    pub breakpoints: bool,
+    pub caret_line: bool,
+}
+
+impl Default for MinimapSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            search_matches: true,
+            diagnostics: true,
+            vcs_changes: true,
+            breakpoints: true,
+            caret_line: true,
+        }
+    }
+}
+
 /// Structured application settings, round-tripped to `settings.toml` in the
 /// config directory. Every field is `#[serde(default)]` so old or partially
 /// written settings files still parse.
@@ -369,6 +405,10 @@ pub struct Settings {
     /// whole plugin, and one plugin can contribute several things.
     #[serde(default)]
     pub disabled_plugins: Vec<String>,
+    /// Whether the editor's right-hand code map shows, and which overlays
+    /// light up on it. See [`MinimapSettings`] for the default-on rationale.
+    #[serde(default)]
+    pub minimap: MinimapSettings,
 }
 
 /// Cap on remembered recent projects — enough for a useful menu without
@@ -815,6 +855,22 @@ mod tests {
     }
 
     #[test]
+    fn settings_file_without_minimap_table_keeps_every_overlay_on() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(SETTINGS_FILE), "theme = \"light\"\n").unwrap();
+
+        let loaded = load(dir.path()).unwrap();
+
+        assert_eq!(loaded.minimap, MinimapSettings::default());
+        assert!(loaded.minimap.enabled);
+        assert!(loaded.minimap.search_matches);
+        assert!(loaded.minimap.diagnostics);
+        assert!(loaded.minimap.vcs_changes);
+        assert!(loaded.minimap.breakpoints);
+        assert!(loaded.minimap.caret_line);
+    }
+
+    #[test]
     fn round_trips_non_default_settings() {
         let dir = tempfile::tempdir().unwrap();
 
@@ -904,6 +960,14 @@ mod tests {
             }],
             ai_mode: "agent".to_string(),
             ai_persist_conversations: Some(false),
+            minimap: MinimapSettings {
+                enabled: true,
+                search_matches: false,
+                diagnostics: true,
+                vcs_changes: false,
+                breakpoints: true,
+                caret_line: false,
+            },
         };
 
         save(dir.path(), &settings).unwrap();

@@ -125,6 +125,19 @@ mod ffi {
         eol_markers: bool,
     }
 
+    /// Editor minimap (code map) master toggle plus its five overlay
+    /// switches, 1:1 with `app_config::MinimapSettings`. Bundled the same
+    /// way `FfiWhitespaceOptions` bundles its five related settings above.
+    #[derive(Default)]
+    struct FfiMinimapOptions {
+        enabled: bool,
+        search_matches: bool,
+        diagnostics: bool,
+        vcs_changes: bool,
+        breakpoints: bool,
+        caret_line: bool,
+    }
+
     /// One row of the Keymap settings page, 1:1 with `app_config::Binding`.
     /// `shortcut` is `QKeySequence` portable text, empty for "unbound";
     /// `is_default` is resolved in Rust so the view can style rebound rows
@@ -2055,6 +2068,17 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "saveWhitespaceOptions"]
         fn save_whitespace_options(self: &AppSettings, options: &FfiWhitespaceOptions);
+
+        /// Editor minimap (code map), on with every overlay by default.
+        #[qinvokable]
+        #[cxx_name = "minimapOptions"]
+        fn minimap_options(self: &AppSettings) -> FfiMinimapOptions;
+
+        /// Persist the minimap options (the Editor page, live preview + on
+        /// OK).
+        #[qinvokable]
+        #[cxx_name = "saveMinimapOptions"]
+        fn save_minimap_options(self: &AppSettings, options: &FfiMinimapOptions);
 
         /// Where the running server publishes its port and auth token, so
         /// the Settings page can tell the user what to point an agent at.

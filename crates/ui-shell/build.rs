@@ -281,6 +281,9 @@ fn main() {
         .cpp_file("cpp/code_editor.h")
         .cpp_file("cpp/code_editor.cpp")
         .cpp_file("cpp/code_editor_gutter.cpp")
+        // Editor minimap (issue #199): no Q_OBJECT, so only the source is
+        // listed, same as vcs_gutter.cpp below.
+        .cpp_file("cpp/minimap.cpp")
         // F3-16: the change-marker colour/kind and the hunk popup. Free
         // functions and plain structs, no Q_OBJECT, so only the source is
         // listed — same as signature_tip.cpp.

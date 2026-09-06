@@ -14,8 +14,8 @@ use syntax_core::theme;
 use crate::bridge::convert::{load_settings, user_styles};
 use crate::bridge::errors;
 use crate::bridge::ffi::{
-    self, FfiEditingProblem, FfiEditingRow, FfiEditorColors, FfiEditorFont, FfiResult,
-    FfiUiFontScales, FfiWhitespaceOptions, FfiWindowGeometry,
+    self, FfiEditingProblem, FfiEditingRow, FfiEditorColors, FfiEditorFont, FfiMinimapOptions,
+    FfiResult, FfiUiFontScales, FfiWhitespaceOptions, FfiWindowGeometry,
 };
 
 /// Rust side of the `AppSettings` QObject: every call re-reads or re-writes
@@ -260,6 +260,34 @@ impl ffi::AppSettings {
         settings.show_whitespace_inner = options.inner;
         settings.show_whitespace_trailing = options.trailing;
         settings.show_eol_markers = options.eol_markers;
+        let _ = app_config::save(&config_dir, &settings);
+    }
+
+    pub fn minimap_options(&self) -> FfiMinimapOptions {
+        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+        FfiMinimapOptions {
+            enabled: settings.minimap.enabled,
+            search_matches: settings.minimap.search_matches,
+            diagnostics: settings.minimap.diagnostics,
+            vcs_changes: settings.minimap.vcs_changes,
+            breakpoints: settings.minimap.breakpoints,
+            caret_line: settings.minimap.caret_line,
+        }
+    }
+
+    pub fn save_minimap_options(&self, options: &FfiMinimapOptions) {
+        let config_dir = app_core::resolve_config_dir();
+        let Ok(mut settings) = app_config::load(&config_dir) else {
+            return;
+        };
+        settings.minimap = app_config::MinimapSettings {
+            enabled: options.enabled,
+            search_matches: options.search_matches,
+            diagnostics: options.diagnostics,
+            vcs_changes: options.vcs_changes,
+            breakpoints: options.breakpoints,
+            caret_line: options.caret_line,
+        };
         let _ = app_config::save(&config_dir, &settings);
     }
 

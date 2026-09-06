@@ -1,5 +1,6 @@
 #include "code_editor.h"
 
+#include "e2e_mark.h"
 #include "theme.h"
 #include <QContextMenuEvent>
 #include <QMenu>
@@ -46,10 +47,18 @@ constexpr int kPopupWidthPadding = 8;
 CodeEditor::CodeEditor(QWidget *parent)
   : QPlainTextEdit(parent)
   , lineNumberArea_(new LineNumberArea(this))
+  , minimap_(new Minimap(this))
 {
     connect(this, &CodeEditor::blockCountChanged, this, &CodeEditor::updateLineNumberAreaWidth);
     connect(this, &CodeEditor::updateRequest, this, &CodeEditor::updateLineNumberArea);
     connect(this, &CodeEditor::cursorPositionChanged, this, &CodeEditor::highlightCurrentLine);
+    // The minimap's slider tracks the scrollbar directly (its own row
+    // mapping decision — see minimap.h), and its caret-line overlay tracks
+    // the cursor; both are cheap enough to keep live unconditionally rather
+    // than connect/disconnect on every options toggle.
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, minimap_,
+            qOverload<>(&QWidget::update));
+    connect(this, &CodeEditor::cursorPositionChanged, minimap_, qOverload<>(&QWidget::update));
 
     // Code is read on a horizontal scrollbar, not reflowed — the same
     // default VS Code and IntelliJ ship. It is also what keeps a
@@ -678,6 +687,28 @@ void CodeEditor::setWhitespaceOptions(const WhitespaceOptions &options)
     viewport()->update();
 }
 
+void CodeEditor::setMinimapOptions(const MinimapOptions &options)
+{
+    const bool visibilityChanged = minimap_->options().enabled != options.enabled;
+    minimap_->setOptions(options);
+    minimap_->setVisible(options.enabled);
+    if (visibilityChanged) {
+        // The strip's own width changes with visibility, so the viewport
+        // margin and the strip's own geometry — both set from resizeEvent,
+        // the same "widen for a column that comes and goes" trick
+        // runMarkerWidth uses — have to be recomputed, not just repainted.
+        updateLineNumberAreaWidth(0);
+        layoutMinimap();
+        e2eMark(QStringLiteral("{\"ev\":\"minimap_visible\",\"enabled\":%1}")
+                  .arg(options.enabled ? QLatin1String("true") : QLatin1String("false")));
+    }
+}
+
+int CodeEditor::minimapWidth() const
+{
+    return minimap_->options().enabled ? Minimap::preferredWidth() : 0;
+}
+
 void CodeEditor::setWhitespaceClassifier(WhitespaceClassifier classifier)
 {
     whitespaceClassifier_ = std::move(classifier);
@@ -881,6 +912,7 @@ void CodeEditor::highlightCurrentLine()
 
     setExtraSelections(selections);
     lineNumberArea_->update();
+    minimap_->update();
 }
 
 void CodeEditor::changeEvent(QEvent *event)
@@ -930,6 +962,7 @@ void CodeEditor::setChangeMarkers(const QVector<ChangeMarker> &markers)
         changeMarkers_.insert(marker.block, marker);
     }
     lineNumberArea_->update();
+    minimap_->update();
 }
 
 bool CodeEditor::changeMarkerAt(int blockNumber, ChangeMarker *out) const

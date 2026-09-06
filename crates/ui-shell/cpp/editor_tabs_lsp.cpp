@@ -526,6 +526,7 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     // tab open — it depends on the tab's language, which does not change
     // for the tab's lifetime.
     editor->setWhitespaceOptions(whitespaceOptions_);
+    editor->setMinimapOptions(minimapOptions_);
     editor->setWhitespaceClassifier([this](const QString &text) {
         QVector<WhitespaceSpan> spans;
         for (const FfiWhitespaceSpan &span : editorOps_->whitespaceSpans(text)) {

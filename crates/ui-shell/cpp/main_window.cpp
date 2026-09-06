@@ -738,6 +738,10 @@ void buildMainWindow(AppSettings *appSettings,
     editorTabs->setWhitespaceOptions(WhitespaceOptions{
       savedWhitespace.enabled, savedWhitespace.leading, savedWhitespace.inner,
       savedWhitespace.trailing, savedWhitespace.eol_markers});
+    const FfiMinimapOptions savedMinimap = appSettings->minimapOptions();
+    editorTabs->setMinimapOptions(MinimapOptions{
+      savedMinimap.enabled, savedMinimap.search_matches, savedMinimap.diagnostics,
+      savedMinimap.vcs_changes, savedMinimap.breakpoints, savedMinimap.caret_line});
 
     wireAiChatToEditor(window, aiChat, central.aiChatPanel, editorTabs, searchModel);
 

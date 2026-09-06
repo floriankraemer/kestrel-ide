@@ -602,6 +602,16 @@ void EditorTabs::setWhitespaceOptions(const WhitespaceOptions &options)
     });
 }
 
+void EditorTabs::setMinimapOptions(const MinimapOptions &options)
+{
+    minimapOptions_ = options;
+    forEachEditor([&options](QPlainTextEdit *editor) {
+        if (auto *codeEditor = qobject_cast<CodeEditor *>(editor)) {
+            codeEditor->setMinimapOptions(options);
+        }
+    });
+}
+
 void EditorTabs::setInlayHintsEnabled(bool enabled)
 {
     inlayHintsEnabled_ = enabled;

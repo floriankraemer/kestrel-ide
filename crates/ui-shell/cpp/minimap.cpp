@@ -82,31 +82,40 @@ int Minimap::firstRow() const
     return static_cast<int>((total - visible) * fraction);
 }
 
+int Minimap::sliderHeightPx() const
+{
+    return qMax(kRowHeight, editor_->verticalScrollBar()->pageStep() * kRowHeight);
+}
+
 QRect Minimap::sliderRect() const
 {
     QScrollBar *scrollBar = editor_->verticalScrollBar();
     const int first = firstRow();
     const int top = (scrollBar->value() - first) * kRowHeight;
-    const int sliderHeight = qMax(kRowHeight, scrollBar->pageStep() * kRowHeight);
-    return QRect(0, top, width(), sliderHeight);
+    return QRect(0, top, width(), sliderHeightPx());
 }
 
 void Minimap::scrollToPixelY(int y)
 {
-    // The inverse of firstRow(): a click's position as a fraction of the
-    // *whole strip height* maps to that same fraction of the scrollbar's
-    // whole range, which is what makes a press at the very bottom of the
-    // strip reach the very bottom of the document regardless of how much
-    // of the file the currently rendered window happens to cover. Mapping
-    // through the rendered window's own firstRow() here (an earlier bug)
-    // instead confined a click to the ~few hundred rows already on screen.
+    // A click or drag maps pixels to scroll value over the slider's *track*
+    // — the strip height minus the slider's own on-screen height — not the
+    // full strip height. sliderRect() draws the slider so its top can only
+    // ever reach `height() - sliderHeight`, never `height()` itself (the
+    // last `sliderHeight` pixels are the slider's own body sitting at the
+    // bottom edge). Mapping the full [0, height()] range onto the scroll
+    // range, as if the slider were a single point, made the drag scroll
+    // faster than the slider itself could visually move: the two drift
+    // apart at a rate proportional to sliderHeight / height(), the exact
+    // "slider lags the mouse, editor keeps scrolling" desync reported
+    // against a real drag.
     QScrollBar *scrollBar = editor_->verticalScrollBar();
     const int maxScroll = scrollBar->maximum();
     if (maxScroll <= 0) {
         return;
     }
-    const int clampedY = qBound(0, y, qMax(1, height()));
-    const double fraction = static_cast<double>(clampedY) / qMax(1, height());
+    const int track = qMax(1, height() - sliderHeightPx());
+    const int clampedY = qBound(0, y, track);
+    const double fraction = static_cast<double>(clampedY) / track;
     scrollBar->setValue(static_cast<int>(fraction * maxScroll));
 }
 

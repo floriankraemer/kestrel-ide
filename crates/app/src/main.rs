@@ -16,7 +16,7 @@ use std::process::ExitCode;
 #[cfg(windows)]
 fn set_windows_app_user_model_id() {
     use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-    let id: Vec<u16> = "FlorianKraemer.IDE\0".encode_utf16().collect();
+    let id: Vec<u16> = "FlorianKraemer.Kestrel\0".encode_utf16().collect();
     unsafe {
         SetCurrentProcessExplicitAppUserModelID(id.as_ptr());
     }

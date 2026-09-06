@@ -56,9 +56,19 @@ CodeEditor::CodeEditor(QWidget *parent)
     // mapping decision — see minimap.h), and its caret-line overlay tracks
     // the cursor; both are cheap enough to keep live unconditionally rather
     // than connect/disconnect on every options toggle.
+    //
+    // `repaint()`, not `update()`: `update()` only posts a paint request,
+    // coalesced with whatever else is already pending on this widget, and a
+    // background pane's minimap has nothing else keeping that queue moving
+    // (the visible pane's own repaints, cursor blink, etc.) — so on a
+    // pane that isn't otherwise being redrawn, a plain `update()` can sit
+    // unpainted for a very visible stretch after the scrollbar has already
+    // moved on. Repainting synchronously here costs nothing extra: a
+    // scrollbar tick fires at most once per event, and the slider/overlay
+    // redraw is cheap even when the code pixmap itself is cache-hit.
     connect(verticalScrollBar(), &QScrollBar::valueChanged, minimap_,
-            qOverload<>(&QWidget::update));
-    connect(this, &CodeEditor::cursorPositionChanged, minimap_, qOverload<>(&QWidget::update));
+            qOverload<>(&QWidget::repaint));
+    connect(this, &CodeEditor::cursorPositionChanged, minimap_, qOverload<>(&QWidget::repaint));
 
     // Code is read on a horizontal scrollbar, not reflowed — the same
     // default VS Code and IntelliJ ship. It is also what keeps a

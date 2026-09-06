@@ -37,7 +37,9 @@ This is the same reason `settings-model` wraps `syntax-core`'s and `lsp-core`'s 
 
 ### 2. Anything touching the user's configuration, credentials, hooks or signing shells out to `git`
 
-Staging (`git add`, `git apply --cached`), commit, branch create/checkout/delete, and fetch/pull/push all go through `vcs_core::cli::run`, a thin wrapper around `std::process::Command`.
+Staging (`git add`, `git apply --cached`), commit, branch create/checkout/delete, discarding one file's changes (`git checkout HEAD -- <path>`, `Repository::discard_file`), and fetch/pull/push all go through `vcs_core::cli::run`, a thin wrapper around `std::process::Command`.
+`discard_file` names `HEAD` rather than taking the bare `git checkout -- <path>` form, which restores from the *index* and would leave a staged change in place — making "revert this file" mean two different things depending on whether the user had staged it.
+It is also the counterexample that keeps §6 honest: a *hunk* revert is an edit spliced into the open buffer, but a whole-file discard is something `git` already gets right for submodules, symlinks, filters and line endings, and re-deriving it from `HEAD`'s blob would be a second, worse implementation.
 It always sets `GIT_TERMINAL_PROMPT=0`, so a missing credential fails fast on stderr instead of blocking on a prompt nothing can answer.
 It applies a 60-second timeout, generous since fetch/push are network calls, not local reads.
 It turns a nonzero exit into `VcsError::GitFailed { command, stderr }`, carrying `git`'s own message verbatim rather than a bare exit code.

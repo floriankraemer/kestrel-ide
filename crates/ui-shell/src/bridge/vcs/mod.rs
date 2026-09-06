@@ -81,6 +81,14 @@ pub struct VcsServiceRust {
     /// repository yet — can re-run `openProject` on success without the
     /// view having to remember and re-pass the path it already gave once.
     project_root: RefCell<String>,
+    /// The repository's working-tree root, once discovery has found one.
+    ///
+    /// The `Repository` handle itself lives on the worker thread and must
+    /// stay there, but `fileStatus` answers on the Qt thread out of the
+    /// cached `status` — and every path in that status is repository-
+    /// relative while every path the view holds is absolute. This is the one
+    /// piece of the worker's knowledge the Qt side needs to bridge the two.
+    work_dir: RefCell<String>,
 }
 
 impl Default for VcsServiceRust {
@@ -95,6 +103,7 @@ impl Default for VcsServiceRust {
             blobs: RefCell::default(),
             branches: RefCell::default(),
             current_branch: RefCell::default(),
+            work_dir: RefCell::default(),
         }
     }
 }
@@ -157,14 +166,19 @@ impl ffi::VcsService {
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || match vcs_core::Repository::discover(&root) {
             Ok(vcs_core::DiscoverResult::Found(repo)) => {
+                let work_dir = repo
+                    .work_dir()
+                    .map(|dir| dir.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 let worker = VcsWorker {
                     repo: *repo,
                     hunk_cache: vcs_core::HunkCache::new(),
                     history_cache: vcs_core::HistoryCache::new(),
                     blame_cache: vcs_core::BlameCache::new(),
                 };
-                let _ = qt_thread.queue(|mut service: Pin<&mut Self>| {
+                let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
                     service.is_repository.set(true);
+                    *service.work_dir.borrow_mut() = work_dir;
                     service.as_mut().repository_changed();
                 });
                 // Ends when the sender above is dropped (project closed, or
@@ -227,6 +241,51 @@ impl ffi::VcsService {
             // as a duplicate of a job that does not exist.
             self.status_pending.store(false, Ordering::SeqCst);
         }
+    }
+
+    /// What the last `refreshStatus` says about one file, by absolute path.
+    ///
+    /// `path` empty in the answer means "this file has no pending change" —
+    /// the same shape `changedFiles()` simply omits. Answering here rather
+    /// than letting the view match paths itself keeps the repository-relative
+    /// / absolute translation in the one place that knows the repository
+    /// root, instead of a suffix comparison in `cpp/` that would call
+    /// `vendor/src/main.rs` a match for `src/main.rs`.
+    pub fn file_status(&self, path: &QString) -> ffi::FfiChangedFile {
+        let none = ffi::FfiChangedFile {
+            path: QString::default(),
+            staged: ffi::FfiChangeKind::None,
+            unstaged: ffi::FfiChangeKind::None,
+        };
+        let work_dir = self.work_dir.borrow();
+        if work_dir.is_empty() {
+            return none;
+        }
+        let absolute = path.to_string();
+        let Ok(relative) = Path::new(&absolute).strip_prefix(work_dir.as_str()) else {
+            // Outside the repository entirely.
+            return none;
+        };
+        let status = self.status.borrow();
+        if let Some(file) = status.files.iter().find(|file| file.path == relative) {
+            return ffi::FfiChangedFile {
+                path: QString::from(file.path.to_string_lossy().as_ref()),
+                staged: to_ffi_change_kind(file.staged),
+                unstaged: to_ffi_change_kind(file.unstaged),
+            };
+        }
+        if status
+            .untracked
+            .iter()
+            .any(|untracked| untracked == relative)
+        {
+            return ffi::FfiChangedFile {
+                path: QString::from(relative.to_string_lossy().as_ref()),
+                staged: ffi::FfiChangeKind::None,
+                unstaged: ffi::FfiChangeKind::Untracked,
+            };
+        }
+        none
     }
 
     pub fn changed_files(&self) -> Vec<ffi::FfiChangedFile> {

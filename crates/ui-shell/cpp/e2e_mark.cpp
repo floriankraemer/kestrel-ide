@@ -1,6 +1,11 @@
 #include "e2e_mark.h"
 
 #include <QByteArray>
+#include <QAction>
+#include <QMenu>
+#include <QPoint>
+#include <QRect>
+#include <QTimer>
 
 #include <cstdio>
 #include <cstdlib>
@@ -78,4 +83,31 @@ QString e2eJson(const QString &value)
     }
     out += QLatin1Char('"');
     return out;
+}
+
+void e2eMarkMenuActions(QMenu *menu, const char *event)
+{
+    // `aboutToShow` fires before the menu is laid out, so its action
+    // geometry is still empty; one turn of the event loop later it is on
+    // screen with real rects.
+    const QString name = QString::fromUtf8(event);
+    QObject::connect(menu, &QMenu::aboutToShow, menu, [menu, name]() {
+        QTimer::singleShot(0, menu, [menu, name]() {
+            for (QAction *action : menu->actions()) {
+                if (action->isSeparator()) {
+                    continue;
+                }
+                const QRect rect = menu->actionGeometry(action);
+                const QPoint origin = rect.isEmpty() ? QPoint() : menu->mapToGlobal(rect.topLeft());
+                e2eMark(QStringLiteral("{\"ev\":%1,\"label\":%2,\"enabled\":%3,"
+                                        "\"rect\":[%4,%5,%6,%7]}")
+                          .arg(e2eJson(name), e2eJson(action->text()),
+                                action->isEnabled() ? "true" : "false")
+                          .arg(origin.x())
+                          .arg(origin.y())
+                          .arg(rect.width())
+                          .arg(rect.height()));
+            }
+        });
+    });
 }

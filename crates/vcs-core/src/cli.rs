@@ -257,6 +257,20 @@ pub mod argv {
         vec!["checkout", name]
     }
 
+    /// `git checkout HEAD -- <paths>` — discard a path's changes in both the
+    /// index and the working tree.
+    ///
+    /// `HEAD` rather than a bare `git checkout -- <paths>`: without a tree
+    /// argument `git` restores from the *index*, which leaves a staged
+    /// change in place and makes "revert this file" mean something different
+    /// depending on whether the user had staged it. Naming `HEAD` says what
+    /// the caller means — put this file back the way the last commit has it.
+    pub fn checkout_paths<'a>(paths: &'a [&str]) -> Vec<&'a str> {
+        let mut args = vec!["checkout", "HEAD", "--"];
+        args.extend_from_slice(paths);
+        args
+    }
+
     /// `git branch -d|-D <name>`.
     pub fn branch_delete(name: &str, force: bool) -> Vec<&str> {
         vec!["branch", if force { "-D" } else { "-d" }, name]

@@ -11,14 +11,16 @@ use cxx_qt_lib::QString;
 
 use crate::bridge::ffi;
 
-use super::{to_ffi_result, CachedHunks, VcsWorker};
+use super::{to_ffi_result, to_repo_relative, CachedHunks, VcsWorker};
 
 impl ffi::VcsService {
     pub fn stage_file(mut self: Pin<&mut Self>, path: &QString) {
         let path = path.to_string();
         let qt_thread = self.as_mut().qt_thread();
         self.as_ref().push_job(move |worker: &VcsWorker| {
-            let result = worker.repo.stage_file(Path::new(&path));
+            let result = worker
+                .repo
+                .stage_file(to_repo_relative(&worker.repo, Path::new(&path)));
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => service.as_mut().refresh_status(),
                 Err(err) => {
@@ -33,7 +35,26 @@ impl ffi::VcsService {
         let path = path.to_string();
         let qt_thread = self.as_mut().qt_thread();
         self.as_ref().push_job(move |worker: &VcsWorker| {
-            let result = worker.repo.unstage_file(Path::new(&path));
+            let result = worker
+                .repo
+                .unstage_file(to_repo_relative(&worker.repo, Path::new(&path)));
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
+                Ok(()) => service.as_mut().refresh_status(),
+                Err(err) => {
+                    let result = to_ffi_result(&err);
+                    service.as_mut().vcs_failed(result);
+                }
+            });
+        });
+    }
+
+    pub fn revert_file(mut self: Pin<&mut Self>, path: &QString) {
+        let path = path.to_string();
+        let qt_thread = self.as_mut().qt_thread();
+        self.as_ref().push_job(move |worker: &VcsWorker| {
+            let result = worker
+                .repo
+                .discard_file(to_repo_relative(&worker.repo, Path::new(&path)));
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => service.as_mut().refresh_status(),
                 Err(err) => {

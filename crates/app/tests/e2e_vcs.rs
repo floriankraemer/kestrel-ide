@@ -88,3 +88,124 @@ fn e2e_an_external_change_reaches_the_changes_dock() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// The centre of a `[x, y, w, h]` marker field, so a flow never computes a
+/// click point from window geometry or font metrics.
+fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
+    let rect: Vec<i64> = rect
+        .as_array()
+        .expect("the marker carries a rect")
+        .iter()
+        .map(|v| v.as_i64().expect("an integer"))
+        .collect();
+    (
+        (rect[0] + rect[2] / 2) as i32,
+        (rect[1] + rect[3] / 2) as i32,
+    )
+}
+
+/// `git status --porcelain`, read by the test with its own `git` process
+/// rather than through the app — so a pass proves the whole seam (tree menu
+/// → bridge → `vcs-core` → a real `git`) actually moved the index, not that
+/// each layer agrees with its own mocks.
+fn status_porcelain(root: &std::path::Path) -> String {
+    std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(root)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .expect("running git status")
+}
+
+/// The project tree's Git submenu stages the file it was opened on.
+///
+/// Staging is the entry worth driving end to end rather than one of the
+/// read-only ones: it is the one that proves the *absolute* path the tree
+/// holds survives the trip to `vcs-core`, which wants a repository-relative
+/// one. `stageFile` was reachable only from the Changes dock before this,
+/// which happens to hand it relative paths already.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_the_project_trees_git_submenu_stages_a_file() {
+    let name = "e2e_the_project_trees_git_submenu_stages_a_file";
+
+    let repo = git_fixture(&[("draft.txt", "first draft\n")]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    // Modified, so the submenu's Stage File is enabled. Written from the
+    // test: the flow under test is the menu, not the editor.
+    let file = ide.project_root().join("draft.txt");
+    std::fs::write(&file, "first draft, revised\n").expect("editing draft.txt");
+    ide.wait_for_event(Mark::start(), "the change to reach the app", |e| {
+        e["ev"] == "changes_row" && e["path"] == "draft.txt"
+    });
+
+    // The tree reports every visible row's rect, and reports again whenever
+    // anything moves a row — including the very first layout, whose rects are
+    // stale by the time the dock has its final size. So force one fresh
+    // report and read *that* one: a new file in the project reaches the tree
+    // through the filesystem watcher, which is a structural change.
+    //
+    // (The Project dock is already visible on a fresh profile. `alt+1` would
+    // toggle it — i.e. hide it — which is how the first version of this flow
+    // ended up right-clicking an empty dock.)
+    let mark = ide.mark();
+    std::fs::write(ide.project_root().join("zzz-settle.txt"), "settle\n")
+        .expect("writing a file to force a fresh tree layout report");
+    let row = ide.wait_for_event(mark, "a settled tree row for draft.txt", |e| {
+        e["ev"] == "project_tree_row"
+            && e["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("draft.txt"))
+    });
+
+    let (row_x, row_y) = rect_centre(&row["rect"]);
+    // No window manager under Xvfb, so nothing has given the window the
+    // input focus since it mapped; a click into an unfocused toplevel is
+    // delivered, but the menu it raises has nowhere to take a grab from.
+    ide.focus_main();
+    ide.click_at(row_x, row_y, 1);
+    ide.click_at(row_x, row_y, 3);
+    ide.wait_for_event(mark, "the tree context menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "project_tree_context_menu"
+    });
+
+    // Both menus report where their entries are, so this hovers and clicks
+    // them rather than counting `Down` presses — a count silently re-targets
+    // itself the day someone adds an entry above the one it meant.
+    let git = ide.wait_for_event(mark, "the Git entry in the tree menu", |e| {
+        e["ev"] == "project_tree_menu_action" && e["label"] == "Git"
+    });
+    let (git_x, git_y) = rect_centre(&git["rect"]);
+    // Hovering opens a submenu; clicking a submenu parent does not.
+    ide.mouse_move(git_x, git_y);
+
+    let stage = ide.wait_for_event(mark, "Stage File in the Git submenu", |e| {
+        e["ev"] == "project_tree_git_action" && e["label"] == "Stage File"
+    });
+    assert_eq!(
+        stage["enabled"],
+        serde_json::Value::Bool(true),
+        "Stage File was disabled for a file with unstaged changes"
+    );
+    let (stage_x, stage_y) = rect_centre(&stage["rect"]);
+    ide.click_at(stage_x, stage_y, 1);
+    ide.wait_for_event(mark, "the tree context menu to close", |e| {
+        e["ev"] == "dialog_closed"
+            && e["name"] == "project_tree_context_menu"
+            && e["accepted"] == true
+    });
+
+    // `M ` in the first column: staged, with nothing left unstaged.
+    let root = ide.project_root().to_path_buf();
+    e2e::wait_for("draft.txt to be staged", || {
+        status_porcelain(&root)
+            .starts_with("M  draft.txt")
+            .then_some(())
+    });
+
+    assert_eq!(ide.quit(), 0);
+}

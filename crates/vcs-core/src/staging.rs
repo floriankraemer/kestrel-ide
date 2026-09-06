@@ -74,12 +74,12 @@ impl Repository {
         Ok(())
     }
 
-    fn work_dir_or_err(&self) -> Result<std::path::PathBuf, VcsError> {
+    pub(crate) fn work_dir_or_err(&self) -> Result<std::path::PathBuf, VcsError> {
         self.work_dir().ok_or(VcsError::OutsideWorkingTree)
     }
 }
 
-fn path_str(path: &Path) -> Result<&str, VcsError> {
+pub(crate) fn path_str(path: &Path) -> Result<&str, VcsError> {
     path.to_str()
         .ok_or_else(|| VcsError::Read(format!("{} is not valid UTF-8", path.display())))
 }

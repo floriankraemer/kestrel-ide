@@ -5178,6 +5178,15 @@ mod ffi {
         #[cxx_name = "changedFiles"]
         fn changed_files(self: &VcsService) -> Vec<FfiChangedFile>;
 
+        /// What the last `refreshStatus` says about one file, by **absolute**
+        /// path — the shape the project tree holds. An empty `path` in the
+        /// answer means the file has no pending change (or is not in this
+        /// repository at all), which is the same thing `changedFiles()` says
+        /// by omitting it.
+        #[qinvokable]
+        #[cxx_name = "fileStatus"]
+        fn file_status(self: &VcsService, path: &QString) -> FfiChangedFile;
+
         /// Ask for `path`'s hunks against `HEAD`, diffed against
         /// `workingText` (the live buffer) and cached by `revision` — the
         /// open document's own revision, which is what makes the cache
@@ -5234,6 +5243,17 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "unstageFile"]
         fn unstage_file(self: Pin<&mut VcsService>, path: &QString);
+
+        /// `git checkout HEAD -- <path>`: discard the file's staged *and*
+        /// unstaged changes, putting it back the way `HEAD` has it.
+        /// `statusChanged` follows on success, `vcsFailed` on failure —
+        /// including for an untracked file, which `HEAD` has no copy of.
+        ///
+        /// Destructive and not undoable from inside the IDE: the working-tree
+        /// content is gone once `git` has run. The view confirms first.
+        #[qinvokable]
+        #[cxx_name = "revertFile"]
+        fn revert_file(self: Pin<&mut VcsService>, path: &QString);
 
         /// Stage `hunks(path)[hunk_index]` via a generated patch
         /// (`vcs_core::stage_hunk`), from the same cached before/working

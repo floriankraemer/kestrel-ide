@@ -209,25 +209,32 @@ void Minimap::renderCode(QPainter &painter, int firstRow, int rowCount)
 
 void Minimap::paintOverlays(QPainter &painter, int firstRow, int rowCount)
 {
-    auto paintRowMark = [&](int blockNumber, const QColor &color) {
+    // Every mark is alpha-blended over the code pixmap rather than painted
+    // opaque: a dense overlay (a find with hundreds of matches, a file that
+    // is mostly changed) must still read as a density map of the code
+    // underneath, not a solid bar that erases the shape decision #3 exists
+    // for. Caret line is deliberately the faintest — it is a "you are here"
+    // hint, not a fact about the file the way a diagnostic or a change is.
+    auto paintRowMark = [&](int blockNumber, QColor color, int alpha) {
         const int row = visibleRowForBlock(blockNumber) - firstRow;
         if (row < 0 || row >= rowCount) {
             return;
         }
+        color.setAlpha(alpha);
         painter.fillRect(0, row * kRowHeight, width(), kRowHeight, color);
     };
 
     if (options_.vcsChanges) {
         const QHash<int, ChangeMarker> &markers = editor_->changeMarkers();
         for (auto it = markers.constBegin(); it != markers.constEnd(); ++it) {
-            paintRowMark(it.key(), changeMarkerColor(it.value().kind));
+            paintRowMark(it.key(), changeMarkerColor(it.value().kind), 170);
         }
     }
 
     if (options_.diagnostics) {
         for (const DiagnosticSpan &span : editor_->diagnosticSpans()) {
             const int blockNumber = editor_->document()->findBlock(span.start).blockNumber();
-            paintRowMark(blockNumber, span.color);
+            paintRowMark(blockNumber, span.color, 170);
         }
     }
 
@@ -235,21 +242,20 @@ void Minimap::paintOverlays(QPainter &painter, int firstRow, int rowCount)
         const QColor matchColor = palette().color(QPalette::Highlight);
         for (const QPair<int, int> &match : editor_->matchSelections()) {
             const int blockNumber = editor_->document()->findBlock(match.first).blockNumber();
-            paintRowMark(blockNumber, matchColor);
+            paintRowMark(blockNumber, matchColor, 130);
         }
     }
 
     if (options_.breakpoints) {
         const QColor breakpointColor(220, 60, 60);
         for (int blockNumber : editor_->breakpointLines()) {
-            paintRowMark(blockNumber, breakpointColor);
+            paintRowMark(blockNumber, breakpointColor, 200);
         }
     }
 
     if (options_.caretLine) {
-        QColor caretColor = palette().color(QPalette::Highlight);
-        caretColor.setAlpha(90);
-        paintRowMark(editor_->textCursor().blockNumber(), caretColor);
+        paintRowMark(editor_->textCursor().blockNumber(), palette().color(QPalette::Highlight),
+                     90);
     }
 }
 

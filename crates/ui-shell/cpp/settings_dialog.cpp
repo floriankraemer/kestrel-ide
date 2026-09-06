@@ -16,6 +16,7 @@
 #include "terminal_page.h"
 #include "terminal_sessions_panel.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -122,7 +123,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     pages->addWidget(appearance.widget);
 
     const EditorPage editor = buildEditorPage(&dialog, appSettings, editorTabs);
-    pages->addWidget(editor.widget);
+    const int editorIndex = pages->addWidget(editor.widget);
 
     // Editing commits on OK, like Keymap and Language Servers: the tab
     // width a user is halfway through typing is not a setting worth
@@ -194,6 +195,36 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
 
     QObject::connect(categoryList, &QListWidget::currentRowChanged, pages,
                       &QStackedWidget::setCurrentIndex);
+    // #199: a stacked page is only laid out once `setCurrentIndex` actually
+    // shows it, so the Editor page's "Show minimap" checkbox has no valid
+    // on-screen rect before that — report it fresh every time the category
+    // switches to Editor, the same "read it after the page it lives on is
+    // real" rule editingIndex's `settings_scope_switched` marker already
+    // follows for the Editing page's own tab-width spinner. And, like that
+    // marker, only `topLeft()`: a freshly current page's field column still
+    // reads as its full pre-layout width for one more turn (the same
+    // observation `settings_scope_switched`'s own comment makes about
+    // `tabWidthSpin`), so only the top-left corner is trustworthy this
+    // early — enough for a click near the checkbox's own glyph and label.
+    QObject::connect(categoryList, &QListWidget::currentRowChanged, &dialog,
+                      [pages, editorIndex](int index) {
+                          if (index != editorIndex) {
+                              return;
+                          }
+                          QTimer::singleShot(0, pages, [pages, editorIndex]() {
+                              auto *minimapCheck =
+                                pages->widget(editorIndex)->findChild<QCheckBox *>(
+                                  QStringLiteral("editorMinimapEnabled"));
+                              if (minimapCheck == nullptr) {
+                                  return;
+                              }
+                              const QPoint topLeft = minimapCheck->mapToGlobal(QPoint(0, 0));
+                              e2eMark(QStringLiteral("{\"ev\":\"editor_page_shown\","
+                                                      "\"minimap_check_top_left\":[%1,%2]}")
+                                        .arg(topLeft.x())
+                                        .arg(topLeft.y()));
+                          });
+                      });
     categoryList->setCurrentRow(0);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
@@ -359,11 +390,26 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
           : QRect();
         QPushButton *okButton = buttons->button(QDialogButtonBox::Ok);
         const QRect okRect(okButton->mapToGlobal(QPoint(0, 0)), okButton->size());
+        // #199: the Editor category row, so an E2E flow can switch to it
+        // without guessing tab order. Its own "Show minimap" checkbox is
+        // *not* read here — `pages->widget(editorIndex)` is still the
+        // un-laid-out page at this point (only the page `categoryList`
+        // currently shows — Appearance, at dialog-open time — has ever
+        // been given a real size by the QStackedWidget), so its checkbox
+        // reports the default QWidget geometry rather than where it will
+        // actually be once shown. `editor_page_shown`, fired below once the
+        // category is actually switched to, is where that rect comes from
+        // — the same lesson `editingIndex`'s `settings_scope_switched`
+        // marker already encodes for the Editing page.
+        const QRect editorCategoryRect(
+          categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(1)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(1)).size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"settings_dialog\","
                                 "\"scope_rect\":%1,\"editing_category_rect\":%2,"
-                                "\"tab_width_rect\":%3,\"ok_rect\":%4}")
+                                "\"tab_width_rect\":%3,\"ok_rect\":%4,"
+                                "\"editor_category_rect\":%5}")
                   .arg(rectJson(scopeRect), rectJson(editingCategoryRect), rectJson(tabWidthRect),
-                       rectJson(okRect)));
+                       rectJson(okRect), rectJson(editorCategoryRect)));
     });
     QObject::connect(&dialog, &QDialog::finished, &dialog, [](int result) {
         e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"settings_dialog\","

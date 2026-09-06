@@ -8,6 +8,7 @@ class QEvent;
 class QMouseEvent;
 class QPaintEvent;
 class QPainter;
+class QResizeEvent;
 class QWheelEvent;
 
 namespace ui_shell {
@@ -50,6 +51,10 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void wheelEvent(QWheelEvent *event) override;
     void leaveEvent(QEvent *event) override;
+    // Reports this strip's on-screen rect (issue #199's E2E flow), the same
+    // "read the rect from the widget that owns the layout" convention
+    // ChangesPanel::showEvent uses for its own dock-relative controls.
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     void ensureCodeCache(int firstRow, int rowCount);

@@ -14,6 +14,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QResizeEvent>
 #include <QScrollBar>
 #include <QTextBlock>
 #include <QTextLayout>
@@ -92,8 +93,21 @@ QRect Minimap::sliderRect() const
 
 void Minimap::scrollToPixelY(int y)
 {
-    const int row = firstRow() + qMax(0, y) / kRowHeight;
-    editor_->verticalScrollBar()->setValue(row);
+    // The inverse of firstRow(): a click's position as a fraction of the
+    // *whole strip height* maps to that same fraction of the scrollbar's
+    // whole range, which is what makes a press at the very bottom of the
+    // strip reach the very bottom of the document regardless of how much
+    // of the file the currently rendered window happens to cover. Mapping
+    // through the rendered window's own firstRow() here (an earlier bug)
+    // instead confined a click to the ~few hundred rows already on screen.
+    QScrollBar *scrollBar = editor_->verticalScrollBar();
+    const int maxScroll = scrollBar->maximum();
+    if (maxScroll <= 0) {
+        return;
+    }
+    const int clampedY = qBound(0, y, qMax(1, height()));
+    const double fraction = static_cast<double>(clampedY) / qMax(1, height());
+    scrollBar->setValue(static_cast<int>(fraction * maxScroll));
 }
 
 int Minimap::visibleRowForBlock(int blockNumber) const
@@ -306,6 +320,17 @@ void Minimap::mouseReleaseEvent(QMouseEvent * /*event*/)
 void Minimap::wheelEvent(QWheelEvent *event)
 {
     QCoreApplication::sendEvent(editor_->verticalScrollBar(), event);
+}
+
+void Minimap::resizeEvent(QResizeEvent * /*event*/)
+{
+    const QRect screenRect(mapToGlobal(QPoint(0, 0)), size());
+    e2eMark(QStringLiteral("{\"ev\":\"minimap_shown\","
+                            "\"rect\":[%1,%2,%3,%4]}")
+              .arg(screenRect.x())
+              .arg(screenRect.y())
+              .arg(screenRect.width())
+              .arg(screenRect.height()));
 }
 
 void Minimap::leaveEvent(QEvent * /*event*/)

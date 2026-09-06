@@ -1,5 +1,6 @@
 #include "code_editor.h"
 
+#include "e2e_mark.h"
 #include "theme.h"
 #include <QContextMenuEvent>
 #include <QMenu>
@@ -698,6 +699,8 @@ void CodeEditor::setMinimapOptions(const MinimapOptions &options)
         // runMarkerWidth uses — have to be recomputed, not just repainted.
         updateLineNumberAreaWidth(0);
         layoutMinimap();
+        e2eMark(QStringLiteral("{\"ev\":\"minimap_visible\",\"enabled\":%1}")
+                  .arg(options.enabled ? QLatin1String("true") : QLatin1String("false")));
     }
 }
 

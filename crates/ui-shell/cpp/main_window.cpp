@@ -630,7 +630,7 @@ void buildMainWindow(AppSettings *appSettings,
     progress(1, QObject::tr("Loading settings..."));
 
     auto *window = new IdeMainWindow();
-    window->setWindowTitle(QStringLiteral("IDE"));
+    window->setWindowTitle(QStringLiteral("Kestrel"));
 
     // Created by run_app() before the splash so the persisted theme is known
     // early enough to paint it; adopted by the window here as before.

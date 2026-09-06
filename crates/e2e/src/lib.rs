@@ -29,7 +29,7 @@ pub use wait::{wait_for, wait_for_within};
 
 /// The main window's title, as `buildMainWindow` sets it. Anchored: the
 /// Search Everywhere and preview dialogs are separate toplevels.
-const MAIN_WINDOW_TITLE: &str = "^IDE$";
+const MAIN_WINDOW_TITLE: &str = "^Kestrel$";
 
 /// A position in the marker stream, from [`Ide::mark`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

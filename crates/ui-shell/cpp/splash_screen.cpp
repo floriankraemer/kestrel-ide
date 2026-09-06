@@ -46,7 +46,7 @@ QPixmap renderBackground(const ThemeColors &colors, qreal devicePixelRatio)
     // Centred in the area above the progress bar and the stage message.
     painter.drawText(panel.adjusted(Margin, Margin, -Margin,
                                     -Margin - MessageHeight - ProgressBarHeight),
-                     Qt::AlignCenter, QStringLiteral("IDE"));
+                     Qt::AlignCenter, QStringLiteral("Kestrel"));
 
     return pixmap;
 }

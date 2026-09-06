@@ -18,6 +18,7 @@
 #include "file_history_panel.h"
 #include "find_bar.h"
 #include "find_usages_panel.h"
+#include "help_menu.h"
 #include "hierarchy_panel.h"
 #include "hex_viewer.h"
 #include "icon_cache.h"
@@ -1049,6 +1050,9 @@ void buildMainWindow(AppSettings *appSettings,
 
     buildAiMenu(window, aiChat, editorTabs, appSettings, *actions, central.docks,
                 central.aiChatPanel);
+
+    // Last in the bar, where every desktop convention puts Help.
+    buildHelpMenu(window, appSettings, *actions);
 
     QObject::connect(undoAction, &QAction::triggered, window, [editorTabs]() {
         if (auto *editor = editorTabs->currentEditor()) {

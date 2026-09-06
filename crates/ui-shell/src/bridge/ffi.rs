@@ -14,6 +14,7 @@
 // here, next to the bridge, and defined in the feature module that owns
 // them.
 use crate::bridge::ai::chat::AiChatRust;
+use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::debug::DebugServiceRust;
@@ -6019,6 +6020,45 @@ mod ffi {
         /// Discard the draft, restoring what was last loaded or committed.
         #[qinvokable]
         fn revert(self: &RunConfigEditor);
+    }
+
+    extern "RustQt" {
+        /// What this build is, for the About dialog: the product name, the
+        /// crate version, the commit it was built from and where the project
+        /// lives.
+        ///
+        /// Stateless, so the view constructs one where it needs it
+        /// (`help_menu.cpp`) rather than being handed one — the same shape
+        /// `IconProvider` already takes.
+        #[qobject]
+        type AppInfo = super::AppInfoRust;
+
+        /// The product name.
+        #[qinvokable]
+        #[cxx_name = "appName"]
+        fn app_name(self: &AppInfo) -> QString;
+
+        /// The `app`/`ui-shell` crate version, e.g. `0.1.0`.
+        #[qinvokable]
+        #[cxx_name = "appVersion"]
+        fn app_version(self: &AppInfo) -> QString;
+
+        /// The abbreviated commit this binary was built from, or `unknown`
+        /// when the build had no repository or no `git` to ask.
+        #[qinvokable]
+        #[cxx_name = "gitHash"]
+        fn git_hash(self: &AppInfo) -> QString;
+
+        /// That commit's date as `YYYY-MM-DD`, or `unknown` on the same
+        /// terms as [`Self::git_hash`].
+        #[qinvokable]
+        #[cxx_name = "gitDate"]
+        fn git_date(self: &AppInfo) -> QString;
+
+        /// The project's public repository URL.
+        #[qinvokable]
+        #[cxx_name = "projectUrl"]
+        fn project_url(self: &AppInfo) -> QString;
     }
 
     unsafe extern "C++" {

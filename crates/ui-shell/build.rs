@@ -227,9 +227,82 @@ fn set_ads_static_define() {
     std::env::set_var("CXXFLAGS", flags);
 }
 
+/// What the About dialog shows: the commit this binary was built from and
+/// when that commit was authored.
+///
+/// Read here rather than at runtime because the shipped binary has no
+/// repository of its own to ask — a runtime `git` call in an installed build
+/// would report whatever project the user happens to have open, which is a
+/// different fact wearing the same name.
+///
+/// Every failure degrades to `unknown`: a source tarball has no `.git`, a
+/// minimal build image may have no `git`, and neither is a reason to fail a
+/// build over a line in a dialog.
+fn emit_build_metadata() {
+    const UNKNOWN: &str = "unknown";
+
+    let git = |args: &[&str]| -> String {
+        Command::new("git")
+            // Builds run in the container as root against a bind-mounted,
+            // host-owned tree, which is exactly what git's dubious-ownership
+            // guard refuses. Without this every containerised build — which
+            // is every build (CLAUDE.md) — reports `unknown`.
+            .args(["-c", "safe.directory=*"])
+            .args(args)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+            .unwrap_or_else(|| UNKNOWN.to_string())
+    };
+
+    println!(
+        "cargo:rustc-env=KESTREL_GIT_HASH={}",
+        git(&["rev-parse", "--short", "HEAD"])
+    );
+    println!(
+        "cargo:rustc-env=KESTREL_GIT_DATE={}",
+        git(&["log", "-1", "--date=format:%Y-%m-%d", "--format=%cd"])
+    );
+
+    // No separate build timestamp: `git` is the only clock formatter here
+    // without adding a `time`/`chrono` build dependency, and the commit date
+    // is the date the About dialog is actually claiming — the version this
+    // build is based on.
+
+    // This script has opted out of cargo's rerun-on-any-change default (see
+    // main()), so without these the hash is frozen at whatever it was the
+    // first time the crate compiled. `.git/HEAD` alone is not enough: it only
+    // changes when the *branch* does, and committing on the same branch moves
+    // the ref file it points at instead.
+    let git_dir = Path::new("../../.git");
+    let head = git_dir.join("HEAD");
+    if head.exists() {
+        println!("cargo:rerun-if-changed={}", head.display());
+        if let Some(reference) = std::fs::read_to_string(&head)
+            .ok()
+            .and_then(|text| text.trim().strip_prefix("ref: ").map(str::to_string))
+        {
+            // Only when it is still a loose ref; a packed one lives in
+            // `packed-refs`, which the next line covers.
+            let ref_path = git_dir.join(&reference);
+            if ref_path.exists() {
+                println!("cargo:rerun-if-changed={}", ref_path.display());
+            }
+        }
+        let packed = git_dir.join("packed-refs");
+        if packed.exists() {
+            println!("cargo:rerun-if-changed={}", packed.display());
+        }
+    }
+}
+
 fn main() {
     let ads_dir = Path::new("../../third_party/qt-advanced-docking-system/src");
     set_ads_static_define();
+    emit_build_metadata();
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let is_windows = target_os == "windows";
     // ads_globals.h only pulls in xcb/QPA on Unix-not-macOS (matches
@@ -273,6 +346,9 @@ fn main() {
         // F0-7: the dock show/hide registry. Free of Q_OBJECT (plain class,
         // no signals/slots), so only the source is listed.
         .cpp_file("cpp/dock_layout.cpp")
+        // The Help menu and its About dialog. No Q_OBJECT (free functions and
+        // a locally built QDialog), so only the source is listed.
+        .cpp_file("cpp/help_menu.cpp")
         .cpp_file("cpp/rounded_corners.cpp")
         .cpp_file("cpp/panel_shadow.cpp")
         // First hand-written (non-generated) QObject in this crate: header

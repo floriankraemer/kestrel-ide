@@ -708,6 +708,14 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "Alt+4",
     },
+    // Last, because the Help menu is last in the bar. Unbound by default:
+    // every platform's convention for About is the menu, not a key.
+    ActionDef {
+        id: "help.about",
+        label: "About Kestrel",
+        category: "Help",
+        default_shortcut: "",
+    },
 ];
 
 /// The action with this id, or `None` for an id that no longer exists (an old

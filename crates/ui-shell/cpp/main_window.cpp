@@ -1190,7 +1190,8 @@ int run_app()
           // is still sound, since Qt holds a posted event queued rather
           // than dropping it, and delivers it the moment the loop begins.
           splash.finish(window);
-          e2eMark("{\"ev\":\"main_window_shown\"}");
+          e2eMark(QStringLiteral("{\"ev\":\"main_window_shown\",\"maximized\":%1}")
+                    .arg(window->isMaximized() ? "true" : "false"));
       });
 
     return QApplication::exec();

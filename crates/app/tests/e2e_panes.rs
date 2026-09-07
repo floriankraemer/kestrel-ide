@@ -97,6 +97,101 @@ fn groups_of(node: &serde_json::Value) -> Vec<&serde_json::Value> {
     }
 }
 
+/// The saved dock layout as plain XML. ADS's `saveState` is `qCompress`ed
+/// XML (a 4-byte big-endian length, then a zlib stream) stored base64 in
+/// `window_state`; `e2e_vcs.rs` decodes it the same way for the same reason —
+/// it is the only readable record of which docks were open where.
+fn saved_dock_layout(ide: &Ide) -> String {
+    use base64::Engine;
+    use std::io::Read;
+    let settings = app_config::load(&ide.config_dir()).expect("the settings the app just wrote");
+    let state = base64::engine::general_purpose::STANDARD
+        .decode(&settings.window_state)
+        .expect("window_state is base64");
+    if state.starts_with(b"<?xml") {
+        return String::from_utf8(state).expect("ADS state is XML text");
+    }
+    let mut xml = Vec::new();
+    flate2::read::ZlibDecoder::new(&state[4..])
+        .read_to_end(&mut xml)
+        .expect("window_state is qCompress'ed XML");
+    String::from_utf8(xml).expect("ADS state is XML text")
+}
+
+/// Whether the restored window reported itself maximized as it came up.
+fn shown_maximized(ide: &Ide) -> bool {
+    ide.wait_for_ev(Mark::start(), "main_window_shown")["maximized"] == true
+}
+
+/// The window comes back maximized, and the Problems dock comes back open.
+///
+/// Two halves of "reopen the way I left it" that the split-pane flow below
+/// does not reach. Neither can be driven by a gesture: there is no window
+/// manager under bare Xvfb, so nothing outside the app can maximize its
+/// window, and a dock's open state is only ever legible in the ADS blob.
+/// So the state is seeded the way `e2e_vcs.rs` seeds a stale layout, and
+/// what is asserted is the full round trip — the app reads the flag, comes
+/// up that way, and writes back what it came up as rather than dropping it.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_maximized_window_and_open_docks_survive_a_restart() {
+    let name = "e2e_maximized_window_and_open_docks_survive_a_restart";
+    let mut ide = Ide::launch(name, APP, fixture("tiny"));
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    assert!(
+        !shown_maximized(&ide),
+        "a first launch with nothing persisted must not come up maximized"
+    );
+
+    // Open the Problems dock, so there is a dock whose open state the next
+    // launch has to bring back. It starts hidden (`main_window.cpp`), which
+    // is what makes it worth asserting. No marker reports a dock opening, so
+    // the event loop is drained rather than slept on, and the assertion is
+    // made against the layout the app writes on the way out.
+    //
+    // Problems rather than Terminal: the terminal widget forwards every
+    // keystroke to its shell, so once it has the focus the Ctrl+Q that ends
+    // this flow never reaches the menu.
+    ide.key("ctrl+alt+p");
+    ide.sync(&mcp);
+    ide.focus_main();
+    assert_eq!(ide.quit(), 0);
+
+    assert!(
+        saved_dock_layout(&ide).contains("Name=\"Problems\" Closed=\"0\""),
+        "the problems dock was open when the window closed, and the saved layout does not say so"
+    );
+
+    // Maximized is a flag the app can only ever observe, never be given by
+    // a gesture here, so it is seeded rather than gestured.
+    let mut settings = app_config::load(&ide.config_dir()).expect("settings just written");
+    settings.window_maximized = true;
+    app_config::save(&ide.config_dir(), &settings).expect("seeding the maximized flag");
+
+    ide.relaunch();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    assert!(
+        shown_maximized(&ide),
+        "the window was left maximized and did not come back that way"
+    );
+    assert!(
+        saved_dock_layout(&ide).contains("Name=\"Problems\" Closed=\"0\""),
+        "the problems dock did not survive the restart"
+    );
+
+    ide.focus_main();
+    assert_eq!(ide.quit(), 0);
+
+    // And the flag is written back, not merely read: a window that came up
+    // maximized and was never un-maximized must still be maximized on disk.
+    let settings = app_config::load(&ide.config_dir()).expect("settings just written");
+    assert!(
+        settings.window_maximized,
+        "closing a maximized window persisted it as un-maximized"
+    );
+}
+
 /// Split the editor, quit, and come back to the same layout.
 ///
 /// `app-config`'s TOML round-trip is unit-tested; *the view reconstructing

@@ -10,6 +10,7 @@ members = [
     "crates/pty-core",
     "crates/terminal-core",
     "crates/index-core",
+    "crates/diagnostics-core",
     "crates/lsp-core",
     "crates/ai-chat-core",
     "crates/plugin-api",

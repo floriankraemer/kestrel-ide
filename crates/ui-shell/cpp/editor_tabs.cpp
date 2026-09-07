@@ -953,6 +953,10 @@ void EditorTabs::addDiffTab(QTabWidget *group, quint64 tabId, const QString &tit
     const QString path = docManager_->tabPath(tabId);
     auto *diffView = new DiffView(docManager_->diffLeftText(tabId), docManager_->diffRightText(tabId),
                                     docManager_->diffHunks(tabId), docManager_->diffSpans(tabId), path);
+    diffView->setDiff(docManager_->diffHunks(tabId), docManager_->diffSpans(tabId),
+                      docManager_->diffRowsBetween(docManager_->diffLeftText(tabId),
+                                                   docManager_->diffRightText(tabId),
+                                                   FfiWhitespaceMode::Exact));
     auto *page = new DiffViewPage(diffView, docManager_->diffLeftLabel(tabId),
                                     docManager_->diffRightLabel(tabId), group);
     page->setProperty("tabId", QVariant::fromValue(tabId));
@@ -961,8 +965,9 @@ void EditorTabs::addDiffTab(QTabWidget *group, quint64 tabId, const QString &tit
         const QString right = docManager_->diffRightText(tabId);
         const FfiWhitespaceMode mode =
           ignore ? FfiWhitespaceMode::IgnoreAll : FfiWhitespaceMode::Exact;
-        diffView->setHunks(docManager_->diffHunksBetween(left, right, mode),
-                             docManager_->diffSpansBetween(left, right, mode, FfiHighlightMode::Words));
+        diffView->setDiff(docManager_->diffHunksBetween(left, right, mode),
+                          docManager_->diffSpansBetween(left, right, mode, FfiHighlightMode::Words),
+                          docManager_->diffRowsBetween(left, right, mode));
     };
     group->addTab(page, title);
     renderTabText(group, group->indexOf(page), title, false);

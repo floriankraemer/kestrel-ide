@@ -664,6 +664,14 @@ void CodeEditor::setOccurrenceSpans(const QVector<OccurrenceSpan> &spans)
     highlightCurrentLine();
 }
 
+void CodeEditor::setDiffSelections(const QVector<DiffLineBackground> &backgrounds,
+                                   const QVector<DiffInlineSpan> &spans)
+{
+    diffBackgrounds_ = backgrounds;
+    diffSpans_ = spans;
+    highlightCurrentLine();
+}
+
 void CodeEditor::setInlayHints(const QVector<InlayHintSpan> &hints)
 {
     inlayHints_ = hints;
@@ -864,6 +872,10 @@ void CodeEditor::highlightCurrentLine()
     line.cursor = textCursor();
     line.cursor.clearSelection();
     selections.append(line);
+
+    // Diff backgrounds sit over the current-line band and under everything
+    // that marks a *position* (matches, occurrences, carets).
+    selections.append(diffSelections(document(), diffBackgrounds_, diffSpans_));
 
     const QColor matchColor = tinted(palette().color(QPalette::Base), 190, 135);
     const QColor currentMatchColor = tinted(palette().color(QPalette::Base), 260, 175);

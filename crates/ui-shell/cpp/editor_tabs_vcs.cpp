@@ -291,14 +291,23 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
 
     auto *diffView =
       new DiffView(headText, editor, vcsService_->hunks(path), ::rust::Vec<FfiInlineSpan>(), path);
+    {
+        const QString workingText = editor->toPlainText();
+        diffView->setDiff(
+          docManager_->diffHunksBetween(headText, workingText, FfiWhitespaceMode::Exact),
+          docManager_->diffSpansBetween(headText, workingText, FfiWhitespaceMode::Exact,
+                                        FfiHighlightMode::Words),
+          docManager_->diffRowsBetween(headText, workingText, FfiWhitespaceMode::Exact));
+    }
     auto *page = new DiffViewPage(diffView, tr("HEAD"), tr("Working Tree"));
     page->onIgnoreWhitespaceToggled = [this, diffView, headText, editor](bool ignore) {
         const QString workingText = editor->toPlainText();
         const FfiWhitespaceMode mode =
           ignore ? FfiWhitespaceMode::IgnoreAll : FfiWhitespaceMode::Exact;
-        diffView->setHunks(
+        diffView->setDiff(
           docManager_->diffHunksBetween(headText, workingText, mode),
-          docManager_->diffSpansBetween(headText, workingText, mode, FfiHighlightMode::Words));
+          docManager_->diffSpansBetween(headText, workingText, mode, FfiHighlightMode::Words),
+          docManager_->diffRowsBetween(headText, workingText, mode));
     };
 
     auto *window = new DiffWindow(nullptr, Qt::Window);

@@ -218,6 +218,25 @@ impl ffi::VcsService {
         }
     }
 
+    pub fn commit_log(mut self: Pin<&mut Self>, max: u32) {
+        let max = if max == 0 { HISTORY_MAX } else { max as usize };
+        let qt_thread = self.as_mut().qt_thread();
+        self.as_ref().push_job(move |worker: &VcsWorker| {
+            let result = worker.history_cache.log(&worker.repo, Some(max));
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
+                Ok(entries) => {
+                    let entries: Vec<ffi::FfiLogEntry> =
+                        entries.iter().map(to_ffi_log_entry).collect();
+                    service.as_mut().commit_log_ready(entries);
+                }
+                Err(err) => {
+                    let result = to_ffi_result(&err);
+                    service.as_mut().vcs_failed(result);
+                }
+            });
+        });
+    }
+
     pub fn blame(mut self: Pin<&mut Self>, path: &QString) {
         let path = path.to_string();
         let qt_thread = self.as_mut().qt_thread();

@@ -5467,6 +5467,15 @@ mod ffi {
         #[cxx_name = "fileHistory"]
         fn file_history(self: Pin<&mut VcsService>, path: &QString);
 
+        /// The repository-wide commit log reachable from `HEAD`, newest
+        /// first, for the repo-wide log panel — `0` means the default page
+        /// size; a caller re-asks with a larger `max` for "Load more"
+        /// rather than this crossing the seam as a cursor. Answers via
+        /// `commitLogReady`.
+        #[qinvokable]
+        #[cxx_name = "commitLog"]
+        fn commit_log(self: Pin<&mut VcsService>, max: u32);
+
         /// `git blame --porcelain -- <path>`, parsed; answers via
         /// `blameReady`.
         #[qinvokable]
@@ -5514,6 +5523,12 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "historyReady"]
         fn history_ready(self: Pin<&mut VcsService>, path: QString, entries: Vec<FfiLogEntry>);
+
+        /// `commitLog`'s answer. No path tag — unlike `fileHistory`, there
+        /// is only ever one repo-wide log in flight at a time.
+        #[qsignal]
+        #[cxx_name = "commitLogReady"]
+        fn commit_log_ready(self: Pin<&mut VcsService>, entries: Vec<FfiLogEntry>);
 
         /// `blame`'s answer, tagged with the path it was requested for —
         /// see `historyReady` on why.

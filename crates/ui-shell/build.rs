@@ -493,6 +493,12 @@ fn main() {
         .cpp_file("cpp/history_list_view.h")
         .cpp_file("cpp/history_list_view.cpp")
         .cpp_file("cpp/file_history_panel.cpp")
+        .cpp_file("cpp/commit_log_panel.cpp")
+        .cpp_file("cpp/commit_detail_panel.cpp")
+        // Q_OBJECT (needed for `qobject_cast` in
+        // `CommitDetailPanel::closeTab`), so its header is listed too.
+        .cpp_file("cpp/commit_detail_view.h")
+        .cpp_file("cpp/commit_detail_view.cpp")
         .cpp_file("cpp/vcs_menu.cpp")
         // F4-11/F4-12: the Run Console dock, its toolbar, the run
         // configuration dialog and the Run menu. Q_OBJECT-free, same as the

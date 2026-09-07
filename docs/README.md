@@ -74,6 +74,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan and 
 - [Markdown and Mermaid preview plan](architecture/markdown-preview-plan.md) — the plugin host's third contribution point and its first content-returning wasm export; comrak + merman + resvg rendering.
 - [Mermaid documents and preview mode plan](architecture/mermaid-documents-and-preview-mode-plan.md) — standalone Mermaid files as a previewed, highlighted file type, and the in-tab edit/view toggle; carries its own Progress table.
 - [Window state and layouts plan](architecture/window-state-and-layouts-plan.md) — the maximized window comes back maximized, and named workspace layouts saved per user or per project.
+- [PHP tooling plan](architecture/php-tooling-plan.md) — PHPStan, PHP_CodeSniffer and PHPUnit integrations on a generalized diagnostics model and a new analyzers/test-frameworks contribution point; carries its own Progress table.
 
 - [LSP conformance](architecture/lsp-conformance.md) — checking the LSP client against a real rust-analyzer; the executable expectations file and why it is not a per-PR gate.
 

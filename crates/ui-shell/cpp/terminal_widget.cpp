@@ -12,8 +12,9 @@
 #include <QContextMenuEvent>
 #include <QDesktopServices>
 #include <QEvent>
+#include <QFocusEvent>
 #include <QFontDatabase>
-#include <QFontMetrics>
+#include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QKeySequence>
 #include <QMenu>
@@ -26,6 +27,21 @@
 #include <QUrl>
 
 namespace ui_shell {
+
+namespace {
+
+// The widget's own backdrop (painted once per frame before any run): a
+// run whose background matches this is skipped rather than re-filled — the
+// perf win `paintEvent`'s per-run `fillRect` call exists to protect, since
+// most of a terminal's cells are plain text on the default background.
+const QColor kBlackBackground = Qt::black;
+
+// Selection tint (T2): fills a selected run's background without touching
+// its foreground. A placeholder colour — T3 replaces the colour source
+// (a real palette) without touching this mechanism.
+const QColor kSelectionBackground(38, 79, 150);
+
+} // namespace
 
 TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId, QString shellId,
                                 AppSettings *appSettings, OpenAt openAt, QWidget *parent)
@@ -57,9 +73,18 @@ TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId
 
     font_ = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     font_.setPointSize(10);
-    const QFontMetrics metrics(font_);
-    cellWidth_ = std::max(1, metrics.horizontalAdvance(QLatin1Char('M')));
-    cellHeight_ = std::max(1, metrics.height());
+    fontBold_ = font_;
+    fontBold_.setBold(true);
+    fontItalic_ = font_;
+    fontItalic_.setItalic(true);
+    fontBoldItalic_ = font_;
+    fontBoldItalic_.setBold(true);
+    fontBoldItalic_.setItalic(true);
+
+    const QFontMetricsF metrics(font_);
+    cellWidth_ = std::max(1, qRound(metrics.horizontalAdvance(QLatin1Char('M'))));
+    cellHeight_ = qRound(metrics.height());
+    ascent_ = metrics.ascent();
 
     QPalette pal = palette();
     pal.setColor(QPalette::Window, Qt::black);
@@ -71,6 +96,7 @@ TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId
     // shared by every session, so filter to this widget's own.
     connect(supervisor_, &TerminalSupervisor::gridUpdated, this, [this](quint64 sessionId) {
         if (sessionId == sessionId_) {
+            snapshotStale_ = true;
             update();
         }
     });
@@ -105,6 +131,7 @@ void TerminalWidget::syncGridSizeToWidget()
     }
     cols_ = newCols;
     rows_ = newRows;
+    snapshotStale_ = true;
     if (!started_) {
         started_ = true;
         supervisor_->start(sessionId_, shellId_, rows_, cols_);
@@ -113,46 +140,143 @@ void TerminalWidget::syncGridSizeToWidget()
     }
 }
 
+TerminalWidget::CellStyle TerminalWidget::styleFor(const FfiTerminalCell &cell, quint32 row, quint32 col,
+                                                     quint32 cursorRow, quint32 cursorCol) const
+{
+    QColor fg(cell.fg_r, cell.fg_g, cell.fg_b);
+    QColor bg(cell.bg_r, cell.bg_g, cell.bg_b);
+    // An SGR-inverse cell swaps fg/bg — unrelated to selection or the
+    // cursor, both handled below.
+    if (cell.inverse) {
+        std::swap(fg, bg);
+    }
+    if (cell.selected) {
+        // Tint the background only; the glyph keeps its normal foreground.
+        bg = kSelectionBackground;
+    }
+    return CellStyle{ fg,      bg,       cell.bold,
+                       cell.italic,  cell.underline, cell.selected,
+                       row == cursorRow && col == cursorCol };
+}
+
+const QFont &TerminalWidget::fontFor(bool bold, bool italic) const
+{
+    if (bold && italic) {
+        return fontBoldItalic_;
+    }
+    if (bold) {
+        return fontBold_;
+    }
+    if (italic) {
+        return fontItalic_;
+    }
+    return font_;
+}
+
+void TerminalWidget::paintRunBody(QPainter &painter, const QColor &fg, const QColor &bg, bool bold,
+                                   bool italic, bool underline, const QRect &rect, qreal baselineY,
+                                   const std::u32string &text, bool forceFill)
+{
+    if (forceFill || bg != kBlackBackground) {
+        painter.fillRect(rect, bg);
+    }
+    const bool blank = std::all_of(text.begin(), text.end(), [](char32_t c) { return c == U' '; });
+    if (!text.empty() && !blank) {
+        painter.setFont(fontFor(bold, italic));
+        painter.setPen(fg);
+        const QString run = QString::fromUcs4(text.data(), static_cast<qsizetype>(text.size()));
+        painter.drawText(QPointF(rect.left(), baselineY), run);
+    }
+    if (underline) {
+        painter.setPen(fg);
+        const int y = static_cast<int>(baselineY) + 1;
+        painter.drawLine(rect.left(), y, rect.left() + rect.width(), y);
+    }
+}
+
 void TerminalWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
-    painter.setFont(font_);
-    painter.fillRect(rect(), Qt::black);
+    painter.fillRect(rect(), kBlackBackground);
 
-    const quint32 rows = supervisor_->gridRows(sessionId_);
-    const quint32 cols = supervisor_->gridCols(sessionId_);
+    // The actual perf win (T2): re-snapshot only when something changed the
+    // grid since the last paint, not on every repaint.
+    if (snapshotStale_) {
+        cachedSnapshot_ = supervisor_->snapshot(sessionId_);
+        snapshotStale_ = false;
+    }
+
+    const quint32 rows = cachedSnapshot_.rows;
+    const quint32 cols = cachedSnapshot_.cols;
     if (rows == 0 || cols == 0) {
         return;
     }
-    const rust::Vec<FfiTerminalCell> cells = supervisor_->gridCells(sessionId_);
-    const quint32 cursorRow = supervisor_->cursorRow(sessionId_);
-    const quint32 cursorCol = supervisor_->cursorCol(sessionId_);
+    const rust::Vec<FfiTerminalCell> &cells = cachedSnapshot_.cells;
+    const quint32 cursorRow = cachedSnapshot_.cursor_row;
+    const quint32 cursorCol = cachedSnapshot_.cursor_col;
+    const bool focused = hasFocus();
 
     for (quint32 row = 0; row < rows; ++row) {
-        for (quint32 col = 0; col < cols; ++col) {
+        quint32 col = 0;
+        bool prevWide = false;
+        while (col < cols) {
             const std::size_t idx = static_cast<std::size_t>(row) * cols + col;
             if (idx >= cells.size()) {
-                continue;
+                break;
             }
-            const FfiTerminalCell &cell = cells[idx];
+            const bool isSpacer = prevWide;
+            const CellStyle style = styleFor(cells[idx], row, col, cursorRow, cursorCol);
 
-            QColor fg(cell.fg_r, cell.fg_g, cell.fg_b);
-            QColor bg(cell.bg_r, cell.bg_g, cell.bg_b);
-            // An SGR-inverse cell swaps fg/bg; the cursor block does the
-            // same on top of whatever the cell already is, so landing on an
-            // already-inverse cell cancels back out (XOR).
-            // A selected cell inverts on top of that again, so selecting an
-            // already-inverse cell cancels back out the same way.
-            if (cell.inverse != (row == cursorRow && col == cursorCol) != cell.selected) {
-                std::swap(fg, bg);
+            std::u32string text;
+            if (!isSpacer) {
+                text.push_back(static_cast<char32_t>(cells[idx].character));
+            }
+            const quint32 runStart = col;
+            prevWide = cells[idx].wide;
+            ++col;
+
+            // Extend the run while every cell shares this style — the
+            // WIDE_CHAR_SPACER half of a wide glyph shares its leading
+            // cell's style, so it merges into the run too; only its
+            // character is skipped (already painted by the glyph itself).
+            while (col < cols) {
+                const std::size_t nextIdx = static_cast<std::size_t>(row) * cols + col;
+                if (nextIdx >= cells.size()) {
+                    break;
+                }
+                const bool nextIsSpacer = prevWide;
+                const CellStyle nextStyle = styleFor(cells[nextIdx], row, col, cursorRow, cursorCol);
+                if (!(nextStyle == style)) {
+                    break;
+                }
+                if (!nextIsSpacer) {
+                    text.push_back(static_cast<char32_t>(cells[nextIdx].character));
+                }
+                prevWide = cells[nextIdx].wide;
+                ++col;
             }
 
-            const QRect cellRect(static_cast<int>(col) * cellWidth_,
-                                  static_cast<int>(row) * cellHeight_, cellWidth_, cellHeight_);
-            painter.fillRect(cellRect, bg);
-            painter.setPen(fg);
-            painter.drawText(cellRect, Qt::AlignLeft | Qt::AlignVCenter, cell.character);
+            const QRect runRect(static_cast<int>(runStart) * cellWidth_, static_cast<int>(row) * cellHeight_,
+                                 static_cast<int>(col - runStart) * cellWidth_, cellHeight_);
+            const qreal baselineY = static_cast<qreal>(row) * cellHeight_ + ascent_;
+
+            if (style.isCursor) {
+                if (focused) {
+                    // Filled block in the (placeholder) cursor colour, the
+                    // glyph drawn in the background colour on top.
+                    paintRunBody(painter, style.bg, style.fg, style.bold, style.italic, style.underline,
+                                 runRect, baselineY, text, /*forceFill=*/true);
+                } else {
+                    paintRunBody(painter, style.fg, style.bg, style.bold, style.italic, style.underline,
+                                 runRect, baselineY, text, /*forceFill=*/false);
+                    painter.setPen(style.fg);
+                    painter.drawRect(runRect.adjusted(0, 0, -1, -1));
+                }
+            } else {
+                paintRunBody(painter, style.fg, style.bg, style.bold, style.italic, style.underline, runRect,
+                             baselineY, text, /*forceFill=*/false);
+            }
         }
     }
 
@@ -245,6 +369,7 @@ void TerminalWidget::mousePressEvent(QMouseEvent *event)
         supervisor_->selectionStart(sessionId_, static_cast<quint32>(cell.y()),
                                      static_cast<quint32>(cell.x()), rightHalf(event->pos()),
                                      FfiSelectionKind::Line);
+        snapshotStale_ = true;
         dragging_ = true;
         update();
         event->accept();
@@ -265,6 +390,7 @@ void TerminalWidget::mousePressEvent(QMouseEvent *event)
     supervisor_->selectionStart(sessionId_, static_cast<quint32>(cell.y()),
                                  static_cast<quint32>(cell.x()), rightHalf(event->pos()),
                                  FfiSelectionKind::Simple);
+    snapshotStale_ = true;
     dragging_ = true;
     update();
     event->accept();
@@ -276,6 +402,7 @@ void TerminalWidget::mouseMoveEvent(QMouseEvent *event)
         const QPoint cell = cellAt(event->pos());
         supervisor_->selectionUpdate(sessionId_, static_cast<quint32>(cell.y()),
                                       static_cast<quint32>(cell.x()), rightHalf(event->pos()));
+        snapshotStale_ = true;
         update();
         event->accept();
         return;
@@ -316,6 +443,7 @@ void TerminalWidget::mouseDoubleClickEvent(QMouseEvent *event)
     supervisor_->selectionStart(sessionId_, static_cast<quint32>(cell.y()),
                                  static_cast<quint32>(cell.x()), rightHalf(event->pos()),
                                  FfiSelectionKind::Word);
+    snapshotStale_ = true;
     // A double click also starts a drag in word/line units, matching every
     // other terminal.
     dragging_ = true;
@@ -396,6 +524,18 @@ void TerminalWidget::keyPressEvent(QKeyEvent *event)
     }
     supervisor_->write(sessionId_, toSend);
     event->accept();
+}
+
+void TerminalWidget::focusInEvent(QFocusEvent *event)
+{
+    QWidget::focusInEvent(event);
+    update();
+}
+
+void TerminalWidget::focusOutEvent(QFocusEvent *event)
+{
+    QWidget::focusOutEvent(event);
+    update();
 }
 
 } // namespace ui_shell

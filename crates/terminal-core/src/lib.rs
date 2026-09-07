@@ -175,6 +175,13 @@ pub struct RenderCell {
     pub bg: CellColor,
     pub attrs: CellAttributes,
     pub selected: bool,
+    /// The leading half of a double-width glyph (`Flags::WIDE_CHAR`), e.g.
+    /// CJK text and most emoji. The cell immediately after it is that
+    /// glyph's spacer half (`Flags::WIDE_CHAR_SPACER`) — still present in
+    /// `Grid::rows` so column arithmetic stays simple, but a paint routine
+    /// must skip drawing it: it is blank filler, already covered by this
+    /// cell's own (double-width) glyph.
+    pub wide: bool,
 }
 
 /// The cursor's position in the visible grid, zero-indexed from the
@@ -434,6 +441,7 @@ impl TerminalEmulator {
                     inverse: cell.flags.contains(CellFlags::INVERSE),
                 },
                 selected: selection.is_some_and(|range| range.contains(indexed.point)),
+                wide: cell.flags.contains(CellFlags::WIDE_CHAR),
             });
         }
 

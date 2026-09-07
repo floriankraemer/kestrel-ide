@@ -121,7 +121,7 @@ fn split_args(args: &str) -> Vec<String> {
 
 fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell {
     ffi::FfiTerminalCell {
-        character: QString::from(cell.character.to_string().as_str()),
+        character: cell.character as u32,
         fg_r: cell.fg.r,
         fg_g: cell.fg.g,
         fg_b: cell.fg.b,
@@ -133,6 +133,7 @@ fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell
         underline: cell.attrs.underline,
         inverse: cell.attrs.inverse,
         selected: cell.selected,
+        wide: cell.wide,
     }
 }
 
@@ -146,6 +147,13 @@ fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell
 struct TerminalEntry {
     pty_session: Rc<RefCell<Option<pty_core::PtySession>>>,
     emulator: std::sync::Arc<std::sync::Mutex<Option<terminal_core::TerminalEmulator>>>,
+    /// Coalesces `gridUpdated` (T2): the reader thread sets this the moment
+    /// it feeds new bytes into the emulator, but only actually queues a Qt
+    /// closure while it flips false -> true — a burst of PTY output (e.g.
+    /// `cat` on a large file) that arrives faster than the Qt thread can
+    /// drain its queue collapses to at most one pending notification per
+    /// session instead of one per 64 KiB chunk read.
+    repaint_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TerminalEntry {
@@ -353,9 +361,16 @@ impl ffi::TerminalSupervisor {
         *entry.pty_session.borrow_mut() = Some(session);
 
         let emulator_slot = std::sync::Arc::clone(&entry.emulator);
+        let repaint_pending = std::sync::Arc::clone(&entry.repaint_pending);
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
+            use std::sync::atomic::Ordering;
+            // 64 KiB, up from 4 KiB: a read this size is still one syscall,
+            // but a flood (`cat` on a large file) now takes 16x fewer trips
+            // through this loop — and, since `gridUpdated` is coalesced
+            // below, that many fewer opportunities to even consider queuing
+            // one.
+            let mut buf = [0u8; 65536];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break, // EOF: the shell exited.
@@ -368,7 +383,21 @@ impl ffi::TerminalSupervisor {
                         };
                         emulator.feed(&buf[..n]);
                         drop(guard);
+
+                        // Coalesce: only queue a Qt closure on the false ->
+                        // true edge, so a burst of reads that lands before
+                        // the Qt thread has drained the previous one still
+                        // produces at most one pending `gridUpdated` per
+                        // session. The closure stores `false` *before*
+                        // emitting, not after: bytes fed in exactly during
+                        // the emit still flip a later `swap` back to
+                        // false -> true, so they are never lost.
+                        if repaint_pending.swap(true, Ordering::AcqRel) {
+                            continue;
+                        }
+                        let pending = std::sync::Arc::clone(&repaint_pending);
                         let sent = qt_thread.queue(move |mut supervisor: Pin<&mut Self>| {
+                            pending.store(false, Ordering::Release);
                             supervisor.as_mut().grid_updated(session_id);
                         });
                         if sent.is_err() {
@@ -397,6 +426,7 @@ impl ffi::TerminalSupervisor {
             .map(|entry| TerminalEntry {
                 pty_session: Rc::clone(&entry.pty_session),
                 emulator: std::sync::Arc::clone(&entry.emulator),
+                repaint_pending: std::sync::Arc::clone(&entry.repaint_pending),
             })
     }
 
@@ -431,46 +461,36 @@ impl ffi::TerminalSupervisor {
         }
     }
 
-    /// Shared snapshot fetch behind the four `grid*`/`cursor*` invokables
-    /// below — `terminal_core::Grid` isn't itself an FFI type, so there is
-    /// no way to expose "the" snapshot as a single call's return value
-    /// (see `FfiTerminalCell`'s doc comment); each accessor re-snapshots
-    /// instead. All four only ever run on the Qt thread, right after
-    /// `gridUpdated`, at repaint frequency — not a hot loop.
-    fn snapshot(&self, session_id: u64) -> Option<terminal_core::Grid> {
-        let sessions = self.sessions.borrow();
-        let entry = sessions.get(&session_id)?;
-        let guard = entry.emulator.lock().ok()?;
-        guard.as_ref().map(terminal_core::TerminalEmulator::grid)
-    }
-
-    pub fn grid_cells(&self, session_id: u64) -> Vec<ffi::FfiTerminalCell> {
-        let Some(snapshot) = self.snapshot(session_id) else {
-            return Vec::new();
+    /// The grid, flattened for the FFI seam (T2): one call replaces what
+    /// used to be five (`gridCells`/`gridRows`/`gridCols`/`cursorRow`/
+    /// `cursorCol`), each independently re-snapshotting
+    /// `terminal_core::TerminalEmulator::grid` on every repaint. Runs on
+    /// the Qt thread only, called by `cpp/terminal_widget.cpp`'s
+    /// `paintEvent` exactly when its cache is stale — not a hot loop.
+    pub fn snapshot(&self, session_id: u64) -> ffi::FfiTerminalSnapshot {
+        let grid = (|| {
+            let sessions = self.sessions.borrow();
+            let entry = sessions.get(&session_id)?;
+            let guard = entry.emulator.lock().ok()?;
+            guard.as_ref().map(terminal_core::TerminalEmulator::grid)
+        })();
+        let Some(grid) = grid else {
+            return ffi::FfiTerminalSnapshot::default();
         };
-        snapshot
-            .rows
-            .into_iter()
-            .flatten()
-            .map(to_ffi_terminal_cell)
-            .collect()
-    }
-
-    pub fn grid_rows(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id).map_or(0, |g| g.rows.len() as u32)
-    }
-
-    pub fn grid_cols(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id)
-            .map_or(0, |g| g.rows.first().map_or(0, Vec::len) as u32)
-    }
-
-    pub fn cursor_row(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id).map_or(0, |g| g.cursor.row as u32)
-    }
-
-    pub fn cursor_col(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id).map_or(0, |g| g.cursor.col as u32)
+        let rows = grid.rows.len() as u32;
+        let cols = grid.rows.first().map_or(0, Vec::len) as u32;
+        ffi::FfiTerminalSnapshot {
+            rows,
+            cols,
+            cursor_row: grid.cursor.row as u32,
+            cursor_col: grid.cursor.col as u32,
+            cells: grid
+                .rows
+                .into_iter()
+                .flatten()
+                .map(to_ffi_terminal_cell)
+                .collect(),
+        }
     }
 
     /// Run `body` against a live session's emulator, if `session_id` is
@@ -800,6 +820,7 @@ mod shutdown_order_tests {
         let entry = TerminalEntry {
             pty_session: std::rc::Rc::new(std::cell::RefCell::new(Some(session))),
             emulator: Default::default(),
+            repaint_pending: Default::default(),
         };
         (entry, grandchild)
     }

@@ -351,14 +351,17 @@ mod ffi {
         anchor: usize,
     }
 
-    /// One renderable terminal cell (Task F3), 1:1 with
-    /// `terminal_core::RenderCell` minus its `char`/`CellColor`/
-    /// `CellAttributes` Rust types, which cxx can't pass directly — `character`
-    /// is always exactly one code point (never empty: blank cells are `' '`,
-    /// matching `terminal_core`'s own convention).
+    /// One renderable terminal cell (Task F3, run-painting since T2), 1:1
+    /// with `terminal_core::RenderCell` minus its `char`/`CellColor`/
+    /// `CellAttributes` Rust types, which cxx can't pass directly.
+    /// `character` is a Unicode code point rather than a `QString` — one
+    /// `QString` per cell was T2's biggest single allocation source, so the
+    /// view builds runs of code points and turns those into text with
+    /// `QString::fromUcs4` instead. Blank cells are `' '` (0x20), matching
+    /// `terminal_core`'s own convention.
     #[derive(Default)]
     struct FfiTerminalCell {
-        character: QString,
+        character: u32,
         fg_r: u8,
         fg_g: u8,
         fg_b: u8,
@@ -369,9 +372,29 @@ mod ffi {
         italic: bool,
         underline: bool,
         inverse: bool,
-        /// Inside the current mouse selection — the view paints it by
-        /// swapping fg/bg, the same way it already handles `inverse`.
+        /// Inside the current mouse selection — the view tints the run's
+        /// background with the selection colour, keeping the glyph's own
+        /// foreground (unlike `inverse`, which swaps fg/bg).
         selected: bool,
+        /// The leading half of a double-width glyph — see
+        /// `terminal_core::RenderCell::wide`. The view skips painting the
+        /// cell right after a `wide` one; it is that glyph's spacer half.
+        wide: bool,
+    }
+
+    /// One paint's worth of grid state (T2): the whole snapshot
+    /// `gridCells`/`gridRows`/`gridCols`/`cursorRow`/`cursorCol` used to
+    /// require five separate FFI round trips for — replaced with the one
+    /// call `cpp/terminal_widget.cpp`'s `paintEvent` makes when (and only
+    /// when) it is about to repaint. `cells` is `rows * cols` long,
+    /// row-major, same flattening convention the old `gridCells` used.
+    #[derive(Default)]
+    struct FfiTerminalSnapshot {
+        rows: u32,
+        cols: u32,
+        cursor_row: u32,
+        cursor_col: u32,
+        cells: Vec<FfiTerminalCell>,
     }
 
     /// What a terminal mouse gesture selects (Task F4), 1:1 with
@@ -2978,35 +3001,16 @@ mod ffi {
         fn resize(self: Pin<&mut TerminalSupervisor>, session_id: u64, rows: u32, cols: u32);
 
         /// Pull-based grid read (Qt thread only — never touches the PTY):
-        /// `cpp/terminal_widget.cpp`'s paint routine calls this in response
-        /// to `gridUpdated`, same "signal says refresh, invokable getter
-        /// hands over the data" shape `ClassViewPanel` already uses for
-        /// `tabOutline`. Cells are `gridRows() * gridCols()` long, row-major
-        /// — flattened because cxx has no `Vec<Vec<T>>` support; the view
-        /// reshapes using `gridCols()`.
+        /// `cpp/terminal_widget.cpp`'s paint routine calls this once,
+        /// caches the result, and only calls it again when its
+        /// `snapshotStale_` flag says the cache is out of date (T2) — set by
+        /// `gridUpdated`, a selection change, or a resize. One call replaces
+        /// what used to be five (`gridCells`/`gridRows`/`gridCols`/
+        /// `cursorRow`/`cursorCol`), each re-snapshotting the grid on every
+        /// single repaint.
         #[qinvokable]
-        #[cxx_name = "gridCells"]
-        fn grid_cells(self: &TerminalSupervisor, session_id: u64) -> Vec<FfiTerminalCell>;
-
-        /// Row count of the snapshot `gridCells()` would return right now.
-        #[qinvokable]
-        #[cxx_name = "gridRows"]
-        fn grid_rows(self: &TerminalSupervisor, session_id: u64) -> u32;
-
-        /// Column count of the snapshot `gridCells()` would return right now.
-        #[qinvokable]
-        #[cxx_name = "gridCols"]
-        fn grid_cols(self: &TerminalSupervisor, session_id: u64) -> u32;
-
-        /// Cursor's current row, zero-indexed from the top.
-        #[qinvokable]
-        #[cxx_name = "cursorRow"]
-        fn cursor_row(self: &TerminalSupervisor, session_id: u64) -> u32;
-
-        /// Cursor's current column, zero-indexed from the left.
-        #[qinvokable]
-        #[cxx_name = "cursorCol"]
-        fn cursor_col(self: &TerminalSupervisor, session_id: u64) -> u32;
+        #[cxx_name = "snapshot"]
+        fn snapshot(self: &TerminalSupervisor, session_id: u64) -> FfiTerminalSnapshot;
 
         /// Begin a mouse selection at a grid cell (Task F4). `right_half`
         /// is which half of the cell the click landed on, which decides

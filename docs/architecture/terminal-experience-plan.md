@@ -20,7 +20,7 @@ Living status table — update the relevant row **in the same commit** that fini
 | Task | Status | Commit |
 |---|---|---|
 | T1 — Shell catalogue off the critical path | done | this commit |
-| T2 — Smooth output: bounded reader queue, dirty-region repaint | open | |
+| T2 — Smooth output: bounded reader queue, dirty-region repaint | done | this commit |
 | T3 — JetBrains Mono as the default editor font | open | |
 | T4 — Terminal font family/size, following the editor font when unset | open | |
 | T5 — Scrollback via wheel/scrollbar/Shift+PgUp/PgDn | open | |

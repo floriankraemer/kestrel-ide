@@ -1,19 +1,24 @@
 #pragma once
 
+#include <QColor>
 #include <QElapsedTimer>
 #include <QFont>
 #include <QPoint>
+#include <QRect>
 #include <QWidget>
 
 #include <functional>
+#include <string>
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 class QAction;
 class QContextMenuEvent;
 class QEvent;
+class QFocusEvent;
 class QKeyEvent;
 class QMouseEvent;
+class QPainter;
 class QPaintEvent;
 class QResizeEvent;
 class QShowEvent;
@@ -26,7 +31,7 @@ namespace ui_shell {
 // `sessionId`) hands over for its one session, and forwards key events back
 // to it. Humble view per CLAUDE.md's hard rule — VT100 interpretation and
 // grid state live entirely in `terminal-core`/the bridge; this class only
-// paints `gridCells(sessionId)`'s snapshot and translates key events to
+// paints `snapshot(sessionId)`'s cached result and translates key events to
 // bytes. Deliberately not QTermWidget (ADR-0007): that would put untestable
 // VT logic behind Qt.
 //
@@ -83,8 +88,34 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+    // The cursor renders differently focused vs. not (filled block vs.
+    // outline), so a focus change alone has to trigger a repaint.
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
 
 private:
+    // One run of consecutive same-styled cells within a row, the unit
+    // `paintEvent` actually draws (T2): grouping by this rather than
+    // painting cell-by-cell turns "one fillRect + one drawText per
+    // character" into one of each per stretch of uniformly-styled text,
+    // which is what a line of plain output mostly is.
+    struct CellStyle
+    {
+        QColor fg;
+        QColor bg;
+        bool bold = false;
+        bool italic = false;
+        bool underline = false;
+        bool selected = false;
+        bool isCursor = false;
+
+        bool operator==(const CellStyle &other) const
+        {
+            return fg == other.fg && bg == other.bg && bold == other.bold && italic == other.italic
+              && underline == other.underline && selected == other.selected && isCursor == other.isCursor;
+        }
+    };
+
     // Recompute rows/cols from the widget's current pixel size and the
     // monospace font's cell metrics, and — if that changed the grid size —
     // either `start()` the session (first call) or `resize()` it.
@@ -108,6 +139,25 @@ private:
     // plain drag over output never turns into a link gesture.
     void updateHoverLink(const QPoint &pos, bool ctrlHeld);
 
+    // A cell's resolved paint style: fg/bg with `inverse` and the selection
+    // tint already folded in, plus the flags a run boundary is drawn on.
+    // `row`/`col` are only needed to compare against the cursor position.
+    CellStyle styleFor(const FfiTerminalCell &cell, quint32 row, quint32 col, quint32 cursorRow,
+                        quint32 cursorCol) const;
+
+    // The cached QFont matching a run's weight/slant — built once in the
+    // constructor rather than constructed per run.
+    const QFont &fontFor(bool bold, bool italic) const;
+
+    // Fill `rect` with `bg` (skipped when `bg` already matches the widget's
+    // black backdrop, unless `forceFill` — the cursor block must always be
+    // drawn even if it happens to equal that colour) and, unless `text` is
+    // empty or all spaces, draw it in `fg` with its baseline at `baselineY`;
+    // draw a one-pixel underline when `underline`.
+    void paintRunBody(QPainter &painter, const QColor &fg, const QColor &bg, bool bold, bool italic,
+                       bool underline, const QRect &rect, qreal baselineY, const std::u32string &text,
+                       bool forceFill);
+
     TerminalSupervisor *supervisor_;
     OpenAt openAt_;
     quint64 sessionId_;
@@ -116,6 +166,10 @@ private:
     QAction *copyAction_ = nullptr;
     QAction *pasteAction_ = nullptr;
     QFont font_;
+    QFont fontBold_;
+    QFont fontItalic_;
+    QFont fontBoldItalic_;
+    qreal ascent_ = 0;
     int cellWidth_ = 1;
     int cellHeight_ = 1;
     quint32 rows_ = 0;
@@ -127,6 +181,15 @@ private:
     QElapsedTimer doubleClickTimer_;
     // The link under the pointer, `found == false` when there is none.
     FfiTerminalLink hoverLink_{};
+
+    // The last snapshot fetched from `supervisor_->snapshot()`, and whether
+    // it is still current (T2). `paintEvent` re-fetches only when this is
+    // true — set by `gridUpdated`, a selection change, and a resize; a
+    // future scroll offset (T5) sets it too, which is the whole reason this
+    // is a flag `paintEvent` checks rather than an unconditional per-frame
+    // fetch.
+    FfiTerminalSnapshot cachedSnapshot_{};
+    bool snapshotStale_ = true;
 };
 
 } // namespace ui_shell

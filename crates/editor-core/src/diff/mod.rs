@@ -12,6 +12,7 @@
 //! - this module: the types, [`diff_lines`] and its whitespace-aware sibling;
 //! - [`whitespace`]: what "the same line" means under each whitespace mode;
 //! - [`inline`]: what changed *within* a modified hunk's lines;
+//! - [`rows`]: both sides laid out as one aligned sequence of rows;
 //! - [`revert`]: the edit that undoes a hunk, the gutter's and the diff
 //!   viewer's "revert this change".
 //!
@@ -24,6 +25,7 @@
 
 mod inline;
 mod revert;
+mod rows;
 mod tokens;
 mod whitespace;
 
@@ -33,6 +35,7 @@ use imara_diff::{Algorithm, Diff, InternedInput};
 
 pub use inline::{diff_inline, diff_inline_opts, HighlightMode};
 pub use revert::{revert_hunk_edit, revert_hunks, LineEdit};
+pub use rows::{diff_rows, DiffRow, RowKind};
 pub use whitespace::WhitespaceMode;
 
 /// Texts above this are not diffed. Matches the highlighting ceiling in

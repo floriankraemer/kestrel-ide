@@ -992,6 +992,11 @@ void buildMainWindow(AppSettings *appSettings,
     });
 
     QMenu *viewMenu = window->menuBar()->addMenu(QObject::tr("&View"));
+    // Each entry's on-screen rect, the same convention the VCS menu already
+    // uses (`vcs_menu.cpp`) — lets an E2E flow click a View menu item (e.g.
+    // "Commit Log") by label rather than by a keyboard shortcut most View
+    // items don't have.
+    e2eMarkMenuActions(viewMenu, "view_menu_action");
     wireProjectTreeViewAction(viewMenu, central.docks, appSettings, *actions);
     QAction *classViewAction = registerAction(viewMenu, QStringLiteral("view.classView"),
                                                QObject::tr("Class View"), appSettings, *actions);

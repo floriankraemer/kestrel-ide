@@ -290,3 +290,105 @@ fn e2e_file_history_opens_after_a_layout_saved_without_its_dock() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// Open the Search Everywhere popup with `shortcut` and wait until its
+/// opening query has been answered, so a later `search_results` marker can
+/// only be one the test's own typing caused.
+///
+/// Duplicated from `e2e.rs` rather than shared, the same judgement
+/// `git_fixture` above already makes about this file's own helpers.
+fn open_search_popup(ide: &Ide, shortcut: &str) -> Mark {
+    let main_window = ide.window().to_string();
+    let mark = ide.mark();
+    ide.key(shortcut);
+    ide.wait_for_event(mark, "the search popup to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
+    });
+    ide.wait_for_focus_change(&main_window);
+    ide.wait_for_ev(mark, "search_results");
+    ide.mark()
+}
+
+/// Type a query into an open search popup and take the top hit.
+fn accept_top_hit(ide: &Ide, mark: Mark, query: &str) {
+    ide.type_text(query);
+    let hits = ide.wait_for_event(mark, &format!("results for `{query}`"), |e| {
+        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
+    });
+    assert!(hits["count"].as_u64().unwrap() > 0);
+    ide.key("Return");
+    ide.wait_for_event(mark, "the search popup to accept", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
+    });
+    ide.focus_main();
+}
+
+/// The repo-wide Commit Log: open it (Find Action, since `view.vcsCommitLog`
+/// has no default shortcut — same reach `e2e_file_history_lists_commits_
+/// and_survives_the_context_menu` in `e2e.rs` uses for File History), expand
+/// a row to see its full message, and double-click it open in the
+/// commit-detail dock — asserting the dock shows the right number of
+/// changed files.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_commit_log_expand_and_open_commit_detail() {
+    let name = "e2e_commit_log_expand_and_open_commit_detail";
+
+    // Two commits touching two different files, so the detail dock's
+    // changed-file count (1) can't be confused with the log's own commit
+    // count (2).
+    let repo = git_fixture(&[("a.txt", "one\n")]);
+    std::fs::write(repo.path().join("b.txt"), "two\n").expect("write b.txt");
+    for args in [
+        ["add", "b.txt"].as_slice(),
+        &["commit", "--quiet", "-m", "add b"],
+    ] {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(repo.path())
+            .status()
+            .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    let popup_mark = open_search_popup(&ide, "ctrl+shift+a");
+    accept_top_hit(&ide, popup_mark, "Commit Log");
+    // Fresh mark: the dock's own construction (while still hidden, tabbed
+    // behind Terminal/Run/etc.) already emitted `commit_log_row` once at
+    // geometry nobody could click — `showEvent` re-asks once actually
+    // raised, and this mark is what isolates that second, real answer.
+    let mark = ide.mark();
+
+    let row0 = ide.wait_for_event(mark, "commit_log_row 0", |e| {
+        e["ev"] == "commit_log_row" && e["row"] == 0
+    });
+    let (row_x, row_y) = rect_centre(&row0["rect"]);
+    let rect: Vec<i64> = row0["rect"]
+        .as_array()
+        .expect("the marker carries a rect")
+        .iter()
+        .map(|v| v.as_i64().expect("an integer"))
+        .collect();
+    let arrow_x = rect[0] as i32 + 8;
+
+    // Expand the newest commit's row (its own arrow, at the row's left
+    // edge) to see the full message body.
+    ide.click_at(arrow_x, row_y, 1);
+    // Double-click the row's text to open it in the commit-detail dock.
+    ide.double_click_at(row_x, row_y, 1);
+
+    let detail = ide.wait_for_event(mark, "commit_detail_ready", |e| {
+        e["ev"] == "commit_detail_ready"
+    });
+    assert_eq!(
+        detail["files"].as_u64(),
+        Some(1),
+        "the detail dock should show exactly the one file 'add b' touched"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}

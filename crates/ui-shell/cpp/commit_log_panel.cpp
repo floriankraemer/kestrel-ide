@@ -9,6 +9,7 @@
 #include "DockWidget.h"
 
 #include <QPushButton>
+#include <QShowEvent>
 #include <QVBoxLayout>
 
 namespace ui_shell {
@@ -45,6 +46,12 @@ CommitLogPanel::CommitLogPanel(VcsService *vcsService, std::function<void(const 
     connect(vcsService_, &VcsService::branchChanged, this, &CommitLogPanel::refresh);
     connect(vcsService_, &VcsService::repositoryChanged, this, &CommitLogPanel::refresh);
 
+    refresh();
+}
+
+void CommitLogPanel::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
     refresh();
 }
 

@@ -313,6 +313,24 @@ impl Ide {
         self.click(button);
     }
 
+    /// A genuine double-click: two button events from one `xdotool`
+    /// invocation (`--repeat 2`), close enough together to land inside
+    /// Qt's double-click interval — two separate `click_at` calls each pay
+    /// a fresh subprocess spawn, which on a loaded CI machine can exceed it
+    /// and register as two single clicks instead.
+    pub fn double_click_at(&self, x: i32, y: i32, button: u8) {
+        self.mouse_move(x, y);
+        xdotool::run(&[
+            "click",
+            "--clearmodifiers",
+            "--repeat",
+            "2",
+            "--delay",
+            "40",
+            &button.to_string(),
+        ]);
+    }
+
     /// Press at `from`, travel to `to`, release — a real drag.
     ///
     /// The travel is stepped rather than a single jump: a drag is recognised

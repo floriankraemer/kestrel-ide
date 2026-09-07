@@ -274,14 +274,22 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
                           fileHistoryPanel->setCurrentFile(editorTabs->currentPath());
                       });
 
+    QAction *viewCommitLogAction = registerAction(
+      viewMenu, QStringLiteral("view.vcsCommitLog"), QObject::tr("Commit Log"), appSettings,
+      actions);
+    QObject::connect(viewCommitLogAction, &QAction::triggered, window,
+                      [docks]() { docks->show(QStringLiteral("commitLog")); });
+
     // Not built at all for a non-repository project, per the plan — reached
     // here by disabling rather than omitting (see vcs_menu.h's note): a
     // project's Git-ness is unknown until well after this menu exists.
-    const auto refreshEnabled = [vcsMenu, viewChangesAction, viewHistoryAction, vcsService]() {
+    const auto refreshEnabled = [vcsMenu, viewChangesAction, viewHistoryAction,
+                                 viewCommitLogAction, vcsService]() {
         const bool isRepo = vcsService->isRepository();
         vcsMenu->menuAction()->setVisible(isRepo);
         viewChangesAction->setVisible(isRepo);
         viewHistoryAction->setVisible(isRepo);
+        viewCommitLogAction->setVisible(isRepo);
     };
     QObject::connect(vcsService, &VcsService::repositoryChanged, vcsMenu, refreshEnabled);
     refreshEnabled();
@@ -298,6 +306,7 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
             docks->hide(QStringLiteral("changes"));
         }
         docks->hide(QStringLiteral("fileHistory"));
+        docks->hide(QStringLiteral("commitLog"));
     });
 }
 

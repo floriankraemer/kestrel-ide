@@ -34,6 +34,14 @@ public:
     CommitLogPanel(VcsService *vcsService, std::function<void(const QString &)> openCommit,
                    QWidget *parent);
 
+protected:
+    // Re-asks every time this dock is raised, not just at construction (when
+    // it is still hidden, tabbed behind Terminal/Run/etc. — its rows' rects
+    // at that point describe geometry nobody sees, which an E2E flow acting
+    // on the marks from `onCommitLogReady` would click into blind). Cheap:
+    // `HistoryCache::log` answers from cache unless `HEAD` moved.
+    void showEvent(QShowEvent *event) override;
+
 private:
     void onCommitLogReady(const ::rust::Vec<FfiLogEntry> &entries);
     void refresh();

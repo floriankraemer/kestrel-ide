@@ -1,5 +1,7 @@
 #include "history_list_view.h"
 
+#include "e2e_mark.h"
+
 #include <QDateTime>
 #include <QHeaderView>
 #include <QLabel>
@@ -173,7 +175,9 @@ void HistoryListView::onItemActivated(QTreeWidgetItem *item, int /*column*/)
         // The body child, not a commit row.
         return;
     }
-    emit commitActivated(item->data(kIdColumn, kCommitIdRole).toString());
+    const QString commitId = item->data(kIdColumn, kCommitIdRole).toString();
+    e2eMark(QStringLiteral("{\"ev\":\"commit_activated\",\"commit\":%1}").arg(e2eJson(commitId)));
+    emit commitActivated(commitId);
 }
 
 void HistoryListView::showContextMenu(const QPoint &pos)

@@ -567,6 +567,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "",
     },
     ActionDef {
+        id: "view.vcsCommitLog",
+        label: "Commit Log",
+        category: "View",
+        default_shortcut: "",
+    },
+    ActionDef {
         id: "debug.debug",
         label: "Debug",
         category: "Debug",

@@ -964,7 +964,7 @@ void EditorTabs::addDiffTab(QTabWidget *group, quint64 tabId, const QString &tit
         data.rows = docManager_->diffRowsBetween(data.leftText, data.rightText, whitespace);
         return data;
     };
-    auto *page = new DiffViewPage(diffView, docManager_->diffLeftLabel(tabId),
+    auto *page = new DiffViewPage(diffView, path, docManager_->diffLeftLabel(tabId),
                                   docManager_->diffRightLabel(tabId), recompute, group);
     page->setProperty("tabId", QVariant::fromValue(tabId));
     group->addTab(page, title);

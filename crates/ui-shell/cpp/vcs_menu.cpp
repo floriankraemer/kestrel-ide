@@ -193,6 +193,9 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
                       []() { e2eMark("{\"ev\":\"dialog_shown\",\"name\":\"vcs_menu\"}"); });
     QObject::connect(vcsMenu, &QMenu::aboutToHide, vcsMenu,
                       []() { e2eMark("{\"ev\":\"dialog_closed\",\"name\":\"vcs_menu\"}"); });
+    // Each entry's on-screen rect, so a flow clicks "Show Diff" by name
+    // rather than by counting arrow presses.
+    e2eMarkMenuActions(vcsMenu, "vcs_menu_action");
 
     QAction *commitAction = registerAction(vcsMenu, QStringLiteral("vcs.commit"),
                                             QObject::tr("Commit..."), appSettings, actions);

@@ -5,9 +5,11 @@
 #include "diff_view.h"
 #include "e2e_mark.h"
 #include "ui_tokens.h"
+#include "unified_diff_view.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 namespace ui_shell {
@@ -47,6 +49,7 @@ const char *highlightName(FfiHighlightMode mode)
 } // namespace
 
 DiffViewPage::DiffViewPage(DiffView *diffView,
+                           const QString &fileName,
                            const QString &leftLabel,
                            const QString &rightLabel,
                            DiffRecompute recompute,
@@ -55,13 +58,29 @@ DiffViewPage::DiffViewPage(DiffView *diffView,
   , toolbar_(new DiffToolbar(this))
   , leftHeader_(new QLabel(leftLabel, this))
   , rightHeader_(new QLabel(rightLabel, this))
+  , stack_(new QStackedWidget(this))
   , diffView_(diffView)
+  , unifiedView_(new UnifiedDiffView(fileName, this))
   , recompute_(std::move(recompute))
 {
-    connect(toolbar_, &DiffToolbar::previousRequested, diffView_, &DiffView::selectPreviousHunk);
-    connect(toolbar_, &DiffToolbar::nextRequested, diffView_, &DiffView::selectNextHunk);
+    connect(toolbar_, &DiffToolbar::previousRequested, this, [this] {
+        if (toolbar_->viewer() == DiffToolbar::Viewer::Unified) {
+            unifiedView_->selectPreviousHunk();
+        } else {
+            diffView_->selectPreviousHunk();
+        }
+    });
+    connect(toolbar_, &DiffToolbar::nextRequested, this, [this] {
+        if (toolbar_->viewer() == DiffToolbar::Viewer::Unified) {
+            unifiedView_->selectNextHunk();
+        } else {
+            diffView_->selectNextHunk();
+        }
+    });
     connect(toolbar_, &DiffToolbar::optionsChanged, this, &DiffViewPage::refresh);
+    connect(toolbar_, &DiffToolbar::viewerChanged, this, &DiffViewPage::showViewer);
 
+    leftHeader_->setProperty("label", leftLabel);
     // One label over each pane, separated by the divider's own width so the
     // names sit over the text they name.
     auto *header = new QWidget(this);
@@ -80,14 +99,31 @@ DiffViewPage::DiffViewPage(DiffView *diffView,
         }
     };
 
+    stack_->addWidget(diffView_);
+    stack_->addWidget(unifiedView_);
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
     layout->addWidget(toolbar_);
     layout->addWidget(header);
-    layout->addWidget(diffView_, 1);
+    layout->addWidget(stack_, 1);
 
     refresh();
+}
+
+void DiffViewPage::showViewer()
+{
+    const bool unified = toolbar_->viewer() == DiffToolbar::Viewer::Unified;
+    stack_->setCurrentWidget(unified ? static_cast<QWidget *>(unifiedView_)
+                                     : static_cast<QWidget *>(diffView_));
+    // One pane has one header; the side labels only make sense over two.
+    rightHeader_->setVisible(!unified);
+    leftHeader_->setText(unified ? tr("%1 → %2").arg(leftHeader_->property("label").toString(),
+                                                     rightHeader_->text())
+                                 : leftHeader_->property("label").toString());
+    e2eMark(QStringLiteral("{\"ev\":\"diff_viewer_mode\",\"mode\":\"%1\"}")
+              .arg(unified ? QLatin1String("unified") : QLatin1String("side_by_side")));
 }
 
 void DiffViewPage::refresh()
@@ -101,6 +137,8 @@ void DiffViewPage::refresh()
     data_ = recompute_(whitespace, highlight);
     diffView_->setOptions(toolbar_->collapseUnchanged(), toolbar_->syncScroll(), highlight);
     diffView_->setDiff(data_.hunks, data_.spans, data_.rows);
+    unifiedView_->setOptions(toolbar_->collapseUnchanged(), highlight);
+    unifiedView_->setContent(data_);
     toolbar_->setDifferenceCount(static_cast<int>(data_.hunks.size()));
     e2eMark(QStringLiteral("{\"ev\":\"diff_recomputed\",\"hunks\":%1,\"whitespace\":\"%2\","
                            "\"highlight\":\"%3\"}")

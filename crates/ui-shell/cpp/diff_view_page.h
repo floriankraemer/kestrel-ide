@@ -14,6 +14,7 @@ namespace ui_shell {
 
 class DiffToolbar;
 class DiffView;
+class UnifiedDiffView;
 
 // Everything one diff computation produced for a pair of texts. Crosses no
 // seam itself — it is what the owner's `DiffRecompute` collects from the
@@ -36,7 +37,8 @@ struct DiffData
 using DiffRecompute = std::function<DiffData(FfiWhitespaceMode, FfiHighlightMode)>;
 
 // The chrome around a `DiffView`: the toolbar, a header naming each side
-// above its pane, and the view itself. Owns the `DiffView` it is
+// above its pane, and the view itself — or, when the toolbar says so, the
+// read-only unified viewer over the same diff. Owns the `DiffView` it is
 // constructed with.
 //
 // `refresh()` is the single path every option change and every live edit
@@ -49,7 +51,10 @@ class DiffViewPage : public QWidget
     Q_OBJECT
 
 public:
+    // `fileName` picks the unified viewer's syntax highlighting, the way
+    // the `DiffView`'s own constructor did for its panes.
     DiffViewPage(DiffView *diffView,
+                 const QString &fileName,
                  const QString &leftLabel,
                  const QString &rightLabel,
                  DiffRecompute recompute,
@@ -65,10 +70,14 @@ public:
     void setApplyHandler(std::function<void(const FfiHunk &)> handler);
 
 private:
+    void showViewer();
+
     DiffToolbar *toolbar_;
     QLabel *leftHeader_;
     QLabel *rightHeader_;
+    QStackedWidget *stack_;
     DiffView *diffView_;
+    UnifiedDiffView *unifiedView_;
     DiffRecompute recompute_;
     DiffData data_;
     std::function<void(const FfiHunk &)> applyHandler_;

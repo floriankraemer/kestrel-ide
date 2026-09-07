@@ -306,7 +306,7 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
         data.rows = docManager_->diffRowsBetween(data.leftText, data.rightText, whitespace);
         return data;
     };
-    auto *page = new DiffViewPage(diffView, tr("HEAD"), tr("Working Tree"), recompute);
+    auto *page = new DiffViewPage(diffView, path, tr("HEAD"), tr("Working Tree"), recompute);
     page->setApplyHandler([this, page, headText, editor, path](const FfiHunk &hunk) {
         FfiTextEdit edit = docManager_->hunkRevertEdit(headText, hunk);
         edit.path = path;
@@ -328,7 +328,10 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
             qOverload<>(&QTimer::start));
     connect(refreshTimer, &QTimer::timeout, page, &DiffViewPage::refresh);
 
-    auto *window = new DiffWindow(nullptr, Qt::Window);
+    // A top-level window of its own, but the main window's child: it closes
+    // when the IDE does, rather than outliving it as the last window and
+    // keeping the process alive after Ctrl+Q.
+    auto *window = new DiffWindow(window_, Qt::Window);
     window->setWindowTitle(tr("Diff — %1").arg(path));
     auto *layout = new QVBoxLayout(window);
     layout->setContentsMargins(0, 0, 0, 0);

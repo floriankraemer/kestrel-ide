@@ -87,7 +87,7 @@ e2e: linux-image ## Run the E2E flows under Xvfb (ignored by `make test`)
 e2e-ci: ## Inner half of `e2e` — run inside the builder image
 	cargo build -p app
 	cargo build --bin stub_server -p lsp-core
-	$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about -- --ignored --test-threads=1 --nocapture
+	$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff -- --ignored --test-threads=1 --nocapture
 
 # Burn-in: `make e2e-repeat TEST=e2e_open_project_edit_save N=20`. A flake is
 # a P1 bug in the product or the harness, so this exists to find one before
@@ -98,7 +98,7 @@ e2e-repeat: linux-image ## Repeat one E2E flow N times: make e2e-repeat TEST=<na
 	$(RUN_LINUX) sh -c 'cargo build -p app && cargo build --bin stub_server -p lsp-core && \
 		for i in $$(seq 1 $(N)); do \
 		echo "--- run $$i/$(N) ---"; \
-		$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about -- --ignored --exact \
+		$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff -- --ignored --exact \
 			--test-threads=1 --nocapture $(TEST) || exit 1; \
 	done'
 

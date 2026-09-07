@@ -458,6 +458,8 @@ fn main() {
         .cpp_file("cpp/diff_toolbar.cpp")
         .cpp_file("cpp/diff_view_page.h")
         .cpp_file("cpp/diff_view_page.cpp")
+        .cpp_file("cpp/unified_diff_view.h")
+        .cpp_file("cpp/unified_diff_view.cpp")
         .cpp_file("cpp/search_everywhere_dialog.cpp")
         .cpp_file("cpp/splash_screen.cpp")
         .cpp_file("cpp/theme.cpp")

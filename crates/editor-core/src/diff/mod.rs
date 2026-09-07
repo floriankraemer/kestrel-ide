@@ -31,7 +31,7 @@ use std::ops::Range;
 
 use imara_diff::{Algorithm, Diff, InternedInput};
 
-pub use inline::diff_inline;
+pub use inline::{diff_inline, diff_inline_opts, HighlightMode};
 pub use revert::{revert_hunk_edit, revert_hunks, LineEdit};
 pub use whitespace::WhitespaceMode;
 

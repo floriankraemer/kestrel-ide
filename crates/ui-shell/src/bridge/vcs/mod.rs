@@ -90,6 +90,12 @@ pub struct VcsServiceRust {
     /// The paths each commit changed, filled by the same worker round trip
     /// as `commit_details` (both come off the same commit).
     changed_commit_files: RefCell<HashMap<String, Vec<vcs_core::ChangedCommitFile>>>,
+    /// `requestCommitFileDiff(id, path)`'s last answer, keyed by the pair —
+    /// same reason `blobs` is keyed by `(path, revision)`, not `path`
+    /// alone: the dock can have several files of the same commit open
+    /// (one `DiffView` per changed file) and several commits open in
+    /// different tabs.
+    commit_file_diffs: RefCell<HashMap<(String, String), vcs_core::FileDiff>>,
     /// The repository's working-tree root, once discovery has found one.
     ///
     /// The `Repository` handle itself lives on the worker thread and must
@@ -114,6 +120,7 @@ impl Default for VcsServiceRust {
             current_branch: RefCell::default(),
             commit_details: RefCell::default(),
             changed_commit_files: RefCell::default(),
+            commit_file_diffs: RefCell::default(),
             work_dir: RefCell::default(),
         }
     }

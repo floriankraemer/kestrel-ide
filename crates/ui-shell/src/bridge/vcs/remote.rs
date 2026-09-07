@@ -316,6 +316,61 @@ impl ffi::VcsService {
         }
     }
 
+    pub fn request_commit_file_diff(mut self: Pin<&mut Self>, id: &QString, path: &QString) {
+        let id = id.to_string();
+        let path = path.to_string();
+        let qt_thread = self.as_mut().qt_thread();
+        let job_id = id.clone();
+        let job_path = path.clone();
+        self.as_ref().push_job(move |worker: &VcsWorker| {
+            // `path` here is a repository-relative path off `changedCommitFiles`,
+            // not a tab's absolute path — no `to_repo_relative` translation
+            // needed, unlike `requestHunks`/`requestBlobAt`.
+            let result = worker.repo.commit_file_diff(&job_id, Path::new(&job_path));
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
+                Ok(diff) => {
+                    service
+                        .commit_file_diffs
+                        .borrow_mut()
+                        .insert((job_id.clone(), job_path.clone()), diff);
+                    service.as_mut().commit_file_diff_ready(
+                        QString::from(job_id.as_str()),
+                        QString::from(job_path.as_str()),
+                    );
+                }
+                Err(err) => {
+                    service.as_mut().vcs_failed(to_ffi_result(&err));
+                }
+            });
+        });
+    }
+
+    pub fn commit_file_diff(&self, id: &QString, path: &QString) -> ffi::FfiFileDiff {
+        match self
+            .commit_file_diffs
+            .borrow()
+            .get(&(id.to_string(), path.to_string()))
+        {
+            Some(diff) => ffi::FfiFileDiff {
+                path: path.clone(),
+                old_text: QString::from(diff.old_text.as_str()),
+                new_text: QString::from(diff.new_text.as_str()),
+            },
+            None => ffi::FfiFileDiff::default(),
+        }
+    }
+
+    pub fn commit_file_diff_hunks(&self, id: &QString, path: &QString) -> Vec<ffi::FfiHunk> {
+        match self
+            .commit_file_diffs
+            .borrow()
+            .get(&(id.to_string(), path.to_string()))
+        {
+            Some(diff) => crate::bridge::convert::to_ffi_hunks(&diff.hunks),
+            None => Vec::new(),
+        }
+    }
+
     pub fn blame(mut self: Pin<&mut Self>, path: &QString) {
         let path = path.to_string();
         let qt_thread = self.as_mut().qt_thread();

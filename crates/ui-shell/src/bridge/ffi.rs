@@ -5527,6 +5527,28 @@ mod ffi {
         #[cxx_name = "changedCommitFiles"]
         fn changed_commit_files(self: &VcsService, id: &QString) -> Vec<FfiChangedCommitFile>;
 
+        /// Ask for one changed file's before/after text and hunks as of
+        /// commit `id`, against its first parent. Answers via
+        /// `commitFileDiffReady(id, path)`; `commitFileDiff`/
+        /// `commitFileDiffHunks` then read the cache it filled, the same
+        /// two-step `requestHunks`/`hunks` already uses.
+        #[qinvokable]
+        #[cxx_name = "requestCommitFileDiff"]
+        fn request_commit_file_diff(self: Pin<&mut VcsService>, id: &QString, path: &QString);
+
+        /// The whole-file before/after text for `(id, path)` — hunks come
+        /// from `commitFileDiffHunks`, the same split `FfiFileDiff`'s own
+        /// doc comment explains.
+        #[qinvokable]
+        #[cxx_name = "commitFileDiff"]
+        fn commit_file_diff(self: &VcsService, id: &QString, path: &QString) -> FfiFileDiff;
+
+        /// The line hunks for the same `(id, path)` pair `commitFileDiff`
+        /// describes.
+        #[qinvokable]
+        #[cxx_name = "commitFileDiffHunks"]
+        fn commit_file_diff_hunks(self: &VcsService, id: &QString, path: &QString) -> Vec<FfiHunk>;
+
         /// `git blame --porcelain -- <path>`, parsed; answers via
         /// `blameReady`.
         #[qinvokable]
@@ -5586,6 +5608,12 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "commitDetailReady"]
         fn commit_detail_ready(self: Pin<&mut VcsService>, id: QString);
+
+        /// `requestCommitFileDiff(id, path)` has a fresh answer for this
+        /// pair.
+        #[qsignal]
+        #[cxx_name = "commitFileDiffReady"]
+        fn commit_file_diff_ready(self: Pin<&mut VcsService>, id: QString, path: QString);
 
         /// `blame`'s answer, tagged with the path it was requested for —
         /// see `historyReady` on why.

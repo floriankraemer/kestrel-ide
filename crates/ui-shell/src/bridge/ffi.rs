@@ -728,6 +728,34 @@ mod ffi {
         author_time: i64,
     }
 
+    /// One commit in full, 1:1 with `vcs_core::CommitDetail`, for the
+    /// commit-detail dock's header and message body. `parent_ids` is
+    /// space-joined (display-only — nothing here re-parses it into a list;
+    /// a commit's own id is already the join key `changedCommitFiles`/
+    /// `requestCommitFileDiff` use).
+    #[derive(Default)]
+    struct FfiCommitDetail {
+        id: QString,
+        summary: QString,
+        body: QString,
+        author_name: QString,
+        author_email: QString,
+        author_time: i64,
+        committer_name: QString,
+        committer_email: QString,
+        committer_time: i64,
+        parent_ids: QString,
+    }
+
+    /// One path a commit touched, 1:1 with `vcs_core::ChangedCommitFile` —
+    /// reuses `FfiChangeKind` verbatim (a commit's changes are the same
+    /// four kinds `FfiChangedFile` already carries for the working tree;
+    /// `None`/`Untracked` never occur here).
+    struct FfiChangedCommitFile {
+        path: QString,
+        change: FfiChangeKind,
+    }
+
     /// One shell this machine offers (`pty_core::ShellCandidate`), for the
     /// terminal dock's "+" dropdown and the Terminal settings page. A
     /// struct rather than a pair of parallel string lists for the same
@@ -5476,6 +5504,29 @@ mod ffi {
         #[cxx_name = "commitLog"]
         fn commit_log(self: Pin<&mut VcsService>, max: u32);
 
+        /// Ask for one commit's full detail and its changed-file list
+        /// together (both come off the same commit, one worker round trip)
+        /// — the commit-detail dock's first step on opening a tab.
+        /// Answers via `commitDetailReady(id)`; `commitDetail`/
+        /// `changedCommitFiles` then read the cache it filled.
+        #[qinvokable]
+        #[cxx_name = "requestCommitDetail"]
+        fn request_commit_detail(self: Pin<&mut VcsService>, id: &QString);
+
+        /// `requestCommitDetail(id)`'s last answer for this id, or a
+        /// default-valued `FfiCommitDetail` before it arrives (or if `id`
+        /// did not resolve to a commit).
+        #[qinvokable]
+        #[cxx_name = "commitDetail"]
+        fn commit_detail(self: &VcsService, id: &QString) -> FfiCommitDetail;
+
+        /// The paths commit `id` changed against its first parent —
+        /// answered together with `requestCommitDetail(id)`, read here
+        /// synchronously once `commitDetailReady(id)` has fired.
+        #[qinvokable]
+        #[cxx_name = "changedCommitFiles"]
+        fn changed_commit_files(self: &VcsService, id: &QString) -> Vec<FfiChangedCommitFile>;
+
         /// `git blame --porcelain -- <path>`, parsed; answers via
         /// `blameReady`.
         #[qinvokable]
@@ -5529,6 +5580,12 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "commitLogReady"]
         fn commit_log_ready(self: Pin<&mut VcsService>, entries: Vec<FfiLogEntry>);
+
+        /// `requestCommitDetail(id)` has a fresh answer for this id —
+        /// `commitDetail(id)`/`changedCommitFiles(id)` both read it now.
+        #[qsignal]
+        #[cxx_name = "commitDetailReady"]
+        fn commit_detail_ready(self: Pin<&mut VcsService>, id: QString);
 
         /// `blame`'s answer, tagged with the path it was requested for —
         /// see `historyReady` on why.

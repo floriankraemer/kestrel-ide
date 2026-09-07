@@ -30,6 +30,28 @@ fn to_ffi_log_entry(entry: &vcs_core::LogEntry) -> ffi::FfiLogEntry {
     }
 }
 
+fn to_ffi_commit_detail(detail: &vcs_core::CommitDetail) -> ffi::FfiCommitDetail {
+    ffi::FfiCommitDetail {
+        id: QString::from(detail.id.as_str()),
+        summary: QString::from(detail.summary.as_str()),
+        body: QString::from(detail.body.as_str()),
+        author_name: QString::from(detail.author_name.as_str()),
+        author_email: QString::from(detail.author_email.as_str()),
+        author_time: detail.author_time,
+        committer_name: QString::from(detail.committer_name.as_str()),
+        committer_email: QString::from(detail.committer_email.as_str()),
+        committer_time: detail.committer_time,
+        parent_ids: QString::from(detail.parent_ids.join(" ").as_str()),
+    }
+}
+
+fn to_ffi_changed_commit_file(file: &vcs_core::ChangedCommitFile) -> ffi::FfiChangedCommitFile {
+    ffi::FfiChangedCommitFile {
+        path: QString::from(file.path.to_string_lossy().as_ref()),
+        change: super::to_ffi_change_kind(Some(file.change)),
+    }
+}
+
 fn to_ffi_blame_line(line: &vcs_core::BlameLine) -> ffi::FfiBlameLine {
     ffi::FfiBlameLine {
         line: line.line as u32,
@@ -235,6 +257,63 @@ impl ffi::VcsService {
                 }
             });
         });
+    }
+
+    pub fn request_commit_detail(mut self: Pin<&mut Self>, id: &QString) {
+        let id = id.to_string();
+        let qt_thread = self.as_mut().qt_thread();
+        let job_id = id.clone();
+        self.as_ref().push_job(move |worker: &VcsWorker| {
+            // Both come off the same commit — one worker round trip rather
+            // than the view firing a second request once it sees the
+            // first answer.
+            let detail = worker.history_cache.commit_detail(&worker.repo, &job_id);
+            let files = worker.repo.changed_files(&job_id);
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+                match detail {
+                    Ok(Some(detail)) => {
+                        service
+                            .commit_details
+                            .borrow_mut()
+                            .insert(job_id.clone(), detail);
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        service.as_mut().vcs_failed(to_ffi_result(&err));
+                        return;
+                    }
+                }
+                match files {
+                    Ok(files) => {
+                        service
+                            .changed_commit_files
+                            .borrow_mut()
+                            .insert(job_id.clone(), files);
+                    }
+                    Err(err) => {
+                        service.as_mut().vcs_failed(to_ffi_result(&err));
+                        return;
+                    }
+                }
+                service
+                    .as_mut()
+                    .commit_detail_ready(QString::from(job_id.as_str()));
+            });
+        });
+    }
+
+    pub fn commit_detail(&self, id: &QString) -> ffi::FfiCommitDetail {
+        match self.commit_details.borrow().get(&id.to_string()) {
+            Some(detail) => to_ffi_commit_detail(detail),
+            None => ffi::FfiCommitDetail::default(),
+        }
+    }
+
+    pub fn changed_commit_files(&self, id: &QString) -> Vec<ffi::FfiChangedCommitFile> {
+        match self.changed_commit_files.borrow().get(&id.to_string()) {
+            Some(files) => files.iter().map(to_ffi_changed_commit_file).collect(),
+            None => Vec::new(),
+        }
     }
 
     pub fn blame(mut self: Pin<&mut Self>, path: &QString) {

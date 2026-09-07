@@ -70,6 +70,8 @@ private:
     // even though the scrollbar's value (and thus sliderRect()'s position)
     // keeps changing as the drag moves it.
     int sliderHeightPx() const;
+    // The distance the slider's top travels over the whole scroll range.
+    int sliderTravelPx() const;
     QRect sliderRect() const;
     // The visible-row index (0-based, folded blocks excluded) a document
     // block paints at, or -1 when the block itself is hidden by a fold.

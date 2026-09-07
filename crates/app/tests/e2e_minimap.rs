@@ -62,12 +62,29 @@ fn rect_centre(rect: &Value) -> (i32, i32) {
 const FIXTURE_LINES: usize = 4000;
 
 fn big_file_fixture() -> tempfile::TempDir {
+    file_fixture("big.rs", FIXTURE_LINES)
+}
+
+/// A file that fits the strip whole: fewer lines than the strip has rows,
+/// so the map never scrolls under the slider and the slider's travel is
+/// `maximum() * kRowHeight` pixels rather than the strip's full height.
+/// The regression this guards mapped a drag over the full height anyway,
+/// so the slider moved slower than the pointer and drifted away from it.
+const SHORT_FIXTURE_LINES: usize = 160;
+/// `Minimap`'s `kRowHeight`: one source line is this many strip pixels.
+const ROW_HEIGHT: i64 = 2;
+
+fn short_file_fixture() -> tempfile::TempDir {
+    file_fixture("short.rs", SHORT_FIXTURE_LINES)
+}
+
+fn file_fixture(name: &str, lines: usize) -> tempfile::TempDir {
     let dir = tempfile::TempDir::new().expect("temp minimap fixture dir");
     let mut content = String::new();
-    for i in 0..FIXTURE_LINES {
+    for i in 0..lines {
         content.push_str(&format!("fn line_{i}() {{}}\n"));
     }
-    std::fs::write(dir.path().join("big.rs"), content).expect("fixture file");
+    std::fs::write(dir.path().join(name), content).expect("fixture file");
     dir
 }
 
@@ -86,6 +103,60 @@ fn wait_for_settled_minimap_rect(ide: &Ide, mark: Mark) -> Value {
         previous = Some(latest);
         None
     })
+}
+
+/// On a file that fits the strip, dragging the slider must move it pixel
+/// for pixel with the pointer: a drag of `D` pixels scrolls exactly
+/// `D / kRowHeight` lines. Uses the release-time `minimap_scrolled` marker
+/// for the resulting first line.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_minimap_slider_tracks_the_pointer_on_a_short_file() {
+    const DRAG_PX: i32 = 150;
+
+    let fixture = short_file_fixture();
+    let mut ide = Ide::launch(
+        "e2e_minimap_slider_tracks_the_pointer_on_a_short_file",
+        APP,
+        fixture.path(),
+    );
+    drop(fixture);
+
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    let mcp = ide.mcp();
+    wait_for_index(&mcp);
+
+    let mark = ide.mark();
+    open_file(&ide, "short.rs");
+    let shown = wait_for_settled_minimap_rect(&ide, mark);
+    let rect: Vec<i64> = shown["rect"]
+        .as_array()
+        .expect("minimap rect")
+        .iter()
+        .map(|v| v.as_i64().expect("an integer"))
+        .collect();
+    assert!(
+        rect[3] / ROW_HEIGHT >= SHORT_FIXTURE_LINES as i64,
+        "fixture premise: {SHORT_FIXTURE_LINES} lines must fit a strip {} px tall",
+        rect[3]
+    );
+    let x = (rect[0] + rect[2] / 2) as i32;
+    // Two pixels into the slider, which sits at the top of an unscrolled file.
+    let slider_top = rect[1] as i32 + 2;
+
+    let mark = ide.mark();
+    ide.drag((x, slider_top), (x, slider_top + DRAG_PX));
+    let scrolled = ide.wait_for_event(mark, "the slider drag to scroll the editor", |e| {
+        e["ev"] == "minimap_scrolled"
+    });
+    let first_line = scrolled["first_line"].as_i64().expect("first_line");
+    let expected = i64::from(DRAG_PX) / ROW_HEIGHT;
+    assert!(
+        (first_line - expected).abs() <= 1,
+        "a {DRAG_PX} px slider drag must scroll {expected} lines (one line per \
+         {ROW_HEIGHT} px), got first_line={first_line}"
+    );
+    ide.quit();
 }
 
 /// Drags the minimap's slider by pressing near the bottom of the strip, and

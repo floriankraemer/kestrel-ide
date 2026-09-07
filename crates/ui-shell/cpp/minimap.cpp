@@ -95,27 +95,32 @@ QRect Minimap::sliderRect() const
     return QRect(0, top, width(), sliderHeightPx());
 }
 
+int Minimap::sliderTravelPx() const
+{
+    // How far sliderRect().top() moves between scroll value 0 and
+    // maximum(): the range a press or drag maps pixels onto. A file taller
+    // than the strip scrolls the map under the slider, so the slider stops
+    // at `height() - sliderHeightPx()`. A file that fits the strip whole
+    // has a fixed map, and the slider stops at that file's last row
+    // instead — mapping such a file over the full track made the slider
+    // move slower than the pointer and drift away from it over a drag,
+    // which is why a short file's minimap looked broken next to a long
+    // file's in the same split.
+    QScrollBar *scrollBar = editor_->verticalScrollBar();
+    const int rows = qMin(scrollBar->maximum(), visibleRows() - scrollBar->pageStep());
+    return qMax(1, rows * kRowHeight);
+}
+
 void Minimap::scrollToPixelY(int y)
 {
-    // A click or drag maps pixels to scroll value over the slider's *track*
-    // — the strip height minus the slider's own on-screen height — not the
-    // full strip height. sliderRect() draws the slider so its top can only
-    // ever reach `height() - sliderHeight`, never `height()` itself (the
-    // last `sliderHeight` pixels are the slider's own body sitting at the
-    // bottom edge). Mapping the full [0, height()] range onto the scroll
-    // range, as if the slider were a single point, made the drag scroll
-    // faster than the slider itself could visually move: the two drift
-    // apart at a rate proportional to sliderHeight / height(), the exact
-    // "slider lags the mouse, editor keeps scrolling" desync reported
-    // against a real drag.
     QScrollBar *scrollBar = editor_->verticalScrollBar();
     const int maxScroll = scrollBar->maximum();
     if (maxScroll <= 0) {
         return;
     }
-    const int track = qMax(1, height() - sliderHeightPx());
-    const int clampedY = qBound(0, y, track);
-    const double fraction = static_cast<double>(clampedY) / track;
+    const int travel = sliderTravelPx();
+    const int clampedY = qBound(0, y, travel);
+    const double fraction = static_cast<double>(clampedY) / travel;
     scrollBar->setValue(static_cast<int>(fraction * maxScroll));
 }
 

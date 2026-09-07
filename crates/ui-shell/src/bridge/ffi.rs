@@ -2945,10 +2945,24 @@ mod ffi {
         /// The list is Rust's answer (`pty_core::shells::detect`) and the
         /// view only renders it: which shells exist, what they are called
         /// and in what order are decisions, and none of them belongs in
-        /// `cpp/`.
+        /// `cpp/`. Returns the cached catalogue — instant once
+        /// `refreshShells()` has landed once; detects synchronously exactly
+        /// once before that, rather than showing an empty menu.
         #[qinvokable]
         #[cxx_name = "availableShells"]
         fn available_shells(self: &TerminalSupervisor) -> Vec<FfiShellCandidate>;
+
+        /// Detect this machine's shells on a background thread and cache
+        /// the result, emitting `shellsChanged()` once it lands. Never
+        /// blocks the Qt thread — a `wsl.exe --list` round trip on Windows
+        /// takes 1-3s, which used to run on the Qt thread every time the
+        /// "+" dropdown opened. Call from the panel's constructor and again
+        /// each time the dropdown is about to show, so a WSL distro
+        /// installed while the IDE is running still turns up without a
+        /// restart.
+        #[qinvokable]
+        #[cxx_name = "refreshShells"]
+        fn refresh_shells(self: Pin<&mut TerminalSupervisor>);
 
         /// Forward keystrokes (already translated to the byte sequence a
         /// shell expects by the view) to `session_id`'s PTY stdin.
@@ -3063,6 +3077,15 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "gridUpdated"]
         fn grid_updated(self: Pin<&mut TerminalSupervisor>, session_id: u64);
+
+        /// Emitted on the Qt thread once `refreshShells()`'s background
+        /// detect has landed and the cache `availableShells()` reads is
+        /// up to date. The dock's shell menu rebuilds from this only while
+        /// it is visible; the settings page's combo, built once per dialog
+        /// open, does not listen.
+        #[qsignal]
+        #[cxx_name = "shellsChanged"]
+        fn shells_changed(self: Pin<&mut TerminalSupervisor>);
     }
 
     // Enables `self.qt_thread()` on `TerminalSupervisor` for the background

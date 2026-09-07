@@ -37,12 +37,20 @@ use crate::bridge::ffi::{self, FfiResult};
 /// which is the whole point of the change: before this, a terminal
 /// inherited the IDE process's own directory, which is never what someone
 /// opening a terminal in a project meant.
+///
+/// `catalogue` is this machine's shell list, already detected — never
+/// re-detected here. Detection means a blocking `wsl.exe` round-trip on
+/// Windows, and this function runs on the Qt thread every time a terminal
+/// tab is opened, so it takes the answer as an argument instead of asking
+/// for it (see `TerminalSupervisorRust::ensure_shells_cached`).
 fn shell_for(
     settings: &app_config::TerminalSettings,
     requested_id: &str,
     project_root: Option<&std::path::Path>,
+    catalogue: &[pty_core::ShellCandidate],
 ) -> pty_core::ShellSpec {
-    let mut spec = requested_shell(settings, requested_id).unwrap_or_else(platform_default);
+    let mut spec =
+        requested_shell(settings, requested_id, catalogue).unwrap_or_else(platform_default);
 
     if !settings.start_directory.is_empty() {
         spec = spec.with_cwd(&settings.start_directory);
@@ -63,9 +71,12 @@ fn shell_for(
 fn requested_shell(
     settings: &app_config::TerminalSettings,
     requested_id: &str,
+    catalogue: &[pty_core::ShellCandidate],
 ) -> Option<pty_core::ShellSpec> {
+    let find = |id: &str| catalogue.iter().find(|candidate| candidate.id == id);
+
     if !requested_id.is_empty() {
-        if let Some(candidate) = pty_core::shells::find(requested_id) {
+        if let Some(candidate) = find(requested_id) {
             return Some(candidate.to_spec());
         }
     }
@@ -76,7 +87,7 @@ fn requested_shell(
         ));
     }
     if !settings.shell_id.is_empty() {
-        if let Some(candidate) = pty_core::shells::find(&settings.shell_id) {
+        if let Some(candidate) = find(&settings.shell_id) {
             let mut spec = candidate.to_spec();
             if !settings.shell_args.is_empty() {
                 spec.args = split_args(&settings.shell_args);
@@ -185,6 +196,12 @@ impl TerminalEntry {
 pub struct TerminalSupervisorRust {
     sessions: RefCell<HashMap<u64, TerminalEntry>>,
     next_id: std::cell::Cell<u64>,
+    /// This machine's shell catalogue, filled in the background so opening
+    /// the "+" dropdown never blocks the Qt thread on a `wsl.exe` round
+    /// trip. `None` until the first fill — either `refresh_shells`' thread
+    /// landing, or a synchronous one-time detect from `ensure_shells_cached`
+    /// if nothing has asked yet.
+    shells: RefCell<Option<Vec<pty_core::ShellCandidate>>>,
 }
 
 impl Drop for TerminalSupervisorRust {
@@ -243,14 +260,49 @@ impl ffi::TerminalSupervisor {
     /// Every shell this machine offers, for the dock's "+" dropdown and the
     /// settings page's combo. The view builds a menu from this and hands an
     /// id back to `start()`; it never decides what is on the list.
+    ///
+    /// Returns the cache — instant once `refresh_shells` has landed once.
+    /// Before that (the very first call of a session), there is nothing to
+    /// return yet, so this detects synchronously exactly once rather than
+    /// showing an empty menu; every call after is free.
     pub fn available_shells(&self) -> Vec<ffi::FfiShellCandidate> {
-        pty_core::shells::detect()
+        self.ensure_shells_cached()
             .into_iter()
             .map(|candidate| ffi::FfiShellCandidate {
                 id: QString::from(candidate.id.as_str()),
                 label: QString::from(candidate.label.as_str()),
             })
             .collect()
+    }
+
+    /// Detect this machine's shells on a background thread and hand the
+    /// result back to the Qt thread via `qt_thread().queue`, the same
+    /// thread-to-Qt idiom `apply_mcp_settings` (`bridge/editor.rs`) already
+    /// uses. Call from the panel's constructor and each time its shell menu
+    /// is about to show — never blocks, so calling it eagerly costs nothing.
+    pub fn refresh_shells(self: Pin<&mut Self>) {
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let detected = pty_core::shells::detect();
+            let _ = qt_thread.queue(move |mut supervisor: Pin<&mut Self>| {
+                *supervisor.shells.borrow_mut() = Some(detected);
+                supervisor.as_mut().shells_changed();
+            });
+        });
+    }
+
+    /// The cached catalogue, detecting synchronously once if nothing has
+    /// filled it yet (the window between construction and `refresh_shells`'
+    /// background thread landing). Every caller that needs the actual
+    /// `ShellCandidate` list — `available_shells` and `start` — goes through
+    /// this rather than calling `pty_core::shells::detect` a second time.
+    fn ensure_shells_cached(&self) -> Vec<pty_core::ShellCandidate> {
+        if let Some(cached) = self.shells.borrow().as_ref() {
+            return cached.clone();
+        }
+        let detected = pty_core::shells::detect();
+        *self.shells.borrow_mut() = Some(detected.clone());
+        detected
     }
 
     pub fn start(
@@ -268,10 +320,12 @@ impl ffi::TerminalSupervisor {
         };
 
         let settings = crate::bridge::convert::load_resolved_settings();
+        let catalogue = self.ensure_shells_cached();
         let shell = shell_for(
             &settings.terminal,
             &shell_id.to_string(),
             crate::bridge::convert::current_project_root().as_deref(),
+            &catalogue,
         );
         let pty_size = pty_core::PtySize::new(rows as u16, cols as u16);
         let mut session = match pty_core::PtySession::spawn(&shell, pty_size) {
@@ -550,12 +604,31 @@ impl ffi::TerminalSupervisor {
 
 #[cfg(test)]
 mod shell_resolution_tests {
-    //! Qt-free: `shell_for` takes everything it depends on as an argument,
-    //! so the precedence rule the whole feature rests on is tested here
-    //! rather than by opening a terminal and looking at it.
+    //! Qt-free: `shell_for` takes everything it depends on as an argument —
+    //! including, now, the shell catalogue itself — so the precedence rule
+    //! the whole feature rests on is tested here, against an explicit
+    //! catalogue, rather than by opening a terminal and looking at it or by
+    //! depending on the test machine's own `$SHELL`.
     use super::{shell_for, split_args};
     use app_config::TerminalSettings;
+    use pty_core::ShellCandidate;
     use std::path::Path;
+
+    fn candidate(id: &str, program: &str) -> ShellCandidate {
+        ShellCandidate {
+            id: id.to_string(),
+            label: id.to_string(),
+            program: program.to_string(),
+            args: Vec::new(),
+        }
+    }
+
+    fn catalogue() -> Vec<ShellCandidate> {
+        vec![
+            candidate("system", "/bin/zsh"),
+            candidate("bash", "/bin/bash"),
+        ]
+    }
 
     #[test]
     fn a_new_terminal_starts_in_the_project_root() {
@@ -563,6 +636,7 @@ mod shell_resolution_tests {
             &TerminalSettings::default(),
             "",
             Some(Path::new("/home/dev/checkout")),
+            &catalogue(),
         );
         assert_eq!(spec.cwd.as_deref(), Some(Path::new("/home/dev/checkout")));
     }
@@ -571,7 +645,10 @@ mod shell_resolution_tests {
     /// own directory, which is what leaving `cwd` unset inherits.
     #[test]
     fn with_no_project_open_the_working_directory_is_inherited() {
-        assert_eq!(shell_for(&TerminalSettings::default(), "", None).cwd, None);
+        assert_eq!(
+            shell_for(&TerminalSettings::default(), "", None, &catalogue()).cwd,
+            None
+        );
     }
 
     #[test]
@@ -580,7 +657,12 @@ mod shell_resolution_tests {
             start_directory: "/srv/elsewhere".to_string(),
             ..TerminalSettings::default()
         };
-        let spec = shell_for(&settings, "", Some(Path::new("/home/dev/checkout")));
+        let spec = shell_for(
+            &settings,
+            "",
+            Some(Path::new("/home/dev/checkout")),
+            &catalogue(),
+        );
         assert_eq!(spec.cwd.as_deref(), Some(Path::new("/srv/elsewhere")));
     }
 
@@ -592,7 +674,7 @@ mod shell_resolution_tests {
             shell_args: "-l -c true".to_string(),
             ..TerminalSettings::default()
         };
-        let spec = shell_for(&settings, "", None);
+        let spec = shell_for(&settings, "", None, &catalogue());
         assert_eq!(spec.program, "/opt/toolchain/bin/ash");
         assert_eq!(spec.args, vec!["-l", "-c", "true"]);
     }
@@ -605,7 +687,7 @@ mod shell_resolution_tests {
             shell_id: "no-such-shell-anywhere".to_string(),
             ..TerminalSettings::default()
         };
-        let spec = shell_for(&settings, "", None);
+        let spec = shell_for(&settings, "", None, &catalogue());
         assert!(!spec.program.is_empty());
         assert_eq!(spec.program, super::platform_default().program);
     }
@@ -614,15 +696,21 @@ mod shell_resolution_tests {
     /// configured default — that is what the "+" dropdown means.
     #[test]
     fn the_requested_shell_beats_a_custom_path() {
-        // `system` is `$SHELL`, which the test environment always has.
-        let Some(system) = pty_core::shells::find("system") else {
-            return; // No `$SHELL` at all: nothing to assert against.
-        };
         let settings = TerminalSettings {
             shell_path: "/opt/toolchain/bin/ash".to_string(),
             ..TerminalSettings::default()
         };
-        assert_eq!(shell_for(&settings, "system", None).program, system.program);
+        let spec = shell_for(&settings, "system", None, &catalogue());
+        assert_eq!(spec.program, "/bin/zsh");
+    }
+
+    /// A requested id the catalogue no longer offers falls through to the
+    /// rest of the precedence list, the same as an uninstalled configured
+    /// shell — a stale id must not be a reason to refuse to open at all.
+    #[test]
+    fn a_requested_shell_the_catalogue_no_longer_offers_falls_through() {
+        let spec = shell_for(&TerminalSettings::default(), "gone", None, &catalogue());
+        assert_eq!(spec.program, super::platform_default().program);
     }
 
     #[test]
@@ -631,7 +719,7 @@ mod shell_resolution_tests {
         settings
             .env
             .insert("RUST_LOG".to_string(), "debug".to_string());
-        let spec = shell_for(&settings, "", None);
+        let spec = shell_for(&settings, "", None, &catalogue());
         assert_eq!(
             spec.env,
             vec![("RUST_LOG".to_string(), "debug".to_string())]

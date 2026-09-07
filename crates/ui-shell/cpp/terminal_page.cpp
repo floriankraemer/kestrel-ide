@@ -40,6 +40,11 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
 
     auto *shellBox = new QComboBox(page);
     shellBox->addItem(QObject::tr("Default shell"), QString());
+    // Known ceiling: `AppSettings::availableShells()` still detects
+    // synchronously, unlike `TerminalSupervisor`'s cached/background
+    // version — built once per dialog open, so a settings dialog costs one
+    // detect rather than one per keystroke or open, which is the ceiling
+    // T1 left in place (see docs/architecture/terminal-experience-plan.md).
     for (const FfiShellCandidate &shell : appSettings->availableShells()) {
         shellBox->addItem(shell.label, shell.id);
     }

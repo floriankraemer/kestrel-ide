@@ -107,17 +107,17 @@ impl Repository {
         Ok(Some(CommitDetail {
             id: commit.id.to_hex().to_string(),
             summary: message.summary().to_string(),
-            body: message
-                .body()
-                .map(|b| b.to_string())
-                .unwrap_or_default(),
+            body: message.body().map(|b| b.to_string()).unwrap_or_default(),
             author_name: author.name.to_string(),
             author_email: author.email.to_string(),
             author_time: author_time.seconds,
             committer_name: committer.name.to_string(),
             committer_email: committer.email.to_string(),
             committer_time: committer_time.seconds,
-            parent_ids: commit.parent_ids().map(|id| id.to_hex().to_string()).collect(),
+            parent_ids: commit
+                .parent_ids()
+                .map(|id| id.to_hex().to_string())
+                .collect(),
         }))
     }
 
@@ -422,7 +422,11 @@ mod tests {
         git(dir.path(), &["add", "a.txt"]);
         git(
             dir.path(),
-            &["commit", "-m", "summary line\n\nfirst body line\nsecond body line"],
+            &[
+                "commit",
+                "-m",
+                "summary line\n\nfirst body line\nsecond body line",
+            ],
         );
 
         let repo = open(dir.path());

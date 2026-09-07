@@ -15,6 +15,7 @@ pub mod blame;
 pub mod branch;
 pub mod cli;
 pub mod commit;
+pub mod commit_diff;
 mod error;
 pub mod history;
 pub mod hunks;
@@ -23,8 +24,9 @@ pub mod revert;
 pub mod staging;
 
 pub use blame::{BlameCache, BlameLine};
+pub use commit_diff::{ChangedCommitFile, FileDiff};
 pub use error::VcsError;
-pub use history::{HistoryCache, LogEntry};
+pub use history::{CommitDetail, HistoryCache, LogEntry};
 pub use hunks::{HunkCache, WorkingHunks};
 pub use repo::{ChangeKind, DiscoverResult, FileStatus, HeadInfo, RepoStatus, Repository};
 pub use revert::{revert_hunk, TextEdit};

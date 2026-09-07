@@ -3,6 +3,7 @@
 #include "ads_globals.h"
 
 #include <QHash>
+#include <QPointer>
 #include <QString>
 
 namespace ads {
@@ -62,7 +63,17 @@ private:
     {
         ads::CDockWidget *dock;
         ads::DockWidgetArea area;
-        ads::CDockAreaWidget *relativeTo;
+        // A dock widget that lived in `registerDock`'s `relativeTo` area,
+        // never that area itself: `CDockManager::restoreState()` deletes
+        // every dock area and builds new ones, so an area pointer taken at
+        // construction is dangling after the first layout restore, and
+        // `show()`'s re-add handed ADS exactly that (issue: File History
+        // crashed on every launch once a layout without it had been saved).
+        // Dock widgets survive a restore; the area to re-add next to is
+        // looked up through this one at show time. `QPointer`, so a dock
+        // ADS deletes reads as "no anchor" rather than as another stale
+        // pointer.
+        QPointer<ads::CDockWidget> anchor;
     };
 
     ads::CDockManager *dockManager_;

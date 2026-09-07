@@ -142,7 +142,9 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "app-config",
+ "base64 0.22.1",
  "e2e",
+ "flate2",
  "serde_json",
  "tempfile",
  "ui-shell",

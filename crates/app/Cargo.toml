@@ -31,3 +31,7 @@ serde_json = "1"
 # thread sees `.git` from the first instant rather than racing a `git init`
 # run after the process is already up.
 tempfile = "3"
+# Only for `e2e_vcs.rs`'s `forget_dock_in_saved_layout`: the persisted dock layout is ADS's
+# `qCompress`ed XML, base64'd through `window_state`.
+base64 = "0.22"
+flate2 = "1"

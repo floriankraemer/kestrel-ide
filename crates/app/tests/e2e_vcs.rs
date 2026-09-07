@@ -117,6 +117,49 @@ fn status_porcelain(root: &std::path::Path) -> String {
         .expect("running git status")
 }
 
+/// Right-click `file`'s row in the project tree and hover the Git entry so
+/// its submenu is open. Returns the mark the submenu's own
+/// `project_tree_git_action` markers come after.
+fn open_tree_git_submenu(ide: &Ide, file: &str) -> Mark {
+    // The tree reports every visible row's rect, and reports again whenever
+    // anything moves a row — including the very first layout, whose rects are
+    // stale by the time the dock has its final size. So force one fresh
+    // report and read *that* one: a new file in the project reaches the tree
+    // through the filesystem watcher, which is a structural change.
+    //
+    // (The Project dock is already visible on a fresh profile. `alt+1` would
+    // toggle it — i.e. hide it — which is how the first version of this flow
+    // ended up right-clicking an empty dock.)
+    let mark = ide.mark();
+    std::fs::write(ide.project_root().join("zzz-settle.txt"), "settle\n")
+        .expect("writing a file to force a fresh tree layout report");
+    let row = ide.wait_for_event(mark, &format!("a settled tree row for {file}"), |e| {
+        e["ev"] == "project_tree_row" && e["path"].as_str().is_some_and(|path| path.ends_with(file))
+    });
+
+    let (row_x, row_y) = rect_centre(&row["rect"]);
+    // No window manager under Xvfb, so nothing has given the window the
+    // input focus since it mapped; a click into an unfocused toplevel is
+    // delivered, but the menu it raises has nowhere to take a grab from.
+    ide.focus_main();
+    ide.click_at(row_x, row_y, 1);
+    ide.click_at(row_x, row_y, 3);
+    ide.wait_for_event(mark, "the tree context menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "project_tree_context_menu"
+    });
+
+    // Both menus report where their entries are, so this hovers and clicks
+    // them rather than counting `Down` presses — a count silently re-targets
+    // itself the day someone adds an entry above the one it meant.
+    let git = ide.wait_for_event(mark, "the Git entry in the tree menu", |e| {
+        e["ev"] == "project_tree_menu_action" && e["label"] == "Git"
+    });
+    let (git_x, git_y) = rect_centre(&git["rect"]);
+    // Hovering opens a submenu; clicking a submenu parent does not.
+    ide.mouse_move(git_x, git_y);
+    mark
+}
+
 /// The project tree's Git submenu stages the file it was opened on.
 ///
 /// Staging is the entry worth driving end to end rather than one of the
@@ -143,45 +186,7 @@ fn e2e_the_project_trees_git_submenu_stages_a_file() {
         e["ev"] == "changes_row" && e["path"] == "draft.txt"
     });
 
-    // The tree reports every visible row's rect, and reports again whenever
-    // anything moves a row — including the very first layout, whose rects are
-    // stale by the time the dock has its final size. So force one fresh
-    // report and read *that* one: a new file in the project reaches the tree
-    // through the filesystem watcher, which is a structural change.
-    //
-    // (The Project dock is already visible on a fresh profile. `alt+1` would
-    // toggle it — i.e. hide it — which is how the first version of this flow
-    // ended up right-clicking an empty dock.)
-    let mark = ide.mark();
-    std::fs::write(ide.project_root().join("zzz-settle.txt"), "settle\n")
-        .expect("writing a file to force a fresh tree layout report");
-    let row = ide.wait_for_event(mark, "a settled tree row for draft.txt", |e| {
-        e["ev"] == "project_tree_row"
-            && e["path"]
-                .as_str()
-                .is_some_and(|path| path.ends_with("draft.txt"))
-    });
-
-    let (row_x, row_y) = rect_centre(&row["rect"]);
-    // No window manager under Xvfb, so nothing has given the window the
-    // input focus since it mapped; a click into an unfocused toplevel is
-    // delivered, but the menu it raises has nowhere to take a grab from.
-    ide.focus_main();
-    ide.click_at(row_x, row_y, 1);
-    ide.click_at(row_x, row_y, 3);
-    ide.wait_for_event(mark, "the tree context menu to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "project_tree_context_menu"
-    });
-
-    // Both menus report where their entries are, so this hovers and clicks
-    // them rather than counting `Down` presses — a count silently re-targets
-    // itself the day someone adds an entry above the one it meant.
-    let git = ide.wait_for_event(mark, "the Git entry in the tree menu", |e| {
-        e["ev"] == "project_tree_menu_action" && e["label"] == "Git"
-    });
-    let (git_x, git_y) = rect_centre(&git["rect"]);
-    // Hovering opens a submenu; clicking a submenu parent does not.
-    ide.mouse_move(git_x, git_y);
+    let mark = open_tree_git_submenu(&ide, "draft.txt");
 
     let stage = ide.wait_for_event(mark, "Stage File in the Git submenu", |e| {
         e["ev"] == "project_tree_git_action" && e["label"] == "Stage File"
@@ -206,6 +211,82 @@ fn e2e_the_project_trees_git_submenu_stages_a_file() {
             .starts_with("M  draft.txt")
             .then_some(())
     });
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// Drop dock `title` from the persisted layout, which is what a layout
+/// saved by a build that predates that dock looks like. ADS's `saveState`
+/// is `qCompress`ed XML (a 4-byte big-endian length, then a zlib stream)
+/// and its `restoreState` takes plain XML back, so the edited layout is
+/// stored uncompressed.
+fn forget_dock_in_saved_layout(ide: &Ide, title: &str) {
+    use base64::Engine;
+    use std::io::Read;
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut settings = app_config::load(&ide.config_dir()).expect("settings just written");
+    let state = engine
+        .decode(&settings.window_state)
+        .expect("window_state is base64");
+    let xml = if state.starts_with(b"<?xml") {
+        state
+    } else {
+        let mut xml = Vec::new();
+        flate2::read::ZlibDecoder::new(&state[4..])
+            .read_to_end(&mut xml)
+            .expect("window_state is qCompress'ed XML");
+        xml
+    };
+    let xml = String::from_utf8(xml).expect("ADS state is XML text");
+    let element = format!("<Widget Name=\"{title}\" Closed=\"1\"/>");
+    assert!(
+        xml.contains(&element),
+        "the saved layout should hold the closed {title} dock: {xml}"
+    );
+    settings.window_state = engine.encode(xml.replace(&element, ""));
+    app_config::save(&ide.config_dir(), &settings).expect("rewriting the layout");
+}
+
+/// A dock the saved layout does not know — File History here, but any
+/// dock added after the user's layout was last saved — is left without a
+/// dock area by `restoreState`, and every dock area that existed before
+/// the restore is deleted by it. Showing such a dock used to hand ADS a
+/// dangling area to place it next to (an access violation on Windows,
+/// undefined on Linux), and since the crash meant no layout was ever saved
+/// again, it repeated on every launch. Driven through the tree's Git
+/// submenu, the path the Windows crash dump named.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_file_history_opens_after_a_layout_saved_without_its_dock() {
+    let name = "e2e_file_history_opens_after_a_layout_saved_without_its_dock";
+    let repo = git_fixture(&[("history.txt", "v1\n")]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    assert_eq!(ide.quit(), 0);
+    forget_dock_in_saved_layout(&ide, "File History");
+
+    ide.relaunch();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    let mark = open_tree_git_submenu(&ide, "history.txt");
+    let history = ide.wait_for_event(mark, "Show File History in the Git submenu", |e| {
+        e["ev"] == "project_tree_git_action" && e["label"] == "Show File History"
+    });
+    let (x, y) = rect_centre(&history["rect"]);
+    ide.click_at(x, y, 1);
+
+    let ready = ide.wait_for_event(mark, "history_ready for history.txt", |e| {
+        e["ev"] == "history_ready"
+            && e["path"]
+                .as_str()
+                .is_some_and(|path| path.ends_with("history.txt"))
+    });
+    assert_eq!(
+        ready["count"].as_u64(),
+        Some(1),
+        "history did not list the commit"
+    );
 
     assert_eq!(ide.quit(), 0);
 }

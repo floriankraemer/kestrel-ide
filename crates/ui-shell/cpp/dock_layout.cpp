@@ -12,7 +12,9 @@ ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWi
                                                  ads::DockWidgetArea area,
                                                  ads::CDockAreaWidget *relativeTo)
 {
-    docks_.insert(id, Entry{dock, area, relativeTo});
+    ads::CDockWidget *anchor =
+      relativeTo && !relativeTo->dockWidgets().isEmpty() ? relativeTo->dockWidgets().first() : nullptr;
+    docks_.insert(id, Entry{dock, area, anchor});
     return dockManager_->addDockWidget(area, dock, relativeTo);
 }
 
@@ -20,7 +22,11 @@ void DockRegistry::show(const QString &id)
 {
     const Entry &entry = docks_[id];
     if (!entry.dock->dockAreaWidget()) {
-        dockManager_->addDockWidget(entry.area, entry.dock, entry.relativeTo);
+        // The anchor's *current* area. An anchor the restored layout left
+        // homeless too gives `nullptr`, which ADS takes as "a new area on
+        // the root container" — a dock in a plain place beats no dock.
+        ads::CDockAreaWidget *relativeTo = entry.anchor ? entry.anchor->dockAreaWidget() : nullptr;
+        dockManager_->addDockWidget(entry.area, entry.dock, relativeTo);
     }
     entry.dock->toggleView(true);
     entry.dock->raise();

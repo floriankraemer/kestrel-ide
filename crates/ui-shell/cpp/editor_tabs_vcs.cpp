@@ -16,6 +16,7 @@
 #include <QPushButton>
 #include <QShortcut>
 #include <QTabWidget>
+#include <QTextDocument>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QVector>
@@ -291,24 +292,41 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
 
     auto *diffView =
       new DiffView(headText, editor, vcsService_->hunks(path), ::rust::Vec<FfiInlineSpan>(), path);
-    {
-        const QString workingText = editor->toPlainText();
-        diffView->setDiff(
-          docManager_->diffHunksBetween(headText, workingText, FfiWhitespaceMode::Exact),
-          docManager_->diffSpansBetween(headText, workingText, FfiWhitespaceMode::Exact,
-                                        FfiHighlightMode::Words),
-          docManager_->diffRowsBetween(headText, workingText, FfiWhitespaceMode::Exact));
-    }
-    auto *page = new DiffViewPage(diffView, tr("HEAD"), tr("Working Tree"));
-    page->onIgnoreWhitespaceToggled = [this, diffView, headText, editor](bool ignore) {
-        const QString workingText = editor->toPlainText();
-        const FfiWhitespaceMode mode =
-          ignore ? FfiWhitespaceMode::IgnoreAll : FfiWhitespaceMode::Exact;
-        diffView->setDiff(
-          docManager_->diffHunksBetween(headText, workingText, mode),
-          docManager_->diffSpansBetween(headText, workingText, mode, FfiHighlightMode::Words),
-          docManager_->diffRowsBetween(headText, workingText, mode));
+    // The right text is the live buffer, read at every recompute — a
+    // keystroke, a chevron, a toolbar option all see what the editor holds
+    // now, not what it held when the window opened.
+    auto recompute = [this, headText, editor](FfiWhitespaceMode whitespace,
+                                              FfiHighlightMode highlight) {
+        DiffData data;
+        data.leftText = headText;
+        data.rightText = editor->toPlainText();
+        data.hunks = docManager_->diffHunksBetween(data.leftText, data.rightText, whitespace);
+        data.spans =
+          docManager_->diffSpansBetween(data.leftText, data.rightText, whitespace, highlight);
+        data.rows = docManager_->diffRowsBetween(data.leftText, data.rightText, whitespace);
+        return data;
     };
+    auto *page = new DiffViewPage(diffView, tr("HEAD"), tr("Working Tree"), recompute);
+    page->setApplyHandler([this, page, headText, editor, path](const FfiHunk &hunk) {
+        FfiTextEdit edit = docManager_->hunkRevertEdit(headText, hunk);
+        edit.path = path;
+        ::rust::Vec<FfiTextEdit> edits;
+        edits.push_back(edit);
+        applyEditsTo(editor, edits);
+        e2eMark(QStringLiteral("{\"ev\":\"diff_hunk_applied\",\"path\":%1,\"new_start\":%2}")
+                  .arg(e2eJson(path))
+                  .arg(hunk.new_start));
+        page->refresh();
+    });
+    // Typing in the right pane changes the diff; recompute once the burst
+    // settles rather than on every keystroke. The timer is the page's
+    // child, so the window closing drops the connection with it.
+    auto *refreshTimer = new QTimer(page);
+    refreshTimer->setSingleShot(true);
+    refreshTimer->setInterval(250);
+    connect(editor->document(), &QTextDocument::contentsChanged, refreshTimer,
+            qOverload<>(&QTimer::start));
+    connect(refreshTimer, &QTimer::timeout, page, &DiffViewPage::refresh);
 
     auto *window = new DiffWindow(nullptr, Qt::Window);
     window->setWindowTitle(tr("Diff — %1").arg(path));

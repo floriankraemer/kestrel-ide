@@ -281,6 +281,27 @@ QToolButton:disabled {
     color: {textDim};
 }
 
+/* ---- diff viewer chrome ------------------------------------------ */
+QWidget#diffToolbar {
+    background: {surface};
+    border-bottom: 1px solid {border};
+}
+
+QWidget#diffToolbar QLabel#diffCount {
+    color: {textDim};
+    padding: 0 {sp-2}px;
+}
+
+QWidget#diffPaneHeader {
+    background: {surface};
+    border-bottom: 1px solid {border};
+}
+
+QWidget#diffPaneHeader QLabel {
+    color: {textDim};
+    padding: 0 {sp-2}px;
+}
+
 QPushButton {
     background-color: {surface2};
     color: {text};

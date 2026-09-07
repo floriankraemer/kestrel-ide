@@ -452,9 +452,10 @@ fn main() {
         .cpp_file("cpp/diff_pane.cpp")
         .cpp_file("cpp/diff_divider.h")
         .cpp_file("cpp/diff_divider.cpp")
-        // F3-14: the toolbar chrome around `DiffView`. Declares Q_OBJECT
-        // (for the ignore-whitespace checkbox's signal/slot), so its header
-        // is listed too.
+        // The chrome around `DiffView`: the toolbar and the page composing
+        // it. Both declare Q_OBJECT, so their headers are listed too.
+        .cpp_file("cpp/diff_toolbar.h")
+        .cpp_file("cpp/diff_toolbar.cpp")
         .cpp_file("cpp/diff_view_page.h")
         .cpp_file("cpp/diff_view_page.cpp")
         .cpp_file("cpp/search_everywhere_dialog.cpp")

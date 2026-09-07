@@ -1,5 +1,7 @@
 #include "code_editor.h"
 
+#include "diff_pane.h"
+
 #include "e2e_mark.h"
 #include "theme.h"
 #include <QContextMenuEvent>
@@ -1018,21 +1020,7 @@ void CodeEditor::setBlameEnabled(bool enabled)
 
 void CodeEditor::setBlocksVisible(int fromBlockExclusive, int toBlockInclusive, bool visible)
 {
-    QTextBlock block = document()->findBlockByNumber(fromBlockExclusive).next();
-    while (block.isValid() && block.blockNumber() <= toBlockInclusive) {
-        block.setVisible(visible);
-        block.setLineCount(visible ? 1 : 0);
-        block = block.next();
-    }
-
-    const QTextBlock startBlock = document()->findBlockByNumber(fromBlockExclusive);
-    const QTextBlock endBlock = document()->findBlockByNumber(toBlockInclusive);
-    if (startBlock.isValid() && endBlock.isValid()) {
-        document()->markContentsDirty(startBlock.position(),
-                                       endBlock.position() + endBlock.length()
-                                         - startBlock.position());
-    }
-    viewport()->update();
+    setLinesVisible(this, fromBlockExclusive, toBlockInclusive, visible);
     lineNumberArea_->update();
 }
 

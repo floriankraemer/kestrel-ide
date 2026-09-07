@@ -4,6 +4,7 @@
 #include "theme.h"
 #include "ui_tokens.h"
 
+#include <QApplication>
 #include <QFontDatabase>
 #include <QPaintEvent>
 #include <QPainter>
@@ -20,9 +21,13 @@ void setLinesVisible(QPlainTextEdit *edit, int fromExclusive, int toInclusive, b
     QTextBlock block = edit->document()->findBlockByNumber(fromExclusive).next();
     while (block.isValid() && block.blockNumber() <= toInclusive) {
         block.setVisible(visible);
-        block.setLineCount(visible ? 1 : 0);
         block = block.next();
     }
+    // Marking the range dirty makes the layout re-lay these blocks, and
+    // *it* sets each block's line count (0 while hidden). Setting the count
+    // by hand here, as an earlier version did, hid the change from the
+    // layout — it then saw no size change, never re-fitted the scrollbars,
+    // and a pane that had just re-shown 80 lines could not scroll to them.
     const QTextBlock startBlock = edit->document()->findBlockByNumber(fromExclusive);
     const QTextBlock endBlock = edit->document()->findBlockByNumber(toInclusive);
     if (startBlock.isValid() && endBlock.isValid()) {
@@ -58,6 +63,9 @@ FoldHint::FoldHint(int lineCount, QWidget *viewport)
     setCursor(Qt::PointingHandCursor);
     setFocusPolicy(Qt::NoFocus);
     setToolTip(QObject::tr("Expand"));
+    // Chrome, not code: the interface font, whichever editor font the pane
+    // underneath happens to use.
+    setFont(QApplication::font());
     // A placeholder row, not a button: the gutter's shade edge to edge, the
     // label dimmed like a line number, no chrome of its own.
     const QColor ground = tinted(viewport->palette().color(QPalette::Base), 130, 106);

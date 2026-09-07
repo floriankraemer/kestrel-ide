@@ -57,6 +57,17 @@ mod ffi {
         tab_id: u64,
     }
 
+    /// `FfiResult` plus one named layout's two opaque blobs — `namedLayout`'s
+    /// return. Both strings are empty when `code` is non-zero; the view
+    /// branches on `code`, never on an empty blob.
+    #[derive(Default)]
+    struct FfiLayout {
+        code: i32,
+        message: QString,
+        window_state: QString,
+        editor_grid: QString,
+    }
+
     /// One row of the binary (hex) viewer, 1:1 with `editor_core::HexRow`.
     ///
     /// Three ready-to-paint strings, not bytes: the offset format, the byte
@@ -1972,6 +1983,18 @@ mod ffi {
         #[cxx_name = "saveWindowGeometry"]
         fn save_window_geometry(self: &AppSettings, x: i32, y: i32, width: u32, height: u32);
 
+        /// Whether the window was maximized when it last closed. Read
+        /// alongside `windowGeometry`, never instead of it: the geometry is
+        /// the *normal* rect, so a maximized window needs both.
+        #[qinvokable]
+        #[cxx_name = "windowMaximized"]
+        fn window_maximized(self: &AppSettings) -> bool;
+
+        /// Persist whether the window is maximized (the same `closeEvent`).
+        #[qinvokable]
+        #[cxx_name = "saveWindowMaximized"]
+        fn save_window_maximized(self: &AppSettings, maximized: bool);
+
         /// Opaque persisted dock layout blob (D4), base64-encoded by the
         /// view — `ads::CDockManager::saveState()`/`restoreState()` deal in
         /// `QByteArray`, not text, and `Settings::window_state` is a plain
@@ -1999,6 +2022,42 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "saveEditorLayout"]
         fn save_editor_layout(self: &AppSettings, layout: &QString);
+
+        /// Named workspace arrangements, ordered by name: the global ones
+        /// merged with the open project's, a project entry shadowing a
+        /// global one of the same name (ADR-0045). A layout holds docks and
+        /// the editor grid and never files, which is what separates it from
+        /// `windowState`/`editorLayout` above — those are the last session,
+        /// this is an arrangement the user chose to keep.
+        #[qinvokable]
+        #[cxx_name = "layoutNames"]
+        fn layout_names(self: &AppSettings) -> QStringList;
+
+        /// Store a layout under `name` in `scope` (`"global"` or
+        /// `"project"`), replacing one of the same name in that layer.
+        /// `window_state` is base64 as for `windowState`; `editor_grid` is
+        /// the view's JSON with no files in it.
+        #[qinvokable]
+        #[cxx_name = "saveNamedLayout"]
+        fn save_named_layout(
+            self: &AppSettings,
+            name: &QString,
+            scope: &QString,
+            window_state: &QString,
+            editor_grid: &QString,
+        ) -> FfiResult;
+
+        /// One resolved layout by name, for the view to apply.
+        #[qinvokable]
+        #[cxx_name = "namedLayout"]
+        fn named_layout(self: &AppSettings, name: &QString) -> FfiLayout;
+
+        /// Delete the layout `name` from whichever layer defines it. A
+        /// project entry shadowing a global one is deleted first, revealing
+        /// the global layout rather than removing both.
+        #[qinvokable]
+        #[cxx_name = "deleteNamedLayout"]
+        fn delete_named_layout(self: &AppSettings, name: &QString) -> FfiResult;
 
         /// Active theme name (T2), e.g. "dark" or "light" — defaults to
         /// "dark" when unset (`Settings::theme_name`). The view maps this to

@@ -74,6 +74,10 @@ void IdeMainWindow::closeEvent(QCloseEvent *event)
         const QRect g = normalGeometry();
         appSettings_->saveWindowGeometry(g.x(), g.y(), static_cast<quint32>(qMax(0, g.width())),
                                           static_cast<quint32>(qMax(0, g.height())));
+        // The other half of that decision: the rect above is deliberately the
+        // *normal* one, so without this flag a maximised window reopens at
+        // the size it would un-maximise to.
+        appSettings_->saveWindowMaximized(isMaximized() || isFullScreen());
         if (dockManager_) {
             // D4: window_state is a plain Rust String (must be valid
             // UTF-8); ADS's saveState() returns raw QByteArray, so
@@ -94,6 +98,20 @@ void IdeMainWindow::closeEvent(QCloseEvent *event)
         docManager_->shutdownMcpServer();
     }
     QMainWindow::closeEvent(event);
+}
+
+void showRestored(QMainWindow *window, AppSettings *appSettings)
+{
+    // The reading half of `closeEvent`'s `saveWindowMaximized` above, and it
+    // lives beside it so the two cannot drift: the geometry has already been
+    // applied by the time this runs and stays the window's *normal* rect, so
+    // showing maximised here still leaves un-maximising on the size the user
+    // last dragged the window to.
+    if (appSettings && appSettings->windowMaximized()) {
+        window->showMaximized();
+        return;
+    }
+    window->show();
 }
 
 void applyNativeWindowChrome(QMainWindow *window)

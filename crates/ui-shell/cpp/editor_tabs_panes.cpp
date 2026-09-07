@@ -168,38 +168,123 @@ public:
 
 QString EditorTabs::saveLayout() const
 {
-    return QString::fromUtf8(QJsonDocument(serializeSplitter(root_)).toJson(QJsonDocument::Compact));
+    return QString::fromUtf8(
+      QJsonDocument(serializeSplitter(root_, /*includeFiles=*/true)).toJson(QJsonDocument::Compact));
 }
 
-void EditorTabs::restoreLayout(const QString &json)
+QString EditorTabs::saveGrid() const
+{
+    return QString::fromUtf8(
+      QJsonDocument(serializeSplitter(root_, /*includeFiles=*/false)).toJson(QJsonDocument::Compact));
+}
+
+// True when `json` described a grid that produced at least one pane.
+//
+// False covers two different failures, and both leave the caller with a
+// usable window: unparseable JSON is rejected *before* anything is torn down,
+// so the panes on screen survive it untouched, while a grid that yields no
+// pane at all leaves a single fresh group behind. Neither is worth
+// distinguishing at the call sites — both mean "there is no restored layout
+// to finish setting up".
+bool EditorTabs::rebuildFrom(const QString &json, bool allowEmptyGroups)
 {
     const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
     if (!doc.isObject()) {
-        return;
+        return false;
     }
     const QJsonObject rootObject = doc.object();
     if (rootObject.value(QStringLiteral("type")).toString() != QLatin1String("splitter")) {
-        return;
+        return false;
     }
 
-    suspendActivation_ = true;
     for (QTabWidget *group : std::as_const(groups_)) {
         group->setParent(nullptr);
         delete group;
     }
     groups_.clear();
     activeGroup_ = nullptr;
+    // Cleared, not merely overwritten: without this a grid with no `focused`
+    // pane would inherit whichever group the *previous* rebuild focused, and
+    // that pointer names a widget the loop above has just deleted.
+    restoredActiveGroup_ = nullptr;
 
-    applySplitter(root_, rootObject);
-    suspendActivation_ = false;
+    applySplitter(root_, rootObject, allowEmptyGroups);
 
     if (groups_.isEmpty()) {
         activeGroup_ = makeGroup();
         root_->addWidget(activeGroup_);
+        return false;
+    }
+    return true;
+}
+
+void EditorTabs::restoreLayout(const QString &json)
+{
+    suspendActivation_ = true;
+    const bool restored = rebuildFrom(json, /*allowEmptyGroups=*/false);
+    suspendActivation_ = false;
+    if (!restored) {
         return;
     }
+
     QTabWidget *group = restoredActiveGroup_ ? restoredActiveGroup_ : groups_.first();
     setActiveGroup(group, group->currentIndex());
+    markPaneCount();
+}
+
+void EditorTabs::applyGrid(const QString &json)
+{
+    // Parsed before anything moves: a grid that turns out to be unusable must
+    // not cost the user the arrangement they already had. `rebuildFrom`
+    // re-parses it, which is a few microseconds against never having half
+    // torn down the editor.
+    const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8());
+    if (!doc.isObject()
+        || doc.object().value(QStringLiteral("type")).toString() != QLatin1String("splitter")) {
+        return;
+    }
+
+    // Every open document comes out of its strip before the strips are torn
+    // down — applying a layout rearranges the workspace and closes nothing.
+    // `removeTab` drops the tab's decoration along with the tab, so title,
+    // icon and tooltip are carried by hand; same reason `moveTabToGroup`
+    // does it.
+    struct DetachedTab
+    {
+        QWidget *page;
+        QIcon icon;
+        QString title;
+        QString toolTip;
+    };
+    QList<DetachedTab> detached;
+    QWidget *wasCurrent = activeGroup_ ? activeGroup_->currentWidget() : nullptr;
+
+    suspendActivation_ = true;
+    for (QTabWidget *group : std::as_const(groups_)) {
+        while (group->count() > 0) {
+            detached.append(
+              DetachedTab{group->widget(0), group->tabIcon(0), group->tabText(0),
+                          group->tabToolTip(0)});
+            group->removeTab(0);
+        }
+    }
+
+    // Return value ignored on purpose: either branch leaves `groups_`
+    // non-empty, and the documents below have to land somewhere regardless.
+    rebuildFrom(json, /*allowEmptyGroups=*/true);
+
+    QTabWidget *target = restoredActiveGroup_ ? restoredActiveGroup_ : groups_.first();
+    int currentIndex = -1;
+    for (const DetachedTab &tab : std::as_const(detached)) {
+        const int at = target->addTab(tab.page, tab.icon, tab.title);
+        target->setTabToolTip(at, tab.toolTip);
+        if (tab.page == wasCurrent) {
+            currentIndex = at;
+        }
+    }
+    suspendActivation_ = false;
+
+    setActiveGroup(target, currentIndex >= 0 ? currentIndex : target->currentIndex());
     markPaneCount();
 }
 
@@ -500,15 +585,15 @@ void EditorTabs::markPaneCount()
     e2eMark(QStringLiteral("{\"ev\":\"pane_count\",\"n\":%1}").arg(groups_.size()));
 }
 
-QJsonObject EditorTabs::serializeSplitter(const QSplitter *splitter) const
+QJsonObject EditorTabs::serializeSplitter(const QSplitter *splitter, bool includeFiles) const
 {
     QJsonArray children;
     for (int i = 0; i < splitter->count(); ++i) {
         QWidget *child = splitter->widget(i);
         if (auto *group = qobject_cast<QTabWidget *>(child)) {
-            children.append(serializeGroup(group));
+            children.append(serializeGroup(group, includeFiles));
         } else if (auto *nested = qobject_cast<QSplitter *>(child)) {
-            children.append(serializeSplitter(nested));
+            children.append(serializeSplitter(nested, includeFiles));
         }
     }
     QJsonArray sizes;
@@ -525,8 +610,17 @@ QJsonObject EditorTabs::serializeSplitter(const QSplitter *splitter) const
     return object;
 }
 
-QJsonObject EditorTabs::serializeGroup(QTabWidget *group) const
+QJsonObject EditorTabs::serializeGroup(QTabWidget *group, bool includeFiles) const
 {
+    QJsonObject object;
+    object[QStringLiteral("type")] = QStringLiteral("group");
+    // `focused` is written either way: which pane the user was working in is
+    // part of an arrangement, not part of the document set.
+    object[QStringLiteral("focused")] = group == activeGroup_;
+    if (!includeFiles) {
+        return object;
+    }
+
     QJsonArray files;
     for (int i = 0; i < group->count(); ++i) {
         const QString path = docManager_->tabPath(tabIdAt(group, i));
@@ -534,17 +628,14 @@ QJsonObject EditorTabs::serializeGroup(QTabWidget *group) const
             files.append(path);
         }
     }
-
-    QJsonObject object;
-    object[QStringLiteral("type")] = QStringLiteral("group");
     object[QStringLiteral("files")] = files;
     object[QStringLiteral("active")] = docManager_->tabPath(
       tabIdAt(group, group->currentIndex()));
-    object[QStringLiteral("focused")] = group == activeGroup_;
     return object;
 }
 
-void EditorTabs::applySplitter(QSplitter *splitter, const QJsonObject &object)
+void EditorTabs::applySplitter(QSplitter *splitter, const QJsonObject &object,
+                               bool allowEmptyGroups)
 {
     splitter->setOrientation(
       object.value(QStringLiteral("orientation")).toString() == QLatin1String("v")
@@ -555,12 +646,12 @@ void EditorTabs::applySplitter(QSplitter *splitter, const QJsonObject &object)
     for (const QJsonValue &child : children) {
         const QJsonObject childObject = child.toObject();
         if (childObject.value(QStringLiteral("type")).toString() == QLatin1String("group")) {
-            restoreGroup(splitter, childObject);
+            restoreGroup(splitter, childObject, allowEmptyGroups);
         } else if (childObject.value(QStringLiteral("type")).toString()
                    == QLatin1String("splitter")) {
             auto *nested = new QSplitter(splitter);
             splitter->addWidget(nested);
-            applySplitter(nested, childObject);
+            applySplitter(nested, childObject, allowEmptyGroups);
         }
     }
 
@@ -574,10 +665,11 @@ void EditorTabs::applySplitter(QSplitter *splitter, const QJsonObject &object)
     }
 }
 
-void EditorTabs::restoreGroup(QSplitter *splitter, const QJsonObject &object)
+void EditorTabs::restoreGroup(QSplitter *splitter, const QJsonObject &object,
+                              bool allowEmptyGroups)
 {
     const QJsonArray files = object.value(QStringLiteral("files")).toArray();
-    if (files.isEmpty()) {
+    if (files.isEmpty() && !allowEmptyGroups) {
         return; // Nothing to show in it — don't restore an empty pane.
     }
 
@@ -599,7 +691,7 @@ void EditorTabs::restoreGroup(QSplitter *splitter, const QJsonObject &object)
             activeTabId = result.tab_id;
         }
     }
-    if (group->count() == 0) {
+    if (group->count() == 0 && !allowEmptyGroups) {
         // Every file in this group failed to reopen.
         groups_.removeAll(group);
         group->setParent(nullptr);

@@ -19,6 +19,7 @@
 #include "find_bar.h"
 #include "find_usages_panel.h"
 #include "help_menu.h"
+#include "layouts_menu.h"
 #include "hierarchy_panel.h"
 #include "hex_viewer.h"
 #include "icon_cache.h"
@@ -500,10 +501,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // to (ADS matches saved widgets by their title/object name). Empty
     // means nothing was ever saved — first launch, or window_state predates
     // D4 — so the layout built above (tree left of editor) stands as-is.
-    const QString savedState = appSettings->windowState();
-    if (!savedState.isEmpty()) {
-        dockManager->restoreState(QByteArray::fromBase64(savedState.toLatin1()));
-    }
+    docks->restoreState(appSettings->windowState());
 
     // Filesystem-watcher plumbing: ProjectTreeModel's watcher-driven signal
     // already carries the changed path and already runs on the Qt thread
@@ -1047,6 +1045,9 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel,
                  viewMenu);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
+    // Last of the View entries, under everything it can rearrange.
+    buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,
+                      central.editorTabs, *actions);
     buildDebugMenu(window, debugService, central.debugPanel, central.runConsolePanel, editorTabs,
                     appSettings, *actions, central.docks, viewMenu);
 
@@ -1177,8 +1178,8 @@ int run_app()
     buildMainWindow(
       appSettings,
       [&splash](int step, const QString &text) { splash.setStage(step, text); },
-      [&splash](QMainWindow *window) {
-          window->show();
+      [&splash, appSettings](QMainWindow *window) {
+          showRestored(window, appSettings);
           applyNativeWindowChrome(window);
           // Closes the splash exactly when the main window is up and its
           // project has settled (opened, failed, or there was none to
@@ -1189,7 +1190,8 @@ int run_app()
           // is still sound, since Qt holds a posted event queued rather
           // than dropping it, and delivers it the moment the loop begins.
           splash.finish(window);
-          e2eMark("{\"ev\":\"main_window_shown\"}");
+          e2eMark(QStringLiteral("{\"ev\":\"main_window_shown\",\"maximized\":%1}")
+                    .arg(window->isMaximized() ? "true" : "false"));
       });
 
     return QApplication::exec();

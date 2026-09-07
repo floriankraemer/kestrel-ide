@@ -24,6 +24,7 @@
 //! That is the four areas ADR-0022 names: language servers, editing
 //! behaviour, run configurations and index excludes.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -31,7 +32,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     load_toml, save_toml, update_toml, ConfigError, DebugAdapterSetting, EditingSettings,
-    LanguageServerSetting, RunConfigSetting, TerminalSettings,
+    LanguageServerSetting, Layout, RunConfigSetting, TerminalSettings,
 };
 
 /// Directory holding a project's IDE files, inside the project root.
@@ -170,6 +171,20 @@ pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<TerminalSettings>,
 
+    /// Named workspace arrangements the project ships, as a `[layouts]`
+    /// table keyed by name.
+    ///
+    /// Unlike every other section here, this one does not *override* the
+    /// global layer wholesale — the two maps are merged by name, a project
+    /// entry shadowing a global one of the same name. That rule lives in
+    /// `settings_model::scope::resolve_layouts`; the reasoning is in
+    /// ADR-0045. A project offering a layout is not a project imposing one:
+    /// nothing applies a layout until the user picks it by name.
+    ///
+    /// Sparse like the rest: `None` is "the project ships no layouts".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layouts: Option<BTreeMap<String, Layout>>,
+
     /// Keys this build does not understand, kept verbatim so a round trip
     /// through an older binary does not delete what a newer one wrote.
     ///
@@ -189,6 +204,7 @@ impl ProjectSettings {
             && self.remote_attach.is_none()
             && self.index_excludes.is_none()
             && self.terminal.is_none()
+            && self.layouts.is_none()
             && self.unknown.is_empty()
     }
 }

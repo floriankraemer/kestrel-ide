@@ -47,6 +47,19 @@ public:
     // restored layout left it homeless, then `toggleView(true)` + `raise()`.
     void show(const QString &id);
 
+    // Applies a base64 `CDockManager::saveState()` blob, then puts every dock
+    // the blob never mentioned back at its registered placement. An empty
+    // blob does nothing, which is what "no layout has been saved" means.
+    //
+    // The two steps are one operation because they are never correct apart.
+    // A restored state leaves any dock it predates un-parented, and `show()`
+    // only rescues one at the moment something asks for it — enough at
+    // startup, where nothing looks at a dock before then, but not when a
+    // named layout is applied to a window the user is already looking at:
+    // there, an un-rescued dock simply vanishes. Routing every restore
+    // through here means no call site has to remember that.
+    void restoreState(const QString &base64State);
+
     // `toggleView(false)` on dock `id`.
     void hide(const QString &id);
 
@@ -75,6 +88,11 @@ private:
         // pointer.
         QPointer<ads::CDockWidget> anchor;
     };
+
+    // Re-adds `entry`'s dock at its registered placement if it currently has
+    // no dock area. Visibility is deliberately untouched: `show()` reveals
+    // afterwards, `reseatHomeless()` does not.
+    void reseat(const Entry &entry);
 
     ads::CDockManager *dockManager_;
     QHash<QString, Entry> docks_;

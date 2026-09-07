@@ -56,7 +56,8 @@ void clearProjectOpening(QStatusBar *statusBar)
 } // namespace
 
 UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
-                              LanguageService *languageService, SearchModel *searchModel,
+                              LanguageService *languageService, BuildService *buildService,
+                              DiagnosticsService *diagnosticsService, SearchModel *searchModel,
                               VcsService *vcsService, EditorTabs *editorTabs,
                               QTreeView *projectTree, DockRegistry *docks,
                               ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel)
@@ -78,8 +79,8 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
         docks->show(QStringLiteral("problems"));
         problemsPanel->focusTree();
     });
-    const auto updateProblemsButton = [problemsButton, languageService]() {
-        const FfiDiagnosticCounts counts = languageService->diagnosticCounts();
+    const auto updateProblemsButton = [problemsButton, diagnosticsService]() {
+        const FfiDiagnosticCounts counts = diagnosticsService->diagnosticCounts();
         const bool any = counts.errors > 0 || counts.warnings > 0;
         problemsButton->setVisible(any);
         if (!any) {
@@ -92,7 +93,12 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                                                              : FfiSeverity::Warning);
         problemsButton->setStyleSheet(QStringLiteral("color: %1;").arg(color.name()));
     };
+    // Either source changing means this counter is stale (ADR-0046): a
+    // build's rows never used to reach it, same as they never used to
+    // reach the editor's squiggles before `DiagnosticsService` existed.
     QObject::connect(languageService, &LanguageService::diagnosticsChanged, window,
+                      updateProblemsButton);
+    QObject::connect(buildService, &BuildService::diagnosticsChanged, window,
                       updateProblemsButton);
     // F3-18: the branch widget (vcs_menu.cpp).
     auto *branchButton = buildBranchWidget(vcsService, window, statusBar);

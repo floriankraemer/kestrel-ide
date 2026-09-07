@@ -41,6 +41,7 @@ pub mod app_info;
 pub mod build;
 pub mod convert;
 pub mod debug;
+pub mod diagnostics;
 pub mod editor;
 pub mod editor_ops;
 pub mod errors;

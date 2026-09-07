@@ -64,10 +64,12 @@ QColor severityColor(FfiSeverity severity)
 }
 
 ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *buildService,
-                             OpenAt openAt, QWidget *parent)
+                             DiagnosticsService *diagnosticsService, OpenAt openAt,
+                             QWidget *parent)
   : QWidget(parent)
   , languageService_(languageService)
   , buildService_(buildService)
+  , diagnosticsService_(diagnosticsService)
   , openAt_(std::move(openAt))
 {
     filterEdit_ = new QLineEdit(this);
@@ -186,17 +188,13 @@ void ProblemsPanel::focusTree()
 
 void ProblemsPanel::refresh()
 {
-    // Two sources, one list. The rows are not re-sorted here: each service
-    // returns its own in its own order, and grouping by file below is what
-    // decides what the user sees.
-    const ::rust::Vec<FfiDiagnostic> serverRows = languageService_->diagnostics();
-    const ::rust::Vec<FfiDiagnostic> buildRows = buildService_->diagnostics();
+    // One store, one list (ADR-0046): `DiagnosticsService` already merges
+    // every source's rows in file/line/column/severity order, so there is
+    // no second merge to do here.
+    const ::rust::Vec<FfiDiagnostic> allRows = diagnosticsService_->diagnostics();
     QVector<FfiDiagnostic> rows;
-    rows.reserve(static_cast<int>(serverRows.size() + buildRows.size()));
-    for (const FfiDiagnostic &row : serverRows) {
-        rows.append(row);
-    }
-    for (const FfiDiagnostic &row : buildRows) {
+    rows.reserve(static_cast<int>(allRows.size()));
+    for (const FfiDiagnostic &row : allRows) {
         rows.append(row);
     }
 

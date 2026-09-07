@@ -119,6 +119,7 @@ public:
 struct CentralWidgets
 {
     EditorTabs *editorTabs;
+    DiagnosticsService *diagnosticsService;
     ads::CDockManager *dockManager;
     // Every side/bottom dock's identity, placement and show/hide now lives
     // in one registry (F0-7) rather than a scattered `toggleView`/`raise()`
@@ -228,6 +229,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     QAction *projectTreeLocateAction = projectTreeDock.locateAction;
 
     auto *editorTabs = new EditorTabs(docManager, languageService, editorRoot, window);
+    auto *diagnosticsService = wireDiagnosticsService(window, languageService, buildService, editorTabs);
 
     // Task H: bottom dock panel, matching where JetBrains/VS-style IDEs
     // dock their Find in Files results. Reuses the one EditorTabs instance
@@ -340,7 +342,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // Task L2: the Problems panel, tabbed into the same bottom area as Find
     // in Files and Find Usages — the same "list of locations" shape, fed by
     // the language servers instead of a query.
-    auto *problemsPanel = new ProblemsPanel(languageService, buildService, openAt, dockManager);
+    auto *problemsPanel =
+      new ProblemsPanel(languageService, buildService, diagnosticsService, openAt, dockManager);
     auto *problemsDock = new ads::CDockWidget(dockManager, QObject::tr("Problems"));
     problemsDock->setWidget(problemsPanel);
     docks->registerDock(QStringLiteral("problems"), problemsDock, ads::CenterDockWidgetArea,
@@ -353,10 +356,6 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     problemsPanel->setFirstDiagnosticCallback([docks]() {
         docks->dock(QStringLiteral("problems"))->toggleView(true);
     });
-    // The squiggles and the panel read the same store, so one signal drives
-    // both.
-    QObject::connect(languageService, &LanguageService::diagnosticsChanged, editorTabs,
-                      [editorTabs]() { editorTabs->applyDiagnostics(); });
 
     auto *terminalPanel =
       new TerminalSessionsPanel(terminalSupervisor, appSettings, openAt, dockManager);
@@ -604,7 +603,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                            editorTabs->showDiffForPath(path);
                                        }});
 
-    return CentralWidgets{editorTabs,       dockManager,      docks,
+    return CentralWidgets{editorTabs,       diagnosticsService, dockManager,      docks,
                            treeView,         searchResultsPanel, classViewPanel,
                            terminalPanel,    findUsagesPanel,  hierarchyPanel,
                            searchEverywhereDialog,
@@ -750,7 +749,8 @@ void buildMainWindow(AppSettings *appSettings,
     wireAiChatToEditor(window, aiChat, central.aiChatPanel, editorTabs, searchModel);
 
     const UiFontTargets uiFontTargets =
-      buildStatusBar(window, appSettings, languageService, searchModel, vcsService, editorTabs,
+      buildStatusBar(window, appSettings, languageService, buildService,
+                     central.diagnosticsService, searchModel, vcsService, editorTabs,
                      central.projectTree, central.docks, central.problemsPanel, treeModel);
 
     // Every menu action is registered under a stable id from

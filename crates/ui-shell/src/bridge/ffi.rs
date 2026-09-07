@@ -18,6 +18,7 @@ use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::debug::DebugServiceRust;
+use crate::bridge::diagnostics::DiagnosticsServiceRust;
 use crate::bridge::editor::DocumentManagerRust;
 use crate::bridge::editor_ops::EditorOpsRust;
 use crate::bridge::icons::IconProviderRust;
@@ -3374,20 +3375,6 @@ mod ffi {
         #[cxx_name = "restartServer"]
         fn restart_server(self: Pin<&mut LanguageService>, language_id: &QString);
 
-        /// Every known diagnostic, grouped by file and ordered within it.
-        #[qinvokable]
-        fn diagnostics(self: &LanguageService) -> Vec<FfiDiagnostic>;
-
-        /// Just one file's diagnostics — what an editor underlines.
-        #[qinvokable]
-        #[cxx_name = "diagnosticsForFile"]
-        fn diagnostics_for_file(self: &LanguageService, path: &QString) -> Vec<FfiDiagnostic>;
-
-        /// Counts per severity, for the status bar and the filter buttons.
-        #[qinvokable]
-        #[cxx_name = "diagnosticCounts"]
-        fn diagnostic_counts(self: &LanguageService) -> FfiDiagnosticCounts;
-
         /// Whether a server is configured, enabled and started for this
         /// file's language — the difference between "no problems" and "no
         /// language server", which is the panel's empty state.
@@ -4150,6 +4137,35 @@ mod ffi {
     // Enables `self.qt_thread()` on `LanguageService` for the LSP listener
     // thread's one cross-thread hop, same pattern as `SearchModel` above.
     impl cxx_qt::Threading for LanguageService {}
+
+    extern "RustQt" {
+        /// The one Problems model (ADR-0046): every diagnostic, from every
+        /// source, that `LanguageService` and `BuildService` have published
+        /// into the shared store. The Problems dock and the editor's
+        /// squiggles read only this — `LanguageService`/`BuildService` keep
+        /// their own `diagnosticsChanged` signals (meaning "my part of the
+        /// store changed"), but no longer answer "what are the
+        /// diagnostics" themselves.
+        ///
+        /// No worker thread of its own — reading the shared store never
+        /// blocks — so this QObject has no `cxx_qt::Threading` impl.
+        #[qobject]
+        type DiagnosticsService = super::DiagnosticsServiceRust;
+
+        /// Every known diagnostic, grouped by file and ordered within it.
+        #[qinvokable]
+        fn diagnostics(self: &DiagnosticsService) -> Vec<FfiDiagnostic>;
+
+        /// Just one file's diagnostics — what an editor underlines.
+        #[qinvokable]
+        #[cxx_name = "diagnosticsForFile"]
+        fn diagnostics_for_file(self: &DiagnosticsService, path: &QString) -> Vec<FfiDiagnostic>;
+
+        /// Counts per severity, for the status bar and the filter buttons.
+        #[qinvokable]
+        #[cxx_name = "diagnosticCounts"]
+        fn diagnostic_counts(self: &DiagnosticsService) -> FfiDiagnosticCounts;
+    }
 
     /// One row of the Syntax Colors tree (T4).
     ///
@@ -5772,13 +5788,6 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "isBuilding"]
         fn is_building(self: &BuildService) -> bool;
-
-        /// What the last build said, in the shape the Problems dock already
-        /// renders for a language server's diagnostics; `source` names the
-        /// build tool, so the two are never confused. Cleared when a new
-        /// build starts.
-        #[qinvokable]
-        fn diagnostics(self: &BuildService) -> Vec<FfiDiagnostic>;
 
         /// A build started. `command` is what is being run, for the dock's
         /// header.

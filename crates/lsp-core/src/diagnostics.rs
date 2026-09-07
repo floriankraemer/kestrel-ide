@@ -104,8 +104,20 @@ mod tests {
     #[test]
     fn the_range_and_message_and_source_carry_over_unconverted() {
         let rows = to_diagnostics(vec![diagnostic(2, 1, DiagnosticSeverity::ERROR, "boom")]);
-        assert_eq!(rows[0].range.start, Position { line: 2, character: 1 });
-        assert_eq!(rows[0].range.end, Some(Position { line: 2, character: 4 }));
+        assert_eq!(
+            rows[0].range.start,
+            Position {
+                line: 2,
+                character: 1
+            }
+        );
+        assert_eq!(
+            rows[0].range.end,
+            Some(Position {
+                line: 2,
+                character: 4
+            })
+        );
         assert_eq!(rows[0].message, "boom");
         assert_eq!(rows[0].source, "rustc");
     }

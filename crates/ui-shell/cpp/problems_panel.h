@@ -23,27 +23,30 @@ namespace ui_shell {
 // its underline can never disagree about what red means.
 QColor severityColor(FfiSeverity severity);
 
-// The Problems dock (Task L2): every diagnostic the language servers have
-// published, grouped by file — the shape `docs/design/language-platform-ui.md`
-// section 5 specifies, and deliberately the same QTreeWidget-grouped-by-file
-// structure as SearchResultsPanel so a user who has used one knows this one.
+// The Problems dock (Task L2): every diagnostic from every source, grouped
+// by file — the shape `docs/design/language-platform-ui.md` section 5
+// specifies, and deliberately the same QTreeWidget-grouped-by-file structure
+// as SearchResultsPanel so a user who has used one knows this one.
 //
 // Humble view per CLAUDE.md: which rows exist, their order and their severity
-// ranking are `lsp-core`'s (`DiagnosticStore::rows`); this builds widgets,
-// applies the two view-local filters (severity toggles, substring box) and
-// turns a double-click into a caret jump.
+// ranking are `diagnostics-core`'s (`DiagnosticStore::rows`, read through
+// `DiagnosticsService`, ADR-0046); this builds widgets, applies the two
+// view-local filters (severity toggles, substring box) and turns a
+// double-click into a caret jump.
 class ProblemsPanel : public QWidget
 {
 public:
     // `openAt(path, line, column)` jumps the editor to a diagnostic.
     using OpenAt = std::function<void(const QString &, int, int)>;
 
-    // `buildService` is the second source of rows (B1-7): a compiler error
-    // delivered by a build is not a different kind of thing from the same
-    // error delivered over LSP, so both land here and the Source column
-    // says which produced each (ADR-0040).
-    ProblemsPanel(LanguageService *languageService, BuildService *buildService, OpenAt openAt,
-                  QWidget *parent);
+    // `languageService`/`buildService` are read only for their
+    // `diagnosticsChanged` signal (a source's rows changed, so refresh) and
+    // `languageService`'s server-state text; the rows themselves come from
+    // `diagnosticsService` alone (ADR-0046) — a build's and a language
+    // server's diagnostics for the same file already coexist in the one
+    // shared store, so there is no second merge to do here.
+    ProblemsPanel(LanguageService *languageService, BuildService *buildService,
+                  DiagnosticsService *diagnosticsService, OpenAt openAt, QWidget *parent);
 
     // Called once, the first time a diagnostic arrives in a session, so the
     // window can raise the dock. Never called again: a panel that reopens
@@ -67,6 +70,7 @@ private:
 
     LanguageService *languageService_;
     BuildService *buildService_;
+    DiagnosticsService *diagnosticsService_;
     OpenAt openAt_;
     std::function<void()> firstDiagnostic_;
     bool announced_ = false;

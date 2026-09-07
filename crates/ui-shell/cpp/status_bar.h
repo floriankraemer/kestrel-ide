@@ -24,7 +24,8 @@ class ProblemsPanel;
 // Preferences dialog's `SettingsContext`, which re-applies them on a scale
 // change.
 UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
-                              LanguageService *languageService, SearchModel *searchModel,
+                              LanguageService *languageService, BuildService *buildService,
+                              DiagnosticsService *diagnosticsService, SearchModel *searchModel,
                               VcsService *vcsService, EditorTabs *editorTabs,
                               QTreeView *projectTree, DockRegistry *docks,
                               ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel);

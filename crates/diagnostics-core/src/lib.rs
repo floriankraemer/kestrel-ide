@@ -134,15 +134,15 @@ impl DiagnosticStore {
     /// the same file, and this source's rows for every other file, are
     /// untouched.
     pub fn remove(&mut self, source: &str, uri: &str) {
-        self.by_key
-            .remove(&(source.to_string(), uri.to_string()));
+        self.by_key.remove(&(source.to_string(), uri.to_string()));
     }
 
     /// Forget everything a source ever published — what a new build run
     /// clears before it reports anything, and a stopped language server
     /// clears when it exits.
     pub fn clear_source(&mut self, source: &str) {
-        self.by_key.retain(|(key_source, _), _| key_source != source);
+        self.by_key
+            .retain(|(key_source, _), _| key_source != source);
     }
 
     /// Forget everything from every source — a new project opening.
@@ -288,8 +288,14 @@ mod tests {
     fn point_diagnostic(line: u32, column: u32, severity: Severity, message: &str) -> Diagnostic {
         Diagnostic {
             range: Range {
-                start: Position { line, character: column },
-                end: Some(Position { line, character: column + 3 }),
+                start: Position {
+                    line,
+                    character: column,
+                },
+                end: Some(Position {
+                    line,
+                    character: column + 3,
+                }),
             },
             severity,
             message: message.into(),
@@ -540,7 +546,10 @@ mod tests {
             "file:///p/a.rs",
             vec![Diagnostic {
                 range: Range {
-                    start: Position { line: 3, character: 8 },
+                    start: Position {
+                        line: 3,
+                        character: 8,
+                    },
                     end: None,
                 },
                 severity: Severity::Error,
@@ -578,8 +587,14 @@ mod tests {
             vec![
                 Diagnostic {
                     range: Range {
-                        start: Position { line: 2, character: 1 },
-                        end: Some(Position { line: 2, character: 4 }),
+                        start: Position {
+                            line: 2,
+                            character: 1,
+                        },
+                        end: Some(Position {
+                            line: 2,
+                            character: 4,
+                        }),
                     },
                     severity: Severity::Error,
                     message: "here".into(),

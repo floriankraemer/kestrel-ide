@@ -173,19 +173,22 @@ pub(crate) fn stop_mcp_server() {
     let _ = control.thread.join();
 }
 
-/// The one diagnostic store in this process, shared by `LanguageService`
-/// (which fills it from the servers) and `AiChat` (which reads it for
+/// The one diagnostic store in this process (ADR-0046), shared by
+/// `LanguageService` and `BuildService` (which publish into it, each under
+/// its own `(source, uri)` key) and by `DiagnosticsService` and `AiChat`
+/// (which read it back — the Problems dock, the editor's squiggles, and
 /// `attachDiagnostics`).
 ///
 /// Same reasoning as the `APP_SESSION` thread-local and `index_slot`: cxx-qt
-/// builds QObjects through `Default` with no injection point, and two stores
-/// would mean the chat attaching a different set of problems than the
-/// Problems panel shows. A newtype rather than a bare `Rc` so
-/// `LanguageServiceRust` keeps its derived `Default`.
-pub(crate) struct SharedDiagnostics(Rc<RefCell<lsp_core::DiagnosticStore>>);
+/// builds QObjects through `Default` with no injection point, and a second
+/// store would mean the editor underlining a different set of problems than
+/// the Problems panel shows — the whole bug class ADR-0046 exists to close.
+/// A newtype rather than a bare `Rc` so every QObject keeps its derived
+/// `Default`.
+pub(crate) struct SharedDiagnostics(Rc<RefCell<diagnostics_core::DiagnosticStore>>);
 
 thread_local! {
-    static DIAGNOSTICS: Rc<RefCell<lsp_core::DiagnosticStore>> = Rc::default();
+    static DIAGNOSTICS: Rc<RefCell<diagnostics_core::DiagnosticStore>> = Rc::default();
 }
 
 impl Default for SharedDiagnostics {
@@ -195,7 +198,7 @@ impl Default for SharedDiagnostics {
 }
 
 impl std::ops::Deref for SharedDiagnostics {
-    type Target = RefCell<lsp_core::DiagnosticStore>;
+    type Target = RefCell<diagnostics_core::DiagnosticStore>;
 
     fn deref(&self) -> &Self::Target {
         &self.0

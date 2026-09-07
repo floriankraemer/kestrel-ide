@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies]
 # Content-Length framing, shared with `dap-core` (ADR-0041).
 stdio-framing = { path = "../stdio-framing" }
+# The one Problems model (ADR-0046): `publish_diagnostics` converts a
+# server's `lsp_types::Diagnostic`s into `diagnostics_core::Diagnostic` at
+# ingest, and `path_from_uri`/`uri_from_path` now live there too.
+diagnostics-core = { path = "../diagnostics-core" }
 # F3-15: the refactor-preview dialog's diff panel needs `editor_core::diff`
 # to turn a pending `DocumentEdits`' before/after text into hunks. See
 # `docs/architecture/layering.md`'s `lsp-core` row.

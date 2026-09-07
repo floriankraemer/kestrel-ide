@@ -1,34 +1,34 @@
 //! What a build says about the code (B1-4).
 //!
-//! One shape for every toolchain, deliberately the shape the Problems dock
-//! already renders for `lsp_core`'s diagnostics: a path, a 1-based
-//! line/column, a severity and a message. A build diagnostic is not a
-//! different kind of thing from a compiler diagnostic delivered over LSP,
+//! One shape for every toolchain, deliberately close to the shape the
+//! Problems dock already renders for `lsp-core`'s diagnostics: a path, a
+//! 1-based line/column, a severity and a message. A build diagnostic is not
+//! a different kind of thing from a compiler diagnostic delivered over LSP,
 //! and giving it its own panel would make the user look in two places for
-//! the same answer (ADR-0040).
+//! the same answer (ADR-0040) — which is also why `severity` is
+//! `diagnostics-core`'s shared enum rather than a build-specific one
+//! (ADR-0046): `ui-shell` converts a `BuildDiagnostic` into a
+//! `diagnostics_core::Diagnostic` and publishes it into the same store an
+//! `lsp-core` diagnostic lands in.
 
 use std::path::PathBuf;
 
-/// How bad it is. Anything a toolchain calls "note", "help" or "info" is
-/// [`Severity::Note`] — the distinctions below warning are per-tool and
-/// nothing downstream renders them differently.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Error,
-    Warning,
-    Note,
-}
+/// The one Problems model's severity (ADR-0046) — shared with `lsp-core`
+/// rather than a build-specific three-value enum, so the seam that used to
+/// translate "Note" onto "Information" no longer exists.
+pub use diagnostics_core::Severity;
 
-impl Severity {
-    /// The word a tool used, mapped onto the three we keep. Unknown words
-    /// are notes rather than errors: over-reporting an error would put a
-    /// red row in the Problems dock for something the build was happy with.
-    pub fn from_word(word: &str) -> Severity {
-        match word.trim().to_ascii_lowercase().as_str() {
-            "error" | "fatal error" | "fatal" => Severity::Error,
-            "warning" | "warn" => Severity::Warning,
-            _ => Severity::Note,
-        }
+/// The word a tool used, mapped onto the four kinds `diagnostics-core`
+/// keeps. Unknown words (and anything a toolchain calls "note", "help" or
+/// "info" — the distinctions below warning are per-tool and nothing
+/// downstream renders them differently) become [`Severity::Information`]
+/// rather than [`Severity::Error`]: over-reporting an error would put a red
+/// row in the Problems dock for something the build was happy with.
+pub fn severity_from_word(word: &str) -> Severity {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "error" | "fatal error" | "fatal" => Severity::Error,
+        "warning" | "warn" => Severity::Warning,
+        _ => Severity::Information,
     }
 }
 
@@ -56,15 +56,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn severity_words_map_onto_the_three_kinds() {
-        assert_eq!(Severity::from_word("error"), Severity::Error);
-        assert_eq!(Severity::from_word("Fatal Error"), Severity::Error);
-        assert_eq!(Severity::from_word("warning"), Severity::Warning);
-        assert_eq!(Severity::from_word("note"), Severity::Note);
+    fn severity_words_map_onto_the_shared_kinds() {
+        assert_eq!(severity_from_word("error"), Severity::Error);
+        assert_eq!(severity_from_word("Fatal Error"), Severity::Error);
+        assert_eq!(severity_from_word("warning"), Severity::Warning);
+        assert_eq!(severity_from_word("note"), Severity::Information);
     }
 
     #[test]
-    fn an_unknown_word_is_a_note_rather_than_an_error() {
-        assert_eq!(Severity::from_word("blorp"), Severity::Note);
+    fn an_unknown_word_is_information_rather_than_an_error() {
+        assert_eq!(severity_from_word("blorp"), Severity::Information);
     }
 }

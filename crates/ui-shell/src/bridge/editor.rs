@@ -365,7 +365,7 @@ impl ffi::DocumentManager {
         let hunks = editor_core::diff::diff_lines_opts(
             &left_text.to_string(),
             &right_text.to_string(),
-            ignore_whitespace,
+            whitespace_mode(ignore_whitespace),
         )
         .unwrap_or_default();
         crate::bridge::convert::to_ffi_hunks(&hunks)
@@ -379,8 +379,9 @@ impl ffi::DocumentManager {
     ) -> Vec<ffi::FfiInlineSpan> {
         let left = left_text.to_string();
         let right = right_text.to_string();
-        let hunks = editor_core::diff::diff_lines_opts(&left, &right, ignore_whitespace)
-            .unwrap_or_default();
+        let hunks =
+            editor_core::diff::diff_lines_opts(&left, &right, whitespace_mode(ignore_whitespace))
+                .unwrap_or_default();
         crate::bridge::convert::to_ffi_inline_spans(&left, &right, &hunks)
     }
 
@@ -513,5 +514,15 @@ impl ffi::DocumentManager {
 
     pub fn shutdown_mcp_server(&self) {
         stop_mcp_server();
+    }
+}
+
+/// The "Ignore Whitespace" checkbox's two states, until the toolbar grows
+/// the full menu.
+fn whitespace_mode(ignore_whitespace: bool) -> editor_core::diff::WhitespaceMode {
+    if ignore_whitespace {
+        editor_core::diff::WhitespaceMode::IgnoreAll
+    } else {
+        editor_core::diff::WhitespaceMode::Exact
     }
 }

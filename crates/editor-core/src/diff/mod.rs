@@ -24,6 +24,7 @@
 
 mod inline;
 mod revert;
+mod tokens;
 mod whitespace;
 
 use std::ops::Range;
@@ -32,6 +33,7 @@ use imara_diff::{Algorithm, Diff, InternedInput};
 
 pub use inline::diff_inline;
 pub use revert::{revert_hunk_edit, revert_hunks, LineEdit};
+pub use whitespace::WhitespaceMode;
 
 /// Texts above this are not diffed. Matches the highlighting ceiling in
 /// `syntax-core`, so a file that is too big to colour is also too big to
@@ -86,43 +88,49 @@ pub enum DiffError {
     TooLarge,
 }
 
-/// Line-level hunks between `before` and `after`.
+/// Line-level hunks between `before` and `after`, every byte significant.
 pub fn diff_lines(before: &str, after: &str) -> Result<Vec<Hunk>, DiffError> {
-    diff_lines_opts(before, after, false)
+    diff_lines_opts(before, after, WhitespaceMode::Exact)
 }
 
-/// Line-level hunks, optionally treating two lines that differ only in
-/// whitespace as unchanged (the diff viewer's "ignore whitespace" toggle).
+/// Line-level hunks under a [`WhitespaceMode`] — the diff viewer's "Ignore
+/// whitespace" menu.
 ///
-/// Line *ranges* never depend on this: only which lines compare equal does,
-/// so the same [`build_hunks`] maps a computed [`imara_diff::Diff`] to
-/// [`Hunk`]s regardless of which `TokenSource` produced it.
+/// Line *ranges* never depend on the mode, only which lines compare equal
+/// does, so the same [`build_hunks`] maps a computed [`imara_diff::Diff`]
+/// to [`Hunk`]s regardless of which token source produced it. [`Exact`]
+/// goes through `imara_diff`'s own `&str` source, the others through
+/// [`whitespace`]'s rule-carrying tokens.
+///
+/// [`Exact`]: WhitespaceMode::Exact
 pub fn diff_lines_opts(
     before: &str,
     after: &str,
-    ignore_whitespace: bool,
+    mode: WhitespaceMode,
 ) -> Result<Vec<Hunk>, DiffError> {
     if before.len() > MAX_DIFF_BYTES || after.len() > MAX_DIFF_BYTES {
         return Err(DiffError::TooLarge);
     }
-    let diff = if ignore_whitespace {
-        let input = InternedInput::new(
-            whitespace::ws_insensitive_lines(before),
-            whitespace::ws_insensitive_lines(after),
-        );
-        Diff::compute(Algorithm::Histogram, &input)
-    } else {
-        let input = InternedInput::new(before, after);
-        Diff::compute(Algorithm::Histogram, &input)
-    };
-    Ok(build_hunks(&diff))
+    if mode != WhitespaceMode::Exact {
+        return Ok(whitespace::diff_lines_with(before, after, mode));
+    }
+    let input = InternedInput::new(before, after);
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+    Ok(build_hunks(&diff, |old, new| (old, new)))
 }
 
-fn build_hunks(diff: &Diff) -> Vec<Hunk> {
+/// `imara_diff`'s hunks as [`Hunk`]s. `to_lines` maps each side's token
+/// range to a line range — the identity when tokens *are* lines.
+fn build_hunks(
+    diff: &Diff,
+    to_lines: impl Fn(Range<usize>, Range<usize>) -> (Range<usize>, Range<usize>),
+) -> Vec<Hunk> {
     diff.hunks()
         .map(|h| {
-            let old = h.before.start as usize..h.before.end as usize;
-            let new = h.after.start as usize..h.after.end as usize;
+            let (old, new) = to_lines(
+                h.before.start as usize..h.before.end as usize,
+                h.after.start as usize..h.after.end as usize,
+            );
             let kind = match (old.is_empty(), new.is_empty()) {
                 (true, false) => HunkKind::Added,
                 (false, true) => HunkKind::Removed,

@@ -299,6 +299,7 @@ impl ffi::LanguageService {
                 &diff.old_text,
                 &diff.new_text,
                 &diff.hunks,
+                editor_core::diff::HighlightMode::Words,
             ),
             None => Vec::new(),
         }

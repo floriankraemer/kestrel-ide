@@ -959,8 +959,10 @@ void EditorTabs::addDiffTab(QTabWidget *group, quint64 tabId, const QString &tit
     page->onIgnoreWhitespaceToggled = [this, diffView, tabId](bool ignore) {
         const QString left = docManager_->diffLeftText(tabId);
         const QString right = docManager_->diffRightText(tabId);
-        diffView->setHunks(docManager_->diffHunksBetween(left, right, ignore),
-                             docManager_->diffSpansBetween(left, right, ignore));
+        const FfiWhitespaceMode mode =
+          ignore ? FfiWhitespaceMode::IgnoreAll : FfiWhitespaceMode::Exact;
+        diffView->setHunks(docManager_->diffHunksBetween(left, right, mode),
+                             docManager_->diffSpansBetween(left, right, mode, FfiHighlightMode::Words));
     };
     group->addTab(page, title);
     renderTabText(group, group->indexOf(page), title, false);

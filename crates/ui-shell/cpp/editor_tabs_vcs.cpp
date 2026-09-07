@@ -294,8 +294,11 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
     auto *page = new DiffViewPage(diffView, tr("HEAD"), tr("Working Tree"));
     page->onIgnoreWhitespaceToggled = [this, diffView, headText, editor](bool ignore) {
         const QString workingText = editor->toPlainText();
-        diffView->setHunks(docManager_->diffHunksBetween(headText, workingText, ignore),
-                             docManager_->diffSpansBetween(headText, workingText, ignore));
+        const FfiWhitespaceMode mode =
+          ignore ? FfiWhitespaceMode::IgnoreAll : FfiWhitespaceMode::Exact;
+        diffView->setHunks(
+          docManager_->diffHunksBetween(headText, workingText, mode),
+          docManager_->diffSpansBetween(headText, workingText, mode, FfiHighlightMode::Words));
     };
 
     auto *window = new DiffWindow(nullptr, Qt::Window);

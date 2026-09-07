@@ -455,6 +455,20 @@ public:
     // the rest of the layout.
     void restoreLayout(const QString &json);
 
+    // The split *grid* as JSON: the same splitter tree saveLayout() writes,
+    // with every group's files omitted. This is what a named layout stores —
+    // a layout is a workspace arrangement, not a set of documents.
+    QString saveGrid() const;
+
+    // Rearranges the open editors into the grid written by saveGrid().
+    //
+    // Unlike restoreLayout(), this runs on a live window with documents
+    // already open, and it closes none of them: every open tab is moved into
+    // the grid's first group before the old groups go away. Panes the grid
+    // adds beyond that one come up empty, which is the whole point — an
+    // empty pane is a place to drag a file to.
+    void applyGrid(const QString &json);
+
     // F3-16: told once a project is known to be (or not be) a repository.
     // `nullptr` (never called) is the ordinary state for a project with no
     // Git — every gutter/popup path below is a no-op without it, the same
@@ -772,13 +786,23 @@ public:
 
 private:
 
-    QJsonObject serializeSplitter(const QSplitter *splitter) const;
+    // `includeFiles` is what separates a session layout (files and all) from
+    // a named layout's bare grid; the tree walk is identical either way.
+    QJsonObject serializeSplitter(const QSplitter *splitter, bool includeFiles) const;
 
-    QJsonObject serializeGroup(QTabWidget *group) const;
+    QJsonObject serializeGroup(QTabWidget *group, bool includeFiles) const;
 
-    void applySplitter(QSplitter *splitter, const QJsonObject &object);
+    // `allowEmptyGroups` is the mirror of `includeFiles` on the way back in:
+    // restoring a session drops a group whose files are all gone, while
+    // applying a grid is nothing *but* empty groups.
+    void applySplitter(QSplitter *splitter, const QJsonObject &object, bool allowEmptyGroups);
 
-    void restoreGroup(QSplitter *splitter, const QJsonObject &object);
+    void restoreGroup(QSplitter *splitter, const QJsonObject &object, bool allowEmptyGroups);
+
+    // Shared tail of restoreLayout()/applyGrid(): parses `json`, tears the
+    // current groups down and rebuilds them from it. Returns false when the
+    // JSON is not a layout, in which case nothing has been touched.
+    bool rebuildFrom(const QString &json, bool allowEmptyGroups);
 
     DocumentManager *docManager_;
     LanguageService *languageService_;

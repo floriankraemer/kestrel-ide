@@ -54,6 +54,13 @@ pub const CODE_BEFORE_LAUNCH: i32 = 1008;
 /// nothing was attempted, because the request could not be formed.
 pub const CODE_INVALID_ARGUMENT: i32 = 1009;
 
+/// A named layout the adapter cannot find. Its own code rather than
+/// `CODE_REFUSED` because the view does branch on it: a layout can disappear
+/// between the menu being built and an entry being chosen (another window,
+/// or a project closing under it), and that is a stale menu to rebuild, not
+/// an error to put in front of the user.
+pub const CODE_UNKNOWN_LAYOUT: i32 = 1010;
+
 /// A failure with an adapter code and a finished sentence.
 pub fn failure(code: i32, message: impl AsRef<str>) -> FfiResult {
     debug_assert!(

@@ -47,6 +47,7 @@ pub mod errors;
 pub mod ffi;
 pub mod icons;
 pub mod language;
+pub mod layouts;
 pub mod plugins;
 pub mod preview;
 pub mod registry;
@@ -56,5 +57,6 @@ pub mod settings;
 pub mod terminal;
 pub mod tree;
 pub mod vcs;
+pub mod window_state;
 
 pub use ffi::run_app;

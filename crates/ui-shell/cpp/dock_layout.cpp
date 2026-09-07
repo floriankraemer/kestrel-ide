@@ -21,15 +21,32 @@ ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWi
 void DockRegistry::show(const QString &id)
 {
     const Entry &entry = docks_[id];
-    if (!entry.dock->dockAreaWidget()) {
-        // The anchor's *current* area. An anchor the restored layout left
-        // homeless too gives `nullptr`, which ADS takes as "a new area on
-        // the root container" — a dock in a plain place beats no dock.
-        ads::CDockAreaWidget *relativeTo = entry.anchor ? entry.anchor->dockAreaWidget() : nullptr;
-        dockManager_->addDockWidget(entry.area, entry.dock, relativeTo);
-    }
+    reseat(entry);
     entry.dock->toggleView(true);
     entry.dock->raise();
+}
+
+void DockRegistry::restoreState(const QString &base64State)
+{
+    if (base64State.isEmpty()) {
+        return;
+    }
+    dockManager_->restoreState(QByteArray::fromBase64(base64State.toLatin1()));
+    for (const Entry &entry : std::as_const(docks_)) {
+        reseat(entry);
+    }
+}
+
+void DockRegistry::reseat(const Entry &entry)
+{
+    if (entry.dock->dockAreaWidget()) {
+        return;
+    }
+    // The anchor's *current* area. An anchor the restored layout left
+    // homeless too gives `nullptr`, which ADS takes as "a new area on
+    // the root container" — a dock in a plain place beats no dock.
+    ads::CDockAreaWidget *relativeTo = entry.anchor ? entry.anchor->dockAreaWidget() : nullptr;
+    dockManager_->addDockWidget(entry.area, entry.dock, relativeTo);
 }
 
 void DockRegistry::hide(const QString &id)

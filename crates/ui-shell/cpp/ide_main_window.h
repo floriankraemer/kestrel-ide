@@ -67,6 +67,12 @@ private:
 // shadow on its own — but only once the window has a native handle, so this
 // has to run after show(), not during construction. No-op elsewhere (DWM
 // setting, not app-drawn chrome, per ADR-0001's native-chrome constraint).
+// Shows `window` the way it was last left — maximised, or at the geometry
+// already applied to it. The counterpart to `IdeMainWindow::closeEvent`'s
+// geometry/maximised save, and here rather than at the call site so the two
+// halves of that decision stay in one file.
+void showRestored(QMainWindow *window, AppSettings *appSettings);
+
 void applyNativeWindowChrome(QMainWindow *window);
 
 } // namespace ui_shell

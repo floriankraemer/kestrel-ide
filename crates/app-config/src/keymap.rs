@@ -274,6 +274,20 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Ctrl+Alt+P",
     },
     ActionDef {
+        id: "view.saveLayout",
+        label: "Save Current Layout...",
+        category: "View",
+        // Unbound by default: keeping a layout is a deliberate, occasional
+        // act, and the View category's obvious keys are spoken for.
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "view.deleteLayout",
+        label: "Delete Layout...",
+        category: "View",
+        default_shortcut: "",
+    },
+    ActionDef {
         id: "view.searchEverywhere",
         label: "Search Everywhere...",
         category: "View",

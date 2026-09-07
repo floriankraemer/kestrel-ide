@@ -7,7 +7,7 @@
 //! A7); that mechanism is untouched by this crate. `ui-shell` reads/writes
 //! [`Settings`] via [`load`]/[`save`] and drives a settings dialog around it.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::fs;
 use std::io;
@@ -40,11 +40,18 @@ pub mod breakpoint_settings;
 /// size ceiling; the three belong together anyway.
 pub mod launch_settings;
 
+/// The window's own persisted state: its geometry, and the named layouts a
+/// user switches between. Split out of this file to keep it under the
+/// ADR-0025 size ceiling; the types are re-exported below, so nothing
+/// outside this crate needs to know the module exists.
+pub mod window;
+
 pub use editing::EditingSettings;
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
 pub use terminal::TerminalSettings;
+pub use window::{Layout, WindowGeometry};
 
 /// File name used to persist settings inside the config directory.
 const SETTINGS_FILE: &str = "settings.toml";
@@ -52,30 +59,6 @@ const SETTINGS_FILE: &str = "settings.toml";
 /// [`SETTINGS_FILE`]. Same directory, so the rename stays within one
 /// filesystem and is therefore atomic.
 const TEMP_SETTINGS_FILE: &str = "settings.toml.tmp";
-
-/// Window position and size, as last saved by the view (`QMainWindow`
-/// geometry). Every field is individually defaulted so a TOML file that only
-/// sets some of them still parses.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-pub struct WindowGeometry {
-    #[serde(default)]
-    pub x: i32,
-    #[serde(default)]
-    pub y: i32,
-    #[serde(default)]
-    pub width: u32,
-    #[serde(default)]
-    pub height: u32,
-}
-
-impl WindowGeometry {
-    /// Whether this geometry is worth persisting or restoring. A zero-sized
-    /// rect is what the window reports while it is minimised or already torn
-    /// down, and restoring it next launch would open a window nobody can see.
-    pub fn is_usable(&self) -> bool {
-        self.width > 0 && self.height > 0
-    }
-}
 
 /// One `[[language_server]]` entry: what the user says about the language
 /// server for one language id.
@@ -296,6 +279,12 @@ pub struct Settings {
     pub recent_files: Vec<PathBuf>,
     #[serde(default)]
     pub window_geometry: WindowGeometry,
+    /// Whether the window was maximized when it last closed. Both this and
+    /// `window_geometry` are needed: the geometry is deliberately the
+    /// *normal* rect (what un-maximizing restores to), so on its own it
+    /// reopens a maximized window at its restored size.
+    #[serde(default)]
+    pub window_maximized: bool,
     /// Opaque persisted layout blob, analogous to `QMainWindow::saveState()`.
     #[serde(default)]
     pub window_state: String,
@@ -304,6 +293,12 @@ pub struct Settings {
     /// view-owns-the-format arrangement as `window_state` above).
     #[serde(default)]
     pub editor_layout: String,
+    /// Named workspace arrangements the user can switch between, by name.
+    /// A `BTreeMap` rather than a `HashMap` so the TOML this serializes to
+    /// keeps a stable key order across saves — the project-scoped twin of
+    /// this map lives in a committed file that people read in review.
+    #[serde(default)]
+    pub layouts: BTreeMap<String, Layout>,
     /// Keyboard shortcut overrides: action id to `QKeySequence` portable text
     /// (`""` = deliberately unbound). Only overrides live here — an action
     /// absent from the map uses the default from [`keymap::ACTIONS`], so
@@ -801,25 +796,6 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_sized_window_geometry_is_not_usable() {
-        assert!(!WindowGeometry::default().is_usable());
-        assert!(!WindowGeometry {
-            x: 10,
-            y: 10,
-            width: 800,
-            height: 0,
-        }
-        .is_usable());
-        assert!(WindowGeometry {
-            x: 10,
-            y: 10,
-            width: 800,
-            height: 600,
-        }
-        .is_usable());
-    }
-
-    #[test]
     fn mcp_defaults_to_enabled_on_an_os_assigned_port() {
         let settings = Settings::default();
         assert!(settings.mcp_enabled_or_default());
@@ -914,8 +890,16 @@ mod tests {
                 start_directory: "/srv/checkout".to_string(),
                 ..TerminalSettings::default()
             },
+            window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),
+            layouts: BTreeMap::from([(
+                "Debugging".to_string(),
+                Layout {
+                    window_state: "dock-blob".to_string(),
+                    editor_grid: "{\"type\":\"splitter\"}".to_string(),
+                },
+            )]),
             keymap: HashMap::from([("view.goToLine".to_string(), "Ctrl+L".to_string())]),
             syntax_colors: HashMap::from([
                 (
@@ -1158,8 +1142,10 @@ use_spaces = false
         assert!(loaded.editor_colors.is_empty());
         assert!(loaded.recent_projects.is_empty());
         assert_eq!(loaded.window_geometry, WindowGeometry::default());
+        assert!(!loaded.window_maximized);
         assert_eq!(loaded.window_state, "");
         assert_eq!(loaded.editor_layout, "");
+        assert!(loaded.layouts.is_empty());
     }
 
     #[test]

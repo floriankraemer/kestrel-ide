@@ -26,8 +26,10 @@
 //! A project that explicitly clears the run configurations is overriding the
 //! global list, not failing to mention it.
 
+use std::collections::BTreeMap;
+
 use app_config::project_settings::ProjectSettings;
-use app_config::Settings;
+use app_config::{Layout, Settings};
 
 /// Where an effective value came from.
 ///
@@ -204,6 +206,44 @@ pub fn origin_for_view(
     } else {
         Scope::Default
     }
+}
+
+/// Every layout visible to the user, project entries shadowing global ones
+/// of the same name, ordered by name.
+///
+/// This deliberately sits beside [`ScopedField`] rather than inside it. That
+/// enum's contract is that a project overrides whole *areas*, because a
+/// half-overridden section is a merge rule nobody can predict from reading
+/// the file. Layouts are not a section — they are a named collection whose
+/// entries are each atomic — so a union keyed by name is the rule a reader
+/// of the two files would expect, and folding them into `ScopedField` would
+/// instead force a project that ships one layout to replace every layout the
+/// user has. See ADR-0045.
+///
+/// The other line in this module's docs — that theme and fonts stay out
+/// because a project forcing your colour scheme on you is hostile — does not
+/// apply here: a project *offers* layouts by name, and nothing applies one
+/// until the user picks it.
+pub fn resolve_layouts(
+    global: &Settings,
+    project: &ProjectSettings,
+) -> Vec<(String, Layout, Scope)> {
+    let mut resolved: BTreeMap<&str, (&Layout, Scope)> = global
+        .layouts
+        .iter()
+        .map(|(name, layout)| (name.as_str(), (layout, Scope::Global)))
+        .collect();
+    // `None` is "the project ships no layouts", and so is `Some(empty)` —
+    // unlike the sparse sections above, an empty map here cannot mean "the
+    // project clears the user's layouts", because a merge by name has no way
+    // to express a removal in the first place.
+    for (name, layout) in project.layouts.iter().flatten() {
+        resolved.insert(name.as_str(), (layout, Scope::Project));
+    }
+    resolved
+        .into_iter()
+        .map(|(name, (layout, scope))| (name.to_string(), layout.clone(), scope))
+        .collect()
 }
 
 fn set_globally(field: ScopedField, global: &Settings) -> bool {
@@ -503,6 +543,89 @@ mod tests {
             origin_for_view(ScopedField::Editing, &global, &project, Scope::Project),
             origin(ScopedField::Editing, &global, &project),
             "with no override the project page shows exactly what origin() already says"
+        );
+    }
+
+    fn layout(tag: &str) -> Layout {
+        Layout {
+            window_state: format!("{tag}-docks"),
+            editor_grid: format!("{tag}-grid"),
+        }
+    }
+
+    fn with_layouts(pairs: &[(&str, &str)]) -> Settings {
+        Settings {
+            layouts: pairs
+                .iter()
+                .map(|(name, tag)| (name.to_string(), layout(tag)))
+                .collect(),
+            ..Settings::default()
+        }
+    }
+
+    fn project_layouts(pairs: &[(&str, &str)]) -> ProjectSettings {
+        ProjectSettings {
+            layouts: Some(
+                pairs
+                    .iter()
+                    .map(|(name, tag)| (name.to_string(), layout(tag)))
+                    .collect(),
+            ),
+            ..ProjectSettings::default()
+        }
+    }
+
+    #[test]
+    fn a_project_layout_shadows_the_global_one_of_the_same_name() {
+        let resolved = resolve_layouts(
+            &with_layouts(&[("Debugging", "global")]),
+            &project_layouts(&[("Debugging", "project")]),
+        );
+
+        assert_eq!(
+            resolved,
+            vec![("Debugging".to_string(), layout("project"), Scope::Project)],
+            "the same name in both layers is one layout, and the project's wins"
+        );
+    }
+
+    #[test]
+    fn layouts_from_the_two_layers_are_merged_rather_than_replaced() {
+        let resolved = resolve_layouts(
+            &with_layouts(&[("Writing", "global")]),
+            &project_layouts(&[("Debugging", "project")]),
+        );
+
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|(name, _, scope)| (name.as_str(), *scope))
+                .collect::<Vec<_>>(),
+            vec![("Debugging", Scope::Project), ("Writing", Scope::Global)],
+            "a project shipping one layout must not hide the user's own, and the order is by name"
+        );
+    }
+
+    #[test]
+    fn a_silent_project_leaves_the_global_layouts_alone() {
+        let global = with_layouts(&[("Writing", "global")]);
+
+        assert_eq!(
+            resolve_layouts(&global, &ProjectSettings::default()),
+            vec![("Writing".to_string(), layout("global"), Scope::Global)]
+        );
+    }
+
+    #[test]
+    fn an_empty_project_table_still_cannot_clear_the_users_layouts() {
+        // Unlike the sparse sections, `Some(empty)` is not "the project
+        // overrides with none": a merge by name has no way to spell a
+        // removal, so this is the same answer as saying nothing.
+        let global = with_layouts(&[("Writing", "global")]);
+
+        assert_eq!(
+            resolve_layouts(&global, &project_layouts(&[])),
+            resolve_layouts(&global, &ProjectSettings::default())
         );
     }
 }

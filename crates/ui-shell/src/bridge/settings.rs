@@ -15,7 +15,7 @@ use crate::bridge::convert::{load_settings, user_styles};
 use crate::bridge::errors;
 use crate::bridge::ffi::{
     self, FfiEditingProblem, FfiEditingRow, FfiEditorColors, FfiEditorFont, FfiMinimapOptions,
-    FfiResult, FfiUiFontScales, FfiWhitespaceOptions, FfiWindowGeometry,
+    FfiResult, FfiUiFontScales, FfiWhitespaceOptions,
 };
 
 /// Rust side of the `AppSettings` QObject: every call re-reads or re-writes
@@ -47,7 +47,7 @@ impl Default for AppSettingsRust {
 const SCOPE_GLOBAL: &str = "global";
 const SCOPE_PROJECT: &str = "project";
 
-fn scope_from_name(name: &str) -> settings_model::Scope {
+pub(super) fn scope_from_name(name: &str) -> settings_model::Scope {
     match name {
         SCOPE_PROJECT => settings_model::Scope::Project,
         // Anything unrecognised is the global layer, which is the answer
@@ -134,63 +134,6 @@ impl ffi::AppSettings {
             .iter()
             .map(|err| QString::from(err.to_string().as_str()))
             .collect()
-    }
-
-    pub fn window_geometry(&self) -> FfiWindowGeometry {
-        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
-        let g = settings.window_geometry;
-        FfiWindowGeometry {
-            x: g.x,
-            y: g.y,
-            width: g.width,
-            height: g.height,
-        }
-    }
-
-    pub fn save_window_geometry(&self, x: i32, y: i32, width: u32, height: u32) {
-        let geometry = app_config::WindowGeometry {
-            x,
-            y,
-            width,
-            height,
-        };
-        // A window on its way out can report a 0x0 rect; persisting it would
-        // replace a usable saved size with one the next launch has to throw
-        // away. Keeping the previous geometry is the better answer.
-        if !geometry.is_usable() {
-            return;
-        }
-        let _ = app_config::update(&app_core::resolve_config_dir(), |settings| {
-            settings.window_geometry = geometry;
-        });
-    }
-
-    pub fn window_state(&self) -> QString {
-        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
-        QString::from(settings.window_state.as_str())
-    }
-
-    pub fn save_window_state(&self, state: &QString) {
-        let config_dir = app_core::resolve_config_dir();
-        let Ok(mut settings) = app_config::load(&config_dir) else {
-            return;
-        };
-        settings.window_state = state.to_string();
-        let _ = app_config::save(&config_dir, &settings);
-    }
-
-    pub fn editor_layout(&self) -> QString {
-        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
-        QString::from(settings.editor_layout.as_str())
-    }
-
-    pub fn save_editor_layout(&self, layout: &QString) {
-        let config_dir = app_core::resolve_config_dir();
-        let Ok(mut settings) = app_config::load(&config_dir) else {
-            return;
-        };
-        settings.editor_layout = layout.to_string();
-        let _ = app_config::save(&config_dir, &settings);
     }
 
     pub fn theme_name(&self) -> QString {
@@ -1489,7 +1432,7 @@ fn parse_env_lines(text: &str) -> std::collections::BTreeMap<String, String> {
         .collect()
 }
 
-fn commit_to_project(
+pub(super) fn commit_to_project(
     edit: impl FnOnce(&mut app_config::project_settings::ProjectSettings),
 ) -> FfiResult {
     let Some(root) = crate::bridge::convert::current_project_root() else {

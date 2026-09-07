@@ -17,23 +17,9 @@ use crate::error::VcsError;
 use crate::repo::Repository;
 use crate::staging::path_str;
 
-/// A text-range replacement, in the shape a future bridge can turn
-/// directly into an `FfiTextEdit` — mirroring the spirit of
-/// `lsp_core::workspace_edit::TextEdit` (a range plus replacement text)
-/// rather than its exact units: an LSP edit addresses UTF-16 characters
-/// because a server can touch part of a line, but a hunk revert only ever
-/// replaces whole lines (that is what a [`Hunk`] *is*), so this is a
-/// half-open **line** range instead. `start_line == end_line` is a pure
-/// insertion, exactly as an empty LSP range is.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TextEdit {
-    /// 0-based, inclusive.
-    pub start_line: usize,
-    /// 0-based, exclusive.
-    pub end_line: usize,
-    /// Replacement text for the range, each line newline-terminated.
-    pub new_text: String,
-}
+/// The edit shape a hunk revert produces — `editor_core::diff::LineEdit`,
+/// re-exported under the name this crate's callers already use.
+pub use editor_core::diff::LineEdit as TextEdit;
 
 impl Repository {
     /// The edit that reverts `hunk` in `relative_path`, computed against
@@ -82,24 +68,10 @@ impl Repository {
     }
 }
 
-/// Build the edit that reverts one hunk, given `HEAD`'s text for the file.
-///
-/// A trailing-newline mismatch at end-of-file is not handled, matching
-/// `staging::hunk_patch`'s same simplification and for the same reason:
-/// every caller today reads real files, which end in a newline.
-pub fn revert_hunk(before: &str, hunk: &Hunk) -> TextEdit {
-    let old_lines: Vec<&str> = before.lines().collect();
-    let mut new_text = String::new();
-    for line in &old_lines[hunk.old.clone()] {
-        new_text.push_str(line);
-        new_text.push('\n');
-    }
-    TextEdit {
-        start_line: hunk.new.start,
-        end_line: hunk.new.end,
-        new_text,
-    }
-}
+/// The edit that reverts one hunk, given `HEAD`'s text for the file —
+/// `editor_core::diff::revert_hunk_edit`, which the diff viewer's apply
+/// chevron shares so a revert needs no repository.
+pub use editor_core::diff::revert_hunk_edit as revert_hunk;
 
 #[cfg(test)]
 mod tests {
@@ -119,58 +91,6 @@ mod tests {
             out.push('\n');
         }
         out
-    }
-
-    #[test]
-    fn reverting_a_modification_replaces_just_that_line() {
-        let before = "one\ntwo\nthree\n";
-        let after = "one\nTWO\nthree\n";
-        let hunk = diff_lines(before, after).unwrap().remove(0);
-        let edit = revert_hunk(before, &hunk);
-        assert_eq!(edit.start_line, 1);
-        assert_eq!(edit.end_line, 2);
-        assert_eq!(edit.new_text, "two\n");
-        assert_eq!(apply(after, &edit), before);
-    }
-
-    #[test]
-    fn reverting_an_addition_deletes_the_added_lines() {
-        let before = "a\nc\n";
-        let after = "a\nb\nc\n";
-        let hunk = diff_lines(before, after).unwrap().remove(0);
-        let edit = revert_hunk(before, &hunk);
-        assert_eq!(edit.start_line, 1);
-        assert_eq!(edit.end_line, 2);
-        assert_eq!(edit.new_text, "");
-        assert_eq!(apply(after, &edit), before);
-    }
-
-    #[test]
-    fn reverting_a_deletion_reinserts_the_removed_lines() {
-        let before = "a\nb\nc\n";
-        let after = "a\nc\n";
-        let hunk = diff_lines(before, after).unwrap().remove(0);
-        let edit = revert_hunk(before, &hunk);
-        assert_eq!(
-            edit.start_line, edit.end_line,
-            "an insertion targets a point, not a range"
-        );
-        assert_eq!(edit.new_text, "b\n");
-        assert_eq!(apply(after, &edit), before);
-    }
-
-    #[test]
-    fn reverting_one_of_two_hunks_leaves_the_other_alone() {
-        let before = "1\n2\n3\n4\n5\n";
-        let after = "1\nX\n3\nY\n5\n";
-        let hunks = diff_lines(before, after).unwrap();
-        assert_eq!(hunks.len(), 2);
-
-        let edit = revert_hunk(before, &hunks[1]);
-        let reverted = apply(after, &edit);
-        assert!(reverted.contains('X'), "the first hunk must be untouched");
-        assert!(!reverted.contains('Y'), "the second hunk must be reverted");
-        assert!(reverted.contains('4'));
     }
 
     // -----------------------------------------------------------------

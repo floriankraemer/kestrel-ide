@@ -952,16 +952,21 @@ void EditorTabs::addDiffTab(QTabWidget *group, quint64 tabId, const QString &tit
 {
     const QString path = docManager_->tabPath(tabId);
     auto *diffView = new DiffView(docManager_->diffLeftText(tabId), docManager_->diffRightText(tabId),
-                                    docManager_->diffHunks(tabId), docManager_->diffSpans(tabId), path);
-    auto *page = new DiffViewPage(diffView, docManager_->diffLeftLabel(tabId),
-                                    docManager_->diffRightLabel(tabId), group);
-    page->setProperty("tabId", QVariant::fromValue(tabId));
-    page->onIgnoreWhitespaceToggled = [this, diffView, tabId](bool ignore) {
-        const QString left = docManager_->diffLeftText(tabId);
-        const QString right = docManager_->diffRightText(tabId);
-        diffView->setHunks(docManager_->diffHunksBetween(left, right, ignore),
-                             docManager_->diffSpansBetween(left, right, ignore));
+                                  docManager_->diffHunks(tabId), docManager_->diffSpans(tabId), path);
+    // The two texts never change for a read-only tab; only the modes do.
+    auto recompute = [this, tabId](FfiWhitespaceMode whitespace, FfiHighlightMode highlight) {
+        DiffData data;
+        data.leftText = docManager_->diffLeftText(tabId);
+        data.rightText = docManager_->diffRightText(tabId);
+        data.hunks = docManager_->diffHunksBetween(data.leftText, data.rightText, whitespace);
+        data.spans =
+          docManager_->diffSpansBetween(data.leftText, data.rightText, whitespace, highlight);
+        data.rows = docManager_->diffRowsBetween(data.leftText, data.rightText, whitespace);
+        return data;
     };
+    auto *page = new DiffViewPage(diffView, path, docManager_->diffLeftLabel(tabId),
+                                  docManager_->diffRightLabel(tabId), recompute, group);
+    page->setProperty("tabId", QVariant::fromValue(tabId));
     group->addTab(page, title);
     renderTabText(group, group->indexOf(page), title, false);
     // The two pane lengths, so an E2E flow can tell "a diff tab opened" from

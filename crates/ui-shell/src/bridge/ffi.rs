@@ -591,6 +591,49 @@ mod ffi {
         end: u32,
     }
 
+    /// Which whitespace differences count as a change, 1:1 with
+    /// `editor_core::diff::WhitespaceMode` — the diff toolbar's "Ignore
+    /// whitespace" menu, in the same order.
+    enum FfiWhitespaceMode {
+        Exact,
+        TrimEnds,
+        IgnoreAll,
+        IgnoreAllAndBlankLines,
+    }
+
+    /// How finely a modified hunk is compared, 1:1 with
+    /// `editor_core::diff::HighlightMode` — the diff toolbar's
+    /// "Highlighting mode" menu. `Lines` and `None` both produce no spans;
+    /// the view additionally drops line backgrounds for `None`.
+    enum FfiHighlightMode {
+        Words,
+        Chars,
+        Lines,
+        None,
+    }
+
+    /// What one aligned diff row shows, 1:1 with
+    /// `editor_core::diff::RowKind`.
+    enum FfiRowKind {
+        Context,
+        Added,
+        Removed,
+    }
+
+    /// One row of the aligned diff layout, 1:1 with
+    /// `editor_core::diff::DiffRow`. `old_line`/`new_line` are `-1` where
+    /// the row has no line on that side; the anchors always name a real
+    /// line (or 0 for an empty side). The unified viewer renders these top
+    /// to bottom, the side-by-side viewer scrolls by them, and the divider
+    /// joins them — the view indexes, it never derives alignment.
+    struct FfiDiffRow {
+        old_line: i32,
+        new_line: i32,
+        kind: FfiRowKind,
+        old_anchor: u32,
+        new_anchor: u32,
+    }
+
     /// Whole-file before/after text for one file in a pending change, for
     /// `DiffView`'s two panes (F3-13/F3-15). Hunks and inline spans are
     /// fetched separately — `pendingFileHunks`/`pendingFileSpans` and their
@@ -1667,16 +1710,17 @@ mod ffi {
         fn diff_spans(self: &DocumentManager, tab_id: u64) -> Vec<FfiInlineSpan>;
 
         /// Diff two arbitrary texts directly — no tab, no `AppSession`
-        /// state — for `DiffViewPage`'s "ignore whitespace" toggle, which
-        /// needs a second hunk set for the same two texts a diff is already
-        /// open on.
+        /// state — for `DiffViewPage`'s toolbar, which recomputes the same
+        /// two texts under whatever whitespace and highlighting mode the
+        /// user picks. Hunks, spans and rows are three calls because a
+        /// `Vec` field on a shared struct is not a shape cxx supports.
         #[qinvokable]
         #[cxx_name = "diffHunksBetween"]
         fn diff_hunks_between(
             self: &DocumentManager,
             left_text: &QString,
             right_text: &QString,
-            ignore_whitespace: bool,
+            whitespace: FfiWhitespaceMode,
         ) -> Vec<FfiHunk>;
         #[qinvokable]
         #[cxx_name = "diffSpansBetween"]
@@ -1684,8 +1728,31 @@ mod ffi {
             self: &DocumentManager,
             left_text: &QString,
             right_text: &QString,
-            ignore_whitespace: bool,
+            whitespace: FfiWhitespaceMode,
+            highlight: FfiHighlightMode,
         ) -> Vec<FfiInlineSpan>;
+        #[qinvokable]
+        #[cxx_name = "diffRowsBetween"]
+        fn diff_rows_between(
+            self: &DocumentManager,
+            left_text: &QString,
+            right_text: &QString,
+            whitespace: FfiWhitespaceMode,
+        ) -> Vec<FfiDiffRow>;
+
+        /// The in-buffer edit that replaces `hunk`'s lines on the right side
+        /// with the left side's — the diff viewer's apply chevron. Only the
+        /// left text is needed (the hunk names the right-side range). Line
+        /// columns are 0 and `in_buffer` is true, the same shape
+        /// `VcsService::revertHunk` builds; `path` is empty for the caller
+        /// to fill in.
+        #[qinvokable]
+        #[cxx_name = "hunkRevertEdit"]
+        fn hunk_revert_edit(
+            self: &DocumentManager,
+            left_text: &QString,
+            hunk: FfiHunk,
+        ) -> FfiTextEdit;
 
         /// Handle a filesystem-watcher event for `path` (relayed via
         /// `ProjectTreeModel::filesChangedExternally`, already running on

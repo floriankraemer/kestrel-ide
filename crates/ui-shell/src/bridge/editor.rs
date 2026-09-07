@@ -7,6 +7,7 @@ use app_core::{AppError, AppSession, TabId, TabKind};
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
+use crate::bridge::convert;
 use crate::bridge::convert::{
     dispatch_editor_command, flatten_symbol_tree, search_options, to_ffi_location, to_ffi_result,
     MAX_HEX_ROWS_PER_REQUEST,
@@ -335,6 +336,7 @@ impl ffi::DocumentManager {
                 left,
                 right,
                 &session.diff_hunks(TabId::from_raw(tab_id)),
+                editor_core::diff::HighlightMode::Words,
             ),
             None => Vec::new(),
         }
@@ -360,28 +362,70 @@ impl ffi::DocumentManager {
         &self,
         left_text: &QString,
         right_text: &QString,
-        ignore_whitespace: bool,
+        whitespace: ffi::FfiWhitespaceMode,
     ) -> Vec<ffi::FfiHunk> {
         let hunks = editor_core::diff::diff_lines_opts(
             &left_text.to_string(),
             &right_text.to_string(),
-            ignore_whitespace,
+            convert::to_whitespace_mode(whitespace),
         )
         .unwrap_or_default();
-        crate::bridge::convert::to_ffi_hunks(&hunks)
+        convert::to_ffi_hunks(&hunks)
     }
 
     pub fn diff_spans_between(
         &self,
         left_text: &QString,
         right_text: &QString,
-        ignore_whitespace: bool,
+        whitespace: ffi::FfiWhitespaceMode,
+        highlight: ffi::FfiHighlightMode,
     ) -> Vec<ffi::FfiInlineSpan> {
         let left = left_text.to_string();
         let right = right_text.to_string();
-        let hunks = editor_core::diff::diff_lines_opts(&left, &right, ignore_whitespace)
-            .unwrap_or_default();
-        crate::bridge::convert::to_ffi_inline_spans(&left, &right, &hunks)
+        let hunks = editor_core::diff::diff_lines_opts(
+            &left,
+            &right,
+            convert::to_whitespace_mode(whitespace),
+        )
+        .unwrap_or_default();
+        convert::to_ffi_inline_spans(&left, &right, &hunks, convert::to_highlight_mode(highlight))
+    }
+
+    pub fn diff_rows_between(
+        &self,
+        left_text: &QString,
+        right_text: &QString,
+        whitespace: ffi::FfiWhitespaceMode,
+    ) -> Vec<ffi::FfiDiffRow> {
+        let left = left_text.to_string();
+        let right = right_text.to_string();
+        let hunks = editor_core::diff::diff_lines_opts(
+            &left,
+            &right,
+            convert::to_whitespace_mode(whitespace),
+        )
+        .unwrap_or_default();
+        convert::to_ffi_rows(&editor_core::diff::diff_rows(
+            left.lines().count(),
+            right.lines().count(),
+            &hunks,
+        ))
+    }
+
+    pub fn hunk_revert_edit(&self, left_text: &QString, hunk: ffi::FfiHunk) -> ffi::FfiTextEdit {
+        let edit = editor_core::diff::revert_hunk_edit(
+            &left_text.to_string(),
+            &convert::from_ffi_hunk(&hunk),
+        );
+        ffi::FfiTextEdit {
+            path: QString::default(),
+            in_buffer: true,
+            start_line: edit.start_line as u32,
+            start_character: 0,
+            end_line: edit.end_line as u32,
+            end_character: 0,
+            new_text: QString::from(edit.new_text.as_str()),
+        }
     }
 
     pub fn tab_kind(&self, tab_id: u64) -> i32 {

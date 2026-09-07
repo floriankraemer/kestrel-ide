@@ -281,6 +281,27 @@ QToolButton:disabled {
     color: {textDim};
 }
 
+/* ---- diff viewer chrome ------------------------------------------ */
+QWidget#diffToolbar {
+    background: {surface};
+    border-bottom: 1px solid {border};
+}
+
+QWidget#diffToolbar QLabel#diffCount {
+    color: {textDim};
+    padding: 0 {sp-2}px;
+}
+
+QWidget#diffPaneHeader {
+    background: {surface};
+    border-bottom: 1px solid {border};
+}
+
+QWidget#diffPaneHeader QLabel {
+    color: {textDim};
+    padding: 0 {sp-2}px;
+}
+
 QPushButton {
     background-color: {surface2};
     color: {text};
@@ -718,6 +739,29 @@ SemanticColors semanticColors()
     return semanticColorsForTheme(activeThemeName());
 }
 
+DiffColors diffColorsForTheme(const QString &themeName)
+{
+    if (themeName == QStringLiteral("light")) {
+        return DiffColors{QColor(QStringLiteral("#e6ffec")), QColor(QStringLiteral("#abf2bc")),
+                          QColor(QStringLiteral("#3c8c46")), QColor(QStringLiteral("#e8f0fe")),
+                          QColor(QStringLiteral("#b4d0fa")), QColor(QStringLiteral("#3870b4")),
+                          QColor(QStringLiteral("#f0f0f0")), QColor(QStringLiteral("#d6d6d6")),
+                          QColor(QStringLiteral("#b4463c"))};
+    }
+    // Both dark themes share one set: the line shades were picked on the
+    // default dark editor ground and read the same on vscode-dark's.
+    return DiffColors{QColor(QStringLiteral("#294436")), QColor(QStringLiteral("#3d6a3d")),
+                      QColor(87, 166, 74),                QColor(QStringLiteral("#385570")),
+                      QColor(QStringLiteral("#4e6f8f")), QColor(76, 130, 196),
+                      QColor(QStringLiteral("#484a4a")), QColor(QStringLiteral("#5f5f5f")),
+                      QColor(197, 81, 71)};
+}
+
+DiffColors diffColors()
+{
+    return diffColorsForTheme(activeThemeName());
+}
+
 QString styleSheetForTheme(const QString &themeName)
 {
     return chromeStyleSheet(chromePaletteForTheme(themeName));
@@ -833,19 +877,14 @@ QString activeThemeName()
     return activeTheme;
 }
 
-QIcon tabCloseIcon()
+QIcon maskIcon(const char *maskResource, QColor tint)
 {
-    // The mask is read once and kept around: it never changes, only the
-    // tint color does.
-    static const QByteArray mask = [] {
-        QFile file(QStringLiteral(":/ui/icons/close_mask_32.a8"));
-        file.open(QIODevice::ReadOnly);
-        return file.readAll();
-    }();
     constexpr int kSide = 32;
+    QFile file(QString::fromLatin1(maskResource));
+    file.open(QIODevice::ReadOnly);
+    const QByteArray mask = file.readAll();
     Q_ASSERT(mask.size() == kSide * kSide);
 
-    const QColor tint = chromePaletteForTheme(activeThemeName()).textDim;
     QImage image(kSide, kSide, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
     for (int y = 0; y < kSide; ++y) {
@@ -856,6 +895,11 @@ QIcon tabCloseIcon()
         }
     }
     return QIcon(QPixmap::fromImage(image));
+}
+
+QIcon tabCloseIcon()
+{
+    return maskIcon(":/ui/icons/close_mask_32.a8", chromePaletteForTheme(activeThemeName()).textDim);
 }
 
 void applyTheme(const QString &themeName)

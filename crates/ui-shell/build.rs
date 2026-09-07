@@ -445,11 +445,21 @@ fn main() {
         // runs moc on it.
         .cpp_file("cpp/diff_view.h")
         .cpp_file("cpp/diff_view.cpp")
-        // F3-14: the toolbar chrome around `DiffView`. Declares Q_OBJECT
-        // (for the ignore-whitespace checkbox's signal/slot), so its header
-        // is listed too.
+        // The diff viewer's parts: the shared extra-selection builder, the
+        // read-only pane with its gutter (no Q_OBJECT — functor connects
+        // only), and the divider (Q_OBJECT, so its header is listed).
+        .cpp_file("cpp/diff_selections.cpp")
+        .cpp_file("cpp/diff_pane.cpp")
+        .cpp_file("cpp/diff_divider.h")
+        .cpp_file("cpp/diff_divider.cpp")
+        // The chrome around `DiffView`: the toolbar and the page composing
+        // it. Both declare Q_OBJECT, so their headers are listed too.
+        .cpp_file("cpp/diff_toolbar.h")
+        .cpp_file("cpp/diff_toolbar.cpp")
         .cpp_file("cpp/diff_view_page.h")
         .cpp_file("cpp/diff_view_page.cpp")
+        .cpp_file("cpp/unified_diff_view.h")
+        .cpp_file("cpp/unified_diff_view.cpp")
         .cpp_file("cpp/search_everywhere_dialog.cpp")
         .cpp_file("cpp/splash_screen.cpp")
         .cpp_file("cpp/theme.cpp")

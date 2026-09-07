@@ -559,12 +559,13 @@ pub(crate) fn to_ffi_inline_spans(
     old_text: &str,
     new_text: &str,
     hunks: &[editor_core::diff::Hunk],
+    mode: editor_core::diff::HighlightMode,
 ) -> Vec<ffi::FfiInlineSpan> {
     let old_lines: Vec<&str> = old_text.lines().collect();
     let new_lines: Vec<&str> = new_text.lines().collect();
     let mut out = Vec::new();
     for hunk in hunks {
-        let inline = editor_core::diff::diff_inline(old_text, new_text, hunk);
+        let inline = editor_core::diff::diff_inline_opts(old_text, new_text, hunk, mode);
         for span in &inline.removed {
             let Some(line) = old_lines.get(span.line) else {
                 continue;
@@ -589,6 +590,64 @@ pub(crate) fn to_ffi_inline_spans(
         }
     }
     out
+}
+
+/// An `FfiHunk` back to the `editor_core` hunk it was built from — the
+/// apply chevron hands the view's hunk back across the seam.
+pub(crate) fn from_ffi_hunk(hunk: &ffi::FfiHunk) -> editor_core::diff::Hunk {
+    let old = hunk.old_start as usize..(hunk.old_start + hunk.old_len) as usize;
+    let new = hunk.new_start as usize..(hunk.new_start + hunk.new_len) as usize;
+    let kind = match hunk.kind {
+        ffi::FfiHunkKind::Added => editor_core::diff::HunkKind::Added,
+        ffi::FfiHunkKind::Removed => editor_core::diff::HunkKind::Removed,
+        // A cxx enum is an open integer; anything the view never sends
+        // reads as the kind both ranges being non-empty would imply.
+        _ => editor_core::diff::HunkKind::Modified,
+    };
+    editor_core::diff::Hunk { old, new, kind }
+}
+
+pub(crate) fn to_whitespace_mode(
+    mode: ffi::FfiWhitespaceMode,
+) -> editor_core::diff::WhitespaceMode {
+    match mode {
+        ffi::FfiWhitespaceMode::Exact => editor_core::diff::WhitespaceMode::Exact,
+        ffi::FfiWhitespaceMode::TrimEnds => editor_core::diff::WhitespaceMode::TrimEnds,
+        ffi::FfiWhitespaceMode::IgnoreAll => editor_core::diff::WhitespaceMode::IgnoreAll,
+        ffi::FfiWhitespaceMode::IgnoreAllAndBlankLines => {
+            editor_core::diff::WhitespaceMode::IgnoreAllAndBlankLines
+        }
+        _ => editor_core::diff::WhitespaceMode::Exact,
+    }
+}
+
+pub(crate) fn to_highlight_mode(mode: ffi::FfiHighlightMode) -> editor_core::diff::HighlightMode {
+    match mode {
+        ffi::FfiHighlightMode::Words => editor_core::diff::HighlightMode::Words,
+        ffi::FfiHighlightMode::Chars => editor_core::diff::HighlightMode::Chars,
+        ffi::FfiHighlightMode::Lines => editor_core::diff::HighlightMode::Lines,
+        ffi::FfiHighlightMode::None => editor_core::diff::HighlightMode::None,
+        _ => editor_core::diff::HighlightMode::Words,
+    }
+}
+
+/// `editor_core::diff::DiffRow`s as the view reads them; an absent line is
+/// `-1` because cxx has no `Option`.
+pub(crate) fn to_ffi_rows(rows: &[editor_core::diff::DiffRow]) -> Vec<ffi::FfiDiffRow> {
+    let line = |l: Option<usize>| l.map_or(-1, |l| l as i32);
+    rows.iter()
+        .map(|row| ffi::FfiDiffRow {
+            old_line: line(row.old),
+            new_line: line(row.new),
+            kind: match row.kind {
+                editor_core::diff::RowKind::Context => ffi::FfiRowKind::Context,
+                editor_core::diff::RowKind::Added => ffi::FfiRowKind::Added,
+                editor_core::diff::RowKind::Removed => ffi::FfiRowKind::Removed,
+            },
+            old_anchor: row.old_anchor as u32,
+            new_anchor: row.new_anchor as u32,
+        })
+        .collect()
 }
 
 /// The UTF-16 code-unit count of `line[..byte_offset]`. `byte_offset` is
@@ -628,6 +687,90 @@ mod tests {
             to_ffi_symbol_kind(syntax_core::SymbolKind::EnumMember),
             ffi::FfiSymbolKind::EnumMember
         ));
+    }
+
+    #[test]
+    fn diff_mode_conversions_cover_every_variant() {
+        use editor_core::diff::{HighlightMode, WhitespaceMode};
+        assert_eq!(
+            to_whitespace_mode(ffi::FfiWhitespaceMode::Exact),
+            WhitespaceMode::Exact
+        );
+        assert_eq!(
+            to_whitespace_mode(ffi::FfiWhitespaceMode::TrimEnds),
+            WhitespaceMode::TrimEnds
+        );
+        assert_eq!(
+            to_whitespace_mode(ffi::FfiWhitespaceMode::IgnoreAll),
+            WhitespaceMode::IgnoreAll
+        );
+        assert_eq!(
+            to_whitespace_mode(ffi::FfiWhitespaceMode::IgnoreAllAndBlankLines),
+            WhitespaceMode::IgnoreAllAndBlankLines
+        );
+        assert_eq!(
+            to_highlight_mode(ffi::FfiHighlightMode::Words),
+            HighlightMode::Words
+        );
+        assert_eq!(
+            to_highlight_mode(ffi::FfiHighlightMode::Chars),
+            HighlightMode::Chars
+        );
+        assert_eq!(
+            to_highlight_mode(ffi::FfiHighlightMode::Lines),
+            HighlightMode::Lines
+        );
+        assert_eq!(
+            to_highlight_mode(ffi::FfiHighlightMode::None),
+            HighlightMode::None
+        );
+    }
+
+    #[test]
+    fn a_hunk_survives_the_round_trip_across_the_seam() {
+        let hunks = editor_core::diff::diff_lines("a\nb\nc\n", "a\nB\nB2\nc\n").unwrap();
+        let ffi_hunks = to_ffi_hunks(&hunks);
+        assert_eq!(from_ffi_hunk(&ffi_hunks[0]), hunks[0]);
+    }
+
+    #[test]
+    fn rows_cross_the_seam_with_minus_one_for_an_absent_line() {
+        let hunks = editor_core::diff::diff_lines("a\nb\n", "a\n").unwrap();
+        let rows = to_ffi_rows(&editor_core::diff::diff_rows(2, 1, &hunks));
+        assert_eq!(rows.len(), 2);
+        assert!(matches!(rows[0].kind, ffi::FfiRowKind::Context));
+        assert!(matches!(rows[1].kind, ffi::FfiRowKind::Removed));
+        assert_eq!(rows[1].old_line, 1);
+        assert_eq!(rows[1].new_line, -1);
+        assert_eq!(rows[1].new_anchor, 0);
+    }
+
+    #[test]
+    fn inline_spans_follow_the_highlight_mode() {
+        let before = "alpha\n";
+        let after = "alpXa\n";
+        let hunks = editor_core::diff::diff_lines(before, after).unwrap();
+        let words = to_ffi_inline_spans(
+            before,
+            after,
+            &hunks,
+            editor_core::diff::HighlightMode::Words,
+        );
+        assert_eq!((words[0].start, words[0].end), (0, 5));
+        let chars = to_ffi_inline_spans(
+            before,
+            after,
+            &hunks,
+            editor_core::diff::HighlightMode::Chars,
+        );
+        assert_eq!((chars[0].start, chars[0].end), (3, 4));
+        assert!(to_ffi_inline_spans(
+            before,
+            after,
+            &hunks,
+            editor_core::diff::HighlightMode::Lines
+        )
+        .is_empty());
     }
 
     #[test]

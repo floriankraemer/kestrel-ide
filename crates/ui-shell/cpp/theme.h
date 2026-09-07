@@ -45,6 +45,33 @@ SemanticColors semanticColorsForTheme(const QString &themeName);
 // The same, for whatever theme is active — what a widget building rows wants.
 SemanticColors semanticColors();
 
+// The colours a diff paints with (`DiffView`, the unified viewer, the VCS
+// gutter's change markers and the minimap's row marks), one set per theme —
+// JetBrains' convention: added is green, modified is blue, deleted is grey.
+// `*Line` is the full-width background of a changed line, `*Inline` the
+// stronger shade over the words that actually changed within it, `*Marker`
+// the opaque ink for a gutter strip or divider glyph. Each `*Line` shade
+// keeps the theme's text at 4.5:1 or better, since code is read on top of
+// it. Kept next to the stylesheets for the reason `SemanticColors` is: a
+// colour picked in code and one picked in QSS must not drift.
+struct DiffColors
+{
+    QColor addedLine;
+    QColor addedInline;
+    QColor addedMarker;
+    QColor modifiedLine;
+    QColor modifiedInline;
+    QColor modifiedMarker;
+    QColor deletedLine;
+    QColor deletedInline;
+    QColor deletedMarker;
+};
+
+DiffColors diffColorsForTheme(const QString &themeName);
+
+// The same, for whatever theme is active.
+DiffColors diffColors();
+
 // The colour roles of the blend design spec (`--ide-*` in the approved
 // mockup), one set per theme. Every stylesheet and palette in this file is
 // generated from one of these, so a theme is only a list of colours — the
@@ -115,6 +142,13 @@ void applyTheme(const QString &themeName);
 // the application font — applyUiFontScale() scales whatever this installed.
 // Falls back to the platform font, silently, if the resource cannot load.
 void installInterfaceFont();
+
+// A 32x32 alpha mask (`resources/icons/**.a8`, rasterized offline — no
+// Qt6Svg in this build) tinted with one colour. The one mechanism behind
+// every glyph this app draws in code: the tab close (x), the symbol-kind
+// glyphs, the diff toolbar's arrows and chevrons. The mask is re-read on
+// every call; callers that need an icon repeatedly keep the result.
+QIcon maskIcon(const char *maskResource, QColor tint);
 
 // The tab/dock close (x) glyph, tinted to the active theme's dim text color
 // (no Qt6Svg in this build, so the vendored ADS icon is rasterized to an

@@ -1034,6 +1034,7 @@ impl ffi::SearchModel {
                 &preview.old_text,
                 &preview.new_text,
                 &preview.hunks,
+                editor_core::diff::HighlightMode::Words,
             ),
             None => Vec::new(),
         }

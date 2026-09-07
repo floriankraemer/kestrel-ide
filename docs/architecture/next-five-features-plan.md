@@ -125,6 +125,7 @@ Renumbered to match §4's Task breakdown, which this table had drifted from (an 
 | F3-21 — measured performance pass: timing harness + fixtures, `gix` object cache, `HunkCache` keyed on the document's revision, `file_history` via `git log --follow`, timed-out `git` children killed (ADR-0031 §7) | done | (#213) |
 | F3-22 — status is watcher-driven and coalesced: the tree watcher reaches `VcsService`, duplicate refreshes collapse, and an external change finally moves the Changes dock (ADR-0031 §7) | done | (#215) |
 | F3-23 — a Git submenu in the project tree's context menu: stage/unstage, compare with `HEAD`, file history, and a confirmed whole-file revert (`Repository::discard_file`, ADR-0031 §2); the tree gains its first E2E markers | done | (#223) |
+| F3-24 — diff viewer JetBrains parity: line-number gutters and full-line backgrounds, a divider drawn from real geometry with apply chevrons, aligned scrolling over `editor_core::diff::diff_rows`, whitespace and highlighting modes, an icon toolbar, a unified viewer, and an E2E flow (ADR-0030 §6) | done | (#229) |
 
 ### F4 — Run configurations and console
 

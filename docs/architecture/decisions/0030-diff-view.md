@@ -70,6 +70,21 @@ File History's "compare revisions" and Project Tree's "Compare with…" have no 
 
 `DiffView` itself grew independently of this split: syntax highlighting (wiring the `fileName` parameter that was threaded through but unused since F3-13), curved connectors between the two ribbons, collapsible unchanged regions (the same block-hiding technique `CodeEditor`'s code folding uses, duplicated in miniature since `DiffView`'s panes aren't `CodeEditor`s), and an ignore-whitespace toggle (`editor_core::diff::diff_lines_opts`, a custom `imara_diff::TokenSource` comparing lines by whitespace-collapsed content) — all consumed by both mechanisms through a shared `DiffViewPage` toolbar wrapper.
 
+### 6. F3-24 follow-up: the JetBrains parity pass
+
+The viewer as shipped by F3-14 was a diff, not the JetBrains one users compare it to: no line numbers on its own panes, a ten-pixel ribbon and connectors painted from a proportional line-to-height guess rather than real geometry, scrolling by scrollbar fraction (so corresponding lines drifted apart), the semantic red/yellow/green palette, a text-button toolbar with one checkbox, no way to apply a hunk from inside the diff, and no unified viewer.
+F3-24 closes that gap, and every rule it needed went into `editor_core::diff` first:
+
+- `WhitespaceMode` (Exact, TrimEnds, IgnoreAll, IgnoreAllAndBlankLines) replaces the ignore-whitespace bool; the last mode drops blank lines from the token list and maps hunks back to real line numbers.
+- `HighlightMode` (Words, Chars, Lines, None) drives a token-level intra-line diff over each modified hunk as one block per side, which handles a 2-to-3-line rewrite like a rename; the prefix/suffix trim is gone.
+- `diff_rows` lays both sides out as one sequence of Context/Removed/Added rows, each carrying the line it sits level with on the side it lacks.
+  This one model powers the unified viewer's text, the side-by-side viewer's aligned scrolling and the divider's shapes; the view indexes it and derives nothing.
+- `revert_hunk_edit` moved here from `vcs-core` (which re-exports it) so the viewer's apply chevron is Git-free: with only the right side editable, "apply the left" and "revert the right" are the same edit, so there is one chevron per hunk rather than JetBrains' pair.
+
+The view side is split by responsibility: `DiffPane` (a read-only pane with a line-number gutter, not a `CodeEditor`, whose gutter sets breakpoints and cannot show the unified viewer's two number columns), `DiffDivider` (shapes and chevrons from `cursorRect` geometry, which also works on the live `CodeEditor`), `DiffToolbar`, `UnifiedDiffView`, and `DiffViewPage::refresh()` as the single path every option change and every live edit takes.
+`DiffColors` in `theme.h` gives the diff, the VCS gutter and the minimap one per-theme palette (added green, modified blue, deleted grey).
+Deliberate simplifications: the unified viewer is read-only even over the editable window (switching back returns the live editor), and the refactor and replace previews pass no rows and keep fraction scrolling.
+
 ## Consequences
 
 - The refactor preview, the AI chat's per-block Apply, and Replace in Files all show a real before/after diff — hunks, intra-line highlighting, F7 navigation — instead of a truncated snippet or a bare count.

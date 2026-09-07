@@ -1,5 +1,7 @@
 #include "vcs_gutter.h"
 
+#include "theme.h"
+
 #include <QMenu>
 #include <QObject>
 #include <QPoint>
@@ -9,13 +11,14 @@ namespace ui_shell {
 
 QColor changeMarkerColor(ChangeMarkerKind kind)
 {
+    const DiffColors colors = diffColors();
     switch (kind) {
     case ChangeMarkerKind::Added:
-        return QColor(87, 166, 74);
+        return colors.addedMarker;
     case ChangeMarkerKind::Removed:
-        return QColor(197, 81, 71);
+        return colors.deletedMarker;
     case ChangeMarkerKind::Modified:
-        return QColor(76, 130, 196);
+        return colors.modifiedMarker;
     }
     return QColor();
 }

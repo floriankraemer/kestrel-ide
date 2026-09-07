@@ -1,11 +1,13 @@
 #pragma once
 
+#include "diff_selections.h"
 #include "minimap.h"
 #include "vcs_gutter.h"
 
 #include <QColor>
 #include <QSet>
 #include <QHash>
+
 #include <QPlainTextEdit>
 #include <QSize>
 #include <QPair>
@@ -290,6 +292,13 @@ public:
     // extra-selection lifetime as diagnostics — asked again on every caret
     // settle, painted until the next answer replaces them.
     void setOccurrenceSpans(const QVector<OccurrenceSpan> &spans);
+
+    // The diff viewer's line backgrounds and inline spans while this editor
+    // is the right pane of the HEAD-vs-working-tree window — same
+    // extra-selection lifetime as occurrences, cleared with two empty
+    // vectors when the window hands the editor back.
+    void setDiffSelections(const QVector<DiffLineBackground> &backgrounds,
+                           const QVector<DiffInlineSpan> &spans);
 
     // F2-11: inlay hints for the visible range, and the settings toggle
     // that decides whether `paintEvent` draws them at all — off by default
@@ -630,6 +639,8 @@ private:
     QHash<int, ChangeMarker> changeMarkers_;
     QVector<DiagnosticSpan> diagnosticSpans_;
     QVector<OccurrenceSpan> occurrenceSpans_;
+    QVector<DiffLineBackground> diffBackgrounds_;
+    QVector<DiffInlineSpan> diffSpans_;
     QVector<InlayHintSpan> inlayHints_;
     QVector<InlineValueSpan> inlineValues_;
     bool inlayHintsEnabled_ = false;

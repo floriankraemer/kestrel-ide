@@ -1,23 +1,20 @@
 #include "diff_view.h"
 
-#include "syntax_highlighter.h"
+#include "code_editor.h"
+#include "diff_pane.h"
 #include "theme.h"
 
-#include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeySequence>
-#include <QPainter>
-#include <QPainterPath>
 #include <QPlainTextEdit>
-#include <QPushButton>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QShortcut>
 #include <QSplitter>
 #include <QTextBlock>
-#include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 namespace ui_shell {
 
@@ -33,185 +30,49 @@ int totalLines(const QPlainTextEdit *edit)
 // collapsing a three-line gap wouldn't just be noise.
 constexpr int kCollapseThreshold = 8;
 
-// The same "keep the header line, hide the rest, mark the document dirty
-// over that range" technique `CodeEditor::setBlocksVisible` already uses for
-// code folding (Task C) — duplicated here in miniature because `DiffView`'s
-// panes are plain `QPlainTextEdit`s (or, in the editable-right-pane case, a
-// `CodeEditor` DiffView has no business reaching into) rather than sharing
-// `CodeEditor`'s private fold state.
-void setLinesVisible(QPlainTextEdit *edit, int fromExclusive, int toInclusive, bool visible)
+// Unchanged lines kept visible on each side of a hunk when the run between
+// two hunks collapses — the context a reader needs to place the change.
+constexpr int kContextLines = 2;
+
+// Paint a diff onto whichever kind of pane this is: a `DiffPane` owns its
+// extra selections outright, a live `CodeEditor` merges them with its own
+// (current line, find matches, occurrences).
+void paintDiffOn(QPlainTextEdit *edit,
+                 const QVector<DiffLineBackground> &backgrounds,
+                 const QVector<DiffInlineSpan> &spans)
 {
-    QTextBlock block = edit->document()->findBlockByNumber(fromExclusive).next();
-    while (block.isValid() && block.blockNumber() <= toInclusive) {
-        block.setVisible(visible);
-        block.setLineCount(visible ? 1 : 0);
-        block = block.next();
+    if (auto *pane = dynamic_cast<DiffPane *>(edit)) {
+        pane->setDiffSelections(backgrounds, spans);
+    } else if (auto *editor = qobject_cast<CodeEditor *>(edit)) {
+        editor->setDiffSelections(backgrounds, spans);
     }
-    const QTextBlock startBlock = edit->document()->findBlockByNumber(fromExclusive);
-    const QTextBlock endBlock = edit->document()->findBlockByNumber(toInclusive);
-    if (startBlock.isValid() && endBlock.isValid()) {
-        edit->document()->markContentsDirty(
-          startBlock.position(), endBlock.position() + endBlock.length() - startBlock.position());
-    }
-    edit->viewport()->update();
 }
 
 } // namespace
 
-// A thin strip painted alongside each pane, marking that side's hunk ranges
-// by colour. Proportional to the pane's own line count rather than pixel-
-// exact block geometry.
-//
-// ponytail: proportional mapping, not `blockBoundingGeometry()` — good
-// enough at 10px wide; upgrade if hunks ever need to line up exactly with
-// wrapped text.
-class DiffView::Ribbon : public QWidget
-{
-public:
-    Ribbon(QPlainTextEdit *edit, QWidget *parent)
-      : QWidget(parent)
-      , edit_(edit)
-    {
-        setFixedWidth(10);
-    }
-
-    void setHunks(const QVector<DiffView::Hunk> &hunks, bool leftSide)
-    {
-        hunks_ = hunks;
-        leftSide_ = leftSide;
-        update();
-    }
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        const int total = totalLines(edit_);
-        QPainter painter(this);
-        for (const DiffView::Hunk &hunk : hunks_) {
-            const int start = leftSide_ ? hunk.oldStart : hunk.newStart;
-            const int len = leftSide_ ? hunk.oldLen : hunk.newLen;
-            if (len == 0) {
-                // A pure add/remove has no lines on this side to mark; the
-                // other pane's ribbon carries the change.
-                continue;
-            }
-            const int y = static_cast<int>(static_cast<qreal>(start) / total * height());
-            const int h =
-              std::max(2, static_cast<int>(static_cast<qreal>(len) / total * height()));
-            painter.fillRect(1, y, width() - 2, h, DiffView::hunkColor(hunk.kind));
-        }
-    }
-
-private:
-    QPlainTextEdit *edit_;
-    QVector<DiffView::Hunk> hunks_;
-    bool leftSide_ = true;
-};
-
-// The curved trapezoids joining each hunk's left-ribbon range to its
-// right-ribbon range — JetBrains' own diff signature. Painted from the same
-// proportional-to-document-length coordinates the ribbons use, so it never
-// has to know about scroll position or wrapped-line geometry either.
-class DiffView::Connectors : public QWidget
-{
-public:
-    Connectors(QPlainTextEdit *leftEdit, QPlainTextEdit *rightEdit, QWidget *parent)
-      : QWidget(parent)
-      , leftEdit_(leftEdit)
-      , rightEdit_(rightEdit)
-    {
-        setFixedWidth(36);
-    }
-
-    void setHunks(const QVector<DiffView::Hunk> &hunks)
-    {
-        hunks_ = hunks;
-        update();
-    }
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        const int leftTotal = totalLines(leftEdit_);
-        const int rightTotal = totalLines(rightEdit_);
-        QPainter painter(this);
-        painter.setRenderHint(QPainter::Antialiasing);
-        for (const DiffView::Hunk &hunk : hunks_) {
-            // A pure add/remove still connects: the empty side collapses to
-            // a point at where the change happened, which is what makes an
-            // insertion read as "a sliver appearing" rather than nothing.
-            const qreal leftY0 = static_cast<qreal>(hunk.oldStart) / leftTotal * height();
-            const qreal leftY1 =
-              static_cast<qreal>(hunk.oldStart + std::max(hunk.oldLen, 0)) / leftTotal * height();
-            const qreal rightY0 = static_cast<qreal>(hunk.newStart) / rightTotal * height();
-            const qreal rightY1 =
-              static_cast<qreal>(hunk.newStart + std::max(hunk.newLen, 0)) / rightTotal * height();
-
-            QPainterPath path;
-            const qreal midX = width() / 2.0;
-            path.moveTo(0, leftY0);
-            path.cubicTo(midX, leftY0, midX, rightY0, width(), rightY0);
-            path.lineTo(width(), rightY1);
-            path.cubicTo(midX, rightY1, midX, leftY1, 0, leftY1);
-            path.closeSubpath();
-
-            QColor fill = DiffView::hunkColor(hunk.kind);
-            fill.setAlpha(70);
-            painter.fillPath(path, fill);
-        }
-    }
-
-private:
-    QPlainTextEdit *leftEdit_;
-    QPlainTextEdit *rightEdit_;
-    QVector<DiffView::Hunk> hunks_;
-};
-
-// A small "N unchanged lines" button floated over a pane's viewport at a
-// collapsed gap's header line. Positioned by `DiffView::repositionFoldHints`
-// via `cursorRect()`, which already accounts for scroll — nothing here
-// tracks scroll itself.
-class DiffView::FoldHint : public QPushButton
-{
-public:
-    FoldHint(int lineCount, QWidget *viewport)
-      : QPushButton(QObject::tr("⋯ %1 unchanged lines ⋯").arg(lineCount), viewport)
-    {
-        setFlat(true);
-        setCursor(Qt::PointingHandCursor);
-        setFocusPolicy(Qt::NoFocus);
-    }
-};
-
 DiffView::DiffView(const QString &leftText,
-                    const QString &rightText,
-                    const ::rust::Vec<FfiHunk> &hunks,
-                    const ::rust::Vec<FfiInlineSpan> &spans,
-                    const QString &fileName,
-                    QWidget *parent)
+                   const QString &rightText,
+                   const ::rust::Vec<FfiHunk> &hunks,
+                   const ::rust::Vec<FfiInlineSpan> &spans,
+                   const QString &fileName,
+                   QWidget *parent)
   : QWidget(parent)
 {
-    const QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    rightEdit_ = new QPlainTextEdit(rightText, this);
-    rightEdit_->setReadOnly(true);
-    rightEdit_->setFont(font);
-    rightEdit_->setLineWrapMode(QPlainTextEdit::NoWrap);
+    rightEdit_ = new DiffPane(rightText, fileName, this);
     ownsRightEdit_ = true;
-
     init(leftText, hunks, spans, fileName);
 }
 
 DiffView::DiffView(const QString &leftText,
-                    QPlainTextEdit *rightPane,
-                    const ::rust::Vec<FfiHunk> &hunks,
-                    const ::rust::Vec<FfiInlineSpan> &spans,
-                    const QString &fileName,
-                    QWidget *parent)
+                   QPlainTextEdit *rightPane,
+                   const ::rust::Vec<FfiHunk> &hunks,
+                   const ::rust::Vec<FfiInlineSpan> &spans,
+                   const QString &fileName,
+                   QWidget *parent)
   : QWidget(parent)
 {
     rightEdit_ = rightPane;
     ownsRightEdit_ = false;
-
     init(leftText, hunks, spans, fileName);
 }
 
@@ -220,106 +81,64 @@ QPlainTextEdit *DiffView::releaseRightPane()
     if (ownsRightEdit_ || !rightEdit_) {
         return nullptr;
     }
+    expandAllGaps();
+    paintDiffOn(rightEdit_, {}, {});
     QPlainTextEdit *released = rightEdit_;
     released->setParent(nullptr);
     rightEdit_ = nullptr;
     return released;
 }
 
-void DiffView::init(const QString &leftText,
-                     const ::rust::Vec<FfiHunk> &hunks,
-                     const ::rust::Vec<FfiInlineSpan> &spans,
-                     const QString &fileName)
+QPlainTextEdit *DiffView::leftPane() const
 {
-    const QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    return leftPane_;
+}
 
-    leftEdit_ = new QPlainTextEdit(leftText, this);
-    leftEdit_->setReadOnly(true);
-    leftEdit_->setFont(font);
-    leftEdit_->setLineWrapMode(QPlainTextEdit::NoWrap);
+void DiffView::init(const QString &leftText,
+                    const ::rust::Vec<FfiHunk> &hunks,
+                    const ::rust::Vec<FfiInlineSpan> &spans,
+                    const QString &fileName)
+{
+    leftPane_ = new DiffPane(leftText, fileName, this);
+    divider_ = new DiffDivider(leftPane_, rightEdit_, this);
 
-    if (!fileName.isEmpty()) {
-        new SyntaxHighlighter(leftEdit_->document(), fileName);
-        // Only a pane this widget created itself gets a highlighter — the
-        // externally-supplied editable pane already has its own from
-        // `CodeEditor`, and attaching a second one to the same document
-        // would double-highlight every block.
-        if (ownsRightEdit_) {
-            new SyntaxHighlighter(rightEdit_->document(), fileName);
-        }
-    }
+    splitter_ = new QSplitter(this);
+    splitter_->setHandleWidth(0);
+    splitter_->addWidget(leftPane_);
+    splitter_->addWidget(divider_);
+    splitter_->addWidget(rightEdit_);
+    // A reparented editor arrives hidden — its tab stack hid it explicitly
+    // when it stopped being the current page — and a hidden splitter child
+    // gets no width at all.
+    rightEdit_->show();
+    splitter_->setStretchFactor(0, 1);
+    splitter_->setStretchFactor(1, 0);
+    splitter_->setStretchFactor(2, 1);
+    splitter_->setCollapsible(1, false);
+    connect(splitter_, &QSplitter::splitterMoved, this, [this] { splitterDragged_ = true; });
 
-    for (const FfiHunk &h : hunks) {
-        hunks_.append(Hunk{static_cast<int>(h.old_start), static_cast<int>(h.old_len),
-                            static_cast<int>(h.new_start), static_cast<int>(h.new_len), h.kind});
-    }
-    for (const FfiInlineSpan &s : spans) {
-        spans_.append(
-          Span{s.side, static_cast<int>(s.line), static_cast<int>(s.start), static_cast<int>(s.end)});
-    }
-
-    leftRibbon_ = new Ribbon(leftEdit_, this);
-    rightRibbon_ = new Ribbon(rightEdit_, this);
-    leftRibbon_->setHunks(hunks_, /*leftSide=*/true);
-    rightRibbon_->setHunks(hunks_, /*leftSide=*/false);
-    connectors_ = new Connectors(leftEdit_, rightEdit_, this);
-    connectors_->setHunks(hunks_);
-
-    auto *leftRow = new QWidget(this);
-    auto *leftRowLayout = new QHBoxLayout(leftRow);
-    leftRowLayout->setContentsMargins(0, 0, 0, 0);
-    leftRowLayout->setSpacing(0);
-    leftRowLayout->addWidget(leftRibbon_);
-    leftRowLayout->addWidget(leftEdit_, 1);
-
-    rightRow_ = new QWidget(this);
-    auto *rightRowLayout = new QHBoxLayout(rightRow_);
-    rightRowLayout->setContentsMargins(0, 0, 0, 0);
-    rightRowLayout->setSpacing(0);
-    rightRowLayout->addWidget(rightRibbon_);
-    rightRowLayout->addWidget(rightEdit_, 1);
-
-    auto *splitter = new QSplitter(this);
-    splitter->addWidget(leftRow);
-    splitter->addWidget(connectors_);
-    splitter->addWidget(rightRow_);
-    splitter->setStretchFactor(0, 1);
-    splitter->setStretchFactor(1, 0);
-    splitter->setStretchFactor(2, 1);
-    splitter->setCollapsible(1, false);
-
-    auto *layout = new QVBoxLayout(this);
+    auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(splitter);
+    layout->addWidget(splitter_);
 
-    // One shared vertical scroll, by fraction of each pane's own range
-    // rather than raw value — the two sides routinely have different line
-    // counts (an insertion or deletion changes only one of them).
-    auto sync = [this](QScrollBar *from, QScrollBar *to) {
-        if (syncingScroll_) {
-            return;
-        }
-        syncingScroll_ = true;
-        const qreal fraction =
-          from->maximum() > 0 ? static_cast<qreal>(from->value()) / from->maximum() : 0.0;
-        to->setValue(static_cast<int>(fraction * to->maximum()));
-        syncingScroll_ = false;
-    };
-    connect(leftEdit_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this, sync](int) {
-        sync(leftEdit_->verticalScrollBar(), rightEdit_->verticalScrollBar());
-        connectors_->update();
+    connect(leftPane_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int) {
+        syncScrollFrom(leftPane_, rightEdit_, /*fromIsLeft=*/true);
+        divider_->update();
     });
-    connect(rightEdit_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this, sync](int) {
-        sync(rightEdit_->verticalScrollBar(), leftEdit_->verticalScrollBar());
-        connectors_->update();
+    connect(rightEdit_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this](int) {
+        syncScrollFrom(rightEdit_, leftPane_, /*fromIsLeft=*/false);
+        divider_->update();
     });
-    connect(leftEdit_, &QPlainTextEdit::updateRequest, this,
-            [this](const QRect &, int) { repositionFoldHints(); });
-    connect(rightEdit_, &QPlainTextEdit::updateRequest, this,
-            [this](const QRect &, int) { repositionFoldHints(); });
+    connect(leftPane_, &QPlainTextEdit::updateRequest, this, [this](const QRect &, int) {
+        repositionFoldHints();
+        divider_->update();
+    });
+    connect(rightEdit_, &QPlainTextEdit::updateRequest, this, [this](const QRect &, int) {
+        repositionFoldHints();
+        divider_->update();
+    });
 
-    applyInlineSelections();
-    recomputeCollapsedGaps();
+    setDiff(hunks, spans, ::rust::Vec<FfiDiffRow>());
 
     auto *nextShortcut = new QShortcut(QKeySequence(Qt::Key_F7), this);
     nextShortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -329,86 +148,145 @@ void DiffView::init(const QString &leftText,
     connect(prevShortcut, &QShortcut::activated, this, &DiffView::selectPreviousHunk);
 }
 
-void DiffView::setHunks(const ::rust::Vec<FfiHunk> &hunks, const ::rust::Vec<FfiInlineSpan> &spans)
+void DiffView::setDiff(const ::rust::Vec<FfiHunk> &hunks,
+                       const ::rust::Vec<FfiInlineSpan> &spans,
+                       const ::rust::Vec<FfiDiffRow> &rows)
 {
     // Undo any fold before rebuilding: a stale hidden range from the old
     // hunk set could otherwise hide lines with no gap left to explain why.
-    for (CollapsedGap &gap : gaps_) {
-        if (gap.leftHint) {
-            setLinesVisible(leftEdit_, gap.leftStart, gap.leftEndExclusive - 1, true);
-            setLinesVisible(rightEdit_, gap.rightStart, gap.rightEndExclusive - 1, true);
-        }
-    }
-    gaps_.clear();
+    expandAllGaps();
 
     hunks_.clear();
     for (const FfiHunk &h : hunks) {
         hunks_.append(Hunk{static_cast<int>(h.old_start), static_cast<int>(h.old_len),
-                            static_cast<int>(h.new_start), static_cast<int>(h.new_len), h.kind});
+                           static_cast<int>(h.new_start), static_cast<int>(h.new_len), h.kind});
     }
     spans_.clear();
     for (const FfiInlineSpan &s : spans) {
         spans_.append(
           Span{s.side, static_cast<int>(s.line), static_cast<int>(s.start), static_cast<int>(s.end)});
     }
+    rows_.clear();
+    rowOfOld_.clear();
+    rowOfNew_.clear();
+    rows_.reserve(static_cast<int>(rows.size()));
+    for (const FfiDiffRow &row : rows) {
+        const int index = rows_.size();
+        rows_.append(row);
+        if (row.old_line >= 0) {
+            rowOfOld_.append(index);
+        }
+        if (row.new_line >= 0) {
+            rowOfNew_.append(index);
+        }
+    }
     currentHunk_ = -1;
 
-    leftRibbon_->setHunks(hunks_, /*leftSide=*/true);
-    rightRibbon_->setHunks(hunks_, /*leftSide=*/false);
-    connectors_->setHunks(hunks_);
-    applyInlineSelections();
+    divider_->setHunks(hunks_);
+    applySelections();
     recomputeCollapsedGaps();
 }
 
-void DiffView::applyInlineSelections()
+void DiffView::setOptions(bool collapseUnchanged, bool syncScroll, FfiHighlightMode highlight)
 {
-    QList<QTextEdit::ExtraSelection> leftSelections;
-    QList<QTextEdit::ExtraSelection> rightSelections;
-    for (const Span &span : spans_) {
-        const bool onLeft = span.side == FfiDiffSide::Old;
-        QPlainTextEdit *edit = onLeft ? leftEdit_ : rightEdit_;
-        const QTextBlock block = edit->document()->findBlockByNumber(span.line);
-        if (!block.isValid()) {
-            continue;
-        }
-        const int last = std::max(0, block.length() - 1);
-        QTextCursor cursor(block);
-        cursor.setPosition(block.position() + std::min(span.start, last));
-        cursor.setPosition(block.position() + std::min(span.end, last), QTextCursor::KeepAnchor);
+    collapseUnchanged_ = collapseUnchanged;
+    syncScroll_ = syncScroll;
+    paintBackgrounds_ = highlight != FfiHighlightMode::None;
+    applySelections();
+    recomputeCollapsedGaps();
+}
 
-        QTextEdit::ExtraSelection selection;
-        selection.cursor = cursor;
-        QColor background = hunkColor(onLeft ? FfiHunkKind::Removed : FfiHunkKind::Added);
-        background.setAlpha(110);
-        selection.format.setBackground(background);
-        (onLeft ? leftSelections : rightSelections).append(selection);
+void DiffView::applySelections()
+{
+    QVector<DiffLineBackground> leftBackgrounds;
+    QVector<DiffLineBackground> rightBackgrounds;
+    QVector<DiffInlineSpan> leftSpans;
+    QVector<DiffInlineSpan> rightSpans;
+    if (paintBackgrounds_) {
+        const DiffColors colors = diffColors();
+        for (const Hunk &hunk : hunks_) {
+            const QColor leftColor =
+              hunk.kind == FfiHunkKind::Removed ? colors.deletedLine : colors.modifiedLine;
+            const QColor rightColor =
+              hunk.kind == FfiHunkKind::Added ? colors.addedLine : colors.modifiedLine;
+            for (int i = 0; i < hunk.oldLen; ++i) {
+                leftBackgrounds.append({hunk.oldStart + i, leftColor});
+            }
+            for (int i = 0; i < hunk.newLen; ++i) {
+                rightBackgrounds.append({hunk.newStart + i, rightColor});
+            }
+        }
+        // Inline spans only exist for modified hunks, so both sides take the
+        // modified shade — a renamed word reads as "changed", not as "this
+        // side lost it, that side gained it".
+        for (const Span &span : spans_) {
+            const DiffInlineSpan inlineSpan{span.line, span.start, span.end, colors.modifiedInline};
+            (span.side == FfiDiffSide::Old ? leftSpans : rightSpans).append(inlineSpan);
+        }
     }
-    leftEdit_->setExtraSelections(leftSelections);
-    rightEdit_->setExtraSelections(rightSelections);
+    paintDiffOn(leftPane_, leftBackgrounds, leftSpans);
+    paintDiffOn(rightEdit_, rightBackgrounds, rightSpans);
+}
+
+void DiffView::syncScrollFrom(QPlainTextEdit *from, QPlainTextEdit *to, bool fromIsLeft)
+{
+    if (syncingScroll_ || !syncScroll_ || !to) {
+        return;
+    }
+    syncingScroll_ = true;
+    if (rows_.isEmpty()) {
+        // No alignment model: by fraction of each pane's own range, since
+        // the two sides routinely have different line counts.
+        QScrollBar *fromBar = from->verticalScrollBar();
+        QScrollBar *toBar = to->verticalScrollBar();
+        const qreal fraction =
+          fromBar->maximum() > 0 ? static_cast<qreal>(fromBar->value()) / fromBar->maximum() : 0.0;
+        toBar->setValue(static_cast<int>(fraction * toBar->maximum()));
+    } else {
+        const int topBlock = firstVisibleBlockIn(from);
+        const QVector<int> &rowOf = fromIsLeft ? rowOfOld_ : rowOfNew_;
+        if (topBlock >= 0 && topBlock < rowOf.size()) {
+            const FfiDiffRow &row = rows_[rowOf[topBlock]];
+            const int target = static_cast<int>(fromIsLeft ? row.new_anchor : row.old_anchor);
+            // A `QPlainTextEdit` scrolls in visible lines, which is what
+            // `firstLineNumber()` counts (hidden, collapsed blocks included).
+            const QTextBlock block = to->document()->findBlockByNumber(target);
+            if (block.isValid()) {
+                to->verticalScrollBar()->setValue(block.firstLineNumber());
+            }
+        }
+    }
+    syncingScroll_ = false;
 }
 
 void DiffView::recomputeCollapsedGaps()
 {
-    for (CollapsedGap &gap : gaps_) {
-        delete gap.leftHint;
-        delete gap.rightHint;
+    expandAllGaps();
+    if (!collapseUnchanged_) {
+        return;
     }
-    gaps_.clear();
 
     // Sorted ascending by construction (`editor_core::diff::diff_lines`'s
     // own invariant, proven by `hunks_are_ascending_and_do_not_overlap`).
+    // Each unchanged run keeps `kContextLines` visible next to the hunk on
+    // either side of it (none at the start or end of the file) and collapses
+    // what is left when that is still long enough to be worth it.
     int leftCursor = 0;
     int rightCursor = 0;
-    auto considerGap = [this](int leftStart, int leftEnd, int rightStart, int rightEnd) {
-        if (leftEnd - leftStart < kCollapseThreshold) {
+    auto considerGap = [this](int leftStart, int leftEnd, int rightStart, int rightEnd,
+                              bool atFileStart, bool atFileEnd) {
+        const int leading = atFileStart ? 0 : kContextLines;
+        const int trailing = atFileEnd ? 0 : kContextLines;
+        const int collapsed = leftEnd - leftStart - leading - trailing;
+        if (collapsed < kCollapseThreshold) {
             return;
         }
-        CollapsedGap gap{leftStart, leftEnd, rightStart, rightEnd, nullptr, nullptr};
-        setLinesVisible(leftEdit_, gap.leftStart, gap.leftEndExclusive - 1, false);
+        CollapsedGap gap{leftStart + leading, leftEnd - trailing, rightStart + leading,
+                         rightEnd - trailing, nullptr, nullptr};
+        setLinesVisible(leftPane_, gap.leftStart, gap.leftEndExclusive - 1, false);
         setLinesVisible(rightEdit_, gap.rightStart, gap.rightEndExclusive - 1, false);
-        const int lineCount = gap.leftEndExclusive - gap.leftStart;
-        gap.leftHint = new FoldHint(lineCount, leftEdit_->viewport());
-        gap.rightHint = new FoldHint(lineCount, rightEdit_->viewport());
+        gap.leftHint = new FoldHint(collapsed, leftPane_->viewport());
+        gap.rightHint = new FoldHint(collapsed, rightEdit_->viewport());
         connect(static_cast<QPushButton *>(gap.leftHint), &QPushButton::clicked, this,
                 [this, hint = gap.leftHint] { expandGapWithHint(hint); });
         connect(static_cast<QPushButton *>(gap.rightHint), &QPushButton::clicked, this,
@@ -417,32 +295,52 @@ void DiffView::recomputeCollapsedGaps()
         gap.rightHint->show();
         gaps_.append(gap);
     };
-    for (const Hunk &hunk : hunks_) {
-        considerGap(leftCursor, hunk.oldStart, rightCursor, hunk.newStart);
+    for (int i = 0; i < hunks_.size(); ++i) {
+        const Hunk &hunk = hunks_[i];
+        considerGap(leftCursor, hunk.oldStart, rightCursor, hunk.newStart, i == 0, false);
         leftCursor = hunk.oldStart + hunk.oldLen;
         rightCursor = hunk.newStart + hunk.newLen;
     }
-    considerGap(leftCursor, totalLines(leftEdit_), rightCursor, totalLines(rightEdit_));
+    considerGap(leftCursor, totalLines(leftPane_), rightCursor, totalLines(rightEdit_),
+                hunks_.isEmpty(), true);
 
     repositionFoldHints();
+}
+
+void DiffView::expandAllGaps()
+{
+    // Taken out of `gaps_` first: showing lines marks the document dirty,
+    // which re-enters `repositionFoldHints` synchronously, and that must not
+    // walk over a hint this loop has already deleted.
+    const QVector<CollapsedGap> gaps = std::exchange(gaps_, {});
+    for (const CollapsedGap &gap : gaps) {
+        if (gap.leftHint) {
+            setLinesVisible(leftPane_, gap.leftStart, gap.leftEndExclusive - 1, true);
+            if (rightEdit_) {
+                setLinesVisible(rightEdit_, gap.rightStart, gap.rightEndExclusive - 1, true);
+            }
+        }
+        delete gap.leftHint;
+        delete gap.rightHint;
+    }
 }
 
 void DiffView::expandGapWithHint(QWidget *hint)
 {
     const int index = std::find_if(gaps_.begin(), gaps_.end(),
-                                    [hint](const CollapsedGap &gap) {
-                                        return gap.leftHint == hint || gap.rightHint == hint;
-                                    })
-                       - gaps_.begin();
+                                   [hint](const CollapsedGap &gap) {
+                                       return gap.leftHint == hint || gap.rightHint == hint;
+                                   })
+      - gaps_.begin();
     if (index >= gaps_.size()) {
         return;
     }
-    CollapsedGap gap = gaps_[index];
-    setLinesVisible(leftEdit_, gap.leftStart, gap.leftEndExclusive - 1, true);
+    const CollapsedGap gap = gaps_[index];
+    gaps_.remove(index);
+    setLinesVisible(leftPane_, gap.leftStart, gap.leftEndExclusive - 1, true);
     setLinesVisible(rightEdit_, gap.rightStart, gap.rightEndExclusive - 1, true);
     delete gap.leftHint;
     delete gap.rightHint;
-    gaps_.remove(index);
 }
 
 void DiffView::repositionFoldHints()
@@ -451,28 +349,32 @@ void DiffView::repositionFoldHints()
         if (!gap.leftHint || !gap.rightHint) {
             continue;
         }
-        auto place = [](QPlainTextEdit *edit, QWidget *hint, int headerBlock) {
-            const QTextBlock block = edit->document()->findBlockByNumber(headerBlock);
+        // The hint covers the gap's first line — the one row of the collapsed
+        // run that stays visible — edge to edge, so it reads as a fold
+        // placeholder rather than a label floating over code.
+        auto place = [](QPlainTextEdit *edit, QWidget *hint, int hostBlock) {
+            const QTextBlock block = edit->document()->findBlockByNumber(hostBlock);
             if (!block.isValid()) {
                 return;
             }
-            QTextCursor cursor(block);
-            const QRect rect = edit->cursorRect(cursor);
-            hint->move(rect.left() + 4, rect.bottom() + 2);
-            hint->resize(std::min(hint->sizeHint().width(), edit->viewport()->width() - 8),
-                          hint->sizeHint().height());
+            const QRect rect = edit->cursorRect(QTextCursor(block));
+            hint->setGeometry(0, rect.top(), edit->viewport()->width(), rect.height());
         };
-        // The header line is the last visible line before the gap, i.e. one
-        // before `leftStart`/`rightStart` (a gap starting at document line 0
-        // has no header — its hint floats at the top instead).
-        place(leftEdit_, gap.leftHint, std::max(gap.leftStart - 1, 0));
-        place(rightEdit_, gap.rightHint, std::max(gap.rightStart - 1, 0));
+        place(leftPane_, gap.leftHint, gap.leftStart);
+        place(rightEdit_, gap.rightHint, gap.rightStart);
     }
 }
 
 void DiffView::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    // Equal halves until the user drags the divider: a splitter otherwise
+    // splits by size hint, and a live `CodeEditor`'s is nothing like a
+    // `DiffPane`'s.
+    if (!splitterDragged_) {
+        const int half = (width() - DiffDivider::kWidth) / 2;
+        splitter_->setSizes({half, DiffDivider::kWidth, half});
+    }
     repositionFoldHints();
 }
 
@@ -492,11 +394,11 @@ void DiffView::selectHunk(int index)
         const QTextBlock endBlock = edit->document()->findBlockByNumber(to);
         QTextCursor cursor(startBlock);
         cursor.setPosition(endBlock.position() + std::max(0, endBlock.length() - 1),
-                            QTextCursor::KeepAnchor);
+                           QTextCursor::KeepAnchor);
         edit->setTextCursor(cursor);
         edit->centerCursor();
     };
-    selectRange(leftEdit_, hunk.oldStart, hunk.oldLen);
+    selectRange(leftPane_, hunk.oldStart, hunk.oldLen);
     selectRange(rightEdit_, hunk.newStart, hunk.newLen);
 }
 
@@ -508,20 +410,6 @@ void DiffView::selectNextHunk()
 void DiffView::selectPreviousHunk()
 {
     selectHunk(currentHunk_ - 1);
-}
-
-QColor DiffView::hunkColor(FfiHunkKind kind)
-{
-    const SemanticColors colors = semanticColors();
-    switch (kind) {
-    case FfiHunkKind::Removed:
-        return colors.error;
-    case FfiHunkKind::Modified:
-        return colors.warning;
-    case FfiHunkKind::Added:
-    default:
-        return colors.ok;
-    }
 }
 
 } // namespace ui_shell

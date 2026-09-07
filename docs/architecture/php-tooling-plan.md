@@ -108,11 +108,11 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| A1 — `diagnostics-core`: `Diagnostic`, `Severity`, `(source, uri)`-keyed `DiagnosticStore`, `rows`/`rows_for_uri`/`counts`/`at` | open | |
-| A2 — `lsp-core` converts at ingest; the raw protocol value is carried on the row so `LspManager::intentions` still round-trips it verbatim | open | |
-| A3 — `build-core` publishes into the store; build diagnostics gain inline squiggles, which they have never had | open | |
-| A4 — `DiagnosticsServiceRust`; `ProblemsPanel` and `EditorTabs::applyDiagnostics` read it alone; `LanguageService`/`BuildService` lose their diagnostic surfaces | open | |
-| A5 — ADR-0046 + `layering.md` rows + CI layering gate | open | |
+| A1 — `diagnostics-core`: `Diagnostic`, `Severity`, `(source, uri)`-keyed `DiagnosticStore`, `rows`/`rows_for_uri`/`counts`/`at` | done | `77c0dc8` |
+| A2 — `lsp-core` converts at ingest; the raw protocol value is carried on the row so `LspManager::intentions` still round-trips it verbatim | done | `1d07d5c` |
+| A3 — `build-core` publishes into the store; build diagnostics gain inline squiggles, which they have never had | done | `1d07d5c`, `7505df0` |
+| A4 — `DiagnosticsServiceRust`; `ProblemsPanel` and `EditorTabs::applyDiagnostics` read it alone; `LanguageService`/`BuildService` lose their diagnostic surfaces | done | `7505df0` |
+| A5 — ADR-0046 + `layering.md` rows + CI layering gate | done | `TBD` |
 
 ### B — `process-exec` and the `analyzers` contribution point
 

@@ -51,6 +51,7 @@ ADR numbers 0006 and 0013–0015 were never used; the gaps are historical and in
 - [ADR-0039: typed run configurations](architecture/decisions/0039-typed-run-configurations.md) — one toolchain table in `run-core` feeding run, build and debug alike; toolchain and target persisted as strings so `app-config` keeps depending on nothing; macros expanded in arguments too, and run-from-context's capped temporary configurations.
 - [ADR-0040: `build-core`](architecture/decisions/0040-build-core.md) — build is delegated to the project's own tool and never modelled by the IDE: no output folders, artifacts or auto-build; Cargo parsed from JSON and everything else from a small pattern table; build diagnostics join the existing Problems dock rather than getting a second one.
 - [ADR-0041: `dap-core`](architecture/decisions/0041-dap-core.md) — a Debug Adapter Protocol client shaped like the LSP one, sharing its `Content-Length` framing through `stdio-framing`; the protocol typed only where it is read; an undeclared capability is unsupported; adapters are installed, not bundled, so every catalog entry carries an install hint.
+- [ADR-0046: one diagnostics model](architecture/decisions/0046-one-diagnostics-model.md) — a new Qt-free `diagnostics-core` crate keyed by `(source, uri)` rather than `lsp-core` growing to hold it; a build diagnostic reaches the editor's squiggles for the first time; amends ADR-0040 §4; the E2E flow budget moves from 15 to 16 in a later phase.
 
 ## Plans
 

@@ -103,10 +103,14 @@ impl ffi::AnalysisService {
                     .map(|c| c.program_candidates.clone())
                     .unwrap_or_default();
                 // Composer-package matching (which package name explains a
-                // tool that resolves to nothing) is C2's job, the PHP-
-                // specific manifest rows; until then such a tool reports
-                // `NotDetected` rather than `DeclaredNotInstalled`.
-                let status = analysis_core::status(&candidates, &root, &[]);
+                // tool that resolves to nothing): `analysis_core::php`'s
+                // id->package table (C2), covering the built-in php-tools
+                // analyzers. An id with no entry (a future non-PHP analyzer)
+                // passes an empty slice, same as the pre-C2 stub.
+                let packages: Vec<&str> = analysis_core::composer_package(&row.id)
+                    .into_iter()
+                    .collect();
+                let status = analysis_core::status(&candidates, &root, &packages);
                 let status_kind = match status {
                     analysis_core::AnalyzerStatus::Detected { .. } => {
                         ffi::FfiAnalyzerStatusKind::Detected

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 portable-pty = "0.8"
+process-exec = { path = "../process-exec" }
 
 # Unix only: killpg, for stopping a run and everything it started. A plain
 # child.kill() reaches one process, which leaves rustc or node holding the

@@ -155,11 +155,11 @@ fn shell_name(program: &str) -> String {
 // ------------------------------------------------------------- Windows ----
 
 fn detect_windows() -> Vec<ShellCandidate> {
-    let distros = std::process::Command::new("wsl.exe")
-        .args(["--list", "--quiet"])
-        .output()
-        .map(|output| decode_utf16le(&output.stdout))
-        .unwrap_or_default();
+    // `process_exec::host::distros()` owns the `wsl.exe --list --quiet`
+    // call and its UTF-16LE decoding (W1-4) — the WSL remote-execution
+    // seam needed the exact same probe, and a second copy is what
+    // `process-exec` as the mechanism crate exists to prevent.
+    let distros = process_exec::host::distros();
 
     let git_bash: Vec<String> = ["ProgramFiles", "ProgramFiles(x86)"]
         .iter()
@@ -177,7 +177,7 @@ fn detect_windows() -> Vec<ShellCandidate> {
 /// installed it expects, and Windows PowerShell — which every machine has —
 /// is the floor.
 fn windows_candidates(
-    wsl_list: &str,
+    distros: &[String],
     git_bash_paths: &[&str],
     launchable: impl Fn(&str) -> bool,
 ) -> Vec<ShellCandidate> {
@@ -197,45 +197,16 @@ fn windows_candidates(
         candidates.push(ShellCandidate::new("git-bash", "Git Bash", path, &[]));
     }
 
-    for distro in wsl_distros(wsl_list) {
+    for distro in distros {
         candidates.push(ShellCandidate::new(
             &format!("wsl:{distro}"),
             &format!("{distro} (WSL)"),
             "wsl.exe",
-            &["-d", &distro],
+            &["-d", distro],
         ));
     }
 
     candidates
-}
-
-/// Distro names out of `wsl.exe --list --quiet`, already decoded.
-///
-/// `--quiet` drops the header, but a default distro is still marked with a
-/// trailing ` (Default)` in some Windows builds, and every line carries the
-/// `\r` of a CRLF stream.
-fn wsl_distros(wsl_list: &str) -> Vec<String> {
-    wsl_list
-        .lines()
-        .map(|line| line.trim().trim_end_matches("(Default)").trim().to_string())
-        .filter(|line| !line.is_empty())
-        .collect()
-}
-
-/// `wsl.exe` writes UTF-16LE, so its output is mostly NUL bytes to anything
-/// expecting UTF-8 — decoding it as such yields one distro name per *two*
-/// bytes of garbage, which is why this is spelled out rather than left to
-/// `String::from_utf8_lossy`.
-fn decode_utf16le(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|pair| u16::from_le_bytes(*pair))
-        // A byte-order mark leads the stream on some Windows builds.
-        .filter(|unit| *unit != 0xFEFF)
-        .collect();
-    String::from_utf16_lossy(&units)
 }
 
 #[cfg(test)]
@@ -332,7 +303,7 @@ mod tests {
     #[test]
     fn windows_offers_every_shell_it_finds_powershell_first() {
         let candidates = windows_candidates(
-            "",
+            &[],
             &["C:\\Program Files\\Git\\bin\\bash.exe"],
             offering(&[
                 "pwsh.exe",
@@ -348,14 +319,15 @@ mod tests {
     /// PowerShell 7 is an optional install; a stock machine has the other two.
     #[test]
     fn a_machine_without_powershell_7_still_offers_the_stock_shells() {
-        let candidates = windows_candidates("", &[], offering(&["powershell.exe", "cmd.exe"]));
+        let candidates = windows_candidates(&[], &[], offering(&["powershell.exe", "cmd.exe"]));
         let ids: Vec<&str> = candidates.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(ids, ["powershell", "cmd"]);
     }
 
     #[test]
     fn each_wsl_distro_becomes_its_own_candidate() {
-        let candidates = windows_candidates("Ubuntu\r\ndebian\r\n", &[], offering(&[]));
+        let distros = vec!["Ubuntu".to_string(), "debian".to_string()];
+        let candidates = windows_candidates(&distros, &[], offering(&[]));
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].id, "wsl:Ubuntu");
         assert_eq!(candidates[0].label, "Ubuntu (WSL)");
@@ -368,27 +340,13 @@ mod tests {
     }
 
     #[test]
-    fn the_default_wsl_distro_keeps_its_bare_name() {
-        let candidates = windows_candidates("Ubuntu (Default)\r\n", &[], offering(&[]));
-        assert_eq!(candidates[0].id, "wsl:Ubuntu");
-    }
-
-    #[test]
     fn a_machine_without_wsl_offers_no_distros() {
-        assert!(windows_candidates("", &[], offering(&[])).is_empty());
+        assert!(windows_candidates(&[], &[], offering(&[])).is_empty());
     }
 
-    /// The one that bites: `wsl.exe` writes UTF-16LE with a BOM, and
-    /// reading it as UTF-8 yields a name interleaved with NULs.
-    #[test]
-    fn wsl_output_is_decoded_as_utf16le_not_utf8() {
-        let mut bytes = vec![0xFF, 0xFE]; // BOM
-        for unit in "Ubuntu\r\n".encode_utf16() {
-            bytes.extend_from_slice(&unit.to_le_bytes());
-        }
-        assert_eq!(decode_utf16le(&bytes), "Ubuntu\r\n");
-
-        let candidates = windows_candidates(&decode_utf16le(&bytes), &[], offering(&[]));
-        assert_eq!(candidates[0].id, "wsl:Ubuntu");
-    }
+    // `process_exec::host` owns turning `wsl.exe --list --quiet`'s raw
+    // UTF-16LE output (BOM, "(Default)" marker, `\r`) into plain distro
+    // names (W1-4) — its own tests cover that decoding; `windows_candidates`
+    // here only needs to prove it turns an already-decoded name into a
+    // candidate, which `each_wsl_distro_becomes_its_own_candidate` does.
 }

@@ -166,7 +166,7 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W0-1 — plan doc at `docs/architecture/remote-wsl-plan.md` + `docs/README.md` index line | done | |
+| W0-1 — plan doc at `docs/architecture/remote-wsl-plan.md` + `docs/README.md` index line | done | c0958c3 |
 
 ### W1 — `process_exec::host`
 

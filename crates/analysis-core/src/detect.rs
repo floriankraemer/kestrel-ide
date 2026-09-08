@@ -61,13 +61,32 @@ impl AnalyzerStatus {
 /// (`phpstan`) is looked up on `PATH`, the same rule `Command::new` itself
 /// uses, so this function's notion of "on PATH" never drifts from what
 /// actually spawning the program would find.
+///
+/// For a project opened from a WSL UNC path (W2-2), neither of those rules
+/// is safe: `./gradlew` or `vendor/bin/phpstan` is a Linux ELF file that
+/// `Path::is_file` over the 9P share happily reports as "there" while
+/// Windows cannot run it, and a bare name belongs on the distro's `PATH`,
+/// never this process's own. `process_exec::host::resolve_program` probes
+/// *inside* the distro instead — `test -x` for a path candidate, a
+/// login-shell `command -v` for a bare one, both memoised — and this
+/// function defers to it entirely rather than trying to guess executability
+/// from the Windows side of the share.
 pub fn find_program(candidates: &[String], project_root: &Path) -> Option<PathBuf> {
+    let host = process_exec::host::ExecHost::for_path(project_root);
     candidates
         .iter()
-        .find_map(|candidate| resolve_one(candidate, project_root))
+        .find_map(|candidate| resolve_one(candidate, project_root, &host))
 }
 
-fn resolve_one(candidate: &str, project_root: &Path) -> Option<PathBuf> {
+fn resolve_one(
+    candidate: &str,
+    project_root: &Path,
+    host: &process_exec::host::ExecHost,
+) -> Option<PathBuf> {
+    if host.is_remote() {
+        return process_exec::host::resolve_program(host, candidate, project_root)
+            .map(|remote_path| host.to_local(&remote_path));
+    }
     if candidate.contains('/') || candidate.contains('\\') {
         let path = project_root.join(candidate);
         // On Windows a Composer shim is `vendor/bin/phpstan.bat`, not the
@@ -274,5 +293,52 @@ mod tests {
             &["phpstan/phpstan"],
         );
         assert_eq!(s, AnalyzerStatus::NotDetected);
+    }
+
+    // W2-2: a WSL project's tools resolve inside the distro, not against
+    // the Windows-side share. `wsl.exe`'s absence on Linux CI is stood in
+    // for the same way `process-exec`'s own tests do — a fake script on
+    // `PATH` — proving `find_program` defers to
+    // `process_exec::host::resolve_program` for a remote root rather than
+    // `Path::is_file`-ing the share.
+    #[test]
+    fn a_remote_root_resolves_a_bare_candidate_inside_the_distro() {
+        use std::io::Write;
+        use std::sync::Mutex;
+        static PATH_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = PATH_LOCK.lock().unwrap();
+
+        let bin_dir = tempfile::tempdir().unwrap();
+        let script_path = bin_dir.path().join("wsl.exe");
+        {
+            let mut script = fs::File::create(&script_path).unwrap();
+            write!(script, "#!/bin/sh\necho /usr/bin/phpstan\n").unwrap();
+        }
+        let mut perms = fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script_path, perms).unwrap();
+
+        let root = std::path::PathBuf::from("//wsl.localhost/Ubuntu/tmp/analysis-core-e2e");
+        fs::create_dir_all(&root).unwrap();
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: serialized by PATH_LOCK.
+        unsafe {
+            std::env::set_var(
+                "PATH",
+                format!("{}:{original_path}", bin_dir.path().display()),
+            );
+        }
+        let found = find_program(&["phpstan".to_string()], &root);
+        unsafe {
+            std::env::set_var("PATH", original_path);
+        }
+
+        assert_eq!(
+            found,
+            Some(std::path::PathBuf::from(
+                "//wsl.localhost/Ubuntu/usr/bin/phpstan"
+            ))
+        );
     }
 }

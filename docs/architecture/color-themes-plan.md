@@ -17,7 +17,7 @@ through the same `<config_dir>/plugins/` install path a user-supplied theme uses
 | T5 | `core-themes` built-in plugin: the three existing themes as TOML, wired into `builtins.rs` | Done | 0c98fc3 |
 | T6 | `app_core::color_themes`: choices, `ColorThemeService`, `appearance_for_theme` from data + tests | Done | d579154 |
 | T7 | FFI + `ThemeProvider`; `theme.cpp` reads the palette from the seam | Done | 1df6835, 1754db2, d1bf96b |
-| T8 | `appearance_page.cpp`: combo from the registry | Not started | |
+| T8 | `appearance_page.cpp`: combo from the registry | Done | d25a8d9 |
 | T9 | `scripts/import-vscode-theme.py`, vendor `third_party/github-vscode-theme/`, nine TOMLs | Not started | |
 | T10 | Integration test: theme plugin installed into a temp `<config_dir>/plugins/` | Not started | |
 | T11 | ADR-0050, `layering.md`, `docs/README.md`, overview + `language-platform-ui.md` truth-up | Not started | |

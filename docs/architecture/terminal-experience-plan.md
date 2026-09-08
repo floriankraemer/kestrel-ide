@@ -19,12 +19,12 @@ Living status table — update the relevant row **in the same commit** that fini
 
 | Task | Status | Commit |
 |---|---|---|
-| T1 — Shell catalogue off the critical path | done | this commit |
-| T2 — Smooth output: bounded reader queue, dirty-region repaint | done | this commit |
-| T3 — JetBrains Mono, terminal padding, and a themed 256-colour palette | done | this commit |
-| T4 — Terminal font family/size, following the editor font when unset | done | this commit |
-| T5 — Scrollback via wheel/scrollbar/Shift+PgUp/PgDn | open | |
-| T6 — Per-theme JetBrains-like ANSI palette, full 256-colour support | done | this commit |
+| T1 — Shell catalogue off the critical path | done | f6a6ff2 |
+| T2 — One snapshot, coalesced repaints, run-based painting | done | c24bae6 |
+| T3 — Font, padding, palette, 256 colours | done | 2e9386a |
+| T4 — Full keyboard translation, in terminal-core | open | |
+| T5 — Scrollback | open | |
+| T6 — Docs and plan bookkeeping | open | |
 
 ## Decisions worth keeping
 

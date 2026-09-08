@@ -135,7 +135,7 @@ Update the row **in the same commit** that finishes the task.
 |---|---|---|
 | C1 — built-in manifest contributing `phpstan` and `phpcs` analyzers | done | `TBD` |
 | C2 — Composer detection specifics: `vendor/bin/*`, `.phar`, the Windows `.bat` shims, an optional `php_binary` prefix, config discovery | done | `TBD` |
-| C3 — `settings_model::plugins::contributes()` learns the two new points (it already omits `language-servers` — `settings-model/src/plugins.rs:183`) | open | |
+| C3 — `settings_model::plugins::contributes()` learns the two new points (it already omits `language-servers` — `settings-model/src/plugins.rs:183`) | done | `TBD` |
 
 ### D — the PHPUnit test tool window
 

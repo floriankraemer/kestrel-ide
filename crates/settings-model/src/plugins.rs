@@ -180,6 +180,14 @@ fn failed_row(error: &PluginLoadError, disabled: &[String]) -> PluginRow {
 
 /// The Contributes column: what this plugin adds, counted rather than
 /// enumerated once there is more than one of a kind.
+///
+/// `language-servers` has no arm here by design, predating this task: it is
+/// left out rather than overlooked (`analyzers` is described below,
+/// following the exact one/many shape every other point already uses).
+/// `test-frameworks` (phase D) will need its own arm once
+/// `TestFrameworkContribution` exists; until then an unrecognised or
+/// not-yet-described point simply contributes nothing to this column, the
+/// same as any point a manifest names that this function has no arm for.
 fn contributes(manifest: &PluginManifest) -> String {
     let mut parts = Vec::new();
     match manifest.contributes.icon_themes.as_slice() {
@@ -196,6 +204,11 @@ fn contributes(manifest: &PluginManifest) -> String {
         [] => {}
         [only] => parts.push(format!("Preview: {}", only.label)),
         many => parts.push(format!("{} previews", many.len())),
+    }
+    match manifest.contributes.analyzers.as_slice() {
+        [] => {}
+        [only] => parts.push(format!("Analyzer: {}", only.name)),
+        many => parts.push(format!("{} analyzers", many.len())),
     }
     parts.join(", ")
 }
@@ -547,6 +560,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(contributes(&preview), "Preview: Markdown");
+
+        let one_analyzer = PluginManifest::from_toml_str(
+            "id = \"php-tools\"\nname = \"PHP Tools\"\nversion = \"1\"\napi_version = 1\n\
+             \n[[contributes.analyzers]]\nid = \"phpstan\"\nname = \"PHPStan\"\n\
+             program-candidates = [\"phpstan\"]\noutput-format = \"checkstyle-xml\"\n",
+        )
+        .unwrap();
+        assert_eq!(contributes(&one_analyzer), "Analyzer: PHPStan");
+
+        let two_analyzers = PluginManifest::from_toml_str(
+            "id = \"php-tools\"\nname = \"PHP Tools\"\nversion = \"1\"\napi_version = 1\n\
+             \n[[contributes.analyzers]]\nid = \"phpstan\"\nname = \"PHPStan\"\n\
+             program-candidates = [\"phpstan\"]\noutput-format = \"checkstyle-xml\"\n\
+             \n[[contributes.analyzers]]\nid = \"phpcs\"\nname = \"PHP_CodeSniffer\"\n\
+             program-candidates = [\"phpcs\"]\noutput-format = \"checkstyle-xml\"\n",
+        )
+        .unwrap();
+        assert_eq!(contributes(&two_analyzers), "2 analyzers");
+    }
+
+    #[test]
+    fn an_unrecognised_contribution_point_such_as_a_future_test_framework_row_breaks_nothing() {
+        // Phase D adds `TestFrameworkContribution`; until then a manifest
+        // naming `test-frameworks` still loads (`Contributes`'s `unknown`
+        // catch-all, ADR-0033's precedent) and this column simply says
+        // nothing about it, the same as any other point with no arm here.
+        let manifest = PluginManifest::from_toml_str(
+            "id = \"php-tools\"\nname = \"PHP Tools\"\nversion = \"1\"\napi_version = 1\n\
+             \n[[contributes.test-frameworks]]\nid = \"phpunit\"\n",
+        )
+        .expect("an unrecognised point must not fail the whole manifest");
+        assert_eq!(contributes(&manifest), "");
     }
 
     #[test]

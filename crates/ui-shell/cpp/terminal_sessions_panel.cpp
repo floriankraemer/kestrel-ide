@@ -89,6 +89,11 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
 void TerminalSessionsPanel::refreshShellMenu()
 {
     shellMenu_->clear();
+    // A disabled first entry, not `addSection()`: the theme styles
+    // `QMenu::separator` as a 1px rule, which would swallow a section's text.
+    QAction *title = shellMenu_->addAction(tr("Select Shell"));
+    title->setEnabled(false);
+    shellMenu_->addSeparator();
     for (const FfiShellCandidate &shell : supervisor_->availableShells()) {
         const QString id = shell.id;
         const QString label = shell.label;

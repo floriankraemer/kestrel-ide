@@ -114,6 +114,14 @@ void TerminalWidget::applyFont()
 {
     const FfiEditorFont terminalFont = appSettings_->terminalFont();
     font_ = QFont(terminalFont.family, static_cast<int>(terminalFont.size));
+    // A terminal grid is only a grid if every glyph is one cell wide. The
+    // configured family need not exist on this machine — "JetBrains Mono" is
+    // the default and is not installed on a stock Windows — and without these
+    // two hints Qt substitutes the *proportional* UI font, so the painted
+    // runs drift left of their columns and the cursor lands far right of the
+    // text (issue #234).
+    font_.setStyleHint(QFont::Monospace, QFont::PreferMatch);
+    font_.setFixedPitch(true);
     fontBold_ = font_;
     fontBold_.setBold(true);
     fontItalic_ = font_;
@@ -126,6 +134,16 @@ void TerminalWidget::applyFont()
     cellWidth_ = std::max(1, qRound(metrics.horizontalAdvance(QLatin1Char('M'))));
     cellHeight_ = qRound(metrics.height());
     ascent_ = metrics.ascent();
+
+    // Cells are laid out on whole-pixel columns while `drawText` advances by
+    // the font's own fractional widths, so a run painted as one string walks
+    // off the grid a fraction of a pixel per character. Pinning each variant's
+    // advance to exactly `cellWidth_` keeps every column aligned no matter how
+    // long the run.
+    for (QFont *variant : { &font_, &fontBold_, &fontItalic_, &fontBoldItalic_ }) {
+        const qreal advance = QFontMetricsF(*variant).horizontalAdvance(QLatin1Char('M'));
+        variant->setLetterSpacing(QFont::AbsoluteSpacing, cellWidth_ - advance);
+    }
 }
 
 void TerminalWidget::applyPalette()

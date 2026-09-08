@@ -43,6 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qt6-base-dev \
         qt6-base-dev-tools \
         qt6-base-private-dev \
+        qt6-l10n-tools \
         libqt6core5compat6-dev \
         libgl1-mesa-dev \
         libxcb1-dev \

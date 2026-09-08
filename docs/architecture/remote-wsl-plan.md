@@ -234,8 +234,8 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W8-1 — ADR-0052 + `layering.md` rows + `docs/README.md` lines | open | |
-| W8-2 — the manual Windows matrix below, walked once and recorded | open | |
+| W8-1 — ADR-0052 + `layering.md` rows + `docs/README.md` lines | done (`layering.md` rows landed incrementally in the W1–W7 commits; this commit added the ADR and the `docs/README.md` index line) | 527472b |
+| W8-2 — the manual Windows matrix below, walked once and recorded | **open — awaits a manual Windows/WSL session.** The implementing session ran in a Linux-only Docker container with no Windows machine or real `wsl.exe` available; every seam above was verified on Linux CI (unit tests, and a fake-`wsl.exe`-on-`PATH` trick proving the whole argv-wrapping path end to end) but the matrix below needs a real `\\wsl.localhost\...` project opened from real Windows. | |
 
 ## Verification
 

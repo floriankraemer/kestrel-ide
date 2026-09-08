@@ -246,12 +246,16 @@ pub static BUILTIN_THEMES: &[Theme] = &[
     },
 ];
 
-// TODO(T6): `Theme`/`BUILTIN_THEMES`/`theme_by_name`/`palette` (the
-// name-based overload below) are the pre-`color-theme`-crate way of
-// supplying a theme's colours. They stay only because `ui-shell` and
-// `markdown-preview` still ask for a theme by name; once `ColorThemeService`
-// (T6) gives them a `ThemeStyles` instead, delete this block and
-// `palette`, keeping `build_palette` as the only entry point.
+// `Theme`/`BUILTIN_THEMES`/`theme_by_name`/`palette` (the name-based overload
+// below) are the pre-`color-theme`-crate way of supplying a theme's colours.
+// T7 rewired `ui-shell`'s two callers (`convert.rs`'s `SyntaxHighlighterHandle::palette`,
+// `settings.rs`'s `LanguagePlatformModel::scopes`) onto `build_palette` via
+// `app_core::color_themes::build_palette`. This block stays — by design, not
+// oversight — because `markdown-preview::highlight` still asks for a theme
+// by name and rewiring its own theming is explicitly out of the
+// color-themes plan's scope; delete this block and `palette` once that
+// crate no longer needs them, keeping `build_palette` as the only entry
+// point.
 fn theme_by_name(name: &str) -> &'static Theme {
     BUILTIN_THEMES
         .iter()

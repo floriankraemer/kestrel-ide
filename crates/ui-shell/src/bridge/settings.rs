@@ -556,7 +556,12 @@ impl ffi::SyntaxColorEditor {
         let mut settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
         draft.apply_to(&mut settings);
         let theme_name = settings.theme_name().to_string();
-        let palette = theme::palette(
+        // Resolved through the colour-theme plugin registry (T7): the
+        // preview may show a theme other than the one currently applied, so
+        // this resolves `theme_name` fresh rather than reading the cached
+        // active theme `ThemeProvider` keeps.
+        let palette = app_core::color_themes::build_palette(
+            &plugin_host::registry(),
             &theme_name,
             level.as_deref().unwrap_or_default(),
             &user_styles(&settings),

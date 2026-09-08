@@ -10,10 +10,10 @@ through the same `<config_dir>/plugins/` install path a user-supplied theme uses
 
 | # | Task | Status | Commit |
 |---|------|--------|--------|
-| T1 | `color-theme` crate: `Rgba`, the structs, `parse_toml`, errors + unit tests | Done | this commit |
-| T2 | `color-theme`: `parse_vscode_json`, workbench-key mapping, TextMate→`SCOPES` table + tests | Done | this commit |
-| T3 | `plugin-api`: `ColorThemes` point, `ColorThemeContribution`, registry lookup + tests | Not started | |
-| T4 | `syntax-core`: `palette()` takes `ThemeStyles`; delete static tables and `BUILTIN_THEMES` | Not started | |
+| T1 | `color-theme` crate: `Rgba`, the structs, `parse_toml`, errors + unit tests | Done | fa59c0b |
+| T2 | `color-theme`: `parse_vscode_json`, workbench-key mapping, TextMate→`SCOPES` table + tests | Done | 92b65e9 |
+| T3 | `plugin-api`: `ColorThemes` point, `ColorThemeContribution`, registry lookup + tests | Done | 3ca3cf8 |
+| T4 | `syntax-core`: `ThemeStyles` + `build_palette()` added (Partial — static tables/`BUILTIN_THEMES`/name-based `palette()` deferred to T6/T7, which rewire `convert.rs`'s sole caller) | In progress | this commit |
 | T5 | `core-themes` built-in plugin: the three existing themes as TOML, wired into `builtins.rs` | Not started | |
 | T6 | `app_core::color_themes`: choices, `ColorThemeService`, `appearance_for_theme` from data + tests | Not started | |
 | T7 | FFI + `ThemeProvider`; `theme.cpp` reads the palette from the seam | Not started | |

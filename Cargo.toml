@@ -11,6 +11,7 @@ members = [
     "crates/terminal-core",
     "crates/index-core",
     "crates/diagnostics-core",
+    "crates/analysis-core",
     "crates/lsp-core",
     "crates/ai-chat-core",
     "crates/plugin-api",

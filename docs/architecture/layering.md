@@ -5,7 +5,7 @@ Hexagonal-lite with a humble Qt view: logic in Qt-free Rust, the view only displ
 
 ## Layers
 
-The layers are: domain (`editor-core`, `project-model`), application (`app-core`), support (`app-config`, `syntax-core`, `index-core`, `diagnostics-core`, `lsp-core`, `settings-model`, `edit-ops`, `vcs-core`, `process-exec`, `pty-core`, `terminal-core`, `run-core`, `build-core`, `dap-core`, `stdio-framing`, `mcp-server`, `plugin-api`, `plugin-host`, `icon-theme`, `markdown-preview`), adapter + view (`ui-shell`), and the `app` binary.
+The layers are: domain (`editor-core`, `project-model`), application (`app-core`), support (`app-config`, `syntax-core`, `index-core`, `diagnostics-core`, `analysis-core`, `lsp-core`, `settings-model`, `edit-ops`, `vcs-core`, `process-exec`, `pty-core`, `terminal-core`, `run-core`, `build-core`, `dap-core`, `stdio-framing`, `mcp-server`, `plugin-api`, `plugin-host`, `icon-theme`, `markdown-preview`), adapter + view (`ui-shell`), and the `app` binary.
 The building-block diagram lives in [overview.md §3](overview.md#3-building-block-view) — one diagram, one place.
 
 ## Allowed imports
@@ -30,6 +30,7 @@ The building-block diagram lives in [overview.md §3](overview.md#3-building-blo
 | `edit-ops` | `editor-core`, `syntax-core` (+ std, tree-sitter) | **No** |
 | `vcs-core` | `editor-core`, `process-exec` (the piped `git` exec mechanism — B1 of the PHP tooling plan) (+ std, gix, serde) | **No** |
 | `process-exec` | (std only) — a leaf on purpose, extracted from `vcs-core/src/cli.rs` so `analysis-core`/`test-core` can share the same piped-exec mechanism rather than copy it | **No** |
+| `analysis-core` | `diagnostics-core` (a checkstyle-xml finding becomes a `Diagnostic` at parse time, ADR-0046's rule for every publisher), `process-exec` (the piped-exec mechanism analyzer runs use — pipes, not a PTY, since a tty hard-wraps at 120 columns and would corrupt JSON/XML output), `plugin-api` (`AnalyzerContribution` is what an `AnalyzerDef` is built from), `syntax-core` (reserved for a future "does this analyzer apply to this file" join, ADR-0018), `app-config` (`project_settings::ensure_root_gitignore_pattern`, so the B6 temp-copy strategy's dotfile is never committed or walked by the tool itself) (+ std, serde, serde_json, quick-xml). No tokio: every run happens on its own `std::thread` (B5's `Scheduler`), reporting back through a `Send` closure `ui-shell` forwards to `CxxQtThread::queue()`. | **No** |
 | `run-core` | `pty-core`, `app-config`, `terminal-core` (+ std, serde, toml, serde_json, regex) | **No** |
 | `build-core` | `run-core`, `diagnostics-core` (ADR-0046: `BuildDiagnostic::severity` is the shared `Severity` enum directly, not a translated one) (+ std, serde_json, regex) | **No** |
 | `dap-core` | `run-core`, `app-config`, `stdio-framing` (+ std, serde, serde_json) | **No** |
@@ -179,6 +180,8 @@ cargo tree -p dap-core -e normal | grep -i qt        # must be empty
 cargo tree -p dap-core -e normal | grep -i tokio     # must be empty
 cargo tree -p stdio-framing -e normal | grep -i qt   # must be empty
 cargo tree -p process-exec -e normal | grep -i qt    # must be empty
+cargo tree -p analysis-core -e normal | grep -i qt      # must be empty
+cargo tree -p analysis-core -e normal | grep -i tokio   # must be empty
 ```
 
 ## Known debt at time of writing

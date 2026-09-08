@@ -1,0 +1,27 @@
+[package]
+name = "analysis-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The one Problems model (ADR-0046): a finding becomes a `diagnostics_core::
+# Diagnostic` at the point it is parsed, never a second severity enum.
+diagnostics-core = { path = "../diagnostics-core" }
+# The piped-exec mechanism analyzers run over (B1): pipes, drain threads,
+# optional stdin, a wall-clock timeout — never a PTY, see the plan's
+# rationale (a tty hard-wraps at 120 columns, fatal for JSON/XML output).
+process-exec = { path = "../process-exec" }
+# `AnalyzerContribution`: the declarative manifest shape an `AnalyzerDef` is
+# built from.
+plugin-api = { path = "../plugin-api" }
+# `language_for_path`: "does this analyzer apply to this file" reuses the
+# one file-to-language table (ADR-0018) rather than a second extension list.
+syntax-core = { path = "../syntax-core" }
+# `.ide/.gitignore` seeding for the temp-copy unsaved-buffer strategy (B6).
+app-config = { path = "../app-config" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = "0.41"
+
+[dev-dependencies]
+tempfile = "3"

@@ -6726,6 +6726,7 @@ dependencies = [
  "app-config",
  "app-core",
  "build-core",
+ "color-theme",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",

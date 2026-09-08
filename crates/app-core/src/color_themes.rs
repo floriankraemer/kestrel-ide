@@ -83,6 +83,7 @@ fn read_and_parse(plugin: &LoadedPlugin, path: &Path) -> Option<ColorTheme> {
 /// legitimate answer [`ColorThemeService::active`] spells as `None`.
 #[derive(Debug, Default)]
 pub struct ColorThemeService {
+    registry: Arc<PluginRegistry>,
     active: Option<ColorTheme>,
 }
 
@@ -100,14 +101,21 @@ impl ColorThemeService {
     /// The registry is a parameter so a test can drive the real resolution
     /// path over its own fixtures without touching the process-wide one.
     pub fn from_registry(registry: Arc<PluginRegistry>, preferred: &str) -> Self {
-        Self {
-            active: choose(&registry, preferred),
-        }
+        let active = choose(&registry, preferred);
+        Self { registry, active }
     }
 
     /// The active theme, or `None` when nothing offered resolved.
     pub fn active(&self) -> Option<&ColorTheme> {
         self.active.as_ref()
+    }
+
+    /// Switch the active theme to `id`, re-running the same fallback
+    /// [`choose`] applies at construction — the live-preview/revert
+    /// mechanism `ThemeProvider::applyColorTheme` (T7) needs, over the
+    /// registry this service was already built with.
+    pub fn set_preferred(&mut self, id: &str) {
+        self.active = choose(&self.registry, id);
     }
 }
 
@@ -121,7 +129,7 @@ impl ColorThemeService {
 /// 1. the `color-themes` contribution whose id is `preferred`;
 /// 2. failing that, the first offered theme that parses to a dark
 ///    [`Appearance`] — dark is the safe default the rest of the app already
-///    assumes (see [`crate::icons::appearance_for_theme`]);
+///    assumes (see [`crate::icons::icon_appearance`]);
 /// 3. failing that, the first offered theme that parses at all, whatever
 ///    its appearance.
 ///
@@ -143,6 +151,57 @@ fn choose(registry: &PluginRegistry, preferred: &str) -> Option<ColorTheme> {
                 .iter()
                 .find_map(|(plugin, theme)| read_and_parse(plugin, &theme.path))
         })
+}
+
+/// Converts a resolved [`ColorTheme`]'s syntax colours into the
+/// `syntax_core::ThemeStyles` shape `syntax_core::build_palette` resolves
+/// against (T7, finishing what T4 deferred).
+///
+/// `by_language` is always empty: a colour theme carries no per-language
+/// overrides, only the flat `[syntax.*]` table `theme.syntax` already is.
+fn syntax_theme_styles(theme: &ColorTheme) -> syntax_core::theme::ThemeStyles {
+    syntax_core::theme::ThemeStyles {
+        base: theme
+            .syntax
+            .iter()
+            .map(|(name, style)| (name.clone(), to_scope_style(*style)))
+            .collect(),
+        by_language: std::collections::HashMap::new(),
+    }
+}
+
+fn to_scope_style(style: color_theme::ScopeStyle) -> syntax_core::theme::ScopeStyle {
+    syntax_core::theme::ScopeStyle {
+        fg: Some(syntax_core::theme::Rgb::new(
+            style.fg.r, style.fg.g, style.fg.b,
+        )),
+        bold: style.bold,
+        italic: style.italic,
+        underline: style.underline,
+    }
+}
+
+/// Resolves the [`syntax_core::Palette`] for `theme_name`/`language_id`
+/// through the colour-theme plugin registry, converting the theme's syntax
+/// colours via [`syntax_theme_styles`] rather than the old name-based
+/// `syntax_core::theme::palette`.
+///
+/// A fresh one-shot resolve over `registry` — acceptable for the two
+/// `ui-shell` callers this exists for (a settings-page preview and a
+/// per-editor highlighter), neither of which is a per-repaint hot loop for
+/// an *arbitrary* theme name; the currently active theme is resolved once
+/// and cached by [`ThemeProvider`] instead (see `crates/ui-shell/src/bridge/theme.rs`).
+///
+/// [`ThemeProvider`]: ../../ui_shell/bridge/theme/struct.ThemeProviderRust.html
+pub fn build_palette(
+    registry: &PluginRegistry,
+    theme_name: &str,
+    language_id: &str,
+    user: &syntax_core::theme::UserStyles,
+) -> syntax_core::theme::Palette {
+    let theme = choose(registry, theme_name);
+    let styles = theme.as_ref().map(syntax_theme_styles).unwrap_or_default();
+    syntax_core::theme::build_palette(&styles, language_id, user)
 }
 
 #[cfg(test)]
@@ -215,6 +274,34 @@ mod tests {
         let service = ColorThemeService::from_registry(builtin_registry(&[]), "no-such-theme");
         let theme = service.active().expect("a dark theme is always offered");
         assert_eq!(theme.appearance, Appearance::Dark);
+    }
+
+    #[test]
+    fn set_preferred_switches_the_active_theme_in_place() {
+        let mut service = ColorThemeService::from_registry(builtin_registry(&[]), "dark");
+        assert_eq!(service.active().unwrap().id, "dark");
+        service.set_preferred("light");
+        assert_eq!(service.active().unwrap().id, "light");
+    }
+
+    #[test]
+    fn build_palette_resolves_an_arbitrary_theme_by_name() {
+        let registry = builtin_registry(&[]);
+        let user = syntax_core::theme::UserStyles::default();
+        let palette = build_palette(&registry, "vscode-dark", "rust", &user);
+        let scope = syntax_core::Scope::resolve("keyword").expect("known scope");
+        assert_eq!(
+            palette.style(scope).fg,
+            Some(syntax_core::theme::Rgb::new(0x56, 0x9c, 0xd6))
+        );
+    }
+
+    #[test]
+    fn build_palette_falls_back_when_the_registry_offers_nothing() {
+        let user = syntax_core::theme::UserStyles::default();
+        let palette = build_palette(&PluginRegistry::default(), "vscode-dark", "rust", &user);
+        let scope = syntax_core::Scope::resolve("keyword").expect("known scope");
+        assert_eq!(palette.style(scope).fg, None);
     }
 
     #[test]

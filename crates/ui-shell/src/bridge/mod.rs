@@ -58,6 +58,7 @@ pub mod search;
 pub mod settings;
 pub mod terminal;
 pub mod testing;
+pub mod theme;
 pub mod tree;
 pub mod vcs;
 pub mod window_state;

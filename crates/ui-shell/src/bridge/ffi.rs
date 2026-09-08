@@ -34,6 +34,7 @@ use crate::bridge::settings::{
 };
 use crate::bridge::terminal::TerminalSupervisorRust;
 use crate::bridge::testing::TestServiceRust;
+use crate::bridge::theme::ThemeProviderRust;
 use crate::bridge::tree::ProjectTreeModelRust;
 use crate::bridge::vcs::VcsServiceRust;
 
@@ -403,12 +404,57 @@ mod ffi {
     /// function's doc comment), and `TerminalSupervisor::setPalette()`
     /// applies it to every open session and remembers it for new ones.
     /// `ansi` is always exactly 16 entries, ANSI 0-15.
+    #[derive(Default)]
     struct FfiTerminalPalette {
         background: FfiRgb,
         foreground: FfiRgb,
         cursor: FfiRgb,
         selection: FfiRgb,
         ansi: Vec<FfiRgb>,
+    }
+
+    /// The chrome design spec's colour roles (T7), one set per active colour
+    /// theme — mirrors `ui_shell::ChromePalette` (`crates/ui-shell/cpp/theme.h`)
+    /// minus `chevron`/`shadow`/`shadowOpacity`, which are not colour data a
+    /// theme supplies: `theme.cpp` derives them from the resolved appearance.
+    #[derive(Default)]
+    struct FfiChromePalette {
+        canvas: FfiRgb,
+        surface: FfiRgb,
+        surface2: FfiRgb,
+        raised: FfiRgb,
+        border: FfiRgb,
+        text: FfiRgb,
+        text_dim: FfiRgb,
+        accent: FfiRgb,
+        accent_ink: FfiRgb,
+        selection: FfiRgb,
+        status_bar: FfiRgb,
+    }
+
+    /// The status/severity colours a theme supplies (T7) — mirrors
+    /// `ui_shell::SemanticColors`.
+    #[derive(Default)]
+    struct FfiSemanticColors {
+        error: FfiRgb,
+        warning: FfiRgb,
+        info: FfiRgb,
+        ok: FfiRgb,
+        muted: FfiRgb,
+    }
+
+    /// The colours a diff paints with (T7) — mirrors `ui_shell::DiffColors`.
+    #[derive(Default)]
+    struct FfiDiffColors {
+        added_line: FfiRgb,
+        added_inline: FfiRgb,
+        added_marker: FfiRgb,
+        modified_line: FfiRgb,
+        modified_inline: FfiRgb,
+        modified_marker: FfiRgb,
+        deleted_line: FfiRgb,
+        deleted_inline: FfiRgb,
+        deleted_marker: FfiRgb,
     }
 
     /// One paint's worth of grid state (T2): the whole snapshot
@@ -2057,6 +2103,63 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "applyColorTheme"]
         fn apply_color_theme(self: &IconProvider, theme_name: &QString);
+    }
+
+    extern "RustQt" {
+        /// The colour-theme seam (T7): every colour a theme supplies,
+        /// resolved from the `color-themes` plugin contribution that is
+        /// currently active. `theme.cpp` asks this once per `applyTheme()`
+        /// call and caches the result — everything downstream (stylesheets,
+        /// palettes, the syntax highlighter) reads that cache rather than
+        /// asking again per repaint.
+        #[qobject]
+        type ThemeProvider = super::ThemeProviderRust;
+
+        /// Every colour theme the loaded plugins offer — the Appearance
+        /// page's combo, in registry order.
+        #[qinvokable]
+        #[cxx_name = "colorThemes"]
+        fn color_themes(self: &ThemeProvider) -> Vec<FfiColorThemeChoice>;
+
+        /// Make `id` the active colour theme, without persisting the choice:
+        /// the Appearance page's live preview, and the Cancel path that puts
+        /// the previous one back. An id nothing offers falls back the same
+        /// way `ColorThemeService::load` does at startup.
+        #[qinvokable]
+        #[cxx_name = "applyColorTheme"]
+        fn apply_color_theme(self: &ThemeProvider, id: &QString);
+
+        /// Whether the active theme is a dark one — the one bit `theme.cpp`
+        /// needs beyond the colours themselves, to pick the shared
+        /// dark/light chevron glyph and shadow ink (T1 deliberately keeps
+        /// those out of `ChromeColors`; see `color_theme::ChromeColors`).
+        #[qinvokable]
+        #[cxx_name = "isDark"]
+        fn is_dark(self: &ThemeProvider) -> bool;
+
+        /// The active theme's chrome colours, or a black fallback when
+        /// nothing resolved (practically unreachable — a built-in dark
+        /// theme is always offered).
+        #[qinvokable]
+        #[cxx_name = "chromePalette"]
+        fn chrome_palette(self: &ThemeProvider) -> FfiChromePalette;
+
+        /// The active theme's status/severity colours.
+        #[qinvokable]
+        #[cxx_name = "semanticColors"]
+        fn semantic_colors(self: &ThemeProvider) -> FfiSemanticColors;
+
+        /// The active theme's diff colours.
+        #[qinvokable]
+        #[cxx_name = "diffColors"]
+        fn diff_colors(self: &ThemeProvider) -> FfiDiffColors;
+
+        /// The active theme's terminal palette — reuses `FfiTerminalPalette`
+        /// (T3) rather than a new struct, since `color_theme::TerminalColors`
+        /// already mirrors its shape.
+        #[qinvokable]
+        #[cxx_name = "terminalPalette"]
+        fn terminal_palette(self: &ThemeProvider) -> FfiTerminalPalette;
     }
 
     /// One rasterised diagram inside a rendered preview — premultiplied
@@ -4789,6 +4892,13 @@ mod ffi {
     /// One entry of the Appearance page's icon-theme combo. The id is the
     /// contribution's, which is what `Settings::icon_theme` persists.
     struct FfiIconTheme {
+        id: QString,
+        label: QString,
+    }
+
+    /// One entry of the Appearance page's colour-theme combo (T7). The id is
+    /// the contribution's, which is what `Settings::theme_name` persists.
+    struct FfiColorThemeChoice {
         id: QString,
         label: QString,
     }

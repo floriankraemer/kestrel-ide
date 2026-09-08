@@ -12,8 +12,12 @@
 //! analyzer addresses one *file* on a keystroke, with the opposite
 //! invocation and cancellation shape (B5).
 
+mod checkstyle;
 mod def;
 mod detect;
 
+pub use checkstyle::{
+    parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding, ParseError,
+};
 pub use def::{AnalyzerDef, Trigger};
 pub use detect::{composer_require_dev, find_config_file, find_program, status, AnalyzerStatus};

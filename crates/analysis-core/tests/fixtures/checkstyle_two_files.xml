@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="3.7.1">
+ <file name="/project/src/A.php">
+  <error line="1" column="1" severity="error" message="Missing file doc comment" source="PEAR.Commenting.FileComment.Missing"/>
+ </file>
+ <file name="/project/src/B.php">
+  <error line="4" column="1" severity="warning" message="Line exceeds 120 characters" source="Generic.Files.LineLength.TooLong"/>
+ </file>
+</checkstyle>

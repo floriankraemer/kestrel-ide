@@ -5980,6 +5980,15 @@ mod ffi {
         #[cxx_name = "changedFiles"]
         fn changed_files(self: &VcsService) -> Vec<FfiChangedFile>;
 
+        /// Where a `changedFiles()` row's **repository-relative** path lives on
+        /// disk. Empty when there is no repository. The inverse of
+        /// `fileStatus`, and the only supported way for the view to turn a
+        /// Changes-dock row into something openable — resolving one against the
+        /// process working directory fails in a packaged build.
+        #[qinvokable]
+        #[cxx_name = "absolutePath"]
+        fn absolute_path(self: &VcsService, relative: &QString) -> QString;
+
         /// What the last `refreshStatus` says about one file, by **absolute**
         /// path — the shape the project tree holds. An empty `path` in the
         /// answer means the file has no pending change (or is not in this

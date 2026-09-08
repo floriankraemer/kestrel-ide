@@ -392,3 +392,65 @@ fn e2e_commit_log_expand_and_open_commit_detail() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// Double-clicking a row in the Changes dock opens that file.
+///
+/// `changedFiles()` reports git's own vocabulary — repository-relative paths
+/// — which is what the dock's checkboxes hand straight back to
+/// `stageFile`/`unstageFile`. The double-click handler used to pass the same
+/// string on to `openFile`, which opens it as a *filesystem* path: a relative
+/// one resolves against the process working directory, which is the project
+/// root only by accident in a dev run started inside it, and never in a
+/// packaged build. Every double-click in `dist/windows` reported "Cannot open
+/// file — The system cannot find the file specified. (os error 2)".
+///
+/// E2E rather than a unit test because the defect was the wiring, not the
+/// join: a unit test of "repository root + relative path" passes just as
+/// happily against the broken build, since nothing there proves the view asks
+/// for it. What makes this test real is that `Ide::spawn` deliberately sets no
+/// `current_dir`, so the app inherits the test runner's — never the project —
+/// which is the condition a packaged build is always in.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_double_clicking_a_changed_file_opens_it() {
+    let name = "e2e_double_clicking_a_changed_file_opens_it";
+
+    let repo = git_fixture(&[("draft.txt", "first draft\n")]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    // Alt+9 is `vcs.view.changes`; read the geometry marker from the start of
+    // the stream, since the dock may already be the visible tab.
+    ide.key("alt+9");
+    ide.wait_for_event(
+        Mark::start(),
+        "the Changes dock to report its geometry",
+        |e| e["ev"] == "changes_panel_shown",
+    );
+
+    let mark = ide.mark();
+    // A tracked file modified from outside, rather than a new untracked one:
+    // this is the row that has HEAD text behind it, so the double-click
+    // reaches the editable diff window instead of stopping at a plain open.
+    std::fs::write(ide.project_root().join("draft.txt"), "second draft\n")
+        .expect("modifying a tracked file from outside the app");
+
+    let row = ide.wait_for_event(mark, "the modified file's row in the dock", |e| {
+        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "unstaged"
+    });
+
+    let opened = ide.mark();
+    let (x, y) = rect_centre(&row["rect"]);
+    ide.double_click_at(x, y, 1);
+
+    // The whole point: a tab, not the "Cannot open file" dialog. Before the
+    // fix `openFile` was handed `draft.txt` and went looking for it beside the
+    // test runner, so this marker never arrived.
+    ide.wait_for_event(opened, "a tab for the double-clicked file", |e| {
+        e["ev"] == "tab_added" && e["title"] == "draft.txt"
+    });
+
+    assert_eq!(ide.quit(), 0);
+}

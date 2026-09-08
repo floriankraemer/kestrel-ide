@@ -14,6 +14,7 @@
 // here, next to the bridge, and defined in the feature module that owns
 // them.
 use crate::bridge::ai::chat::AiChatRust;
+use crate::bridge::analysis::AnalysisServiceRust;
 use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
@@ -4166,6 +4167,83 @@ mod ffi {
         #[cxx_name = "diagnosticCounts"]
         fn diagnostic_counts(self: &DiagnosticsService) -> FfiDiagnosticCounts;
     }
+
+    /// One row of the Analysis settings page and the status bar's
+    /// per-analyzer indicator (the PHP tooling plan's B7-B9): an
+    /// analyzer's configuration joined with its live detection status.
+    struct FfiAnalyzerRow {
+        id: QString,
+        name: QString,
+        enabled: bool,
+        /// `settings_model::analysis::Trigger::id()` — what a settings-page
+        /// edit writes back.
+        #[cxx_name = "triggerId"]
+        trigger_id: QString,
+        /// `Trigger::label()` — what the dropdown shows.
+        #[cxx_name = "triggerLabel"]
+        trigger_label: QString,
+        /// `analysis_core::AnalyzerStatus::describe`'s sentence — detected,
+        /// declared-but-not-installed, or not detected.
+        #[cxx_name = "statusText"]
+        status_text: QString,
+    }
+
+    extern "RustQt" {
+        /// Runs analyzer jobs on worker threads (`analysis_core::Scheduler`)
+        /// and publishes their findings into the one Problems model
+        /// (ADR-0046), the PHP tooling plan's B8. One registered `#[qobject]`
+        /// per ADR-0032's precedent.
+        #[qobject]
+        type AnalysisService = super::AnalysisServiceRust;
+
+        /// Every contributed analyzer's configuration and live detection
+        /// status, for the settings page and the status bar.
+        #[qinvokable]
+        #[cxx_name = "analyzerRows"]
+        fn analyzer_rows(self: &AnalysisService) -> Vec<FfiAnalyzerRow>;
+
+        /// Whether "Inspect Project" is already running.
+        #[qinvokable]
+        #[cxx_name = "isInspecting"]
+        fn is_inspecting(self: &AnalysisService) -> bool;
+
+        /// Run every enabled, installed analyzer against the whole open
+        /// project (`Trigger::Manual`). Answers via `analysisStarted`, one
+        /// `analyzerStarted`/`analyzerFinished` pair per analyzer, then
+        /// `analysisFinished`.
+        #[qinvokable]
+        #[cxx_name = "inspectProject"]
+        fn inspect_project(self: Pin<&mut AnalysisService>) -> FfiResult;
+
+        /// A project-wide analysis run began.
+        #[qsignal]
+        #[cxx_name = "analysisStarted"]
+        fn analysis_started(self: Pin<&mut AnalysisService>);
+
+        /// One analyzer in the batch started running.
+        #[qsignal]
+        #[cxx_name = "analyzerStarted"]
+        fn analyzer_started(self: Pin<&mut AnalysisService>, analyzer_id: QString);
+
+        /// One analyzer in the batch finished. `ok` is false for a run
+        /// failure (not found, timed out, an I/O error) — never for the
+        /// tool having found something to report, which is success.
+        #[qsignal]
+        #[cxx_name = "analyzerFinished"]
+        fn analyzer_finished(
+            self: Pin<&mut AnalysisService>,
+            analyzer_id: QString,
+            ok: bool,
+            message: QString,
+        );
+
+        /// The whole batch finished — every queued analyzer has reported.
+        #[qsignal]
+        #[cxx_name = "analysisFinished"]
+        fn analysis_finished(self: Pin<&mut AnalysisService>);
+    }
+
+    impl cxx_qt::Threading for AnalysisService {}
 
     /// One row of the Syntax Colors tree (T4).
     ///

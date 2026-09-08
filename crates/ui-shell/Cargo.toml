@@ -20,6 +20,7 @@ lsp-core = { path = "../lsp-core" }
 # The one Problems model (ADR-0046): the shared store `DiagnosticsService`,
 # `LanguageService` and `BuildService` all read and write.
 diagnostics-core = { path = "../diagnostics-core" }
+analysis-core = { path = "../analysis-core" }
 # Git v1 (F3-12): repository discovery, status, hunks, staging, commit,
 # branches, remotes, history and blame — `VcsService` is a thin worker-thread
 # adapter over this crate's own types, never `gix`/`git` directly.
@@ -42,6 +43,7 @@ ai-chat-core = { path = "../ai-chat-core" }
 # tier runs with — an implementation of which will be a Qt object, so this is
 # the crate that picks one.
 plugin-host = { path = "../plugin-host" }
+plugin-api = { path = "../plugin-api" }
 # The agent's tool arguments and results are `serde_json::Value`s
 # (`ai_chat_core::tools::ToolCall`), so the seam has to read and write them.
 serde_json = "1"

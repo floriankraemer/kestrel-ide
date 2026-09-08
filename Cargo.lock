@@ -6700,6 +6700,7 @@ name = "ui-shell"
 version = "0.1.0"
 dependencies = [
  "ai-chat-core",
+ "analysis-core",
  "app-config",
  "app-core",
  "build-core",
@@ -6715,6 +6716,7 @@ dependencies = [
  "lsp-core",
  "markdown-preview",
  "mcp-server",
+ "plugin-api",
  "plugin-host",
  "project-model",
  "pty-core",

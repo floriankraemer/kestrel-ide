@@ -125,7 +125,7 @@ Update the row **in the same commit** that finishes the task.
 | B5 — the scheduler: `OnType` (debounced) / `OnSave` / `Manual`, one in-flight run per (analyzer, file), a new keystroke cancels the previous, project-wide runs serialized | done | `5017b50` |
 | B6 — unsaved-buffer strategies: `stdin`, `temp-copy` beside the original, `saved-only`; `saved-only` degrades `OnType` to `OnSave` visibly | done | `309a02d` |
 | B7 — `[analysis]` settings section, `ScopedField::Analysis`, `settings-model::analysis` rows | done | `2c3e6a5` |
-| B8 — `AnalysisServiceRust`: runs on worker threads, publishes into the store | open | |
+| B8 — `AnalysisServiceRust`: runs on worker threads, publishes into the store | done | `1dbab9c` |
 | B9 — view: the Analysis settings page, an "Inspect Project" action, per-analyzer status in the status bar | open | |
 | B10 — ADR-0047 + `layering.md` rows + gates | open | |
 

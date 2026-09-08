@@ -503,3 +503,28 @@ fn previews_without_a_component_load_and_need_no_wasm_tier() {
     let plugin = registry.by_id("markdown-preview").expect("loaded");
     assert!(plugin.manifest().wasm.is_none());
 }
+
+#[test]
+fn analyzers_are_listed_with_the_plugin_that_offers_them() {
+    let fixture = Fixture::new();
+    let manifest = r#"
+        id = "php-tools"
+        name = "PHP Tools"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.analyzers]]
+        id = "phpstan"
+        name = "PHPStan"
+        program-candidates = ["vendor/bin/phpstan", "phpstan"]
+        output-format = "checkstyle-xml"
+        "#;
+    fixture.install("php-tools", manifest);
+    let registry = fixture.load(&[]);
+
+    let analyzers: Vec<_> = registry.analyzers().collect();
+    assert_eq!(analyzers.len(), 1);
+    assert_eq!(analyzers[0].0.id(), "php-tools");
+    assert_eq!(analyzers[0].1.id, "phpstan");
+    assert_eq!(analyzers[0].1.output_format, "checkstyle-xml");
+}

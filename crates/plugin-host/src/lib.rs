@@ -47,8 +47,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
-    CommandContribution, IconThemeContribution, LanguageServerContribution, LoadErrorKind,
-    PluginLoadError, PluginManifest, PreviewContribution, MANIFEST_FILE, QUARANTINE_DIR,
+    AnalyzerContribution, CommandContribution, IconThemeContribution, LanguageServerContribution,
+    LoadErrorKind, PluginLoadError, PluginManifest, PreviewContribution, MANIFEST_FILE,
+    QUARANTINE_DIR,
 };
 
 pub use plugin::{BuiltinPlugin, LoadedPlugin, PluginSource};
@@ -153,6 +154,19 @@ impl PluginRegistry {
                 .language_servers
                 .iter()
                 .map(move |server| (plugin, server))
+        })
+    }
+
+    /// Every `analyzers` contribution, with the plugin that offers it (the
+    /// PHP tooling plan's B8).
+    pub fn analyzers(&self) -> impl Iterator<Item = (&LoadedPlugin, &AnalyzerContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .analyzers
+                .iter()
+                .map(move |analyzer| (plugin, analyzer))
         })
     }
 

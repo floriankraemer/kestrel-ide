@@ -148,7 +148,7 @@ Update the row **in the same commit** that finishes the task.
 | D5 — view: the Tests dock — toolbar, tree with status icons and durations, failure pane with clickable `file:line` via `run_core::links` | done | `fb1340b` |
 | D6 — rerun: all, failed only, one node, from the tree's context menu | done | `fb1340b` |
 | D7 — `phpunit` rows added to the `php-tools` manifest | done | `33bbf34` |
-| D8 — ADR-0048 | open | |
+| D8 — ADR-0048 | done | `5477b50` |
 
 ### E — verification
 

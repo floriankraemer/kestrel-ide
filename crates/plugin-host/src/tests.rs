@@ -543,6 +543,24 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
         phpcs.severity_map.get("warning").map(String::as_str),
         Some("warning")
     );
+
+    let frameworks: Vec<_> = registry.test_frameworks().collect();
+    assert_eq!(frameworks.len(), 1, "{frameworks:?}");
+    let (owner, phpunit) = &frameworks[0];
+    assert_eq!(owner.id(), "php-tools");
+    assert_eq!(phpunit.id, "phpunit");
+    assert_eq!(phpunit.name, "PHPUnit");
+    assert_eq!(
+        phpunit.program_candidates,
+        vec!["vendor/bin/phpunit", "phpunit.phar", "phpunit"]
+    );
+    assert_eq!(phpunit.args, vec!["--teamcity"]);
+    assert_eq!(phpunit.filter_flag, "--filter");
+    assert_eq!(phpunit.output_format, "teamcity");
+    assert_eq!(
+        phpunit.config_file_candidates,
+        vec!["phpunit.xml", "phpunit.xml.dist"]
+    );
 }
 
 #[test]

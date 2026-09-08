@@ -147,7 +147,7 @@ Update the row **in the same commit** that finishes the task.
 | D4 — `TestServiceRust`, one QObject for N runs | done | `c67c2e6` |
 | D5 — view: the Tests dock — toolbar, tree with status icons and durations, failure pane with clickable `file:line` via `run_core::links` | done | `fb1340b` |
 | D6 — rerun: all, failed only, one node, from the tree's context menu | done | `fb1340b` |
-| D7 — `phpunit` rows added to the `php-tools` manifest | open | |
+| D7 — `phpunit` rows added to the `php-tools` manifest | done | `33bbf34` |
 | D8 — ADR-0048 | open | |
 
 ### E — verification

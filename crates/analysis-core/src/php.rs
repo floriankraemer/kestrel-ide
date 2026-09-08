@@ -31,6 +31,12 @@ pub const PHPCS_CONFIG_CANDIDATES: &[&str] = &[
     "phpcs.xml.dist",
 ];
 
+/// PHPUnit's own automatic config-file discovery order (no `-c` given,
+/// PHPUnit's `Configuration::locateConfigurationFile`): the bare filename
+/// before its `.dist` counterpart, since a tracked default should not
+/// shadow a developer's own untracked override.
+pub const PHPUNIT_CONFIG_CANDIDATES: &[&str] = &["phpunit.xml", "phpunit.xml.dist"];
+
 /// The Composer package an analyzer id corresponds to, for
 /// [`crate::status`]'s `composer_packages` argument — the table B8 left as
 /// a stub (`analyzer_rows()` passed `&[]`, so a declared-but-uninstalled
@@ -39,6 +45,11 @@ pub fn composer_package(analyzer_id: &str) -> Option<&'static str> {
     match analyzer_id {
         "phpstan" => Some("phpstan/phpstan"),
         "phpcs" => Some("squizlabs/php_codesniffer"),
+        // Not just an analyzer id: `test-core`'s D7 caller looks this up
+        // for `phpunit` too, since it is the same "declared but not
+        // installed" question `AnalyzerStatus` already answers for a
+        // linter, applied to a test framework's own program candidates.
+        "phpunit" => Some("phpunit/phpunit"),
         _ => None,
     }
 }
@@ -105,6 +116,11 @@ mod tests {
     #[test]
     fn phpcs_maps_to_its_composer_package() {
         assert_eq!(composer_package("phpcs"), Some("squizlabs/php_codesniffer"));
+    }
+
+    #[test]
+    fn phpunit_maps_to_its_composer_package() {
+        assert_eq!(composer_package("phpunit"), Some("phpunit/phpunit"));
     }
 
     #[test]
@@ -184,6 +200,14 @@ mod tests {
                 ".phpcs.xml.dist",
                 "phpcs.xml.dist"
             ]
+        );
+    }
+
+    #[test]
+    fn phpunit_config_candidates_match_its_own_discovery_order() {
+        assert_eq!(
+            PHPUNIT_CONFIG_CANDIDATES,
+            &["phpunit.xml", "phpunit.xml.dist"]
         );
     }
 }

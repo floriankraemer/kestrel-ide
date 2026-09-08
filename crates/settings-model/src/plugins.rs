@@ -184,10 +184,9 @@ fn failed_row(error: &PluginLoadError, disabled: &[String]) -> PluginRow {
 /// `language-servers` has no arm here by design, predating this task: it is
 /// left out rather than overlooked (`analyzers` is described below,
 /// following the exact one/many shape every other point already uses).
-/// `test-frameworks` (phase D) will need its own arm once
-/// `TestFrameworkContribution` exists; until then an unrecognised or
-/// not-yet-described point simply contributes nothing to this column, the
-/// same as any point a manifest names that this function has no arm for.
+/// An unrecognised or not-yet-described point simply contributes nothing to
+/// this column, the same as any point a manifest names that this function
+/// has no arm for.
 fn contributes(manifest: &PluginManifest) -> String {
     let mut parts = Vec::new();
     match manifest.contributes.icon_themes.as_slice() {
@@ -209,6 +208,11 @@ fn contributes(manifest: &PluginManifest) -> String {
         [] => {}
         [only] => parts.push(format!("Analyzer: {}", only.name)),
         many => parts.push(format!("{} analyzers", many.len())),
+    }
+    match manifest.contributes.test_frameworks.as_slice() {
+        [] => {}
+        [only] => parts.push(format!("Test framework: {}", only.name)),
+        many => parts.push(format!("{} test frameworks", many.len())),
     }
     parts.join(", ")
 }
@@ -578,6 +582,15 @@ mod tests {
         )
         .unwrap();
         assert_eq!(contributes(&two_analyzers), "2 analyzers");
+
+        let one_test_framework = PluginManifest::from_toml_str(
+            "id = \"php-tools\"\nname = \"PHP Tools\"\nversion = \"1\"\napi_version = 1\n\
+             \n[[contributes.test-frameworks]]\nid = \"phpunit\"\nname = \"PHPUnit\"\n\
+             program-candidates = [\"phpunit\"]\nfilter-flag = \"--filter\"\n\
+             output-format = \"teamcity\"\n",
+        )
+        .unwrap();
+        assert_eq!(contributes(&one_test_framework), "Test framework: PHPUnit");
     }
 
     #[test]

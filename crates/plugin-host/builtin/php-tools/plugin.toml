@@ -1,21 +1,23 @@
 # Hand-written, like builtin/csharp/plugin.toml: no upstream package to
 # import here either, so there is no generator script to re-run. It
-# contributes two `analyzers` rather than a `[wasm]` component — PHPStan and
-# PHPCS are native processes the host launches by argv, matching
-# `AnalyzerContribution`'s doc comment (a wasm guest can neither spawn a
-# process nor be trusted with a linter's raw bytes).
+# contributes two `analyzers` and one `test-frameworks` row rather than a
+# `[wasm]` component — PHPStan, PHPCS and PHPUnit are all native processes
+# the host launches by argv, matching `AnalyzerContribution`'s and
+# `TestFrameworkContribution`'s doc comments (a wasm guest can neither spawn
+# a process nor be trusted with either kind of tool's raw bytes).
 #
 # Composer-specific detection details (which `program-candidates` a Composer
 # project actually installs under, the `.phar`/`.bat` fallback shapes, and
 # the id->package table behind "declared but not installed") live in
-# `analysis-core` (C2), not here: this manifest only lists the candidates,
-# `analysis_core::detect` does the probing.
+# `analysis-core` (C2/D7), not here: this manifest only lists the
+# candidates, `analysis_core::detect` does the probing — reused for the
+# test framework row too, not duplicated (the PHP tooling plan's D7).
 id = "php-tools"
 name = "PHP Tools"
 version = "1.0.0"
 api_version = 1
 license = "MIT"
-description = "PHPStan and PHP_CodeSniffer analyzers for PHP projects."
+description = "PHPStan, PHP_CodeSniffer and PHPUnit for PHP projects."
 
 [[contributes.analyzers]]
 id = "phpstan"
@@ -55,3 +57,29 @@ output-format = "checkstyle-xml"
 [contributes.analyzers.severity-map]
 error = "error"
 warning = "warning"
+
+[[contributes.test-frameworks]]
+id = "phpunit"
+name = "PHPUnit"
+# Same candidate shape as the two analyzers above: `vendor/bin/phpunit` from
+# `composer require --dev phpunit/phpunit`, `phpunit.phar` as the
+# manually-downloaded fallback, `phpunit` for a global install. The Windows
+# `.bat` shim needs no candidate of its own for the same reason PHPStan's
+# doesn't (`analysis_core::detect::find_program`'s automatic retry).
+program-candidates = ["vendor/bin/phpunit", "phpunit.phar", "phpunit"]
+# `--teamcity` streams one service message per suite/test as it runs (D2),
+# which is what lets the Tests dock's tree fill in while the run is still
+# going — see ADR-0048 for why this is preferred over `--log-junit` alone.
+# PHPUnit supports `--teamcity` directly, so there is no fallback argv to
+# add here; `--log-junit` stays test-core's fallback *parser* for a future
+# framework whose manifest names no streaming format, not something this
+# row needs.
+args = ["--teamcity"]
+# PHPUnit's own `--filter` is a regex tested against a test's fully
+# qualified name (`Namespace\Class::method`) — precisely the qualified form
+# `test_core::TestId` already builds from nested `testSuiteStarted`/
+# `testStarted` messages, so no translation happens at the filter call site
+# (`test_core::filter`).
+filter-flag = "--filter"
+output-format = "teamcity"
+config-file-candidates = ["phpunit.xml", "phpunit.xml.dist"]

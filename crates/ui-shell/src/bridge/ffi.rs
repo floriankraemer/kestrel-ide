@@ -1492,6 +1492,22 @@ mod ffi {
         #[cxx_name = "rootPath"]
         fn root_path(self: &ProjectTreeModel) -> QString;
 
+        /// W7-1 (ADR-0052): the distro name if the open project's root is a
+        /// WSL UNC path, empty otherwise. `cpp/` only ever branches on
+        /// "empty or not" — the classification itself is
+        /// `process_exec::host::ExecHost::for_path`'s decision, not a
+        /// business rule reimplemented in C++.
+        #[qinvokable]
+        #[cxx_name = "remoteWslDistro"]
+        fn remote_wsl_distro(self: &ProjectTreeModel) -> QString;
+
+        /// The Linux path a `remoteWslDistro()`-nonempty root translates to
+        /// — the status bar's tooltip content. Empty when
+        /// `remoteWslDistro()` is empty.
+        #[qinvokable]
+        #[cxx_name = "remoteWslLinuxRoot"]
+        fn remote_wsl_linux_root(self: &ProjectTreeModel) -> QString;
+
         /// Create an empty file named `name` inside `parent_dir` and
         /// refresh the tree.
         #[qinvokable]

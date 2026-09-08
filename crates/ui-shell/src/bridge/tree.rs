@@ -242,6 +242,16 @@ impl ffi::ProjectTreeModel {
         self.open_folder_async(path);
     }
 
+    /// W7-2 (ADR-0052): read the global off switch and apply it before
+    /// anything classifies this project's root — every `ExecHost::for_path`
+    /// call site in the plan funnels through the same process-wide flag
+    /// (`process_exec::host`'s doc comment on why), so this one read at the
+    /// one place every project open passes through keeps it current.
+    fn apply_remote_wsl_setting() {
+        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+        lsp_core::set_remote_wsl_enabled(settings.remote_wsl_or_default());
+    }
+
     /// Reopen the last-persisted project (US-1), the same way as
     /// `openFolder` — fire-and-forget, walking on a worker thread. Returns
     /// whether a reopen was kicked off at all: `false` means nothing was
@@ -271,6 +281,7 @@ impl ffi::ProjectTreeModel {
     /// matters — a second one simply replaces whatever the first would have
     /// installed once both land.
     fn open_folder_async(mut self: Pin<&mut Self>, path: std::path::PathBuf) {
+        Self::apply_remote_wsl_setting();
         let order = self.session.borrow().tree_sort_order();
         let config_dir = app_core::resolve_config_dir();
         let qt_thread = self.as_mut().qt_thread();
@@ -457,6 +468,35 @@ impl ffi::ProjectTreeModel {
     pub fn root_path(&self) -> QString {
         match self.session.borrow().root_path() {
             Some(path) => QString::from(path.to_string_lossy().as_ref()),
+            None => QString::default(),
+        }
+    }
+
+    /// W7-1: the distro name if the open root is a WSL UNC path, empty
+    /// otherwise — `cpp/`'s status-bar indicator branches on emptiness
+    /// only, never on the string's shape.
+    pub fn remote_wsl_distro(&self) -> QString {
+        match self.session.borrow().root_path() {
+            Some(path) => match lsp_core::ExecHost::for_path(path) {
+                lsp_core::ExecHost::Wsl(wsl) => QString::from(wsl.distro.as_str()),
+                lsp_core::ExecHost::Local => QString::default(),
+            },
+            None => QString::default(),
+        }
+    }
+
+    /// W7-1: the Linux path `remote_wsl_distro`'s root translates to, for
+    /// the status-bar tooltip.
+    pub fn remote_wsl_linux_root(&self) -> QString {
+        match self.session.borrow().root_path() {
+            Some(path) => {
+                let host = lsp_core::ExecHost::for_path(path);
+                if host.is_remote() {
+                    QString::from(host.to_remote(path).as_str())
+                } else {
+                    QString::default()
+                }
+            }
             None => QString::default(),
         }
     }

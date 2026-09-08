@@ -83,7 +83,7 @@ pub use navigation::{
 /// retranslate a `workspace/applyEdit`'s paths outside a
 /// [`LspManager`]-holding closure — without also taking a direct
 /// dependency on `process-exec`.
-pub use process_exec::host::ExecHost;
+pub use process_exec::host::{set_remote_wsl_enabled, ExecHost};
 pub use progress::{ProgressTracker, ServerActivity};
 pub use registration::{Registration, Registrations, Watcher};
 pub use rename::{

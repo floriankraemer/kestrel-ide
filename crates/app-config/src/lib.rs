@@ -272,6 +272,17 @@ pub struct Settings {
     /// Read through [`Settings::mcp_enabled_or_default`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp_enabled: Option<bool>,
+    /// Whether a WSL project root (`\\wsl$\`/`\\wsl.localhost\`) runs its
+    /// tooling inside the distro at all (ADR-0052, W7-2). `None` means
+    /// "never chosen", which resolves to [`DEFAULT_REMOTE_WSL`] — a bare
+    /// `bool` would make the derived `Default` say "off" and silently fall
+    /// back to running everything Windows-side over the share for everyone
+    /// whose `settings.toml` predates this field, the same reason
+    /// `mcp_enabled` is an `Option`. No per-project override: a project
+    /// opened from a WSL path has already said which machine it belongs to.
+    /// Read through [`Settings::remote_wsl_or_default`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_wsl: Option<bool>,
     /// TCP port the MCP server binds on `127.0.0.1`. `0` means "let the OS
     /// assign one" (ADR-0004's multi-instance property); any other value is
     /// bound exactly, and a bind failure is reported rather than silently
@@ -467,6 +478,12 @@ fn resolve_font_scale(value: u32) -> u32 {
 /// the human first hunting for a switch.
 const DEFAULT_MCP_ENABLED: bool = true;
 
+/// Remote WSL execution (ADR-0052) is on unless the user turns it off: a
+/// project opened from a `\\wsl$\`/`\\wsl.localhost\` UNC path has already
+/// said which machine it belongs to, so running its tooling there is the
+/// answer that needs no configuration, not the exception.
+const DEFAULT_REMOTE_WSL: bool = true;
+
 /// Conversations are kept unless the user says otherwise: a chat panel that
 /// forgets every transcript on restart is a chat panel nobody trusts with a
 /// long investigation. The transcripts are written `0600` per project, and
@@ -523,6 +540,12 @@ impl Settings {
     /// [`DEFAULT_MCP_ENABLED`] when the user has never chosen.
     pub fn mcp_enabled_or_default(&self) -> bool {
         self.mcp_enabled.unwrap_or(DEFAULT_MCP_ENABLED)
+    }
+
+    /// Whether a WSL project root runs its tooling inside the distro,
+    /// defaulting to [`DEFAULT_REMOTE_WSL`] when the user has never chosen.
+    pub fn remote_wsl_or_default(&self) -> bool {
+        self.remote_wsl.unwrap_or(DEFAULT_REMOTE_WSL)
     }
 
     /// Whether AI chat transcripts are persisted, defaulting to
@@ -850,6 +873,38 @@ mod tests {
         assert_eq!(loaded.mcp_port, 0);
     }
 
+    // W7-2: same "Option<bool>, default true" shape as mcp_enabled, and for
+    // the same reason — a `settings.toml` written before this field existed
+    // must not silently turn remote WSL execution off.
+    #[test]
+    fn remote_wsl_defaults_to_enabled() {
+        assert!(Settings::default().remote_wsl_or_default());
+    }
+
+    #[test]
+    fn remote_wsl_can_be_turned_off_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = Settings {
+            remote_wsl: Some(false),
+            ..Settings::default()
+        };
+
+        save(dir.path(), &settings).unwrap();
+        let loaded = load(dir.path()).unwrap();
+
+        assert!(!loaded.remote_wsl_or_default());
+    }
+
+    #[test]
+    fn settings_file_without_remote_wsl_key_keeps_it_enabled() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(SETTINGS_FILE), "theme = \"light\"\n").unwrap();
+
+        let loaded = load(dir.path()).unwrap();
+
+        assert!(loaded.remote_wsl_or_default());
+    }
+
     #[test]
     fn settings_file_without_minimap_table_keeps_every_overlay_on() {
         let dir = tempfile::tempdir().unwrap();
@@ -890,6 +945,7 @@ mod tests {
             show_eol_markers: true,
             menu_font_scale: 90,
             mcp_enabled: Some(true),
+            remote_wsl: Some(false),
             mcp_port: 7337,
             editor_colors: colors,
             recent_projects: vec![PathBuf::from("/home/user/project-a")],

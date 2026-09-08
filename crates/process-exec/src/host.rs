@@ -10,10 +10,29 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::sync::OnceLock;
 
 use crate::suppress_console_window;
+
+/// W7-2 (ADR-0052): the global `remote_wsl` off switch, default on.
+///
+/// `process-exec` is a leaf crate (ADR-0047 §4) and must not depend on
+/// `app-config` to read the setting itself, so the switch lives here as a
+/// process-wide flag instead: `ui-shell` reads the persisted setting once
+/// at startup (and again whenever it changes) and calls
+/// [`set_remote_wsl_enabled`]. Every classification funnels through
+/// [`ExecHost::for_path`], so flipping this one flag is enough to make
+/// every seam in this plan behave as if no project were ever remote —
+/// no per-call-site plumbing, and nothing to keep in sync.
+static REMOTE_WSL_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Turn remote WSL execution on or off for every [`ExecHost::for_path`]
+/// call from here on, in this process. See [`REMOTE_WSL_ENABLED`].
+pub fn set_remote_wsl_enabled(enabled: bool) {
+    REMOTE_WSL_ENABLED.store(enabled, Ordering::Relaxed);
+}
 
 /// Where a process should run.
 ///
@@ -76,6 +95,9 @@ impl ExecHost {
     /// Pure, total, deterministic on the path string — nothing here is
     /// stored, so no service can hold a stale answer once a caller has one.
     pub fn for_path(path: &Path) -> Self {
+        if !REMOTE_WSL_ENABLED.load(Ordering::Relaxed) {
+            return ExecHost::Local;
+        }
         match parse_unc(path) {
             Some((unc_prefix, distro, _remainder)) => ExecHost::Wsl(WslHost { distro, unc_prefix }),
             None => ExecHost::Local,
@@ -349,6 +371,20 @@ mod tests {
 
     fn wsl(path: &str) -> ExecHost {
         ExecHost::for_path(Path::new(path))
+    }
+
+    // W7-2: the off switch is a process-wide static, so this test resets it
+    // on every exit path rather than trusting nextest's one-process-per-test
+    // isolation alone — a plain `cargo test` run shares a process across
+    // this whole file's tests.
+    #[test]
+    fn the_off_switch_forces_local_even_for_a_wsl_shaped_path() {
+        set_remote_wsl_enabled(false);
+        let result = std::panic::catch_unwind(|| {
+            assert_eq!(wsl(r"\\wsl.localhost\Ubuntu\home\f\proj"), ExecHost::Local);
+        });
+        set_remote_wsl_enabled(true);
+        result.unwrap();
     }
 
     #[test]

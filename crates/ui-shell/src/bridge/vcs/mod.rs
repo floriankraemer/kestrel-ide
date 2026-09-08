@@ -306,6 +306,33 @@ impl ffi::VcsService {
         none
     }
 
+    /// Where one `changedFiles()` row's file actually lives on disk.
+    ///
+    /// The rows carry git's own vocabulary — repository-relative paths — because
+    /// that is what `stageFile`/`unstageFile` hand back to git. Opening one needs
+    /// a filesystem path instead, and a relative one is resolved against the
+    /// *process* working directory, which is the project root only by accident
+    /// (a dev run started inside it) and never in a packaged build. That is why
+    /// double-clicking a row reported "The system cannot find the file
+    /// specified. (os error 2)".
+    ///
+    /// The join lives here for the same reason `file_status` translates the
+    /// other direction here: `cpp/` does not know the repository root, and a
+    /// humble view must not guess it. Empty when there is no repository yet,
+    /// which the caller reads as "nothing to open".
+    ///
+    /// Tolerant of an already-absolute `relative`: [`Path::join`] with an
+    /// absolute argument returns that argument, so a caller that has a real
+    /// path is not corrupted by asking.
+    pub fn absolute_path(&self, relative: &QString) -> QString {
+        let work_dir = self.work_dir.borrow();
+        if work_dir.is_empty() {
+            return QString::default();
+        }
+        let joined = Path::new(work_dir.as_str()).join(relative.to_string());
+        QString::from(joined.to_string_lossy().as_ref())
+    }
+
     pub fn changed_files(&self) -> Vec<ffi::FfiChangedFile> {
         let status = self.status.borrow();
         let mut out: Vec<ffi::FfiChangedFile> = status

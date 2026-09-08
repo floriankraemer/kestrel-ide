@@ -105,9 +105,17 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
         // Only a file row carries a path (kPathRole) — a group header
         // ("Staged"/"Unstaged"/"Untracked") double-click does nothing.
+        //
+        // The row's path is repository-relative, which is what the checkbox
+        // handler below needs; opening the file needs a filesystem path, and
+        // `absolutePath` is the one place that knows the repository root.
         const QString path = item->data(0, kPathRole).toString();
-        if (!path.isEmpty()) {
-            showDiff_(path);
+        if (path.isEmpty()) {
+            return;
+        }
+        const QString absolute = vcsService_->absolutePath(path);
+        if (!absolute.isEmpty()) {
+            showDiff_(absolute);
         }
     });
 

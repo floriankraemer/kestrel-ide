@@ -122,7 +122,7 @@ Update the row **in the same commit** that finishes the task.
 | B2 — `plugin-api`: `AnalyzerContribution` + validation + manifest round-trip tests; `api_version` unchanged | done | `80ece93` |
 | B3 — `analysis-core`: `AnalyzerDef` built from a contribution, detection (program candidates, config files, `composer.json` `require-dev`), status reporting for "declared but not installed" | done | `37054a5` |
 | B4 — `checkstyle-xml` parser and its severity mapping, fixture-driven | done | `de4c858` |
-| B5 — the scheduler: `OnType` (debounced) / `OnSave` / `Manual`, one in-flight run per (analyzer, file), a new keystroke cancels the previous, project-wide runs serialized | open | |
+| B5 — the scheduler: `OnType` (debounced) / `OnSave` / `Manual`, one in-flight run per (analyzer, file), a new keystroke cancels the previous, project-wide runs serialized | done | `5017b50` |
 | B6 — unsaved-buffer strategies: `stdin`, `temp-copy` beside the original, `saved-only`; `saved-only` degrades `OnType` to `OnSave` visibly | open | |
 | B7 — `[analysis]` settings section, `ScopedField::Analysis`, `settings-model::analysis` rows | open | |
 | B8 — `AnalysisServiceRust`: runs on worker threads, publishes into the store | open | |

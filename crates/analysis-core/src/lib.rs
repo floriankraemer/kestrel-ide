@@ -15,9 +15,11 @@
 mod checkstyle;
 mod def;
 mod detect;
+mod scheduler;
 
 pub use checkstyle::{
     parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding, ParseError,
 };
 pub use def::{AnalyzerDef, Trigger};
 pub use detect::{composer_require_dev, find_config_file, find_program, status, AnalyzerStatus};
+pub use scheduler::{RunFailure, RunOutput, RunResult, Scheduler};

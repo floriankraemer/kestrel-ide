@@ -347,4 +347,210 @@ mod tests {
         assert!(service.active().is_none());
         assert!(ColorThemeService::default().active().is_none());
     }
+
+    // --- T10: an installed (not built-in) theme plugin, end to end -----
+    //
+    // The rest of this module's tests only ever load `BUILTIN_PLUGINS` from
+    // a nonexistent config dir. These two drive the full stack a real user
+    // install goes through: a plugin directory written to a temp
+    // `<config_dir>/plugins/`, scanned by `plugin_host::load`, and resolved
+    // by `ColorThemeService` — proving install -> registry -> service
+    // resolution works for an installed plugin, not just the registry
+    // layer.
+
+    fn write_plugin(
+        config_dir: &std::path::Path,
+        dir_name: &str,
+        manifest: &str,
+        asset_name: &str,
+        asset_contents: &str,
+    ) {
+        let plugin_dir = config_dir.join(plugin_host::PLUGINS_DIR).join(dir_name);
+        std::fs::create_dir_all(&plugin_dir).expect("plugin dir");
+        // "plugin.toml" is `plugin_api::MANIFEST_FILE`; not worth a new
+        // dev-dependency on `plugin-api` just to name it symbolically.
+        std::fs::write(plugin_dir.join("plugin.toml"), manifest).expect("manifest");
+        std::fs::write(plugin_dir.join(asset_name), asset_contents).expect("asset");
+    }
+
+    fn minimal_native_theme_toml(id: &str, label: &str) -> String {
+        format!(
+            r##"
+            id = "{id}"
+            label = "{label}"
+            appearance = "dark"
+
+            [chrome]
+            canvas = "#101010"
+            surface = "#202020"
+            surface2 = "#252525"
+            raised = "#303030"
+            border = "#3a3a3a"
+            text = "#eeeeee"
+            text_dim = "#999999"
+            accent = "#4488ff"
+            accent_ink = "#ffffff"
+            selection = "#334466"
+            status_bar = "#202020"
+
+            [semantic]
+            error = "#ff5555"
+            warning = "#ffb454"
+            info = "#59a1e0"
+            ok = "#7fd962"
+            muted = "#8a8f98"
+
+            [diff]
+            added_line = "#1e3a1e"
+            added_inline = "#2d5a2d"
+            added_marker = "#4caf50"
+            modified_line = "#1e2f4a"
+            modified_inline = "#2d4a70"
+            modified_marker = "#3574f0"
+            deleted_line = "#3a1e1e"
+            deleted_inline = "#5a2d2d"
+            deleted_marker = "#f44336"
+
+            [terminal]
+            black = "#000000"
+            red = "#ff5555"
+            green = "#7fd962"
+            yellow = "#ffb454"
+            blue = "#59a1e0"
+            magenta = "#c678dd"
+            cyan = "#56b6c2"
+            white = "#dfe1e5"
+            bright_black = "#5c6370"
+            bright_red = "#ff6e67"
+            bright_green = "#9ae37c"
+            bright_yellow = "#ffd479"
+            bright_blue = "#7fb8ea"
+            bright_magenta = "#d8a1e6"
+            bright_cyan = "#79cdd8"
+            bright_white = "#ffffff"
+            background = "#101010"
+            foreground = "#eeeeee"
+            cursor = "#eeeeee"
+            selection = "#334466"
+
+            [syntax.keyword]
+            fg = "#cc7832"
+            bold = true
+            "##
+        )
+    }
+
+    fn minimal_vscode_json(name: &str) -> String {
+        format!(
+            r##"{{
+                "name": "{name}",
+                "type": "dark",
+                "colors": {{
+                    "editor.background": "#112233",
+                    "editor.foreground": "#eeeeee",
+                    "focusBorder": "#4488ff",
+                    "editorError.foreground": "#ff5555",
+                    "terminal.ansiBlack": "#000000",
+                    "terminal.ansiRed": "#ff5555"
+                }},
+                "tokenColors": [
+                    {{
+                        "scope": "keyword",
+                        "settings": {{ "foreground": "#ff5555" }}
+                    }}
+                ]
+            }}"##
+        )
+    }
+
+    #[test]
+    fn an_installed_toml_theme_resolves_as_active_alongside_the_built_ins() {
+        let config_dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(config_dir.path().join(plugin_host::PLUGINS_DIR))
+            .expect("plugins root");
+        write_plugin(
+            config_dir.path(),
+            "my-theme",
+            r#"
+            id = "my-theme"
+            name = "My Theme Plugin"
+            version = "1.0.0"
+            api_version = 1
+
+            [[contributes.color-themes]]
+            id = "my-toml-theme"
+            label = "My TOML Theme"
+            path = "my-theme.toml"
+            "#,
+            "my-theme.toml",
+            &minimal_native_theme_toml("my-toml-theme", "My TOML Theme"),
+        );
+
+        let registry = Arc::new(plugin_host::load(
+            config_dir.path(),
+            plugin_host::BUILTIN_PLUGINS,
+            &[],
+        ));
+
+        let ids: Vec<String> = color_themes(&registry).into_iter().map(|c| c.id).collect();
+        assert!(ids.contains(&"my-toml-theme".to_string()));
+        assert!(
+            ids.contains(&"dark".to_string()),
+            "built-ins still offered: {ids:?}"
+        );
+
+        let service = ColorThemeService::from_registry(registry, "my-toml-theme");
+        assert_eq!(
+            service.active().map(|t| &t.id),
+            Some(&"my-toml-theme".to_string())
+        );
+        assert_eq!(
+            service.active().unwrap().appearance,
+            color_theme::Appearance::Dark
+        );
+    }
+
+    #[test]
+    fn an_installed_unmodified_vscode_json_theme_resolves_as_active_alongside_the_built_ins() {
+        let config_dir = tempfile::tempdir().expect("temp dir");
+        std::fs::create_dir_all(config_dir.path().join(plugin_host::PLUGINS_DIR))
+            .expect("plugins root");
+        write_plugin(
+            config_dir.path(),
+            "my-vscode-theme",
+            r#"
+            id = "my-vscode-theme"
+            name = "My VS Code Theme Plugin"
+            version = "1.0.0"
+            api_version = 1
+
+            [[contributes.color-themes]]
+            id = "my-json-theme"
+            label = "My JSON Theme"
+            path = "my-vscode-theme.json"
+            "#,
+            "my-vscode-theme.json",
+            &minimal_vscode_json("My JSON Theme"),
+        );
+
+        let registry = Arc::new(plugin_host::load(
+            config_dir.path(),
+            plugin_host::BUILTIN_PLUGINS,
+            &[],
+        ));
+
+        let ids: Vec<String> = color_themes(&registry).into_iter().map(|c| c.id).collect();
+        assert!(ids.contains(&"my-json-theme".to_string()));
+        assert!(
+            ids.contains(&"dark".to_string()),
+            "built-ins still offered: {ids:?}"
+        );
+
+        // Drives the real `.json` -> `parse_vscode_json` dispatch in
+        // `parse_by_extension` via `ColorThemeService`, not a direct call.
+        let service = ColorThemeService::from_registry(registry, "my-json-theme");
+        let theme = service.active().expect("installed VS Code theme resolves");
+        assert_eq!(theme.label, "My JSON Theme");
+        assert_eq!(theme.appearance, color_theme::Appearance::Dark);
+    }
 }

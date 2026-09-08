@@ -141,7 +141,7 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| D1 — `plugin-api`: `TestFrameworkContribution` (program candidates, run argv, `--filter` spelling, output format, config files) | open | |
+| D1 — `plugin-api`: `TestFrameworkContribution` (program candidates, run argv, `--filter` spelling, output format, config files) | done | `36572fc` |
 | D2 — `test-core`: `TestTree`, `TestId`, `TestStatus`, the TeamCity service-message parser, the JUnit-XML fallback | open | |
 | D3 — failures published as diagnostics through `diagnostics-core` | open | |
 | D4 — `TestServiceRust`, one QObject for N runs | open | |

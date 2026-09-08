@@ -38,6 +38,7 @@ pub enum ContributionPoint {
     Previews,
     LanguageServers,
     Analyzers,
+    TestFrameworks,
 }
 
 impl ContributionPoint {
@@ -49,6 +50,7 @@ impl ContributionPoint {
             Self::Previews => "previews",
             Self::LanguageServers => "language-servers",
             Self::Analyzers => "analyzers",
+            Self::TestFrameworks => "test-frameworks",
         }
     }
 }
@@ -180,6 +182,54 @@ pub struct AnalyzerContribution {
     pub severity_map: BTreeMap<String, String>,
 }
 
+/// One test framework a plugin offers (the PHP tooling plan's D1).
+///
+/// Shaped after [`AnalyzerContribution`] for the same reason: a wasm guest
+/// can neither spawn a process nor be trusted with a test runner's raw
+/// bytes, so this is native process launch data too. What a manifest adds
+/// over an analyzer's shape is the two fields a test run needs that a
+/// one-shot lint never does: a spelling for "run only this subset"
+/// ([`Self::filter_flag`]), because rerunning one failed test is the whole
+/// point of a Tests dock, and a list of config filenames to discover
+/// ([`Self::config_file_candidates`]), so the settings page can show which
+/// `phpunit.xml` a project's run actually uses.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TestFrameworkContribution {
+    /// Stable id, e.g. `"phpunit"`.
+    pub id: String,
+    /// What the Tests dock and settings page show.
+    pub name: String,
+    /// Programs to probe, in order — the first one detection finds wins.
+    /// Same rule as [`AnalyzerContribution::program_candidates`]: a bare
+    /// name is looked up on `PATH`, a path relative to the project root is
+    /// looked up there instead.
+    #[serde(rename = "program-candidates")]
+    pub program_candidates: Vec<String>,
+    /// Fixed arguments every run gets, before whatever a specific run adds
+    /// (a filter, a report path), e.g. `["--teamcity"]`.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// The flag that selects a subset of tests, e.g. `"--filter"`. Rerun
+    /// (D6) appends `[filter_flag, pattern]` to [`Self::args`]; `pattern`
+    /// is built from the node the user reruns, in the tool's own `--filter`
+    /// regex dialect, which this crate has no opinion on.
+    #[serde(rename = "filter-flag")]
+    pub filter_flag: String,
+    /// Id of the parser in `test-core` that understands this tool's
+    /// streaming output, e.g. `"teamcity"`. Free-form here for the same
+    /// reason [`AnalyzerContribution::output_format`] is: the parser table
+    /// is native code this crate never sees.
+    #[serde(rename = "output-format")]
+    pub output_format: String,
+    /// Filenames to look for in the project root, in preference order
+    /// (`["phpunit.xml", "phpunit.xml.dist"]`), so the settings page can
+    /// report which one a run would actually use. Empty is valid — some
+    /// test frameworks have no project-level config file at all.
+    #[serde(default, rename = "config-file-candidates")]
+    pub config_file_candidates: Vec<String>,
+}
+
 /// Everything a plugin contributes, by point.
 ///
 /// Deliberately *not* `deny_unknown_fields`: [`API_VERSION`]'s doc comment
@@ -200,6 +250,8 @@ pub struct Contributes {
     pub language_servers: Vec<LanguageServerContribution>,
     #[serde(default)]
     pub analyzers: Vec<AnalyzerContribution>,
+    #[serde(default, rename = "test-frameworks")]
+    pub test_frameworks: Vec<TestFrameworkContribution>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -214,6 +266,7 @@ impl Contributes {
             && self.previews.is_empty()
             && self.language_servers.is_empty()
             && self.analyzers.is_empty()
+            && self.test_frameworks.is_empty()
     }
 }
 
@@ -383,6 +436,37 @@ impl PluginManifest {
         // An analyzer needs no `[wasm]` component either, for the same
         // reason a language server doesn't: it is a native process, and a
         // wasm guest cannot spawn one (`wit/plugin.wit`).
+
+        for framework in &self.contributes.test_frameworks {
+            check_id("contributes.test-frameworks.id", &framework.id)?;
+            non_empty("contributes.test-frameworks.name", &framework.name)?;
+            if framework.program_candidates.is_empty() {
+                return Err(LoadErrorKind::EmptyField(
+                    "contributes.test-frameworks.program-candidates",
+                ));
+            }
+            for candidate in &framework.program_candidates {
+                non_empty("contributes.test-frameworks.program-candidates", candidate)?;
+            }
+            non_empty(
+                "contributes.test-frameworks.filter-flag",
+                &framework.filter_flag,
+            )?;
+            non_empty(
+                "contributes.test-frameworks.output-format",
+                &framework.output_format,
+            )?;
+        }
+        check_unique(
+            ContributionPoint::TestFrameworks,
+            self.contributes
+                .test_frameworks
+                .iter()
+                .map(|t| t.id.as_str()),
+        )?;
+
+        // Same reasoning again: a test framework is a native process, not a
+        // wasm guest.
 
         if let Some(wasm) = &self.wasm {
             check_relative("wasm.component", &wasm.component)?;
@@ -1108,6 +1192,123 @@ mod tests {
             LoadErrorKind::DuplicateContributionId {
                 point: "analyzers",
                 id: "phpstan".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_test_framework_contribution_round_trips() {
+        let manifest = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["vendor/bin/phpunit", "phpunit"]
+            args = ["--teamcity"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            config-file-candidates = ["phpunit.xml", "phpunit.xml.dist"]
+            "#,
+        ))
+        .expect("valid");
+        let frameworks = &manifest.contributes.test_frameworks;
+        assert_eq!(frameworks.len(), 1);
+        assert_eq!(frameworks[0].id, "phpunit");
+        assert_eq!(frameworks[0].name, "PHPUnit");
+        assert_eq!(
+            frameworks[0].program_candidates,
+            vec!["vendor/bin/phpunit", "phpunit"]
+        );
+        assert_eq!(frameworks[0].args, vec!["--teamcity"]);
+        assert_eq!(frameworks[0].filter_flag, "--filter");
+        assert_eq!(frameworks[0].output_format, "teamcity");
+        assert_eq!(
+            frameworks[0].config_file_candidates,
+            vec!["phpunit.xml", "phpunit.xml.dist"]
+        );
+        assert!(!manifest.contributes.is_empty());
+        assert_eq!(ContributionPoint::TestFrameworks.key(), "test-frameworks");
+    }
+
+    #[test]
+    fn a_test_framework_needs_no_wasm_component() {
+        let manifest = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            "#,
+        ))
+        .expect("valid");
+        assert!(manifest.wasm.is_none());
+    }
+
+    #[test]
+    fn a_test_framework_needs_at_least_one_program_candidate() {
+        let err = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = []
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            "#,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LoadErrorKind::EmptyField("contributes.test-frameworks.program-candidates")
+        );
+    }
+
+    #[test]
+    fn a_test_framework_needs_a_filter_flag() {
+        let err = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = ""
+            output-format = "teamcity"
+            "#,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LoadErrorKind::EmptyField("contributes.test-frameworks.filter-flag")
+        );
+    }
+
+    #[test]
+    fn duplicate_test_framework_ids_in_one_manifest_are_rejected() {
+        let err = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit, again"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            "#,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LoadErrorKind::DuplicateContributionId {
+                point: "test-frameworks",
+                id: "phpunit".to_string(),
             }
         );
     }

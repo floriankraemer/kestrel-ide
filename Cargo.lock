@@ -6736,6 +6736,7 @@ dependencies = [
  "settings-model",
  "syntax-core",
  "terminal-core",
+ "test-core",
  "tokio",
  "vcs-core",
 ]

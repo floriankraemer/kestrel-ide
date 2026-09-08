@@ -24,8 +24,11 @@
 //!   events, over pipes rather than a PTY (same reasoning as analyzers).
 //! - [`diagnostics`] — a failing test becomes a `diagnostics_core::
 //!   Diagnostic` (D3), published into the one shared Problems model.
+//! - [`filter`] — building a `--filter` pattern from tree nodes (D6): run
+//!   all failed, or one node, from the tree's context menu.
 
 mod diagnostics;
+pub mod filter;
 mod junit;
 mod runner;
 mod teamcity;

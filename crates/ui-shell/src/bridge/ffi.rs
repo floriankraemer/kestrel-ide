@@ -33,6 +33,7 @@ use crate::bridge::settings::{
     LanguageCatalogRust, LanguageServerEditorRust, SyntaxColorEditorRust,
 };
 use crate::bridge::terminal::TerminalSupervisorRust;
+use crate::bridge::testing::TestServiceRust;
 use crate::bridge::tree::ProjectTreeModelRust;
 use crate::bridge::vcs::VcsServiceRust;
 
@@ -4299,6 +4300,135 @@ mod ffi {
         #[qinvokable]
         fn commit(self: &AnalysisEditor);
     }
+
+    /// Whether a Tests dock row is a suite/class grouping or a leaf test
+    /// method — `test_core::NodeKind` crossed the seam.
+    enum FfiTestNodeKind {
+        Suite,
+        Test,
+    }
+
+    /// Where a Tests dock row stands — `test_core::TestStatus` crossed the
+    /// seam, kept as its own enum (rather than reusing `FfiSeverity`) since
+    /// a test's states (running, skipped) have no diagnostic-severity
+    /// analogue.
+    enum FfiTestStatusKind {
+        Failed,
+        Running,
+        Pending,
+        Passed,
+        Skipped,
+    }
+
+    /// One row of the Tests dock's tree (D4/D5): a flattened
+    /// `test_core::TestNode`, parent-qualified rather than nested, since a
+    /// `QTreeWidget` builds its own hierarchy from `parentId` the same way
+    /// `ProjectTreeModel`'s rows do.
+    struct FfiTestNode {
+        id: QString,
+        #[cxx_name = "parentId"]
+        parent_id: QString,
+        name: QString,
+        kind: FfiTestNodeKind,
+        status: FfiTestStatusKind,
+        /// `-1` when the node has not finished (no duration yet) — a
+        /// sentinel rather than a second `has_duration` bool, matching
+        /// `FfiAnalyzerRow`-adjacent rows that use a sentinel for "absent"
+        /// on a field a view only ever displays, never computes with.
+        #[cxx_name = "durationMs"]
+        duration_ms: i64,
+        #[cxx_name = "hasFailure"]
+        has_failure: bool,
+    }
+
+    extern "RustQt" {
+        /// Runs the project's test framework on worker threads
+        /// (`test_core::runner::run`), streaming TeamCity messages into a
+        /// `test_core::TestTree` and publishing failures into the one
+        /// Problems model (D3/ADR-0046) — the PHP tooling plan's D4. One
+        /// registered `#[qobject]` owning a `HashMap` of in-flight runs,
+        /// mirroring `BuildService`'s shape: a run is a single process read
+        /// to completion or a stop, not a queue of short operations.
+        #[qobject]
+        type TestService = super::TestServiceRust;
+
+        /// Every node of the current tree, flattened — the Tests dock's
+        /// tree widget. Empty before any run this session.
+        #[qinvokable]
+        fn nodes(self: &TestService) -> Vec<FfiTestNode>;
+
+        /// The failing node's assertion message, for the failure pane's
+        /// header line. Empty when the node has no failure or does not
+        /// exist.
+        #[qinvokable]
+        #[cxx_name = "failureMessage"]
+        fn failure_message(self: &TestService, node_id: &QString) -> QString;
+
+        /// The failing node's raw detail text (stack trace/diff) — where
+        /// `run_core::links::resolve_link` (D5) finds a clickable
+        /// `file:line`.
+        #[qinvokable]
+        #[cxx_name = "failureDetails"]
+        fn failure_details(self: &TestService, node_id: &QString) -> QString;
+
+        /// Whether a run is currently in flight — the toolbar's run/stop
+        /// enablement.
+        #[qinvokable]
+        #[cxx_name = "isRunning"]
+        fn is_running(self: &TestService) -> bool;
+
+        /// Run the whole project's tests with no filter. Replaces whatever
+        /// tree a previous run left behind.
+        #[qinvokable]
+        #[cxx_name = "runAll"]
+        fn run_all(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Rerun every currently `Failed` leaf test, built into one
+        /// `--filter` alternation (D1's `filter-flag`). Refused when
+        /// nothing is currently failing. Every other node's last result
+        /// stays on the tree untouched.
+        #[qinvokable]
+        #[cxx_name = "runFailed"]
+        fn run_failed(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Rerun one node — a single test, or every test under a suite —
+        /// from the tree's context menu (D6).
+        #[qinvokable]
+        #[cxx_name = "runNode"]
+        fn run_node(self: Pin<&mut TestService>, node_id: &QString) -> FfiResult;
+
+        /// Stop the run in progress, if any.
+        #[qinvokable]
+        fn stop(self: Pin<&mut TestService>);
+
+        /// A run began.
+        #[qsignal]
+        #[cxx_name = "testRunStarted"]
+        fn test_run_started(self: Pin<&mut TestService>);
+
+        /// The tree changed — a status, a duration, a new node. The view
+        /// re-reads `nodes()` rather than the signal carrying a payload,
+        /// the same rule `AnalysisService::analyzerFinished` follows for
+        /// its own list.
+        #[qsignal]
+        #[cxx_name = "testTreeChanged"]
+        fn test_tree_changed(self: Pin<&mut TestService>);
+
+        /// A chunk of the run's raw output, for the dock's output pane.
+        #[qsignal]
+        #[cxx_name = "testOutputAppended"]
+        fn test_output_appended(self: Pin<&mut TestService>, text: QString);
+
+        /// The run finished. `ok` is false for a run failure (not found,
+        /// an I/O error) — a nonzero *test* exit code (failures found) is
+        /// still `ok`, the same distinction `AnalysisService::
+        /// analyzerFinished` draws.
+        #[qsignal]
+        #[cxx_name = "testRunFinished"]
+        fn test_run_finished(self: Pin<&mut TestService>, ok: bool, message: QString);
+    }
+
+    impl cxx_qt::Threading for TestService {}
 
     /// One row of the Syntax Colors tree (T4).
     ///

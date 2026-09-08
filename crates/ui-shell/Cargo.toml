@@ -21,6 +21,7 @@ lsp-core = { path = "../lsp-core" }
 # `LanguageService` and `BuildService` all read and write.
 diagnostics-core = { path = "../diagnostics-core" }
 analysis-core = { path = "../analysis-core" }
+test-core = { path = "../test-core" }
 # Git v1 (F3-12): repository discovery, status, hunks, staging, commit,
 # branches, remotes, history and blame — `VcsService` is a thin worker-thread
 # adapter over this crate's own types, never `gix`/`git` directly.

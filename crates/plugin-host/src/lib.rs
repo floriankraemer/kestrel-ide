@@ -48,8 +48,8 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
     AnalyzerContribution, CommandContribution, IconThemeContribution, LanguageServerContribution,
-    LoadErrorKind, PluginLoadError, PluginManifest, PreviewContribution, MANIFEST_FILE,
-    QUARANTINE_DIR,
+    LoadErrorKind, PluginLoadError, PluginManifest, PreviewContribution, TestFrameworkContribution,
+    MANIFEST_FILE, QUARANTINE_DIR,
 };
 
 pub use plugin::{BuiltinPlugin, LoadedPlugin, PluginSource};
@@ -168,6 +168,21 @@ impl PluginRegistry {
                 .analyzers
                 .iter()
                 .map(move |analyzer| (plugin, analyzer))
+        })
+    }
+
+    /// Every `test-frameworks` contribution, with the plugin that offers
+    /// it (the PHP tooling plan's D4).
+    pub fn test_frameworks(
+        &self,
+    ) -> impl Iterator<Item = (&LoadedPlugin, &TestFrameworkContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .test_frameworks
+                .iter()
+                .map(move |framework| (plugin, framework))
         })
     }
 

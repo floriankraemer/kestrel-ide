@@ -73,6 +73,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "analysis-core"
+version = "0.1.0"
+dependencies = [
+ "app-config",
+ "diagnostics-core",
+ "plugin-api",
+ "process-exec",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "syntax-core",
+ "tempfile",
+]
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -427,6 +442,7 @@ dependencies = [
 name = "build-core"
 version = "0.1.0"
 dependencies = [
+ "diagnostics-core",
  "regex",
  "run-core",
  "serde_json",
@@ -1215,6 +1231,13 @@ dependencies = [
  "quote",
  "rustc_version",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "diagnostics-core"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
 ]
 
 [[package]]
@@ -3614,6 +3637,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 name = "lsp-core"
 version = "0.1.0"
 dependencies = [
+ "diagnostics-core",
  "editor-core",
  "globset",
  "lsp-types",
@@ -4553,6 +4577,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "process-exec"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
 ]
 
 [[package]]
@@ -5978,6 +6009,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-core"
+version = "0.1.0"
+dependencies = [
+ "diagnostics-core",
+ "plugin-api",
+ "process-exec",
+ "quick-xml",
+ "tempfile",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6669,6 +6711,7 @@ name = "ui-shell"
 version = "0.1.0"
 dependencies = [
  "ai-chat-core",
+ "analysis-core",
  "app-config",
  "app-core",
  "build-core",
@@ -6677,12 +6720,14 @@ dependencies = [
  "cxx-qt-build",
  "cxx-qt-lib",
  "dap-core",
+ "diagnostics-core",
  "edit-ops",
  "editor-core",
  "index-core",
  "lsp-core",
  "markdown-preview",
  "mcp-server",
+ "plugin-api",
  "plugin-host",
  "project-model",
  "pty-core",
@@ -6691,6 +6736,7 @@ dependencies = [
  "settings-model",
  "syntax-core",
  "terminal-core",
+ "test-core",
  "tokio",
  "vcs-core",
 ]
@@ -6884,6 +6930,7 @@ version = "0.1.0"
 dependencies = [
  "editor-core",
  "gix",
+ "process-exec",
  "serde",
  "tempfile",
 ]

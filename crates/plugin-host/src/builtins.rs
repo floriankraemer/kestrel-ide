@@ -54,6 +54,16 @@ pub(crate) const CSHARP: BuiltinPlugin = BuiltinPlugin {
     files: &[],
 };
 
+/// PHPStan and PHP_CodeSniffer support (the PHP tooling plan's C1), first-
+/// party like C# above: an `analyzers` contribution needs no `[wasm]`
+/// component either, since both tools are native processes on `PATH` (or
+/// under the project's own `vendor/bin`) that the host launches, never
+/// bundled.
+pub(crate) const PHP_TOOLS: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/php-tools/plugin.toml"),
+    files: &[],
+};
+
 // The id list is packed by line width, which rustfmt would otherwise
 // unpack to one per line and undo the point of the macro.
 #[rustfmt::skip]

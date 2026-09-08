@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use crate::diagnostics::{BuildDiagnostic, Severity};
+use crate::diagnostics::{severity_from_word, BuildDiagnostic};
 
 /// The argument that makes Cargo emit the JSON this module reads. Appended
 /// by the build spec for a Cargo build, and nowhere else.
@@ -51,7 +51,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
             .get("column_start")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32,
-        severity: Severity::from_word(message.get("level")?.as_str()?),
+        severity: severity_from_word(message.get("level")?.as_str()?),
         message: message.get("message")?.as_str()?.to_string(),
         code: message
             .get("code")
@@ -65,6 +65,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::Severity;
     use std::path::PathBuf;
 
     const ERROR: &str = r#"{"reason":"compiler-message","message":{"message":"mismatched types","code":{"code":"E0308"},"level":"error","spans":[{"file_name":"src/main.rs","line_start":4,"column_start":9,"is_primary":true}]}}"#;

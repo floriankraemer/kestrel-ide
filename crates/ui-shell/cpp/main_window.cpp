@@ -5,6 +5,7 @@
 #include "markdown_preview_panel.h"
 #include "appearance_page.h"
 #include "changes_panel.h"
+#include "analysis_menu.h"
 #include "build_menu.h"
 #include "debug_menu.h"
 #include "debug_panel.h"
@@ -41,6 +42,8 @@
 #include "settings_dialog.h"
 #include "splash_screen.h"
 #include "status_bar.h"
+#include "tests_menu.h"
+#include "tests_panel.h"
 #include "syntax_highlighter.h"
 #include "terminal_sessions_panel.h"
 #include "theme.h"
@@ -119,6 +122,7 @@ public:
 struct CentralWidgets
 {
     EditorTabs *editorTabs;
+    DiagnosticsService *diagnosticsService;
     ads::CDockManager *dockManager;
     // Every side/bottom dock's identity, placement and show/hide now lives
     // in one registry (F0-7) rather than a scattered `toggleView`/`raise()`
@@ -150,7 +154,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    LanguageService *languageService, AiChat *aiChat,
                                    VcsService *vcsService, RunService *runService,
                                    BuildService *buildService, DebugService *debugService,
-                                   PreviewProvider *previewProvider)
+                                   TestService *testService, PreviewProvider *previewProvider,
+                                   AnalysisService *analysisService)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -228,6 +233,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     QAction *projectTreeLocateAction = projectTreeDock.locateAction;
 
     auto *editorTabs = new EditorTabs(docManager, languageService, editorRoot, window);
+    auto *diagnosticsService =
+      wireDiagnosticsService(window, languageService, buildService, analysisService, editorTabs);
 
     // Task H: bottom dock panel, matching where JetBrains/VS-style IDEs
     // dock their Find in Files results. Reuses the one EditorTabs instance
@@ -340,7 +347,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // Task L2: the Problems panel, tabbed into the same bottom area as Find
     // in Files and Find Usages — the same "list of locations" shape, fed by
     // the language servers instead of a query.
-    auto *problemsPanel = new ProblemsPanel(languageService, buildService, openAt, dockManager);
+    auto *problemsPanel = new ProblemsPanel(languageService, buildService, analysisService,
+                                            diagnosticsService, openAt, dockManager);
     auto *problemsDock = new ads::CDockWidget(dockManager, QObject::tr("Problems"));
     problemsDock->setWidget(problemsPanel);
     docks->registerDock(QStringLiteral("problems"), problemsDock, ads::CenterDockWidgetArea,
@@ -353,10 +361,6 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     problemsPanel->setFirstDiagnosticCallback([docks]() {
         docks->dock(QStringLiteral("problems"))->toggleView(true);
     });
-    // The squiggles and the panel read the same store, so one signal drives
-    // both.
-    QObject::connect(languageService, &LanguageService::diagnosticsChanged, editorTabs,
-                      [editorTabs]() { editorTabs->applyDiagnostics(); });
 
     auto *terminalPanel =
       new TerminalSessionsPanel(terminalSupervisor, appSettings, openAt, dockManager);
@@ -367,6 +371,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *runConsolePanel = buildRunConsoleDock(dockManager, docks, bottomArea, runToolbar, openAt);
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService);
+    buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
 
     // Class View tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -604,7 +609,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                            editorTabs->showDiffForPath(path);
                                        }});
 
-    return CentralWidgets{editorTabs,       dockManager,      docks,
+    return CentralWidgets{editorTabs,       diagnosticsService, dockManager,      docks,
                            treeView,         searchResultsPanel, classViewPanel,
                            terminalPanel,    findUsagesPanel,  hierarchyPanel,
                            searchEverywhereDialog,
@@ -653,6 +658,9 @@ void buildMainWindow(AppSettings *appSettings,
     // P7's Plugins page, the same arrangement again: it holds the rows of
     // the last scan between the dialog's refresh() calls.
     auto *pluginCatalog = new PluginCatalog(window);
+    // The PHP tooling plan's B7-B9: the Analysis page's draft, alongside
+    // the other per-window settings-page editors above.
+    auto *analysisEditor = new AnalysisEditor(window);
 
     const FfiWindowGeometry savedGeometry = appSettings->windowGeometry();
     if (savedGeometry.width > 0 && savedGeometry.height > 0) {
@@ -683,6 +691,11 @@ void buildMainWindow(AppSettings *appSettings,
     // B1-6: one build adapter per window, like the others; it runs nothing
     // until asked and knows no project until one is open.
     auto *buildService = new BuildService(window);
+    // The PHP tooling plan's B8: one analysis adapter per window, the same
+    // "nothing runs until asked" rule as BuildService.
+    auto *analysisService = new AnalysisService(window);
+    // The PHP tooling plan's D4: one test-run adapter per window, same rule.
+    auto *testService = new TestService(window);
     // D3-1: one debug adapter per window. It owns the breakpoints, which
     // exist with no session at all, so it is built before any project opens
     // and told to load them when one does.
@@ -709,7 +722,8 @@ void buildMainWindow(AppSettings *appSettings,
     const CentralWidgets central =
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
-                          buildService, debugService, previewProvider);
+                          buildService, debugService, testService, previewProvider,
+                          analysisService);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs);             // R1-7
@@ -750,8 +764,10 @@ void buildMainWindow(AppSettings *appSettings,
     wireAiChatToEditor(window, aiChat, central.aiChatPanel, editorTabs, searchModel);
 
     const UiFontTargets uiFontTargets =
-      buildStatusBar(window, appSettings, languageService, searchModel, vcsService, editorTabs,
-                     central.projectTree, central.docks, central.problemsPanel, treeModel);
+      buildStatusBar(window, appSettings, languageService, buildService,
+                     central.diagnosticsService, searchModel, vcsService, editorTabs,
+                     central.projectTree, central.docks, central.problemsPanel, treeModel,
+                     analysisService);
 
     // Every menu action is registered under a stable id from
     // app_config::ACTIONS and takes its shortcut from the persisted keymap,
@@ -836,6 +852,8 @@ void buildMainWindow(AppSettings *appSettings,
       aiProviderEditor,
       aiChat,
       pluginCatalog,
+      analysisEditor,
+      analysisService,
       uiFontTargets,
       central.terminalPanel,
     };
@@ -1045,6 +1063,8 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel,
                  viewMenu);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
+    buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
+    buildAnalysisMenu(window, analysisService, appSettings, *actions);
     // Last of the View entries, under everything it can rearrange.
     buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,
                       central.editorTabs, *actions);

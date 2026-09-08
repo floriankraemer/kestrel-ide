@@ -19,12 +19,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::pin::Pin;
 
-use build_core::{BuildDiagnostic, BuildKind, BuildSpec, Severity};
+use build_core::{BuildDiagnostic, BuildKind, BuildSpec};
 use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 
 use crate::bridge::errors;
 use crate::bridge::ffi;
+use crate::bridge::registry::SharedDiagnostics;
 
 /// Rust side of the `BuildService` QObject.
 #[derive(Default)]
@@ -34,10 +35,20 @@ pub struct BuildServiceRust {
     /// Everything the last build said, in the order it said it. Replaced
     /// wholesale when a new build starts: a diagnostic from a build two
     /// edits ago is worse than no diagnostic, because it looks current.
+    /// Kept as a running accumulator (not exposed to the view — see
+    /// `DiagnosticsService`) so a republish after a later chunk can regroup
+    /// everything the build has said so far by file, per `republish`.
     diagnostics: RefCell<Vec<BuildDiagnostic>>,
     /// Which tool produced the diagnostics currently held — the `source`
-    /// column the Problems dock already shows for a language server's.
+    /// column the Problems dock already shows for a language server's, and
+    /// half of this build's key into the shared store (see `source_key`).
     source: RefCell<String>,
+    /// The one Problems model (ADR-0046), shared with `LanguageService`,
+    /// `DiagnosticsService` and `AiChat`. Every row this adapter publishes
+    /// is keyed under [`source_key`], so a build's diagnostics for a file
+    /// never clobber (or get clobbered by) a language server's for the
+    /// same file.
+    store: SharedDiagnostics,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -58,30 +69,57 @@ fn to_ffi_result(err: &build_core::BuildError) -> ffi::FfiResult {
     }
 }
 
-fn to_ffi_severity(severity: Severity) -> ffi::FfiSeverity {
-    match severity {
-        Severity::Error => ffi::FfiSeverity::Error,
-        Severity::Warning => ffi::FfiSeverity::Warning,
-        Severity::Note => ffi::FfiSeverity::Information,
+/// The shared diagnostics store's key for one toolchain's rows (ADR-0046):
+/// distinct from a language server's (`language::lsp_source_key`) so a
+/// build's rows for a file and a server's for the same file coexist.
+fn source_key(toolchain: &str) -> String {
+    format!("build:{toolchain}")
+}
+
+/// A build diagnostic converted to the shared model. A build reports where
+/// a problem starts, 1-based, and never where it ends; `diagnostics-core`
+/// counts from 0, so the position is shifted rather than carried through
+/// unconverted — the bug this phase's regression test exists to catch, per
+/// `docs/architecture/php-tooling-plan.md`'s phase A.
+fn to_diagnostic_core(diagnostic: &BuildDiagnostic, source: &str) -> diagnostics_core::Diagnostic {
+    diagnostics_core::Diagnostic {
+        range: diagnostics_core::Range {
+            start: diagnostics_core::Position {
+                line: diagnostic.line.saturating_sub(1),
+                character: diagnostic.column.saturating_sub(1),
+            },
+            // A build never reports where a problem ends; `DiagnosticStore`
+            // treats a missing end as a point at `start`, exactly as it
+            // already did for a build diagnostic's `end_line`/`end_column`.
+            end: None,
+        },
+        severity: diagnostic.severity,
+        message: diagnostic.message.clone(),
+        source: source.to_string(),
+        raw: None,
     }
 }
 
-/// A build diagnostic in the shape the Problems dock already renders for a
-/// language server's (ADR-0040): same struct, and `source` says which tool
-/// produced it so the two can never be confused for each other.
-fn to_ffi_diagnostic(diagnostic: &BuildDiagnostic, source: &str) -> ffi::FfiDiagnostic {
-    ffi::FfiDiagnostic {
-        path: QString::from(diagnostic.path.display().to_string().as_str()),
-        line: diagnostic.line,
-        column: diagnostic.column,
-        // A build reports where a problem starts, never where it ends;
-        // repeating the start is what the Problems dock's row needs, and
-        // inventing an end would put a made-up range in the editor.
-        end_line: diagnostic.line,
-        end_column: diagnostic.column,
-        severity: to_ffi_severity(diagnostic.severity),
-        message: QString::from(diagnostic.message.as_str()),
-        source: QString::from(source),
+/// Regroup everything this build has said so far by file and publish it
+/// under this build's source key. Called after every chunk of diagnostics,
+/// not just at the end, so the Problems dock and the editor's squiggles
+/// fill in while the build is still running (ADR-0040 §5) — and a full
+/// regroup rather than an incremental one because a later chunk can add a
+/// diagnostic to a file an earlier chunk already reported on.
+fn republish(service: &ffi::BuildService) {
+    let source = service.source.borrow().clone();
+    let key = source_key(&source);
+    let mut grouped: HashMap<String, Vec<diagnostics_core::Diagnostic>> = HashMap::new();
+    for diagnostic in service.diagnostics.borrow().iter() {
+        let uri = diagnostics_core::uri_from_path(&diagnostic.path.display().to_string());
+        grouped
+            .entry(uri)
+            .or_default()
+            .push(to_diagnostic_core(diagnostic, &source));
+    }
+    let mut store = service.store.borrow_mut();
+    for (uri, diagnostics) in grouped {
+        store.replace(&key, &uri, diagnostics);
     }
 }
 
@@ -115,6 +153,9 @@ impl ffi::BuildService {
         // build two edits ago looks current and is not.
         self.diagnostics.borrow_mut().clear();
         *self.source.borrow_mut() = toolchain.as_str().to_string();
+        self.store
+            .borrow_mut()
+            .clear_source(&source_key(toolchain.as_str()));
 
         let build_id = self.next_id.get() + 1;
         self.next_id.set(build_id);
@@ -156,15 +197,6 @@ impl ffi::BuildService {
     pub fn is_building(&self) -> bool {
         !self.builds.borrow().is_empty()
     }
-
-    pub fn diagnostics(&self) -> Vec<ffi::FfiDiagnostic> {
-        let source = self.source.borrow().clone();
-        self.diagnostics
-            .borrow()
-            .iter()
-            .map(|diagnostic| to_ffi_diagnostic(diagnostic, &source))
-            .collect()
-    }
 }
 
 /// The `BuildSink` that turns a running build's chunks into Qt signals.
@@ -196,6 +228,7 @@ impl build_core::BuildSink for QtSink {
             .queue(move |mut service: Pin<&mut ffi::BuildService>| {
                 service.diagnostics.borrow_mut().extend(diagnostics);
                 *service.source.borrow_mut() = source;
+                republish(&service);
                 service.as_mut().diagnostics_changed();
             });
     }

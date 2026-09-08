@@ -17,7 +17,7 @@ use std::path::Path;
 
 use regex::Regex;
 
-use crate::diagnostics::{BuildDiagnostic, Severity};
+use crate::diagnostics::{severity_from_word, BuildDiagnostic};
 
 /// One tool's way of writing a diagnostic line.
 struct Pattern {
@@ -99,7 +99,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
             } else {
                 0
             },
-            severity: Severity::from_word(captures.name("severity")?.as_str()),
+            severity: severity_from_word(captures.name("severity")?.as_str()),
             message: captures.name("message")?.as_str().trim().to_string(),
             code: String::new(),
         });
@@ -110,6 +110,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diagnostics::Severity;
     use std::path::PathBuf;
 
     fn parse(line: &str) -> Option<BuildDiagnostic> {

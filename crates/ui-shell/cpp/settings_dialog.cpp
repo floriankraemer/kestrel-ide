@@ -1,6 +1,7 @@
 #include "settings_dialog.h"
 
 #include "ai_providers_page.h"
+#include "analysis_settings_page.h"
 #include "appearance_page.h"
 #include "e2e_mark.h"
 #include "editor_page.h"
@@ -67,6 +68,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     categoryList->addItem(QObject::tr("AI Providers"));
     categoryList->addItem(QObject::tr("Plugins"));
     categoryList->addItem(QObject::tr("Terminal"));
+    categoryList->addItem(QObject::tr("Analysis"));
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
     // nav width: the interface font scale below can make "Language Servers"
@@ -189,6 +191,14 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     const int terminalIndex =
       pages->addWidget(scopedPage(QStringLiteral("terminal"), terminalPage->widget));
 
+    // Analysis is project-scoped for the same reason Terminal and Language
+    // Servers are: which analyzers a checkout wants on, and how eagerly, is
+    // a property of the project at least as often as of the person.
+    context.analysisEditor->beginEdit(appSettings->settingsScope());
+    const int analysisIndex = pages->addWidget(scopedPage(
+      QStringLiteral("analysis"),
+      buildAnalysisSettingsPage(&dialog, context.analysisEditor, context.analysisService)));
+
     const McpPage mcp =
       buildMcpPage(&dialog, appSettings, context.docManager, *context.mcpStatus);
     pages->addWidget(mcp.widget);
@@ -287,7 +297,9 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
       [&dialog, appSettings, pages, editingIndex, languageServersIndex, scopeHint,
        scopeBox, scopedPage, editingEditor = context.editingEditor,
        languageServerEditor = context.languageServerEditor,
-       languageService = context.languageService, terminalPage, terminalIndex]() {
+       languageService = context.languageService, terminalPage, terminalIndex,
+       analysisEditor = context.analysisEditor,
+       analysisService = context.analysisService, analysisIndex]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -319,6 +331,15 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
                               scopedPage(QStringLiteral("terminal"), terminalPage->widget));
           pages->removeWidget(staleTerminal);
           staleTerminal->deleteLater();
+
+          analysisEditor->beginEdit(scope);
+          QWidget *staleAnalysis = pages->widget(analysisIndex);
+          pages->insertWidget(
+            analysisIndex,
+            scopedPage(QStringLiteral("analysis"),
+                       buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService)));
+          pages->removeWidget(staleAnalysis);
+          staleAnalysis->deleteLater();
 
           pages->setCurrentIndex(current);
 
@@ -437,6 +458,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
         // persistence setting it had cached.
         context.aiChat->applyAiSettings();
         context.languageServerEditor->commit();
+        context.analysisEditor->commit();
         // Reconciling is the Rust side's decision: it stops what the new
         // settings no longer describe and leaves the rest running, and the
         // re-announcement below starts the replacements.

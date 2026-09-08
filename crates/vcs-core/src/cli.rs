@@ -7,12 +7,10 @@
 //! [`run`], never `std::process::Command` directly, so `GIT_TERMINAL_PROMPT`,
 //! the timeout and the stderr-to-sentence conversion apply everywhere.
 
-use std::io;
 use std::path::Path;
-use std::process::{Child, ExitStatus};
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use process_exec::Failure;
 
 use crate::error::VcsError;
 
@@ -56,83 +54,25 @@ fn run_internal(
 ) -> Result<String, VcsError> {
     let command_str = display_command(args);
 
-    let child = Command::new("git")
-        .args(args)
-        .current_dir(work_dir)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(if stdin_text.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-
-    let mut child = match child {
-        Ok(child) => child,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(VcsError::GitNotInstalled),
-        Err(e) => return Err(VcsError::Read(e.to_string())),
-    };
-
-    if let Some(text) = stdin_text {
-        use std::io::Write;
-        // Written synchronously before handing the child to the waiter
-        // thread below, then dropped to close the pipe — `git apply`
-        // reads its patch to EOF before doing anything else, so there is
-        // no output to drain concurrently yet and no deadlock risk from
-        // writing here. A patch big enough to fill the stdin pipe buffer
-        // before `git` starts reading is not a shape this crate produces
-        // (one hunk at a time).
-        let mut stdin = child.stdin.take().expect("stdin was piped");
-        if let Err(e) = stdin.write_all(text.as_bytes()) {
-            return Err(VcsError::Read(e.to_string()));
-        }
-        drop(stdin);
-    }
-
-    // One draining thread per pipe: `git` can fill stdout's or stderr's OS
-    // pipe buffer and block on a write before this function ever looks at
-    // it, so anything that does not drain both concurrently has a deadlock
-    // built in. Draining here rather than in a thread that owns the whole
-    // child is what lets this function keep the `Child` and therefore kill
-    // it — a timed-out `git fetch` used to keep running after this returned
-    // `GitTimedOut`, holding a network connection and, behind the bridge's
-    // single job queue, everything queued after it.
-    let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
-    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
-    let stdout_reader = thread::spawn(move || {
-        let mut buffer = Vec::new();
-        io::Read::read_to_end(&mut stdout_pipe, &mut buffer).map(|_| buffer)
-    });
-    let stderr_reader = thread::spawn(move || {
-        let mut buffer = Vec::new();
-        io::Read::read_to_end(&mut stderr_pipe, &mut buffer).map(|_| buffer)
-    });
-
-    let Some(status) = wait_with_timeout(&mut child, timeout)? else {
-        // The pipes are still owned by the reader threads; killing the
-        // child closes its ends, so they finish rather than blocking
-        // forever on a process nobody is waiting for any more.
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(VcsError::GitTimedOut {
-            command: command_str,
-        });
-    };
-
-    let join = |reader: thread::JoinHandle<io::Result<Vec<u8>>>| match reader.join() {
-        Ok(Ok(buffer)) => Ok(buffer),
-        Ok(Err(e)) => Err(VcsError::Read(e.to_string())),
-        Err(_) => Err(VcsError::Read(format!(
-            "reading `{command_str}`'s output failed"
-        ))),
-    };
-    let output = std::process::Output {
-        status,
-        stdout: join(stdout_reader)?,
-        stderr: join(stderr_reader)?,
-    };
+    // `GIT_TERMINAL_PROMPT=0` and the git-specific error mapping stay here;
+    // `process_exec::run` is just the spawn/pipe/drain/wait/kill mechanism
+    // (B1 of the PHP tooling plan — the same mechanism an analyzer or test
+    // runner needs, extracted rather than copied).
+    let output = process_exec::run(
+        "git",
+        args,
+        work_dir,
+        stdin_text.map(str::as_bytes),
+        timeout,
+        &[("GIT_TERMINAL_PROMPT", "0")],
+    )
+    .map_err(|failure| match failure {
+        Failure::NotFound => VcsError::GitNotInstalled,
+        Failure::TimedOut => VcsError::GitTimedOut {
+            command: command_str.clone(),
+        },
+        Failure::Io(message) => VcsError::Read(message),
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -168,34 +108,6 @@ fn dubious_ownership_path(stderr: &str) -> Option<std::path::PathBuf> {
     let rest = &after_marker[quote.len_utf8()..];
     let end = rest.find(quote)?;
     Some(std::path::PathBuf::from(&rest[..end]))
-}
-
-/// Wait for `child` for at most `timeout`, returning `None` if it outlives
-/// that.
-///
-/// Backs off from a tenth of a millisecond so an ordinary `git add` — which
-/// finishes in single-digit milliseconds — is not held up by the poll
-/// interval, while a `git fetch` sitting on a network timeout is not woken
-/// thousands of times a second either.
-fn wait_with_timeout(child: &mut Child, timeout: Duration) -> Result<Option<ExitStatus>, VcsError> {
-    const MIN_POLL: Duration = Duration::from_micros(100);
-    const MAX_POLL: Duration = Duration::from_millis(20);
-
-    let deadline = Instant::now() + timeout;
-    let mut poll = MIN_POLL;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return Ok(Some(status)),
-            Ok(None) => {}
-            Err(e) => return Err(VcsError::Read(e.to_string())),
-        }
-        let remaining = match deadline.checked_duration_since(Instant::now()) {
-            Some(remaining) if !remaining.is_zero() => remaining,
-            _ => return Ok(None),
-        };
-        thread::sleep(poll.min(remaining));
-        poll = (poll * 2).min(MAX_POLL);
-    }
 }
 
 fn display_command(args: &[&str]) -> String {

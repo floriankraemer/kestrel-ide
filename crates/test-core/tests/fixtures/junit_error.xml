@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+ <testsuite name="Tests\GreeterTest" tests="1" errors="1" time="0.001">
+  <testcase name="testThrows" class="Tests\GreeterTest" time="0.001">
+   <error type="RuntimeException" message="Something broke">RuntimeException: Something broke
+at Tests\GreeterTest::testThrows (GreeterTest.php:33)</error>
+  </testcase>
+ </testsuite>
+</testsuites>

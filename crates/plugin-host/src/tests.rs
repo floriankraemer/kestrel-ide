@@ -493,6 +493,98 @@ fn a_disabled_csharp_builtin_is_filtered_like_any_other() {
 }
 
 #[test]
+fn the_php_tools_builtin_loads_through_the_real_path() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let plugin = registry.by_id("php-tools").expect("the built-in loaded");
+    assert_eq!(plugin.source(), PluginSource::Builtin);
+
+    let analyzers: Vec<_> = registry.analyzers().collect();
+    assert_eq!(analyzers.len(), 2, "{analyzers:?}");
+    for (owner, _) in &analyzers {
+        assert_eq!(owner.id(), "php-tools");
+    }
+
+    let phpstan = analyzers
+        .iter()
+        .find(|(_, a)| a.id == "phpstan")
+        .expect("phpstan contributed")
+        .1;
+    assert_eq!(phpstan.name, "PHPStan");
+    assert_eq!(
+        phpstan.program_candidates,
+        vec!["vendor/bin/phpstan", "phpstan.phar", "phpstan"]
+    );
+    assert_eq!(
+        phpstan.args,
+        vec!["analyse", "--error-format=checkstyle", "--no-progress"]
+    );
+    assert_eq!(phpstan.output_format, "checkstyle-xml");
+    assert_eq!(
+        phpstan.severity_map.get("error").map(String::as_str),
+        Some("error")
+    );
+
+    let phpcs = analyzers
+        .iter()
+        .find(|(_, a)| a.id == "phpcs")
+        .expect("phpcs contributed")
+        .1;
+    assert_eq!(phpcs.name, "PHP_CodeSniffer");
+    assert_eq!(
+        phpcs.program_candidates,
+        vec!["vendor/bin/phpcs", "phpcs.phar", "phpcs"]
+    );
+    assert_eq!(phpcs.args, vec!["--report=checkstyle"]);
+    assert_eq!(phpcs.output_format, "checkstyle-xml");
+    assert_eq!(
+        phpcs.severity_map.get("warning").map(String::as_str),
+        Some("warning")
+    );
+
+    let frameworks: Vec<_> = registry.test_frameworks().collect();
+    assert_eq!(frameworks.len(), 1, "{frameworks:?}");
+    let (owner, phpunit) = &frameworks[0];
+    assert_eq!(owner.id(), "php-tools");
+    assert_eq!(phpunit.id, "phpunit");
+    assert_eq!(phpunit.name, "PHPUnit");
+    assert_eq!(
+        phpunit.program_candidates,
+        vec!["vendor/bin/phpunit", "phpunit.phar", "phpunit"]
+    );
+    assert_eq!(phpunit.args, vec!["--teamcity"]);
+    assert_eq!(phpunit.filter_flag, "--filter");
+    assert_eq!(phpunit.output_format, "teamcity");
+    assert_eq!(
+        phpunit.config_file_candidates,
+        vec!["phpunit.xml", "phpunit.xml.dist"]
+    );
+}
+
+#[test]
+fn an_analyzer_contribution_needs_no_wasm_component_either() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    let plugin = registry.by_id("php-tools").expect("loaded");
+    assert!(plugin.manifest().wasm.is_none());
+}
+
+#[test]
+fn a_disabled_php_tools_builtin_is_filtered_like_any_other() {
+    let fixture = Fixture::new();
+    let registry = load(
+        fixture.config_dir(),
+        &[builtins::PHP_TOOLS],
+        &["php-tools".to_string()],
+    );
+    assert!(registry.by_id("php-tools").is_none());
+    assert_eq!(registry.analyzers().count(), 0);
+    assert!(registry.errors().is_empty());
+}
+
+#[test]
 fn previews_without_a_component_load_and_need_no_wasm_tier() {
     // The whole point of the asymmetry with `commands` (M1): a `previews`
     // contribution with no `[wasm]` section is not `CommandsWithoutComponent`
@@ -502,4 +594,29 @@ fn previews_without_a_component_load_and_need_no_wasm_tier() {
     let registry = load(fixture.config_dir(), &[builtins::MARKDOWN_PREVIEW], &[]);
     let plugin = registry.by_id("markdown-preview").expect("loaded");
     assert!(plugin.manifest().wasm.is_none());
+}
+
+#[test]
+fn analyzers_are_listed_with_the_plugin_that_offers_them() {
+    let fixture = Fixture::new();
+    let manifest = r#"
+        id = "php-tools"
+        name = "PHP Tools"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.analyzers]]
+        id = "phpstan"
+        name = "PHPStan"
+        program-candidates = ["vendor/bin/phpstan", "phpstan"]
+        output-format = "checkstyle-xml"
+        "#;
+    fixture.install("php-tools", manifest);
+    let registry = fixture.load(&[]);
+
+    let analyzers: Vec<_> = registry.analyzers().collect();
+    assert_eq!(analyzers.len(), 1);
+    assert_eq!(analyzers[0].0.id(), "php-tools");
+    assert_eq!(analyzers[0].1.id, "phpstan");
+    assert_eq!(analyzers[0].1.output_format, "checkstyle-xml");
 }

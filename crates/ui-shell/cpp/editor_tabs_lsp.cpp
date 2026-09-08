@@ -454,7 +454,7 @@ void EditorTabs::applyDiagnostics()
         QVector<DiagnosticSpan> spans;
         if (!path.isEmpty()) {
             const QTextDocument *document = editor->document();
-            for (const FfiDiagnostic &row : languageService_->diagnosticsForFile(path)) {
+            for (const FfiDiagnostic &row : diagnosticsService_->diagnosticsForFile(path)) {
                 // LSP line/character are UTF-16 code units, which is what
                 // QTextBlock/QTextCursor count too — so this is arithmetic,
                 // not a re-encoding (contrast SyntaxHighlighter, which has
@@ -482,7 +482,41 @@ void EditorTabs::applyDiagnostics()
             }
         }
         codeEditor->setDiagnosticSpans(spans);
+        if (!path.isEmpty()) {
+            // The only way anything outside the process can know this
+            // file's squiggles caught up with whichever source just
+            // changed — the same reason `ProblemsPanel::applyFilter`
+            // reports `problems_refreshed` for its own dock.
+            e2eMark(QStringLiteral("{\"ev\":\"diagnostics_applied\",\"path\":%1,\"count\":%2}")
+                      .arg(e2eJson(path))
+                      .arg(spans.size()));
+        }
     });
+}
+
+void EditorTabs::setDiagnosticsService(DiagnosticsService *diagnosticsService)
+{
+    diagnosticsService_ = diagnosticsService;
+}
+
+DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *languageService,
+                                           BuildService *buildService,
+                                           AnalysisService *analysisService,
+                                           EditorTabs *editorTabs)
+{
+    // ADR-0046: the single QObject the Problems dock and the editor read;
+    // any source's `diagnosticsChanged` means this file's squiggles (and
+    // the panel's rows, wired the same way from `problemsPanel.cpp`) may
+    // have changed.
+    auto *diagnosticsService = new DiagnosticsService(parent);
+    editorTabs->setDiagnosticsService(diagnosticsService);
+    QObject::connect(languageService, &LanguageService::diagnosticsChanged, editorTabs,
+                      [editorTabs]() { editorTabs->applyDiagnostics(); });
+    QObject::connect(buildService, &BuildService::diagnosticsChanged, editorTabs,
+                      [editorTabs]() { editorTabs->applyDiagnostics(); });
+    QObject::connect(analysisService, &AnalysisService::diagnosticsChanged, editorTabs,
+                      [editorTabs]() { editorTabs->applyDiagnostics(); });
+    return diagnosticsService;
 }
 
 void EditorTabs::reannounceDocuments()

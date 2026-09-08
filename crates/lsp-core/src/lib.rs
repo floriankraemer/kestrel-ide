@@ -55,9 +55,7 @@ pub use completion::{
     TextRange,
 };
 pub use configuration::resolve as resolve_configuration;
-pub use diagnostics::{
-    path_from_uri, uri_from_path, DiagnosticCounts, DiagnosticRow, DiagnosticStore, Severity,
-};
+pub use diagnostics::{path_from_uri, to_diagnostics, uri_from_path};
 pub use diff_preview::{file_diff, FileDiff};
 pub use document_highlight::{parse_document_highlights, DocumentHighlight, HighlightKind};
 pub use hierarchy::{

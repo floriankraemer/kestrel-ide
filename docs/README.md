@@ -51,6 +51,9 @@ ADR numbers 0006 and 0013–0015 were never used; the gaps are historical and in
 - [ADR-0039: typed run configurations](architecture/decisions/0039-typed-run-configurations.md) — one toolchain table in `run-core` feeding run, build and debug alike; toolchain and target persisted as strings so `app-config` keeps depending on nothing; macros expanded in arguments too, and run-from-context's capped temporary configurations.
 - [ADR-0040: `build-core`](architecture/decisions/0040-build-core.md) — build is delegated to the project's own tool and never modelled by the IDE: no output folders, artifacts or auto-build; Cargo parsed from JSON and everything else from a small pattern table; build diagnostics join the existing Problems dock rather than getting a second one.
 - [ADR-0041: `dap-core`](architecture/decisions/0041-dap-core.md) — a Debug Adapter Protocol client shaped like the LSP one, sharing its `Content-Length` framing through `stdio-framing`; the protocol typed only where it is read; an undeclared capability is unsupported; adapters are installed, not bundled, so every catalog entry carries an install hint.
+- [ADR-0046: one diagnostics model](architecture/decisions/0046-one-diagnostics-model.md) — a new Qt-free `diagnostics-core` crate keyed by `(source, uri)` rather than `lsp-core` growing to hold it; a build diagnostic reaches the editor's squiggles for the first time; amends ADR-0040 §4; the E2E flow budget moves from 15 to 16 in a later phase.
+- [ADR-0047: the `analyzers` contribution point](architecture/decisions/0047-analyzers-contribution-point.md) — declarative manifest data, native output-format parsers, a new Qt-free `analysis-core` crate, analyzers run over pipes rather than a PTY (a tty's column wrap corrupts JSON/XML), `process-exec` extracted from `vcs-core` rather than copied, and the `OnType`/`OnSave`/`Manual` trigger model with cooperative per-`(analyzer, file)` cancellation.
+- [ADR-0048: the test runner](architecture/decisions/0048-test-runner.md) — TeamCity service messages over JUnit XML for a tree that fills in while a run is in flight, `process_exec::spawn` as a streamed sibling to `run`, a new Qt-free `test-core` crate for a test run's live tree and rerun selectors, and a failing test published as a diagnostic through the same shared store ADR-0046 built.
 
 ## Plans
 
@@ -75,6 +78,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan and 
 - [Mermaid documents and preview mode plan](architecture/mermaid-documents-and-preview-mode-plan.md) — standalone Mermaid files as a previewed, highlighted file type, and the in-tab edit/view toggle; carries its own Progress table.
 - [Window state and layouts plan](architecture/window-state-and-layouts-plan.md) — the maximized window comes back maximized, and named workspace layouts saved per user or per project.
 - [Terminal experience plan](architecture/terminal-experience-plan.md) — an instant shell catalogue, smooth output, JetBrains Mono, and a theme-following 256-colour ANSI palette; in delivery, carries its own Progress table.
+- [PHP tooling plan](architecture/php-tooling-plan.md) — PHPStan, PHP_CodeSniffer and PHPUnit integrations on a generalized diagnostics model and a new analyzers/test-frameworks contribution point; carries its own Progress table.
 
 - [LSP conformance](architecture/lsp-conformance.md) — checking the LSP client against a real rust-analyzer; the executable expectations file and why it is not a per-PR gate.
 

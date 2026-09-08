@@ -25,8 +25,14 @@ use crate::bridge::ffi::{self, FfiResult};
 /// 2. `settings.shell_path` — a shell named by path, the settings page's
 ///    "Custom…" escape hatch for something this build's catalogue has never
 ///    heard of.
-/// 3. `settings.shell_id` — the configured default, by catalogue id.
-/// 4. The platform default: `$SHELL` on Unix, PowerShell on Windows.
+/// 3. The project's own distro (ADR-0052, W5-1) — a project opened from a
+///    WSL UNC path has already said which machine it belongs to, the same
+///    reasoning that makes remote execution automatic in the first place.
+///    This outranks `settings.shell_id`, a global default the user did not
+///    set with this project in mind, but not an explicit `shell_path`,
+///    which is a deliberate per-machine override step 2 already grants.
+/// 4. `settings.shell_id` — the configured default, by catalogue id.
+/// 5. The platform default: `$SHELL` on Unix, PowerShell on Windows.
 ///
 /// A configured shell that is no longer installed falls through to the
 /// platform default rather than failing to spawn: a machine that had `fish`
@@ -49,8 +55,8 @@ fn shell_for(
     project_root: Option<&std::path::Path>,
     catalogue: &[pty_core::ShellCandidate],
 ) -> pty_core::ShellSpec {
-    let mut spec =
-        requested_shell(settings, requested_id, catalogue).unwrap_or_else(platform_default);
+    let mut spec = requested_shell(settings, requested_id, project_root, catalogue)
+        .unwrap_or_else(platform_default);
 
     if !settings.start_directory.is_empty() {
         spec = spec.with_cwd(&settings.start_directory);
@@ -66,11 +72,12 @@ fn shell_for(
     }
 }
 
-/// Steps 1–3 of [`shell_for`]'s precedence list; `None` when none of them
+/// Steps 1–4 of [`shell_for`]'s precedence list; `None` when none of them
 /// names a shell this machine still offers.
 fn requested_shell(
     settings: &app_config::TerminalSettings,
     requested_id: &str,
+    project_root: Option<&std::path::Path>,
     catalogue: &[pty_core::ShellCandidate],
 ) -> Option<pty_core::ShellSpec> {
     let find = |id: &str| catalogue.iter().find(|candidate| candidate.id == id);
@@ -86,6 +93,9 @@ fn requested_shell(
             split_args(&settings.shell_args),
         ));
     }
+    if let Some(candidate) = project_distro_shell(project_root, catalogue) {
+        return Some(candidate.to_spec());
+    }
     if !settings.shell_id.is_empty() {
         if let Some(candidate) = find(&settings.shell_id) {
             let mut spec = candidate.to_spec();
@@ -96,6 +106,23 @@ fn requested_shell(
         }
     }
     None
+}
+
+/// Step 3: the `wsl:<distro>` candidate matching `project_root`'s own
+/// distro, if `project_root` is a WSL UNC path and this machine's catalogue
+/// actually offers that distro (it might not — the project could have been
+/// copied from a machine with a different one installed, in which case this
+/// falls through to `settings.shell_id` like any other unavailable choice).
+fn project_distro_shell<'a>(
+    project_root: Option<&std::path::Path>,
+    catalogue: &'a [pty_core::ShellCandidate],
+) -> Option<&'a pty_core::ShellCandidate> {
+    let root = project_root?;
+    let lsp_core::ExecHost::Wsl(wsl) = lsp_core::ExecHost::for_path(root) else {
+        return None;
+    };
+    let id = format!("wsl:{}", wsl.distro);
+    catalogue.iter().find(|candidate| candidate.id == id)
 }
 
 /// What the terminal opened before any of this was configurable, kept as
@@ -913,6 +940,62 @@ mod shell_resolution_tests {
             spec.env,
             vec![("RUST_LOG".to_string(), "debug".to_string())]
         );
+    }
+
+    // W5-1: a project opened from a WSL UNC path spawns in its own distro
+    // by default, ahead of the configured `shell_id` but behind an explicit
+    // `shell_path` override.
+    #[test]
+    fn a_wsl_project_root_spawns_its_own_distro_ahead_of_the_configured_default() {
+        let mut list = catalogue();
+        list.push(candidate("wsl:Ubuntu", "wsl.exe"));
+        let settings = TerminalSettings {
+            shell_id: "bash".to_string(),
+            ..TerminalSettings::default()
+        };
+        let spec = shell_for(
+            &settings,
+            "",
+            Some(Path::new("//wsl.localhost/Ubuntu/home/f/proj")),
+            &list,
+        );
+        assert_eq!(spec.program, "wsl.exe");
+    }
+
+    #[test]
+    fn an_explicit_shell_path_still_beats_the_project_distro() {
+        let mut list = catalogue();
+        list.push(candidate("wsl:Ubuntu", "wsl.exe"));
+        let settings = TerminalSettings {
+            shell_path: "/opt/toolchain/bin/ash".to_string(),
+            ..TerminalSettings::default()
+        };
+        let spec = shell_for(
+            &settings,
+            "",
+            Some(Path::new("//wsl.localhost/Ubuntu/home/f/proj")),
+            &list,
+        );
+        assert_eq!(spec.program, "/opt/toolchain/bin/ash");
+    }
+
+    /// The project names a distro this machine's catalogue does not offer
+    /// (copied from a machine with a different one installed) — falls
+    /// through to the configured default like any other unavailable choice,
+    /// not to a hard failure.
+    #[test]
+    fn a_wsl_project_whose_distro_is_not_installed_here_falls_through() {
+        let settings = TerminalSettings {
+            shell_id: "bash".to_string(),
+            ..TerminalSettings::default()
+        };
+        let spec = shell_for(
+            &settings,
+            "",
+            Some(Path::new("//wsl.localhost/Ubuntu/home/f/proj")),
+            &catalogue(),
+        );
+        assert_eq!(spec.program, "/bin/bash");
     }
 
     #[test]

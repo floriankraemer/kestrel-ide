@@ -144,7 +144,23 @@ fn path_end_before_line_col(matched: &str, has_col: bool) -> usize {
 /// forward slashes first, so a Windows-style path pasted into Linux output
 /// (or vice versa) still joins onto a real `Path` instead of becoming one
 /// unsplittable file-name component.
+///
+/// W5-2: when `cwd` is a WSL UNC path, `path` — absolute or relative — is a
+/// Linux path regardless: the program that printed it ran inside the
+/// distro. `ExecHost::to_remote`/`to_local` resolves it explicitly, the
+/// same rule `build_core::diagnostics::resolve_path` applies to a
+/// compiler's own file references, rather than trusting `PathBuf::join`'s
+/// platform-dependent handling of a rooted-but-unprefixed argument.
 fn resolve_path(path: &str, cwd: &Path) -> PathBuf {
+    let host = process_exec::host::ExecHost::for_path(cwd);
+    if host.is_remote() {
+        let linux_path = if path.starts_with('/') {
+            path.to_string()
+        } else {
+            format!("{}/{path}", host.to_remote(cwd))
+        };
+        return host.to_local(&linux_path);
+    }
     let normalized = path.replace('\\', "/");
     let candidate = Path::new(&normalized);
     if candidate.is_absolute() {
@@ -334,6 +350,37 @@ mod tests {
         assert_eq!(resolved.path, dir.path().join("src/main.rs"));
         assert_eq!(resolved.line, 12);
         assert_eq!(resolved.col, Some(5));
+    }
+
+    // W5-2: a Linux `file:line` in a WSL run's output opens the UNC path
+    // the share actually serves, not a path pasted straight under the
+    // (Windows-shaped) cwd.
+    #[test]
+    fn a_relative_linux_path_resolves_to_the_unc_path_on_a_wsl_cwd() {
+        let cwd = PathBuf::from("//wsl.localhost/Ubuntu/tmp/links-e2e-relative");
+        fs::create_dir_all(cwd.join("src")).unwrap();
+        fs::write(cwd.join("src/main.rs"), "").unwrap();
+
+        let text = "src/main.rs:12:5";
+        let offset = text.len() / 2;
+        let resolved = resolve_link(text, offset, &cwd).expect("a link");
+        assert_eq!(resolved.path, cwd.join("src/main.rs"));
+        assert_eq!(resolved.line, 12);
+        assert_eq!(resolved.col, Some(5));
+    }
+
+    #[test]
+    fn an_absolute_linux_path_resolves_to_the_unc_path_on_a_wsl_cwd() {
+        let cwd = PathBuf::from("//wsl.localhost/Ubuntu/tmp/links-e2e-absolute");
+        fs::create_dir_all(&cwd).unwrap();
+        let target = PathBuf::from("//wsl.localhost/Ubuntu/tmp/elsewhere-abs");
+        fs::create_dir_all(&target).unwrap();
+        fs::write(target.join("lib.rs"), "").unwrap();
+
+        let text = "/tmp/elsewhere-abs/lib.rs:3:1";
+        let offset = text.len() / 2;
+        let resolved = resolve_link(text, offset, &cwd).expect("a link");
+        assert_eq!(resolved.path, target.join("lib.rs"));
     }
 
     #[test]

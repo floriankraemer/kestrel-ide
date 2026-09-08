@@ -66,8 +66,8 @@ impl CellColor {
         Self { r, g, b }
     }
 
-    fn from_ansi(color: AnsiColor, default: CellColor) -> Self {
-        Self::from_ansi_opt(color).unwrap_or(default)
+    fn from_ansi(color: AnsiColor, default: CellColor, ansi: &[CellColor; 16]) -> Self {
+        Self::from_ansi_opt(color, ansi).unwrap_or(default)
     }
 
     /// The same resolution, but saying "use the caller's default" as `None`
@@ -79,16 +79,11 @@ impl CellColor {
     /// and a run console that baked a color in there would stop following
     /// the editor theme. Both sinks resolve through this one function so
     /// the palette stays in one place (`crate::sgr`).
-    pub(crate) fn from_ansi_opt(color: AnsiColor) -> Option<Self> {
+    pub(crate) fn from_ansi_opt(color: AnsiColor, ansi: &[CellColor; 16]) -> Option<Self> {
         match color {
             AnsiColor::Spec(Rgb { r, g, b }) => Some(CellColor::rgb(r, g, b)),
-            AnsiColor::Named(named) => named_color_opt(named),
-            // Indexed colors beyond the named 16 are the 256-color cube /
-            // grayscale ramp; approximating those faithfully needs a full
-            // palette table, which is over-engineering for a first slice.
-            // Falls back to the caller's default (usually foreground/
-            // background) until a real theme/palette lands.
-            AnsiColor::Indexed(idx) => named_color_by_index(idx),
+            AnsiColor::Named(named) => named_color_opt(named, ansi),
+            AnsiColor::Indexed(idx) => indexed_color(idx, ansi),
         }
     }
 }
@@ -100,7 +95,7 @@ impl CellColor {
 /// with the ANSI 0-15 table, while `Foreground`/`Background`/`Cursor` and the
 /// `Dim*` tail have discriminants past 255. Casting the whole enum to `u8`
 /// therefore wrapped a default-background cell onto palette slot 1 (red).
-fn named_color_opt(named: NamedColor) -> Option<CellColor> {
+fn named_color_opt(named: NamedColor, ansi: &[CellColor; 16]) -> Option<CellColor> {
     let index = match named {
         // Not palette slots — these mean "whatever the caller's default is",
         // which `from_ansi` threads through per fg/bg call and `from_ansi_opt`
@@ -123,32 +118,103 @@ fn named_color_opt(named: NamedColor) -> Option<CellColor> {
         // `Black`..`BrightWhite` really do occupy discriminants 0-15.
         other => other as u8,
     };
-    named_color_by_index(index)
+    indexed_color(index, ansi)
 }
 
-/// The standard 16-color ANSI palette (indices 0-15), used both for
-/// [`NamedColor`] variants and low `Indexed` colors. Values match the
-/// conventional xterm default palette.
-fn named_color_by_index(idx: u8) -> Option<CellColor> {
-    const PALETTE: [CellColor; 16] = [
-        CellColor::rgb(0, 0, 0),
-        CellColor::rgb(205, 0, 0),
-        CellColor::rgb(0, 205, 0),
-        CellColor::rgb(205, 205, 0),
-        CellColor::rgb(0, 0, 238),
-        CellColor::rgb(205, 0, 205),
-        CellColor::rgb(0, 205, 205),
-        CellColor::rgb(229, 229, 229),
-        CellColor::rgb(127, 127, 127),
-        CellColor::rgb(255, 0, 0),
-        CellColor::rgb(0, 255, 0),
-        CellColor::rgb(255, 255, 0),
-        CellColor::rgb(92, 92, 255),
-        CellColor::rgb(255, 0, 255),
-        CellColor::rgb(0, 255, 255),
-        CellColor::rgb(255, 255, 255),
-    ];
-    PALETTE.get(idx as usize).copied()
+/// Resolve any `Indexed` color (0-255): 0-15 is the caller's 16-color
+/// palette (theme-able, T3), 16-231 is the standard 6x6x6 color cube, and
+/// 232-255 is the 24-step greyscale ramp — both fixed by the xterm 256-color
+/// spec, so unlike the 16-color table they carry no theme of their own.
+fn indexed_color(idx: u8, ansi: &[CellColor; 16]) -> Option<CellColor> {
+    match idx {
+        0..=15 => ansi.get(idx as usize).copied(),
+        16..=231 => Some(cube_color(idx)),
+        _ => Some(grey_ramp_color(idx)),
+    }
+}
+
+/// xterm's 6x6x6 color cube (indices 16-231): index `16 + 36r + 6g + b`,
+/// each of `r`/`g`/`b` in `0..6` mapping through this level table rather
+/// than a linear `0..256` step.
+const CUBE_LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+
+fn cube_color(idx: u8) -> CellColor {
+    let i = idx - 16;
+    let r = (i / 36) % 6;
+    let g = (i / 6) % 6;
+    let b = i % 6;
+    CellColor::rgb(
+        CUBE_LEVELS[r as usize],
+        CUBE_LEVELS[g as usize],
+        CUBE_LEVELS[b as usize],
+    )
+}
+
+/// xterm's 24-step greyscale ramp (indices 232-255): level `8 + 10*i` for
+/// `i` in `0..24`, equal on all three channels.
+fn grey_ramp_color(idx: u8) -> CellColor {
+    let level = 8 + 10 * (idx - 232);
+    CellColor::rgb(level, level, level)
+}
+
+/// The 16-color ANSI palette plus the fixed points (foreground, background,
+/// cursor, selection) a terminal paints with — the one place every color a
+/// grid cell or a streamed console run resolves through, other than the
+/// 256-color cube/greyscale ramp above (fixed by the xterm spec, not
+/// themeable).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Palette {
+    pub foreground: CellColor,
+    pub background: CellColor,
+    pub cursor: CellColor,
+    pub selection: CellColor,
+    pub ansi: [CellColor; 16],
+}
+
+/// The 16-color table `Palette::xterm()` and every "never themed" caller
+/// (`SgrResolver`, whose run-console colors this task's hard requirement
+/// keeps byte-identical) use. Values match the conventional xterm default
+/// palette — copied byte-for-byte from what was, before this task, a
+/// hardcoded table with no name.
+const XTERM_ANSI: [CellColor; 16] = [
+    CellColor::rgb(0, 0, 0),
+    CellColor::rgb(205, 0, 0),
+    CellColor::rgb(0, 205, 0),
+    CellColor::rgb(205, 205, 0),
+    CellColor::rgb(0, 0, 238),
+    CellColor::rgb(205, 0, 205),
+    CellColor::rgb(0, 205, 205),
+    CellColor::rgb(229, 229, 229),
+    CellColor::rgb(127, 127, 127),
+    CellColor::rgb(255, 0, 0),
+    CellColor::rgb(0, 255, 0),
+    CellColor::rgb(255, 255, 0),
+    CellColor::rgb(92, 92, 255),
+    CellColor::rgb(255, 0, 255),
+    CellColor::rgb(0, 255, 255),
+    CellColor::rgb(255, 255, 255),
+];
+
+impl Palette {
+    /// The palette every terminal used before this task, byte-identical:
+    /// black background, the `#e5e5e5` foreground `grid()` used to hardcode,
+    /// and `XTERM_ANSI` — the same 16 colors `sgr.rs`'s run-console sink
+    /// keeps using regardless of what a live terminal's palette is set to.
+    pub const fn xterm() -> Self {
+        Self {
+            foreground: CellColor::rgb(229, 229, 229),
+            background: CellColor::rgb(0, 0, 0),
+            cursor: CellColor::rgb(229, 229, 229),
+            selection: CellColor::rgb(38, 79, 150),
+            ansi: XTERM_ANSI,
+        }
+    }
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self::xterm()
+    }
 }
 
 /// Basic per-cell rendering attributes exposed cheaply by `alacritty_terminal`'s
@@ -366,15 +432,23 @@ impl EventListener for NullEventListener {
 pub struct TerminalEmulator {
     term: Term<NullEventListener>,
     parser: Processor,
+    palette: Palette,
 }
 
 impl TerminalEmulator {
-    pub fn new(size: GridSize) -> Self {
+    pub fn new(size: GridSize, palette: Palette) -> Self {
         let term = Term::new(TermConfig::default(), &size, NullEventListener);
         Self {
             term,
             parser: Processor::new(),
+            palette,
         }
+    }
+
+    /// Replace this session's palette (T3) — live, so a theme switch is
+    /// visible in an already-open terminal without restarting its shell.
+    pub fn set_palette(&mut self, palette: Palette) {
+        self.palette = palette;
     }
 
     /// Interpret raw bytes (text and/or escape sequences) read from the PTY,
@@ -414,7 +488,6 @@ impl TerminalEmulator {
     pub fn grid(&self) -> Grid {
         let term_grid = self.term.grid();
         let cols = term_grid.columns();
-        let default = CellColor::rgb(0, 0, 0);
 
         let mut rows: Vec<Vec<RenderCell>> = (0..term_grid.screen_lines())
             .map(|_| Vec::with_capacity(cols))
@@ -428,8 +501,8 @@ impl TerminalEmulator {
                 continue;
             };
             let cell = indexed.cell;
-            let fg = CellColor::from_ansi(cell.fg, CellColor::rgb(229, 229, 229));
-            let bg = CellColor::from_ansi(cell.bg, default);
+            let fg = CellColor::from_ansi(cell.fg, self.palette.foreground, &self.palette.ansi);
+            let bg = CellColor::from_ansi(cell.bg, self.palette.background, &self.palette.ansi);
             row.push(RenderCell {
                 character: cell.c,
                 fg,
@@ -594,7 +667,7 @@ mod tests {
 
     #[test]
     fn plain_text_appears_at_expected_cell_positions() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
         emulator.feed(b"hi");
 
         let grid = emulator.grid();
@@ -605,7 +678,7 @@ mod tests {
 
     #[test]
     fn cup_escape_sequence_moves_cursor() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20), Palette::xterm());
         // CUP: move cursor to row 3, column 5 (1-indexed in the escape
         // sequence itself).
         emulator.feed(b"\x1b[3;5H");
@@ -616,7 +689,7 @@ mod tests {
 
     #[test]
     fn home_escape_sequence_moves_cursor_to_origin() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20), Palette::xterm());
         emulator.feed(b"hello\x1b[H");
 
         let grid = emulator.grid();
@@ -625,18 +698,18 @@ mod tests {
 
     #[test]
     fn sgr_red_sets_cell_foreground() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
         emulator.feed(b"\x1b[31mR\x1b[0m");
 
         let grid = emulator.grid();
         let cell = grid.rows[0][0];
         assert_eq!(cell.character, 'R');
-        assert_eq!(cell.fg, named_color_by_index(1).unwrap());
+        assert_eq!(cell.fg, indexed_color(1, &Palette::xterm().ansi).unwrap());
     }
 
     #[test]
     fn line_feed_advances_cursor_row() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20), Palette::xterm());
         emulator.feed(b"a\r\nb");
 
         let grid = emulator.grid();
@@ -647,7 +720,7 @@ mod tests {
 
     #[test]
     fn row_text_is_the_row_without_its_trailing_blanks() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(3, 40));
+        let mut emulator = TerminalEmulator::new(GridSize::new(3, 40), Palette::xterm());
         emulator.feed(b"src/main.rs:42:5: error\r\n");
         assert_eq!(
             emulator.row_text(0).as_deref(),
@@ -659,7 +732,7 @@ mod tests {
 
     #[test]
     fn resize_does_not_panic_and_writes_still_render() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(10, 20), Palette::xterm());
         emulator.feed(b"before");
 
         emulator.resize(GridSize::new(15, 30));
@@ -673,7 +746,7 @@ mod tests {
 
     #[test]
     fn bold_flag_is_reflected_in_attributes() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
         emulator.feed(b"\x1b[1mB\x1b[0m");
 
         let grid = emulator.grid();
@@ -682,38 +755,126 @@ mod tests {
 
     #[test]
     fn default_cell_background_resolves_to_the_caller_supplied_default() {
+        let ansi = Palette::xterm().ansi;
         let default_bg = CellColor::rgb(30, 31, 34);
         assert_eq!(
-            CellColor::from_ansi(AnsiColor::Named(NamedColor::Background), default_bg),
+            CellColor::from_ansi(AnsiColor::Named(NamedColor::Background), default_bg, &ansi),
             default_bg
         );
         let default_fg = CellColor::rgb(169, 183, 198);
         assert_eq!(
-            CellColor::from_ansi(AnsiColor::Named(NamedColor::Foreground), default_fg),
+            CellColor::from_ansi(AnsiColor::Named(NamedColor::Foreground), default_fg, &ansi),
             default_fg
         );
     }
 
     #[test]
     fn named_palette_colors_still_resolve_to_palette_entries() {
+        let ansi = Palette::xterm().ansi;
         let default = CellColor::rgb(30, 31, 34);
         assert_eq!(
-            CellColor::from_ansi(AnsiColor::Named(NamedColor::Red), default),
-            named_color_by_index(1).unwrap()
+            CellColor::from_ansi(AnsiColor::Named(NamedColor::Red), default, &ansi),
+            indexed_color(1, &ansi).unwrap()
         );
         assert_eq!(
-            CellColor::from_ansi(AnsiColor::Named(NamedColor::BrightWhite), default),
-            named_color_by_index(15).unwrap()
+            CellColor::from_ansi(AnsiColor::Named(NamedColor::BrightWhite), default, &ansi),
+            indexed_color(15, &ansi).unwrap()
         );
         assert_eq!(
-            CellColor::from_ansi(AnsiColor::Named(NamedColor::DimRed), default),
-            named_color_by_index(1).unwrap()
+            CellColor::from_ansi(AnsiColor::Named(NamedColor::DimRed), default, &ansi),
+            indexed_color(1, &ansi).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_custom_palette_changes_which_color_ansi_red_resolves_to() {
+        let mut custom = Palette::xterm();
+        custom.ansi[1] = CellColor::rgb(255, 105, 97);
+        let default = CellColor::rgb(0, 0, 0);
+        assert_eq!(
+            CellColor::from_ansi(AnsiColor::Named(NamedColor::Red), default, &custom.ansi),
+            CellColor::rgb(255, 105, 97)
+        );
+    }
+
+    #[test]
+    fn palette_xterm_matches_the_historical_hardcoded_values() {
+        let palette = Palette::xterm();
+        assert_eq!(palette.background, CellColor::rgb(0, 0, 0));
+        assert_eq!(palette.foreground, CellColor::rgb(229, 229, 229));
+        assert_eq!(
+            palette.ansi,
+            [
+                CellColor::rgb(0, 0, 0),
+                CellColor::rgb(205, 0, 0),
+                CellColor::rgb(0, 205, 0),
+                CellColor::rgb(205, 205, 0),
+                CellColor::rgb(0, 0, 238),
+                CellColor::rgb(205, 0, 205),
+                CellColor::rgb(0, 205, 205),
+                CellColor::rgb(229, 229, 229),
+                CellColor::rgb(127, 127, 127),
+                CellColor::rgb(255, 0, 0),
+                CellColor::rgb(0, 255, 0),
+                CellColor::rgb(255, 255, 0),
+                CellColor::rgb(92, 92, 255),
+                CellColor::rgb(255, 0, 255),
+                CellColor::rgb(0, 255, 255),
+                CellColor::rgb(255, 255, 255),
+            ]
+        );
+    }
+
+    #[test]
+    fn default_derives_to_xterm() {
+        assert_eq!(Palette::default(), Palette::xterm());
+    }
+
+    // --- 256-color cube / greyscale ramp -----------------------------------
+
+    #[test]
+    fn cube_index_16_is_black_and_231_is_near_white() {
+        let ansi = Palette::xterm().ansi;
+        assert_eq!(indexed_color(16, &ansi), Some(CellColor::rgb(0, 0, 0)));
+        assert_eq!(
+            indexed_color(231, &ansi),
+            Some(CellColor::rgb(255, 255, 255))
+        );
+    }
+
+    #[test]
+    fn a_mid_cube_index_resolves_to_its_documented_rgb_levels() {
+        // 16 + 36*2 + 6*3 + 4 = 110.
+        let ansi = Palette::xterm().ansi;
+        assert_eq!(
+            indexed_color(110, &ansi),
+            Some(CellColor::rgb(135, 175, 215))
+        );
+    }
+
+    #[test]
+    fn grey_ramp_spans_232_to_255() {
+        let ansi = Palette::xterm().ansi;
+        assert_eq!(indexed_color(232, &ansi), Some(CellColor::rgb(8, 8, 8)));
+        assert_eq!(
+            indexed_color(255, &ansi),
+            Some(CellColor::rgb(238, 238, 238))
+        );
+    }
+
+    #[test]
+    fn indexed_0_to_15_follows_the_supplied_ansi_table_not_the_fixed_one() {
+        let mut custom = Palette::xterm();
+        custom.ansi[4] = CellColor::rgb(1, 2, 3);
+        assert_eq!(
+            indexed_color(4, &custom.ansi),
+            Some(CellColor::rgb(1, 2, 3))
         );
     }
 
     #[test]
     fn untouched_cells_paint_with_the_default_background() {
-        let emulator = TerminalEmulator::new(GridSize::new(3, 10));
+        let emulator = TerminalEmulator::new(GridSize::new(3, 10), Palette::xterm());
 
         let grid = emulator.grid();
         assert_eq!(grid.rows[0][0].bg, CellColor::rgb(0, 0, 0));
@@ -803,7 +964,7 @@ mod tests {
     // --- link_at ----------------------------------------------------------
 
     fn emulator_showing(text: &str) -> TerminalEmulator {
-        let mut emulator = TerminalEmulator::new(GridSize::new(4, 40));
+        let mut emulator = TerminalEmulator::new(GridSize::new(4, 40), Palette::xterm());
         emulator.feed(text.as_bytes());
         emulator
     }
@@ -848,7 +1009,7 @@ mod tests {
 
     #[test]
     fn bracketed_paste_follows_the_applications_request() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(4, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(4, 20), Palette::xterm());
         assert!(!emulator.bracketed_paste());
 
         emulator.feed(b"\x1b[?2004h");
@@ -860,7 +1021,7 @@ mod tests {
 
     #[test]
     fn paste_payload_is_wrapped_only_in_bracketed_paste_mode() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(4, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(4, 20), Palette::xterm());
         assert_eq!(emulator.paste_payload("ls"), "ls");
 
         emulator.feed(b"\x1b[?2004h");
@@ -869,7 +1030,7 @@ mod tests {
 
     #[test]
     fn a_smuggled_end_marker_cannot_close_the_paste_wrapper_early() {
-        let mut emulator = TerminalEmulator::new(GridSize::new(4, 20));
+        let mut emulator = TerminalEmulator::new(GridSize::new(4, 20), Palette::xterm());
         emulator.feed(b"\x1b[?2004h");
 
         let payload = emulator.paste_payload("ls\x1b[201~rm -rf /");

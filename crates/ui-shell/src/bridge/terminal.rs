@@ -137,6 +137,35 @@ fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell
     }
 }
 
+fn cell_color_from_ffi(rgb: &ffi::FfiRgb) -> terminal_core::CellColor {
+    terminal_core::CellColor {
+        r: rgb.r,
+        g: rgb.g,
+        b: rgb.b,
+    }
+}
+
+/// `theme.cpp`'s `terminalPaletteForTheme()` result, resolved into
+/// `terminal_core::Palette` (T3). `ansi` always carries exactly 16 entries —
+/// `theme.cpp` builds it from a fixed 16-entry table, so a short/long `Vec`
+/// here would mean a bug on the C++ side, not a real "no ansi 7" case; the
+/// gap is filled with `Palette::xterm()`'s own slot rather than panicking on
+/// what would still be a paintable, if wrong, palette.
+fn terminal_palette_from_ffi(palette: &ffi::FfiTerminalPalette) -> terminal_core::Palette {
+    let default_ansi = terminal_core::Palette::xterm().ansi;
+    let mut ansi = default_ansi;
+    for (slot, rgb) in ansi.iter_mut().zip(palette.ansi.iter()) {
+        *slot = cell_color_from_ffi(rgb);
+    }
+    terminal_core::Palette {
+        foreground: cell_color_from_ffi(&palette.foreground),
+        background: cell_color_from_ffi(&palette.background),
+        cursor: cell_color_from_ffi(&palette.cursor),
+        selection: cell_color_from_ffi(&palette.selection),
+        ansi,
+    }
+}
+
 /// One session's Qt-thread-owned state: a spawned shell plus its VT100/grid
 /// state. Same split `TerminalSessionRust` (the single-session predecessor
 /// of this type) used — `pty_session` is `Rc<RefCell<..>>` because only
@@ -210,6 +239,12 @@ pub struct TerminalSupervisorRust {
     /// landing, or a synchronous one-time detect from `ensure_shells_cached`
     /// if nothing has asked yet.
     shells: RefCell<Option<Vec<pty_core::ShellCandidate>>>,
+    /// The palette every emulator paints with (T3): applied to every
+    /// currently-open session by `set_palette`, and to every session
+    /// `start()`s afterward. `terminal_core::Palette::xterm()` (this
+    /// struct's `#[derive(Default)]`) is what an emulator gets before the
+    /// view has ever pushed a theme-derived one down.
+    palette: RefCell<terminal_core::Palette>,
 }
 
 impl Drop for TerminalSupervisorRust {
@@ -313,6 +348,22 @@ impl ffi::TerminalSupervisor {
         detected
     }
 
+    /// Apply a palette (T3) to every currently-open session's emulator, live
+    /// — a theme switch recolors an already-running terminal without
+    /// restarting its shell — and remember it for every session `start()`s
+    /// afterward.
+    pub fn set_palette(self: Pin<&mut Self>, palette: ffi::FfiTerminalPalette) {
+        let palette = terminal_palette_from_ffi(&palette);
+        *self.palette.borrow_mut() = palette;
+        for entry in self.sessions.borrow().values() {
+            if let Ok(mut guard) = entry.emulator.lock() {
+                if let Some(emulator) = guard.as_mut() {
+                    emulator.set_palette(palette);
+                }
+            }
+        }
+    }
+
     pub fn start(
         self: Pin<&mut Self>,
         session_id: u64,
@@ -357,7 +408,9 @@ impl ffi::TerminalSupervisor {
         };
 
         let grid_size = terminal_core::GridSize::new(rows as usize, cols as usize);
-        *entry.emulator.lock().unwrap() = Some(terminal_core::TerminalEmulator::new(grid_size));
+        let palette = *self.palette.borrow();
+        *entry.emulator.lock().unwrap() =
+            Some(terminal_core::TerminalEmulator::new(grid_size, palette));
         *entry.pty_session.borrow_mut() = Some(session);
 
         let emulator_slot = std::sync::Arc::clone(&entry.emulator);

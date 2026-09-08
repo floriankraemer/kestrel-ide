@@ -62,6 +62,11 @@ public:
     // `newSession` shortcut, after a keymap rebind (Settings > Keymap > OK).
     void reapplyKeymap();
 
+    // Re-apply the terminal font and theme palette (T3) to every open tab,
+    // after Settings > Terminal/Appearance's OK — modeled on `reapplyKeymap`
+    // above.
+    void reapplyAppearance();
+
     // `terminal.newSession` (Ctrl+Shift+T): one QAction on the panel itself,
     // not per tab, so — unlike Copy/Paste — it is long-lived enough to sit
     // in the app-wide `actions` map `main_window.cpp` builds for Settings >

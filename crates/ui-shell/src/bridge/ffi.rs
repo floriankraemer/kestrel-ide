@@ -382,6 +382,32 @@ mod ffi {
         wide: bool,
     }
 
+    /// One RGB color as it crosses the FFI seam — the same r/g/b-bytes
+    /// convention `FfiTerminalCell`'s `fg_r`/`fg_g`/`fg_b` already uses,
+    /// wrapped here only because `FfiTerminalPalette::ansi` needs a `Vec`
+    /// element type (the same "table of N colors" shape `palette()`'s
+    /// `Vec<FfiScopeStyle>` already crosses the seam with).
+    #[derive(Default, Clone, Copy)]
+    struct FfiRgb {
+        r: u8,
+        g: u8,
+        b: u8,
+    }
+
+    /// A whole terminal palette (T3), in one call: `theme.cpp`'s
+    /// `terminalPaletteForTheme()` builds one from the active theme (and, for
+    /// background/foreground, the editor colors when configured — see that
+    /// function's doc comment), and `TerminalSupervisor::setPalette()`
+    /// applies it to every open session and remembers it for new ones.
+    /// `ansi` is always exactly 16 entries, ANSI 0-15.
+    struct FfiTerminalPalette {
+        background: FfiRgb,
+        foreground: FfiRgb,
+        cursor: FfiRgb,
+        selection: FfiRgb,
+        ansi: Vec<FfiRgb>,
+    }
+
     /// One paint's worth of grid state (T2): the whole snapshot
     /// `gridCells`/`gridRows`/`gridCols`/`cursorRow`/`cursorCol` used to
     /// require five separate FFI round trips for — replaced with the one
@@ -779,6 +805,14 @@ mod ffi {
         /// Empty means the open project's root.
         start_directory: QString,
         env: QString,
+        /// Empty means "follow the editor font" (T3) —
+        /// `AppSettings::terminalFont()` is where that precedence is
+        /// resolved; this raw, possibly-empty value is only for the
+        /// settings page to edit.
+        font_family: QString,
+        /// `0` means "follow the editor font size" (T3), same idiom as
+        /// `font_family`.
+        font_size: u32,
     }
 
     /// One local branch name. `cxx`'s `Vec<T>` needs `T: ImplVec`, which
@@ -2270,6 +2304,14 @@ mod ffi {
         #[cxx_name = "saveTerminalSettings"]
         fn save_terminal_settings(self: &AppSettings, terminal: &FfiTerminalSettings) -> FfiResult;
 
+        /// The terminal's effective font (T3): the project-resolved
+        /// `[terminal]` override when one is set, else the editor font —
+        /// always resolved, never empty/zero, so the view never re-derives
+        /// this precedence itself.
+        #[qinvokable]
+        #[cxx_name = "terminalFont"]
+        fn terminal_font(self: &AppSettings) -> FfiEditorFont;
+
         /// Every shell this machine offers, for the Terminal page's combo —
         /// the same list, from the same place, as the terminal dock's "+"
         /// dropdown.
@@ -2986,6 +3028,14 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "refreshShells"]
         fn refresh_shells(self: Pin<&mut TerminalSupervisor>);
+
+        /// Apply a palette (T3) to every open session, live, and remember it
+        /// for every session started afterward. `theme.cpp`'s
+        /// `terminalPaletteForTheme()` builds the argument; this call never
+        /// decides the colors itself.
+        #[qinvokable]
+        #[cxx_name = "setPalette"]
+        fn set_palette(self: Pin<&mut TerminalSupervisor>, palette: FfiTerminalPalette);
 
         /// Forward keystrokes (already translated to the byte sequence a
         /// shell expects by the view) to `session_id`'s PTY stdin.

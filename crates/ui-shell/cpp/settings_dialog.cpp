@@ -425,6 +425,12 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
         applyKeymap(*context.actions, appSettings);
         context.terminalPanel->reapplyKeymap();
         terminalPage->commit();
+        // T3: the terminal's own font/size may have just changed (Settings
+        // > Terminal) and so may the editor font/colors just committed
+        // above (Settings > Editor) — either can change what
+        // `terminalFont()`/`terminalPaletteForTheme()` resolve to, so this
+        // runs after both commits, unconditionally.
+        context.terminalPanel->reapplyAppearance();
         mcp.commit();
         // The AI draft was already committed by the OK handler above; this
         // is the chat session re-reading the provider, the mode and the

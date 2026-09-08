@@ -75,6 +75,13 @@ public:
     // `applyKeymap()` every menu action uses.
     void reapplyKeymap();
 
+    // Re-read the terminal font (`AppSettings::terminalFont()`) and the
+    // theme's palette (`terminalPaletteForTheme(activeThemeName())`, T3)
+    // after Settings > Terminal/Appearance's OK — the per-tab counterpart of
+    // `reapplyKeymap()` above, called from the same place
+    // (`TerminalSessionsPanel::reapplyAppearance`).
+    void reapplyAppearance();
+
 protected:
     // A focused terminal owns its Ctrl-combinations, so this intercepts the
     // window's menu shortcuts before they can swallow them (see the .cpp).
@@ -120,6 +127,17 @@ private:
     // monospace font's cell metrics, and — if that changed the grid size —
     // either `start()` the session (first call) or `resize()` it.
     void syncGridSizeToWidget();
+
+    // (Re)reads `appSettings_->terminalFont()` into `font_`/the bold/italic/
+    // bold-italic variants and their cell metrics. Shared by the constructor
+    // and `reapplyAppearance()` so the two can never resolve the font
+    // differently.
+    void applyFont();
+
+    // (Re)reads the theme's terminal palette into `bgColor_`/
+    // `selectionColor_`/`cursorColor_` and this widget's own backdrop.
+    // Shared the same way `applyFont()` is.
+    void applyPalette();
 
     // Pixel -> cell arithmetic, the one translation this view legitimately
     // owns: which cell a position lands in (clamped to the grid), and
@@ -174,6 +192,13 @@ private:
     int cellHeight_ = 1;
     quint32 rows_ = 0;
     quint32 cols_ = 0;
+    // The widget's own backdrop and the selection/cursor tints (T3),
+    // resolved from the active theme by `applyPalette()` — no longer the
+    // hardcoded black/blue placeholders `styleFor()`/`paintEvent()` used to
+    // paint with regardless of theme.
+    QColor bgColor_{ Qt::black };
+    QColor selectionColor_{ 38, 79, 150 };
+    QColor cursorColor_{ Qt::white };
     bool started_ = false;
     bool dragging_ = false;
     // Time since the last double click, used to recognise the press that

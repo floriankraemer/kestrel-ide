@@ -21,10 +21,10 @@ Living status table — update the relevant row **in the same commit** that fini
 |---|---|---|
 | T1 — Shell catalogue off the critical path | done | this commit |
 | T2 — Smooth output: bounded reader queue, dirty-region repaint | done | this commit |
-| T3 — JetBrains Mono as the default editor font | open | |
-| T4 — Terminal font family/size, following the editor font when unset | open | |
+| T3 — JetBrains Mono, terminal padding, and a themed 256-colour palette | done | this commit |
+| T4 — Terminal font family/size, following the editor font when unset | done | this commit |
 | T5 — Scrollback via wheel/scrollbar/Shift+PgUp/PgDn | open | |
-| T6 — Per-theme JetBrains-like ANSI palette, full 256-colour support | open | |
+| T6 — Per-theme JetBrains-like ANSI palette, full 256-colour support | done | this commit |
 
 ## Decisions worth keeping
 

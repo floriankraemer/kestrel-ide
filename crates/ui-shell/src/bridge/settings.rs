@@ -295,6 +295,29 @@ impl ffi::AppSettings {
         }
     }
 
+    /// The terminal's effective font (T3): its own `[terminal]` override,
+    /// project-resolved, when one is set, else the editor font. The one
+    /// place this precedence is decided — `TerminalWidget` only ever calls
+    /// this, never `editorFont()` plus its own empty check, so the two can
+    /// never disagree about what "unset" means.
+    pub fn terminal_font(&self) -> FfiEditorFont {
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let family = if settings.terminal.font_family.is_empty() {
+            settings.editor_font_family_or_default().to_string()
+        } else {
+            settings.terminal.font_family.clone()
+        };
+        let size = if settings.terminal.font_size == 0 {
+            settings.editor_font_size_or_default()
+        } else {
+            settings.terminal.font_size
+        };
+        FfiEditorFont {
+            family: QString::from(family.as_str()),
+            size,
+        }
+    }
+
     /// Every shell this machine offers, for the Terminal page's combo. The
     /// same list the dock's "+" dropdown shows, from the same place — see
     /// `TerminalSupervisor::available_shells`.
@@ -1408,6 +1431,8 @@ fn to_ffi_terminal_settings(terminal: &app_config::TerminalSettings) -> ffi::Ffi
         shell_args: QString::from(terminal.shell_args.as_str()),
         start_directory: QString::from(terminal.start_directory.as_str()),
         env: QString::from(env.join("\n").as_str()),
+        font_family: QString::from(terminal.font_family.as_str()),
+        font_size: terminal.font_size,
     }
 }
 
@@ -1418,6 +1443,8 @@ fn from_ffi_terminal_settings(row: &ffi::FfiTerminalSettings) -> app_config::Ter
         shell_args: row.shell_args.to_string().trim().to_string(),
         start_directory: row.start_directory.to_string().trim().to_string(),
         env: parse_env_lines(&row.env.to_string()),
+        font_family: row.font_family.to_string().trim().to_string(),
+        font_size: row.font_size,
     }
 }
 

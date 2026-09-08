@@ -1,5 +1,6 @@
 #include "terminal_widget.h"
 
+#include "theme.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <algorithm>
@@ -13,7 +14,6 @@
 #include <QDesktopServices>
 #include <QEvent>
 #include <QFocusEvent>
-#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -30,16 +30,12 @@ namespace ui_shell {
 
 namespace {
 
-// The widget's own backdrop (painted once per frame before any run): a
-// run whose background matches this is skipped rather than re-filled — the
-// perf win `paintEvent`'s per-run `fillRect` call exists to protect, since
-// most of a terminal's cells are plain text on the default background.
-const QColor kBlackBackground = Qt::black;
-
-// Selection tint (T2): fills a selected run's background without touching
-// its foreground. A placeholder colour — T3 replaces the colour source
-// (a real palette) without touching this mechanism.
-const QColor kSelectionBackground(38, 79, 150);
+// Uniform padding around the grid on every side (T3) — JetBrains-style
+// breathing room, rather than text glued to the dock's own edge. Grid
+// geometry (`syncGridSizeToWidget`) and pixel<->cell mapping (`cellAt`) both
+// work in the padding-deflated rect; the padding band itself is filled once
+// per frame in the widget's backdrop colour and never drawn into again.
+constexpr int kPadding = 6;
 
 } // namespace
 
@@ -71,25 +67,8 @@ TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId
     connect(pasteAction_, &QAction::triggered, this, &TerminalWidget::pasteClipboard);
     addAction(pasteAction_);
 
-    font_ = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    font_.setPointSize(10);
-    fontBold_ = font_;
-    fontBold_.setBold(true);
-    fontItalic_ = font_;
-    fontItalic_.setItalic(true);
-    fontBoldItalic_ = font_;
-    fontBoldItalic_.setBold(true);
-    fontBoldItalic_.setItalic(true);
-
-    const QFontMetricsF metrics(font_);
-    cellWidth_ = std::max(1, qRound(metrics.horizontalAdvance(QLatin1Char('M'))));
-    cellHeight_ = qRound(metrics.height());
-    ascent_ = metrics.ascent();
-
-    QPalette pal = palette();
-    pal.setColor(QPalette::Window, Qt::black);
-    setAutoFillBackground(true);
-    setPalette(pal);
+    applyFont();
+    applyPalette();
 
     // Repaint only in response to genuinely new PTY output (per gridUpdated),
     // never on a timer — CLAUDE.md's/F3's explicit requirement. The signal is
@@ -110,6 +89,47 @@ void TerminalWidget::reapplyKeymap()
       appSettings_->shortcutFor(QStringLiteral("terminal.paste")), QKeySequence::PortableText));
 }
 
+void TerminalWidget::reapplyAppearance()
+{
+    applyFont();
+    applyPalette();
+    snapshotStale_ = true;
+    syncGridSizeToWidget();
+    update();
+}
+
+void TerminalWidget::applyFont()
+{
+    const FfiEditorFont terminalFont = appSettings_->terminalFont();
+    font_ = QFont(terminalFont.family, static_cast<int>(terminalFont.size));
+    fontBold_ = font_;
+    fontBold_.setBold(true);
+    fontItalic_ = font_;
+    fontItalic_.setItalic(true);
+    fontBoldItalic_ = font_;
+    fontBoldItalic_.setBold(true);
+    fontBoldItalic_.setItalic(true);
+
+    const QFontMetricsF metrics(font_);
+    cellWidth_ = std::max(1, qRound(metrics.horizontalAdvance(QLatin1Char('M'))));
+    cellHeight_ = qRound(metrics.height());
+    ascent_ = metrics.ascent();
+}
+
+void TerminalWidget::applyPalette()
+{
+    const FfiTerminalPalette themedPalette = terminalPaletteForTheme(activeThemeName(), appSettings_);
+    bgColor_ = QColor(themedPalette.background.r, themedPalette.background.g, themedPalette.background.b);
+    selectionColor_ =
+      QColor(themedPalette.selection.r, themedPalette.selection.g, themedPalette.selection.b);
+    cursorColor_ = QColor(themedPalette.cursor.r, themedPalette.cursor.g, themedPalette.cursor.b);
+
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, bgColor_);
+    setAutoFillBackground(true);
+    setPalette(pal);
+}
+
 void TerminalWidget::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
@@ -124,8 +144,10 @@ void TerminalWidget::resizeEvent(QResizeEvent *event)
 
 void TerminalWidget::syncGridSizeToWidget()
 {
-    const quint32 newCols = static_cast<quint32>(std::max(1, width() / cellWidth_));
-    const quint32 newRows = static_cast<quint32>(std::max(1, height() / cellHeight_));
+    const int usableWidth = width() - 2 * kPadding;
+    const int usableHeight = height() - 2 * kPadding;
+    const quint32 newCols = static_cast<quint32>(std::max(1, usableWidth / cellWidth_));
+    const quint32 newRows = static_cast<quint32>(std::max(1, usableHeight / cellHeight_));
     if (started_ && newCols == cols_ && newRows == rows_) {
         return;
     }
@@ -152,7 +174,7 @@ TerminalWidget::CellStyle TerminalWidget::styleFor(const FfiTerminalCell &cell, 
     }
     if (cell.selected) {
         // Tint the background only; the glyph keeps its normal foreground.
-        bg = kSelectionBackground;
+        bg = selectionColor_;
     }
     return CellStyle{ fg,      bg,       cell.bold,
                        cell.italic,  cell.underline, cell.selected,
@@ -177,7 +199,7 @@ void TerminalWidget::paintRunBody(QPainter &painter, const QColor &fg, const QCo
                                    bool italic, bool underline, const QRect &rect, qreal baselineY,
                                    const std::u32string &text, bool forceFill)
 {
-    if (forceFill || bg != kBlackBackground) {
+    if (forceFill || bg != bgColor_) {
         painter.fillRect(rect, bg);
     }
     const bool blank = std::all_of(text.begin(), text.end(), [](char32_t c) { return c == U' '; });
@@ -198,7 +220,7 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
-    painter.fillRect(rect(), kBlackBackground);
+    painter.fillRect(rect(), bgColor_);
 
     // The actual perf win (T2): re-snapshot only when something changed the
     // grid since the last paint, not on every repaint.
@@ -257,20 +279,21 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
                 ++col;
             }
 
-            const QRect runRect(static_cast<int>(runStart) * cellWidth_, static_cast<int>(row) * cellHeight_,
+            const QRect runRect(kPadding + static_cast<int>(runStart) * cellWidth_,
+                                 kPadding + static_cast<int>(row) * cellHeight_,
                                  static_cast<int>(col - runStart) * cellWidth_, cellHeight_);
-            const qreal baselineY = static_cast<qreal>(row) * cellHeight_ + ascent_;
+            const qreal baselineY = kPadding + static_cast<qreal>(row) * cellHeight_ + ascent_;
 
             if (style.isCursor) {
                 if (focused) {
-                    // Filled block in the (placeholder) cursor colour, the
-                    // glyph drawn in the background colour on top.
-                    paintRunBody(painter, style.bg, style.fg, style.bold, style.italic, style.underline,
-                                 runRect, baselineY, text, /*forceFill=*/true);
+                    // Filled block in the theme's cursor colour, the glyph
+                    // drawn in the cell's own background colour on top.
+                    paintRunBody(painter, style.bg, cursorColor_, style.bold, style.italic,
+                                 style.underline, runRect, baselineY, text, /*forceFill=*/true);
                 } else {
                     paintRunBody(painter, style.fg, style.bg, style.bold, style.italic, style.underline,
                                  runRect, baselineY, text, /*forceFill=*/false);
-                    painter.setPen(style.fg);
+                    painter.setPen(cursorColor_);
                     painter.drawRect(runRect.adjusted(0, 0, -1, -1));
                 }
             } else {
@@ -283,23 +306,24 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
     // Ctrl-hovered link: underline the exact span the click would open, so
     // what is clickable is never a guess.
     if (hoverLink_.found && hoverLink_.row < rows) {
-        const int y = (static_cast<int>(hoverLink_.row) + 1) * cellHeight_ - 1;
-        painter.setPen(QColor(Qt::white));
-        painter.drawLine(static_cast<int>(hoverLink_.start_col) * cellWidth_, y,
-                          static_cast<int>(hoverLink_.end_col) * cellWidth_, y);
+        const int y = kPadding + (static_cast<int>(hoverLink_.row) + 1) * cellHeight_ - 1;
+        painter.setPen(cursorColor_);
+        painter.drawLine(kPadding + static_cast<int>(hoverLink_.start_col) * cellWidth_, y,
+                          kPadding + static_cast<int>(hoverLink_.end_col) * cellWidth_, y);
     }
 }
 
 QPoint TerminalWidget::cellAt(const QPoint &pos) const
 {
-    const int col = std::clamp(pos.x() / cellWidth_, 0, static_cast<int>(cols_) - 1);
-    const int row = std::clamp(pos.y() / cellHeight_, 0, static_cast<int>(rows_) - 1);
+    const int col = std::clamp((pos.x() - kPadding) / cellWidth_, 0, static_cast<int>(cols_) - 1);
+    const int row = std::clamp((pos.y() - kPadding) / cellHeight_, 0, static_cast<int>(rows_) - 1);
     return {col, row};
 }
 
 bool TerminalWidget::rightHalf(const QPoint &pos) const
 {
-    return (pos.x() % cellWidth_) * 2 >= cellWidth_;
+    const int xInGrid = std::max(0, pos.x() - kPadding);
+    return (xInGrid % cellWidth_) * 2 >= cellWidth_;
 }
 
 void TerminalWidget::copySelection()

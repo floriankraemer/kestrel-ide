@@ -1,6 +1,7 @@
 #include "terminal_sessions_panel.h"
 
 #include "terminal_widget.h"
+#include "theme.h"
 
 #include <QAction>
 #include <QKeySequence>
@@ -127,6 +128,19 @@ void TerminalSessionsPanel::reapplyKeymap()
     for (int i = 0; i < tabs_->count(); ++i) {
         if (auto *widget = qobject_cast<TerminalWidget *>(tabs_->widget(i))) {
             widget->reapplyKeymap();
+        }
+    }
+}
+
+void TerminalSessionsPanel::reapplyAppearance()
+{
+    // Applies to the Rust-side emulator (fg/bg defaults, the 256-colour
+    // ansi table) for every open session and every one started afterward;
+    // each tab's own selection/cursor tint and font are re-read right below.
+    supervisor_->setPalette(terminalPaletteForTheme(activeThemeName(), appSettings_));
+    for (int i = 0; i < tabs_->count(); ++i) {
+        if (auto *widget = qobject_cast<TerminalWidget *>(tabs_->widget(i))) {
+            widget->reapplyAppearance();
         }
     }
 }

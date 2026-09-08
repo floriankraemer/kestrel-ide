@@ -419,7 +419,7 @@ const DEFAULT_THEME: &str = "dark";
 
 /// Editor font used when `Settings::editor_font_family`/`_size` haven't
 /// been set yet (S2).
-const DEFAULT_EDITOR_FONT_FAMILY: &str = "Monospace";
+const DEFAULT_EDITOR_FONT_FAMILY: &str = "JetBrains Mono";
 const DEFAULT_EDITOR_FONT_SIZE: u32 = 11;
 
 /// Interface font scale used when the user has never chosen one: the
@@ -1025,7 +1025,7 @@ mod tests {
     #[test]
     fn editor_font_defaults_when_unset() {
         let settings = Settings::default();
-        assert_eq!(settings.editor_font_family_or_default(), "Monospace");
+        assert_eq!(settings.editor_font_family_or_default(), "JetBrains Mono");
         assert_eq!(settings.editor_font_size_or_default(), 11);
     }
 

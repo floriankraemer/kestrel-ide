@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ui-shell/src/bridge/ffi.cxxqt.h"
+
 #include <QColor>
 #include <QIcon>
 #include <QPalette>
@@ -104,6 +106,19 @@ struct ChromePalette
 // the same fallback `Settings::theme_name()` resolves an unset theme to.
 ChromePalette chromePaletteForTheme(const QString &themeName);
 
+// The terminal's ANSI palette for one theme (T3): JetBrains Darcula's 16
+// colours for the dark themes (default and "vscode-dark"), and JetBrains
+// Light's for "light" — the same convention `chromePaletteForTheme` follows
+// for what "light" means and what everything else falls back to.
+// Background/foreground follow the editor's own colours
+// (`appSettings->editorColors()`) when the user configured them, else
+// `ChromePalette::canvas`/`text`; selection is `ChromePalette::selection`;
+// the cursor is the resolved foreground. Picking these RGB values per theme
+// name is presentation data (like `chromePaletteForTheme` itself), not a
+// business rule — `AppSettings::terminalFont()` is where a real precedence
+// decision (terminal override vs. editor font) is made, in Rust.
+FfiTerminalPalette terminalPaletteForTheme(const QString &themeName, AppSettings *appSettings);
+
 // The whole application stylesheet for `palette`: chrome, tabs, tree,
 // inputs, scrollbars. Editor text colours are QPalette-driven, not QSS (A3).
 QString chromeStyleSheet(const ChromePalette &palette);
@@ -137,11 +152,15 @@ QPalette paletteForTheme(const QString &themeName);
 // drift apart.
 void applyTheme(const QString &themeName);
 
-// Registers the bundled Inter faces (resources/fonts, SIL OFL) and makes
-// Inter the application font at the spec's 12.5px, before anything captures
-// the application font — applyUiFontScale() scales whatever this installed.
-// Falls back to the platform font, silently, if the resource cannot load.
-void installInterfaceFont();
+// Registers the bundled Inter and JetBrains Mono faces (resources/fonts,
+// both SIL OFL) and makes Inter the application font at the spec's 12.5px,
+// before anything captures the application font — applyUiFontScale() scales
+// whatever this installed. Falls back to the platform font, silently, if a
+// resource cannot load. JetBrains Mono is registered but not applied here —
+// it becomes the default editor/terminal font via
+// `DEFAULT_EDITOR_FONT_FAMILY` (app-config) and `AppSettings::editorFont()`/
+// `terminalFont()`.
+void installBundledFonts();
 
 // A 32x32 alpha mask (`resources/icons/**.a8`, rasterized offline — no
 // Qt6Svg in this build) tinted with one colour. The one mechanism behind

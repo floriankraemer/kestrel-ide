@@ -736,8 +736,8 @@ void buildMainWindow(AppSettings *appSettings,
     const FfiEditorFont savedFont = appSettings->editorFont();
     editorTabs->setEditorFont(QFont(savedFont.family, static_cast<int>(savedFont.size)));
     const FfiEditorColors savedColors = appSettings->editorColors();
-    editorTabs->setEditorColors(savedColors.background, savedColors.foreground,
-                                 savedColors.current_line);
+    editorTabs->setEditorColors(savedColors.background, savedColors.foreground, savedColors.current_line);
+    central.terminalPanel->reapplyAppearance(); // T3: terminal font/palette, like the editor's above.
     const FfiWhitespaceOptions savedWhitespace = appSettings->whitespaceOptions();
     editorTabs->setWhitespaceOptions(WhitespaceOptions{
       savedWhitespace.enabled, savedWhitespace.leading, savedWhitespace.inner,
@@ -1160,7 +1160,7 @@ int run_app()
     // splash nor the main window ever flashes an unstyled frame.
     // Inter before the theme: the sheet's metrics are polished against the
     // application font, and applyUiFontScale() scales whatever is installed.
-    installInterfaceFont();
+    installBundledFonts();
     applyTheme(appSettings->themeName());
     // The global half of the interface font scale, before the splash for the
     // same reason: no frame is ever painted at a size the user did not pick.

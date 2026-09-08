@@ -172,13 +172,13 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W1-1 — `ExecHost`/`WslHost`, `for_path`, tolerant classification of all four spellings | open | |
-| W1-2 — `to_remote`/`to_local`, spelling-preserving on the way out, round-trip identity | open | |
-| W1-3 — `argv` + `command`: `-d`, `--cd`, `-e`, `WSLENV`, `CREATE_NO_WINDOW` | open | |
-| W1-4 — `host::distros()` moved out of `pty_core::shells` (`decode_utf16le`, `wsl_distros`); `pty-core` calls it | open | |
-| W1-5 — `host::resolve_program`: login-shell `command -v`, memoised per `(distro, program)` | open | |
-| W1-6 — exit 127 and `wsl.exe`'s own failures become `Failure::NotFound` | open | |
-| W1-7 — `run`/`spawn` classify their own `work_dir`; no signature change, no caller change | open | |
+| W1-1 — `ExecHost`/`WslHost`, `for_path`, tolerant classification of all four spellings | done | c6e4b0a |
+| W1-2 — `to_remote`/`to_local`, spelling-preserving on the way out, round-trip identity | done | c6e4b0a |
+| W1-3 — `argv` + `command`: `-d`, `--cd`, `-e`, `WSLENV`, `CREATE_NO_WINDOW` | done | c6e4b0a |
+| W1-4 — `host::distros()` moved out of `pty_core::shells` (`decode_utf16le`, `wsl_distros`); `pty-core` calls it | done | 92398bc |
+| W1-5 — `host::resolve_program`: login-shell `command -v`, memoised per `(distro, program)` | done | c6e4b0a |
+| W1-6 — exit 127 and `wsl.exe`'s own failures become `Failure::NotFound` | done | c6e4b0a |
+| W1-7 — `run`/`spawn` classify their own `work_dir`; no signature change, no caller change | done | c6e4b0a |
 
 ### W2 — git, analyzers, tests (callers that need no change)
 

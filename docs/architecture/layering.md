@@ -13,7 +13,7 @@ The building-block diagram lives in [overview.md §3](overview.md#3-building-blo
 | Crate | May depend on | Qt/cxx-qt allowed |
 |-------|---------------|-------------------|
 | `editor-core` | (std, ropey, regex) | **No** |
-| `project-model` | (std, notify, dirs) | **No** |
+| `project-model` | (std, notify, dirs, ignore) — `ignore` (ADR-0051) so the project watcher can skip gitignored directories (`target/`, `node_modules/`) the same way `index-core` already skips them when indexing | **No** |
 | `syntax-core` | (std, tree-sitter plus the bundled grammar crates — see `crates/syntax-core/Cargo.toml`, streaming-iterator, serde, toml, libloading, tree-sitter-language) | **No** |
 | `app-config` | (std, dirs, serde, toml, nucleo-matcher) | **No** |
 | `mcp-server` | `index-core`, `editor-core` (+ std, serde, serde_json, tokio, axum) | **No** |

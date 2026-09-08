@@ -19,6 +19,24 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// On Windows, stop a spawned child from briefly flashing its own console
+/// window — `Command::new` otherwise allocates one for every subprocess,
+/// visible for the instant it takes to run something as quick as `git
+/// status`. No effect (and no `windows-sys`/`winapi` dependency) on other
+/// platforms.
+fn suppress_console_window(command: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = command;
+    }
+}
+
 /// A finished process's captured output.
 #[derive(Debug)]
 pub struct Output {
@@ -76,6 +94,7 @@ pub fn run(
     for (key, value) in env {
         command.env(key, value);
     }
+    suppress_console_window(&mut command);
 
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -211,13 +230,15 @@ impl Spawned {
 /// in — a test runner's TeamCity service messages — rather than parse a
 /// batch report after the process has already exited.
 pub fn spawn(program: &str, args: &[&str], work_dir: &Path) -> Result<Spawned, Failure> {
-    let child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(work_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    suppress_console_window(&mut command);
+    let child = command.spawn();
     match child {
         Ok(child) => Ok(Spawned {
             child: Arc::new(Mutex::new(child)),

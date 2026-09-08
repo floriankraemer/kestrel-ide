@@ -385,21 +385,28 @@ impl ProjectSession {
 
     /// (Re)start the filesystem watcher for the current project root,
     /// replacing any previous watcher (single-watcher-per-session — the
-    /// previous one is dropped, which stops it). No-op if no project is
-    /// open. `on_change` runs on `notify`'s background thread; the caller
-    /// (`ui-shell`) is responsible for marshaling any Qt-object updates onto
-    /// the Qt thread from within it. The `notify::EventKind` is passed
-    /// through (not collapsed to just a path) so the caller can tell a
-    /// structural change (create/remove/rename) apart from a content-only
-    /// write to a file that already exists in the tree.
+    /// previous one is dropped, which stops it). No-op (returning `Ok`) if
+    /// no project is open. `on_change` runs on `notify`'s background
+    /// thread; the caller (`ui-shell`) is responsible for marshaling any
+    /// Qt-object updates onto the Qt thread from within it. The
+    /// `notify::EventKind` is passed through (not collapsed to just a path)
+    /// so the caller can tell a structural change (create/remove/rename)
+    /// apart from a content-only write to a file that already exists in
+    /// the tree.
+    ///
+    /// Returns the `notify` error on failure rather than swallowing it —
+    /// previously this discarded the error via `.ok()`, so a failed watch
+    /// (e.g. the platform's watch-descriptor limit) left the Changes dock
+    /// and the tree silently stale with no way to tell why.
     pub fn start_watcher(
         &mut self,
         on_change: impl Fn(notify::EventKind, PathBuf) + Send + 'static,
-    ) {
+    ) -> notify::Result<()> {
         self.watcher = None;
         if let Some(project) = &self.current {
-            self.watcher = ProjectWatcher::start(project.root.path(), on_change).ok();
+            self.watcher = Some(ProjectWatcher::start(project.root.path(), on_change)?);
         }
+        Ok(())
     }
 
     pub fn current(&self) -> Option<&Project> {

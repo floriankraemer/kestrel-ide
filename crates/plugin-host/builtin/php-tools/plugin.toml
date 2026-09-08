@@ -1,0 +1,57 @@
+# Hand-written, like builtin/csharp/plugin.toml: no upstream package to
+# import here either, so there is no generator script to re-run. It
+# contributes two `analyzers` rather than a `[wasm]` component — PHPStan and
+# PHPCS are native processes the host launches by argv, matching
+# `AnalyzerContribution`'s doc comment (a wasm guest can neither spawn a
+# process nor be trusted with a linter's raw bytes).
+#
+# Composer-specific detection details (which `program-candidates` a Composer
+# project actually installs under, the `.phar`/`.bat` fallback shapes, and
+# the id->package table behind "declared but not installed") live in
+# `analysis-core` (C2), not here: this manifest only lists the candidates,
+# `analysis_core::detect` does the probing.
+id = "php-tools"
+name = "PHP Tools"
+version = "1.0.0"
+api_version = 1
+license = "MIT"
+description = "PHPStan and PHP_CodeSniffer analyzers for PHP projects."
+
+[[contributes.analyzers]]
+id = "phpstan"
+name = "PHPStan"
+# `vendor/bin/phpstan` is what `composer require --dev phpstan/phpstan`
+# installs; `phpstan.phar` is the manually-downloaded PHAR some projects
+# commit instead; a bare `phpstan` covers a global install on PATH. The
+# Windows `vendor/bin/phpstan.bat` shim needs no candidate of its own —
+# `analysis_core::detect::find_program` already retries any path-shaped
+# candidate with a `.bat` suffix.
+program-candidates = ["vendor/bin/phpstan", "phpstan.phar", "phpstan"]
+args = ["analyse", "--error-format=checkstyle", "--no-progress"]
+output-format = "checkstyle-xml"
+
+# Quirk: PHPStan's checkstyle report emits every finding as `<error
+# severity="error">` — PHPStan has no notion of a "warning" level distinct
+# from an error, every rule violation at every level is reported the same
+# way. The map therefore only ever sees the word "error"; leaving "warning"
+# unmapped is not a gap, `AnalyzerDef::severity_for` never receives that word
+# from this tool.
+[contributes.analyzers.severity-map]
+error = "error"
+
+[[contributes.analyzers]]
+id = "phpcs"
+name = "PHP_CodeSniffer"
+# Same shape as phpstan's candidates: `vendor/bin/phpcs` from
+# `composer require --dev squizlabs/php_codesniffer`, `phpcs.phar` as the
+# manually-downloaded fallback, `phpcs` for a global install.
+program-candidates = ["vendor/bin/phpcs", "phpcs.phar", "phpcs"]
+args = ["--report=checkstyle"]
+output-format = "checkstyle-xml"
+
+# Unlike PHPStan, PHPCS's checkstyle report does distinguish `error` from
+# `warning` (a sniff can be configured at either severity), so both words are
+# mapped.
+[contributes.analyzers.severity-map]
+error = "error"
+warning = "warning"

@@ -213,8 +213,8 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W5-1 — a WSL project's default terminal is its distro at its Linux cwd | open | |
-| W5-2 — `terminal-core` link resolution: a Linux `file:line` opens the UNC file | open | |
+| W5-1 — a WSL project's default terminal is its distro at its Linux cwd | done | cf38b1b |
+| W5-2 — `terminal-core` link resolution: a Linux `file:line` opens the UNC file | done (the shared resolver both the terminal and the run console use is `run_core::links::resolve_link`, not `terminal-core` itself — see commit message) | cf38b1b |
 
 ### W6 — watcher and index
 

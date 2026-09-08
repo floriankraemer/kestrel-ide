@@ -195,6 +195,13 @@ impl Default for MinimapSettings {
 pub struct Settings {
     #[serde(default)]
     pub theme: String,
+    /// BCP-47 language tag for the UI, e.g. `"de"`. Empty means "never
+    /// chosen", which resolves to [`DEFAULT_UI_LOCALE`]. Global rather than
+    /// per-project, like [`Settings::theme`]. Read through
+    /// [`Settings::ui_locale_or_default`]. Changing this takes effect after
+    /// a restart — there is no live-retranslation plumbing.
+    #[serde(default)]
+    pub ui_locale: String,
     /// Id of the `icon-themes` contribution whose pack draws file and folder
     /// icons. Empty means "never chosen", which resolves to the first icon
     /// theme the loaded plugins offer — so a fresh install gets icons without
@@ -425,6 +432,14 @@ const MAX_RECENT_FILES: usize = 50;
 /// Theme name used when `Settings::theme` hasn't been set yet (T2).
 const DEFAULT_THEME: &str = "dark";
 
+/// UI locale used when `Settings::ui_locale` hasn't been set yet, or holds a
+/// value we don't ship a translation for.
+const DEFAULT_UI_LOCALE: &str = "en";
+
+/// BCP-47 tags this build ships a translation for. `en` is the `tr()` source
+/// text itself, not a `.ts`/`.qm` file.
+pub const SUPPORTED_UI_LOCALES: &[&str] = &["en", "de", "es", "fr"];
+
 /// Editor font used when `Settings::editor_font_family`/`_size` haven't
 /// been set yet (S2).
 const DEFAULT_EDITOR_FONT_FAMILY: &str = "JetBrains Mono";
@@ -469,6 +484,16 @@ impl Settings {
             DEFAULT_THEME
         } else {
             &self.theme
+        }
+    }
+
+    /// The active UI locale, defaulting to [`DEFAULT_UI_LOCALE`] when unset
+    /// or set to a tag this build has no translation for.
+    pub fn ui_locale_or_default(&self) -> &str {
+        if SUPPORTED_UI_LOCALES.contains(&self.ui_locale.as_str()) {
+            &self.ui_locale
+        } else {
+            DEFAULT_UI_LOCALE
         }
     }
 
@@ -863,6 +888,7 @@ mod tests {
 
         let settings = Settings {
             theme: "dark".to_string(),
+            ui_locale: "de".to_string(),
             icon_theme: "material".to_string(),
             disabled_plugins: vec!["noisy-plugin".to_string()],
             editor_font_size: 14,
@@ -1029,6 +1055,30 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(settings.theme_name(), "light");
+    }
+
+    #[test]
+    fn ui_locale_defaults_when_unset() {
+        let settings = Settings::default();
+        assert_eq!(settings.ui_locale_or_default(), "en");
+    }
+
+    #[test]
+    fn ui_locale_returns_the_set_locale() {
+        let settings = Settings {
+            ui_locale: "de".to_string(),
+            ..Settings::default()
+        };
+        assert_eq!(settings.ui_locale_or_default(), "de");
+    }
+
+    #[test]
+    fn ui_locale_falls_back_on_unsupported_value() {
+        let settings = Settings {
+            ui_locale: "xx".to_string(),
+            ..Settings::default()
+        };
+        assert_eq!(settings.ui_locale_or_default(), "en");
     }
 
     #[test]

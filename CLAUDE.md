@@ -78,6 +78,7 @@ The authoritative per-crate import table lives in `docs/architecture/layering.md
 - Business rules and orchestration live ONLY in Qt-free crates.
 - `bridge.rs` QObjects: translation only — slot → `AppSession` call → signal/model refresh. No rules, no owned domain state.
 - `cpp/` is a humble view: widget construction, layout, dialogs, signal wiring only. Never add an `if` that encodes a business decision to C++.
+- Every user-visible string added to `crates/ui-shell/cpp/` must be `tr()`-wrapped (`QObject::tr()` in a free function, bare `tr()` inside a `QObject`-derived class's own member function) — see ADR-0049.
 
 ## FFI seam rules (ADR-0003)
 

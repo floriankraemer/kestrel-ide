@@ -1,22 +1,29 @@
 #pragma once
 
+#include <QColor>
 #include <QElapsedTimer>
 #include <QFont>
 #include <QPoint>
+#include <QRect>
 #include <QWidget>
 
 #include <functional>
+#include <string>
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 class QAction;
 class QContextMenuEvent;
 class QEvent;
+class QFocusEvent;
 class QKeyEvent;
 class QMouseEvent;
+class QPainter;
 class QPaintEvent;
 class QResizeEvent;
+class QScrollBar;
 class QShowEvent;
+class QWheelEvent;
 
 namespace ui_shell {
 
@@ -26,7 +33,7 @@ namespace ui_shell {
 // `sessionId`) hands over for its one session, and forwards key events back
 // to it. Humble view per CLAUDE.md's hard rule — VT100 interpretation and
 // grid state live entirely in `terminal-core`/the bridge; this class only
-// paints `gridCells(sessionId)`'s snapshot and translates key events to
+// paints `snapshot(sessionId)`'s cached result and translates key events to
 // bytes. Deliberately not QTermWidget (ADR-0007): that would put untestable
 // VT logic behind Qt.
 //
@@ -70,6 +77,13 @@ public:
     // `applyKeymap()` every menu action uses.
     void reapplyKeymap();
 
+    // Re-read the terminal font (`AppSettings::terminalFont()`) and the
+    // theme's palette (`terminalPaletteForTheme(activeThemeName())`, T3)
+    // after Settings > Terminal/Appearance's OK — the per-tab counterpart of
+    // `reapplyKeymap()` above, called from the same place
+    // (`TerminalSessionsPanel::reapplyAppearance`).
+    void reapplyAppearance();
+
 protected:
     // A focused terminal owns its Ctrl-combinations, so this intercepts the
     // window's menu shortcuts before they can swallow them (see the .cpp).
@@ -83,12 +97,53 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseDoubleClickEvent(QMouseEvent *event) override;
     void contextMenuEvent(QContextMenuEvent *event) override;
+    // The cursor renders differently focused vs. not (filled block vs.
+    // outline), so a focus change alone has to trigger a repaint.
+    void focusInEvent(QFocusEvent *event) override;
+    void focusOutEvent(QFocusEvent *event) override;
+    // Scrollback (T5): the wheel scrolls history, except on the alternate
+    // screen (`vim`/`less`), where it becomes arrow keys instead — see the
+    // .cpp's doc comment.
+    void wheelEvent(QWheelEvent *event) override;
 
 private:
+    // One run of consecutive same-styled cells within a row, the unit
+    // `paintEvent` actually draws (T2): grouping by this rather than
+    // painting cell-by-cell turns "one fillRect + one drawText per
+    // character" into one of each per stretch of uniformly-styled text,
+    // which is what a line of plain output mostly is.
+    struct CellStyle
+    {
+        QColor fg;
+        QColor bg;
+        bool bold = false;
+        bool italic = false;
+        bool underline = false;
+        bool selected = false;
+        bool isCursor = false;
+
+        bool operator==(const CellStyle &other) const
+        {
+            return fg == other.fg && bg == other.bg && bold == other.bold && italic == other.italic
+              && underline == other.underline && selected == other.selected && isCursor == other.isCursor;
+        }
+    };
+
     // Recompute rows/cols from the widget's current pixel size and the
     // monospace font's cell metrics, and — if that changed the grid size —
     // either `start()` the session (first call) or `resize()` it.
     void syncGridSizeToWidget();
+
+    // (Re)reads `appSettings_->terminalFont()` into `font_`/the bold/italic/
+    // bold-italic variants and their cell metrics. Shared by the constructor
+    // and `reapplyAppearance()` so the two can never resolve the font
+    // differently.
+    void applyFont();
+
+    // (Re)reads the theme's terminal palette into `bgColor_`/
+    // `selectionColor_`/`cursorColor_` and this widget's own backdrop.
+    // Shared the same way `applyFont()` is.
+    void applyPalette();
 
     // Pixel -> cell arithmetic, the one translation this view legitimately
     // owns: which cell a position lands in (clamped to the grid), and
@@ -97,16 +152,57 @@ private:
     QPoint cellAt(const QPoint &pos) const;
     bool rightHalf(const QPoint &pos) const;
 
+    // Translate one Qt key event to `FfiTerminalKey` + code point and hand
+    // it to `supervisor_->sendKey()` — pure enum/modifier translation (a
+    // humble view concern); the xterm escape-sequence encoding itself lives
+    // in `terminal_core::keys::encode` (see the .cpp's doc comment).
+    // Returns false for a key this widget doesn't translate (e.g. a bare
+    // modifier press), leaving it for `QWidget::keyPressEvent`.
+    bool sendTranslatedKey(QKeyEvent *event);
+
     // Copy the current selection to the clipboard, and open the hovered
     // link — both no-ops when there is nothing to act on.
     void copySelection();
     void pasteClipboard();
     void openLink(const FfiTerminalLink &link);
 
+    // Scrollback (T5). `layoutScrollBar` positions it against the widget's
+    // right edge (called from `resizeEvent`, alongside the grid-size sync);
+    // `refreshScrollState` re-reads `supervisor_->scrollState()` and updates
+    // the bar's range/value without re-entering `onScrollBarValueChanged`
+    // (it blocks the bar's own signal while doing so — otherwise dragging
+    // the thumb and a `gridUpdated`-driven refresh would fight each other).
+    // `scrollLines` is the one place wheel/Shift+PgUp/PgDn/Home/End funnel
+    // through: it calls the FFI scroll, marks the snapshot stale, refreshes
+    // the bar, and repaints.
+    void layoutScrollBar();
+    void refreshScrollState();
+    void scrollLines(int delta);
+    void onScrollBarValueChanged(int value);
+
     // Refresh `hoverLink_` for a mouse position, repainting when the
     // hovered span changed. Links only light up while Ctrl is held, so a
     // plain drag over output never turns into a link gesture.
     void updateHoverLink(const QPoint &pos, bool ctrlHeld);
+
+    // A cell's resolved paint style: fg/bg with `inverse` and the selection
+    // tint already folded in, plus the flags a run boundary is drawn on.
+    // `row`/`col` are only needed to compare against the cursor position.
+    CellStyle styleFor(const FfiTerminalCell &cell, quint32 row, quint32 col, quint32 cursorRow,
+                        quint32 cursorCol) const;
+
+    // The cached QFont matching a run's weight/slant — built once in the
+    // constructor rather than constructed per run.
+    const QFont &fontFor(bool bold, bool italic) const;
+
+    // Fill `rect` with `bg` (skipped when `bg` already matches the widget's
+    // black backdrop, unless `forceFill` — the cursor block must always be
+    // drawn even if it happens to equal that colour) and, unless `text` is
+    // empty or all spaces, draw it in `fg` with its baseline at `baselineY`;
+    // draw a one-pixel underline when `underline`.
+    void paintRunBody(QPainter &painter, const QColor &fg, const QColor &bg, bool bold, bool italic,
+                       bool underline, const QRect &rect, qreal baselineY, const std::u32string &text,
+                       bool forceFill);
 
     TerminalSupervisor *supervisor_;
     OpenAt openAt_;
@@ -116,10 +212,21 @@ private:
     QAction *copyAction_ = nullptr;
     QAction *pasteAction_ = nullptr;
     QFont font_;
+    QFont fontBold_;
+    QFont fontItalic_;
+    QFont fontBoldItalic_;
+    qreal ascent_ = 0;
     int cellWidth_ = 1;
     int cellHeight_ = 1;
     quint32 rows_ = 0;
     quint32 cols_ = 0;
+    // The widget's own backdrop and the selection/cursor tints (T3),
+    // resolved from the active theme by `applyPalette()` — no longer the
+    // hardcoded black/blue placeholders `styleFor()`/`paintEvent()` used to
+    // paint with regardless of theme.
+    QColor bgColor_{ Qt::black };
+    QColor selectionColor_{ 38, 79, 150 };
+    QColor cursorColor_{ Qt::white };
     bool started_ = false;
     bool dragging_ = false;
     // Time since the last double click, used to recognise the press that
@@ -127,6 +234,19 @@ private:
     QElapsedTimer doubleClickTimer_;
     // The link under the pointer, `found == false` when there is none.
     FfiTerminalLink hoverLink_{};
+
+    // The last snapshot fetched from `supervisor_->snapshot()`, and whether
+    // it is still current (T2). `paintEvent` re-fetches only when this is
+    // true — set by `gridUpdated`, a selection change, a resize, and now a
+    // scroll (T5), which is the whole reason this is a flag `paintEvent`
+    // checks rather than an unconditional per-frame fetch.
+    FfiTerminalSnapshot cachedSnapshot_{};
+    bool snapshotStale_ = true;
+
+    // Scrollback (T5): a plain vertical scrollbar this widget positions
+    // itself in `layoutScrollBar` (not a `QAbstractScrollArea`, which this
+    // custom-painted grid isn't one of).
+    QScrollBar *scrollBar_ = nullptr;
 };
 
 } // namespace ui_shell

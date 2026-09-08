@@ -13,6 +13,10 @@
         <file>fonts/Inter-Regular.ttf</file>
         <file>fonts/Inter-Medium.ttf</file>
         <file>fonts/Inter-SemiBold.ttf</file>
+        <file>fonts/JetBrainsMono-Regular.ttf</file>
+        <file>fonts/JetBrainsMono-Bold.ttf</file>
+        <file>fonts/JetBrainsMono-Italic.ttf</file>
+        <file>fonts/JetBrainsMono-BoldItalic.ttf</file>
         <file>icons/symbols/class.a8</file>
         <file>icons/symbols/struct.a8</file>
         <file>icons/symbols/enum.a8</file>

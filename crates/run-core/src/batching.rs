@@ -340,8 +340,10 @@ mod tests {
         let t2 = t1 + MAX_BATCH_INTERVAL + Duration::from_millis(1);
         events_b.extend(batcher.flush_due(t2));
 
-        let mut emulator =
-            terminal_core::TerminalEmulator::new(terminal_core::GridSize::new(5, 80));
+        let mut emulator = terminal_core::TerminalEmulator::new(
+            terminal_core::GridSize::new(5, 80),
+            terminal_core::Palette::xterm(),
+        );
         for event in events_a.into_iter().chain(events_b) {
             if let BatchedOutput::Output(text) = event {
                 emulator.feed(text.as_bytes());

@@ -180,6 +180,16 @@ impl PtySession {
         if let Some(dir) = &shell.cwd {
             cmd.cwd(dir);
         }
+        // A GUI-launched IDE has no controlling terminal, so `TERM` is
+        // usually absent from the inherited environment — every curses
+        // program the shell runs (vim, less, htop) then falls back to a
+        // dumb terminal or refuses to start outright ("TERM environment
+        // variable not set"). Default it to what this terminal actually
+        // emulates; applied before `shell.env` so an explicit `TERM` there
+        // (or `$TERM` already set in the inherited environment) still wins.
+        if env::var_os("TERM").is_none_or(|v| v.is_empty()) {
+            cmd.env("TERM", "xterm-256color");
+        }
         for (key, value) in &shell.env {
             cmd.env(key, value);
         }
@@ -693,5 +703,39 @@ mod cwd_env_tests {
         let mut session = PtySession::spawn(&spec, PtySize::new(24, 80)).unwrap();
         let out = read_output(&mut session, "set-by-test");
         assert!(out.contains("set-by-test:haspath"), "got {out:?}");
+    }
+
+    /// A GUI-launched IDE typically has no `TERM` in its own environment, so
+    /// the spawned shell must get a sane default rather than leaving curses
+    /// programs (vim, less, htop) to guess or refuse to start.
+    #[test]
+    fn term_defaults_to_xterm_256color_when_unset() {
+        // SAFETY: nextest runs each test in its own process, so this does
+        // not race another test's view of the environment.
+        let original = env::var_os("TERM");
+        unsafe {
+            env::remove_var("TERM");
+        }
+        let spec = ShellSpec::new("/bin/sh", vec!["-c".into(), "echo \"TERM=$TERM\"".into()]);
+        let mut session = PtySession::spawn(&spec, PtySize::new(24, 80)).unwrap();
+        let out = read_output(&mut session, "TERM=");
+        unsafe {
+            match original {
+                Some(v) => env::set_var("TERM", v),
+                None => env::remove_var("TERM"),
+            }
+        }
+        assert!(out.contains("TERM=xterm-256color"), "got {out:?}");
+    }
+
+    /// An explicit `TERM` — from settings-configured env, or already present
+    /// in the inherited environment — must win over the built-in default.
+    #[test]
+    fn explicit_term_overrides_the_default() {
+        let spec = ShellSpec::new("/bin/sh", vec!["-c".into(), "echo \"TERM=$TERM\"".into()])
+            .with_env(vec![("TERM".into(), "screen".into())]);
+        let mut session = PtySession::spawn(&spec, PtySize::new(24, 80)).unwrap();
+        let out = read_output(&mut session, "TERM=");
+        assert!(out.contains("TERM=screen"), "got {out:?}");
     }
 }

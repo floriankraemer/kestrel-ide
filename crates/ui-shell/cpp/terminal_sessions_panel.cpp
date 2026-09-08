@@ -1,6 +1,7 @@
 #include "terminal_sessions_panel.h"
 
 #include "terminal_widget.h"
+#include "theme.h"
 
 #include <QAction>
 #include <QKeySequence>
@@ -33,9 +34,22 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
     connect(newTabButton_, &QToolButton::clicked, this, [this]() { addSession(); });
 
     shellMenu_ = new QMenu(newTabButton_);
-    // Rebuilt on every open: a WSL distro installed while the IDE is
-    // running should show up without a restart.
-    connect(shellMenu_, &QMenu::aboutToShow, this, &TerminalSessionsPanel::refreshShellMenu);
+    // Rebuilt from the cache (instant) on every open, and a background
+    // re-detect is kicked off alongside it: a WSL distro installed while
+    // the IDE is running should show up without a restart, but opening the
+    // menu must never block on the `wsl.exe` round trip that finds out.
+    connect(shellMenu_, &QMenu::aboutToShow, this, [this]() {
+        refreshShellMenu();
+        supervisor_->refreshShells();
+    });
+    // The menu only rebuilds itself from a landed background detect while
+    // it is actually open — no point re-populating a closed menu the user
+    // hasn't looked at yet.
+    connect(supervisor_, &TerminalSupervisor::shellsChanged, this, [this]() {
+        if (shellMenu_->isVisible()) {
+            refreshShellMenu();
+        }
+    });
     newTabButton_->setMenu(shellMenu_);
 
     tabs_->setCornerWidget(newTabButton_, Qt::TopRightCorner);
@@ -66,6 +80,10 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
     // predecessor of this class, there is always at least one shell ready
     // to use as soon as the dock is shown.
     addSession();
+
+    // Kick off the background detect immediately, so the catalogue is
+    // already warm by the time anyone opens the "+" dropdown.
+    supervisor_->refreshShells();
 }
 
 void TerminalSessionsPanel::refreshShellMenu()
@@ -110,6 +128,19 @@ void TerminalSessionsPanel::reapplyKeymap()
     for (int i = 0; i < tabs_->count(); ++i) {
         if (auto *widget = qobject_cast<TerminalWidget *>(tabs_->widget(i))) {
             widget->reapplyKeymap();
+        }
+    }
+}
+
+void TerminalSessionsPanel::reapplyAppearance()
+{
+    // Applies to the Rust-side emulator (fg/bg defaults, the 256-colour
+    // ansi table) for every open session and every one started afterward;
+    // each tab's own selection/cursor tint and font are re-read right below.
+    supervisor_->setPalette(terminalPaletteForTheme(activeThemeName(), appSettings_));
+    for (int i = 0; i < tabs_->count(); ++i) {
+        if (auto *widget = qobject_cast<TerminalWidget *>(tabs_->widget(i))) {
+            widget->reapplyAppearance();
         }
     }
 }

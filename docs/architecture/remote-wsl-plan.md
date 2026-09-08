@@ -220,8 +220,8 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W6-1 — `ProjectWatcher::start` uses `notify::PollWatcher` on a remote root | open | |
-| W6-2 — state the index consequence; no code | open | |
+| W6-1 — `ProjectWatcher::start` uses `notify::PollWatcher` on a remote root | done (takes `is_remote: bool` from `ui-shell` rather than depending on `process-exec` itself — a domain crate stays below the support layer, see commit message) | aed7d21 |
+| W6-2 — state the index consequence; no code | done | aed7d21 |
 
 ### W7 — UX
 

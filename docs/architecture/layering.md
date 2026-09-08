@@ -117,6 +117,11 @@ That test target is the one place `app-config` may be read from a test rather th
   Its diagnostics publish into the same `diagnostics_core::DiagnosticStore` a language server's do (ADR-0046), keyed under their own `(source, uri)` so neither clobbers the other: one store, one question, one place to look.
   Its text patterns overlap `run_core::links`' catalogue and stay separate on purpose — a link resolver wants a location, a build wants the severity and message too, and one table serving both would satisfy neither.
 
+- **Which analyzers exist for a project, how to run them, and what their output means** lives in `analysis-core` (ADR-0047): program-candidate/config-file/`composer.json` detection, the `OnType`/`OnSave`/`Manual` trigger scheduler with its per-`(analyzer, file)` in-flight rule, the unsaved-buffer strategies, and the `checkstyle-xml` output parser.
+  It never decides which analyzers a project has enabled or how they are triggered — that is `settings_model::analysis` and `app_config::analysis`'s `[analysis]` section (ADR-0022's per-project-scoping rule, `ScopedField::Analysis`) — this crate only runs what it is asked to and reports back.
+  Its findings publish into the same `diagnostics_core::DiagnosticStore` a language server's and a build's do (ADR-0046), keyed under their own `analysis:<analyzer-id>` source.
+  Runs over pipes rather than a PTY, since `run_core::Supervisor`'s tty default hard-wraps at 120 columns and would corrupt a checkstyle-xml or JSON payload — the one place in the codebase that deliberately does not follow the PTY-for-everything rule.
+
 - **How a debugger is driven** lives in `dap-core` (ADR-0041): the Debug Adapter Protocol's envelope, the session handshake, the adapter catalog and, from D2, the breakpoint store.
   It reads `run_core::toolchain` for which adapter a project implies rather than keeping a second mapping, and it types only the protocol bodies something actually reads a field out of.
   A capability the adapter did not declare is unsupported: the view disables an action because the adapter said so, never because C++ guessed.

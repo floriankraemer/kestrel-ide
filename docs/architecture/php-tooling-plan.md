@@ -127,7 +127,7 @@ Update the row **in the same commit** that finishes the task.
 | B7 — `[analysis]` settings section, `ScopedField::Analysis`, `settings-model::analysis` rows | done | `2c3e6a5` |
 | B8 — `AnalysisServiceRust`: runs on worker threads, publishes into the store | done | `1dbab9c` |
 | B9 — view: the Analysis settings page, an "Inspect Project" action, per-analyzer status in the status bar | done | `a6afd56` |
-| B10 — ADR-0047 + `layering.md` rows + gates | open | |
+| B10 — ADR-0047 + `layering.md` rows + gates | done | `92780dd` |
 
 ### C — the `php-tools` built-in plugin
 

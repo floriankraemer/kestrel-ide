@@ -105,6 +105,34 @@ fn a_good_manifest_loads_with_its_contributions() {
 }
 
 #[test]
+fn a_color_theme_contribution_is_readable_from_the_registry() {
+    let fixture = Fixture::new();
+    fixture.install(
+        "acme.themes",
+        r#"
+        id = "acme.themes"
+        name = "Acme Themes"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.color-themes]]
+        id = "midnight"
+        label = "Midnight"
+        path = "midnight.toml"
+        "#,
+    );
+
+    let registry = fixture.load(&[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let themes: Vec<_> = registry.color_themes().collect();
+    assert_eq!(themes.len(), 1);
+    assert_eq!(themes[0].0.id(), "acme.themes");
+    assert_eq!(themes[0].1.id, "midnight");
+    assert_eq!(themes[0].1.path, PathBuf::from("midnight.toml"));
+}
+
+#[test]
 fn a_missing_plugins_directory_is_not_an_error() {
     let dir = TempDir::new().expect("temp dir");
     let registry = load(dir.path(), &[], &[]);

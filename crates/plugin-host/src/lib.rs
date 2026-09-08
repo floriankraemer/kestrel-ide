@@ -47,9 +47,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
-    AnalyzerContribution, CommandContribution, IconThemeContribution, LanguageServerContribution,
-    LoadErrorKind, PluginLoadError, PluginManifest, PreviewContribution, TestFrameworkContribution,
-    MANIFEST_FILE, QUARANTINE_DIR,
+    AnalyzerContribution, ColorThemeContribution, CommandContribution, IconThemeContribution,
+    LanguageServerContribution, LoadErrorKind, PluginLoadError, PluginManifest,
+    PreviewContribution, TestFrameworkContribution, MANIFEST_FILE, QUARANTINE_DIR,
 };
 
 pub use plugin::{BuiltinPlugin, LoadedPlugin, PluginSource};
@@ -114,6 +114,18 @@ impl PluginRegistry {
                 .manifest()
                 .contributes
                 .icon_themes
+                .iter()
+                .map(move |theme| (plugin, theme))
+        })
+    }
+
+    /// Every `color-themes` contribution, with the plugin that offers it.
+    pub fn color_themes(&self) -> impl Iterator<Item = (&LoadedPlugin, &ColorThemeContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .color_themes
                 .iter()
                 .map(move |theme| (plugin, theme))
         })

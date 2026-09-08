@@ -490,7 +490,9 @@ QTreeView, QListView, QListWidget, QTreeWidget, QTableView {
     outline: 0;
 }
 
-QTreeView::item, QListView::item, QListWidget::item {
+QTreeView::item, QListView::item, QListWidget::item,
+QTreeView::item:hover, QListView::item:hover, QListWidget::item:hover,
+QTreeView::item:selected, QListView::item:selected, QListWidget::item:selected {
     min-height: {row-h}px;
     padding: 0 {sp-1}px;
     border-radius: {r-ctl}px;

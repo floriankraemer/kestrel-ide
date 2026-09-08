@@ -27,4 +27,4 @@ pub use catalog::Adapter;
 pub use error::DapError;
 pub use inline_values::{inline_values, InlineValue};
 pub use protocol::{Capabilities, Message, Scope, StackFrame, Stopped, Thread, Variable};
-pub use session::{DapSession, SessionListener};
+pub use session::{local_path, source_path, DapSession, SessionListener};

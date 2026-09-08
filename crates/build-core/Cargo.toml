@@ -8,6 +8,11 @@ edition = "2021"
 # launched the same way a run is, so nothing here re-derives either which
 # build tool a project uses or how to start one.
 run-core = { path = "../run-core" }
+# The WSL execution/path-translation seam (ADR-0052): a build's compiler ran
+# inside the distro on a WSL project root, so `diagnostics::resolve_path`
+# needs `ExecHost` to turn its Linux-shaped file references back into the
+# UNC paths the Problems dock and "open file" both expect.
+process-exec = { path = "../process-exec" }
 # The one Problems model (ADR-0046): `BuildDiagnostic::severity` is
 # `diagnostics_core::Severity`, so a build's diagnostics and a language
 # server's need no severity translation at the seam.

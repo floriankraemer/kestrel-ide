@@ -73,8 +73,23 @@ impl Supervisor {
             }
         }
 
-        let mut shell =
-            ShellSpec::new(spec.program.clone(), spec.args.clone()).with_env(spec.env.clone());
+        // W4-1: a PTY spawn (`pty-core`) never touches `process_exec::run`/
+        // `spawn`, so it gets none of their automatic WSL wrapping (W1-7) —
+        // `LaunchSpec`'s argv is translated by hand here, the same
+        // `ExecHost::argv` every other seam uses. A local `cwd` (or none)
+        // makes `ExecHost::for_path` answer `Local` and this a no-op.
+        let cwd_for_host = spec
+            .cwd
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let host = process_exec::host::ExecHost::for_path(&cwd_for_host);
+        let resolved_program =
+            process_exec::host::resolve_program(&host, &spec.program, &cwd_for_host)
+                .unwrap_or_else(|| spec.program.clone());
+        let arg_refs: Vec<&str> = spec.args.iter().map(String::as_str).collect();
+        let (program, args) = host.argv(&resolved_program, &arg_refs, &cwd_for_host);
+
+        let mut shell = ShellSpec::new(program, args).with_env(spec.env.clone());
         if let Some(cwd) = &spec.cwd {
             shell = shell.with_cwd(cwd.clone());
         }
@@ -476,5 +491,71 @@ mod tests {
             supervisor.wait(ConsoleId(99)),
             Err(RunError::UnknownConsole)
         ));
+    }
+
+    // W4-1: `launch` translates `LaunchSpec`'s argv through `ExecHost`
+    // itself — a PTY spawn never goes through `process_exec::run`/`spawn`'s
+    // automatic wrapping. Proven with the same fake-`wsl.exe`-on-`PATH`
+    // trick `process-exec`'s own tests use.
+    #[test]
+    fn launch_wraps_a_remote_cwd_through_wsl_exe() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Mutex;
+        static PATH_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = PATH_LOCK.lock().unwrap();
+
+        let bin_dir = tempfile::tempdir().unwrap();
+        let script_path = bin_dir.path().join("wsl.exe");
+        {
+            let mut script = std::fs::File::create(&script_path).unwrap();
+            write!(
+                script,
+                "#!/bin/sh\n\
+                 for arg in \"$@\"; do\n\
+                 \x20\x20if [ \"$arg\" = \"-lc\" ]; then echo /bin/sh; exit 0; fi\n\
+                 done\n\
+                 echo \"$@\"\n"
+            )
+            .unwrap();
+        }
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+
+        let cwd = std::path::PathBuf::from("//wsl.localhost/Ubuntu/tmp/run-core-e2e");
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: serialized by PATH_LOCK.
+        unsafe {
+            std::env::set_var(
+                "PATH",
+                format!("{}:{original_path}", bin_dir.path().display()),
+            );
+        }
+        let mut supervisor = Supervisor::new();
+        let mut launch_spec = spec("/bin/sh", vec!["-c", "true"]);
+        launch_spec.cwd = Some(cwd);
+        let id = supervisor.launch("cfg", &launch_spec).expect("launch");
+        unsafe {
+            std::env::set_var("PATH", original_path);
+        }
+
+        let mut reader = supervisor.take_reader(id).expect("take_reader");
+        let mut buf = [0u8; 256];
+        let mut collected = Vec::new();
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => collected.extend_from_slice(&buf[..n]),
+                Err(_) => break,
+            }
+        }
+        let output = String::from_utf8_lossy(&collected);
+        assert!(
+            output.contains("-d Ubuntu --cd /tmp/run-core-e2e -e /bin/sh -c true"),
+            "expected the wrapped argv on the PTY, got: {output:?}"
+        );
     }
 }

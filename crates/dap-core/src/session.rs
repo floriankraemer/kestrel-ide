@@ -16,7 +16,8 @@
 
 use std::collections::HashMap;
 use std::io::{BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::path::Path;
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -67,6 +68,32 @@ pub struct DapSession {
     /// than assumed: the event is what says the adapter is ready for
     /// breakpoints, and DAP puts no ordering guarantee on it beyond that.
     initialized: Arc<(Mutex<bool>, Condvar)>,
+    /// Where this session's adapter runs (ADR-0052) — derived once, from
+    /// `start`'s `cwd`, the same way `LspManager` derives its own.
+    host: process_exec::host::ExecHost,
+}
+
+/// A `Source.path` this client sends to the adapter — `setBreakpoints`'s
+/// `source.path`, most commonly. Windows path in, translated through `host`
+/// (a no-op unless `host` is remote): the adapter runs inside the distro on
+/// a WSL project root and only ever understands its own Linux paths.
+pub fn source_path(host: &process_exec::host::ExecHost, path: &Path) -> String {
+    if host.is_remote() {
+        host.to_remote(path)
+    } else {
+        path.display().to_string()
+    }
+}
+
+/// The reverse of [`source_path`]: a `Source.path` the adapter sent back
+/// (`StackFrame::path`, most commonly) translated to the Windows path the
+/// share actually serves.
+pub fn local_path(host: &process_exec::host::ExecHost, path: &str) -> String {
+    if host.is_remote() {
+        host.to_local(path).to_string_lossy().into_owned()
+    } else {
+        path.to_string()
+    }
 }
 
 impl DapSession {
@@ -82,15 +109,25 @@ impl DapSession {
         cwd: Option<&std::path::Path>,
         mut listener: Box<dyn SessionListener>,
     ) -> Result<Arc<DapSession>, DapError> {
-        let mut command = Command::new(&adapter.program);
+        // W4-5: `ExecHost::command` (ADR-0052) replaces a bare `Command::new`
+        // — it runs the adapter inside the distro for a WSL project root,
+        // and `resolve_program` reports a missing adapter binary plainly
+        // rather than as a generic spawn failure, the same rule `lsp-core`'s
+        // `connect` follows. `Local` never probes, so this costs nothing on
+        // every other project.
+        let host_cwd = cwd
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let host = process_exec::host::ExecHost::for_path(&host_cwd);
+        let resolved_program =
+            process_exec::host::resolve_program(&host, &adapter.program, &host_cwd)
+                .unwrap_or_else(|| adapter.program.clone());
+        let arg_refs: Vec<&str> = adapter.args.iter().map(String::as_str).collect();
+        let mut command = host.command(&resolved_program, &arg_refs, &host_cwd, &[]);
         command
-            .args(&adapter.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        if let Some(cwd) = cwd {
-            command.current_dir(cwd);
-        }
 
         let mut child = command.spawn().map_err(|err| DapError::AdapterNotStarted {
             adapter: adapter.id.clone(),
@@ -121,6 +158,7 @@ impl DapSession {
             next_seq: AtomicI64::new(1),
             capabilities: Mutex::new(Capabilities::default()),
             initialized: Arc::new((Mutex::new(false), Condvar::new())),
+            host,
         });
 
         let reader_session = Arc::clone(&session);
@@ -196,6 +234,14 @@ impl DapSession {
     /// A launch that genuinely fails is reported by the adapter as an
     /// `output` event and a `terminated`, which the caller is listening for
     /// anyway.
+    /// Where this session's adapter runs (ADR-0052) — `ExecHost::Local`
+    /// unless the debugged project's root is a WSL UNC path. Callers use
+    /// [`source_path`]/[`local_path`] against this to translate a
+    /// `Source.path` at the seam.
+    pub fn host(&self) -> &process_exec::host::ExecHost {
+        &self.host
+    }
+
     pub fn launch(&self, arguments: Value) -> Result<(), DapError> {
         self.send_request("launch", arguments)
     }
@@ -387,6 +433,41 @@ mod tests {
             args: vec!["-c".into(), script.to_string()],
             install_hint: "install the test adapter".into(),
         }
+    }
+
+    // W4-5: `source_path`/`local_path` translate a `Source.path` at the
+    // seam, a no-op on `ExecHost::Local` and both directions of the same
+    // rule on a WSL root.
+    #[test]
+    fn source_path_is_unchanged_on_a_local_host() {
+        let host = process_exec::host::ExecHost::Local;
+        assert_eq!(
+            source_path(&host, Path::new("/home/f/proj/src/main.rs")),
+            "/home/f/proj/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn source_path_translates_a_unc_path_to_linux_on_a_wsl_host() {
+        let host =
+            process_exec::host::ExecHost::for_path(Path::new("//wsl.localhost/Ubuntu/home/f/proj"));
+        assert_eq!(
+            source_path(
+                &host,
+                Path::new("//wsl.localhost/Ubuntu/home/f/proj/src/main.rs")
+            ),
+            "/home/f/proj/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn local_path_translates_a_linux_path_back_to_the_unc_path() {
+        let host =
+            process_exec::host::ExecHost::for_path(Path::new("//wsl.localhost/Ubuntu/home/f/proj"));
+        assert_eq!(
+            local_path(&host, "/home/f/proj/src/main.rs"),
+            "//wsl.localhost/Ubuntu/home/f/proj/src/main.rs"
+        );
     }
 
     #[derive(Default)]

@@ -7,6 +7,12 @@ edition = "2021"
 # Transport: spawns the run's shell/process and kills its whole tree
 # (F4-1/F4-2). `run-core` never touches a process directly.
 pty-core = { path = "../pty-core" }
+# The WSL execution/path-translation seam (ADR-0052): `Supervisor::launch`
+# wraps `LaunchSpec`'s argv through `ExecHost` before handing it to
+# `pty-core`'s `ShellSpec` (a PTY spawn, so it does not go through
+# `process_exec::run`/`spawn`'s own automatic wrapping), and
+# `toolchain::python_program` asks `ExecHost` instead of `cfg!(windows)`.
+process-exec = { path = "../process-exec" }
 # Persistence: a run configuration is project-shaped (ADR-0022), so this
 # crate reuses `app_config::RunConfigSetting` as its own `RunConfig` rather
 # than keeping a second type in sync with a manual mapping.

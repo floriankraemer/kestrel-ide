@@ -11,7 +11,7 @@
 //! `diagnostics_core::Diagnostic` and publishes it into the same store an
 //! `lsp-core` diagnostic lands in.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The one Problems model's severity (ADR-0046) — shared with `lsp-core`
 /// rather than a build-specific three-value enum, so the seam that used to
@@ -30,6 +30,38 @@ pub fn severity_from_word(word: &str) -> Severity {
         "warning" | "warn" => Severity::Warning,
         _ => Severity::Information,
     }
+}
+
+/// Resolve one file reference from a build tool's output against
+/// `project_root`, shared by every parser (`cargo_json`, `text`) so the
+/// WSL rule below lives in exactly one place.
+///
+/// `raw_path` may be absolute or relative. On a `Local` project root the
+/// rule is the same as always: absolute is taken as-is, relative is joined
+/// onto `project_root`. On a WSL project root (W4-4) the compiler ran
+/// *inside the distro*, so `raw_path` — absolute or relative — is a Linux
+/// path regardless of what platform this binary itself was built for;
+/// `PathBuf::join`ing it straight onto a Windows UNC `project_root` would
+/// only accidentally work (or silently not, on a real Windows build where
+/// `Path::is_absolute` never recognises a bare `/...` as absolute at all).
+/// `ExecHost::to_remote`/`to_local` is used explicitly instead, the same
+/// seam every other translation site in this plan goes through.
+pub fn resolve_path(raw_path: &str, project_root: &Path) -> PathBuf {
+    let host = process_exec::host::ExecHost::for_path(project_root);
+    if !host.is_remote() {
+        let path = Path::new(raw_path);
+        return if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            project_root.join(path)
+        };
+    }
+    let linux_path = if raw_path.starts_with('/') {
+        raw_path.to_string()
+    } else {
+        format!("{}/{raw_path}", host.to_remote(project_root))
+    };
+    host.to_local(&linux_path)
 }
 
 /// One problem a build reported.
@@ -66,5 +98,48 @@ mod tests {
     #[test]
     fn an_unknown_word_is_information_rather_than_an_error() {
         assert_eq!(severity_from_word("blorp"), Severity::Information);
+    }
+
+    // W4-4: on a Local project root, resolve_path keeps today's rule
+    // exactly.
+    #[test]
+    fn a_relative_path_joins_onto_a_local_project_root() {
+        assert_eq!(
+            resolve_path("src/main.rs", Path::new("/p")),
+            PathBuf::from("/p/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn an_absolute_path_is_kept_as_is_on_a_local_project_root() {
+        assert_eq!(
+            resolve_path("/elsewhere/lib.rs", Path::new("/p")),
+            PathBuf::from("/elsewhere/lib.rs")
+        );
+    }
+
+    // On a WSL project root, both a relative and an absolute file reference
+    // are Linux paths (the compiler ran in the distro) and must come back
+    // as the UNC path under the root, not a bare Linux path pasted onto it.
+    #[test]
+    fn a_relative_path_resolves_to_the_unc_path_on_a_wsl_root() {
+        assert_eq!(
+            resolve_path(
+                "src/main.rs",
+                Path::new("//wsl.localhost/Ubuntu/home/f/proj")
+            ),
+            PathBuf::from("//wsl.localhost/Ubuntu/home/f/proj/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn an_absolute_linux_path_resolves_to_the_unc_path_on_a_wsl_root() {
+        assert_eq!(
+            resolve_path(
+                "/home/f/.cargo/registry/src/lib.rs",
+                Path::new("//wsl.localhost/Ubuntu/home/f/proj")
+            ),
+            PathBuf::from("//wsl.localhost/Ubuntu/home/f/.cargo/registry/src/lib.rs")
+        );
     }
 }

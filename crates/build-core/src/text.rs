@@ -84,12 +84,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
         if raw_path.is_empty() {
             continue;
         }
-        let path = Path::new(raw_path);
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            project_root.join(path)
-        };
+        let path = crate::diagnostics::resolve_path(raw_path, project_root);
 
         return Some(BuildDiagnostic {
             path,

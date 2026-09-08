@@ -60,7 +60,7 @@ ADR numbers 0006 and 0013–0015 were never used; the gaps are historical and in
 
 ## Plans
 
-All plan documents are complete except the plugin-host-and-icon-themes plan and the run-build-debug parity plan, which are the two currently being delivered; the rest remain as historical records of how each feature phase was delivered.
+All plan documents are complete except the plugin-host-and-icon-themes plan, the run-build-debug parity plan, and the remote WSL plan, which are the three currently being delivered; the rest remain as historical records of how each feature phase was delivered.
 (An earlier version of this line called the index-performance and large-files plans incomplete. Both of their Progress tables are fully `done`; the claim was stale.)
 
 - [MVP implementation plan](architecture/mvp-implementation-plan.md) — MVP editor shell; marked historical.
@@ -83,6 +83,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan and 
 - [Terminal experience plan](architecture/terminal-experience-plan.md) — an instant shell catalogue, smooth output, JetBrains Mono, and a theme-following 256-colour ANSI palette; in delivery, carries its own Progress table.
 - [PHP tooling plan](architecture/php-tooling-plan.md) — PHPStan, PHP_CodeSniffer and PHPUnit integrations on a generalized diagnostics model and a new analyzers/test-frameworks contribution point; carries its own Progress table.
 - [Colour themes plan](architecture/color-themes-plan.md) — colour themes become a `color-themes` plugin contribution, the three original built-in themes migrate to data with unchanged ids, and the nine GitHub (Primer) theme variants ship as a vendored built-in plugin; carries its own Progress table.
+- [Remote WSL plan](architecture/remote-wsl-plan.md) — the Windows build executes tooling inside a `\\wsl.localhost\...`/`\\wsl$\...` project's own distro via `wsl.exe` while file I/O stays on the UNC share; `ExecHost` as a value in `process-exec`, translation confined to `lsp-core`/`dap-core`/`build-core`; in delivery, carries its own Progress table.
 
 - [LSP conformance](architecture/lsp-conformance.md) — checking the LSP client against a real rust-analyzer; the executable expectations file and why it is not a per-PR gate.
 

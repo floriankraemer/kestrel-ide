@@ -77,6 +77,17 @@ baseline() {
 	# whitespaceOptions/saveWhitespaceOptions just above them already uses.
 	# No split planned.
 	crates/ui-shell/src/bridge/settings.rs) echo 1505 ;;
+	# 1175 -> 1208 across the Git history UI revamp (commit-detail dock,
+	# repo-wide Commit Log panel, File History's buildFileHistoryDock
+	# retrofit): each new dock is one `buildXDock(dockManager, docks,
+	# bottomArea, ...)` call plus its `#include`, following the existing
+	# buildCommitLogDock/buildCommitDetailDock/buildFileHistoryDock
+	# pattern — the construction logic itself already lives in each
+	# panel's own .cpp. Further splitting main_window.cpp itself was
+	# already investigated and ruled out (see the extraction-wall note
+	# from the main_window.cpp split down to 1175 lines); no further
+	# split planned here.
+	crates/ui-shell/cpp/main_window.cpp) echo 1208 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

@@ -315,28 +315,21 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     docks->registerDock(QStringLiteral("changes"), changesDock, ads::CenterDockWidgetArea, rightArea);
     docks->hide(QStringLiteral("changes"));
 
-    // The commit-detail dock, built before the two panels that open it
-    // (File History, Commit Log) so `openCommit` below has somewhere to
-    // send a commit id.
+    // Built first so `openCommit` below has somewhere to send a commit id.
     auto *commitDetailPanel = buildCommitDetailDock(dockManager, docks, bottomArea, vcsService);
     auto openCommit = [docks, commitDetailPanel](const QString &commitId) {
         commitDetailPanel->openCommit(commitId);
         docks->dock(QStringLiteral("commitDetail"))->toggleView(true);
     };
 
-    auto *fileHistoryPanel = new FileHistoryPanel(
-      vcsService,
+    auto *fileHistoryPanel = buildFileHistoryDock(
+      dockManager, docks, bottomArea, vcsService,
       [editorTabs](const QString &path, const QString &leftRevision, const QString &leftLabel,
                     const QString &rightRevision, const QString &rightLabel) {
           editorTabs->openCompareRevisions(path, leftRevision, leftLabel, rightRevision,
                                              rightLabel);
       },
-      openCommit, dockManager);
-    auto *fileHistoryDock = new ads::CDockWidget(dockManager, QObject::tr("File History"));
-    fileHistoryDock->setWidget(fileHistoryPanel);
-    docks->registerDock(QStringLiteral("fileHistory"), fileHistoryDock, ads::CenterDockWidgetArea,
-                        bottomArea);
-    docks->hide(QStringLiteral("fileHistory"));
+      openCommit);
     buildCommitLogDock(dockManager, docks, bottomArea, vcsService, openCommit);
 
     // Search Everywhere: a transient popup parented to the top-level window
@@ -992,10 +985,7 @@ void buildMainWindow(AppSettings *appSettings,
     });
 
     QMenu *viewMenu = window->menuBar()->addMenu(QObject::tr("&View"));
-    // Each entry's on-screen rect, the same convention the VCS menu already
-    // uses (`vcs_menu.cpp`) — lets an E2E flow click a View menu item (e.g.
-    // "Commit Log") by label rather than by a keyboard shortcut most View
-    // items don't have.
+    // Each entry's rect, the same convention `vcs_menu.cpp` uses for its menu.
     e2eMarkMenuActions(viewMenu, "view_menu_action");
     wireProjectTreeViewAction(viewMenu, central.docks, appSettings, *actions);
     QAction *classViewAction = registerAction(viewMenu, QStringLiteral("view.classView"),

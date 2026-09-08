@@ -1,7 +1,12 @@
 #include "file_history_panel.h"
 
+#include "dock_layout.h"
 #include "e2e_mark.h"
 #include "history_list_view.h"
+
+#include "DockAreaWidget.h"
+#include "DockManager.h"
+#include "DockWidget.h"
 
 #include <QAction>
 #include <QLabel>
@@ -10,13 +15,8 @@
 
 namespace ui_shell {
 
-FileHistoryPanel::FileHistoryPanel(
-  VcsService *vcsService,
-  std::function<void(const QString &, const QString &, const QString &, const QString &,
-                      const QString &)>
-    compareRevisions,
-  std::function<void(const QString &)> openCommit,
-  QWidget *parent)
+FileHistoryPanel::FileHistoryPanel(VcsService *vcsService, CompareRevisions compareRevisions,
+                                    OpenCommit openCommit, QWidget *parent)
   : QWidget(parent)
   , vcsService_(vcsService)
   , compareRevisions_(std::move(compareRevisions))
@@ -141,6 +141,20 @@ void FileHistoryPanel::showContextMenu(const QPoint &globalPos, const QStringLis
         compareRevisions_(path, leftRevision, leftRevision.left(8), rightRevision,
                             rightRevision.left(8));
     }
+}
+
+FileHistoryPanel *buildFileHistoryDock(ads::CDockManager *dockManager, DockRegistry *docks,
+                                        ads::CDockAreaWidget *relativeTo, VcsService *vcsService,
+                                        FileHistoryPanel::CompareRevisions compareRevisions,
+                                        FileHistoryPanel::OpenCommit openCommit)
+{
+    auto *panel = new FileHistoryPanel(vcsService, std::move(compareRevisions),
+                                        std::move(openCommit), dockManager);
+    auto *dock = new ads::CDockWidget(dockManager, QObject::tr("File History"));
+    dock->setWidget(panel);
+    docks->registerDock(QStringLiteral("fileHistory"), dock, ads::CenterDockWidgetArea, relativeTo);
+    docks->hide(QStringLiteral("fileHistory"));
+    return panel;
 }
 
 } // namespace ui_shell

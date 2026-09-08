@@ -32,6 +32,7 @@ AppearancePage buildAppearancePage(QWidget *parent,
                                    AppearanceHooks hooks)
 {
     IconProvider *iconProvider = sharedIconProvider();
+    ThemeProvider *themeProvider = sharedThemeProvider();
     const QString originalTheme = appSettings->themeName();
     const QString originalIconTheme = appSettings->iconThemeId();
     const FfiUiFontScales originalScales = appSettings->uiFontScales();
@@ -40,11 +41,17 @@ AppearancePage buildAppearancePage(QWidget *parent,
     auto *form = new QFormLayout(page);
 
     auto *themeCombo = new QComboBox(page);
-    themeCombo->addItem(QObject::tr("Dark"), QStringLiteral("dark"));
-    themeCombo->addItem(QObject::tr("Light"), QStringLiteral("light"));
-    themeCombo->addItem(QObject::tr("VS Code Dark"), QStringLiteral("vscode-dark"));
-    // findData() of an unknown persisted name yields -1; falling back to 0
-    // lands on Dark, the same theme styleSheetForTheme() would apply for it.
+    for (const FfiColorThemeChoice &theme : themeProvider->colorThemes()) {
+        themeCombo->addItem(theme.label, theme.id);
+    }
+    // core-themes is the built-in plugin behind these entries; disabling it
+    // entirely is the only way this combo ends up empty (T6's fallback chain
+    // keeps a theme selected otherwise), so this guard is defensive, not the
+    // normal path.
+    themeCombo->setEnabled(themeCombo->count() > 0);
+    // findData() of an unknown persisted name (or of an empty combo) yields
+    // -1; falling back to 0 lands on Dark when it exists, and is a documented
+    // no-op on setCurrentIndex when the combo is empty.
     themeCombo->setCurrentIndex(std::max(0, themeCombo->findData(originalTheme)));
     form->addRow(QObject::tr("Theme:"), themeCombo);
 

@@ -1,0 +1,158 @@
+# The "VS Code Dark" theme (id "vscode-dark"), migrated verbatim from
+# `crates/ui-shell/cpp/theme.cpp`'s `vscodeDarkPalette()`/
+# `semanticColorsForTheme()`/`diffColorsForTheme()`/`terminalPaletteForTheme()`
+# and `crates/syntax-core/src/theme.rs`'s `VSCODE_DARK` table (color-themes
+# plan T5). Do not hand-edit a colour without re-checking it against those
+# sources — a transposed digit here is a real regression.
+id = "vscode-dark"
+label = "VS Code Dark"
+appearance = "dark"
+
+[chrome]
+canvas = "#1e1e1e"
+surface = "#252526"
+surface2 = "#252526"
+raised = "#2a2d2e"
+border = "#3c3c3c"
+text = "#cccccc"
+text_dim = "#969696"
+accent = "#007acc"
+accent_ink = "#ffffff"
+selection = "#264f78"
+status_bar = "#007acc"
+
+# vscode-dark shares its semantic and diff colours with "dark" —
+# `semanticColorsForTheme`/`diffColorsForTheme` in theme.cpp only special-case
+# "light", so every other theme name (this one included) falls through to the
+# same values.
+[semantic]
+error = "#ff6b68"
+warning = "#d9a441"
+info = "#74a7cc"
+ok = "#6aab73"
+muted = "#9a9a9a"
+
+[diff]
+added_line = "#294436"
+added_inline = "#3d6a3d"
+added_marker = "#57a64a"
+modified_line = "#385570"
+modified_inline = "#4e6f8f"
+modified_marker = "#4c82c4"
+deleted_line = "#484a4a"
+deleted_inline = "#5f5f5f"
+deleted_marker = "#c55147"
+
+[terminal]
+# vscode-dark also shares the dark ANSI 16 — `terminalPaletteForTheme` only
+# special-cases "light", same as above.
+black = "#000000"
+red = "#ff6b68"
+green = "#a8c023"
+yellow = "#d6bf55"
+blue = "#5394ec"
+magenta = "#ae8abe"
+cyan = "#299999"
+white = "#bbbbbb"
+bright_black = "#555555"
+bright_red = "#ff8785"
+bright_green = "#a8c023"
+bright_yellow = "#ffff00"
+bright_blue = "#7eaef1"
+bright_magenta = "#ff99ff"
+bright_cyan = "#6cdada"
+bright_white = "#ffffff"
+# background/foreground/cursor/selection follow chrome.canvas/text/text/
+# selection, the same fallback `terminalPaletteForTheme` uses when no editor
+# colour override is configured.
+background = "#1e1e1e"
+foreground = "#cccccc"
+cursor = "#cccccc"
+selection = "#264f78"
+
+[syntax.keyword]
+fg = "#569cd6"
+
+[syntax.string]
+fg = "#ce9178"
+
+[syntax.character]
+fg = "#ce9178"
+
+[syntax."string.regexp"]
+fg = "#d16969"
+
+[syntax.comment]
+fg = "#6a9955"
+
+[syntax.number]
+fg = "#b5cea8"
+
+[syntax.function]
+fg = "#dcdcaa"
+
+[syntax.type]
+fg = "#4ec9b0"
+
+[syntax.constructor]
+fg = "#4ec9b0"
+
+[syntax.module]
+fg = "#4ec9b0"
+
+[syntax."type.builtin"]
+fg = "#569cd6"
+
+[syntax.constant]
+fg = "#4fc1ff"
+
+[syntax."constant.builtin"]
+fg = "#569cd6"
+
+[syntax.boolean]
+fg = "#569cd6"
+
+[syntax.variable]
+fg = "#9cdcfe"
+
+[syntax."variable.builtin"]
+fg = "#569cd6"
+
+[syntax.property]
+fg = "#9cdcfe"
+
+[syntax.attribute]
+fg = "#9cdcfe"
+
+[syntax.tag]
+fg = "#569cd6"
+
+[syntax.escape]
+fg = "#d7ba7d"
+
+[syntax."string.escape"]
+fg = "#d7ba7d"
+
+[syntax."markup.heading"]
+fg = "#569cd6"
+bold = true
+
+[syntax."markup.link"]
+fg = "#3794ff"
+underline = true
+
+[syntax."markup.link.url"]
+fg = "#ce9178"
+
+[syntax."markup.raw"]
+fg = "#ce9178"
+
+[syntax."markup.list"]
+fg = "#6796e6"
+
+[syntax."markup.quote"]
+fg = "#6a9955"
+italic = true
+
+[syntax."markup.strikethrough"]
+fg = "#808080"

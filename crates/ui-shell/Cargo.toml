@@ -45,6 +45,11 @@ ai-chat-core = { path = "../ai-chat-core" }
 # the crate that picks one.
 plugin-host = { path = "../plugin-host" }
 plugin-api = { path = "../plugin-api" }
+# `ThemeProvider` (T7) translates a resolved `color_theme::ColorTheme`'s
+# fields into the FFI structs the seam crosses (`FfiChromePalette` etc.) —
+# the same kind of direct field translation `convert.rs` already does for
+# `syntax_core::theme::ScopeStyle` -> `FfiScopeStyle`.
+color-theme = { path = "../color-theme" }
 # The agent's tool arguments and results are `serde_json::Value`s
 # (`ai_chat_core::tools::ToolCall`), so the seam has to read and write them.
 serde_json = "1"

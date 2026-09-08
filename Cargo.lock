@@ -182,6 +182,7 @@ dependencies = [
 name = "app-core"
 version = "0.1.0"
 dependencies = [
+ "color-theme",
  "editor-core",
  "icon-theme",
  "markdown-preview",
@@ -632,6 +633,15 @@ dependencies = [
  "serde",
  "termcolor",
  "unicode-width 0.2.2",
+]
+
+[[package]]
+name = "color-theme"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
 ]
 
 [[package]]
@@ -4440,6 +4450,7 @@ dependencies = [
 name = "plugin-host"
 version = "0.1.0"
 dependencies = [
+ "color-theme",
  "icon-theme",
  "plugin-api",
  "tempfile",
@@ -6715,6 +6726,7 @@ dependencies = [
  "app-config",
  "app-core",
  "build-core",
+ "color-theme",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",

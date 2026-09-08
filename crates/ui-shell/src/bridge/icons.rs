@@ -18,7 +18,7 @@ use app_core::AppSession;
 use cxx_qt_lib::{QByteArray, QString};
 
 use crate::bridge::ffi;
-use crate::bridge::registry::{shared_icons, shared_session, SharedIcons};
+use crate::bridge::registry::{shared_color_themes, shared_icons, shared_session, SharedIcons};
 
 /// Handles on the process-wide icon theme and session, nothing more.
 pub struct IconProviderRust {
@@ -90,15 +90,20 @@ impl ffi::IconProvider {
     /// Re-read which art the colour theme wants, so a light theme switched
     /// on in the same dialog gets the pack's light variants.
     ///
-    /// The mapping from a theme name to an appearance is
-    /// `app_core::icons::appearance_for_theme` — the view passes the name it
-    /// applied and decides nothing.
-    pub fn apply_color_theme(&self, theme_name: &QString) {
-        self.icons
-            .appearance
-            .set(app_core::icons::appearance_for_theme(
-                &theme_name.to_string(),
-            ));
+    /// The theme name itself is not read here (T7): every call site
+    /// (`appearance_page.cpp`'s `applyThemeLive`) calls `applyTheme(name)`
+    /// first, which resolves `name` through `ThemeProvider` before this
+    /// slot ever runs — so the shared colour-theme service's active
+    /// appearance is already the answer for `name`, mapped through
+    /// `app_core::icons::icon_appearance` (the one allowed conversion point
+    /// between `color_theme::Appearance` and `icon_theme::Appearance`).
+    pub fn apply_color_theme(&self, _theme_name: &QString) {
+        let appearance = shared_color_themes()
+            .borrow()
+            .active()
+            .map(|theme| app_core::icons::icon_appearance(theme.appearance))
+            .unwrap_or(app_core::icons::Appearance::Dark);
+        self.icons.appearance.set(appearance);
     }
 
     /// Premultiplied RGBA8 for `key` at `px` by `px`, or an empty

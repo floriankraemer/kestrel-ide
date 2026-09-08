@@ -13,6 +13,11 @@ project-model = { path = "../project-model" }
 icon-theme = { path = "../icon-theme" }
 plugin-host = { path = "../plugin-host" }
 syntax-core = { path = "../syntax-core" }
+# The colour-theme join (ADR-0026, color-themes plan T6), same shape as the
+# icon-theme join above: the host stores contributions, `color-theme` parses
+# a theme file, neither may depend on the other. Qt-free, so app-core's
+# no-Qt rule is untouched.
+color-theme = { path = "../color-theme" }
 # The previews join (ADR-0033), the same shape as the icon-theme join
 # above: the host stores contributions, `markdown-preview` renders,
 # neither may depend on the other. Qt-free, so app-core's no-Qt rule is

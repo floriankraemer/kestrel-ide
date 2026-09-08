@@ -126,19 +126,27 @@ impl SyntaxHighlighterHandle {
     pub(crate) fn palette(&self, theme: &str) -> Vec<ffi::FfiScopeStyle> {
         let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
         let user = user_styles(&settings);
-        theme::palette(theme, &self.language.id(), &user)
-            .styles()
-            .iter()
-            .map(|style| ffi::FfiScopeStyle {
-                has_fg: style.fg.is_some(),
-                red: style.fg.map_or(0, |rgb| rgb.r),
-                green: style.fg.map_or(0, |rgb| rgb.g),
-                blue: style.fg.map_or(0, |rgb| rgb.b),
-                bold: style.bold,
-                italic: style.italic,
-                underline: style.underline,
-            })
-            .collect()
+        // Resolved through the colour-theme plugin registry (T7) rather than
+        // the old name-based `theme::palette`: a `color-themes` contribution
+        // is the only thing "dark"/"light"/"vscode-dark" name any more.
+        app_core::color_themes::build_palette(
+            &plugin_host::registry(),
+            theme,
+            &self.language.id(),
+            &user,
+        )
+        .styles()
+        .iter()
+        .map(|style| ffi::FfiScopeStyle {
+            has_fg: style.fg.is_some(),
+            red: style.fg.map_or(0, |rgb| rgb.r),
+            green: style.fg.map_or(0, |rgb| rgb.g),
+            blue: style.fg.map_or(0, |rgb| rgb.b),
+            bold: style.bold,
+            italic: style.italic,
+            underline: style.underline,
+        })
+        .collect()
     }
 }
 

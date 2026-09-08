@@ -24,6 +24,9 @@ Existing wording conventions that the new surfaces follow: sentence case for lab
 `crates/ui-shell/cpp/theme.cpp` currently defines chrome only — it has no error, warning, info or success colour.
 All four surfaces need one, so a small semantic set is added per theme, exposed the same way the stylesheets already are, and used by nothing else.
 
+Colour themes are now a `color-themes` plugin contribution point ([ADR-0050](../architecture/decisions/0050-color-themes-as-a-contribution-point.md)): semantic, chrome, diff and terminal colours are per-theme *data* a contribution defines for itself, read through `ThemeProvider`, not a hardcoded branch keyed on one of a fixed set of theme names.
+The table below still names the three original built-in themes because they are the ones this spec was written against and remain the ones every contrast number here was checked against; any other installed theme — including the nine vendored GitHub/Primer themes or a third-party VS Code theme JSON — supplies its own values through the same tokens rather than through a new branch in `theme.cpp`.
+
 | Token | dark (on `#2b2b2b`) | light (on `#ffffff`) | vscode-dark (on `#252526`) |
 |---|---|---|---|
 | `severity.error` | `#ff6b68` (5.1:1) | `#c62828` (5.6:1) | `#ff6b68` (5.6:1) |

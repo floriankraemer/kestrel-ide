@@ -1,0 +1,150 @@
+# The light theme (id "light"), migrated verbatim from
+# `crates/ui-shell/cpp/theme.cpp`'s `lightPalette()`/`semanticColorsForTheme()`/
+# `diffColorsForTheme()`/`terminalPaletteForTheme()` and
+# `crates/syntax-core/src/theme.rs`'s `LIGHT` table (color-themes plan T5).
+# Do not hand-edit a colour without re-checking it against those sources —
+# a transposed digit here is a real regression.
+id = "light"
+label = "Light"
+appearance = "light"
+
+[chrome]
+canvas = "#f7f8fa"
+surface = "#ffffff"
+surface2 = "#f0f2f4"
+raised = "#e6e9ed"
+# over(surface, #0f172a, 0.10) — theme.cpp's own blend, pre-computed.
+border = "#e7e8ea"
+text = "#1f2328"
+text_dim = "#6b7178"
+accent = "#3574f0"
+accent_ink = "#ffffff"
+# over(surface2, accent, 0.14) — theme.cpp's own blend, pre-computed.
+selection = "#d6e0f3"
+status_bar = "#ffffff"
+
+[semantic]
+error = "#c62828"
+warning = "#8a6100"
+info = "#1565c0"
+ok = "#2e7d32"
+muted = "#5f5f5f"
+
+[diff]
+added_line = "#e6ffec"
+added_inline = "#abf2bc"
+added_marker = "#3c8c46"
+modified_line = "#e8f0fe"
+modified_inline = "#b4d0fa"
+modified_marker = "#3870b4"
+deleted_line = "#f0f0f0"
+deleted_inline = "#d6d6d6"
+deleted_marker = "#b4463c"
+
+[terminal]
+# JetBrains Light's console colours (ansi 0-7, then the bright 8-15).
+black = "#000000"
+red = "#990000"
+green = "#00a600"
+yellow = "#999900"
+blue = "#0000b2"
+magenta = "#b200b2"
+cyan = "#00a6b2"
+white = "#bfbfbf"
+bright_black = "#666666"
+bright_red = "#e50000"
+bright_green = "#00d900"
+bright_yellow = "#e5e500"
+bright_blue = "#0000ff"
+bright_magenta = "#e500e5"
+bright_cyan = "#00e5e5"
+bright_white = "#e5e5e5"
+# background/foreground/cursor/selection follow chrome.canvas/text/text/
+# selection, the same fallback `terminalPaletteForTheme` uses when no editor
+# colour override is configured.
+background = "#f7f8fa"
+foreground = "#1f2328"
+cursor = "#1f2328"
+selection = "#d6e0f3"
+
+[syntax.keyword]
+fg = "#0033b3"
+
+[syntax.string]
+fg = "#067d17"
+
+[syntax.character]
+fg = "#067d17"
+
+[syntax.comment]
+fg = "#5f6b7a"
+
+[syntax.number]
+fg = "#1750eb"
+
+[syntax.function]
+fg = "#795e26"
+
+[syntax.constructor]
+fg = "#0f5b8f"
+
+[syntax.type]
+fg = "#0f5b8f"
+
+[syntax."type.builtin"]
+fg = "#0033b3"
+
+[syntax.constant]
+fg = "#871094"
+italic = true
+
+[syntax."constant.builtin"]
+fg = "#0033b3"
+
+[syntax.boolean]
+fg = "#0033b3"
+
+[syntax.property]
+fg = "#871094"
+
+[syntax."variable.member"]
+fg = "#871094"
+
+[syntax."variable.builtin"]
+fg = "#0033b3"
+
+[syntax.attribute]
+fg = "#7a6a00"
+
+[syntax.escape]
+fg = "#0037a6"
+
+[syntax."string.escape"]
+fg = "#0037a6"
+
+[syntax.tag]
+fg = "#000080"
+
+[syntax."markup.heading"]
+fg = "#0033b3"
+bold = true
+
+[syntax."markup.link"]
+fg = "#1750eb"
+underline = true
+
+[syntax."markup.link.url"]
+fg = "#0f5b8f"
+
+[syntax."markup.raw"]
+fg = "#067d17"
+
+[syntax."markup.list"]
+fg = "#795e26"
+
+[syntax."markup.quote"]
+fg = "#5f6b7a"
+italic = true
+
+[syntax."markup.strikethrough"]
+fg = "#5f6b7a"

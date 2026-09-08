@@ -63,9 +63,22 @@ thread_local! {
             &settings.icon_theme,
         );
         start_plugin_tier();
+        // Resolve the initial appearance through the same colour-theme
+        // service the seam otherwise shares (T7), rather than the
+        // deleted-elsewhere string match `appearance_for_theme` did: a
+        // one-shot resolve here is fine since `COLOR_THEMES` has not been
+        // touched yet at process start, either way.
+        let color_themes = app_core::color_themes::ColorThemeService::from_registry(
+            plugin_host::registry(),
+            settings.theme_name(),
+        );
+        let appearance = color_themes
+            .active()
+            .map(|theme| app_core::icons::icon_appearance(theme.appearance))
+            .unwrap_or(app_core::icons::Appearance::Dark);
         SharedIcons {
             service: RefCell::new(service),
-            appearance: Cell::new(app_core::icons::appearance_for_theme(settings.theme_name())),
+            appearance: Cell::new(appearance),
         }
     });
 }
@@ -86,6 +99,28 @@ pub(crate) fn start_plugin_tier() {
 
 pub(crate) fn shared_icons() -> Rc<SharedIcons> {
     ICONS.with(Rc::clone)
+}
+
+thread_local! {
+    /// The one colour-theme service in this process (T7). Independent of
+    /// [`ICONS`] rather than joined into one mega-singleton: each does its
+    /// own `resolve_config_dir()` + `app_config::load(...)`, which is a
+    /// little wasteful but keeps both small, focused thread-locals rather
+    /// than one that answers for two unrelated concerns — the style this
+    /// module already follows for `APP_SESSION`/`ICONS`/`DIAGNOSTICS`.
+    static COLOR_THEMES: Rc<RefCell<app_core::color_themes::ColorThemeService>> = Rc::new({
+        let config_dir = app_core::resolve_config_dir();
+        let settings = app_config::load(&config_dir).unwrap_or_default();
+        RefCell::new(app_core::color_themes::ColorThemeService::load(
+            &config_dir,
+            &settings.disabled_plugins,
+            settings.theme_name(),
+        ))
+    });
+}
+
+pub(crate) fn shared_color_themes() -> Rc<RefCell<app_core::color_themes::ColorThemeService>> {
+    COLOR_THEMES.with(Rc::clone)
 }
 
 /// The one preview renderer in this process — `Arc<Mutex<_>>`, not the

@@ -57,10 +57,12 @@ baseline() {
 	# Raised from 1594 by 1 line for the project_open module declaration
 	# (ADR-0037); install_opened_project/install_rebuilt_tree and their tests
 	# live in app-core/src/project_open.rs rather than in here.
-	# Raised from 1595 by 2 lines for the text_search module declaration and
-	# its doc comment (issue #233); matches_query itself lives in
-	# app-core/src/text_search.rs rather than in here.
-	crates/app-core/src/lib.rs) echo 1597 ;;           # no split planned; ratcheted so it cannot grow
+	# Raised from 1597 by 2 lines for the color_themes module declaration and
+	# its doc comment (color-themes plan T6), stacked on the text_search
+	# module declaration (issue #233) already there; ColorThemeService and
+	# matches_query live in app-core/src/color_themes.rs and
+	# app-core/src/text_search.rs respectively, rather than in here.
+	crates/app-core/src/lib.rs) echo 1599 ;;           # no split planned; ratcheted so it cannot grow
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)

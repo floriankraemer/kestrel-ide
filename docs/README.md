@@ -55,6 +55,7 @@ ADR numbers 0006 and 0013–0015 were never used; the gaps are historical and in
 - [ADR-0047: the `analyzers` contribution point](architecture/decisions/0047-analyzers-contribution-point.md) — declarative manifest data, native output-format parsers, a new Qt-free `analysis-core` crate, analyzers run over pipes rather than a PTY (a tty's column wrap corrupts JSON/XML), `process-exec` extracted from `vcs-core` rather than copied, and the `OnType`/`OnSave`/`Manual` trigger model with cooperative per-`(analyzer, file)` cancellation.
 - [ADR-0048: the test runner](architecture/decisions/0048-test-runner.md) — TeamCity service messages over JUnit XML for a tree that fills in while a run is in flight, `process_exec::spawn` as a streamed sibling to `run`, a new Qt-free `test-core` crate for a test run's live tree and rerun selectors, and a failing test published as a diagnostic through the same shared store ADR-0046 built.
 - [ADR-0049: UI internationalization](architecture/decisions/0049-ui-internationalization.md) — a global `ui_locale` setting (en default, de/es/fr shipped), a Language settings page, hand-authored `.ts` files compiled through `lrelease`/`rcc` into an embedded resource, a `QTranslator` installed at startup with no live retranslation, and the full `tr()` sweep across `crates/ui-shell/cpp/` this all sits on.
+- [ADR-0050: colour themes as a contribution point](architecture/decisions/0050-color-themes-as-a-contribution-point.md) — a new Qt-free `color-theme` crate (native TOML plus VS Code theme JSON import), a `color-themes` plugin contribution point, theme resolution kept in `syntax-core`, chevron/shadow art keyed by appearance rather than theme name, and the honest deviation that `syntax-core`'s old static theme tables stay put for `markdown-preview`.
 
 ## Plans
 
@@ -80,6 +81,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan and 
 - [Window state and layouts plan](architecture/window-state-and-layouts-plan.md) — the maximized window comes back maximized, and named workspace layouts saved per user or per project.
 - [Terminal experience plan](architecture/terminal-experience-plan.md) — an instant shell catalogue, smooth output, JetBrains Mono, and a theme-following 256-colour ANSI palette; in delivery, carries its own Progress table.
 - [PHP tooling plan](architecture/php-tooling-plan.md) — PHPStan, PHP_CodeSniffer and PHPUnit integrations on a generalized diagnostics model and a new analyzers/test-frameworks contribution point; carries its own Progress table.
+- [Colour themes plan](architecture/color-themes-plan.md) — colour themes become a `color-themes` plugin contribution, the three original built-in themes migrate to data with unchanged ids, and the nine GitHub (Primer) theme variants ship as a vendored built-in plugin; carries its own Progress table.
 
 - [LSP conformance](architecture/lsp-conformance.md) — checking the LSP client against a real rust-analyzer; the executable expectations file and why it is not a per-PR gate.
 

@@ -19,6 +19,8 @@ use project_model::{FileOpError, OpenFolderError, Project, ProjectSession};
 
 use diff_tab::DiffContent;
 
+/// Where plugins and parsed colour themes are joined (ADR-0026, color-themes plan T6).
+pub mod color_themes;
 /// Read-only `TabKind::Diff` tabs: `DiffContent` and the `AppSession`
 /// methods that open one and read it back (F3-14).
 mod diff_tab;

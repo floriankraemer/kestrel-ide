@@ -23,6 +23,12 @@ wasmtime = { version = "38", default-features = false, features = [
 # with the crate that owns the format. At runtime the two crates still know
 # nothing of each other and are joined in `app-core` (ADR-0026, ADR-0027).
 icon-theme = { path = "../icon-theme" }
+# Dev-only, for the same reason `icon-theme` is above: `BUILTIN_PLUGINS`'s
+# `core-themes` contributions are checked through the real load path, which
+# means parsing them with the crate that owns the TOML shape. At runtime
+# `plugin-host` still knows nothing of `color-theme` — `app-core` is where
+# a parsed theme gets joined to the rest of the application.
+color-theme = { path = "../color-theme" }
 tempfile = "3"
 # Tests write their components inline in the component-model text format, so
 # the tier is exercised without adding a `wasm32-*` toolchain to the builder

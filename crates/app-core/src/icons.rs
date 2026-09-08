@@ -31,17 +31,21 @@ use plugin_host::PluginRegistry;
 /// with icons goes through this module.
 pub use icon_theme::Appearance;
 
-/// Which icon set the named colour theme wants.
+/// Maps a resolved colour theme's appearance onto `icon_theme::Appearance`.
 ///
-/// A rule, so it lives here rather than in the view: the shipped themes are
-/// `light`, `vscode-dark` and `darcula`, and `theme.cpp` treats every name
-/// it does not know as Darcula. Dark is therefore the default on both sides
-/// — a theme this did not recognise would otherwise get light art on a dark
-/// background.
-pub fn appearance_for_theme(theme_name: &str) -> Appearance {
-    match theme_name {
-        "light" => Appearance::Light,
-        _ => Appearance::Dark,
+/// This is the one place allowed to convert between `color_theme::Appearance`
+/// and `icon_theme::Appearance` (color-themes plan T6): the two crates
+/// deliberately duplicate the enum rather than depend on each other (see
+/// `color_theme`'s module doc), and `app_core::icons` is where icon packs
+/// and colour themes are already joined. `ui-shell` (T7) resolves the active
+/// `ColorTheme` through `ColorThemeService::active` and maps its appearance
+/// through this function; the string-matching predecessor,
+/// `appearance_for_theme`, is gone now that both of its call sites
+/// (`crates/ui-shell/src/bridge/icons.rs`, `.../bridge/registry.rs`) do.
+pub fn icon_appearance(color_theme_appearance: color_theme::Appearance) -> Appearance {
+    match color_theme_appearance {
+        color_theme::Appearance::Dark => Appearance::Dark,
+        color_theme::Appearance::Light => Appearance::Light,
     }
 }
 
@@ -379,11 +383,15 @@ mod tests {
     }
 
     #[test]
-    fn a_theme_name_the_view_does_not_know_is_treated_as_dark() {
-        assert_eq!(appearance_for_theme("light"), Appearance::Light);
-        assert_eq!(appearance_for_theme("darcula"), Appearance::Dark);
-        assert_eq!(appearance_for_theme("vscode-dark"), Appearance::Dark);
-        assert_eq!(appearance_for_theme(""), Appearance::Dark);
+    fn icon_appearance_maps_color_theme_appearance_one_to_one() {
+        assert_eq!(
+            icon_appearance(color_theme::Appearance::Dark),
+            Appearance::Dark
+        );
+        assert_eq!(
+            icon_appearance(color_theme::Appearance::Light),
+            Appearance::Light
+        );
     }
 
     #[test]

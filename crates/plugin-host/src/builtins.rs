@@ -64,6 +64,80 @@ pub(crate) const PHP_TOOLS: BuiltinPlugin = BuiltinPlugin {
     files: &[],
 };
 
+/// The three colour themes that used to be hardcoded in `ui-shell`'s
+/// `theme.cpp` and `syntax-core`'s `theme.rs`, first-party like the
+/// Markdown preview above: a `color-themes` contribution needs no `[wasm]`
+/// component either, just the three theme files it points `path` at.
+pub(crate) const CORE_THEMES: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/core-themes/plugin.toml"),
+    files: &[
+        (
+            "dark.toml",
+            include_bytes!("../builtin/core-themes/dark.toml"),
+        ),
+        (
+            "light.toml",
+            include_bytes!("../builtin/core-themes/light.toml"),
+        ),
+        (
+            "vscode-dark.toml",
+            include_bytes!("../builtin/core-themes/vscode-dark.toml"),
+        ),
+    ],
+};
+
+/// The nine `github-vscode-theme` (Primer) colour themes, vendored like
+/// the Material icon theme above: `scripts/import-vscode-theme.py`
+/// generates `third_party/github-vscode-theme/themes/*.toml` from the
+/// upstream VS Code theme JSON, and this constant just embeds the result —
+/// nine files is small enough that, unlike the 1251-icon macro above,
+/// listing them inline needs no packing trick.
+pub(crate) const GITHUB_VSCODE_THEME: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../../../third_party/github-vscode-theme/plugin.toml"),
+    files: &[
+        (
+            "themes/light-default.toml",
+            include_bytes!("../../../third_party/github-vscode-theme/themes/light-default.toml"),
+        ),
+        (
+            "themes/light-high-contrast.toml",
+            include_bytes!(
+                "../../../third_party/github-vscode-theme/themes/light-high-contrast.toml"
+            ),
+        ),
+        (
+            "themes/light-colorblind.toml",
+            include_bytes!("../../../third_party/github-vscode-theme/themes/light-colorblind.toml"),
+        ),
+        (
+            "themes/dark-default.toml",
+            include_bytes!("../../../third_party/github-vscode-theme/themes/dark-default.toml"),
+        ),
+        (
+            "themes/dark-high-contrast.toml",
+            include_bytes!(
+                "../../../third_party/github-vscode-theme/themes/dark-high-contrast.toml"
+            ),
+        ),
+        (
+            "themes/dark-colorblind.toml",
+            include_bytes!("../../../third_party/github-vscode-theme/themes/dark-colorblind.toml"),
+        ),
+        (
+            "themes/dark-dimmed.toml",
+            include_bytes!("../../../third_party/github-vscode-theme/themes/dark-dimmed.toml"),
+        ),
+        (
+            "themes/light.toml",
+            include_bytes!("../../../third_party/github-vscode-theme/themes/light.toml"),
+        ),
+        (
+            "themes/dark.toml",
+            include_bytes!("../../../third_party/github-vscode-theme/themes/dark.toml"),
+        ),
+    ],
+};
+
 // The id list is packed by line width, which rustfmt would otherwise
 // unpack to one per line and undo the point of the macro.
 #[rustfmt::skip]

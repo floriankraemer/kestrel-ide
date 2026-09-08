@@ -34,6 +34,7 @@ pub const PLUGIN_DIR_TOKEN: &str = "${plugin_dir}";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContributionPoint {
     IconThemes,
+    ColorThemes,
     Commands,
     Previews,
     LanguageServers,
@@ -46,6 +47,7 @@ impl ContributionPoint {
     pub const fn key(self) -> &'static str {
         match self {
             Self::IconThemes => "icon-themes",
+            Self::ColorThemes => "color-themes",
             Self::Commands => "commands",
             Self::Previews => "previews",
             Self::LanguageServers => "language-servers",
@@ -65,6 +67,24 @@ pub struct IconThemeContribution {
     pub label: String,
     /// The pack description, relative to the plugin directory.
     pub pack: PathBuf,
+}
+
+/// One colour theme a plugin offers.
+///
+/// The id is what `settings.toml` persists as the chosen colour theme.
+/// `path` is the theme file, relative to the plugin directory; its
+/// extension decides which parser reads it (`.toml` for the native
+/// format, `.json` for a VS Code theme) — that dispatch is a caller
+/// concern (`app-core`), not this crate's.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ColorThemeContribution {
+    /// Stable id, persisted in `settings.toml` as the chosen colour theme.
+    pub id: String,
+    /// What the settings page shows.
+    pub label: String,
+    /// The theme file, relative to the plugin directory.
+    pub path: PathBuf,
 }
 
 /// One command a plugin offers.
@@ -242,6 +262,8 @@ pub struct TestFrameworkContribution {
 pub struct Contributes {
     #[serde(default, rename = "icon-themes")]
     pub icon_themes: Vec<IconThemeContribution>,
+    #[serde(default, rename = "color-themes")]
+    pub color_themes: Vec<ColorThemeContribution>,
     #[serde(default)]
     pub commands: Vec<CommandContribution>,
     #[serde(default)]
@@ -262,6 +284,7 @@ impl Contributes {
     /// not an error: it is how a plugin is emptied out without deleting it.
     pub fn is_empty(&self) -> bool {
         self.icon_themes.is_empty()
+            && self.color_themes.is_empty()
             && self.commands.is_empty()
             && self.previews.is_empty()
             && self.language_servers.is_empty()
@@ -359,6 +382,16 @@ impl PluginManifest {
         check_unique(
             ContributionPoint::IconThemes,
             self.contributes.icon_themes.iter().map(|t| t.id.as_str()),
+        )?;
+
+        for theme in &self.contributes.color_themes {
+            check_id("contributes.color-themes.id", &theme.id)?;
+            non_empty("contributes.color-themes.label", &theme.label)?;
+            check_relative("contributes.color-themes.path", &theme.path)?;
+        }
+        check_unique(
+            ContributionPoint::ColorThemes,
+            self.contributes.color_themes.iter().map(|t| t.id.as_str()),
         )?;
 
         for command in &self.contributes.commands {
@@ -661,6 +694,51 @@ mod tests {
         assert_eq!(themes[0].id, "material");
         assert_eq!(themes[0].label, "Material");
         assert_eq!(themes[0].pack, PathBuf::from("pack.toml"));
+    }
+
+    #[test]
+    fn a_color_theme_contribution_round_trips() {
+        let manifest = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.color-themes]]
+            id = "midnight"
+            label = "Midnight"
+            path = "midnight.toml"
+            "#,
+        ))
+        .expect("valid");
+        let themes = &manifest.contributes.color_themes;
+        assert_eq!(themes.len(), 1);
+        assert_eq!(themes[0].id, "midnight");
+        assert_eq!(themes[0].label, "Midnight");
+        assert_eq!(themes[0].path, PathBuf::from("midnight.toml"));
+        assert!(!manifest.contributes.is_empty());
+        assert_eq!(ContributionPoint::ColorThemes.key(), "color-themes");
+    }
+
+    #[test]
+    fn two_color_theme_contributions_may_not_claim_one_id() {
+        let err = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.color-themes]]
+            id = "midnight"
+            label = "Midnight"
+            path = "a.toml"
+
+            [[contributes.color-themes]]
+            id = "midnight"
+            label = "Midnight, again"
+            path = "b.toml"
+            "#,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LoadErrorKind::DuplicateContributionId {
+                point: "color-themes",
+                id: "midnight".to_string(),
+            }
+        );
     }
 
     #[test]

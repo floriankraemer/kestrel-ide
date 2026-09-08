@@ -19,6 +19,7 @@ members = [
     "crates/settings-model",
     "crates/markdown-preview",
     "crates/vcs-core",
+    "crates/process-exec",
     "crates/run-core",
     "crates/build-core",
     "crates/stdio-framing",

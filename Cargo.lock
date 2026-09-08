@@ -4565,6 +4565,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "process-exec"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
+
+[[package]]
 name = "prodash"
 version = "31.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6894,6 +6901,7 @@ version = "0.1.0"
 dependencies = [
  "editor-core",
  "gix",
+ "process-exec",
  "serde",
  "tempfile",
 ]

@@ -112,13 +112,13 @@ Update the row **in the same commit** that finishes the task.
 | A2 — `lsp-core` converts at ingest; the raw protocol value is carried on the row so `LspManager::intentions` still round-trips it verbatim | done | `1d07d5c` |
 | A3 — `build-core` publishes into the store; build diagnostics gain inline squiggles, which they have never had | done | `1d07d5c`, `7505df0` |
 | A4 — `DiagnosticsServiceRust`; `ProblemsPanel` and `EditorTabs::applyDiagnostics` read it alone; `LanguageService`/`BuildService` lose their diagnostic surfaces | done | `7505df0` |
-| A5 — ADR-0046 + `layering.md` rows + CI layering gate | done | `TBD` |
+| A5 — ADR-0046 + `layering.md` rows + CI layering gate | done | `3c438a1` |
 
 ### B — `process-exec` and the `analyzers` contribution point
 
 | Task | Status | Commit |
 |---|---|---|
-| B1 — extract `process-exec` from `vcs-core/src/cli.rs`; `vcs-core` migrated onto it in the same commit | open | |
+| B1 — extract `process-exec` from `vcs-core/src/cli.rs`; `vcs-core` migrated onto it in the same commit | done | `TBD` |
 | B2 — `plugin-api`: `AnalyzerContribution` + validation + manifest round-trip tests; `api_version` unchanged | open | |
 | B3 — `analysis-core`: `AnalyzerDef` built from a contribution, detection (program candidates, config files, `composer.json` `require-dev`), status reporting for "declared but not installed" | open | |
 | B4 — `checkstyle-xml` parser and its severity mapping, fixture-driven | open | |

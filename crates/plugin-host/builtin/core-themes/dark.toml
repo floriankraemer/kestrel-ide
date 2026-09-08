@@ -1,0 +1,153 @@
+# The default dark theme (id "dark"), migrated verbatim from
+# `crates/ui-shell/cpp/theme.cpp`'s `darkPalette()`/`semanticColorsForTheme()`/
+# `diffColorsForTheme()`/`terminalPaletteForTheme()` and
+# `crates/syntax-core/src/theme.rs`'s `DARCULA` table (color-themes plan T5).
+# Do not hand-edit a colour without re-checking it against those sources —
+# a transposed digit here is a real regression.
+id = "dark"
+label = "Dark"
+appearance = "dark"
+
+[chrome]
+canvas = "#1e1f22"
+surface = "#2b2d30"
+surface2 = "#26282b"
+raised = "#2f3136"
+# over(surface, Qt::white, 0.09) — theme.cpp's own blend, pre-computed.
+border = "#3e4043"
+text = "#dfe1e5"
+text_dim = "#8a8f98"
+accent = "#3574f0"
+accent_ink = "#ffffff"
+# over(surface2, accent, 0.28) — theme.cpp's own blend, pre-computed.
+selection = "#2a3d62"
+status_bar = "#2b2d30"
+
+[semantic]
+error = "#ff6b68"
+warning = "#d9a441"
+info = "#74a7cc"
+ok = "#6aab73"
+muted = "#9a9a9a"
+
+[diff]
+added_line = "#294436"
+added_inline = "#3d6a3d"
+added_marker = "#57a64a"
+modified_line = "#385570"
+modified_inline = "#4e6f8f"
+modified_marker = "#4c82c4"
+deleted_line = "#484a4a"
+deleted_inline = "#5f5f5f"
+deleted_marker = "#c55147"
+
+[terminal]
+# JetBrains Darcula's console colours (ansi 0-7, then the bright 8-15).
+black = "#000000"
+red = "#ff6b68"
+green = "#a8c023"
+yellow = "#d6bf55"
+blue = "#5394ec"
+magenta = "#ae8abe"
+cyan = "#299999"
+white = "#bbbbbb"
+bright_black = "#555555"
+bright_red = "#ff8785"
+bright_green = "#a8c023"
+bright_yellow = "#ffff00"
+bright_blue = "#7eaef1"
+bright_magenta = "#ff99ff"
+bright_cyan = "#6cdada"
+bright_white = "#ffffff"
+# background/foreground/cursor/selection follow chrome.canvas/text/text/
+# selection, the same fallback `terminalPaletteForTheme` uses when no editor
+# colour override is configured.
+background = "#1e1f22"
+foreground = "#dfe1e5"
+cursor = "#dfe1e5"
+selection = "#2a3d62"
+
+[syntax.keyword]
+fg = "#cc7832"
+
+[syntax.string]
+fg = "#6a8759"
+
+[syntax.character]
+fg = "#6a8759"
+
+[syntax.comment]
+fg = "#808080"
+
+[syntax."comment.documentation"]
+fg = "#629755"
+
+[syntax.number]
+fg = "#6897bb"
+
+[syntax.function]
+fg = "#ffc66d"
+
+[syntax.constructor]
+fg = "#ffc66d"
+
+[syntax.type]
+fg = "#a9b7c6"
+
+[syntax."type.builtin"]
+fg = "#cc7832"
+
+[syntax.constant]
+fg = "#9876aa"
+italic = true
+
+[syntax."constant.builtin"]
+fg = "#cc7832"
+
+[syntax.boolean]
+fg = "#cc7832"
+
+[syntax.property]
+fg = "#9876aa"
+
+[syntax."variable.member"]
+fg = "#9876aa"
+
+[syntax."variable.builtin"]
+fg = "#cc7832"
+
+[syntax.attribute]
+fg = "#bbb529"
+
+[syntax.escape]
+fg = "#cc7832"
+
+[syntax."string.escape"]
+fg = "#cc7832"
+
+[syntax.tag]
+fg = "#e8bf6a"
+
+[syntax."markup.heading"]
+fg = "#ffc66d"
+bold = true
+
+[syntax."markup.link"]
+fg = "#589df6"
+underline = true
+
+[syntax."markup.link.url"]
+fg = "#6897bb"
+
+[syntax."markup.raw"]
+fg = "#6a8759"
+
+[syntax."markup.list"]
+fg = "#cc7832"
+
+[syntax."markup.quote"]
+fg = "#808080"
+italic = true
+
+[syntax."markup.strikethrough"]
+fg = "#808080"

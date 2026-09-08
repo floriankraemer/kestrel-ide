@@ -64,6 +64,28 @@ pub(crate) const PHP_TOOLS: BuiltinPlugin = BuiltinPlugin {
     files: &[],
 };
 
+/// The three colour themes that used to be hardcoded in `ui-shell`'s
+/// `theme.cpp` and `syntax-core`'s `theme.rs`, first-party like the
+/// Markdown preview above: a `color-themes` contribution needs no `[wasm]`
+/// component either, just the three theme files it points `path` at.
+pub(crate) const CORE_THEMES: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/core-themes/plugin.toml"),
+    files: &[
+        (
+            "dark.toml",
+            include_bytes!("../builtin/core-themes/dark.toml"),
+        ),
+        (
+            "light.toml",
+            include_bytes!("../builtin/core-themes/light.toml"),
+        ),
+        (
+            "vscode-dark.toml",
+            include_bytes!("../builtin/core-themes/vscode-dark.toml"),
+        ),
+    ],
+};
+
 // The id list is packed by line width, which rustfmt would otherwise
 // unpack to one per line and undo the point of the macro.
 #[rustfmt::skip]

@@ -4449,6 +4449,7 @@ dependencies = [
 name = "plugin-host"
 version = "0.1.0"
 dependencies = [
+ "color-theme",
  "icon-theme",
  "plugin-api",
  "tempfile",

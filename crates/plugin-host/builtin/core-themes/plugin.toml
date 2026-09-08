@@ -1,0 +1,28 @@
+# Hand-written, like builtin/markdown-preview/plugin.toml: this built-in
+# has no upstream package to import, so there is no generator script to
+# re-run. It migrates the three colour themes that used to be hardcoded in
+# `crates/ui-shell/cpp/theme.cpp` and `crates/syntax-core/src/theme.rs`
+# into data (color-themes plan T5) — the three `id`s below are unchanged
+# from those built-ins, since `settings.toml` already persists them as the
+# chosen theme.
+id = "core-themes"
+name = "Core Themes"
+version = "0.1.0"
+api_version = 1
+license = "MIT"
+description = "The Dark, Light and VS Code Dark colour themes."
+
+[[contributes.color-themes]]
+id = "dark"
+label = "Dark"
+path = "dark.toml"
+
+[[contributes.color-themes]]
+id = "light"
+label = "Light"
+path = "light.toml"
+
+[[contributes.color-themes]]
+id = "vscode-dark"
+label = "VS Code Dark"
+path = "vscode-dark.toml"

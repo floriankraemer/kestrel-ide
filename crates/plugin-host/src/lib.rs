@@ -72,6 +72,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::MARKDOWN_PREVIEW,
     builtins::CSHARP,
     builtins::PHP_TOOLS,
+    builtins::CORE_THEMES,
 ];
 
 /// Every plugin that loaded, and every one that did not.

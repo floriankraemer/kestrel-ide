@@ -203,4 +203,60 @@ mod tests {
         stop_thread.join().unwrap();
         assert_ne!(code, Some(0));
     }
+
+    // W2-3: `run` calls `process_exec::spawn` with `work_dir` verbatim, no
+    // knowledge of hosts at all — `spawn` classifies `work_dir` itself
+    // (W1-7), so a WSL project's test run reaches the distro without a
+    // line changing here. Proven the same way `process-exec`'s own tests
+    // stand in for a real `wsl.exe`: a fake script on `PATH`, this one
+    // emitting TeamCity service messages, showing streamed stdout parses
+    // exactly as it would locally.
+    #[test]
+    fn a_remote_work_dir_streams_teamcity_output_through_wsl_exe_unchanged() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::Mutex;
+        static PATH_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = PATH_LOCK.lock().unwrap();
+
+        let bin_dir = tempfile::tempdir().unwrap();
+        let script_path = bin_dir.path().join("wsl.exe");
+        {
+            let mut script = std::fs::File::create(&script_path).unwrap();
+            write!(
+                script,
+                "#!/bin/sh\n\
+                 for arg in \"$@\"; do\n\
+                 \x20\x20if [ \"$arg\" = \"-lc\" ]; then echo some-test-runner; exit 0; fi\n\
+                 done\n\
+                 echo \"##teamcity[testStarted name='t']\"\n\
+                 echo \"##teamcity[testFinished name='t' duration='1']\"\n"
+            )
+            .unwrap();
+        }
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).unwrap();
+
+        let work_dir = Path::new("//wsl.localhost/Ubuntu/tmp/test-core-e2e");
+        std::fs::create_dir_all(work_dir).unwrap();
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: serialized by PATH_LOCK.
+        unsafe {
+            std::env::set_var(
+                "PATH",
+                format!("{}:{original_path}", bin_dir.path().display()),
+            );
+        }
+        let handle = TestRunHandle::new();
+        let mut collected = Collected::default();
+        let code = run(&handle, "some-test-runner", &[], work_dir, &mut collected);
+        unsafe {
+            std::env::set_var("PATH", original_path);
+        }
+
+        assert_eq!(code.unwrap(), Some(0));
+        assert_eq!(collected.events.len(), 2);
+    }
 }

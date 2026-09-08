@@ -4371,6 +4371,17 @@ mod ffi {
         #[cxx_name = "failureDetails"]
         fn failure_details(self: &TestService, node_id: &QString) -> QString;
 
+        /// Resolve a `file:line` at `byte_offset` into this node's failure
+        /// details — the failure pane's click-to-open, same contract as
+        /// `RunService::resolveLink`.
+        #[qinvokable]
+        #[cxx_name = "resolveFailureLink"]
+        fn resolve_failure_link(
+            self: &TestService,
+            node_id: &QString,
+            byte_offset: u32,
+        ) -> FfiResolvedLink;
+
         /// Whether a run is currently in flight — the toolbar's run/stop
         /// enablement.
         #[qinvokable]

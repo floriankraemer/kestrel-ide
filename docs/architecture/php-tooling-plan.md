@@ -145,8 +145,8 @@ Update the row **in the same commit** that finishes the task.
 | D2 — `test-core`: `TestTree`, `TestId`, `TestStatus`, the TeamCity service-message parser, the JUnit-XML fallback | done | `431a15e` |
 | D3 — failures published as diagnostics through `diagnostics-core` | done | `c67c2e6` |
 | D4 — `TestServiceRust`, one QObject for N runs | done | `c67c2e6` |
-| D5 — view: the Tests dock — toolbar, tree with status icons and durations, failure pane with clickable `file:line` via `run_core::links` | open | |
-| D6 — rerun: all, failed only, one node, from the tree's context menu | open | |
+| D5 — view: the Tests dock — toolbar, tree with status icons and durations, failure pane with clickable `file:line` via `run_core::links` | done | `fb1340b` |
+| D6 — rerun: all, failed only, one node, from the tree's context menu | done | `fb1340b` |
 | D7 — `phpunit` rows added to the `php-tools` manifest | open | |
 | D8 — ADR-0048 | open | |
 

@@ -436,6 +436,11 @@ fn main() {
         .cpp_file("cpp/mcp_page.cpp")
         .cpp_file("cpp/terminal_page.cpp")
         .cpp_file("cpp/problems_panel.cpp")
+        // The PHP tooling plan's D5: the Tests dock. Q_OBJECT-free like
+        // `build_panel.cpp` (plain QWidget, lambdas and pointer-to-member
+        // connects), so only the source is listed.
+        .cpp_file("cpp/tests_panel.cpp")
+        .cpp_file("cpp/tests_menu.cpp")
         .cpp_file("cpp/icon_cache.cpp")
         // Declares Q_OBJECT (it overrides QIdentityProxyModel::data), so its
         // header is listed too — that is what runs moc on it.

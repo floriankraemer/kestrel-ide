@@ -159,6 +159,39 @@ impl ffi::TestService {
         QString::from(details.as_str())
     }
 
+    /// Resolve a `file:line` at `byte_offset` into this node's failure
+    /// details, the same contract `RunService::resolve_link` has for
+    /// console output — reused directly rather than duplicated, since the
+    /// underlying catalogue (`run_core::links::resolve_link`) is exactly
+    /// the plan's stated reuse for this pane.
+    pub fn resolve_failure_link(
+        &self,
+        node_id: &QString,
+        byte_offset: u32,
+    ) -> ffi::FfiResolvedLink {
+        let Some(root) = current_project_root() else {
+            return ffi::FfiResolvedLink::default();
+        };
+        let id = test_core::TestId(node_id.to_string());
+        let details = self
+            .tree
+            .borrow()
+            .node(&id)
+            .and_then(|node| node.failure.as_ref())
+            .map(|failure| failure.details.clone())
+            .unwrap_or_default();
+        match run_core::resolve_link(&details, byte_offset as usize, &root) {
+            Some(link) => ffi::FfiResolvedLink {
+                found: true,
+                path: QString::from(link.path.display().to_string().as_str()),
+                line: link.line,
+                has_column: link.col.is_some(),
+                column: link.col.unwrap_or(0),
+            },
+            None => ffi::FfiResolvedLink::default(),
+        }
+    }
+
     pub fn is_running(&self) -> bool {
         !self.runs.borrow().is_empty()
     }
@@ -228,6 +261,7 @@ impl ffi::TestService {
         std::thread::spawn(move || {
             let mut sink = QtSink {
                 qt_thread: qt_thread.clone(),
+                ansi: run_core::AnsiStripper::default(),
             };
             let program_str = program.to_string_lossy().into_owned();
             let result = test_core::run(&handle, &program_str, &args, &root, &mut sink);
@@ -275,11 +309,16 @@ fn republish(service: &ffi::TestService) {
 /// runs on the run's own thread.
 struct QtSink {
     qt_thread: CxxQtThread<ffi::TestService>,
+    /// PHPUnit colours its own progress output; the plan's "Reuse, not
+    /// reinvention" section names this stripper for exactly that, applied
+    /// here rather than in `test-core` since `test-core`'s layering row
+    /// carries no adapter-layer crate (`run-core` included).
+    ansi: run_core::AnsiStripper,
 }
 
 impl test_core::TestSink for QtSink {
     fn output(&mut self, text: &str) {
-        let text = text.to_string();
+        let text = self.ansi.feed(text);
         let _ = self
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {

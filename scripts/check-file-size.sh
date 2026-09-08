@@ -83,7 +83,12 @@ baseline() {
 	# SettingsContext fields, wiring AnalysisService into buildStatusBar,
 	# and the one-line call to buildAnalysisMenu (its own translation
 	# unit, like buildBuildMenu/buildRunMenu). No split planned.
-	crates/ui-shell/cpp/main_window.cpp) echo 1211 ;;
+	# Raised from 1211 by 6 lines for the PHP tooling plan's D5/D6:
+	# constructing TestService alongside the other per-window services,
+	# threading it through buildCentralWidget to build the Tests dock, and
+	# the one-line call to buildTestsMenu (its own translation unit, like
+	# buildBuildMenu/buildAnalysisMenu). No split planned.
+	crates/ui-shell/cpp/main_window.cpp) echo 1217 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

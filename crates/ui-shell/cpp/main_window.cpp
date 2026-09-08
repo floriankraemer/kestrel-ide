@@ -42,6 +42,8 @@
 #include "settings_dialog.h"
 #include "splash_screen.h"
 #include "status_bar.h"
+#include "tests_menu.h"
+#include "tests_panel.h"
 #include "syntax_highlighter.h"
 #include "terminal_sessions_panel.h"
 #include "theme.h"
@@ -152,7 +154,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    LanguageService *languageService, AiChat *aiChat,
                                    VcsService *vcsService, RunService *runService,
                                    BuildService *buildService, DebugService *debugService,
-                                   PreviewProvider *previewProvider)
+                                   TestService *testService, PreviewProvider *previewProvider)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -367,6 +369,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *runConsolePanel = buildRunConsoleDock(dockManager, docks, bottomArea, runToolbar, openAt);
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService);
+    buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
 
     // Class View tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -689,6 +692,8 @@ void buildMainWindow(AppSettings *appSettings,
     // The PHP tooling plan's B8: one analysis adapter per window, the same
     // "nothing runs until asked" rule as BuildService.
     auto *analysisService = new AnalysisService(window);
+    // The PHP tooling plan's D4: one test-run adapter per window, same rule.
+    auto *testService = new TestService(window);
     // D3-1: one debug adapter per window. It owns the breakpoints, which
     // exist with no session at all, so it is built before any project opens
     // and told to load them when one does.
@@ -715,7 +720,7 @@ void buildMainWindow(AppSettings *appSettings,
     const CentralWidgets central =
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
-                          buildService, debugService, previewProvider);
+                          buildService, debugService, testService, previewProvider);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs);             // R1-7
@@ -1055,6 +1060,7 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel,
                  viewMenu);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
+    buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);
     // Last of the View entries, under everything it can rearrange.
     buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,

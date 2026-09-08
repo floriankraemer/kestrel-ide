@@ -398,13 +398,21 @@ impl ProjectSession {
     /// previously this discarded the error via `.ok()`, so a failed watch
     /// (e.g. the platform's watch-descriptor limit) left the Changes dock
     /// and the tree silently stale with no way to tell why.
+    ///
+    /// `is_remote` (W6-1, ADR-0052) passes straight through to
+    /// [`ProjectWatcher::start`].
     pub fn start_watcher(
         &mut self,
+        is_remote: bool,
         on_change: impl Fn(notify::EventKind, PathBuf) + Send + 'static,
     ) -> notify::Result<()> {
         self.watcher = None;
         if let Some(project) = &self.current {
-            self.watcher = Some(ProjectWatcher::start(project.root.path(), on_change)?);
+            self.watcher = Some(ProjectWatcher::start(
+                project.root.path(),
+                is_remote,
+                on_change,
+            )?);
         }
         Ok(())
     }

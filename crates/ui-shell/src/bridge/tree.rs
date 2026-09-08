@@ -343,30 +343,36 @@ impl ffi::ProjectTreeModel {
     /// still fully rebuilding for real structural changes (US-2).
     fn start_watcher(mut self: Pin<&mut Self>) {
         let qt_thread = self.qt_thread();
-        let result = self
-            .session
-            .borrow_mut()
-            .start_watcher(move |kind, changed_path| {
-                let structural = project_model::is_structural_change(&kind);
-                // C5: the same event, mapped onto LSP's `FileChangeType` for
-                // `LanguageService::watchedFileChanged` — computed here,
-                // once, rather than in every listener.
-                let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
-                let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                    if structural {
-                        // Off the Qt thread (ADR-0037): a `git checkout` of
-                        // a branch with many new files re-walks the whole
-                        // tree here, and that walk must not block the UI
-                        // any more than the initial "Open Folder" walk does.
-                        model.as_mut().rebuild_tree_async();
-                    }
-                    let path = QString::from(changed_path.to_string_lossy().as_ref());
-                    model
-                        .as_mut()
-                        .watched_file_changed(path.clone(), watched_kind);
-                    model.as_mut().files_changed_externally(path);
+        // W6-1 (ADR-0052): the classification lives here, past the
+        // domain/support boundary `project-model`/`app-core` stay below —
+        // see `ProjectSession::start_watcher`'s doc comment.
+        let is_remote = crate::bridge::convert::current_project_root()
+            .map(|root| lsp_core::ExecHost::for_path(&root).is_remote())
+            .unwrap_or(false);
+        let result =
+            self.session
+                .borrow_mut()
+                .start_watcher(is_remote, move |kind, changed_path| {
+                    let structural = project_model::is_structural_change(&kind);
+                    // C5: the same event, mapped onto LSP's `FileChangeType` for
+                    // `LanguageService::watchedFileChanged` — computed here,
+                    // once, rather than in every listener.
+                    let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
+                    let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                        if structural {
+                            // Off the Qt thread (ADR-0037): a `git checkout` of
+                            // a branch with many new files re-walks the whole
+                            // tree here, and that walk must not block the UI
+                            // any more than the initial "Open Folder" walk does.
+                            model.as_mut().rebuild_tree_async();
+                        }
+                        let path = QString::from(changed_path.to_string_lossy().as_ref());
+                        model
+                            .as_mut()
+                            .watched_file_changed(path.clone(), watched_kind);
+                        model.as_mut().files_changed_externally(path);
+                    });
                 });
-            });
         // The project itself is already open; a failed watch only means
         // external changes (a terminal `git pull`/`checkout`/commit, an
         // edit made outside the app) won't be noticed until it's reopened.

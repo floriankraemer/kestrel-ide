@@ -9,8 +9,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as _};
+use notify::{Event, PollWatcher, RecursiveMode};
 
 // Re-exported so downstream crates (`app-core`, `ui-shell`) can name the
 // event kind in watcher callbacks without depending on `notify` themselves —
@@ -85,8 +86,25 @@ pub struct ProjectWatcher {
     // on a channel `start`'s callback closure owns the sending half of —
     // dropping the closure with this drops the sender, which ends that
     // thread's `recv` loop and its `Arc` clone with it).
-    _watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
+    //
+    // Boxed rather than the concrete `RecommendedWatcher`: W6-1 (ADR-0052)
+    // needs this to hold either backend depending on `root`, and `notify`'s
+    // own `Watcher` trait is what both `RecommendedWatcher` and
+    // `PollWatcher` implement.
+    _watcher: Arc<Mutex<Option<Box<dyn notify::Watcher + Send>>>>,
 }
+
+/// `ReadDirectoryChangesW`/`inotify`/`FSEvents` — whichever backend
+/// `notify::recommended_watcher` picks — does not fire over a 9P share, so
+/// a WSL project root gets silently no events at all from it. `PollWatcher`
+/// stats every watched path on an interval instead, which does work over
+/// the share. 4 s: frequent enough that a file created inside the distro
+/// shows up in the tree without feeling broken, infrequent enough not to
+/// mean a `stat()` storm across a project's directory count every tick.
+/// `compare_contents: false` — content diffing an unbounded number of files
+/// every tick would be the resource cost this ceiling exists to avoid; a
+/// modify event still fires from the mtime change alone.
+const POLL_INTERVAL: Duration = Duration::from_secs(4);
 
 impl ProjectWatcher {
     /// Start watching `root`. Rather than one blanket
@@ -109,11 +127,20 @@ impl ProjectWatcher {
     /// (which doesn't, and notably is what every `Ctrl+S` save looks like).
     /// Callers needing to touch Qt objects must marshal onto the Qt thread
     /// themselves (`ui-shell`'s job, not this crate's).
+    ///
+    /// `is_remote` (W6-1, ADR-0052) switches the backend to
+    /// [`PollWatcher`] — see [`POLL_INTERVAL`]'s doc comment for why.
+    /// Answered by the caller rather than computed here:
+    /// `process_exec::host::ExecHost` lives in the support layer, and this
+    /// crate is domain (`docs/architecture/layering.md`), so `ui-shell`
+    /// (already past that boundary, ADR-0052's other seams) does the
+    /// classification and hands back a plain bool.
     pub fn start(
         root: &Path,
+        is_remote: bool,
         on_change: impl Fn(EventKind, PathBuf) + Send + 'static,
     ) -> notify::Result<Self> {
-        let slot: Arc<Mutex<Option<RecommendedWatcher>>> = Arc::new(Mutex::new(None));
+        let slot: Arc<Mutex<Option<Box<dyn notify::Watcher + Send>>>> = Arc::new(Mutex::new(None));
         let incremental_matcher = root_gitignore_matcher(root);
 
         // A newly created directory can't be handed to `Watcher::watch`
@@ -127,7 +154,7 @@ impl ProjectWatcher {
         // separate thread doing the latter.
         let (new_dirs_tx, new_dirs_rx) = std::sync::mpsc::channel::<PathBuf>();
 
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+        let handler = move |res: notify::Result<Event>| {
             let Ok(event) = res else { return };
             if matches!(event.kind, EventKind::Create(_)) {
                 for path in &event.paths {
@@ -139,7 +166,19 @@ impl ProjectWatcher {
             for path in event.paths {
                 on_change(event.kind, path);
             }
-        })?;
+        };
+        // W6-1 (ADR-0052): a WSL root gets the polling backend, since the
+        // OS-native one never fires over the 9P share (see `POLL_INTERVAL`).
+        let mut watcher: Box<dyn notify::Watcher + Send> = if is_remote {
+            Box::new(PollWatcher::new(
+                handler,
+                notify::Config::default()
+                    .with_poll_interval(POLL_INTERVAL)
+                    .with_compare_contents(false),
+            )?)
+        } else {
+            Box::new(notify::recommended_watcher(handler)?)
+        };
 
         // `WalkBuilder` itself already skips descending into an ignored
         // directory (`target/` never gets yielded at all), so every
@@ -235,7 +274,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = mpsc::channel::<PathBuf>();
 
-        let _watcher = ProjectWatcher::start(dir.path(), move |_kind, path| {
+        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();
@@ -256,6 +295,35 @@ mod tests {
         assert!(saw_it, "expected a watcher event for the new file");
     }
 
+    // W6-1: `is_remote: true` selects `PollWatcher`, which still has to
+    // notice a new file — over a real (if generous, since the poll interval
+    // is 4s) deadline rather than the OS-native backend's near-instant one.
+    #[test]
+    fn a_remote_watcher_still_detects_a_new_file_by_polling() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, rx) = mpsc::channel::<PathBuf>();
+
+        let _watcher = ProjectWatcher::start(dir.path(), true, move |_kind, path| {
+            let _ = tx.send(path);
+        })
+        .unwrap();
+
+        let new_file = dir.path().join("new.txt");
+        fs::write(&new_file, "hello").unwrap();
+
+        let mut saw_it = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(12);
+        while std::time::Instant::now() < deadline {
+            if let Ok(path) = rx.recv_timeout(Duration::from_millis(200)) {
+                if path == new_file {
+                    saw_it = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_it, "expected the poll watcher to notice the new file");
+    }
+
     // Regression test for the bug where saving a file (Ctrl+S) collapsed
     // the whole sidebar tree: the watcher callback carries `EventKind`
     // precisely so a caller can tell a content-only write to an
@@ -270,7 +338,7 @@ mod tests {
         fs::write(&file, "original").unwrap();
 
         let (tx, rx) = mpsc::channel::<EventKind>();
-        let _watcher = ProjectWatcher::start(dir.path(), move |kind, path| {
+        let _watcher = ProjectWatcher::start(dir.path(), false, move |kind, path| {
             if path == file {
                 let _ = tx.send(kind);
             }
@@ -334,7 +402,7 @@ mod tests {
         fs::create_dir(dir.path().join("tracked")).unwrap();
 
         let (tx, rx) = mpsc::channel::<PathBuf>();
-        let _watcher = ProjectWatcher::start(dir.path(), move |_kind, path| {
+        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();
@@ -367,7 +435,7 @@ mod tests {
         fs::create_dir(dir.path().join(".git")).unwrap();
 
         let (tx, rx) = mpsc::channel::<PathBuf>();
-        let _watcher = ProjectWatcher::start(dir.path(), move |_kind, path| {
+        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();
@@ -390,7 +458,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let (tx, rx) = mpsc::channel::<PathBuf>();
-        let _watcher = ProjectWatcher::start(dir.path(), move |_kind, path| {
+        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();

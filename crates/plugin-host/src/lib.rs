@@ -47,8 +47,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
-    CommandContribution, IconThemeContribution, LanguageServerContribution, LoadErrorKind,
-    PluginLoadError, PluginManifest, PreviewContribution, MANIFEST_FILE, QUARANTINE_DIR,
+    AnalyzerContribution, CommandContribution, IconThemeContribution, LanguageServerContribution,
+    LoadErrorKind, PluginLoadError, PluginManifest, PreviewContribution, TestFrameworkContribution,
+    MANIFEST_FILE, QUARANTINE_DIR,
 };
 
 pub use plugin::{BuiltinPlugin, LoadedPlugin, PluginSource};
@@ -70,6 +71,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::MATERIAL_ICON_THEME,
     builtins::MARKDOWN_PREVIEW,
     builtins::CSHARP,
+    builtins::PHP_TOOLS,
 ];
 
 /// Every plugin that loaded, and every one that did not.
@@ -153,6 +155,34 @@ impl PluginRegistry {
                 .language_servers
                 .iter()
                 .map(move |server| (plugin, server))
+        })
+    }
+
+    /// Every `analyzers` contribution, with the plugin that offers it (the
+    /// PHP tooling plan's B8).
+    pub fn analyzers(&self) -> impl Iterator<Item = (&LoadedPlugin, &AnalyzerContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .analyzers
+                .iter()
+                .map(move |analyzer| (plugin, analyzer))
+        })
+    }
+
+    /// Every `test-frameworks` contribution, with the plugin that offers
+    /// it (the PHP tooling plan's D4).
+    pub fn test_frameworks(
+        &self,
+    ) -> impl Iterator<Item = (&LoadedPlugin, &TestFrameworkContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .test_frameworks
+                .iter()
+                .map(move |framework| (plugin, framework))
         })
     }
 

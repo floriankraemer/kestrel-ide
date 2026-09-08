@@ -14,10 +14,12 @@
 // here, next to the bridge, and defined in the feature module that owns
 // them.
 use crate::bridge::ai::chat::AiChatRust;
+use crate::bridge::analysis::{AnalysisEditorRust, AnalysisServiceRust};
 use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::debug::DebugServiceRust;
+use crate::bridge::diagnostics::DiagnosticsServiceRust;
 use crate::bridge::editor::DocumentManagerRust;
 use crate::bridge::editor_ops::EditorOpsRust;
 use crate::bridge::icons::IconProviderRust;
@@ -31,6 +33,7 @@ use crate::bridge::settings::{
     LanguageCatalogRust, LanguageServerEditorRust, SyntaxColorEditorRust,
 };
 use crate::bridge::terminal::TerminalSupervisorRust;
+use crate::bridge::testing::TestServiceRust;
 use crate::bridge::tree::ProjectTreeModelRust;
 use crate::bridge::vcs::VcsServiceRust;
 
@@ -3374,20 +3377,6 @@ mod ffi {
         #[cxx_name = "restartServer"]
         fn restart_server(self: Pin<&mut LanguageService>, language_id: &QString);
 
-        /// Every known diagnostic, grouped by file and ordered within it.
-        #[qinvokable]
-        fn diagnostics(self: &LanguageService) -> Vec<FfiDiagnostic>;
-
-        /// Just one file's diagnostics — what an editor underlines.
-        #[qinvokable]
-        #[cxx_name = "diagnosticsForFile"]
-        fn diagnostics_for_file(self: &LanguageService, path: &QString) -> Vec<FfiDiagnostic>;
-
-        /// Counts per severity, for the status bar and the filter buttons.
-        #[qinvokable]
-        #[cxx_name = "diagnosticCounts"]
-        fn diagnostic_counts(self: &LanguageService) -> FfiDiagnosticCounts;
-
         /// Whether a server is configured, enabled and started for this
         /// file's language — the difference between "no problems" and "no
         /// language server", which is the panel's empty state.
@@ -4150,6 +4139,319 @@ mod ffi {
     // Enables `self.qt_thread()` on `LanguageService` for the LSP listener
     // thread's one cross-thread hop, same pattern as `SearchModel` above.
     impl cxx_qt::Threading for LanguageService {}
+
+    extern "RustQt" {
+        /// The one Problems model (ADR-0046): every diagnostic, from every
+        /// source, that `LanguageService` and `BuildService` have published
+        /// into the shared store. The Problems dock and the editor's
+        /// squiggles read only this — `LanguageService`/`BuildService` keep
+        /// their own `diagnosticsChanged` signals (meaning "my part of the
+        /// store changed"), but no longer answer "what are the
+        /// diagnostics" themselves.
+        ///
+        /// No worker thread of its own — reading the shared store never
+        /// blocks — so this QObject has no `cxx_qt::Threading` impl.
+        #[qobject]
+        type DiagnosticsService = super::DiagnosticsServiceRust;
+
+        /// Every known diagnostic, grouped by file and ordered within it.
+        #[qinvokable]
+        fn diagnostics(self: &DiagnosticsService) -> Vec<FfiDiagnostic>;
+
+        /// Just one file's diagnostics — what an editor underlines.
+        #[qinvokable]
+        #[cxx_name = "diagnosticsForFile"]
+        fn diagnostics_for_file(self: &DiagnosticsService, path: &QString) -> Vec<FfiDiagnostic>;
+
+        /// Counts per severity, for the status bar and the filter buttons.
+        #[qinvokable]
+        #[cxx_name = "diagnosticCounts"]
+        fn diagnostic_counts(self: &DiagnosticsService) -> FfiDiagnosticCounts;
+    }
+
+    /// `analysis_core::AnalyzerStatus`'s discriminant, crossed separately
+    /// from its sentence (`FfiAnalyzerRow::status_text`) so the status
+    /// bar's colour/icon choice is a `match` on this, translation the view
+    /// is allowed, rather than pattern-matching English text — which would
+    /// be a business decision leaking into `cpp/`.
+    enum FfiAnalyzerStatusKind {
+        Detected,
+        DeclaredNotInstalled,
+        NotDetected,
+    }
+
+    /// One row of the Analysis settings page and the status bar's
+    /// per-analyzer indicator (the PHP tooling plan's B7-B9): an
+    /// analyzer's configuration joined with its live detection status.
+    struct FfiAnalyzerRow {
+        id: QString,
+        name: QString,
+        enabled: bool,
+        /// `settings_model::analysis::Trigger::id()` — what a settings-page
+        /// edit writes back.
+        #[cxx_name = "triggerId"]
+        trigger_id: QString,
+        /// `Trigger::label()` — what the dropdown shows.
+        #[cxx_name = "triggerLabel"]
+        trigger_label: QString,
+        #[cxx_name = "statusKind"]
+        status_kind: FfiAnalyzerStatusKind,
+        /// `analysis_core::AnalyzerStatus::describe`'s sentence — detected,
+        /// declared-but-not-installed, or not detected.
+        #[cxx_name = "statusText"]
+        status_text: QString,
+    }
+
+    extern "RustQt" {
+        /// Runs analyzer jobs on worker threads (`analysis_core::Scheduler`)
+        /// and publishes their findings into the one Problems model
+        /// (ADR-0046), the PHP tooling plan's B8. One registered `#[qobject]`
+        /// per ADR-0032's precedent.
+        #[qobject]
+        type AnalysisService = super::AnalysisServiceRust;
+
+        /// Every contributed analyzer's configuration and live detection
+        /// status, for the settings page and the status bar.
+        #[qinvokable]
+        #[cxx_name = "analyzerRows"]
+        fn analyzer_rows(self: &AnalysisService) -> Vec<FfiAnalyzerRow>;
+
+        /// Whether "Inspect Project" is already running.
+        #[qinvokable]
+        #[cxx_name = "isInspecting"]
+        fn is_inspecting(self: &AnalysisService) -> bool;
+
+        /// Run every enabled, installed analyzer against the whole open
+        /// project (`Trigger::Manual`). Answers via `analysisStarted`, one
+        /// `analyzerStarted`/`analyzerFinished` pair per analyzer, then
+        /// `analysisFinished`.
+        #[qinvokable]
+        #[cxx_name = "inspectProject"]
+        fn inspect_project(self: Pin<&mut AnalysisService>) -> FfiResult;
+
+        /// A project-wide analysis run began.
+        #[qsignal]
+        #[cxx_name = "analysisStarted"]
+        fn analysis_started(self: Pin<&mut AnalysisService>);
+
+        /// One analyzer in the batch started running.
+        #[qsignal]
+        #[cxx_name = "analyzerStarted"]
+        fn analyzer_started(self: Pin<&mut AnalysisService>, analyzer_id: QString);
+
+        /// One analyzer in the batch finished. `ok` is false for a run
+        /// failure (not found, timed out, an I/O error) — never for the
+        /// tool having found something to report, which is success.
+        #[qsignal]
+        #[cxx_name = "analyzerFinished"]
+        fn analyzer_finished(
+            self: Pin<&mut AnalysisService>,
+            analyzer_id: QString,
+            ok: bool,
+            message: QString,
+        );
+
+        /// The whole batch finished — every queued analyzer has reported.
+        #[qsignal]
+        #[cxx_name = "analysisFinished"]
+        fn analysis_finished(self: Pin<&mut AnalysisService>);
+
+        /// This analyzer's rows in the shared store (ADR-0046) changed —
+        /// the same "my part of the store changed" meaning `LanguageService`
+        /// and `BuildService` already give their own `diagnosticsChanged`.
+        /// `EditorTabs::applyDiagnostics` and `ProblemsPanel::refresh` both
+        /// wire to this alongside the other two sources, so an analyzer
+        /// finding reaches the editor's squiggles and the Problems dock the
+        /// same way a build's or a language server's does — the finding-1
+        /// bug class ADR-0046 exists to prevent, for this third source too.
+        #[qsignal]
+        #[cxx_name = "diagnosticsChanged"]
+        fn diagnostics_changed(self: Pin<&mut AnalysisService>);
+    }
+
+    impl cxx_qt::Threading for AnalysisService {}
+
+    /// One row of the Analysis settings page (B9): an analyzer's enabled
+    /// flag and trigger, as edited by `AnalysisEditor`.
+    struct FfiAnalysisRow {
+        id: QString,
+        name: QString,
+        enabled: bool,
+        #[cxx_name = "triggerId"]
+        trigger_id: QString,
+        #[cxx_name = "triggerLabel"]
+        trigger_label: QString,
+    }
+
+    extern "RustQt" {
+        /// Settings > Analysis (B9): the draft the page edits, following
+        /// `LanguageServerEditor`'s begin_edit(scope)/rows/set_*/is_dirty/
+        /// commit shape.
+        #[qobject]
+        type AnalysisEditor = super::AnalysisEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &AnalysisEditor, scope: &QString);
+
+        #[qinvokable]
+        fn rows(self: &AnalysisEditor) -> Vec<FfiAnalysisRow>;
+
+        #[qinvokable]
+        #[cxx_name = "setEnabled"]
+        fn set_enabled(self: &AnalysisEditor, id: &QString, enabled: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setTrigger"]
+        fn set_trigger(self: &AnalysisEditor, id: &QString, trigger_id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "isDirty"]
+        fn is_dirty(self: &AnalysisEditor, id: &QString) -> bool;
+
+        #[qinvokable]
+        fn commit(self: &AnalysisEditor);
+    }
+
+    /// Whether a Tests dock row is a suite/class grouping or a leaf test
+    /// method — `test_core::NodeKind` crossed the seam.
+    enum FfiTestNodeKind {
+        Suite,
+        Test,
+    }
+
+    /// Where a Tests dock row stands — `test_core::TestStatus` crossed the
+    /// seam, kept as its own enum (rather than reusing `FfiSeverity`) since
+    /// a test's states (running, skipped) have no diagnostic-severity
+    /// analogue.
+    enum FfiTestStatusKind {
+        Failed,
+        Running,
+        Pending,
+        Passed,
+        Skipped,
+    }
+
+    /// One row of the Tests dock's tree (D4/D5): a flattened
+    /// `test_core::TestNode`, parent-qualified rather than nested, since a
+    /// `QTreeWidget` builds its own hierarchy from `parentId` the same way
+    /// `ProjectTreeModel`'s rows do.
+    struct FfiTestNode {
+        id: QString,
+        #[cxx_name = "parentId"]
+        parent_id: QString,
+        name: QString,
+        kind: FfiTestNodeKind,
+        status: FfiTestStatusKind,
+        /// `-1` when the node has not finished (no duration yet) — a
+        /// sentinel rather than a second `has_duration` bool, matching
+        /// `FfiAnalyzerRow`-adjacent rows that use a sentinel for "absent"
+        /// on a field a view only ever displays, never computes with.
+        #[cxx_name = "durationMs"]
+        duration_ms: i64,
+        #[cxx_name = "hasFailure"]
+        has_failure: bool,
+    }
+
+    extern "RustQt" {
+        /// Runs the project's test framework on worker threads
+        /// (`test_core::runner::run`), streaming TeamCity messages into a
+        /// `test_core::TestTree` and publishing failures into the one
+        /// Problems model (D3/ADR-0046) — the PHP tooling plan's D4. One
+        /// registered `#[qobject]` owning a `HashMap` of in-flight runs,
+        /// mirroring `BuildService`'s shape: a run is a single process read
+        /// to completion or a stop, not a queue of short operations.
+        #[qobject]
+        type TestService = super::TestServiceRust;
+
+        /// Every node of the current tree, flattened — the Tests dock's
+        /// tree widget. Empty before any run this session.
+        #[qinvokable]
+        fn nodes(self: &TestService) -> Vec<FfiTestNode>;
+
+        /// The failing node's assertion message, for the failure pane's
+        /// header line. Empty when the node has no failure or does not
+        /// exist.
+        #[qinvokable]
+        #[cxx_name = "failureMessage"]
+        fn failure_message(self: &TestService, node_id: &QString) -> QString;
+
+        /// The failing node's raw detail text (stack trace/diff) — where
+        /// `run_core::links::resolve_link` (D5) finds a clickable
+        /// `file:line`.
+        #[qinvokable]
+        #[cxx_name = "failureDetails"]
+        fn failure_details(self: &TestService, node_id: &QString) -> QString;
+
+        /// Resolve a `file:line` at `byte_offset` into this node's failure
+        /// details — the failure pane's click-to-open, same contract as
+        /// `RunService::resolveLink`.
+        #[qinvokable]
+        #[cxx_name = "resolveFailureLink"]
+        fn resolve_failure_link(
+            self: &TestService,
+            node_id: &QString,
+            byte_offset: u32,
+        ) -> FfiResolvedLink;
+
+        /// Whether a run is currently in flight — the toolbar's run/stop
+        /// enablement.
+        #[qinvokable]
+        #[cxx_name = "isRunning"]
+        fn is_running(self: &TestService) -> bool;
+
+        /// Run the whole project's tests with no filter. Replaces whatever
+        /// tree a previous run left behind.
+        #[qinvokable]
+        #[cxx_name = "runAll"]
+        fn run_all(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Rerun every currently `Failed` leaf test, built into one
+        /// `--filter` alternation (D1's `filter-flag`). Refused when
+        /// nothing is currently failing. Every other node's last result
+        /// stays on the tree untouched.
+        #[qinvokable]
+        #[cxx_name = "runFailed"]
+        fn run_failed(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Rerun one node — a single test, or every test under a suite —
+        /// from the tree's context menu (D6).
+        #[qinvokable]
+        #[cxx_name = "runNode"]
+        fn run_node(self: Pin<&mut TestService>, node_id: &QString) -> FfiResult;
+
+        /// Stop the run in progress, if any.
+        #[qinvokable]
+        fn stop(self: Pin<&mut TestService>);
+
+        /// A run began.
+        #[qsignal]
+        #[cxx_name = "testRunStarted"]
+        fn test_run_started(self: Pin<&mut TestService>);
+
+        /// The tree changed — a status, a duration, a new node. The view
+        /// re-reads `nodes()` rather than the signal carrying a payload,
+        /// the same rule `AnalysisService::analyzerFinished` follows for
+        /// its own list.
+        #[qsignal]
+        #[cxx_name = "testTreeChanged"]
+        fn test_tree_changed(self: Pin<&mut TestService>);
+
+        /// A chunk of the run's raw output, for the dock's output pane.
+        #[qsignal]
+        #[cxx_name = "testOutputAppended"]
+        fn test_output_appended(self: Pin<&mut TestService>, text: QString);
+
+        /// The run finished. `ok` is false for a run failure (not found,
+        /// an I/O error) — a nonzero *test* exit code (failures found) is
+        /// still `ok`, the same distinction `AnalysisService::
+        /// analyzerFinished` draws.
+        #[qsignal]
+        #[cxx_name = "testRunFinished"]
+        fn test_run_finished(self: Pin<&mut TestService>, ok: bool, message: QString);
+    }
+
+    impl cxx_qt::Threading for TestService {}
 
     /// One row of the Syntax Colors tree (T4).
     ///
@@ -5772,13 +6074,6 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "isBuilding"]
         fn is_building(self: &BuildService) -> bool;
-
-        /// What the last build said, in the shape the Problems dock already
-        /// renders for a language server's diagnostics; `source` names the
-        /// build tool, so the two are never confused. Cleared when a new
-        /// build starts.
-        #[qinvokable]
-        fn diagnostics(self: &BuildService) -> Vec<FfiDiagnostic>;
 
         /// A build started. `command` is what is being run, for the dock's
         /// header.

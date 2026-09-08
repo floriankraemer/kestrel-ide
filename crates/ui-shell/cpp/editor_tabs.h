@@ -42,6 +42,15 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs);
 // D2-5/D3: gives EditorTabs the DebugService whose breakpoints its gutter
 // shows and toggles (editor_tabs_debug.cpp).
 void wireDebugService(DebugService *debugService, EditorTabs *editorTabs);
+// ADR-0046: builds the one DiagnosticsService, gives EditorTabs the copy its
+// squiggles read, and refreshes them whenever any source's rows in the
+// shared store changed (editor_tabs_lsp.cpp). `analysisService` is the PHP
+// tooling plan's third source (analyzer findings) — the same wiring
+// `languageService`/`buildService` already had.
+DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *languageService,
+                                           BuildService *buildService,
+                                           AnalysisService *analysisService,
+                                           EditorTabs *editorTabs);
 
 // app_core::TabKind's stable code for a binary tab (ADR-0020).
 constexpr int kTabKindBinary = 1;
@@ -296,10 +305,13 @@ public:
 
     void navigationChanged();
 
-    // Task L2: repaint every open editor's squiggles from whatever the
-    // language servers have published. Called on the service's
-    // diagnosticsChanged signal — the store is the single source, so no
-    // per-editor bookkeeping of "which diagnostics are mine" exists here.
+    // Task L2/ADR-0046: repaint every open editor's squiggles from whatever
+    // any source — a language server, a build — has published into the
+    // shared store. Called on both `LanguageService::diagnosticsChanged`
+    // and `BuildService::diagnosticsChanged`, since either can mean this
+    // file's rows changed; `diagnosticsService_` is read for the rows
+    // themselves, so no per-editor bookkeeping of "which diagnostics are
+    // mine" exists here.
     void applyDiagnostics();
 
     // The current editor's find bar, or nothing when no tab is open.
@@ -480,6 +492,10 @@ public:
     void setPreviewProvider(PreviewProvider *previewProvider);
     void setRunService(RunService *runService);
     void setDebugService(DebugService *debugService);
+    // ADR-0046: only `applyDiagnostics` (fired off `wireDiagnosticsService`'s
+    // signals, never from the constructor) reads this, so retrofitting it
+    // post-construction is safe, unlike `ProblemsPanel`'s own copy.
+    void setDiagnosticsService(DiagnosticsService *diagnosticsService);
 
     // D2-5: push this file's breakpoints into its gutter, and turn a gutter
     // click into `DebugService::toggleBreakpoint`.
@@ -806,6 +822,9 @@ private:
 
     DocumentManager *docManager_;
     LanguageService *languageService_;
+    // ADR-0046: null until `wireDiagnosticsService` sets it — see that
+    // setter's own comment for why this is safe.
+    DiagnosticsService *diagnosticsService_ = nullptr;
     // F3-16: null for a project with no Git — set once, after construction,
     // the same retrofit shape setContextMenuCallback uses.
     VcsService *vcsService_ = nullptr;

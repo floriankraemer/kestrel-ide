@@ -190,7 +190,7 @@ fn a_server_that_dies_mid_session_is_respawned() {
 /// rows the Problems panel renders.
 #[test]
 fn published_diagnostics_become_problem_rows() {
-    use lsp_core::diagnostics::{DiagnosticCounts, DiagnosticStore, Severity};
+    use diagnostics_core::{DiagnosticCounts, DiagnosticStore, Severity};
     use lsp_core::uri_from_path;
 
     let (manager, rx) = LspManager::new("file:///workspace");
@@ -206,7 +206,7 @@ fn published_diagnostics_become_problem_rows() {
         } => Some((uri.clone(), diagnostics.clone())),
         _ => None,
     });
-    store.replace(&published_uri, diagnostics);
+    store.replace(LANG, &published_uri, lsp_core::to_diagnostics(diagnostics));
 
     let rows = store.rows();
     assert_eq!(rows.len(), 1);
@@ -226,7 +226,7 @@ fn published_diagnostics_become_problem_rows() {
 
     // Closing the document is what drops its rows from the panel.
     manager.did_close(&uri).expect("didClose");
-    store.remove(&uri);
+    store.remove(LANG, &uri);
     assert!(store.rows().is_empty());
 }
 #[test]

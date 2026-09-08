@@ -8,6 +8,10 @@ edition = "2021"
 # launched the same way a run is, so nothing here re-derives either which
 # build tool a project uses or how to start one.
 run-core = { path = "../run-core" }
+# The one Problems model (ADR-0046): `BuildDiagnostic::severity` is
+# `diagnostics_core::Severity`, so a build's diagnostics and a language
+# server's need no severity translation at the seam.
+diagnostics-core = { path = "../diagnostics-core" }
 # Cargo's `--message-format=json` diagnostics.
 serde_json = "1"
 # The text diagnostic table for the toolchains that have no structured

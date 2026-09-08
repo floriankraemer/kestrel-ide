@@ -82,16 +82,19 @@ pub enum ScopedField {
     IndexExcludes,
     /// The `[terminal]` section: shell, start directory and environment.
     Terminal,
+    /// The `[[analyzer]]` overrides (the PHP tooling plan's B7).
+    Analysis,
 }
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 5] = [
+    pub const ALL: [ScopedField; 6] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
         ScopedField::IndexExcludes,
         ScopedField::Terminal,
+        ScopedField::Analysis,
     ];
 
     /// The stable id the view names this field by — the same string the
@@ -104,6 +107,7 @@ impl ScopedField {
             ScopedField::RunConfigs => "runConfigs",
             ScopedField::IndexExcludes => "indexExcludes",
             ScopedField::Terminal => "terminal",
+            ScopedField::Analysis => "analysis",
         }
     }
 
@@ -135,6 +139,9 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     }
     if let Some(terminal) = &project.terminal {
         resolved.terminal = terminal.clone();
+    }
+    if let Some(analyzers) = &project.analysis {
+        resolved.analysis.analyzers = analyzers.clone();
     }
     // Run configurations are deliberately *not* folded in: they have no
     // counterpart in the global layer at all (ADR-0029 — a run configuration
@@ -169,6 +176,7 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::RunConfigs => project.run_configs.is_some(),
         ScopedField::IndexExcludes => project.index_excludes.is_some(),
         ScopedField::Terminal => project.terminal.is_some(),
+        ScopedField::Analysis => project.analysis.is_some(),
     };
     if overridden {
         return Scope::Project;
@@ -257,6 +265,7 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
         ScopedField::RunConfigs => false,
         ScopedField::IndexExcludes => global.index_excludes != defaults.index_excludes,
         ScopedField::Terminal => global.terminal != defaults.terminal,
+        ScopedField::Analysis => global.analysis != defaults.analysis,
     }
 }
 
@@ -376,7 +385,11 @@ mod tests {
         assert!(ScopedField::from_id("keymap").is_none());
         assert!(ScopedField::from_id("aiProviders").is_none());
         assert!(ScopedField::from_id("editorFontSize").is_none());
-        assert_eq!(ScopedField::ALL.len(), 5, "ADR-0022 names five areas");
+        assert_eq!(
+            ScopedField::ALL.len(),
+            6,
+            "ADR-0022 names five areas, plus Analysis added by the PHP tooling plan (B7)"
+        );
     }
 
     #[test]

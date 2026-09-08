@@ -1,0 +1,10 @@
+[package]
+name = "diagnostics-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `Diagnostic::raw` carries an LSP diagnostic verbatim so
+# `LspManager::intentions` can round-trip it (see `docs/architecture/
+# decisions/0046-one-diagnostics-model.md`).
+serde_json = "1"

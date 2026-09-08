@@ -1,0 +1,85 @@
+# Hand-written, like builtin/csharp/plugin.toml: no upstream package to
+# import here either, so there is no generator script to re-run. It
+# contributes two `analyzers` and one `test-frameworks` row rather than a
+# `[wasm]` component — PHPStan, PHPCS and PHPUnit are all native processes
+# the host launches by argv, matching `AnalyzerContribution`'s and
+# `TestFrameworkContribution`'s doc comments (a wasm guest can neither spawn
+# a process nor be trusted with either kind of tool's raw bytes).
+#
+# Composer-specific detection details (which `program-candidates` a Composer
+# project actually installs under, the `.phar`/`.bat` fallback shapes, and
+# the id->package table behind "declared but not installed") live in
+# `analysis-core` (C2/D7), not here: this manifest only lists the
+# candidates, `analysis_core::detect` does the probing — reused for the
+# test framework row too, not duplicated (the PHP tooling plan's D7).
+id = "php-tools"
+name = "PHP Tools"
+version = "1.0.0"
+api_version = 1
+license = "MIT"
+description = "PHPStan, PHP_CodeSniffer and PHPUnit for PHP projects."
+
+[[contributes.analyzers]]
+id = "phpstan"
+name = "PHPStan"
+# `vendor/bin/phpstan` is what `composer require --dev phpstan/phpstan`
+# installs; `phpstan.phar` is the manually-downloaded PHAR some projects
+# commit instead; a bare `phpstan` covers a global install on PATH. The
+# Windows `vendor/bin/phpstan.bat` shim needs no candidate of its own —
+# `analysis_core::detect::find_program` already retries any path-shaped
+# candidate with a `.bat` suffix.
+program-candidates = ["vendor/bin/phpstan", "phpstan.phar", "phpstan"]
+args = ["analyse", "--error-format=checkstyle", "--no-progress"]
+output-format = "checkstyle-xml"
+
+# Quirk: PHPStan's checkstyle report emits every finding as `<error
+# severity="error">` — PHPStan has no notion of a "warning" level distinct
+# from an error, every rule violation at every level is reported the same
+# way. The map therefore only ever sees the word "error"; leaving "warning"
+# unmapped is not a gap, `AnalyzerDef::severity_for` never receives that word
+# from this tool.
+[contributes.analyzers.severity-map]
+error = "error"
+
+[[contributes.analyzers]]
+id = "phpcs"
+name = "PHP_CodeSniffer"
+# Same shape as phpstan's candidates: `vendor/bin/phpcs` from
+# `composer require --dev squizlabs/php_codesniffer`, `phpcs.phar` as the
+# manually-downloaded fallback, `phpcs` for a global install.
+program-candidates = ["vendor/bin/phpcs", "phpcs.phar", "phpcs"]
+args = ["--report=checkstyle"]
+output-format = "checkstyle-xml"
+
+# Unlike PHPStan, PHPCS's checkstyle report does distinguish `error` from
+# `warning` (a sniff can be configured at either severity), so both words are
+# mapped.
+[contributes.analyzers.severity-map]
+error = "error"
+warning = "warning"
+
+[[contributes.test-frameworks]]
+id = "phpunit"
+name = "PHPUnit"
+# Same candidate shape as the two analyzers above: `vendor/bin/phpunit` from
+# `composer require --dev phpunit/phpunit`, `phpunit.phar` as the
+# manually-downloaded fallback, `phpunit` for a global install. The Windows
+# `.bat` shim needs no candidate of its own for the same reason PHPStan's
+# doesn't (`analysis_core::detect::find_program`'s automatic retry).
+program-candidates = ["vendor/bin/phpunit", "phpunit.phar", "phpunit"]
+# `--teamcity` streams one service message per suite/test as it runs (D2),
+# which is what lets the Tests dock's tree fill in while the run is still
+# going — see ADR-0048 for why this is preferred over `--log-junit` alone.
+# PHPUnit supports `--teamcity` directly, so there is no fallback argv to
+# add here; `--log-junit` stays test-core's fallback *parser* for a future
+# framework whose manifest names no streaming format, not something this
+# row needs.
+args = ["--teamcity"]
+# PHPUnit's own `--filter` is a regex tested against a test's fully
+# qualified name (`Namespace\Class::method`) — precisely the qualified form
+# `test_core::TestId` already builds from nested `testSuiteStarted`/
+# `testStarted` messages, so no translation happens at the filter call site
+# (`test_core::filter`).
+filter-flag = "--filter"
+output-format = "teamcity"
+config-file-candidates = ["phpunit.xml", "phpunit.xml.dist"]

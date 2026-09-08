@@ -8,6 +8,9 @@ edition = "2021"
 # a second implementation. See `docs/architecture/layering.md`'s `vcs-core`
 # row.
 editor-core = { path = "../editor-core" }
+# The piped-exec mechanism (spawn, drain, timeout, kill) `cli.rs` runs `git`
+# through — see `docs/architecture/layering.md`'s `vcs-core` row.
+process-exec = { path = "../process-exec" }
 # Reads only (ADR-0031): discovery, HEAD/blob reads, status, ref listing,
 # log. `default-features = false` because the crate's defaults drag in write
 # paths (worktree checkout, merge, etc.) this layer must never touch — every

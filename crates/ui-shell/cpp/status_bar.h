@@ -24,10 +24,12 @@ class ProblemsPanel;
 // Preferences dialog's `SettingsContext`, which re-applies them on a scale
 // change.
 UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
-                              LanguageService *languageService, SearchModel *searchModel,
+                              LanguageService *languageService, BuildService *buildService,
+                              DiagnosticsService *diagnosticsService, SearchModel *searchModel,
                               VcsService *vcsService, EditorTabs *editorTabs,
                               QTreeView *projectTree, DockRegistry *docks,
-                              ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel);
+                              ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel,
+                              AnalysisService *analysisService);
 
 // Busy indication for an in-flight "Open Folder..."/Recent Projects open
 // (ADR-0037: the walk itself runs off the Qt thread, so nothing else says a

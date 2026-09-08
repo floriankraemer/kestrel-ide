@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<checkstyle version="3.7.1">
+ <file name="/project/src/Greeter.php">
+  <error line="10" column="5" severity="error" message="Undefined variable: $name" source="PHPStan.undefinedVariable"/>
+  <error line="20" severity="warning" message="Unused variable $x"/>
+ </file>
+</checkstyle>

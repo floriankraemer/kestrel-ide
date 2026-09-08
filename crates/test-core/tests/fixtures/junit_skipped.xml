@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+ <testsuite name="Tests\GreeterTest" tests="1" skipped="1" time="0.000">
+  <testcase name="testNeedsExtension" class="Tests\GreeterTest" time="0.000">
+   <skipped/>
+  </testcase>
+ </testsuite>
+</testsuites>

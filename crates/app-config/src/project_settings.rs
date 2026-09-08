@@ -26,6 +26,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -171,6 +172,17 @@ pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<TerminalSettings>,
 
+    /// The project's `[[analyzer]]` overrides (the PHP tooling plan's B7)
+    /// — the same `AnalyzerSetting` row shape the global layer's
+    /// `[[analysis.analyzer]]` uses, flattened to the top level the way
+    /// [`ProjectSettings::language_servers`] already is rather than nested
+    /// under an `[analysis]` table this file has no other use for. Same
+    /// sparse rule as every other field here: `None` is "the project
+    /// overrides no analyzer", not "every analyzer keeps its shipped
+    /// default".
+    #[serde(default, rename = "analyzer", skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<Vec<crate::AnalyzerSetting>>,
+
     /// Named workspace arrangements the project ships, as a `[layouts]`
     /// table keyed by name.
     ///
@@ -205,6 +217,7 @@ impl ProjectSettings {
             && self.index_excludes.is_none()
             && self.terminal.is_none()
             && self.layouts.is_none()
+            && self.analysis.is_none()
             && self.unknown.is_empty()
     }
 }
@@ -317,6 +330,44 @@ fn ensure_gitignore(dir: &Path) -> Result<(), ConfigError> {
         return Ok(());
     }
     fs::write(&path, PROJECT_GITIGNORE_BODY)?;
+    Ok(())
+}
+
+/// Make sure `<project_root>/.gitignore` ignores `pattern`, appending a
+/// line for it if the pattern is not already there.
+///
+/// This is the root `.gitignore`, not `.ide/.gitignore`: a pattern in
+/// `.ide/.gitignore` can only ever match paths *inside* `.ide/` (that is
+/// how git scopes a nested ignore file), and analysis-core's temp-copy
+/// unsaved-buffer strategy (the PHP tooling plan's B6) writes its dotfile
+/// beside the original source file, which can be anywhere in the tree — so
+/// only the project's own root ignore file can cover every location one
+/// might appear at.
+///
+/// Unlike [`ensure_gitignore`], an *existing* file is not left untouched:
+/// a fresh checkout almost always already has a `.gitignore`, and skipping
+/// it the way the `.ide/` seeding does would mean this pattern is never
+/// added to any real project. Appending one missing line is still narrow
+/// enough to respect the same spirit — nothing here rewrites or reorders
+/// content a user wrote, it only adds the one line this feature needs and
+/// only when that exact line is not present yet.
+pub fn ensure_root_gitignore_pattern(
+    project_root: &Path,
+    pattern: &str,
+) -> Result<(), ConfigError> {
+    let path = project_root.join(PROJECT_GITIGNORE);
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    if existing.lines().any(|line| line == pattern) {
+        return Ok(());
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file)?;
+    }
+    writeln!(file, "{pattern}")?;
     Ok(())
 }
 
@@ -566,6 +617,69 @@ mod tests {
         assert!(
             save(root.path(), &ProjectSettings::default()).is_err(),
             "save followed the symlink out"
+        );
+    }
+
+    #[test]
+    fn analyzer_overrides_round_trip_and_stay_sparse() {
+        let root = project();
+        update(root.path(), |s| {
+            s.analysis = Some(vec![crate::AnalyzerSetting {
+                id: "phpstan".into(),
+                enabled: Some(false),
+                trigger: Some("on-save".into()),
+            }]);
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        let analyzers = loaded.analysis.expect("analyzer overrides");
+        assert_eq!(analyzers.len(), 1);
+        assert_eq!(analyzers[0].id, "phpstan");
+        assert_eq!(analyzers[0].enabled, Some(false));
+        assert_eq!(analyzers[0].trigger.as_deref(), Some("on-save"));
+
+        let body =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        assert!(body.contains("[[analyzer]]"), "{body}");
+    }
+
+    #[test]
+    fn a_project_that_never_touched_analysis_has_no_analyzer_override() {
+        let root = project();
+        let settings = load(root.path()).unwrap();
+        assert!(settings.analysis.is_none());
+    }
+
+    #[test]
+    fn a_missing_root_gitignore_is_created_with_the_pattern() {
+        let root = project();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        let body = fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert!(body.lines().any(|l| l == ".*.ide-analysis-tmp-*"));
+    }
+
+    #[test]
+    fn an_existing_root_gitignore_gets_the_pattern_appended() {
+        let root = project();
+        fs::write(root.path().join(".gitignore"), "target/\n").unwrap();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        let body = fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert!(body.lines().any(|l| l == "target/"), "user content kept");
+        assert!(body.lines().any(|l| l == ".*.ide-analysis-tmp-*"));
+    }
+
+    #[test]
+    fn the_pattern_is_added_only_once() {
+        let root = project();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        let body = fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert_eq!(
+            body.lines()
+                .filter(|l| *l == ".*.ide-analysis-tmp-*")
+                .count(),
+            1
         );
     }
 }

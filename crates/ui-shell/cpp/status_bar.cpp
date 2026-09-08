@@ -56,10 +56,12 @@ void clearProjectOpening(QStatusBar *statusBar)
 } // namespace
 
 UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
-                              LanguageService *languageService, SearchModel *searchModel,
+                              LanguageService *languageService, BuildService *buildService,
+                              DiagnosticsService *diagnosticsService, SearchModel *searchModel,
                               VcsService *vcsService, EditorTabs *editorTabs,
                               QTreeView *projectTree, DockRegistry *docks,
-                              ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel)
+                              ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel,
+                              AnalysisService *analysisService)
 {
     // L3: line:col + language update per current tab / cursor move; "UTF-8"
     // is static since only UTF-8 is supported today (US-2b's binary-file
@@ -78,8 +80,8 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
         docks->show(QStringLiteral("problems"));
         problemsPanel->focusTree();
     });
-    const auto updateProblemsButton = [problemsButton, languageService]() {
-        const FfiDiagnosticCounts counts = languageService->diagnosticCounts();
+    const auto updateProblemsButton = [problemsButton, diagnosticsService]() {
+        const FfiDiagnosticCounts counts = diagnosticsService->diagnosticCounts();
         const bool any = counts.errors > 0 || counts.warnings > 0;
         problemsButton->setVisible(any);
         if (!any) {
@@ -92,7 +94,12 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                                                              : FfiSeverity::Warning);
         problemsButton->setStyleSheet(QStringLiteral("color: %1;").arg(color.name()));
     };
+    // Either source changing means this counter is stale (ADR-0046): a
+    // build's rows never used to reach it, same as they never used to
+    // reach the editor's squiggles before `DiagnosticsService` existed.
     QObject::connect(languageService, &LanguageService::diagnosticsChanged, window,
+                      updateProblemsButton);
+    QObject::connect(buildService, &BuildService::diagnosticsChanged, window,
                       updateProblemsButton);
     // F3-18: the branch widget (vcs_menu.cpp).
     auto *branchButton = buildBranchWidget(vcsService, window, statusBar);
@@ -189,6 +196,57 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                           }
                       });
 
+    // The PHP tooling plan's B9: a compact per-analyzer summary — how many
+    // of the contributed analyzers are detected/declared-but-not-installed,
+    // and whether "Inspect Project" is running right now. `statusKind`
+    // (an enum, not `statusText`'s English sentence) is what this switches
+    // on, so the colour choice is translation rather than a business
+    // decision made in `cpp/` — see `FfiAnalyzerStatusKind`'s doc comment.
+    auto *analysisLabel = new QLabel(statusBar);
+    analysisLabel->setVisible(false);
+    const auto updateAnalysisLabel = [analysisLabel, analysisService]() {
+        const ::rust::Vec<FfiAnalyzerRow> rows = analysisService->analyzerRows();
+        if (rows.empty()) {
+            analysisLabel->setVisible(false);
+            return;
+        }
+        if (analysisService->isInspecting()) {
+            analysisLabel->setStyleSheet(QString());
+            analysisLabel->setText(QObject::tr("Analysis: running..."));
+            analysisLabel->setVisible(true);
+            return;
+        }
+        int detected = 0;
+        int notInstalled = 0;
+        for (const FfiAnalyzerRow &row : rows) {
+            switch (row.statusKind) {
+            case FfiAnalyzerStatusKind::Detected:
+                ++detected;
+                break;
+            case FfiAnalyzerStatusKind::DeclaredNotInstalled:
+                ++notInstalled;
+                break;
+            case FfiAnalyzerStatusKind::NotDetected:
+                break;
+            }
+        }
+        const SemanticColors colors = semanticColors();
+        analysisLabel->setStyleSheet(
+          notInstalled > 0 ? QStringLiteral("color: %1;").arg(colors.warning.name()) : QString());
+        analysisLabel->setText(notInstalled > 0
+                                 ? QObject::tr("Analysis: %1 detected, %2 not installed")
+                                     .arg(detected)
+                                     .arg(notInstalled)
+                                 : QObject::tr("Analysis: %1 detected").arg(detected));
+        analysisLabel->setVisible(true);
+    };
+    updateAnalysisLabel();
+    QObject::connect(treeModel, &ProjectTreeModel::projectOpened, statusBar, updateAnalysisLabel);
+    QObject::connect(analysisService, &AnalysisService::analysisStarted, statusBar,
+                      updateAnalysisLabel);
+    QObject::connect(analysisService, &AnalysisService::analysisFinished, statusBar,
+                      updateAnalysisLabel);
+
     // ADR-0037: clears whatever `showProjectOpening` set, regardless of
     // which call site triggered the open or how it ended.
     QObject::connect(treeModel, &ProjectTreeModel::projectOpened, statusBar,
@@ -201,6 +259,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     statusBar->addPermanentWidget(serverLabel);
     statusBar->addPermanentWidget(serverBar);
     statusBar->addPermanentWidget(problemsButton);
+    statusBar->addPermanentWidget(analysisLabel);
     statusBar->addPermanentWidget(branchButton);
     statusBar->addPermanentWidget(languageLabel);
     statusBar->addPermanentWidget(positionLabel);

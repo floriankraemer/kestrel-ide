@@ -47,6 +47,11 @@ struct SettingsContext
     AiProviderEditor *aiProviderEditor;
     AiChat *aiChat;
     PluginCatalog *pluginCatalog;
+    // The PHP tooling plan's B7/B9: which analyzers are enabled and their
+    // trigger (`AnalysisEditor`), and their live detection status
+    // (`AnalysisService`), for the Analysis page.
+    AnalysisEditor *analysisEditor;
+    AnalysisService *analysisService;
     UiFontTargets uiFontTargets;
     // F4-14b: every open terminal tab's Copy/Paste shortcut is re-read from
     // `appSettings` here on OK, rather than through `actions` — see that

@@ -14,7 +14,7 @@
 // here, next to the bridge, and defined in the feature module that owns
 // them.
 use crate::bridge::ai::chat::AiChatRust;
-use crate::bridge::analysis::AnalysisServiceRust;
+use crate::bridge::analysis::{AnalysisEditorRust, AnalysisServiceRust};
 use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
@@ -4168,6 +4168,17 @@ mod ffi {
         fn diagnostic_counts(self: &DiagnosticsService) -> FfiDiagnosticCounts;
     }
 
+    /// `analysis_core::AnalyzerStatus`'s discriminant, crossed separately
+    /// from its sentence (`FfiAnalyzerRow::status_text`) so the status
+    /// bar's colour/icon choice is a `match` on this, translation the view
+    /// is allowed, rather than pattern-matching English text — which would
+    /// be a business decision leaking into `cpp/`.
+    enum FfiAnalyzerStatusKind {
+        Detected,
+        DeclaredNotInstalled,
+        NotDetected,
+    }
+
     /// One row of the Analysis settings page and the status bar's
     /// per-analyzer indicator (the PHP tooling plan's B7-B9): an
     /// analyzer's configuration joined with its live detection status.
@@ -4182,6 +4193,8 @@ mod ffi {
         /// `Trigger::label()` — what the dropdown shows.
         #[cxx_name = "triggerLabel"]
         trigger_label: QString,
+        #[cxx_name = "statusKind"]
+        status_kind: FfiAnalyzerStatusKind,
         /// `analysis_core::AnalyzerStatus::describe`'s sentence — detected,
         /// declared-but-not-installed, or not detected.
         #[cxx_name = "statusText"]
@@ -4244,6 +4257,48 @@ mod ffi {
     }
 
     impl cxx_qt::Threading for AnalysisService {}
+
+    /// One row of the Analysis settings page (B9): an analyzer's enabled
+    /// flag and trigger, as edited by `AnalysisEditor`.
+    struct FfiAnalysisRow {
+        id: QString,
+        name: QString,
+        enabled: bool,
+        #[cxx_name = "triggerId"]
+        trigger_id: QString,
+        #[cxx_name = "triggerLabel"]
+        trigger_label: QString,
+    }
+
+    extern "RustQt" {
+        /// Settings > Analysis (B9): the draft the page edits, following
+        /// `LanguageServerEditor`'s begin_edit(scope)/rows/set_*/is_dirty/
+        /// commit shape.
+        #[qobject]
+        type AnalysisEditor = super::AnalysisEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &AnalysisEditor, scope: &QString);
+
+        #[qinvokable]
+        fn rows(self: &AnalysisEditor) -> Vec<FfiAnalysisRow>;
+
+        #[qinvokable]
+        #[cxx_name = "setEnabled"]
+        fn set_enabled(self: &AnalysisEditor, id: &QString, enabled: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setTrigger"]
+        fn set_trigger(self: &AnalysisEditor, id: &QString, trigger_id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "isDirty"]
+        fn is_dirty(self: &AnalysisEditor, id: &QString) -> bool;
+
+        #[qinvokable]
+        fn commit(self: &AnalysisEditor);
+    }
 
     /// One row of the Syntax Colors tree (T4).
     ///

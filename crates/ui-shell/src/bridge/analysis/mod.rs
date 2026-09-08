@@ -3,6 +3,11 @@
 //! they find into the shared `diagnostics_core::DiagnosticStore` —
 //! `DiagnosticsServiceRust`'s store, reused rather than duplicated (A4).
 //!
+//! `AnalysisEditor` (B9's Analysis settings page) lives in this module too:
+//! it edits the same `[analysis]` overrides `AnalysisService::analyzer_rows`
+//! reads, following `LanguageServerEditor`'s begin_edit(scope)/rows/set_*/
+//! is_dirty/commit shape exactly (`bridge::settings`).
+//!
 //! # Threading
 //!
 //! One registered `#[qobject]` (ADR-0032): `Scheduler::run_manual` spawns
@@ -102,12 +107,24 @@ impl ffi::AnalysisService {
                 // specific manifest rows; until then such a tool reports
                 // `NotDetected` rather than `DeclaredNotInstalled`.
                 let status = analysis_core::status(&candidates, &root, &[]);
+                let status_kind = match status {
+                    analysis_core::AnalyzerStatus::Detected { .. } => {
+                        ffi::FfiAnalyzerStatusKind::Detected
+                    }
+                    analysis_core::AnalyzerStatus::DeclaredNotInstalled { .. } => {
+                        ffi::FfiAnalyzerStatusKind::DeclaredNotInstalled
+                    }
+                    analysis_core::AnalyzerStatus::NotDetected => {
+                        ffi::FfiAnalyzerStatusKind::NotDetected
+                    }
+                };
                 ffi::FfiAnalyzerRow {
                     id: QString::from(row.id.as_str()),
                     name: QString::from(row.name.as_str()),
                     enabled: row.enabled,
                     trigger_id: QString::from(row.trigger.id()),
                     trigger_label: QString::from(row.trigger.label()),
+                    status_kind,
                     status_text: QString::from(status.describe(&row.name).as_str()),
                 }
             })
@@ -246,5 +263,109 @@ fn publish_result(
         let diagnostics = analysis_core::to_diagnostics(&findings, file, analyzer);
         let uri = diagnostics_core::uri_from_path(file);
         store.replace(&key, &uri, diagnostics);
+    }
+}
+
+/// Rust side of the Analysis settings page's `AnalysisEditor` QObject (B9).
+#[derive(Default)]
+pub struct AnalysisEditorRust {
+    draft: RefCell<Option<settings_model::analysis::AnalysisDraft>>,
+    /// What was saved when the page opened, so `is_dirty` can tell a row
+    /// the user edited from one they did not, the same reason
+    /// `LanguageServerEditorRust::saved` exists.
+    saved: RefCell<Option<settings_model::analysis::AnalysisDraft>>,
+    /// The layer this draft came from and will be written back to
+    /// (ADR-0022).
+    scope: RefCell<settings_model::Scope>,
+}
+
+impl ffi::AnalysisEditor {
+    /// Load the draft from `scope` — `"global"` or `"project"`. Same shape
+    /// as `LanguageServerEditor::begin_edit`: the project's analyzer list
+    /// is lifted into an otherwise-default `Settings` and lowered back out
+    /// on commit.
+    pub fn begin_edit(&self, scope: &QString) {
+        let scope = crate::bridge::settings::scope_from_name(&scope.to_string());
+        *self.scope.borrow_mut() = scope;
+        let settings = match scope {
+            settings_model::Scope::Project => app_config::Settings {
+                analysis: app_config::AnalysisSettings {
+                    analyzers: crate::bridge::convert::load_project_settings()
+                        .analysis
+                        .unwrap_or_default(),
+                },
+                ..app_config::Settings::default()
+            },
+            _ => app_config::load(&app_core::resolve_config_dir()).unwrap_or_default(),
+        };
+        let draft =
+            settings_model::analysis::AnalysisDraft::new(&settings, &contributed_analyzers());
+        *self.saved.borrow_mut() = Some(draft.clone());
+        *self.draft.borrow_mut() = Some(draft);
+    }
+
+    pub fn rows(&self) -> Vec<ffi::FfiAnalysisRow> {
+        let draft = self.draft.borrow();
+        let Some(draft) = draft.as_ref() else {
+            return Vec::new();
+        };
+        draft
+            .rows()
+            .iter()
+            .map(|row| ffi::FfiAnalysisRow {
+                id: QString::from(row.id.as_str()),
+                name: QString::from(row.name.as_str()),
+                enabled: row.enabled,
+                trigger_id: QString::from(row.trigger.id()),
+                trigger_label: QString::from(row.trigger.label()),
+            })
+            .collect()
+    }
+
+    pub fn set_enabled(&self, id: &QString, enabled: bool) {
+        if let Some(draft) = self.draft.borrow_mut().as_mut() {
+            draft.set_enabled(&id.to_string(), enabled);
+        }
+    }
+
+    pub fn set_trigger(&self, id: &QString, trigger_id: &QString) {
+        let Some(trigger) = settings_model::analysis::Trigger::from_id(&trigger_id.to_string())
+        else {
+            return;
+        };
+        if let Some(draft) = self.draft.borrow_mut().as_mut() {
+            draft.set_trigger(&id.to_string(), trigger);
+        }
+    }
+
+    pub fn is_dirty(&self, id: &QString) -> bool {
+        let id = id.to_string();
+        let draft = self.draft.borrow();
+        let saved = self.saved.borrow();
+        match (draft.as_ref(), saved.as_ref()) {
+            (Some(draft), Some(saved)) => draft.row(&id) != saved.row(&id),
+            _ => false,
+        }
+    }
+
+    pub fn commit(&self) {
+        let Some(draft) = self.draft.borrow().clone() else {
+            return;
+        };
+        if *self.scope.borrow() == settings_model::Scope::Project {
+            let analyzers = draft.overrides();
+            let _ = crate::bridge::settings::commit_to_project(move |project| {
+                project.analysis = Some(analyzers);
+            });
+            *self.saved.borrow_mut() = Some(draft);
+            return;
+        }
+        let config_dir = app_core::resolve_config_dir();
+        let Ok(mut settings) = app_config::load(&config_dir) else {
+            return;
+        };
+        draft.apply_to(&mut settings);
+        let _ = app_config::save(&config_dir, &settings);
+        *self.saved.borrow_mut() = Some(draft);
     }
 }

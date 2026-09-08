@@ -5,6 +5,7 @@
 #include "markdown_preview_panel.h"
 #include "appearance_page.h"
 #include "changes_panel.h"
+#include "analysis_menu.h"
 #include "build_menu.h"
 #include "debug_menu.h"
 #include "debug_panel.h"
@@ -652,6 +653,9 @@ void buildMainWindow(AppSettings *appSettings,
     // P7's Plugins page, the same arrangement again: it holds the rows of
     // the last scan between the dialog's refresh() calls.
     auto *pluginCatalog = new PluginCatalog(window);
+    // The PHP tooling plan's B7-B9: the Analysis page's draft, alongside
+    // the other per-window settings-page editors above.
+    auto *analysisEditor = new AnalysisEditor(window);
 
     const FfiWindowGeometry savedGeometry = appSettings->windowGeometry();
     if (savedGeometry.width > 0 && savedGeometry.height > 0) {
@@ -682,6 +686,9 @@ void buildMainWindow(AppSettings *appSettings,
     // B1-6: one build adapter per window, like the others; it runs nothing
     // until asked and knows no project until one is open.
     auto *buildService = new BuildService(window);
+    // The PHP tooling plan's B8: one analysis adapter per window, the same
+    // "nothing runs until asked" rule as BuildService.
+    auto *analysisService = new AnalysisService(window);
     // D3-1: one debug adapter per window. It owns the breakpoints, which
     // exist with no session at all, so it is built before any project opens
     // and told to load them when one does.
@@ -751,7 +758,8 @@ void buildMainWindow(AppSettings *appSettings,
     const UiFontTargets uiFontTargets =
       buildStatusBar(window, appSettings, languageService, buildService,
                      central.diagnosticsService, searchModel, vcsService, editorTabs,
-                     central.projectTree, central.docks, central.problemsPanel, treeModel);
+                     central.projectTree, central.docks, central.problemsPanel, treeModel,
+                     analysisService);
 
     // Every menu action is registered under a stable id from
     // app_config::ACTIONS and takes its shortcut from the persisted keymap,
@@ -836,6 +844,8 @@ void buildMainWindow(AppSettings *appSettings,
       aiProviderEditor,
       aiChat,
       pluginCatalog,
+      analysisEditor,
+      analysisService,
       uiFontTargets,
       central.terminalPanel,
     };
@@ -1045,6 +1055,7 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel,
                  viewMenu);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
+    buildAnalysisMenu(window, analysisService, appSettings, *actions);
     // Last of the View entries, under everything it can rearrange.
     buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,
                       central.editorTabs, *actions);

@@ -19,12 +19,18 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+pub mod host;
+
+use host::ExecHost;
+
 /// On Windows, stop a spawned child from briefly flashing its own console
 /// window — `Command::new` otherwise allocates one for every subprocess,
 /// visible for the instant it takes to run something as quick as `git
 /// status`. No effect (and no `windows-sys`/`winapi` dependency) on other
-/// platforms.
-fn suppress_console_window(command: &mut Command) {
+/// platforms. `pub(crate)`: `host::ExecHost::command` applies this too, so
+/// `wsl.exe` itself — the only Windows-side process a remote run spawns
+/// directly — never flashes a console either.
+pub(crate) fn suppress_console_window(command: &mut Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -80,10 +86,21 @@ pub fn run(
     timeout: Duration,
     env: &[(&str, &str)],
 ) -> Result<Output, Failure> {
-    let mut command = Command::new(program);
+    let host = ExecHost::for_path(work_dir);
+    let resolved_program = match host::resolve_program(&host, program, work_dir) {
+        Some(resolved) => resolved,
+        // Not found in the distro: fall through with the bare name so the
+        // spawn below still happens and fails the normal way (`wsl.exe`
+        // exits with `-e`'s "no such file or directory", which is not
+        // exit 127 — it is exit 2 — so this does not double-report; the
+        // caller simply gets git/analyzer-shaped stderr instead of an
+        // early `Failure::NotFound`. Acceptable: the common case, a
+        // present binary, never takes this branch.)
+        None => program.to_string(),
+    };
+
+    let mut command = host.command(&resolved_program, args, work_dir, env);
     command
-        .args(args)
-        .current_dir(work_dir)
         .stdin(if stdin.is_some() {
             Stdio::piped()
         } else {
@@ -91,10 +108,6 @@ pub fn run(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    for (key, value) in env {
-        command.env(key, value);
-    }
-    suppress_console_window(&mut command);
 
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -146,10 +159,23 @@ pub fn run(
         Err(_) => Err(Failure::Io("reading the process's output failed".into())),
     };
 
+    let stdout = join(stdout_reader)?;
+    let stderr = join(stderr_reader)?;
+
+    // `wsl.exe` spawns fine even when the *Linux* program is missing, so a
+    // missing binary shows up as an ordinary nonzero exit rather than
+    // `io::ErrorKind::NotFound` above. Remap the two ways that happens
+    // (exit 127, or `wsl.exe`'s own "no such distro" stderr) onto the same
+    // `Failure::NotFound` a missing local binary already reports, so
+    // `VcsError::GitNotInstalled` and friends keep working unmodified.
+    if host.is_remote() && host::is_missing_program(status.code(), &stderr) {
+        return Err(Failure::NotFound);
+    }
+
     Ok(Output {
         status,
-        stdout: join(stdout_reader)?,
-        stderr: join(stderr_reader)?,
+        stdout,
+        stderr,
     })
 }
 
@@ -230,14 +256,15 @@ impl Spawned {
 /// in — a test runner's TeamCity service messages — rather than parse a
 /// batch report after the process has already exited.
 pub fn spawn(program: &str, args: &[&str], work_dir: &Path) -> Result<Spawned, Failure> {
-    let mut command = Command::new(program);
+    let host = ExecHost::for_path(work_dir);
+    let resolved_program =
+        host::resolve_program(&host, program, work_dir).unwrap_or_else(|| program.to_string());
+
+    let mut command = host.command(&resolved_program, args, work_dir, &[]);
     command
-        .args(args)
-        .current_dir(work_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    suppress_console_window(&mut command);
     let child = command.spawn();
     match child {
         Ok(child) => Ok(Spawned {

@@ -254,6 +254,18 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     QObject::connect(treeModel, &ProjectTreeModel::projectOpenFailed, statusBar,
                       [statusBar](const FfiResult &) { clearProjectOpening(statusBar); });
 
+    // The project itself opened fine; this only means external changes
+    // (a terminal `git pull`/checkout/commit, an edit made outside the
+    // app) won't be noticed live. Not worth a blocking dialog, but worth
+    // more than silence (previously this failure was swallowed entirely).
+    QObject::connect(treeModel, &ProjectTreeModel::watcherFailed, statusBar,
+                      [window](const FfiResult &result) {
+                          window->statusBar()->showMessage(
+                            QObject::tr("Live file watching could not be started: %1")
+                              .arg(result.message),
+                            10000);
+                      });
+
     statusBar->addPermanentWidget(indexLabel);
     statusBar->addPermanentWidget(indexBar);
     statusBar->addPermanentWidget(serverLabel);

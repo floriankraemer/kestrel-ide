@@ -1596,6 +1596,16 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "projectOpenFailed"]
         fn project_open_failed(self: Pin<&mut ProjectTreeModel>, result: FfiResult);
+
+        /// Emitted when the filesystem watcher fails to (re)start for the
+        /// project `openFolder`/`reopenLastProject` just opened
+        /// successfully — distinct from `projectOpenFailed`, since the
+        /// project itself is open and the tree is showing; only live
+        /// external-change detection (the Changes dock, the "reload from
+        /// disk" prompt) is degraded until the project is reopened.
+        #[qsignal]
+        #[cxx_name = "watcherFailed"]
+        fn watcher_failed(self: Pin<&mut ProjectTreeModel>, result: FfiResult);
     }
 
     // Enables `self.qt_thread()` on `ProjectTreeModel`, giving the

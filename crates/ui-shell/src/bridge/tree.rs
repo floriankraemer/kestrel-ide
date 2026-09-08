@@ -341,9 +341,10 @@ impl ffi::ProjectTreeModel {
     /// on the event kind here fixes both the app's own saves and genuinely
     /// external content-only edits (no reason to reset for either), while
     /// still fully rebuilding for real structural changes (US-2).
-    fn start_watcher(self: Pin<&mut Self>) {
+    fn start_watcher(mut self: Pin<&mut Self>) {
         let qt_thread = self.qt_thread();
-        self.session
+        let result = self
+            .session
             .borrow_mut()
             .start_watcher(move |kind, changed_path| {
                 let structural = project_model::is_structural_change(&kind);
@@ -366,6 +367,15 @@ impl ffi::ProjectTreeModel {
                     model.as_mut().files_changed_externally(path);
                 });
             });
+        // The project itself is already open; a failed watch only means
+        // external changes (a terminal `git pull`/`checkout`/commit, an
+        // edit made outside the app) won't be noticed until it's reopened.
+        // Surfaced rather than left silent (`.ok()` used to swallow this) —
+        // see `AppError::WatcherFailed`.
+        if let Err(err) = result {
+            let result = to_ffi_result(Err(err));
+            self.as_mut().watcher_failed(result);
+        }
     }
 
     /// A structural filesystem-watcher event says the tree may have moved.

@@ -1,5 +1,6 @@
 #include "analysis_menu.h"
 
+#include "e2e_mark.h"
 #include "keymap_page.h"
 
 #include <QAction>
@@ -13,7 +14,22 @@ namespace ui_shell {
 void buildAnalysisMenu(QMainWindow *window, AnalysisService *analysisService,
                        AppSettings *appSettings, QHash<QString, QAction *> &actions)
 {
-    QMenu *analysisMenu = window->menuBar()->addMenu(QObject::tr("&Analysis"));
+    // "Ana&lysis", not "&Analysis": "&AI" already claims Alt+A, and a menu
+    // bar's ambiguous-mnemonic fallback (cycling on a repeated press) is not
+    // something either a user or an E2E flow should have to rely on to
+    // reach this menu — the same reasoning `vcs_menu.cpp` gives "V&CS".
+    QMenu *analysisMenu = window->menuBar()->addMenu(QObject::tr("Ana&lysis"));
+    // A top-level menu bar entry never goes through `exec()`, so
+    // `aboutToShow`/`aboutToHide` are the only signal an E2E flow has that
+    // it is safe to send keystrokes into what is, in X11 terms, a brand new
+    // toplevel — same as `vcs_menu.cpp`.
+    QObject::connect(analysisMenu, &QMenu::aboutToShow, analysisMenu,
+                      []() { e2eMark("{\"ev\":\"dialog_shown\",\"name\":\"analysis_menu\"}"); });
+    QObject::connect(analysisMenu, &QMenu::aboutToHide, analysisMenu,
+                      []() { e2eMark("{\"ev\":\"dialog_closed\",\"name\":\"analysis_menu\"}"); });
+    // Its one entry's on-screen rect, so a flow clicks "Inspect Project" by
+    // name rather than by counting arrow presses.
+    e2eMarkMenuActions(analysisMenu, "analysis_menu_action");
 
     QAction *inspectAction =
       registerAction(analysisMenu, QStringLiteral("analysis.inspectProject"),

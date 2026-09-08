@@ -205,6 +205,11 @@ impl ffi::AnalysisService {
                 .run_manual(program, args, &root, MANUAL_RUN_TIMEOUT, move |result| {
                     let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
                         publish_result(&service, &analyzer, &result);
+                        // The store just changed for this analyzer's rows —
+                        // tell the editor and the Problems dock, the same
+                        // signal `LanguageService`/`BuildService` emit for
+                        // their own writes (ADR-0046).
+                        service.as_mut().diagnostics_changed();
                         let (ok, message) = match &result {
                             Ok(_) => (true, String::new()),
                             Err(analysis_core::RunFailure::NotFound) => {

@@ -39,14 +39,16 @@ public:
     // `openAt(path, line, column)` jumps the editor to a diagnostic.
     using OpenAt = std::function<void(const QString &, int, int)>;
 
-    // `languageService`/`buildService` are read only for their
-    // `diagnosticsChanged` signal (a source's rows changed, so refresh) and
-    // `languageService`'s server-state text; the rows themselves come from
-    // `diagnosticsService` alone (ADR-0046) — a build's and a language
-    // server's diagnostics for the same file already coexist in the one
-    // shared store, so there is no second merge to do here.
+    // `languageService`/`buildService`/`analysisService` are read only for
+    // their `diagnosticsChanged` signal (a source's rows changed, so
+    // refresh) and `languageService`'s server-state text; the rows
+    // themselves come from `diagnosticsService` alone (ADR-0046) — a
+    // build's, a language server's and an analyzer's diagnostics for the
+    // same file already coexist in the one shared store, so there is no
+    // second merge to do here.
     ProblemsPanel(LanguageService *languageService, BuildService *buildService,
-                  DiagnosticsService *diagnosticsService, OpenAt openAt, QWidget *parent);
+                  AnalysisService *analysisService, DiagnosticsService *diagnosticsService,
+                  OpenAt openAt, QWidget *parent);
 
     // Called once, the first time a diagnostic arrives in a session, so the
     // window can raise the dock. Never called again: a panel that reopens

@@ -64,6 +64,7 @@ QColor severityColor(FfiSeverity severity)
 }
 
 ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *buildService,
+                             AnalysisService *analysisService,
                              DiagnosticsService *diagnosticsService, OpenAt openAt,
                              QWidget *parent)
   : QWidget(parent)
@@ -137,6 +138,7 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
 
     connect(languageService_, &LanguageService::diagnosticsChanged, this, &ProblemsPanel::refresh);
     connect(buildService_, &BuildService::diagnosticsChanged, this, &ProblemsPanel::refresh);
+    connect(analysisService, &AnalysisService::diagnosticsChanged, this, &ProblemsPanel::refresh);
     connect(languageService_,
             &LanguageService::serverStateChanged,
             this,
@@ -314,6 +316,28 @@ void ProblemsPanel::applyFilter()
             if (visible) {
                 ++visibleChildren;
                 ++shown;
+                // This row's own on-screen rect, the same reason
+                // `changes_panel.cpp`'s `markChangesRow` reports one: an
+                // E2E flow that has to double-click a specific finding
+                // would otherwise compute its position from the tree's
+                // font metrics and row height. Reported from here, after
+                // visibility is settled and the dock has already been
+                // shown (`refresh()`'s `firstDiagnostic_` runs before this
+                // is reached) — not from `refresh()`'s own row-building
+                // loop, where the dock may still be hidden and the rect
+                // meaningless.
+                const QRect itemRect = tree_->visualItemRect(item);
+                const QPoint origin = itemRect.isEmpty()
+                  ? QPoint()
+                  : tree_->viewport()->mapToGlobal(itemRect.topLeft());
+                e2eMark(QStringLiteral("{\"ev\":\"problem_row\",\"path\":%1,\"source\":%2,"
+                                        "\"rect\":[%3,%4,%5,%6]}")
+                          .arg(e2eJson(item->data(0, kPathRole).toString()),
+                                e2eJson(item->text(3)))
+                          .arg(origin.x())
+                          .arg(origin.y())
+                          .arg(itemRect.width())
+                          .arg(itemRect.height()));
             }
         }
         // A group with nothing left in it is not a group.

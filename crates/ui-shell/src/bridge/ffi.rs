@@ -4255,6 +4255,18 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "analysisFinished"]
         fn analysis_finished(self: Pin<&mut AnalysisService>);
+
+        /// This analyzer's rows in the shared store (ADR-0046) changed —
+        /// the same "my part of the store changed" meaning `LanguageService`
+        /// and `BuildService` already give their own `diagnosticsChanged`.
+        /// `EditorTabs::applyDiagnostics` and `ProblemsPanel::refresh` both
+        /// wire to this alongside the other two sources, so an analyzer
+        /// finding reaches the editor's squiggles and the Problems dock the
+        /// same way a build's or a language server's does — the finding-1
+        /// bug class ADR-0046 exists to prevent, for this third source too.
+        #[qsignal]
+        #[cxx_name = "diagnosticsChanged"]
+        fn diagnostics_changed(self: Pin<&mut AnalysisService>);
     }
 
     impl cxx_qt::Threading for AnalysisService {}

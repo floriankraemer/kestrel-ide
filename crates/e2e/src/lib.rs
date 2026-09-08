@@ -313,6 +313,22 @@ impl Ide {
         self.click(button);
     }
 
+    /// Two rapid clicks at the same point — `QTreeWidget::itemDoubleClicked`
+    /// and friends need an actual double-click event, not two independent
+    /// single clicks far enough apart for Qt to treat them as such.
+    pub fn double_click_at(&self, x: i32, y: i32, button: u8) {
+        self.mouse_move(x, y);
+        xdotool::run(&[
+            "click",
+            "--clearmodifiers",
+            "--repeat",
+            "2",
+            "--delay",
+            "40",
+            &button.to_string(),
+        ]);
+    }
+
     /// Press at `from`, travel to `to`, release — a real drag.
     ///
     /// The travel is stepped rather than a single jump: a drag is recognised

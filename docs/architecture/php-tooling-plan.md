@@ -155,7 +155,7 @@ Update the row **in the same commit** that finishes the task.
 | Task | Status | Commit |
 |---|---|---|
 | E1 — a stub analyzer binary (a script that prints fixture XML), on the `lsp-core::bin::stub_server` precedent, so CI needs no PHP | done | `86511eb` |
-| E2 — E2E: `e2e_analyzer_findings_appear_inline_and_in_problems` | open | |
+| E2 — E2E: `e2e_analyzer_findings_appear_inline_and_in_problems` | done | `2c45884` |
 | E3 — the manual PHP matrix: a real Composer project walked by hand, recorded in the plan | open | |
 
 ## Critical files

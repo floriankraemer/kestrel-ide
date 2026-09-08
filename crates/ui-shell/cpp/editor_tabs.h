@@ -43,10 +43,14 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs);
 // shows and toggles (editor_tabs_debug.cpp).
 void wireDebugService(DebugService *debugService, EditorTabs *editorTabs);
 // ADR-0046: builds the one DiagnosticsService, gives EditorTabs the copy its
-// squiggles read, and refreshes them whenever either source's rows in the
-// shared store changed (editor_tabs_lsp.cpp).
+// squiggles read, and refreshes them whenever any source's rows in the
+// shared store changed (editor_tabs_lsp.cpp). `analysisService` is the PHP
+// tooling plan's third source (analyzer findings) — the same wiring
+// `languageService`/`buildService` already had.
 DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *languageService,
-                                           BuildService *buildService, EditorTabs *editorTabs);
+                                           BuildService *buildService,
+                                           AnalysisService *analysisService,
+                                           EditorTabs *editorTabs);
 
 // app_core::TabKind's stable code for a binary tab (ADR-0020).
 constexpr int kTabKindBinary = 1;

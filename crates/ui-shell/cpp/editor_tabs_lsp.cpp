@@ -482,6 +482,15 @@ void EditorTabs::applyDiagnostics()
             }
         }
         codeEditor->setDiagnosticSpans(spans);
+        if (!path.isEmpty()) {
+            // The only way anything outside the process can know this
+            // file's squiggles caught up with whichever source just
+            // changed — the same reason `ProblemsPanel::applyFilter`
+            // reports `problems_refreshed` for its own dock.
+            e2eMark(QStringLiteral("{\"ev\":\"diagnostics_applied\",\"path\":%1,\"count\":%2}")
+                      .arg(e2eJson(path))
+                      .arg(spans.size()));
+        }
     });
 }
 
@@ -491,10 +500,12 @@ void EditorTabs::setDiagnosticsService(DiagnosticsService *diagnosticsService)
 }
 
 DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *languageService,
-                                           BuildService *buildService, EditorTabs *editorTabs)
+                                           BuildService *buildService,
+                                           AnalysisService *analysisService,
+                                           EditorTabs *editorTabs)
 {
     // ADR-0046: the single QObject the Problems dock and the editor read;
-    // either source's `diagnosticsChanged` means this file's squiggles (and
+    // any source's `diagnosticsChanged` means this file's squiggles (and
     // the panel's rows, wired the same way from `problemsPanel.cpp`) may
     // have changed.
     auto *diagnosticsService = new DiagnosticsService(parent);
@@ -502,6 +513,8 @@ DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *lan
     QObject::connect(languageService, &LanguageService::diagnosticsChanged, editorTabs,
                       [editorTabs]() { editorTabs->applyDiagnostics(); });
     QObject::connect(buildService, &BuildService::diagnosticsChanged, editorTabs,
+                      [editorTabs]() { editorTabs->applyDiagnostics(); });
+    QObject::connect(analysisService, &AnalysisService::diagnosticsChanged, editorTabs,
                       [editorTabs]() { editorTabs->applyDiagnostics(); });
     return diagnosticsService;
 }

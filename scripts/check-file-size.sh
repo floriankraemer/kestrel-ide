@@ -88,7 +88,13 @@ baseline() {
 	# threading it through buildCentralWidget to build the Tests dock, and
 	# the one-line call to buildTestsMenu (its own translation unit, like
 	# buildBuildMenu/buildAnalysisMenu). No split planned.
-	crates/ui-shell/cpp/main_window.cpp) echo 1217 ;;
+	# Raised from 1217 by 3 lines for the PHP tooling plan's E2: threading
+	# `analysisService` through `buildCentralWidget` into
+	# `wireDiagnosticsService`/`ProblemsPanel` too, so an analyzer's rows
+	# reach the editor's squiggles and the Problems dock the same way a
+	# build's or a language server's already did (ADR-0046's third-source
+	# gap this closes). No split planned.
+	crates/ui-shell/cpp/main_window.cpp) echo 1220 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

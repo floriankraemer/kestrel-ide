@@ -154,7 +154,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    LanguageService *languageService, AiChat *aiChat,
                                    VcsService *vcsService, RunService *runService,
                                    BuildService *buildService, DebugService *debugService,
-                                   TestService *testService, PreviewProvider *previewProvider)
+                                   TestService *testService, PreviewProvider *previewProvider,
+                                   AnalysisService *analysisService)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -232,7 +233,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     QAction *projectTreeLocateAction = projectTreeDock.locateAction;
 
     auto *editorTabs = new EditorTabs(docManager, languageService, editorRoot, window);
-    auto *diagnosticsService = wireDiagnosticsService(window, languageService, buildService, editorTabs);
+    auto *diagnosticsService =
+      wireDiagnosticsService(window, languageService, buildService, analysisService, editorTabs);
 
     // Task H: bottom dock panel, matching where JetBrains/VS-style IDEs
     // dock their Find in Files results. Reuses the one EditorTabs instance
@@ -345,8 +347,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // Task L2: the Problems panel, tabbed into the same bottom area as Find
     // in Files and Find Usages — the same "list of locations" shape, fed by
     // the language servers instead of a query.
-    auto *problemsPanel =
-      new ProblemsPanel(languageService, buildService, diagnosticsService, openAt, dockManager);
+    auto *problemsPanel = new ProblemsPanel(languageService, buildService, analysisService,
+                                            diagnosticsService, openAt, dockManager);
     auto *problemsDock = new ads::CDockWidget(dockManager, QObject::tr("Problems"));
     problemsDock->setWidget(problemsPanel);
     docks->registerDock(QStringLiteral("problems"), problemsDock, ads::CenterDockWidgetArea,
@@ -720,7 +722,8 @@ void buildMainWindow(AppSettings *appSettings,
     const CentralWidgets central =
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
-                          buildService, debugService, testService, previewProvider);
+                          buildService, debugService, testService, previewProvider,
+                          analysisService);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs);             // R1-7

@@ -370,12 +370,17 @@ impl AppSession {
 
     /// (Re)start the filesystem watcher for the current project root; see
     /// `ProjectSession::start_watcher` for the threading contract.
+    ///
+    /// `is_remote` (W6-1, ADR-0052) passes straight through to
+    /// `ProjectWatcher::start` — see its doc comment for why this crate
+    /// takes a plain bool rather than classifying the root itself.
     pub fn start_watcher(
         &mut self,
+        is_remote: bool,
         on_change: impl Fn(project_model::EventKind, PathBuf) + Send + 'static,
     ) -> Result<(), AppError> {
         self.project
-            .start_watcher(on_change)
+            .start_watcher(is_remote, on_change)
             .map_err(|err| AppError::WatcherFailed(err.to_string()))
     }
 

@@ -219,8 +219,24 @@ impl EditorOpsRust {
     /// indent style already uses.
     fn save_rules(&self, language: Language) -> editor_core::save_rules::SaveRules {
         let settings = self.settings.borrow();
-        let rules = settings_model::editing::resolve_for_language(&settings, &language.id());
-        rules.save_rules()
+        let mut rules =
+            settings_model::editing::resolve_for_language(&settings, &language.id()).save_rules();
+        // W6 (line endings, ADR-0052): `on_save`'s `LineEnding::platform()`
+        // fallback only ever fires for a file with no existing line ending
+        // to preserve (a brand-new empty file) — every other file already
+        // keeps its own endings regardless of host. That one fallback is
+        // `cfg!(windows)`, which is wrong for a WSL project on a Windows
+        // build of this IDE: the file lives inside a Linux distro and wants
+        // LF, not the compiled-for platform's CRLF.
+        if rules.line_endings.is_none() {
+            let is_remote = crate::bridge::convert::current_project_root()
+                .map(|root| lsp_core::ExecHost::for_path(&root).is_remote())
+                .unwrap_or(false);
+            if is_remote {
+                rules.line_endings = Some(editor_core::save_rules::LineEnding::Lf);
+            }
+        }
+        rules
     }
 
     /// The selection a tab is on, or a single caret at the start for a tab

@@ -155,6 +155,15 @@ const WRITER_LOCK_RETRY_DELAY: std::time::Duration = std::time::Duration::from_m
 /// index goes to the user's cache directory instead, keyed by the project's
 /// path. Slightly worse (two projects at the same path collide, and the
 /// cache is not portable with the project) and much better than not working.
+/// W6-2 (ADR-0052): this already handles a WSL project root correctly —
+/// `\\wsl.localhost\...` is exactly the "some FUSE mounts" case above, and
+/// falls back to the cache directory the same as any other lock-incapable
+/// filesystem. What it does not fix, and this plan does not either, is the
+/// *speed* of the first index: every file is read once, over the 9P share,
+/// which is the slow leg of this whole design (file I/O stays Windows-side
+/// by design — see the plan's Context section). Stated, not fixed; no
+/// upgrade path is proposed, since the fix would mean file I/O moving off
+/// the share, which is the one thing this plan deliberately does not do.
 pub fn index_dir_for(project_root: &Path) -> PathBuf {
     index_dir_with(project_root, supports_file_locks)
 }

@@ -34,12 +34,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
         .find(|span| span.get("is_primary").and_then(|p| p.as_bool()) == Some(true))?;
 
     let file = primary.get("file_name")?.as_str()?;
-    let path = Path::new(file);
-    let path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        project_root.join(path)
-    };
+    let path = crate::diagnostics::resolve_path(file, project_root);
 
     Some(BuildDiagnostic {
         path,

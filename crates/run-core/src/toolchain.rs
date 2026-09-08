@@ -172,8 +172,14 @@ pub fn package_manager(project_root: &Path) -> &'static str {
 /// The interpreter a Python run configuration is launched with. Windows
 /// ships `python`; everywhere else `python` may be absent or Python 2, so
 /// `python3` is the only safe default.
-pub fn python_program() -> &'static str {
-    if cfg!(windows) {
+///
+/// This is a host question, not a `cfg!(windows)` one (W4-2): a project
+/// opened from a WSL UNC path runs inside the distro regardless of which OS
+/// this binary itself was compiled for, so it gets the Linux answer even
+/// when `cfg!(windows)` is true.
+pub fn python_program(project_root: &Path) -> &'static str {
+    let is_remote = process_exec::host::ExecHost::for_path(project_root).is_remote();
+    if cfg!(windows) && !is_remote {
         "python"
     } else {
         "python3"
@@ -225,6 +231,18 @@ mod tests {
             fs::write(dir.path().join(name), "").unwrap();
         }
         dir
+    }
+
+    // W4-2: a WSL project root always gets the Linux answer, regardless of
+    // `cfg!(windows)` (which is false in this Linux CI build anyway, so the
+    // one bit this test actually exercises across both host platforms is
+    // "remote overrides the compiled-for-Windows branch too").
+    #[test]
+    fn python_program_is_python3_on_a_wsl_root_even_if_this_were_windows() {
+        assert_eq!(
+            python_program(Path::new(r"\\wsl.localhost\Ubuntu\home\f\proj")),
+            "python3"
+        );
     }
 
     #[test]

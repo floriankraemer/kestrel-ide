@@ -43,7 +43,25 @@ impl MacroContext {
     }
 
     fn value_of(&self, token: Token) -> Option<String> {
-        let display = |path: &Path| path.display().to_string();
+        // W4-3: a launched process runs inside the distro on a WSL project
+        // root (W4-1), so a macro expanding to a path must already be the
+        // Linux path — `host.argv` passes an argument string through
+        // untouched, unlike `cwd`, which it does translate for `--cd`.
+        // `ExecHost::for_path` on the project root, not `path` itself:
+        // `$FILE_PATH$` names a file *under* the root, and only the root's
+        // own spelling is guaranteed to carry the UNC prefix.
+        let host = self
+            .project_root
+            .as_deref()
+            .map(process_exec::host::ExecHost::for_path)
+            .unwrap_or(process_exec::host::ExecHost::Local);
+        let display = |path: &Path| {
+            if host.is_remote() {
+                host.to_remote(path)
+            } else {
+                path.display().to_string()
+            }
+        };
         match token {
             Token::ProjectDir => self.project_root.as_deref().map(display),
             Token::FilePath => self.file.as_deref().map(display),
@@ -58,6 +76,13 @@ impl MacroContext {
                 .as_deref()
                 .and_then(Path::file_stem)
                 .map(|n| n.to_string_lossy().into_owned()),
+            // ponytail: stays the Windows-side $HOME/$USERPROFILE even on a
+            // remote host — the distro's own home would need a login-shell
+            // probe (`process_exec::host::resolve_program`'s style of I/O),
+            // and no run configuration observed in this codebase uses
+            // $USER_HOME$ for a path that reaches the spawned process.
+            // Upgrade path: probe `echo $HOME` once per distro, memoised the
+            // same way `resolve_program` is, if that ever changes.
             Token::UserHome => home_dir().as_deref().map(display),
         }
     }
@@ -142,6 +167,28 @@ mod tests {
         assert_eq!(expand("$FILE_DIR$", &ctx), "/home/me/project/src");
         assert_eq!(expand("$FILE_NAME$", &ctx), "main.rs");
         assert_eq!(expand("$FILE_NAME_WITHOUT_EXTENSION$", &ctx), "main");
+    }
+
+    // W4-3: on a WSL project root, macros expand to the Linux path a
+    // launched process actually understands, not the Windows UNC spelling
+    // `host.argv` would otherwise pass through untouched.
+    #[test]
+    fn project_dir_expands_to_the_linux_path_on_a_wsl_root() {
+        let ctx = MacroContext::for_project("//wsl.localhost/Ubuntu/home/f/proj");
+        assert_eq!(expand("$PROJECT_DIR$", &ctx), "/home/f/proj");
+    }
+
+    #[test]
+    fn file_path_expands_to_the_linux_path_on_a_wsl_root() {
+        // Forward slashes: what actually reaches this crate — Qt hands
+        // Windows paths (drive letters included) with `/` separators, per
+        // `diagnostics_core::uri_from_path`'s own doc comment.
+        let ctx = MacroContext::for_file(
+            "//wsl.localhost/Ubuntu/home/f/proj",
+            "//wsl.localhost/Ubuntu/home/f/proj/src/main.rs",
+        );
+        assert_eq!(expand("$FILE_PATH$", &ctx), "/home/f/proj/src/main.rs");
+        assert_eq!(expand("$FILE_DIR$", &ctx), "/home/f/proj/src");
     }
 
     #[test]

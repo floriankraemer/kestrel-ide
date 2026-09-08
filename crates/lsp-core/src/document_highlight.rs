@@ -86,6 +86,7 @@ impl crate::manager::LspManager {
         line: u32,
         character: u32,
     ) -> Result<Vec<DocumentHighlight>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let result = self.request_with_timeout(
             &language_id,

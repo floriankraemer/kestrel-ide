@@ -150,6 +150,7 @@ impl crate::manager::LspManager {
         line: u32,
         character: u32,
     ) -> Result<Option<PrepareRename>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let result = self.request_with_timeout(
             &language_id,
@@ -171,6 +172,7 @@ impl crate::manager::LspManager {
         character: u32,
         new_name: &str,
     ) -> Result<Vec<DocumentEdits>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let mut params = position_params(uri, line, character);
         params["newName"] = Value::String(new_name.to_string());
@@ -180,7 +182,10 @@ impl crate::manager::LspManager {
             params,
             REFACTOR_TIMEOUT,
         )?;
-        parse_workspace_edit(&result).map_err(|e| LspError::Protocol(e.to_string()))
+        let mut edits =
+            parse_workspace_edit(&result).map_err(|e| LspError::Protocol(e.to_string()))?;
+        crate::workspace_edit::retranslate_document_edits(&mut edits, self.host());
+        Ok(edits)
     }
 }
 

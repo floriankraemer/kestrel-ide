@@ -393,6 +393,15 @@ impl ffi::LanguageService {
     /// The file a code action was asked about, so an edit confined to it
     /// needs no preview. Taken from the action's own edit rather than
     /// remembered separately.
+    ///
+    /// ponytail: uses the untranslated `lsp_core::parse_workspace_edit`, so
+    /// on a WSL project root this is a Linux path compared against a UNC
+    /// one — the confinement check below always sees "touches other files"
+    /// and shows a preview it didn't strictly need to. A correctness ceiling,
+    /// not a correctness bug: `run_action`'s own `manager.parse_workspace_changes`
+    /// (ADR-0052) is what actually applies the edit, already translated.
+    /// Upgrade path if the extra preview ever annoys someone: give this
+    /// struct the same `self.host` `apply_event` uses and retranslate here too.
     pub(crate) fn current_path_of(&self, action: &lsp_core::CodeActionItem) -> String {
         action
             .edit

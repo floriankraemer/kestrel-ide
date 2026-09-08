@@ -294,6 +294,21 @@ impl PtySession {
     /// `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and terminating the job takes
     /// the whole tree with it. That path is compiled but **not exercised by
     /// CI**, which has no Windows runner — see the release checklist.
+    ///
+    /// # WSL ceiling (W4-6, ADR-0052)
+    ///
+    /// On a WSL project root the Job Object above only ever contains
+    /// `wsl.exe` itself — the process this crate can see and signal.
+    /// Everything the command actually started (`cargo build`, a daemonised
+    /// Gradle) runs *inside the distro*, in a PID namespace the Windows
+    /// Job Object has no reach into. Killing `wsl.exe` here is honest about
+    /// what it does — it drops the pipe the distro-side process was
+    /// writing to, so the run console goes quiet — but it does not send
+    /// that process a signal, so a daemonised build tool (Gradle's own
+    /// daemon, most commonly) survives a Stop. Stated, not fixed: the
+    /// upgrade path is `wsl.exe -e kill -TERM -<pgid>` against the distro's
+    /// own process group, not written until a real orphan is observed
+    /// (see `docs/architecture/remote-wsl-plan.md`'s "Accepted ceilings").
     pub fn kill_tree(&mut self) -> Result<KillOutcome, PtyError> {
         let Some(pid) = self.process_id() else {
             // Already reaped: there is nothing left to signal, which is the

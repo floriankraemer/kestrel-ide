@@ -6,6 +6,10 @@ edition = "2021"
 [dependencies]
 # The wire framing, shared with `lsp-core` (ADR-0041).
 stdio-framing = { path = "../stdio-framing" }
+# The WSL execution/path-translation seam (ADR-0052): `DapSession::start`
+# spawns the adapter through `ExecHost::command`, and `Source.path`/
+# breakpoint paths are translated at the same seam `lsp-core` uses.
+process-exec = { path = "../process-exec" }
 # `LaunchSpec` and the toolchain table: which adapter a project's programs
 # are debugged with is `run_core::toolchain`'s answer, not a second one
 # (ADR-0039).

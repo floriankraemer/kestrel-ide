@@ -1059,7 +1059,7 @@ impl ffi::DebugService {
             return;
         };
         let arguments = json!({
-            "source": { "path": path.display().to_string() },
+            "source": { "path": dap_core::source_path(session.host(), path) },
             "breakpoints": self.breakpoints.borrow().source_breakpoints(path),
         });
         std::thread::spawn(move || {
@@ -1108,10 +1108,17 @@ impl ffi::DebugService {
                 .request("threads", Value::Null)
                 .map(|body| dap_core::protocol::threads(&body))
                 .unwrap_or_default();
-            let frames = session
+            let mut frames = session
                 .request("stackTrace", json!({ "threadId": stopped.thread_id }))
                 .map(|body| dap_core::protocol::stack_frames(&body))
                 .unwrap_or_default();
+            // W4-5: each frame's `Source.path` came back from the adapter
+            // as a Linux path on a WSL project root — translate it to the
+            // UNC path the share serves before anything downstream (the
+            // frame list, the caret jump) treats it as a local path.
+            for frame in &mut frames {
+                frame.path = dap_core::local_path(session.host(), &frame.path);
+            }
             let top = frames.first().cloned();
 
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
@@ -1210,7 +1217,7 @@ fn send_configuration(session: &Arc<DapSession>, breakpoints: &BreakpointStore) 
         let _ = session.request(
             "setBreakpoints",
             json!({
-                "source": { "path": path.display().to_string() },
+                "source": { "path": dap_core::source_path(session.host(), path) },
                 "breakpoints": breakpoints.source_breakpoints(path),
             }),
         );

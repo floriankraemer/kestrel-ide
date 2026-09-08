@@ -475,6 +475,17 @@ impl ffi::VcsService {
     /// `ProjectTreeModel::open_folder` already makes on this same thread.
     /// On success, re-runs `openProject` so discovery — which failed the
     /// first time for exactly this reason — runs again.
+    ///
+    /// W2-4: for a WSL project root this button becomes unreachable, not
+    /// merely unnecessary. "Dubious ownership" is `git` refusing a
+    /// repository whose on-disk owner UID doesn't match the process's own —
+    /// which only happens when Windows-side `git.exe` reads a WSL-owned
+    /// repo over the 9P share. `vcs_core::cli::run` now runs `git` inside
+    /// the distro for a WSL root (W1-7/W2-1), as the repository's own user,
+    /// so the UID mismatch this dialog exists to fix never occurs and
+    /// `VcsError::DubiousOwnership` is never returned in the first place.
+    /// Nothing to remove: a `--global safe.directory` write is a no-op fix
+    /// for an error that can't fire, not a wrong one.
     pub fn trust_directory(mut self: Pin<&mut Self>) -> ffi::FfiResult {
         let root = self.project_root.borrow().clone();
         match vcs_core::cli::run(

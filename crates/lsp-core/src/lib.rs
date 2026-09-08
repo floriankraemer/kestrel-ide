@@ -71,13 +71,19 @@ pub use intentions::{
     IntentionGroup, ORGANIZE_IMPORTS,
 };
 pub use manager::{
-    LspError, LspEvent, LspManager, DEFAULT_REQUEST_TIMEOUT, DOCUMENT_HIGHLIGHT_TIMEOUT,
-    INLAY_HINT_TIMEOUT, INTENTION_TIMEOUT, REFACTOR_TIMEOUT, SEMANTIC_TOKENS_TIMEOUT,
-    SIGNATURE_HELP_TIMEOUT,
+    path_for, uri_for, LspError, LspEvent, LspManager, DEFAULT_REQUEST_TIMEOUT,
+    DOCUMENT_HIGHLIGHT_TIMEOUT, INLAY_HINT_TIMEOUT, INTENTION_TIMEOUT, REFACTOR_TIMEOUT,
+    SEMANTIC_TOKENS_TIMEOUT, SIGNATURE_HELP_TIMEOUT,
 };
 pub use navigation::{
     definition_outcome, parse_definition, virtual_doc_key, DefinitionOutcome, DefinitionTarget,
 };
+/// ADR-0052: where a project's tooling runs. Re-exported so an adapter
+/// (`ui-shell`) that already depends on `lsp-core` can hold one — e.g. to
+/// retranslate a `workspace/applyEdit`'s paths outside a
+/// [`LspManager`]-holding closure — without also taking a direct
+/// dependency on `process-exec`.
+pub use process_exec::host::{set_remote_wsl_enabled, ExecHost};
 pub use progress::{ProgressTracker, ServerActivity};
 pub use registration::{Registration, Registrations, Watcher};
 pub use rename::{

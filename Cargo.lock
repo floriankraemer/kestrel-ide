@@ -444,6 +444,7 @@ name = "build-core"
 version = "0.1.0"
 dependencies = [
  "diagnostics-core",
+ "process-exec",
  "regex",
  "run-core",
  "serde_json",
@@ -1121,6 +1122,7 @@ name = "dap-core"
 version = "0.1.0"
 dependencies = [
  "app-config",
+ "process-exec",
  "run-core",
  "serde",
  "serde_json",
@@ -3652,6 +3654,7 @@ dependencies = [
  "globset",
  "lsp-types",
  "notify",
+ "process-exec",
  "serde",
  "serde_json",
  "stdio-framing",
@@ -4622,6 +4625,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "portable-pty",
+ "process-exec",
 ]
 
 [[package]]
@@ -5040,6 +5044,7 @@ name = "run-core"
 version = "0.1.0"
 dependencies = [
  "app-config",
+ "process-exec",
  "pty-core",
  "regex",
  "serde",

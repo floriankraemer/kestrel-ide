@@ -247,6 +247,28 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     QObject::connect(analysisService, &AnalysisService::analysisFinished, statusBar,
                       updateAnalysisLabel);
 
+    // W7-1 (ADR-0052): "WSL: <distro>" when the open project's root is a
+    // WSL UNC path, hidden otherwise. `remoteWslDistro()`/
+    // `remoteWslLinuxRoot()` do the classification on the Rust side —
+    // this only ever branches on whether the returned string is empty.
+    auto *remoteWslLabel = new QLabel(statusBar);
+    remoteWslLabel->setVisible(false);
+    const auto updateRemoteWslLabel = [remoteWslLabel, treeModel]() {
+        const QString distro = treeModel->remoteWslDistro();
+        if (distro.isEmpty()) {
+            remoteWslLabel->setVisible(false);
+            return;
+        }
+        remoteWslLabel->setText(QObject::tr("WSL: %1").arg(distro));
+        remoteWslLabel->setToolTip(
+          QObject::tr("Running this project's tooling inside %1 (%2)")
+            .arg(distro, treeModel->remoteWslLinuxRoot()));
+        remoteWslLabel->setVisible(true);
+    };
+    updateRemoteWslLabel();
+    QObject::connect(treeModel, &ProjectTreeModel::projectOpened, statusBar,
+                      updateRemoteWslLabel);
+
     // ADR-0037: clears whatever `showProjectOpening` set, regardless of
     // which call site triggered the open or how it ended.
     QObject::connect(treeModel, &ProjectTreeModel::projectOpened, statusBar,
@@ -272,6 +294,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     statusBar->addPermanentWidget(serverBar);
     statusBar->addPermanentWidget(problemsButton);
     statusBar->addPermanentWidget(analysisLabel);
+    statusBar->addPermanentWidget(remoteWslLabel);
     statusBar->addPermanentWidget(branchButton);
     statusBar->addPermanentWidget(languageLabel);
     statusBar->addPermanentWidget(positionLabel);

@@ -242,6 +242,16 @@ impl ffi::ProjectTreeModel {
         self.open_folder_async(path);
     }
 
+    /// W7-2 (ADR-0052): read the global off switch and apply it before
+    /// anything classifies this project's root — every `ExecHost::for_path`
+    /// call site in the plan funnels through the same process-wide flag
+    /// (`process_exec::host`'s doc comment on why), so this one read at the
+    /// one place every project open passes through keeps it current.
+    fn apply_remote_wsl_setting() {
+        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+        lsp_core::set_remote_wsl_enabled(settings.remote_wsl_or_default());
+    }
+
     /// Reopen the last-persisted project (US-1), the same way as
     /// `openFolder` — fire-and-forget, walking on a worker thread. Returns
     /// whether a reopen was kicked off at all: `false` means nothing was
@@ -271,6 +281,7 @@ impl ffi::ProjectTreeModel {
     /// matters — a second one simply replaces whatever the first would have
     /// installed once both land.
     fn open_folder_async(mut self: Pin<&mut Self>, path: std::path::PathBuf) {
+        Self::apply_remote_wsl_setting();
         let order = self.session.borrow().tree_sort_order();
         let config_dir = app_core::resolve_config_dir();
         let qt_thread = self.as_mut().qt_thread();
@@ -343,30 +354,36 @@ impl ffi::ProjectTreeModel {
     /// still fully rebuilding for real structural changes (US-2).
     fn start_watcher(mut self: Pin<&mut Self>) {
         let qt_thread = self.qt_thread();
-        let result = self
-            .session
-            .borrow_mut()
-            .start_watcher(move |kind, changed_path| {
-                let structural = project_model::is_structural_change(&kind);
-                // C5: the same event, mapped onto LSP's `FileChangeType` for
-                // `LanguageService::watchedFileChanged` — computed here,
-                // once, rather than in every listener.
-                let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
-                let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                    if structural {
-                        // Off the Qt thread (ADR-0037): a `git checkout` of
-                        // a branch with many new files re-walks the whole
-                        // tree here, and that walk must not block the UI
-                        // any more than the initial "Open Folder" walk does.
-                        model.as_mut().rebuild_tree_async();
-                    }
-                    let path = QString::from(changed_path.to_string_lossy().as_ref());
-                    model
-                        .as_mut()
-                        .watched_file_changed(path.clone(), watched_kind);
-                    model.as_mut().files_changed_externally(path);
+        // W6-1 (ADR-0052): the classification lives here, past the
+        // domain/support boundary `project-model`/`app-core` stay below —
+        // see `ProjectSession::start_watcher`'s doc comment.
+        let is_remote = crate::bridge::convert::current_project_root()
+            .map(|root| lsp_core::ExecHost::for_path(&root).is_remote())
+            .unwrap_or(false);
+        let result =
+            self.session
+                .borrow_mut()
+                .start_watcher(is_remote, move |kind, changed_path| {
+                    let structural = project_model::is_structural_change(&kind);
+                    // C5: the same event, mapped onto LSP's `FileChangeType` for
+                    // `LanguageService::watchedFileChanged` — computed here,
+                    // once, rather than in every listener.
+                    let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
+                    let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                        if structural {
+                            // Off the Qt thread (ADR-0037): a `git checkout` of
+                            // a branch with many new files re-walks the whole
+                            // tree here, and that walk must not block the UI
+                            // any more than the initial "Open Folder" walk does.
+                            model.as_mut().rebuild_tree_async();
+                        }
+                        let path = QString::from(changed_path.to_string_lossy().as_ref());
+                        model
+                            .as_mut()
+                            .watched_file_changed(path.clone(), watched_kind);
+                        model.as_mut().files_changed_externally(path);
+                    });
                 });
-            });
         // The project itself is already open; a failed watch only means
         // external changes (a terminal `git pull`/`checkout`/commit, an
         // edit made outside the app) won't be noticed until it's reopened.
@@ -451,6 +468,35 @@ impl ffi::ProjectTreeModel {
     pub fn root_path(&self) -> QString {
         match self.session.borrow().root_path() {
             Some(path) => QString::from(path.to_string_lossy().as_ref()),
+            None => QString::default(),
+        }
+    }
+
+    /// W7-1: the distro name if the open root is a WSL UNC path, empty
+    /// otherwise — `cpp/`'s status-bar indicator branches on emptiness
+    /// only, never on the string's shape.
+    pub fn remote_wsl_distro(&self) -> QString {
+        match self.session.borrow().root_path() {
+            Some(path) => match lsp_core::ExecHost::for_path(path) {
+                lsp_core::ExecHost::Wsl(wsl) => QString::from(wsl.distro.as_str()),
+                lsp_core::ExecHost::Local => QString::default(),
+            },
+            None => QString::default(),
+        }
+    }
+
+    /// W7-1: the Linux path `remote_wsl_distro`'s root translates to, for
+    /// the status-bar tooltip.
+    pub fn remote_wsl_linux_root(&self) -> QString {
+        match self.session.borrow().root_path() {
+            Some(path) => {
+                let host = lsp_core::ExecHost::for_path(path);
+                if host.is_remote() {
+                    QString::from(host.to_remote(path).as_str())
+                } else {
+                    QString::default()
+                }
+            }
             None => QString::default(),
         }
     }

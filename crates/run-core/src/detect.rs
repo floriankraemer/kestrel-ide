@@ -281,7 +281,7 @@ fn detect_python(project_root: &Path) -> Vec<RunConfig> {
                 name,
                 format!("python-{name}"),
                 name,
-                toolchain::python_program(),
+                toolchain::python_program(project_root),
                 vec![name.to_string()],
             )
         })

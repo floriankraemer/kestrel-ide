@@ -246,6 +246,7 @@ impl crate::manager::LspManager {
         diagnostics: &[Value],
         timeout: Duration,
     ) -> Result<Vec<CodeActionItem>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let mut context = json!({"diagnostics": diagnostics});
         if !only.is_empty() {

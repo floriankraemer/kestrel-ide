@@ -94,7 +94,7 @@ fn python_config(project_root: &Path, file: &Path, relative: &Path) -> Option<Ru
         shown.clone(),
         format!("python-{shown}"),
         shown.clone(),
-        toolchain::python_program(),
+        toolchain::python_program(project_root),
         vec![shown],
     ))
 }
@@ -206,7 +206,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("pyproject.toml"), "").unwrap();
         let config = config_for(dir.path(), "scripts/etl.py").unwrap();
-        assert_eq!(config.program, toolchain::python_program());
+        assert_eq!(config.program, toolchain::python_program(dir.path()));
         assert_eq!(config.args, vec!["scripts/etl.py"]);
     }
 

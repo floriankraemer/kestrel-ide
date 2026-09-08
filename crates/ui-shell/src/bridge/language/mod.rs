@@ -111,6 +111,14 @@ pub struct LanguageServiceRust {
     /// Open document path -> language id, so a change/save/close for a file we
     /// never opened against a server is dropped rather than sent.
     pub(crate) open_docs: RefCell<std::collections::HashMap<String, String>>,
+    /// ADR-0052: the same `ExecHost` `LspManager::new` derived from this
+    /// project's root, kept here too for the one path-retranslation site
+    /// (`LspEvent::ApplyEdit`, in `apply_event`) that runs on the event
+    /// listener thread rather than inside a `push_job` closure with a
+    /// `&LspManager` already in hand. Set once, in `open_project`, from the
+    /// same `root` string the manager itself was constructed from, so the
+    /// two never disagree.
+    host: RefCell<lsp_core::ExecHost>,
     /// The one Problems model (ADR-0046), shared with `BuildService`,
     /// `DiagnosticsService` and `AiChat` — a second store would mean the
     /// editor underlining a different set of problems than the Problems
@@ -225,6 +233,7 @@ impl Default for LanguageServiceRust {
             configs: RefCell::default(),
             started: RefCell::default(),
             open_docs: RefCell::default(),
+            host: RefCell::new(lsp_core::ExecHost::Local),
             store: SharedDiagnostics::default(),
             hover: RefCell::default(),
             completion: RefCell::default(),
@@ -421,6 +430,7 @@ impl ffi::LanguageService {
             })
             .collect();
         *self.configs.borrow_mut() = lsp_core::resolve_servers(&overrides, &plugin_servers());
+        *self.host.borrow_mut() = lsp_core::ExecHost::for_path(std::path::Path::new(&root));
 
         let (manager, events) = lsp_core::LspManager::new(lsp_core::uri_from_path(&root));
         let (jobs, rx) = std::sync::mpsc::channel::<LspJob>();
@@ -729,7 +739,11 @@ impl ffi::LanguageService {
             for step in lsp_core::action_steps(&resolved) {
                 match step {
                     lsp_core::ActionStep::ApplyEdit(edit) => {
-                        match lsp_core::parse_workspace_changes(&edit) {
+                        // `manager.parse_workspace_changes`, not the free
+                        // function: it retranslates every path through this
+                        // project's `ExecHost` (ADR-0052), a no-op unless
+                        // the root is a WSL UNC path.
+                        match manager.parse_workspace_changes(&edit) {
                             Ok(parsed) => changes.steps.extend(parsed.steps),
                             Err(e) => failure = Some(e.to_string()),
                         }
@@ -1143,7 +1157,16 @@ impl ffi::LanguageService {
                 label, edit, gate, ..
             } => {
                 let changes = match lsp_core::parse_workspace_changes(&edit) {
-                    Ok(changes) => changes,
+                    Ok(mut changes) => {
+                        // ADR-0052: this handler runs on the event-listener
+                        // thread, not inside a `push_job` closure, so there
+                        // is no `&LspManager` to call the retranslating
+                        // method through — `self.host` is the same
+                        // `ExecHost` the manager derived, kept for exactly
+                        // this site.
+                        changes.retranslate_paths(&self.host.borrow());
+                        changes
+                    }
                     Err(e) => {
                         gate.refuse(e.to_string());
                         self.as_mut()

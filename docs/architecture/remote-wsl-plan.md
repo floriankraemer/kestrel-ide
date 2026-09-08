@@ -227,8 +227,8 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W7-1 — status-bar indicator `WSL: Ubuntu`, tooltip with distro and Linux root, on the existing `projectOpened` signal | open | |
-| W7-2 — global `remote_wsl` off switch in `app-config`, default on | open | |
+| W7-1 — status-bar indicator `WSL: Ubuntu`, tooltip with distro and Linux root, on the existing `projectOpened` signal | done | 259fcbf |
+| W7-2 — global `remote_wsl` off switch in `app-config`, default on | done (a process-wide `AtomicBool` in `process-exec`, set from `ui-shell`'s one project-open choke point; no settings-page checkbox yet — see commit message) | 259fcbf |
 
 ### W8 — docs and gates
 

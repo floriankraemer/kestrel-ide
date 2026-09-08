@@ -2274,6 +2274,19 @@ mod ffi {
         #[cxx_name = "saveTheme"]
         fn save_theme(self: &AppSettings, theme: &QString);
 
+        /// Active UI locale as a BCP-47 tag, e.g. "de" — defaults to "en"
+        /// when unset or unsupported (`Settings::ui_locale_or_default`).
+        /// Applying a change requires a restart: there is no live
+        /// retranslation.
+        #[qinvokable]
+        #[cxx_name = "uiLocale"]
+        fn ui_locale(self: &AppSettings) -> QString;
+
+        /// Persist the chosen UI locale (Language settings page, on OK).
+        #[qinvokable]
+        #[cxx_name = "saveUiLocale"]
+        fn save_ui_locale(self: &AppSettings, locale: &QString);
+
         /// The persisted icon theme id, or an empty string when the user
         /// has never chosen one — which is not the same as "no icons": the
         /// first theme the plugins offer is used until they do.

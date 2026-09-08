@@ -14,6 +14,7 @@
 #include "code_editor.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
+#include "i18n_startup.h"
 #include "editing_actions.h"
 #include "editor_tabs.h"
 #include "commit_detail_panel.h"
@@ -1184,6 +1185,7 @@ int run_app()
     // window exists, and buildMainWindow() adopts this object as soon as it
     // has one.
     auto *appSettings = new AppSettings(nullptr);
+    installUiTranslators(appSettings, app); // ADR-0049
     // Applying the theme (T2) before anything is shown means neither the
     // splash nor the main window ever flashes an unstyled frame.
     // Inter before the theme: the sheet's metrics are polished against the

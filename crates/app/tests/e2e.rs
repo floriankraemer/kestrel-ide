@@ -1360,3 +1360,38 @@ fn e2e_markdown_preview_dock() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// The `ui_locale` setting (ADR-0049): a cold-launched process with no
+/// `settings.toml` reports the "en" default, and a `settings.toml` seeded
+/// with `ui_locale = "de"` before a relaunch takes effect — both read
+/// through the marker `installUiTranslators` emits at startup, since a
+/// German button label is not something this suite screenshots. That
+/// translator install (and, for "de", the `.qm` it loads) is what this test
+/// actually exercises; spot-checking translated label text in the running
+/// window is not automated here, see the PR description for what manual
+/// verification covered instead.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_ui_locale_setting_takes_effect_on_relaunch() {
+    let name = "e2e_ui_locale_setting_takes_effect_on_relaunch";
+    let mut ide = Ide::launch(name, APP, fixture("tiny"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    let active = ide.wait_for_ev(Mark::start(), "ui_locale_active");
+    assert_eq!(
+        active["locale"], "en",
+        "default locale before any setting is saved"
+    );
+    assert_eq!(ide.quit(), 0);
+
+    let mut settings =
+        app_config::load(&ide.config_dir()).expect("settings written by the first launch");
+    settings.ui_locale = "de".to_string();
+    app_config::save(&ide.config_dir(), &settings).expect("seeding ui_locale = de");
+
+    ide.relaunch();
+    let active = ide.wait_for_ev(Mark::start(), "ui_locale_active");
+    assert_eq!(active["locale"], "de");
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    assert_eq!(ide.quit(), 0);
+}

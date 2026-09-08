@@ -48,12 +48,17 @@ pub mod launch_settings;
 /// outside this crate needs to know the module exists.
 pub mod window;
 
+/// The UI language accessor and locale list, split out like `window` above.
+/// `SUPPORTED_UI_LOCALES` is re-exported below.
+mod ui_locale;
+
 pub use analysis::{AnalysisSettings, AnalyzerSetting};
 pub use editing::EditingSettings;
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
 pub use terminal::TerminalSettings;
+pub use ui_locale::SUPPORTED_UI_LOCALES;
 pub use window::{Layout, WindowGeometry};
 
 /// File name used to persist settings inside the config directory.
@@ -195,6 +200,13 @@ impl Default for MinimapSettings {
 pub struct Settings {
     #[serde(default)]
     pub theme: String,
+    /// BCP-47 language tag for the UI, e.g. `"de"`. Empty means "never
+    /// chosen", which resolves to `"en"`. Global rather than
+    /// per-project, like [`Settings::theme`]. Read through
+    /// [`Settings::ui_locale_or_default`]. Changing this takes effect after
+    /// a restart — there is no live-retranslation plumbing.
+    #[serde(default)]
+    pub ui_locale: String,
     /// Id of the `icon-themes` contribution whose pack draws file and folder
     /// icons. Empty means "never chosen", which resolves to the first icon
     /// theme the loaded plugins offer — so a fresh install gets icons without
@@ -863,6 +875,7 @@ mod tests {
 
         let settings = Settings {
             theme: "dark".to_string(),
+            ui_locale: "de".to_string(),
             icon_theme: "material".to_string(),
             disabled_plugins: vec!["noisy-plugin".to_string()],
             editor_font_size: 14,

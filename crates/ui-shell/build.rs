@@ -163,6 +163,92 @@ fn compile_ads_qrc(ads_dir: &Path, tool_dirs: &[PathBuf]) -> PathBuf {
     );
 }
 
+/// Compiles the hand-authored `.ts` translation sources (translations/
+/// README.md) into a `.qm` per locale via `lrelease`, then bundles all of
+/// them into one `rcc`-embedded resource, `--name translations` so
+/// `main_window.cpp`'s `Q_INIT_RESOURCE(translations)` call matches the
+/// generated `qInitResources_translations()` symbol — same reasoning as
+/// `compile_ads_qrc` above. There is no `ide_en.ts`/`.qm`: English is the
+/// `tr()` source text itself, so an untranslated id (or `ui_locale == "en"`)
+/// falls back to it without a translator installed at all.
+fn compile_translations_qrc(translations_dir: &Path, tool_dirs: &[PathBuf]) -> PathBuf {
+    const LOCALES: [&str; 3] = ["de", "es", "fr"];
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR not set"));
+
+    let lrelease_candidates: Vec<PathBuf> = tool_dirs
+        .iter()
+        .map(|dir| dir.join("lrelease"))
+        .chain(["lrelease6", "lrelease"].map(PathBuf::from))
+        .collect();
+
+    let mut qm_files = Vec::new();
+    for locale in LOCALES {
+        let ts_file = translations_dir.join(format!("ide_{locale}.ts"));
+        println!("cargo:rerun-if-changed={}", ts_file.display());
+        let output = out_dir.join(format!("ide_{locale}.qm"));
+        let temp = output.with_extension("qm.new");
+
+        let mut compiled = false;
+        for lrelease in &lrelease_candidates {
+            let status = Command::new(lrelease)
+                .arg(&ts_file)
+                .arg("-qm")
+                .arg(&temp)
+                .status();
+            if matches!(status, Ok(s) if s.success()) {
+                replace_if_changed(&temp, &output);
+                compiled = true;
+                break;
+            }
+        }
+        if !compiled {
+            panic!(
+                "could not run lrelease (tried: {lrelease_candidates:?}) on {}",
+                ts_file.display()
+            );
+        }
+        qm_files.push(output);
+    }
+
+    let qrc_path = out_dir.join("translations.qrc");
+    let mut qrc = String::from("<RCC>\n  <qresource prefix=\"/i18n\">\n");
+    for qm in &qm_files {
+        qrc.push_str(&format!(
+            "    <file alias=\"{}\">{}</file>\n",
+            qm.file_name().unwrap().to_string_lossy(),
+            qm.display()
+        ));
+    }
+    qrc.push_str("  </qresource>\n</RCC>\n");
+    let qrc_temp = out_dir.join("translations.qrc.new");
+    std::fs::write(&qrc_temp, &qrc).expect("translations.qrc is writable");
+    replace_if_changed(&qrc_temp, &qrc_path);
+
+    let rcc_candidates: Vec<PathBuf> = tool_dirs
+        .iter()
+        .map(|dir| dir.join("rcc"))
+        .chain(["rcc6", "rcc"].map(PathBuf::from))
+        .collect();
+    let output = out_dir.join("translations_resources.cpp");
+    let temp = output.with_extension("cpp.new");
+    for rcc in &rcc_candidates {
+        let status = Command::new(rcc)
+            .arg(&qrc_path)
+            .arg("-o")
+            .arg(&temp)
+            .args(["--name", "translations"])
+            .status();
+        if matches!(status, Ok(s) if s.success()) {
+            replace_if_changed(&temp, &output);
+            return output;
+        }
+    }
+    panic!(
+        "could not run rcc (tried: {rcc_candidates:?}) to compile {}",
+        qrc_path.display()
+    );
+}
+
 /// Runs `moc` on an ADS header directly rather than through
 /// `CxxQtBuilder::cpp_file()`'s automatic moc: `MocArguments` has no way to
 /// pass a `-D` define, but ADS's `FloatingDockContainer.h` branches its own
@@ -421,6 +507,8 @@ fn main() {
         .cpp_file("cpp/languages_page.cpp")
         .cpp_file("cpp/plugins_page.cpp")
         .cpp_file("cpp/appearance_page.cpp")
+        .cpp_file("cpp/language_page.cpp")
+        .cpp_file("cpp/i18n_startup.cpp")
         .cpp_file("cpp/language_servers_page.cpp")
         // The PHP tooling plan's B9: the Analysis settings page and its
         // menu action, Q_OBJECT-free like the pages/menus above.
@@ -526,6 +614,10 @@ fn main() {
         .include_dir("cpp")
         .include_dir(ads_dir)
         .cpp_file(compile_ads_qrc(ads_dir, &tool_dirs))
+        .cpp_file(compile_translations_qrc(
+            Path::new("translations"),
+            &tool_dirs,
+        ))
         // The close-icon mask (F?): a plain qrc, named by us, so CxxQtBuilder's
         // own filename-derived init symbol works — unlike ads.qrc above, no
         // manual rcc step is needed here.

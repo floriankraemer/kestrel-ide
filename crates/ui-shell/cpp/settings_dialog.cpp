@@ -3,6 +3,7 @@
 #include "ai_providers_page.h"
 #include "analysis_settings_page.h"
 #include "appearance_page.h"
+#include "language_page.h"
 #include "e2e_mark.h"
 #include "editor_page.h"
 #include "editing_page.h"
@@ -55,6 +56,11 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
 
     auto *categoryList = new QListWidget(&dialog);
     categoryList->addItem(QObject::tr("Appearance"));
+    // "Language" (this app's own UI language) versus "Languages" (the
+    // programming-language/grammar catalogue) a few rows down — distinct
+    // settings, distinct English words; don't rename either to disambiguate,
+    // the two concepts already read apart in the sidebar's ordering.
+    categoryList->addItem(QObject::tr("Language"));
     categoryList->addItem(QObject::tr("Editor"));
     // Editing before Syntax Colors, matching the order the widgets are
     // added to the stack below. They disagreed until F0-10: the list said
@@ -123,6 +129,9 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
         },
       });
     pages->addWidget(appearance.widget);
+
+    const LanguagePage language = buildLanguagePage(&dialog, appSettings);
+    pages->addWidget(language.widget);
 
     const EditorPage editor = buildEditorPage(&dialog, appSettings, editorTabs);
     const int editorIndex = pages->addWidget(editor.widget);
@@ -441,6 +450,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
 
     if (dialog.exec() == QDialog::Accepted) {
         appearance.commit();
+        language.commit();
         editor.commit();
         context.keymapEditor->commit();
         applyKeymap(*context.actions, appSettings);

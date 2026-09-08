@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/ui">
         <file>icons/close_mask_32.a8</file>
+        <file>icons/search_mask_32.a8</file>
         <file>icons/diff/arrow_up.a8</file>
         <file>icons/diff/arrow_down.a8</file>
         <file>icons/diff/chevron_apply.a8</file>

@@ -29,6 +29,8 @@ pub mod icons;
 /// Where plugins and the Markdown/Mermaid renderer are joined (ADR-0033).
 pub mod preview;
 mod project_open; // Swap-in half of an off-thread project open/rebuild (ADR-0037).
+/// Locale-aware substring matching for UI filter boxes (issue #233).
+pub mod text_search;
 mod tree_sort;
 mod virtual_doc; // Read-only virtual documents with no backing file (C12).
 

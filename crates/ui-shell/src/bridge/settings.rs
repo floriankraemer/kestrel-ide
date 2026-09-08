@@ -116,6 +116,10 @@ impl ffi::AppSettings {
         QString::from(origin.label())
     }
 
+    pub fn settings_search_matches(&self, haystack: &QString, query: &QString) -> bool {
+        app_core::text_search::matches_query(&haystack.to_string(), &query.to_string())
+    }
+
     pub fn recent_projects(&self) -> QStringList {
         let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
         settings

@@ -94,7 +94,18 @@ baseline() {
 	# reach the editor's squiggles and the Problems dock the same way a
 	# build's or a language server's already did (ADR-0046's third-source
 	# gap this closes). No split planned.
-	crates/ui-shell/cpp/main_window.cpp) echo 1220 ;;
+	# Raised from 1220 by 8 lines for the Git history UI revamp
+	# (commit-detail dock, repo-wide Commit Log panel, File History's
+	# buildFileHistoryDock retrofit): each new dock is one
+	# `buildXDock(dockManager, docks, bottomArea, ...)` call plus its
+	# `#include`, following the existing
+	# buildCommitLogDock/buildCommitDetailDock/buildFileHistoryDock
+	# pattern — the construction logic itself already lives in each
+	# panel's own .cpp. Further splitting main_window.cpp itself was
+	# already investigated and ruled out (see the extraction-wall note
+	# from the main_window.cpp split down to 1175 lines); no further
+	# split planned here.
+	crates/ui-shell/cpp/main_window.cpp) echo 1228 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

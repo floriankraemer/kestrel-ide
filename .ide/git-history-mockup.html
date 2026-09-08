@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Git History UI mockup</title>
+<style>
+  :root {
+    --bg: #f3f3f3; --panel: #ffffff; --border: #d7d7d7; --text: #1e1e1e;
+    --muted: #6b6b6b; --hover: #eef3fb; --sel: #d7e6fb; --accent: #2f6fdb;
+    --add: #1e8e3e; --del: #c5221f; --mod: #b8860b;
+    --diffAddBg: #e6f4ea; --diffDelBg: #fce8e6; --mono: "SF Mono", Consolas, monospace;
+  }
+  body { background: var(--bg); color: var(--text); font: 13px/1.4 -apple-system, Segoe UI, sans-serif; margin:0; padding: 24px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; color: var(--muted); }
+  .row-list { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; width: 640px; overflow: hidden; }
+  .commit-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .commit-row:hover { background: var(--hover); }
+  .commit-row.selected { background: var(--sel); }
+  .commit-row .date { color: var(--muted); width: 130px; flex: none; }
+  .commit-row .id { font-family: var(--mono); color: #8a5a00; width: 70px; flex: none; }
+  .commit-row .author { width: 100px; flex: none; color: var(--muted); }
+  .commit-row .summary { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .expand-body { padding: 8px 10px 12px 46px; background: #fafafa; border-bottom: 1px solid var(--border); color: #333; white-space: pre-wrap; font-size: 12.5px; }
+
+  .dock { width: 760px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; margin-top: 12px; }
+  .dock-tabs { display:flex; border-bottom: 1px solid var(--border); background: #eaeaea; }
+  .dock-tab { padding: 6px 14px; font-size: 12px; border-right: 1px solid var(--border); }
+  .dock-tab.active { background: var(--panel); font-weight: 600; }
+  .dock-header { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+  .dock-header .title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .dock-header .meta { color: var(--muted); display: grid; grid-template-columns: 90px 1fr; row-gap: 3px; font-size: 12px; }
+  .dock-body { padding: 10px 16px; border-bottom: 1px solid var(--border); white-space: pre-wrap; font-size: 12.5px; color: #333; }
+  .file-diff { border-bottom: 1px solid var(--border); }
+  .file-diff .file-name { padding: 6px 16px; background: #f5f5f5; font-family: var(--mono); font-size: 12px; display:flex; gap:8px; align-items:center;}
+  .chip { font-size: 10px; padding: 1px 6px; border-radius: 8px; color:#fff; }
+  .chip.added{background:var(--add)} .chip.modified{background:var(--mod)} .chip.deleted{background:var(--del)}
+  .diff-lines { font-family: var(--mono); font-size: 12px; }
+  .diff-line { display:flex; padding: 1px 16px; }
+  .diff-line .gutter { width: 34px; color: var(--muted); flex: none; text-align:right; padding-right:8px; user-select:none;}
+  .diff-line.add { background: var(--diffAddBg); }
+  .diff-line.del { background: var(--diffDelBg); }
+  .diff-line.add .gutter, .diff-line.del .gutter { color: #999; }
+</style>
+</head>
+<body>
+
+<h2>File History panel — collapsed rows (locale date, HistoryListView)</h2>
+<div class="row-list">
+  <div class="commit-row selected">
+    <span class="date">9/8/26, 2:14 PM</span><span class="id">a3f9c21</span><span class="author">F. Krämer</span>
+    <span class="summary">feat(ui-shell): JetBrains-style diff viewer</span>
+  </div>
+  <div class="commit-row">
+    <span class="date">9/6/26, 11:02 AM</span><span class="id">628673b</span><span class="author">F. Krämer</span>
+    <span class="summary">docs: refresh the application screenshot in the README</span>
+  </div>
+</div>
+
+<h2>File History panel — expanded row (full message body, lazy-fetched)</h2>
+<div class="row-list">
+  <div class="commit-row selected">
+    <span class="date">9/8/26, 2:14 PM</span><span class="id">a3f9c21</span><span class="author">F. Krämer</span>
+    <span class="summary">feat(ui-shell): JetBrains-style diff viewer</span>
+  </div>
+  <div class="expand-body">Adds a side-by-side and unified DiffView matching JetBrains'
+change-ribbon and gutter conventions.
+
+Follows the existing DiffToolbar for whitespace/highlight modes.</div>
+  <div class="commit-row">
+    <span class="date">9/6/26, 11:02 AM</span><span class="id">628673b</span><span class="author">F. Krämer</span>
+    <span class="summary">docs: refresh the application screenshot in the README</span>
+  </div>
+</div>
+
+<h2>Repo-wide Commit Log panel — same HistoryListView, no path column</h2>
+<div class="row-list">
+  <div class="commit-row"><span class="date">9/8/26, 2:14 PM</span><span class="id">a3f9c21</span><span class="author">F. Krämer</span><span class="summary">feat(ui-shell): JetBrains-style diff viewer (#229)</span></div>
+  <div class="commit-row"><span class="date">9/6/26, 11:02 AM</span><span class="id">628673b</span><span class="author">F. Krämer</span><span class="summary">docs: refresh the application screenshot in the README (#228)</span></div>
+  <div class="commit-row"><span class="date">9/5/26, 4:47 PM</span><span class="id">8755cb5</span><span class="author">F. Krämer</span><span class="summary">feat(ui-shell,app-config): restore the maximized window, and named layouts (#227)</span></div>
+</div>
+
+<h2>Commit-detail dock — header, full message, multi-file diff</h2>
+<div class="dock">
+  <div class="dock-tabs">
+    <div class="dock-tab active">a3f9c21</div>
+    <div class="dock-tab">8755cb5</div>
+  </div>
+  <div class="dock-header">
+    <div class="title">feat(ui-shell,editor-core): JetBrains-style diff viewer</div>
+    <div class="meta">
+      <div>Commit</div><div>a3f9c21e8b4d7c0f912a5e6d8b3c1f04a9e77d2b</div>
+      <div>Author</div><div>Florian Krämer &lt;florian.kraemer123@gmail.com&gt;, Monday, September 8, 2026 2:14:09 PM</div>
+      <div>Committer</div><div>Florian Krämer &lt;florian.kraemer123@gmail.com&gt;, Monday, September 8, 2026 2:14:09 PM</div>
+      <div>Parent</div><div>628673b1</div>
+    </div>
+  </div>
+  <div class="dock-body">Adds a side-by-side and unified DiffView matching JetBrains'
+change-ribbon and gutter conventions.
+
+Follows the existing DiffToolbar for whitespace/highlight modes.</div>
+
+  <div class="file-diff">
+    <div class="file-name">crates/ui-shell/cpp/diff_view.cpp <span class="chip modified">modified</span></div>
+    <div class="diff-lines">
+      <div class="diff-line"><span class="gutter">118</span> void DiffView::paintRibbon(QPainter &amp;p) {</div>
+      <div class="diff-line del"><span class="gutter">119</span> -    p.fillRect(rect, oldColor);</div>
+      <div class="diff-line add"><span class="gutter">119</span> +    p.fillRect(rect, changeColorFor(kind));</div>
+      <div class="diff-line"><span class="gutter">120</span> }</div>
+    </div>
+  </div>
+  <div class="file-diff">
+    <div class="file-name">crates/ui-shell/cpp/history_list_view.h <span class="chip added">added</span></div>
+    <div class="diff-lines">
+      <div class="diff-line add"><span class="gutter">1</span> +#pragma once</div>
+      <div class="diff-line add"><span class="gutter">2</span> +class HistoryListView : public QTreeWidget { ... };</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

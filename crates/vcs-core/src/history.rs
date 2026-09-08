@@ -26,6 +26,26 @@ pub struct LogEntry {
     pub author_time: i64,
 }
 
+/// One commit in full, for the commit-detail dock — everything [`LogEntry`]
+/// carries plus the full message body, the committer identity (which can
+/// differ from the author, e.g. after a rebase), and parent ids (empty for
+/// a root commit).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitDetail {
+    pub id: String,
+    pub summary: String,
+    /// The message with the summary line and its blank-line separator
+    /// stripped — empty when the commit has no body beyond the summary.
+    pub body: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub author_time: i64,
+    pub committer_name: String,
+    pub committer_email: String,
+    pub committer_time: i64,
+    pub parent_ids: Vec<String>,
+}
+
 impl Repository {
     /// The commit history reachable from `HEAD`, newest first, via `gix`'s
     /// commit walk — no subprocess. `max` caps how many commits are
@@ -58,6 +78,47 @@ impl Repository {
             }
         }
         Ok(entries)
+    }
+
+    /// The full detail of one commit by id (or any revspec `gix` accepts),
+    /// or `None` if it does not resolve — a caller reaches for this from a
+    /// real log entry, so "not found" is a display edge case, not an error.
+    pub fn commit_detail(&self, id: &str) -> Result<Option<CommitDetail>, VcsError> {
+        let Ok(id) = self.inner.rev_parse_single(id) else {
+            return Ok(None);
+        };
+        let Ok(object) = id.object() else {
+            return Ok(None);
+        };
+        let Ok(commit) = object.try_into_commit() else {
+            return Ok(None);
+        };
+        let message = commit
+            .message()
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        let author = commit.author().map_err(|e| VcsError::Read(e.to_string()))?;
+        let author_time = author.time().map_err(|e| VcsError::Read(e.to_string()))?;
+        let committer = commit
+            .committer()
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        let committer_time = committer
+            .time()
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        Ok(Some(CommitDetail {
+            id: commit.id.to_hex().to_string(),
+            summary: message.summary().to_string(),
+            body: message.body().map(|b| b.to_string()).unwrap_or_default(),
+            author_name: author.name.to_string(),
+            author_email: author.email.to_string(),
+            author_time: author_time.seconds,
+            committer_name: committer.name.to_string(),
+            committer_email: committer.email.to_string(),
+            committer_time: committer_time.seconds,
+            parent_ids: commit
+                .parent_ids()
+                .map(|id| id.to_hex().to_string())
+                .collect(),
+        }))
     }
 
     /// Commits that touched `relative_path`, newest first, via
@@ -159,6 +220,10 @@ type FileHistoryKey = (PathBuf, String, Option<usize>);
 pub struct HistoryCache {
     log: Mutex<HashMap<LogKey, Vec<LogEntry>>>,
     file_history: Mutex<HashMap<FileHistoryKey, Vec<LogEntry>>>,
+    /// Keyed by commit id alone, never by `HEAD` — a commit's own detail
+    /// never changes once it exists, unlike `log`/`file_history` which
+    /// answer for "as of `HEAD`".
+    commit_detail: Mutex<HashMap<String, Option<CommitDetail>>>,
 }
 
 impl HistoryCache {
@@ -192,6 +257,22 @@ impl HistoryCache {
             .unwrap()
             .insert(key, entries.clone());
         Ok(entries)
+    }
+
+    pub fn commit_detail(
+        &self,
+        repo: &Repository,
+        id: &str,
+    ) -> Result<Option<CommitDetail>, VcsError> {
+        if let Some(cached) = self.commit_detail.lock().unwrap().get(id) {
+            return Ok(cached.clone());
+        }
+        let detail = repo.commit_detail(id)?;
+        self.commit_detail
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), detail.clone());
+        Ok(detail)
     }
 }
 
@@ -331,5 +412,111 @@ mod tests {
         let second = cache.log(&repo, None).unwrap();
         assert_eq!(first, second);
         assert_eq!(first.len(), 1);
+    }
+
+    #[test]
+    fn commit_detail_reports_summary_body_and_identities() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(
+            dir.path(),
+            &[
+                "commit",
+                "-m",
+                "summary line\n\nfirst body line\nsecond body line",
+            ],
+        );
+
+        let repo = open(dir.path());
+        let head = repo.log(None).unwrap()[0].id.clone();
+        let detail = repo.commit_detail(&head).unwrap().unwrap();
+        assert_eq!(detail.summary, "summary line");
+        assert_eq!(detail.body, "first body line\nsecond body line\n");
+        assert_eq!(detail.author_email, "test@example.com");
+        assert_eq!(detail.committer_email, "test@example.com");
+    }
+
+    #[test]
+    fn commit_detail_on_a_root_commit_has_no_parents() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "root"]);
+
+        let repo = open(dir.path());
+        let head = repo.log(None).unwrap()[0].id.clone();
+        let detail = repo.commit_detail(&head).unwrap().unwrap();
+        assert!(detail.parent_ids.is_empty());
+    }
+
+    #[test]
+    fn commit_detail_reports_a_parent_after_a_second_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        let first_id = repo_head(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        git(dir.path(), &["commit", "-am", "second"]);
+
+        let repo = open(dir.path());
+        let head = repo.log(None).unwrap()[0].id.clone();
+        let detail = repo.commit_detail(&head).unwrap().unwrap();
+        assert_eq!(detail.parent_ids, vec![first_id]);
+    }
+
+    #[test]
+    fn commit_detail_for_an_unknown_id_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        let repo = open(dir.path());
+        assert!(repo
+            .commit_detail("0000000000000000000000000000000000000000")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn history_cache_serves_commit_detail_without_a_head_move_invalidating_it() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        let repo = open(dir.path());
+        let head = repo.log(None).unwrap()[0].id.clone();
+        let cache = HistoryCache::new();
+        let first = cache.commit_detail(&repo, &head).unwrap();
+
+        // Move HEAD forward: a commit-keyed cache entry must still answer
+        // for the old id, unlike `log`/`file_history` which are keyed by
+        // HEAD and would recompute here.
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        git(dir.path(), &["commit", "-am", "second"]);
+        let second = cache.commit_detail(&repo, &head).unwrap();
+        assert_eq!(first, second);
+    }
+
+    fn repo_head(dir: &Path) -> String {
+        String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(dir)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string()
     }
 }

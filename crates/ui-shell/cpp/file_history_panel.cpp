@@ -1,38 +1,33 @@
 #include "file_history_panel.h"
 
+#include "dock_layout.h"
 #include "e2e_mark.h"
+#include "history_list_view.h"
+
+#include "DockAreaWidget.h"
+#include "DockManager.h"
+#include "DockWidget.h"
 
 #include <QAction>
-#include <QDateTime>
 #include <QLabel>
-#include <QListWidget>
 #include <QMenu>
 #include <QVBoxLayout>
 
 namespace ui_shell {
 
-namespace {
-// Where a row's commit id lives, alongside Qt's own display-text role.
-constexpr int kCommitIdRole = Qt::UserRole;
-} // namespace
-
-FileHistoryPanel::FileHistoryPanel(
-  VcsService *vcsService,
-  std::function<void(const QString &, const QString &, const QString &, const QString &,
-                      const QString &)>
-    compareRevisions,
-  QWidget *parent)
+FileHistoryPanel::FileHistoryPanel(VcsService *vcsService, CompareRevisions compareRevisions,
+                                    OpenCommit openCommit, QWidget *parent)
   : QWidget(parent)
   , vcsService_(vcsService)
   , compareRevisions_(std::move(compareRevisions))
+  , openCommit_(std::move(openCommit))
 {
     titleLabel_ = new QLabel(this);
     titleLabel_->setWordWrap(true);
-    list_ = new QListWidget(this);
-    // F3-14: "Compare Selected Revisions" needs two rows picked at once.
-    list_->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    list_->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(list_, &QListWidget::customContextMenuRequested, this,
+    list_ = new HistoryListView(vcsService_, this);
+    connect(list_, &HistoryListView::commitActivated, this,
+            [this](const QString &commitId) { openCommit_(commitId); });
+    connect(list_, &HistoryListView::contextMenuRequestedFor, this,
             &FileHistoryPanel::showContextMenu);
 
     auto *layout = new QVBoxLayout(this);
@@ -47,7 +42,7 @@ FileHistoryPanel::FileHistoryPanel(
 void FileHistoryPanel::setCurrentFile(const QString &path)
 {
     currentPath_ = path;
-    list_->clear();
+    list_->setEntries(::rust::Vec<FfiLogEntry>());
     if (path.isEmpty()) {
         titleLabel_->setText(tr("No file selected"));
         return;
@@ -63,31 +58,18 @@ void FileHistoryPanel::onHistoryReady(const QString &path, const ::rust::Vec<Ffi
         // switched tabs while it was in flight.
         return;
     }
-    list_->clear();
-    for (const FfiLogEntry &entry : entries) {
-        const QDateTime when = QDateTime::fromSecsSinceEpoch(entry.author_time);
-        const QString commitId = QString(entry.id);
-        const QString shortId = commitId.left(8);
-        const QString text = tr("%1  %2 — %3 (%4)")
-                                .arg(shortId, QString(entry.summary), QString(entry.author_name),
-                                     when.toString(Qt::TextDate));
-        auto *item = new QListWidgetItem(text, list_);
-        item->setData(kCommitIdRole, commitId);
-    }
+    list_->setEntries(entries);
     // Each row's own rect, so an E2E flow can right-click a specific commit
     // without computing its position from row height/font metrics — same
     // reasoning as `markChangesRow` (changes_panel.cpp).
-    for (int row = 0; row < list_->count(); ++row) {
-        QListWidgetItem *item = list_->item(row);
-        const QRect rect = list_->visualItemRect(item);
-        const QPoint origin =
-          rect.isEmpty() ? QPoint() : list_->viewport()->mapToGlobal(rect.topLeft());
+    for (int row = 0; row < list_->commitCount(); ++row) {
+        const QRect rect = list_->globalRectForRow(row);
         e2eMark(QStringLiteral("{\"ev\":\"history_row\",\"path\":%1,\"commit\":%2,"
                                 "\"row\":%3,\"rect\":[%4,%5,%6,%7]}")
-                  .arg(e2eJson(path), e2eJson(item->data(kCommitIdRole).toString()))
+                  .arg(e2eJson(path), e2eJson(list_->commitIdAt(row)))
                   .arg(row)
-                  .arg(origin.x())
-                  .arg(origin.y())
+                  .arg(rect.x())
+                  .arg(rect.y())
                   .arg(rect.width())
                   .arg(rect.height()));
     }
@@ -103,46 +85,35 @@ void FileHistoryPanel::onHistoryUnavailable(const QString &path)
     if (path != currentPath_) {
         return;
     }
-    list_->clear();
+    list_->setEntries(::rust::Vec<FfiLogEntry>());
     titleLabel_->setText(tr("%1 — not a version-controlled file").arg(path));
     e2eMark(QStringLiteral("{\"ev\":\"history_unavailable\",\"path\":%1}").arg(e2eJson(path)));
 }
 
-void FileHistoryPanel::showContextMenu(const QPoint &pos)
+void FileHistoryPanel::showContextMenu(const QPoint &globalPos, const QStringList &selectedIds)
 {
-    const QList<QListWidgetItem *> selected = list_->selectedItems();
-    if (selected.isEmpty() || currentPath_.isEmpty()) {
+    if (selectedIds.isEmpty() || currentPath_.isEmpty()) {
         return;
     }
 
-    // Read everything the chosen action will need into locals now: `menu.exec()`
-    // below spins a nested event loop, during which a re-entrant
-    // `setCurrentFile`/`onHistoryReady` can call `list_->clear()` and delete
-    // every `QListWidgetItem*` in `selected` out from under us. Nothing after
-    // `menu.exec()` may dereference a `QListWidgetItem*` again.
-    QString firstRevision = selected.first()->data(kCommitIdRole).toString();
+    QString firstRevision = selectedIds.first();
     QString leftRevision;
     QString rightRevision;
-    if (selected.size() == 2) {
-        // Newest-first list: the later (higher) row is the older revision,
-        // so the diff reads left-to-right as old-to-new either way it was
-        // selected.
-        QListWidgetItem *first = selected.at(0);
-        QListWidgetItem *second = selected.at(1);
-        if (list_->row(first) < list_->row(second)) {
-            std::swap(first, second);
-        }
-        leftRevision = first->data(kCommitIdRole).toString();
-        rightRevision = second->data(kCommitIdRole).toString();
+    if (selectedIds.size() == 2) {
+        // `HistoryListView::selectedCommitIds` returns rows in their
+        // on-screen (newest-first) order, so the diff reads left-to-right
+        // as old-to-new either way the two rows were picked.
+        leftRevision = selectedIds.at(1);
+        rightRevision = selectedIds.at(0);
     }
     const QString path = currentPath_;
 
-    QMenu menu(list_);
+    QMenu menu(this);
     QAction *compareWithWorkingTree = nullptr;
     QAction *compareSelected = nullptr;
-    if (selected.size() == 1) {
+    if (selectedIds.size() == 1) {
         compareWithWorkingTree = menu.addAction(tr("Compare with Working Tree"));
-    } else if (selected.size() == 2) {
+    } else if (selectedIds.size() == 2) {
         compareSelected = menu.addAction(tr("Compare Selected Revisions"));
     }
     if (menu.isEmpty()) {
@@ -156,7 +127,7 @@ void FileHistoryPanel::showContextMenu(const QPoint &pos)
     // is up — and it has to fire before `exec()`, which does not return
     // until the menu is gone.
     e2eMark("{\"ev\":\"dialog_shown\",\"name\":\"file_history_context_menu\"}");
-    QAction *chosen = menu.exec(list_->viewport()->mapToGlobal(pos));
+    QAction *chosen = menu.exec(globalPos);
     e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"file_history_context_menu\","
                             "\"accepted\":%1}")
               .arg(chosen != nullptr ? QLatin1String("true") : QLatin1String("false")));
@@ -170,6 +141,20 @@ void FileHistoryPanel::showContextMenu(const QPoint &pos)
         compareRevisions_(path, leftRevision, leftRevision.left(8), rightRevision,
                             rightRevision.left(8));
     }
+}
+
+FileHistoryPanel *buildFileHistoryDock(ads::CDockManager *dockManager, DockRegistry *docks,
+                                        ads::CDockAreaWidget *relativeTo, VcsService *vcsService,
+                                        FileHistoryPanel::CompareRevisions compareRevisions,
+                                        FileHistoryPanel::OpenCommit openCommit)
+{
+    auto *panel = new FileHistoryPanel(vcsService, std::move(compareRevisions),
+                                        std::move(openCommit), dockManager);
+    auto *dock = new ads::CDockWidget(dockManager, QObject::tr("File History"));
+    dock->setWidget(panel);
+    docks->registerDock(QStringLiteral("fileHistory"), dock, ads::CenterDockWidgetArea, relativeTo);
+    docks->hide(QStringLiteral("fileHistory"));
+    return panel;
 }
 
 } // namespace ui_shell

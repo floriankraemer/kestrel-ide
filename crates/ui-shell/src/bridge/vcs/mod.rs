@@ -81,6 +81,21 @@ pub struct VcsServiceRust {
     /// repository yet — can re-run `openProject` on success without the
     /// view having to remember and re-pass the path it already gave once.
     project_root: RefCell<String>,
+    /// `requestCommitDetail(id)`'s last answer, keyed by commit id — never
+    /// invalidated on `openProject`'s clear the way `hunks`/`blobs` are:
+    /// unlike those, a commit's own detail cannot go stale. Kept as the
+    /// domain type rather than its `Ffi*` translation so a cache hit is a
+    /// plain clone, not a struct cxx has no derived `Clone` for.
+    commit_details: RefCell<HashMap<String, vcs_core::CommitDetail>>,
+    /// The paths each commit changed, filled by the same worker round trip
+    /// as `commit_details` (both come off the same commit).
+    changed_commit_files: RefCell<HashMap<String, Vec<vcs_core::ChangedCommitFile>>>,
+    /// `requestCommitFileDiff(id, path)`'s last answer, keyed by the pair —
+    /// same reason `blobs` is keyed by `(path, revision)`, not `path`
+    /// alone: the dock can have several files of the same commit open
+    /// (one `DiffView` per changed file) and several commits open in
+    /// different tabs.
+    commit_file_diffs: RefCell<HashMap<(String, String), vcs_core::FileDiff>>,
     /// The repository's working-tree root, once discovery has found one.
     ///
     /// The `Repository` handle itself lives on the worker thread and must
@@ -103,6 +118,9 @@ impl Default for VcsServiceRust {
             blobs: RefCell::default(),
             branches: RefCell::default(),
             current_branch: RefCell::default(),
+            commit_details: RefCell::default(),
+            changed_commit_files: RefCell::default(),
+            commit_file_diffs: RefCell::default(),
             work_dir: RefCell::default(),
         }
     }

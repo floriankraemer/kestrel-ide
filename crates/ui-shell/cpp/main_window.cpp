@@ -16,6 +16,8 @@
 #include "e2e_mark.h"
 #include "editing_actions.h"
 #include "editor_tabs.h"
+#include "commit_detail_panel.h"
+#include "commit_log_panel.h"
 #include "file_history_panel.h"
 #include "find_bar.h"
 #include "find_usages_panel.h"
@@ -319,19 +321,23 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     changesDock->setWidget(changesPanel);
     docks->registerDock(QStringLiteral("changes"), changesDock, ads::CenterDockWidgetArea, rightArea);
     docks->hide(QStringLiteral("changes"));
-    auto *fileHistoryPanel = new FileHistoryPanel(
-      vcsService,
+
+    // Built first so `openCommit` below has somewhere to send a commit id.
+    auto *commitDetailPanel = buildCommitDetailDock(dockManager, docks, bottomArea, vcsService);
+    auto openCommit = [docks, commitDetailPanel](const QString &commitId) {
+        commitDetailPanel->openCommit(commitId);
+        docks->dock(QStringLiteral("commitDetail"))->toggleView(true);
+    };
+
+    auto *fileHistoryPanel = buildFileHistoryDock(
+      dockManager, docks, bottomArea, vcsService,
       [editorTabs](const QString &path, const QString &leftRevision, const QString &leftLabel,
                     const QString &rightRevision, const QString &rightLabel) {
           editorTabs->openCompareRevisions(path, leftRevision, leftLabel, rightRevision,
                                              rightLabel);
       },
-      dockManager);
-    auto *fileHistoryDock = new ads::CDockWidget(dockManager, QObject::tr("File History"));
-    fileHistoryDock->setWidget(fileHistoryPanel);
-    docks->registerDock(QStringLiteral("fileHistory"), fileHistoryDock, ads::CenterDockWidgetArea,
-                        bottomArea);
-    docks->hide(QStringLiteral("fileHistory"));
+      openCommit);
+    buildCommitLogDock(dockManager, docks, bottomArea, vcsService, openCommit);
 
     // Search Everywhere: a transient popup parented to the top-level window
     // (not the dock manager) since it's a floating overlay, not a dock
@@ -997,6 +1003,8 @@ void buildMainWindow(AppSettings *appSettings,
     });
 
     QMenu *viewMenu = window->menuBar()->addMenu(QObject::tr("&View"));
+    // Each entry's rect, the same convention `vcs_menu.cpp` uses for its menu.
+    e2eMarkMenuActions(viewMenu, "view_menu_action");
     wireProjectTreeViewAction(viewMenu, central.docks, appSettings, *actions);
     QAction *classViewAction = registerAction(viewMenu, QStringLiteral("view.classView"),
                                                QObject::tr("Class View"), appSettings, *actions);

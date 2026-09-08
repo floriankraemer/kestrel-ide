@@ -313,7 +313,11 @@ impl Ide {
         self.click(button);
     }
 
-    /// Two rapid clicks at the same point — `QTreeWidget::itemDoubleClicked`
+    /// A genuine double-click: two button events from one `xdotool`
+    /// invocation (`--repeat 2`), close enough together to land inside
+    /// Qt's double-click interval — two separate `click_at` calls each pay
+    /// a fresh subprocess spawn, which on a loaded CI machine can exceed it
+    /// and register as two single clicks instead. `QTreeWidget::itemDoubleClicked`
     /// and friends need an actual double-click event, not two independent
     /// single clicks far enough apart for Qt to treat them as such.
     pub fn double_click_at(&self, x: i32, y: i32, button: u8) {

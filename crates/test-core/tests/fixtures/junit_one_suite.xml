@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+ <testsuite name="Tests\GreeterTest" tests="2" failures="1" time="0.003">
+  <testcase name="testGreets" class="Tests\GreeterTest" time="0.001"/>
+  <testcase name="testAdds" class="Tests\GreeterTest" time="0.002">
+   <failure type="PHPUnit\Framework\ExpectationFailedException" message="Failed asserting that 1 matches 2.">Failed asserting that 1 matches 2.
+at Tests\GreeterTest::testAdds (GreeterTest.php:20)</failure>
+  </testcase>
+ </testsuite>
+</testsuites>

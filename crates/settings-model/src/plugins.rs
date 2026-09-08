@@ -581,14 +581,14 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognised_contribution_point_such_as_a_future_test_framework_row_breaks_nothing() {
-        // Phase D adds `TestFrameworkContribution`; until then a manifest
-        // naming `test-frameworks` still loads (`Contributes`'s `unknown`
-        // catch-all, ADR-0033's precedent) and this column simply says
-        // nothing about it, the same as any other point with no arm here.
+    fn an_unrecognised_contribution_point_breaks_nothing() {
+        // A point this build has never heard of loads via `Contributes`'s
+        // `unknown` catch-all (ADR-0033's precedent) and this column
+        // simply says nothing about it, the same as any point with no arm
+        // here yet.
         let manifest = PluginManifest::from_toml_str(
             "id = \"php-tools\"\nname = \"PHP Tools\"\nversion = \"1\"\napi_version = 1\n\
-             \n[[contributes.test-frameworks]]\nid = \"phpunit\"\n",
+             \n[[contributes.some-future-point]]\nid = \"whatever\"\n",
         )
         .expect("an unrecognised point must not fail the whole manifest");
         assert_eq!(contributes(&manifest), "");

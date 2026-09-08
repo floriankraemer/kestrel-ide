@@ -313,6 +313,19 @@ QToolButton {
     padding: 2px;
 }
 
+/* A styled QToolButton loses the native style's reserved room for its menu
+   arrow, so a MenuButtonPopup button draws the arrow on top of its own label
+   (issue #234). Qt's documented fix: reserve the arrow's width by hand.
+   popupMode 1 is QToolButton::MenuButtonPopup. */
+QToolButton[popupMode="1"] {
+    padding-right: 16px;
+}
+
+QToolButton::menu-button {
+    border: none;
+    width: 14px;
+}
+
 QToolButton:hover {
     background-color: {raised};
     color: {text};

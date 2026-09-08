@@ -193,10 +193,10 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W3-1 — `LspManager` carries an `ExecHost`; `connect` spawns through `ExecHost::command` (gains `current_dir` and `CREATE_NO_WINDOW` it never had) | open | |
-| W3-2 — `rootUri` is the Linux path; `uri_for`/`path_for` at every URI site | open | |
-| W3-3 — server discovery via `host::resolve_program`; a server missing in the distro says so | open | |
-| W3-4 — `watched_files` globs and `didChangeWatchedFiles` URIs translated the same way | open | |
+| W3-1 — `LspManager` carries an `ExecHost`; `connect` spawns through `ExecHost::command` (gains `current_dir` and `CREATE_NO_WINDOW` it never had) | done | 5346659 |
+| W3-2 — `rootUri` is the Linux path; `uri_for`/`path_for` at every URI site | done (translated at `LspManager`'s own methods rather than threaded through every `navigation.rs`/`workspace_edit.rs` parser — see commit message) | 5346659 |
+| W3-3 — server discovery via `host::resolve_program`; a server missing in the distro says so | done | 5346659 |
+| W3-4 — `watched_files` globs and `didChangeWatchedFiles` URIs translated the same way | done | 5346659 |
 
 ### W4 — run, build, debug, toolchains
 

@@ -156,7 +156,7 @@ Update the row **in the same commit** that finishes the task.
 |---|---|---|
 | E1 — a stub analyzer binary (a script that prints fixture XML), on the `lsp-core::bin::stub_server` precedent, so CI needs no PHP | done | `86511eb` |
 | E2 — E2E: `e2e_analyzer_findings_appear_inline_and_in_problems` | done | `2c45884` |
-| E3 — the manual PHP matrix: a real Composer project walked by hand, recorded in the plan | open | |
+| E3 — the manual PHP matrix: a real Composer project walked by hand, recorded in the plan | documented, not yet executed | `98b32c9` |
 
 ## Critical files
 
@@ -210,12 +210,45 @@ End to end, in the headless harness under Xvfb (see the E2E harness notes in `cr
 - **B/C** — open a fixture project whose `vendor/bin/phpstan` is the stub analyzer; confirm findings appear as squiggles within the debounce interval, that the Problems dock shows them with source `phpstan`, and that double-clicking navigates.
 - **D** — run the fixture test framework, confirm the tree fills while the run is in flight, that a failure is both a red node and an editor squiggle, and that Rerun Failed re-runs exactly the failed node.
 
-Manual, against a real Composer project (E3), recorded in this document:
+Manual, against a real Composer project (E3), recorded in this document.
 
-1. `composer create-project laravel/laravel` (or any project with `phpstan/phpstan`, `squizlabs/php_codesniffer` and `phpunit/phpunit` in `require-dev`), open it, and confirm all three are detected with no configuration.
-2. Introduce a type error, an unused-variable sniff violation and a failing assertion; confirm each is underlined, each has a Problems row naming its source, and the failing test is red in the Tests dock.
-3. Remove `vendor/`, confirm the settings page says "declared in composer.json, not installed" rather than reporting nothing.
-4. Repeat once on Windows, where the `vendor/bin` shims are `.bat` files rather than shebang scripts.
+**Status: documented, not yet executed.**
+Risk #7 is why: neither PHP nor Composer exists in `linux-builder`, or in any container this plan's implementation work ran in, so nobody has run this checklist against a real toolchain yet.
+It is written to be followed exactly, by whoever picks up the PHP or Composer install this matrix needs.
+
+**Before you start:** a real PHP 8.1+ CLI and Composer 2.x, on PATH or reachable the way the machine you're testing on normally runs them.
+`analysis_core::detect::find_program` only looks at `vendor/bin/<name>` (or `.bat` on Windows), `<name>.phar` beside the project root, and `<name>` on `PATH` — nothing else, so a version manager (`phpenv`, Herd, etc.) has to put one of those three shapes in reach.
+
+**Note before step 2:** there is no live "as you type" or "on save" squiggle yet — `analysis_core::Scheduler::schedule_file_run` (the `OnType`/`OnSave` engine, B5) exists and is unit-tested, but nothing in `ui-shell` currently calls it; only the **Analysis > Inspect Project** menu action (B9) is wired end to end.
+So "confirm it's underlined" below means: after editing, run **Analysis > Inspect Project** (or reopen the project) and check the result, not "wait for it to happen on its own."
+If that live wiring lands later, re-walk this same matrix once with no manual re-run between an edit and a check, since that is the behavior it would add.
+
+1. **Set up the project.**
+   `composer create-project laravel/laravel phpstan-e2e-check` (or any project you already have with `phpstan/phpstan`, `squizlabs/php_codesniffer` and `phpunit/phpunit` in `require-dev`; add whichever are missing with `composer require --dev phpstan/phpstan squizlabs/php_codesniffer phpunit/phpunit` and `composer install`).
+   Open the folder in the IDE.
+   Open **Settings > Analysis** — confirm all three rows (**PHPStan**, **PHP_CodeSniffer**, and the **PHPUnit** row on the Tests side, if the same page lists it) say "detected at `vendor/bin/<name>`", with no configuration on your part.
+2. **A type error (PHPStan).**
+   Open any controller or a plain class, and add a line that is a genuine type error for the project's own PHPStan level — e.g. call a method that does not exist on a typed variable, or pass a `string` where a constructor demands an `int`.
+   Run **Analysis > Inspect Project** (menu bar, no default shortcut).
+   Confirm: the offending line is underlined in the editor; the Problems dock (View > Problems, or wherever it auto-opened to) has a row for it whose **Source** column reads `PHPStan`; double-clicking the row jumps the caret to the line.
+3. **An unused-variable sniff (PHP_CodeSniffer).**
+   In the same or another file, assign a local variable and never read it (`$unused = 'x';` with nothing after).
+   Run **Analysis > Inspect Project** again.
+   Confirm: a second underline appears on that line; the Problems dock gains a row whose **Source** column reads `PHP_CodeSniffer` (or the sniff's own short name, whatever `phpcs --report=checkstyle`'s `source` attribute for that sniff actually is — record what you saw here if it surprises you).
+   Both PHPStan's and PHPCS's rows for the *first* file must still be present — a second analyzer's run must not have cleared the first's.
+4. **A failing assertion (PHPUnit).**
+   Open (or write) a test and change one assertion so it fails against the current code (e.g. `assertSame('a', 'b')`).
+   Open the Tests dock and run the suite (or just that test).
+   Confirm: the tree shows the test red while — and after — the run is in flight; the failure pane shows the assertion's own message; the failing assertion's line is underlined in the editor with source naming PHPUnit (or the test framework's configured name), the same as the other two sources.
+   Use **Rerun Failed** from the tree's context menu and confirm it reruns only that one test, not the whole suite.
+5. **"Declared but not installed."**
+   Delete (or rename) `vendor/` entirely.
+   Reopen the project (or revisit Settings > Analysis without reopening, if the page recomputes on focus).
+   Confirm each of the three rows now reads exactly `"<name>: declared but not installed (<package> is in composer.json's require-dev, but vendor/ has no matching binary — run \`composer install\`)"` — that literal substring, not a generic "not found."
+   Confirm the Problems dock and the Tests dock do not pretend the last run's stale rows are still current (either they're cleared, or it's otherwise obvious they're stale — record which).
+6. **Windows.**
+   Repeat steps 1-3 once on a Windows machine (or a Windows VM) with the same `laravel/laravel`-shaped project, where `composer install` puts `.bat` shims at `vendor\bin\phpstan.bat` and `vendor\bin\phpcs.bat` rather than POSIX shebang scripts.
+   Confirm detection and both analyzers' findings work identically — `analysis_core::detect::find_program`'s `.bat`-suffix retry (C2) is the code this step exists to prove against a real shim, not a fixture.
 
 ## Docs to write
 

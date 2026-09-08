@@ -48,7 +48,9 @@ The Terminal page is a form: its widgets are the draft, `AppSettings::terminalSe
 
 ## Known ceilings
 
-- `detect()` spawns `wsl.exe --list` on Windows. It runs when the dropdown opens and when the settings page is built, not per keystroke.
+- `detect()` spawns `wsl.exe --list` on Windows.
+  The "+" dropdown no longer pays for it: `TerminalSupervisorRust` caches the catalogue and refreshes it on a background thread (`docs/architecture/terminal-experience-plan.md` T1), so the menu opens from the cache instantly and a newly installed WSL distro shows up on the next background refresh rather than the next click.
+  The Settings > Terminal page's shell combo is the one place still paying the synchronous cost, once per dialog open — see that plan's own Known ceilings.
 - Candidates carry no `--login`/`-i` argument, which matters most on macOS. The page's arguments field is the escape hatch; auto-adding login flags is a separate decision.
 - Nothing consumes OSC title sequences, so a shell never renames its own tab (`terminal-core` discards those events). A tab opened from the dropdown is named after the shell that was picked.
 

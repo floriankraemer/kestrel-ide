@@ -22,9 +22,9 @@ Living status table — update the relevant row **in the same commit** that fini
 | T1 — Shell catalogue off the critical path | done | f6a6ff2 |
 | T2 — One snapshot, coalesced repaints, run-based painting | done | c24bae6 |
 | T3 — Font, padding, palette, 256 colours | done | 2e9386a |
-| T4 — Full keyboard translation, in terminal-core | done | this commit |
-| T5 — Scrollback | done | this commit |
-| T6 — Docs and plan bookkeeping | open | |
+| T4 — Full keyboard translation, in terminal-core | done | 0d5bc81 |
+| T5 — Scrollback | done | da5d8e3 |
+| T6 — Docs and plan bookkeeping | done | this commit |
 
 ## Decisions worth keeping
 
@@ -36,3 +36,7 @@ Living status table — update the relevant row **in the same commit** that fini
 ## Known ceilings
 
 - The Terminal settings page's shell combo (`crates/ui-shell/cpp/terminal_page.cpp`, via `AppSettings::availableShells()`) still detects the shell catalogue synchronously, once per dialog open. T1 left this in place deliberately: a settings dialog opens rarely enough that one blocking detect is a non-issue, unlike the "+" dropdown this task fixed, which opens on every new terminal tab.
+- No OSC title support: `terminal-core` discards OSC sequences, so a shell can't rename its own tab. A tab is named after the shell that was picked, same as before this plan.
+- No cursor/text blink.
+- No bold-as-bright: a bold character keeps its SGR colour rather than being promoted to the bright variant of that ANSI colour, which some terminals do by default and JetBrains does not.
+- The ANSI-stripped run console (ADR-0032) keeps the fixed xterm palette unconditionally — `SgrResolver` never reads the new theme-following `Palette`, since build/run output isn't meant to react to the editor's colour theme the way an interactive shell now does.

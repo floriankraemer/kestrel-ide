@@ -12,11 +12,16 @@
 //! analyzer addresses one *file* on a keystroke, with the opposite
 //! invocation and cancellation shape (B5).
 
+mod buffer;
 mod checkstyle;
 mod def;
 mod detect;
 mod scheduler;
 
+pub use buffer::{
+    degradation_reason, effective_trigger, write_temp_copy, BufferStrategy, TempCopyGuard,
+    TEMP_COPY_GITIGNORE_PATTERN,
+};
 pub use checkstyle::{
     parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding, ParseError,
 };

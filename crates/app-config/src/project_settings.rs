@@ -26,6 +26,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -320,6 +321,44 @@ fn ensure_gitignore(dir: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// Make sure `<project_root>/.gitignore` ignores `pattern`, appending a
+/// line for it if the pattern is not already there.
+///
+/// This is the root `.gitignore`, not `.ide/.gitignore`: a pattern in
+/// `.ide/.gitignore` can only ever match paths *inside* `.ide/` (that is
+/// how git scopes a nested ignore file), and analysis-core's temp-copy
+/// unsaved-buffer strategy (the PHP tooling plan's B6) writes its dotfile
+/// beside the original source file, which can be anywhere in the tree — so
+/// only the project's own root ignore file can cover every location one
+/// might appear at.
+///
+/// Unlike [`ensure_gitignore`], an *existing* file is not left untouched:
+/// a fresh checkout almost always already has a `.gitignore`, and skipping
+/// it the way the `.ide/` seeding does would mean this pattern is never
+/// added to any real project. Appending one missing line is still narrow
+/// enough to respect the same spirit — nothing here rewrites or reorders
+/// content a user wrote, it only adds the one line this feature needs and
+/// only when that exact line is not present yet.
+pub fn ensure_root_gitignore_pattern(
+    project_root: &Path,
+    pattern: &str,
+) -> Result<(), ConfigError> {
+    let path = project_root.join(PROJECT_GITIGNORE);
+    let existing = fs::read_to_string(&path).unwrap_or_default();
+    if existing.lines().any(|line| line == pattern) {
+        return Ok(());
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file)?;
+    }
+    writeln!(file, "{pattern}")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,6 +605,38 @@ mod tests {
         assert!(
             save(root.path(), &ProjectSettings::default()).is_err(),
             "save followed the symlink out"
+        );
+    }
+
+    #[test]
+    fn a_missing_root_gitignore_is_created_with_the_pattern() {
+        let root = project();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        let body = fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert!(body.lines().any(|l| l == ".*.ide-analysis-tmp-*"));
+    }
+
+    #[test]
+    fn an_existing_root_gitignore_gets_the_pattern_appended() {
+        let root = project();
+        fs::write(root.path().join(".gitignore"), "target/\n").unwrap();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        let body = fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert!(body.lines().any(|l| l == "target/"), "user content kept");
+        assert!(body.lines().any(|l| l == ".*.ide-analysis-tmp-*"));
+    }
+
+    #[test]
+    fn the_pattern_is_added_only_once() {
+        let root = project();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        ensure_root_gitignore_pattern(root.path(), ".*.ide-analysis-tmp-*").unwrap();
+        let body = fs::read_to_string(root.path().join(".gitignore")).unwrap();
+        assert_eq!(
+            body.lines()
+                .filter(|l| *l == ".*.ide-analysis-tmp-*")
+                .count(),
+            1
         );
     }
 }

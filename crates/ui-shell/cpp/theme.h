@@ -185,6 +185,11 @@ QIcon maskIcon(const char *maskResource, QColor tint);
 // buttons (via ads::CIconProvider) in sync with a live theme switch.
 QIcon tabCloseIcon();
 
+// The magnifying-glass glyph for filter/search boxes (issue #233), tinted to
+// the active theme's dim text color the same way tabCloseIcon() is — same
+// no-Qt6Svg constraint, same alpha-mask mechanism.
+QIcon searchIcon();
+
 // Scales the whole application's default UI font to `percent` of the font
 // installed at startup (100 = unchanged). Widgets that were never given a
 // font of their own follow it; the two that were — see

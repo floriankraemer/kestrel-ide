@@ -2573,6 +2573,16 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "fieldOrigin"]
         fn field_origin(self: &AppSettings, field_id: &QString) -> QString;
+
+        /// Does `haystack` contain `query`, ignoring case and diacritics
+        /// (issue #233)? Backs the settings dialog's search box; the view
+        /// harvests each page's visible label text and calls this per
+        /// label rather than the dialog owning any text-matching rules
+        /// itself.
+        #[qinvokable]
+        #[cxx_name = "settingsSearchMatches"]
+        fn settings_search_matches(self: &AppSettings, haystack: &QString, query: &QString)
+            -> bool;
     }
 
     unsafe extern "RustQt" {

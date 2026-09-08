@@ -17,17 +17,23 @@
 #include "syntax_colors_page.h"
 #include "terminal_page.h"
 #include "terminal_sessions_panel.h"
+#include "theme.h"
 
+#include <QAbstractButton>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFont>
+#include <QGroupBox>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QObject>
 #include <QPushButton>
+#include <QShortcut>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QStandardItemModel>
@@ -212,6 +218,61 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
       buildMcpPage(&dialog, appSettings, context.docManager, *context.mcpStatus);
     pages->addWidget(mcp.widget);
 
+    // #233: does any label/button/group text on `page` match `query`? Every
+    // category's page is already built and stacked by this point (including
+    // after a scope switch rebuilds one, since that happens in place at the
+    // same stack index), so this walks the live widget tree rather than
+    // keeping a separate label catalog in step with twelve page builders.
+    auto pageMatchesQuery = [](QWidget *page, AppSettings *appSettings, const QString &query) {
+        for (QLabel *label : page->findChildren<QLabel *>()) {
+            if (appSettings->settingsSearchMatches(label->text(), query)) {
+                return true;
+            }
+        }
+        for (QAbstractButton *button : page->findChildren<QAbstractButton *>()) {
+            if (appSettings->settingsSearchMatches(button->text(), query)) {
+                return true;
+            }
+        }
+        for (QGroupBox *group : page->findChildren<QGroupBox *>()) {
+            if (appSettings->settingsSearchMatches(group->title(), query)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    auto applySettingsFilter = [categoryList, pages, appSettings,
+                                 pageMatchesQuery](const QString &query) {
+        int firstVisible = -1;
+        for (int i = 0; i < categoryList->count(); ++i) {
+            QListWidgetItem *item = categoryList->item(i);
+            QWidget *page = pages->widget(i);
+            const bool matches = appSettings->settingsSearchMatches(item->text(), query)
+              || (page != nullptr && pageMatchesQuery(page, appSettings, query));
+            categoryList->setRowHidden(i, !matches);
+            if (matches && firstVisible == -1) {
+                firstVisible = i;
+            }
+        }
+        // A query that hid the category currently on screen jumps to the
+        // first match still visible, the same way a file-tree filter does —
+        // otherwise the stack keeps showing a page the sidebar no longer
+        // offers a way back to.
+        const int current = categoryList->currentRow();
+        if (firstVisible != -1 && (current < 0 || categoryList->isRowHidden(current))) {
+            categoryList->setCurrentRow(firstVisible);
+        }
+    };
+
+    auto *searchEdit = new QLineEdit(&dialog);
+    searchEdit->setPlaceholderText(QObject::tr("Search settings"));
+    searchEdit->setClearButtonEnabled(true);
+    searchEdit->addAction(searchIcon(), QLineEdit::LeadingPosition);
+    QObject::connect(searchEdit, &QLineEdit::textChanged, &dialog, applySettingsFilter);
+    auto *clearSearchShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), searchEdit);
+    clearSearchShortcut->setContext(Qt::WidgetShortcut);
+    QObject::connect(clearSearchShortcut, &QShortcut::activated, searchEdit, &QLineEdit::clear);
+
     QObject::connect(categoryList, &QListWidget::currentRowChanged, pages,
                       &QStackedWidget::setCurrentIndex);
     // #199: a stacked page is only laid out once `setCurrentIndex` actually
@@ -262,8 +323,12 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
       });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 
+    auto *sidebarLayout = new QVBoxLayout();
+    sidebarLayout->addWidget(searchEdit);
+    sidebarLayout->addWidget(categoryList, 1);
+
     auto *bodyLayout = new QHBoxLayout();
-    bodyLayout->addWidget(categoryList);
+    bodyLayout->addLayout(sidebarLayout);
     bodyLayout->addWidget(pages, 1);
 
     // The scope selector: which layer the project-scoped pages edit

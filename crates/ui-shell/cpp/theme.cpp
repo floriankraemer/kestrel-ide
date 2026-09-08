@@ -935,6 +935,12 @@ QIcon tabCloseIcon()
     return maskIcon(":/ui/icons/close_mask_32.a8", chromePaletteForTheme(activeThemeName()).textDim);
 }
 
+QIcon searchIcon()
+{
+    return maskIcon(":/ui/icons/search_mask_32.a8",
+                     chromePaletteForTheme(activeThemeName()).textDim);
+}
+
 void applyTheme(const QString &themeName)
 {
     // Switches the shared colour-theme service's active theme, then asks it

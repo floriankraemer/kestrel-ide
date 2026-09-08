@@ -19,7 +19,7 @@ through the same `<config_dir>/plugins/` install path a user-supplied theme uses
 | T7 | FFI + `ThemeProvider`; `theme.cpp` reads the palette from the seam | Done | 1df6835, 1754db2, d1bf96b |
 | T8 | `appearance_page.cpp`: combo from the registry | Done | d25a8d9 |
 | T9 | `scripts/import-vscode-theme.py`, vendor `third_party/github-vscode-theme/`, nine TOMLs | Done | 8aa1465 |
-| T10 | Integration test: theme plugin installed into a temp `<config_dir>/plugins/` | Not started | |
+| T10 | Integration test: theme plugin installed into a temp `<config_dir>/plugins/` | Done | 6730dfb |
 | T11 | ADR-0050, `layering.md`, `docs/README.md`, overview + `language-platform-ui.md` truth-up | Not started | |
 
 Note: the plan's suggested ADR number 0049 was taken by another merged change

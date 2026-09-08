@@ -5,7 +5,7 @@ Hexagonal-lite with a humble Qt view: logic in Qt-free Rust, the view only displ
 
 ## Layers
 
-The layers are: domain (`editor-core`, `project-model`), application (`app-core`), support (`app-config`, `syntax-core`, `index-core`, `diagnostics-core`, `analysis-core`, `test-core`, `lsp-core`, `settings-model`, `edit-ops`, `vcs-core`, `process-exec`, `pty-core`, `terminal-core`, `run-core`, `build-core`, `dap-core`, `stdio-framing`, `mcp-server`, `plugin-api`, `plugin-host`, `icon-theme`, `markdown-preview`), adapter + view (`ui-shell`), and the `app` binary.
+The layers are: domain (`editor-core`, `project-model`), application (`app-core`), support (`app-config`, `syntax-core`, `index-core`, `diagnostics-core`, `analysis-core`, `test-core`, `lsp-core`, `settings-model`, `edit-ops`, `vcs-core`, `process-exec`, `pty-core`, `terminal-core`, `run-core`, `build-core`, `dap-core`, `stdio-framing`, `mcp-server`, `plugin-api`, `plugin-host`, `icon-theme`, `color-theme`, `markdown-preview`), adapter + view (`ui-shell`), and the `app` binary.
 The building-block diagram lives in [overview.md §3](overview.md#3-building-block-view) — one diagram, one place.
 
 ## Allowed imports
@@ -25,6 +25,7 @@ The building-block diagram lives in [overview.md §3](overview.md#3-building-blo
 | `plugin-api` | (std, serde, toml) — a leaf on purpose, see [ADR-0026](decisions/0026-plugin-host.md) | **No** |
 | `plugin-host` | `plugin-api` (+ std, wasmtime) — discovery, the registry and the built-ins ([ADR-0026](decisions/0026-plugin-host.md)), plus the sandboxed wasm tier ([ADR-0028](decisions/0028-wasm-plugin-tier.md)); `icon-theme` as a **dev**-dependency only, to check the vendored Material pack through the real load path | **No** |
 | `icon-theme` | (std, serde, toml, resvg) — **not** `syntax-core` and **not** `plugin-host`, see [ADR-0027](decisions/0027-icon-themes.md) | **No** |
+| `color-theme` | (std, serde, serde_json, toml) — a leaf on purpose, **not** `plugin-api`, **not** `plugin-host`, and **not** `syntax-core`, see [ADR-0050](decisions/0050-color-themes-as-a-contribution-point.md) | **No** |
 | `markdown-preview` | `syntax-core` (+ std, comrak, resvg, merman `=0.7.0-alpha.1` pinned exactly with its sibling crates, regex-lite) — **not** `plugin-api` and **not** `plugin-host`, the same isolation `icon-theme` keeps, see [ADR-0033](decisions/0033-markdown-preview.md) | **No** |
 | `settings-model` | `app-config`, `syntax-core`, `lsp-core`, `edit-ops`, `editor-core`, `plugin-api`, `plugin-host` (+ std, serde, toml, tree-sitter) | **No** |
 | `edit-ops` | `editor-core`, `syntax-core` (+ std, tree-sitter) | **No** |
@@ -36,7 +37,7 @@ The building-block diagram lives in [overview.md §3](overview.md#3-building-blo
 | `build-core` | `run-core`, `diagnostics-core` (ADR-0046: `BuildDiagnostic::severity` is the shared `Severity` enum directly, not a translated one) (+ std, serde_json, regex) | **No** |
 | `dap-core` | `run-core`, `app-config`, `stdio-framing` (+ std, serde, serde_json) | **No** |
 | `stdio-framing` | (std only) | **No** |
-| `app-core` | `editor-core`, `project-model`, `plugin-host`, `icon-theme`, `syntax-core`, `markdown-preview` — the last four only for the icon-theme and previews joins, see below | **No** |
+| `app-core` | `editor-core`, `project-model`, `plugin-host`, `icon-theme`, `color-theme`, `syntax-core`, `markdown-preview` — the last five only for the icon-theme, color-theme and previews joins, see below | **No** |
 | `ai-chat-core` | `lsp-core` (+ std, serde, serde_json, base64, tiktoken-rs, reqwest/rustls) | **No** |
 | `ui-shell` | `app-core`, `editor-core`, `edit-ops`, `project-model`, `app-config`, `settings-model`, `syntax-core`, `mcp-server`, `index-core`, `lsp-core`, `diagnostics-core`, `analysis-core`, `test-core` (D4: `TestService` needs `test_core::run`/`TestTree`/`filter` directly, the same reason it already depends on `analysis-core`), `ai-chat-core`, `pty-core`, `terminal-core`, `plugin-host`, `plugin-api` (B8: `AnalysisService` needs `AnalyzerContribution` directly, the same reason `settings-model` already depends on it), `vcs-core`, `run-core`, `build-core`, `markdown-preview`, `color-theme` (color-themes plan T7: `ThemeProvider` translates a resolved `ColorTheme`'s fields directly into the FFI structs the seam crosses — `FfiChromePalette`/`FfiSemanticColors`/`FfiDiffColors`/`FfiTerminalPalette` — the same shape `convert.rs` already uses for `syntax_core::theme::ScopeStyle` -> `FfiScopeStyle`) (+ tokio, cxx, cxx-qt, cxx-qt-lib) | Yes (adapter + view live here) |
 | `app` | `ui-shell` | Yes |
@@ -79,9 +80,12 @@ That test target is the one place `app-config` may be read from a test rather th
 - **Where those three meet** is `app_core::icons` (ADR-0026's amendment), and nowhere else.
   It owns the active theme — the registry snapshot, the resolved `IconPack`, the `IconAssets` implementation backed by `LoadedPlugin::read_asset`, and the `IconRenderer` — and answers exactly two questions: the `"<pack-id>/<icon-id>"` key for a row, and the premultiplied RGBA8 behind a key.
   It is also the one place that asks `syntax_core::language_for_path` on an icon's behalf, which is the ADR-0018 join `icon-theme` refuses to make itself.
-  Mapping a colour theme name to a light or dark icon set is a rule and lives here too, not in `theme.cpp`.
+  Mapping a colour theme name to a light or dark icon set is a rule and lives here too, not in `theme.cpp` — it gains a sibling in `app_core::color_themes` (ADR-0050): `icons::icon_appearance` maps a resolved `color_theme::Appearance` onto the icon crate's own `Appearance`, the one allowed conversion point between the two, replacing the old string-matching `appearance_for_theme` that guessed a theme's darkness from its name.
   Which icon theme is active is the same kind of answer: `IconService` is handed the persisted id and falls back to the first theme there is when nothing offers it, so a setting that outlives its plugin costs the user no icons (P7).
   This is why `app-core`'s dependency row grew past the two domain crates: all three additions are Qt-free, so the hard rule below is untouched, and the `cargo tree` gate is what proves it rather than the claim.
+- **Which colour theme is active, and where its file comes from** — the join between a `color-themes` contribution's manifest entry and the parsed [`color_theme::ColorTheme`](../../../crates/color-theme/src) it names — lives in `app_core::color_themes` (ADR-0050), the same shape as `app_core::icons`: `plugin-host` stores the contribution and never interprets it, `color-theme` parses a theme file (native TOML or a VS Code theme JSON, dispatched by extension) and never learns where the file lives, and neither crate depends on the other.
+  `syntax-core` keeps the actual *resolution* rules — the built-in-vs-plugin precedence walk and a theme's parent-scope inheritance — because `color-theme` must stay a leaf with no `syntax-core` edge; a TextMate scope is a plain string on both sides of that boundary, so no type needs to cross it.
+  What crosses the FFI seam is the whole resolved `ColorTheme`, translated field-by-field into `ui-shell`'s own FFI structs (T7) rather than a name `theme.cpp` looks up in a hardcoded table.
 - **Which preview a document gets, and who renders it** — the extension-to-provider table built from `previews` contributions (installed shadowing built-in, exactly `icon_themes`' direction and for the same reason), and the dispatch between the built-in native renderer and a running wasm plugin's `render` export — lives in `app_core::preview` (ADR-0033), the same shape as `app_core::icons` and joined for the same reason: `plugin-host` stores a contribution and never interprets it, `markdown-preview` renders and knows nothing about plugins.
   A wasm provider's SVG is rasterised with the host's own bundled font, in `markdown-preview`, never inside the sandbox — a fuel-metered 64 MiB store is not where a rasteriser belongs, and the host already owns one.
   A trap or a failed render from a wasm provider is never silently swapped for the native path: two different answers for one file would be worse than one honest `PreviewError`.
@@ -178,6 +182,7 @@ cargo tree -p e2e -e normal | grep -i qt            # must be empty
 cargo tree -p plugin-api -e normal | grep -i qt     # must be empty
 cargo tree -p plugin-host -e normal | grep -i qt    # must be empty
 cargo tree -p icon-theme -e normal | grep -i qt     # must be empty
+cargo tree -p color-theme -e normal | grep -i qt    # must be empty
 cargo tree -p markdown-preview -e normal | grep -i qt  # must be empty
 cargo tree -p run-core -e normal | grep -i qt        # must be empty
 cargo tree -p build-core -e normal | grep -i qt      # must be empty

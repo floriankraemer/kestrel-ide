@@ -236,13 +236,50 @@ mod tests {
                     id: "vscode-dark".to_string(),
                     label: "VS Code Dark".to_string(),
                 },
+                ColorThemeChoice {
+                    id: "github-light-default".to_string(),
+                    label: "GitHub Light Default".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-light-high-contrast".to_string(),
+                    label: "GitHub Light High Contrast".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-light-colorblind".to_string(),
+                    label: "GitHub Light Colorblind (Beta)".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-dark-default".to_string(),
+                    label: "GitHub Dark Default".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-dark-high-contrast".to_string(),
+                    label: "GitHub Dark High Contrast".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-dark-colorblind".to_string(),
+                    label: "GitHub Dark Colorblind (Beta)".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-dark-dimmed".to_string(),
+                    label: "GitHub Dark Dimmed".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-light".to_string(),
+                    label: "GitHub Light".to_string(),
+                },
+                ColorThemeChoice {
+                    id: "github-dark".to_string(),
+                    label: "GitHub Dark".to_string(),
+                },
             ]
         );
     }
 
     #[test]
     fn a_disabled_plugin_offers_no_colour_themes() {
-        let without = builtin_registry(&["core-themes".to_string()]);
+        let without =
+            builtin_registry(&["core-themes".to_string(), "github-vscode-theme".to_string()]);
         assert!(color_themes(&without).is_empty());
         assert!(ColorThemeService::from_registry(without, "dark")
             .active()

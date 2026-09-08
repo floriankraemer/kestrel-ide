@@ -1,0 +1,57 @@
+# Hand-written, like core-themes/plugin.toml: nine entries that never
+# change shape between upstream releases, so a generator would be pure
+# ceremony over what `scripts/import-vscode-theme.py` regenerates instead
+# (the `themes/*.toml` files it points at). `version` tracks upstream,
+# like `material-icon-theme/plugin.toml` does, since this whole plugin IS
+# the vendored package rather than a first-party built-in.
+id = "github-vscode-theme"
+name = "GitHub Theme"
+version = "6.3.5"
+api_version = 1
+license = "MIT"
+description = "The nine GitHub (Primer) colour themes: Light, Dark, and their Default/High Contrast/Colorblind/Dimmed variants."
+
+[[contributes.color-themes]]
+id = "github-light-default"
+label = "GitHub Light Default"
+path = "themes/light-default.toml"
+
+[[contributes.color-themes]]
+id = "github-light-high-contrast"
+label = "GitHub Light High Contrast"
+path = "themes/light-high-contrast.toml"
+
+[[contributes.color-themes]]
+id = "github-light-colorblind"
+label = "GitHub Light Colorblind (Beta)"
+path = "themes/light-colorblind.toml"
+
+[[contributes.color-themes]]
+id = "github-dark-default"
+label = "GitHub Dark Default"
+path = "themes/dark-default.toml"
+
+[[contributes.color-themes]]
+id = "github-dark-high-contrast"
+label = "GitHub Dark High Contrast"
+path = "themes/dark-high-contrast.toml"
+
+[[contributes.color-themes]]
+id = "github-dark-colorblind"
+label = "GitHub Dark Colorblind (Beta)"
+path = "themes/dark-colorblind.toml"
+
+[[contributes.color-themes]]
+id = "github-dark-dimmed"
+label = "GitHub Dark Dimmed"
+path = "themes/dark-dimmed.toml"
+
+[[contributes.color-themes]]
+id = "github-light"
+label = "GitHub Light"
+path = "themes/light.toml"
+
+[[contributes.color-themes]]
+id = "github-dark"
+label = "GitHub Dark"
+path = "themes/dark.toml"

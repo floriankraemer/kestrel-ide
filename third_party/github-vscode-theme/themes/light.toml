@@ -1,0 +1,326 @@
+id = "github-light"
+label = "GitHub Light"
+appearance = "light"
+
+[chrome]
+canvas = "#ffffffff"
+surface = "#ffffffff"
+surface2 = "#f6f8faff"
+raised = "#ebf0f4ff"
+border = "#e1e4e8ff"
+text = "#24292eff"
+text_dim = "#6a737dff"
+accent = "#2188ffff"
+accent_ink = "#ffffffff"
+selection = "#e2e5e9ff"
+status_bar = "#ffffffff"
+
+[semantic]
+error = "#cb2431ff"
+warning = "#f9c513ff"
+info = "#3794ffff"
+ok = "#28a745ff"
+muted = "#6a737dff"
+
+[diff]
+added_line = "#e4f9e9ff"
+added_inline = "#e4f9e9ff"
+added_marker = "#28a745ff"
+modified_line = "#1e2f4aff"
+modified_inline = "#2d4a70ff"
+modified_marker = "#005cc5ff"
+deleted_line = "#fae5e7ff"
+deleted_inline = "#fae5e7ff"
+deleted_marker = "#d73a49ff"
+
+[terminal]
+black = "#24292eff"
+red = "#d73a49ff"
+green = "#28a745ff"
+yellow = "#dbab09ff"
+blue = "#0366d6ff"
+magenta = "#5a32a3ff"
+cyan = "#1b7c83ff"
+white = "#6a737dff"
+bright_black = "#959da5ff"
+bright_red = "#cb2431ff"
+bright_green = "#22863aff"
+bright_yellow = "#b08800ff"
+bright_blue = "#005cc5ff"
+bright_magenta = "#5a32a3ff"
+bright_cyan = "#3192aaff"
+bright_white = "#d1d5daff"
+background = "#ffffffff"
+foreground = "#586069ff"
+cursor = "#005cc5ff"
+selection = "#e2e5e9ff"
+
+[syntax."attribute"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."boolean"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."character"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."comment"]
+fg = "#6a737dff"
+bold = false
+italic = false
+underline = false
+
+[syntax."comment.documentation"]
+fg = "#6a737dff"
+bold = false
+italic = false
+underline = false
+
+[syntax."constant"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."constant.builtin"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."constructor"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."escape"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."function"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."function.builtin"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."function.call"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."function.macro"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."function.method"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."keyword"]
+fg = "#d73a49ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."label"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."markup.bold"]
+fg = "#24292eff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.heading"]
+fg = "#005cc5ff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.heading.1"]
+fg = "#005cc5ff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.heading.2"]
+fg = "#005cc5ff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.heading.3"]
+fg = "#005cc5ff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.heading.4"]
+fg = "#005cc5ff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.heading.5"]
+fg = "#005cc5ff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.heading.6"]
+fg = "#005cc5ff"
+bold = true
+italic = false
+underline = false
+
+[syntax."markup.italic"]
+fg = "#24292eff"
+bold = false
+italic = true
+underline = false
+
+[syntax."markup.link.label"]
+fg = "#032f62ff"
+bold = false
+italic = false
+underline = true
+
+[syntax."markup.quote"]
+fg = "#22863aff"
+bold = false
+italic = false
+underline = false
+
+[syntax."markup.raw"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."module"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."number"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."number.float"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."operator"]
+fg = "#d73a49ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."property"]
+fg = "#24292eff"
+bold = false
+italic = false
+underline = false
+
+[syntax."string"]
+fg = "#032f62ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."string.escape"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."string.regexp"]
+fg = "#032f62ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."string.special"]
+fg = "#032f62ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."tag"]
+fg = "#22863aff"
+bold = false
+italic = false
+underline = false
+
+[syntax."type"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."type.builtin"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."type.definition"]
+fg = "#6f42c1ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."variable"]
+fg = "#e36209ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."variable.builtin"]
+fg = "#005cc5ff"
+bold = false
+italic = false
+underline = false
+
+[syntax."variable.member"]
+fg = "#24292eff"
+bold = false
+italic = false
+underline = false
+
+[syntax."variable.parameter"]
+fg = "#e36209ff"
+bold = false
+italic = false
+underline = false

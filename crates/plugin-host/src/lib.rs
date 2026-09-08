@@ -73,6 +73,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::CSHARP,
     builtins::PHP_TOOLS,
     builtins::CORE_THEMES,
+    builtins::GITHUB_VSCODE_THEME,
 ];
 
 /// Every plugin that loaded, and every one that did not.

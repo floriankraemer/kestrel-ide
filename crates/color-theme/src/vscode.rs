@@ -183,9 +183,33 @@ struct RawVsCodeTheme {
     name: Option<String>,
     #[serde(rename = "type")]
     kind: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_string_colors")]
     colors: Option<HashMap<String, String>>,
     #[serde(rename = "tokenColors", default)]
     token_colors: Vec<RawTokenColor>,
+}
+
+/// Some real-world theme files (e.g. `github-vscode-theme`'s dark variants,
+/// `symbolIcon.constantForeground`) give a handful of exotic keys an array
+/// of colours instead of one hex string — a per-token gradient VS Code
+/// itself uses for semantic highlighting, which this crate's `colors` map
+/// never reads by that name. Rather than fail the whole file over a key
+/// nothing here consumes, keep only the entries that are plain strings.
+fn deserialize_string_colors<'de, D>(
+    deserializer: D,
+) -> Result<Option<HashMap<String, String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw: Option<HashMap<String, serde_json::Value>> = Deserialize::deserialize(deserializer)?;
+    Ok(raw.map(|map| {
+        map.into_iter()
+            .filter_map(|(key, value)| match value {
+                serde_json::Value::String(s) => Some((key, s)),
+                _ => None,
+            })
+            .collect()
+    }))
 }
 
 #[derive(Deserialize)]
@@ -619,6 +643,22 @@ mod tests {
         assert_eq!(theme.chrome.text, Rgba::new(0xc9, 0xd1, 0xd9, 255));
         assert_eq!(theme.semantic.error, Rgba::new(0xf8, 0x51, 0x49, 255));
         assert_eq!(theme.terminal.ansi()[0], Rgba::new(0x48, 0x4f, 0x58, 255));
+        assert_eq!(theme.terminal.ansi()[1], Rgba::new(0xff, 0x7b, 0x72, 255));
+    }
+
+    #[test]
+    fn ignores_a_non_string_color_value_instead_of_failing_the_whole_file() {
+        // github-vscode-theme's dark variants give
+        // "symbolIcon.constantForeground" an array of colours (a per-token
+        // gradient), which nothing in this crate's `colors` map reads by
+        // that name — the file must still parse.
+        let with_array_color = fixture().replacen(
+            "\"terminal.ansiRed\": \"#ff7b72\"",
+            "\"terminal.ansiRed\": \"#ff7b72\",\n\"symbolIcon.constantForeground\": [\"#aff5b4\", \"#7ee787\"]",
+            1,
+        );
+        let theme =
+            parse_vscode_json(&with_array_color).expect("array-valued key is ignored, not fatal");
         assert_eq!(theme.terminal.ansi()[1], Rgba::new(0xff, 0x7b, 0x72, 255));
     }
 

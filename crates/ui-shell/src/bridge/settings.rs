@@ -150,6 +150,20 @@ impl ffi::AppSettings {
         let _ = app_config::save(&config_dir, &settings);
     }
 
+    pub fn ui_locale(&self) -> QString {
+        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+        QString::from(settings.ui_locale_or_default())
+    }
+
+    pub fn save_ui_locale(&self, locale: &QString) {
+        let config_dir = app_core::resolve_config_dir();
+        let Ok(mut settings) = app_config::load(&config_dir) else {
+            return;
+        };
+        settings.ui_locale = locale.to_string();
+        let _ = app_config::save(&config_dir, &settings);
+    }
+
     pub fn icon_theme_id(&self) -> QString {
         let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
         QString::from(settings.icon_theme.as_str())

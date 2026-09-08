@@ -123,7 +123,10 @@ baseline() {
 	# planned; this suite is already one flow per test.
 	# Ratcheted down: the split-pane flows moved to their own binary,
 	# crates/app/tests/e2e_panes.rs, to make room for the tab-drag flow.
-	crates/app/tests/e2e.rs) echo 1362 ;;
+	# Raised from 1362 by 35 lines for e2e_ui_locale_setting_takes_effect_on_relaunch
+	# (ADR-0049): the ui_locale_active marker on a cold launch and after a
+	# relaunch seeded with ui_locale = "de".
+	crates/app/tests/e2e.rs) echo 1397 ;;
 	esac
 }
 

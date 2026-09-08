@@ -25,3 +25,9 @@ quick-xml = "0.41"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+# E1: a fake `vendor/bin/phpstan`, so CI/E2E need no real PHP or Composer —
+# see `src/bin/stub_analyzer.rs`'s doc comment.
+name = "stub_analyzer"
+path = "src/bin/stub_analyzer.rs"

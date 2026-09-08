@@ -172,6 +172,17 @@ pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<TerminalSettings>,
 
+    /// The project's `[[analyzer]]` overrides (the PHP tooling plan's B7)
+    /// — the same `AnalyzerSetting` row shape the global layer's
+    /// `[[analysis.analyzer]]` uses, flattened to the top level the way
+    /// [`ProjectSettings::language_servers`] already is rather than nested
+    /// under an `[analysis]` table this file has no other use for. Same
+    /// sparse rule as every other field here: `None` is "the project
+    /// overrides no analyzer", not "every analyzer keeps its shipped
+    /// default".
+    #[serde(default, rename = "analyzer", skip_serializing_if = "Option::is_none")]
+    pub analysis: Option<Vec<crate::AnalyzerSetting>>,
+
     /// Named workspace arrangements the project ships, as a `[layouts]`
     /// table keyed by name.
     ///
@@ -206,6 +217,7 @@ impl ProjectSettings {
             && self.index_excludes.is_none()
             && self.terminal.is_none()
             && self.layouts.is_none()
+            && self.analysis.is_none()
             && self.unknown.is_empty()
     }
 }
@@ -606,6 +618,37 @@ mod tests {
             save(root.path(), &ProjectSettings::default()).is_err(),
             "save followed the symlink out"
         );
+    }
+
+    #[test]
+    fn analyzer_overrides_round_trip_and_stay_sparse() {
+        let root = project();
+        update(root.path(), |s| {
+            s.analysis = Some(vec![crate::AnalyzerSetting {
+                id: "phpstan".into(),
+                enabled: Some(false),
+                trigger: Some("on-save".into()),
+            }]);
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        let analyzers = loaded.analysis.expect("analyzer overrides");
+        assert_eq!(analyzers.len(), 1);
+        assert_eq!(analyzers[0].id, "phpstan");
+        assert_eq!(analyzers[0].enabled, Some(false));
+        assert_eq!(analyzers[0].trigger.as_deref(), Some("on-save"));
+
+        let body =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        assert!(body.contains("[[analyzer]]"), "{body}");
+    }
+
+    #[test]
+    fn a_project_that_never_touched_analysis_has_no_analyzer_override() {
+        let root = project();
+        let settings = load(root.path()).unwrap();
+        assert!(settings.analysis.is_none());
     }
 
     #[test]

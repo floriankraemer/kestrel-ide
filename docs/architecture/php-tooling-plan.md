@@ -102,7 +102,7 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| P0-1 — this plan doc + `docs/README.md` index line | open | |
+| P0-1 — this plan doc + `docs/README.md` index line | done | `3be2021` |
 
 ### A — one diagnostics model, and squiggles for every source
 
@@ -118,7 +118,7 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| B1 — extract `process-exec` from `vcs-core/src/cli.rs`; `vcs-core` migrated onto it in the same commit | done | `TBD` |
+| B1 — extract `process-exec` from `vcs-core/src/cli.rs`; `vcs-core` migrated onto it in the same commit | done | `d4bd4f2` |
 | B2 — `plugin-api`: `AnalyzerContribution` + validation + manifest round-trip tests; `api_version` unchanged | done | `80ece93` |
 | B3 — `analysis-core`: `AnalyzerDef` built from a contribution, detection (program candidates, config files, `composer.json` `require-dev`), status reporting for "declared but not installed" | done | `37054a5` |
 | B4 — `checkstyle-xml` parser and its severity mapping, fixture-driven | done | `de4c858` |
@@ -133,9 +133,9 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| C1 — built-in manifest contributing `phpstan` and `phpcs` analyzers | done | `TBD` |
-| C2 — Composer detection specifics: `vendor/bin/*`, `.phar`, the Windows `.bat` shims, an optional `php_binary` prefix, config discovery | done | `TBD` |
-| C3 — `settings_model::plugins::contributes()` learns the two new points (it already omits `language-servers` — `settings-model/src/plugins.rs:183`) | done | `TBD` |
+| C1 — built-in manifest contributing `phpstan` and `phpcs` analyzers | done | `46e20b4` |
+| C2 — Composer detection specifics: `vendor/bin/*`, `.phar`, the Windows `.bat` shims, an optional `php_binary` prefix, config discovery | done | `256f620` |
+| C3 — `settings_model::plugins::contributes()` learns the two new points (it already omits `language-servers` — `settings-model/src/plugins.rs:183`) | done | `12ea28d` |
 
 ### D — the PHPUnit test tool window
 
@@ -154,9 +154,9 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| E1 — a stub analyzer binary (a script that prints fixture XML), on the `lsp-core::bin::stub_server` precedent, so CI needs no PHP | done | `86511eb` |
-| E2 — E2E: `e2e_analyzer_findings_appear_inline_and_in_problems` | done | `2c45884` |
-| E3 — the manual PHP matrix: a real Composer project walked by hand, recorded in the plan | documented, not yet executed | `98b32c9` |
+| E1 — a stub analyzer binary (a script that prints fixture XML), on the `lsp-core::bin::stub_server` precedent, so CI needs no PHP | done | `bc337ba` |
+| E2 — E2E: `e2e_analyzer_findings_appear_inline_and_in_problems` | done | `c12b071` |
+| E3 — the manual PHP matrix: a real Composer project walked by hand, recorded in the plan | documented, not yet executed | `6f9481a` |
 
 ## Critical files
 

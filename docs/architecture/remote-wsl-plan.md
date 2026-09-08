@@ -184,10 +184,10 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W2-1 — verify `vcs-core` runs `git` in the distro; only `gix::discover`'s cwd spelling may need work | open | |
-| W2-2 — `analysis_core::detect::find_program` probes the distro, not the share | open | |
-| W2-3 — `test-core`'s streamed `spawn` over `wsl.exe`, TeamCity output unaffected | open | |
-| W2-4 — dubious-ownership "mark safe" offer becomes unreachable for a WSL root; confirm and note | open | |
+| W2-1 — verify `vcs-core` runs `git` in the distro; only `gix::discover`'s cwd spelling may need work | done | 936e2fa |
+| W2-2 — `analysis_core::detect::find_program` probes the distro, not the share | done | d541293 |
+| W2-3 — `test-core`'s streamed `spawn` over `wsl.exe`, TeamCity output unaffected | done | 36e2d91 |
+| W2-4 — dubious-ownership "mark safe" offer becomes unreachable for a WSL root; confirm and note | done | a9abf50 |
 
 ### W3 — `lsp-core`
 

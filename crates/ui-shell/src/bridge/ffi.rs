@@ -431,6 +431,38 @@ mod ffi {
         Line,
     }
 
+    /// A logical key press crossing the seam (Task T4), 1:1 with
+    /// `terminal_core::keys::Key`. `cpp/terminal_widget.cpp`'s
+    /// `keyPressEvent` maps `Qt::Key` to this — pure enum translation, a
+    /// humble view concern — and the actual xterm escape-sequence encoding
+    /// happens on the Rust side (`terminal_core::keys::encode`), never in
+    /// C++.
+    ///
+    /// `Char` and `F` carry no payload of their own: a cxx enum can't be a
+    /// Rust-style data-carrying enum, so `send_key`'s `code_point` parameter
+    /// carries the Unicode code point for `Char` and the function-key number
+    /// (1-12) for `F`, the same "typed flag plus a field that means
+    /// something only for certain variants" convention `FfiSymbolMatch`'s
+    /// `has_kind`/`kind` already uses.
+    enum FfiTerminalKey {
+        Char,
+        Enter,
+        Tab,
+        Backspace,
+        Escape,
+        Up,
+        Down,
+        Left,
+        Right,
+        Home,
+        End,
+        PageUp,
+        PageDown,
+        Insert,
+        Delete,
+        F,
+    }
+
     /// One symbol row crossing the seam — a usage, an implementation, or
     /// a declaration candidate — 1:1 with `index_core::SymbolMatch`.
     ///
@@ -3042,6 +3074,24 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "write"]
         fn write(self: Pin<&mut TerminalSupervisor>, session_id: u64, input: &QString);
+
+        /// Translate one key press to the xterm bytes a shell expects
+        /// (`terminal_core::keys::encode`, honoring `session_id`'s current
+        /// application-cursor-key mode) and write them to its PTY stdin
+        /// (Task T4). `code_point` is a Unicode code point for
+        /// `FfiTerminalKey::Char`, or the function-key number (1-12) for
+        /// `FfiTerminalKey::F`; meaningless for every other variant.
+        #[qinvokable]
+        #[cxx_name = "sendKey"]
+        fn send_key(
+            self: Pin<&mut TerminalSupervisor>,
+            session_id: u64,
+            key: FfiTerminalKey,
+            code_point: u32,
+            shift: bool,
+            ctrl: bool,
+            alt: bool,
+        );
 
         /// Resize both `session_id`'s PTY and grid — call from
         /// `cpp/terminal_widget.cpp`'s `resizeEvent` whenever the

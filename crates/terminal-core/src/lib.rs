@@ -16,6 +16,7 @@ use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::{Config as TermConfig, Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor, Processor, Rgb};
 
+pub mod keys;
 mod sgr;
 
 pub use sgr::{SgrResolver, StyledRun, StyledText, TextStyle};
@@ -535,6 +536,13 @@ impl TerminalEmulator {
         self.term.mode().contains(TermMode::BRACKETED_PASTE)
     }
 
+    /// Whether the running application asked for application-cursor-key
+    /// mode (`\x1b[?1h`), i.e. whether arrow/Home/End keys should encode as
+    /// `SS3` sequences instead of `CSI` ones (`keys::encode`).
+    pub fn app_cursor_mode(&self) -> bool {
+        self.term.mode().contains(TermMode::APP_CURSOR)
+    }
+
     /// The exact bytes a paste of `text` should write to the PTY:
     /// [`sanitize_paste`]'d, and wrapped in the bracketed-paste markers only
     /// when the application enabled them — sending the markers otherwise
@@ -1017,6 +1025,18 @@ mod tests {
 
         emulator.feed(b"\x1b[?2004l");
         assert!(!emulator.bracketed_paste());
+    }
+
+    #[test]
+    fn app_cursor_mode_follows_the_applications_request() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(4, 20), Palette::xterm());
+        assert!(!emulator.app_cursor_mode());
+
+        emulator.feed(b"\x1b[?1h");
+        assert!(emulator.app_cursor_mode());
+
+        emulator.feed(b"\x1b[?1l");
+        assert!(!emulator.app_cursor_mode());
     }
 
     #[test]

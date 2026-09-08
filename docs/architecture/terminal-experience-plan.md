@@ -22,7 +22,7 @@ Living status table — update the relevant row **in the same commit** that fini
 | T1 — Shell catalogue off the critical path | done | f6a6ff2 |
 | T2 — One snapshot, coalesced repaints, run-based painting | done | c24bae6 |
 | T3 — Font, padding, palette, 256 colours | done | 2e9386a |
-| T4 — Full keyboard translation, in terminal-core | open | |
+| T4 — Full keyboard translation, in terminal-core | done | this commit |
 | T5 — Scrollback | open | |
 | T6 — Docs and plan bookkeeping | open | |
 

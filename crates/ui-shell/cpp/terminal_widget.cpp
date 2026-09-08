@@ -498,13 +498,20 @@ void TerminalWidget::contextMenuEvent(QContextMenuEvent *event)
 
 bool TerminalWidget::event(QEvent *event)
 {
-    // While the terminal has focus, Ctrl+letter belongs to the shell:
-    // Ctrl+C is SIGINT, Ctrl+D is EOF, Ctrl+S/Ctrl+Q are flow control.
-    // Qt offers window-level menu shortcuts (Edit > Copy is Ctrl+C) the key
-    // first, so without accepting the ShortcutOverride here those combos
-    // would never reach keyPressEvent. Only plain Ctrl+letter is taken —
-    // Ctrl+Shift+C/V are this widget's own copy/paste actions, and
-    // Ctrl+` still toggles the dock, so there is always a way back out.
+    // While the terminal has focus, several key combinations belong to the
+    // shell/the running program rather than to Qt's own focus-chain or
+    // window-level menu shortcuts, which otherwise see the key first. Not
+    // accepting the ShortcutOverride here means keyPressEvent would never
+    // get them (Tab would move focus instead of completing a command,
+    // arrows/Home/End/PageUp/PageDown would be swallowed by whatever dock
+    // action happens to bind them).
+    //
+    // Ctrl+` (view.terminal, the dock toggle) and Ctrl+Shift+C/V
+    // (terminal.copy/terminal.paste, this widget's own QActions) are
+    // deliberately excluded so there is always a way back out and copy/paste
+    // keep working: only plain Ctrl+letter (no Shift/Alt) is taken here —
+    // Ctrl+Shift+C/V already fail that check on Shift alone, and Ctrl+` fails
+    // it because backtick is not in the A-Z range.
     if (event->type() == QEvent::ShortcutOverride) {
         auto *keyEvent = static_cast<QKeyEvent *>(event);
         if (keyEvent->modifiers() == Qt::ControlModifier && keyEvent->key() >= Qt::Key_A
@@ -512,42 +519,146 @@ bool TerminalWidget::event(QEvent *event)
             event->accept();
             return true;
         }
+        switch (keyEvent->key()) {
+        case Qt::Key_Tab:
+        case Qt::Key_Backtab:
+        case Qt::Key_Up:
+        case Qt::Key_Down:
+        case Qt::Key_Left:
+        case Qt::Key_Right:
+        case Qt::Key_Home:
+        case Qt::Key_End:
+        case Qt::Key_PageUp:
+        case Qt::Key_PageDown:
+            event->accept();
+            return true;
+        default:
+            break;
+        }
     }
     return QWidget::event(event);
 }
 
-void TerminalWidget::keyPressEvent(QKeyEvent *event)
+namespace {
+
+// Qt::Key -> FfiTerminalKey for the keys `terminal_core::keys::Key` names
+// directly (everything except `Char`/`F`, which `sendTranslatedKey` builds
+// separately since they carry a code point). `Key_Backtab` maps to the same
+// `Tab` variant as `Key_Tab` — which one Qt delivers for Shift+Tab varies by
+// platform, and either way it is the `shift` flag, not the key identity,
+// that turns it into a back-tab (`terminal_core::keys::encode`).
+bool namedFfiKeyFor(int qtKey, FfiTerminalKey &out)
 {
-    // First-cut keyboard coverage: printable characters (incl. IME/composed
-    // text via event->text()), Enter, Backspace, Tab, Escape. Arrow keys and
-    // Ctrl-combinations are NOT translated to their escape sequences yet —
-    // see this class's doc comment / the task's own report for the gap.
-    QString toSend;
-    switch (event->key()) {
+    switch (qtKey) {
     case Qt::Key_Return:
     case Qt::Key_Enter:
-        toSend = QStringLiteral("\r");
-        break;
+        out = FfiTerminalKey::Enter;
+        return true;
     case Qt::Key_Backspace:
-        toSend = QString(QChar(0x7f));
-        break;
+        out = FfiTerminalKey::Backspace;
+        return true;
     case Qt::Key_Tab:
-        toSend = QStringLiteral("\t");
-        break;
+    case Qt::Key_Backtab:
+        out = FfiTerminalKey::Tab;
+        return true;
     case Qt::Key_Escape:
-        toSend = QString(QChar(0x1b));
-        break;
+        out = FfiTerminalKey::Escape;
+        return true;
+    case Qt::Key_Up:
+        out = FfiTerminalKey::Up;
+        return true;
+    case Qt::Key_Down:
+        out = FfiTerminalKey::Down;
+        return true;
+    case Qt::Key_Left:
+        out = FfiTerminalKey::Left;
+        return true;
+    case Qt::Key_Right:
+        out = FfiTerminalKey::Right;
+        return true;
+    case Qt::Key_Home:
+        out = FfiTerminalKey::Home;
+        return true;
+    case Qt::Key_End:
+        out = FfiTerminalKey::End;
+        return true;
+    case Qt::Key_PageUp:
+        out = FfiTerminalKey::PageUp;
+        return true;
+    case Qt::Key_PageDown:
+        out = FfiTerminalKey::PageDown;
+        return true;
+    case Qt::Key_Insert:
+        out = FfiTerminalKey::Insert;
+        return true;
+    case Qt::Key_Delete:
+        out = FfiTerminalKey::Delete;
+        return true;
     default:
-        toSend = event->text();
-        break;
+        return false;
+    }
+}
+
+} // namespace
+
+bool TerminalWidget::sendTranslatedKey(QKeyEvent *event)
+{
+    const bool shift = event->modifiers().testFlag(Qt::ShiftModifier);
+    const bool ctrl = event->modifiers().testFlag(Qt::ControlModifier);
+    const bool alt = event->modifiers().testFlag(Qt::AltModifier);
+
+    FfiTerminalKey namedKey;
+    if (namedFfiKeyFor(event->key(), namedKey)) {
+        supervisor_->sendKey(sessionId_, namedKey, 0, shift, ctrl, alt);
+        return true;
+    }
+    if (event->key() >= Qt::Key_F1 && event->key() <= Qt::Key_F12) {
+        const quint32 n = static_cast<quint32>(event->key() - Qt::Key_F1 + 1);
+        supervisor_->sendKey(sessionId_, FfiTerminalKey::F, n, shift, ctrl, alt);
+        return true;
     }
 
-    if (toSend.isEmpty()) {
-        QWidget::keyPressEvent(event);
+    // Ctrl/Alt combinations on a printable key (Ctrl+C, Ctrl+[, Alt+b, ...):
+    // Qt's own `event->text()` already applied to the shell's platform key
+    // mapping, which is not the same encoding a terminal expects (and is
+    // often empty). The base ASCII key value plus the modifiers we already
+    // extracted is what `terminal_core::keys::encode` needs instead — Qt
+    // reports these printable keys as their ASCII code regardless of
+    // modifiers, so `shift` alone decides the letter's case.
+    if ((ctrl || alt) && event->key() >= 0x20 && event->key() <= 0x7e) {
+        QChar ch(static_cast<char16_t>(event->key()));
+        if (!shift) {
+            ch = ch.toLower();
+        }
+        supervisor_->sendKey(sessionId_, FfiTerminalKey::Char, ch.unicode(), shift, ctrl, alt);
+        return true;
+    }
+
+    // Plain typing, incl. IME/composed text: a single code point goes
+    // through the same translation path (harmless — `encode()` just returns
+    // it unchanged); anything else (a multi-code-point composed string) is
+    // forwarded to the PTY as-is, unchanged from this widget's original
+    // behavior.
+    const QString text = event->text();
+    const auto codePoints = text.toUcs4();
+    if (codePoints.size() == 1) {
+        supervisor_->sendKey(sessionId_, FfiTerminalKey::Char, codePoints.first(), shift, ctrl, alt);
+        return true;
+    }
+    if (!text.isEmpty()) {
+        supervisor_->write(sessionId_, text);
+        return true;
+    }
+    return false;
+}
+
+void TerminalWidget::keyPressEvent(QKeyEvent *event)
+{
+    if (sendTranslatedKey(event)) {
+        event->accept();
         return;
     }
-    supervisor_->write(sessionId_, toSend);
-    event->accept();
+    QWidget::keyPressEvent(event);
 }
 
 void TerminalWidget::focusInEvent(QFocusEvent *event)

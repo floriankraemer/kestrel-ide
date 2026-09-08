@@ -146,6 +146,14 @@ private:
     QPoint cellAt(const QPoint &pos) const;
     bool rightHalf(const QPoint &pos) const;
 
+    // Translate one Qt key event to `FfiTerminalKey` + code point and hand
+    // it to `supervisor_->sendKey()` — pure enum/modifier translation (a
+    // humble view concern); the xterm escape-sequence encoding itself lives
+    // in `terminal_core::keys::encode` (see the .cpp's doc comment).
+    // Returns false for a key this widget doesn't translate (e.g. a bare
+    // modifier press), leaving it for `QWidget::keyPressEvent`.
+    bool sendTranslatedKey(QKeyEvent *event);
+
     // Copy the current selection to the clipboard, and open the hovered
     // link — both no-ops when there is nothing to act on.
     void copySelection();

@@ -137,6 +137,37 @@ fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell
     }
 }
 
+/// `FfiTerminalKey` -> `terminal_core::keys::Key` (Task T4). `code_point` is
+/// only meaningful for `Char` (a Unicode code point) and `F` (the
+/// function-key number, 1-12) — see `FfiTerminalKey`'s doc comment. `None`
+/// when `code_point` doesn't decode to anything sendable, so a stray/invalid
+/// key event is silently dropped rather than sending garbage to the shell.
+fn key_from_ffi(key: ffi::FfiTerminalKey, code_point: u32) -> Option<terminal_core::keys::Key> {
+    use terminal_core::keys::Key;
+    Some(match key {
+        ffi::FfiTerminalKey::Char => Key::Char(char::from_u32(code_point)?),
+        ffi::FfiTerminalKey::Enter => Key::Enter,
+        ffi::FfiTerminalKey::Tab => Key::Tab,
+        ffi::FfiTerminalKey::Backspace => Key::Backspace,
+        ffi::FfiTerminalKey::Escape => Key::Escape,
+        ffi::FfiTerminalKey::Up => Key::Up,
+        ffi::FfiTerminalKey::Down => Key::Down,
+        ffi::FfiTerminalKey::Left => Key::Left,
+        ffi::FfiTerminalKey::Right => Key::Right,
+        ffi::FfiTerminalKey::Home => Key::Home,
+        ffi::FfiTerminalKey::End => Key::End,
+        ffi::FfiTerminalKey::PageUp => Key::PageUp,
+        ffi::FfiTerminalKey::PageDown => Key::PageDown,
+        ffi::FfiTerminalKey::Insert => Key::Insert,
+        ffi::FfiTerminalKey::Delete => Key::Delete,
+        ffi::FfiTerminalKey::F => Key::F(u8::try_from(code_point).ok()?),
+        // `FfiTerminalKey` is a C++-facing enum, so it is not exhaustively
+        // matchable from Rust (same convention `selection_start`'s
+        // `FfiSelectionKind` match uses).
+        _ => return None,
+    })
+}
+
 fn cell_color_from_ffi(rgb: &ffi::FfiRgb) -> terminal_core::CellColor {
     terminal_core::CellColor {
         r: rgb.r,
@@ -491,6 +522,41 @@ impl ffi::TerminalSupervisor {
         if let Some(session) = pty_session.as_mut() {
             let _ = session.write(input.to_string().as_bytes());
         }
+    }
+
+    /// Translate one key press (Task T4) and write the resulting xterm bytes
+    /// to `session_id`'s PTY — the keyboard counterpart of `paste()`: both
+    /// resolve their bytes against the emulator (here, its current
+    /// application-cursor-key mode) before writing them out.
+    pub fn send_key(
+        self: Pin<&mut Self>,
+        session_id: u64,
+        key: ffi::FfiTerminalKey,
+        code_point: u32,
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+    ) {
+        let Some(key) = key_from_ffi(key, code_point) else {
+            return;
+        };
+        let mods = terminal_core::keys::Modifiers { shift, ctrl, alt };
+        let Some(app_cursor) =
+            self.with_emulator(session_id, |emulator| emulator.app_cursor_mode())
+        else {
+            return;
+        };
+        let Some(bytes) = terminal_core::keys::encode(key, mods, app_cursor) else {
+            return;
+        };
+        let Some(entry) = self.handles(session_id) else {
+            return;
+        };
+        let mut pty_session = entry.pty_session.borrow_mut();
+        if let Some(session) = pty_session.as_mut() {
+            let _ = session.write(bytes.as_bytes());
+        }
+        // TODO(T5): scroll_to_bottom on key input.
     }
 
     pub fn resize(self: Pin<&mut Self>, session_id: u64, rows: u32, cols: u32) {

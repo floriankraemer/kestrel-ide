@@ -182,6 +182,7 @@ dependencies = [
 name = "app-core"
 version = "0.1.0"
 dependencies = [
+ "color-theme",
  "editor-core",
  "icon-theme",
  "markdown-preview",

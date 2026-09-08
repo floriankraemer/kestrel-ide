@@ -45,6 +45,25 @@ pub fn appearance_for_theme(theme_name: &str) -> Appearance {
     }
 }
 
+/// Maps a resolved colour theme's appearance onto `icon_theme::Appearance`.
+///
+/// This is the one place allowed to convert between `color_theme::Appearance`
+/// and `icon_theme::Appearance` (color-themes plan T6): the two crates
+/// deliberately duplicate the enum rather than depend on each other (see
+/// `color_theme`'s module doc), and `app_core::icons` is where icon packs
+/// and colour themes are already joined.
+///
+/// // TODO(T7): wire callers in `ui-shell` (`crates/ui-shell/src/bridge/icons.rs`,
+/// `crates/ui-shell/src/bridge/registry.rs`) onto `ColorThemeService::active`
+/// and this function, replacing their calls to `appearance_for_theme`, which
+/// is kept alive above for that reason.
+pub fn icon_appearance(color_theme_appearance: color_theme::Appearance) -> Appearance {
+    match color_theme_appearance {
+        color_theme::Appearance::Dark => Appearance::Dark,
+        color_theme::Appearance::Light => Appearance::Light,
+    }
+}
+
 /// Separator between the pack id and the icon id in an icon key.
 ///
 /// A pack id is a plugin-manifest id, whose charset `plugin-api` restricts,
@@ -375,6 +394,18 @@ mod tests {
                     Appearance::Light
                 )
                 .expect("active theme")
+        );
+    }
+
+    #[test]
+    fn icon_appearance_maps_color_theme_appearance_one_to_one() {
+        assert_eq!(
+            icon_appearance(color_theme::Appearance::Dark),
+            Appearance::Dark
+        );
+        assert_eq!(
+            icon_appearance(color_theme::Appearance::Light),
+            Appearance::Light
         );
     }
 

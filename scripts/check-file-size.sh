@@ -105,7 +105,12 @@ baseline() {
 	# already investigated and ruled out (see the extraction-wall note
 	# from the main_window.cpp split down to 1175 lines); no further
 	# split planned here.
-	crates/ui-shell/cpp/main_window.cpp) echo 1228 ;;
+	# Raised from 1228 by 2 lines for i18n startup (ADR-0049): one
+	# #include and one installUiTranslators(appSettings, app) call in
+	# run_app() — the translator-load logic itself lives in the new
+	# i18n_startup.cpp, following the same split-out-a-.cpp pattern as
+	# status_bar.cpp/navigate_menu.cpp/ai_menu.cpp above it.
+	crates/ui-shell/cpp/main_window.cpp) echo 1230 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

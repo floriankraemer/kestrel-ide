@@ -202,12 +202,12 @@ Living status table — update the row in the same commit that finishes the task
 
 | Task | Status | Commit |
 |---|---|---|
-| W4-1 — `run_core::supervisor::launch` translates `LaunchSpec` through `ExecHost::argv` before `ShellSpec` | open | |
-| W4-2 — `toolchain::python_program` and `wrapper_or` become host questions, not `cfg!(windows)` questions | open | |
-| W4-3 — `run_core::macros` expand to Linux paths on a remote host | open | |
-| W4-4 — `build_core` diagnostic paths translated back to UNC before the Problems dock | open | |
-| W4-5 — `dap_core::session` spawns through `ExecHost::command`; `Source.path` and breakpoints both ways | open | |
-| W4-6 — document the process-tree-kill ceiling | open | |
+| W4-1 — `run_core::supervisor::launch` translates `LaunchSpec` through `ExecHost::argv` before `ShellSpec` | done | 80b8f60 |
+| W4-2 — `toolchain::python_program` and `wrapper_or` become host questions, not `cfg!(windows)` questions | done (`wrapper_or`'s existing `is_file()` checks needed no change — see commit message) | 80b8f60 |
+| W4-3 — `run_core::macros` expand to Linux paths on a remote host | done (`$USER_HOME$` is a documented ceiling, stays Windows-side — see commit message) | 80b8f60 |
+| W4-4 — `build_core` diagnostic paths translated back to UNC before the Problems dock | done | 80b8f60 |
+| W4-5 — `dap_core::session` spawns through `ExecHost::command`; `Source.path` and breakpoints both ways | done | 80b8f60 |
+| W4-6 — document the process-tree-kill ceiling | done (doc comment on `PtySession::kill_tree`, no code change — this is one of the plan's two "state, do not fix" items) | 80b8f60 |
 
 ### W5 — terminal
 

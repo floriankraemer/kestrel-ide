@@ -37,6 +37,7 @@ pub enum ContributionPoint {
     Commands,
     Previews,
     LanguageServers,
+    Analyzers,
 }
 
 impl ContributionPoint {
@@ -47,6 +48,7 @@ impl ContributionPoint {
             Self::Commands => "commands",
             Self::Previews => "previews",
             Self::LanguageServers => "language-servers",
+            Self::Analyzers => "analyzers",
         }
     }
 }
@@ -132,6 +134,52 @@ pub struct LanguageServerContribution {
     pub settings: toml::value::Table,
 }
 
+/// One static analyzer a plugin offers (the PHP tooling plan's B2).
+///
+/// Unlike [`CommandContribution`], this needs no `[wasm]` component: a wasm
+/// guest can neither spawn a process nor be trusted with a linter's raw
+/// bytes (`wit/plugin.wit`), so an analyzer is native process launch data,
+/// the same shape [`LanguageServerContribution`] already has. What a manifest
+/// adds over that shape is the two fields a language-server row has no use
+/// for: several candidate programs to probe (a Composer project's tool
+/// lives at `vendor/bin/phpstan`, a global install just as `phpstan`), and
+/// an output *format id* that resolves to a parser `analysis-core` owns —
+/// this crate has no opinion on what checkstyle-xml or TeamCity look like,
+/// only that a manifest names one.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnalyzerContribution {
+    /// Stable id, e.g. `"phpstan"`.
+    pub id: String,
+    /// What the Analysis settings page and Problems dock's Source column
+    /// show.
+    pub name: String,
+    /// Programs to probe, in order — the first one detection finds wins.
+    /// Bare names are looked up on `PATH`; a path relative to the project
+    /// root (e.g. `vendor/bin/phpstan`) is looked up there instead. At
+    /// least one candidate is required, or nothing could ever be detected.
+    #[serde(rename = "program-candidates")]
+    pub program_candidates: Vec<String>,
+    /// Fixed arguments before whatever `analysis-core` appends for a given
+    /// run.
+    #[serde(default)]
+    pub args: Vec<String>,
+    /// Id of the parser in `analysis-core` that understands this tool's
+    /// output, e.g. `"checkstyle-xml"`. Free-form here because the parser
+    /// table is native code this crate never sees, exactly as
+    /// [`LanguageServerContribution::settings`] is free-form JSON the
+    /// server alone interprets.
+    #[serde(rename = "output-format")]
+    pub output_format: String,
+    /// The tool's own severity vocabulary (e.g. PHPCS's `"error"`/
+    /// `"warning"`), mapped to this crate's neutral spelling. Free-form
+    /// strings rather than `diagnostics_core::Severity` directly — this
+    /// crate stays a leaf and does not depend on `diagnostics-core` — so
+    /// `analysis-core` parses the value side into its own `Severity`.
+    #[serde(default, rename = "severity-map")]
+    pub severity_map: BTreeMap<String, String>,
+}
+
 /// Everything a plugin contributes, by point.
 ///
 /// Deliberately *not* `deny_unknown_fields`: [`API_VERSION`]'s doc comment
@@ -150,6 +198,8 @@ pub struct Contributes {
     pub previews: Vec<PreviewContribution>,
     #[serde(default, rename = "language-servers")]
     pub language_servers: Vec<LanguageServerContribution>,
+    #[serde(default)]
+    pub analyzers: Vec<AnalyzerContribution>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -163,6 +213,7 @@ impl Contributes {
             && self.commands.is_empty()
             && self.previews.is_empty()
             && self.language_servers.is_empty()
+            && self.analyzers.is_empty()
     }
 }
 
@@ -307,6 +358,31 @@ impl PluginManifest {
         // A language server needs no `[wasm]` component either: it is a
         // native process launched by `command`/`args`, the same shape the
         // built-in catalog table already has.
+
+        for analyzer in &self.contributes.analyzers {
+            check_id("contributes.analyzers.id", &analyzer.id)?;
+            non_empty("contributes.analyzers.name", &analyzer.name)?;
+            if analyzer.program_candidates.is_empty() {
+                return Err(LoadErrorKind::EmptyField(
+                    "contributes.analyzers.program-candidates",
+                ));
+            }
+            for candidate in &analyzer.program_candidates {
+                non_empty("contributes.analyzers.program-candidates", candidate)?;
+            }
+            non_empty(
+                "contributes.analyzers.output-format",
+                &analyzer.output_format,
+            )?;
+        }
+        check_unique(
+            ContributionPoint::Analyzers,
+            self.contributes.analyzers.iter().map(|a| a.id.as_str()),
+        )?;
+
+        // An analyzer needs no `[wasm]` component either, for the same
+        // reason a language server doesn't: it is a native process, and a
+        // wasm guest cannot spawn one (`wit/plugin.wit`).
 
         if let Some(wasm) = &self.wasm {
             check_relative("wasm.component", &wasm.component)?;
@@ -914,6 +990,124 @@ mod tests {
             LoadErrorKind::DuplicateContributionId {
                 point: "language-servers",
                 id: "csharp-ls".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn an_analyzer_contribution_round_trips() {
+        let manifest = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.analyzers]]
+            id = "phpstan"
+            name = "PHPStan"
+            program-candidates = ["vendor/bin/phpstan", "phpstan"]
+            args = ["analyse", "--error-format=checkstyle"]
+            output-format = "checkstyle-xml"
+
+            [contributes.analyzers.severity-map]
+            error = "error"
+            warning = "warning"
+            "#,
+        ))
+        .expect("valid");
+        let analyzers = &manifest.contributes.analyzers;
+        assert_eq!(analyzers.len(), 1);
+        assert_eq!(analyzers[0].id, "phpstan");
+        assert_eq!(analyzers[0].name, "PHPStan");
+        assert_eq!(
+            analyzers[0].program_candidates,
+            vec!["vendor/bin/phpstan", "phpstan"]
+        );
+        assert_eq!(
+            analyzers[0].args,
+            vec!["analyse", "--error-format=checkstyle"]
+        );
+        assert_eq!(analyzers[0].output_format, "checkstyle-xml");
+        assert_eq!(
+            analyzers[0].severity_map.get("error").map(String::as_str),
+            Some("error")
+        );
+        assert!(!manifest.contributes.is_empty());
+        assert_eq!(ContributionPoint::Analyzers.key(), "analyzers");
+    }
+
+    #[test]
+    fn an_analyzer_needs_no_wasm_component() {
+        // Same reasoning as a language server: a native process launched
+        // by argv needs no sandboxed guest to run it.
+        let manifest = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.analyzers]]
+            id = "phpstan"
+            name = "PHPStan"
+            program-candidates = ["phpstan"]
+            output-format = "checkstyle-xml"
+            "#,
+        ))
+        .expect("valid");
+        assert!(manifest.wasm.is_none());
+    }
+
+    #[test]
+    fn an_analyzer_needs_at_least_one_program_candidate() {
+        let err = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.analyzers]]
+            id = "phpstan"
+            name = "PHPStan"
+            program-candidates = []
+            output-format = "checkstyle-xml"
+            "#,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LoadErrorKind::EmptyField("contributes.analyzers.program-candidates")
+        );
+    }
+
+    #[test]
+    fn an_analyzer_without_an_output_format_is_rejected() {
+        let err = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.analyzers]]
+            id = "phpstan"
+            name = "PHPStan"
+            program-candidates = ["phpstan"]
+            output-format = ""
+            "#,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LoadErrorKind::EmptyField("contributes.analyzers.output-format")
+        );
+    }
+
+    #[test]
+    fn duplicate_analyzer_ids_in_one_manifest_are_rejected() {
+        let err = PluginManifest::from_toml_str(&with(
+            r#"
+            [[contributes.analyzers]]
+            id = "phpstan"
+            name = "PHPStan"
+            program-candidates = ["phpstan"]
+            output-format = "checkstyle-xml"
+
+            [[contributes.analyzers]]
+            id = "phpstan"
+            name = "PHPStan, again"
+            program-candidates = ["phpstan"]
+            output-format = "checkstyle-xml"
+            "#,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            LoadErrorKind::DuplicateContributionId {
+                point: "analyzers",
+                id: "phpstan".to_string(),
             }
         );
     }

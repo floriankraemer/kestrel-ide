@@ -119,7 +119,7 @@ Update the row **in the same commit** that finishes the task.
 | Task | Status | Commit |
 |---|---|---|
 | B1 — extract `process-exec` from `vcs-core/src/cli.rs`; `vcs-core` migrated onto it in the same commit | done | `TBD` |
-| B2 — `plugin-api`: `AnalyzerContribution` + validation + manifest round-trip tests; `api_version` unchanged | open | |
+| B2 — `plugin-api`: `AnalyzerContribution` + validation + manifest round-trip tests; `api_version` unchanged | done | `80ece93` |
 | B3 — `analysis-core`: `AnalyzerDef` built from a contribution, detection (program candidates, config files, `composer.json` `require-dev`), status reporting for "declared but not installed" | open | |
 | B4 — `checkstyle-xml` parser and its severity mapping, fixture-driven | open | |
 | B5 — the scheduler: `OnType` (debounced) / `OnSave` / `Manual`, one in-flight run per (analyzer, file), a new keystroke cancels the previous, project-wide runs serialized | open | |

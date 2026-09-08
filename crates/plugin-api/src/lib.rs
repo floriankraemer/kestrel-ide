@@ -45,9 +45,10 @@ mod manifest;
 
 pub use error::{LoadErrorKind, PluginLoadError};
 pub use manifest::{
-    check_api_version, expand_capability_path, Capabilities, CommandContribution, Contributes,
-    ContributionPoint, IconThemeContribution, LanguageServerContribution, PluginManifest,
-    PreviewContribution, WasmSection, ID_MAX_LEN, MANIFEST_FILE, PLUGIN_DIR_TOKEN,
+    check_api_version, expand_capability_path, AnalyzerContribution, Capabilities,
+    CommandContribution, Contributes, ContributionPoint, IconThemeContribution,
+    LanguageServerContribution, PluginManifest, PreviewContribution, WasmSection, ID_MAX_LEN,
+    MANIFEST_FILE, PLUGIN_DIR_TOKEN,
 };
 
 /// The newest contract revision this build speaks.

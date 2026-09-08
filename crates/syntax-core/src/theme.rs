@@ -246,6 +246,12 @@ pub static BUILTIN_THEMES: &[Theme] = &[
     },
 ];
 
+// TODO(T6): `Theme`/`BUILTIN_THEMES`/`theme_by_name`/`palette` (the
+// name-based overload below) are the pre-`color-theme`-crate way of
+// supplying a theme's colours. They stay only because `ui-shell` and
+// `markdown-preview` still ask for a theme by name; once `ColorThemeService`
+// (T6) gives them a `ThemeStyles` instead, delete this block and
+// `palette`, keeping `build_palette` as the only entry point.
 fn theme_by_name(name: &str) -> &'static Theme {
     BUILTIN_THEMES
         .iter()
@@ -258,6 +264,17 @@ fn theme_by_name(name: &str) -> &'static Theme {
 /// ignored (a newer build may know them).
 #[derive(Debug, Default, Clone)]
 pub struct UserStyles {
+    pub base: HashMap<String, ScopeStyle>,
+    pub by_language: HashMap<String, HashMap<String, ScopeStyle>>,
+}
+
+/// A theme's colours, in the same base/by-language shape [`UserStyles`]
+/// already uses for the caller-supplied override — [`build_palette`] walks
+/// both with the identical precedence logic. This is the shape a future
+/// `ColorThemeService` (T6) hands in, once themes come from TOML rather
+/// than the `BUILTIN_THEMES` table below.
+#[derive(Debug, Default, Clone)]
+pub struct ThemeStyles {
     pub base: HashMap<String, ScopeStyle>,
     pub by_language: HashMap<String, HashMap<String, ScopeStyle>>,
 }
@@ -308,6 +325,36 @@ pub fn palette(theme_name: &str, language_id: &str, user: &UserStyles) -> Palett
             .or_else(|| entry(theme.base, name))
     };
 
+    resolve_scopes(lookup)
+}
+
+/// Same resolution as [`palette`], but sourced from an owned [`ThemeStyles`]
+/// instead of a built-in theme name — the entry point a `ThemeStyles`
+/// supplier (a `ColorThemeService`, in T6) resolves against.
+///
+/// Precedence and inheritance are identical to `palette`; see its doc for
+/// the full walk.
+pub fn build_palette(theme: &ThemeStyles, language_id: &str, user: &UserStyles) -> Palette {
+    let lang_user = user.by_language.get(language_id);
+    let lang_theme = theme.by_language.get(language_id);
+
+    let lookup = |name: &str| -> Option<ScopeStyle> {
+        lang_user
+            .and_then(|map| map.get(name))
+            .copied()
+            .or_else(|| user.base.get(name).copied())
+            .or_else(|| lang_theme.and_then(|map| map.get(name)).copied())
+            .or_else(|| theme.base.get(name).copied())
+    };
+
+    resolve_scopes(lookup)
+}
+
+/// The per-scope walk shared by `palette` and `build_palette`: resolve every
+/// scope in [`SCOPES`] by trying `lookup` on the scope itself and then each
+/// dotted ancestor, accumulating font flags and taking the first colour
+/// found.
+fn resolve_scopes(lookup: impl Fn(&str) -> Option<ScopeStyle>) -> Palette {
     let styles = (0..SCOPES.len())
         .map(|index| {
             let mut resolved = ScopeStyle::default();
@@ -602,6 +649,40 @@ mod tests {
                 0.2126 * channel(fg.r) + 0.7152 * channel(fg.g) + 0.0722 * channel(fg.b);
             let ratio = 1.05 / (luminance + 0.05);
             assert!(ratio >= 4.5, "light `{name}` is only {ratio:.2}:1 on white");
+        }
+    }
+
+    fn vscode_dark_styles() -> ThemeStyles {
+        ThemeStyles {
+            base: VSCODE_DARK
+                .iter()
+                .map(|(k, v)| (k.to_string(), *v))
+                .collect(),
+            by_language: HashMap::new(),
+        }
+    }
+
+    /// `build_palette` given the `ThemeStyles` equivalent of `vscode-dark`
+    /// must resolve every scope identically to the old name-based `palette`
+    /// — this is a parameter-source swap, not a behaviour change.
+    #[test]
+    fn build_palette_matches_name_based_palette() {
+        let by_name = palette("vscode-dark", "rust", &UserStyles::default());
+        let by_styles = build_palette(&vscode_dark_styles(), "rust", &UserStyles::default());
+        for name in [
+            "keyword",
+            "string",
+            "comment",
+            "markup.heading",
+            // Relies on parent-scope inheritance: neither has its own entry.
+            "function.method",
+            "string.special",
+        ] {
+            assert_eq!(
+                style_of(&by_name, name),
+                style_of(&by_styles, name),
+                "scope `{name}` differs between palette and build_palette"
+            );
         }
     }
 

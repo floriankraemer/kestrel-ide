@@ -14,6 +14,7 @@
 #include <QPixmap>
 #include <QWidget>
 
+#include <array>
 #include <utility>
 
 namespace ui_shell {
@@ -152,6 +153,52 @@ ChromePalette chromePaletteForTheme(const QString &themeName)
         return vscodeDarkPalette();
     }
     return darkPalette();
+}
+
+namespace {
+
+FfiRgb toFfiRgb(const QColor &color)
+{
+    return FfiRgb{ static_cast<quint8>(color.red()), static_cast<quint8>(color.green()),
+                   static_cast<quint8>(color.blue()) };
+}
+
+// `hex` empty means "not configured" (`AppSettings::editorColors()`'s own
+// convention) — the caller's theme colour wins in that case.
+QColor colorOrFallback(const QString &hex, const QColor &fallback)
+{
+    return hex.isEmpty() ? fallback : QColor(hex);
+}
+
+} // namespace
+
+FfiTerminalPalette terminalPaletteForTheme(const QString &themeName, AppSettings *appSettings)
+{
+    // JetBrains Darcula's console colours (ansi 0-7, then the bright 8-15).
+    static const std::array<const char *, 16> kDarkAnsi{
+        "#000000", "#FF6B68", "#A8C023", "#D6BF55", "#5394EC", "#AE8ABE", "#299999", "#BBBBBB",
+        "#555555", "#FF8785", "#A8C023", "#FFFF00", "#7EAEF1", "#FF99FF", "#6CDADA", "#FFFFFF",
+    };
+    // JetBrains Light's console colours, same layout.
+    static const std::array<const char *, 16> kLightAnsi{
+        "#000000", "#990000", "#00A600", "#999900", "#0000B2", "#B200B2", "#00A6B2", "#BFBFBF",
+        "#666666", "#E50000", "#00D900", "#E5E500", "#0000FF", "#E500E5", "#00E5E5", "#E5E5E5",
+    };
+    const bool isLight = themeName == QStringLiteral("light");
+
+    const ChromePalette chrome = chromePaletteForTheme(themeName);
+    const FfiEditorColors editorColors = appSettings->editorColors();
+    const QColor foreground = colorOrFallback(editorColors.foreground, chrome.text);
+
+    FfiTerminalPalette palette;
+    palette.background = toFfiRgb(colorOrFallback(editorColors.background, chrome.canvas));
+    palette.foreground = toFfiRgb(foreground);
+    palette.cursor = toFfiRgb(foreground);
+    palette.selection = toFfiRgb(chrome.selection);
+    for (const char *hex : (isLight ? kLightAnsi : kDarkAnsi)) {
+        palette.ansi.push_back(toFfiRgb(QColor(QLatin1String(hex))));
+    }
+    return palette;
 }
 
 // Embedded as a compile-time string rather than a .qrc/rcc resource or an
@@ -925,9 +972,14 @@ void applyTheme(const QString &themeName)
     ads::CDockManager::iconProvider().registerCustomIcon(ads::DockAreaCloseIcon, closeIcon);
 }
 
-void installInterfaceFont()
+void installBundledFonts()
 {
-    for (const char *face : {"Inter-Regular", "Inter-Medium", "Inter-SemiBold"}) {
+    // Inter (UI chrome) and JetBrains Mono (editor/terminal default,
+    // `DEFAULT_EDITOR_FONT_FAMILY`) — both SIL OFL, both registered here so
+    // neither font depends on what happens to be installed on the host.
+    for (const char *face : {"Inter-Regular", "Inter-Medium", "Inter-SemiBold",
+                              "JetBrainsMono-Regular", "JetBrainsMono-Bold",
+                              "JetBrainsMono-Italic", "JetBrainsMono-BoldItalic"}) {
         QFontDatabase::addApplicationFont(
           QStringLiteral(":/ui/fonts/%1.ttf").arg(QLatin1String(face)));
     }

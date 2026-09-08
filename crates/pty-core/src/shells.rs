@@ -63,13 +63,6 @@ pub fn detect() -> Vec<ShellCandidate> {
     }
 }
 
-/// The candidate with this id, or `None` if the machine no longer offers it
-/// — a settings file naming a shell that has since been uninstalled is a
-/// normal thing to find, not an error.
-pub fn find(id: &str) -> Option<ShellCandidate> {
-    detect().into_iter().find(|candidate| candidate.id == id)
-}
-
 /// Whether `program` can be launched: an absolute path is checked directly,
 /// a bare name is looked up on `PATH` the way the OS itself would.
 fn launchable(program: &str) -> bool {

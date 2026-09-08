@@ -17,6 +17,8 @@ use std::path::{Path, PathBuf};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+/// The `[analysis]` section: per-analyzer trigger/enabled overrides.
+pub mod analysis;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
 pub mod keymap;
@@ -46,6 +48,7 @@ pub mod launch_settings;
 /// outside this crate needs to know the module exists.
 pub mod window;
 
+pub use analysis::{AnalysisSettings, AnalyzerSetting};
 pub use editing::EditingSettings;
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
@@ -375,6 +378,11 @@ pub struct Settings {
     /// as often as to the person.
     #[serde(default)]
     pub terminal: TerminalSettings,
+    /// Per-analyzer trigger/enabled overrides (the PHP tooling plan's B7).
+    /// Project-scoped like [`Settings::editing`] and [`Settings::terminal`]
+    /// — see [`analysis`] for the sparse per-row rule.
+    #[serde(default)]
+    pub analysis: AnalysisSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
     ///
@@ -419,7 +427,7 @@ const DEFAULT_THEME: &str = "dark";
 
 /// Editor font used when `Settings::editor_font_family`/`_size` haven't
 /// been set yet (S2).
-const DEFAULT_EDITOR_FONT_FAMILY: &str = "Monospace";
+const DEFAULT_EDITOR_FONT_FAMILY: &str = "JetBrains Mono";
 const DEFAULT_EDITOR_FONT_SIZE: u32 = 11;
 
 /// Interface font scale used when the user has never chosen one: the
@@ -890,6 +898,7 @@ mod tests {
                 start_directory: "/srv/checkout".to_string(),
                 ..TerminalSettings::default()
             },
+            analysis: AnalysisSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),
@@ -1025,7 +1034,7 @@ mod tests {
     #[test]
     fn editor_font_defaults_when_unset() {
         let settings = Settings::default();
-        assert_eq!(settings.editor_font_family_or_default(), "Monospace");
+        assert_eq!(settings.editor_font_family_or_default(), "JetBrains Mono");
         assert_eq!(settings.editor_font_size_or_default(), 11);
     }
 

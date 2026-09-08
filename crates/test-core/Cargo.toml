@@ -1,0 +1,22 @@
+[package]
+name = "test-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# A failing assertion becomes a `diagnostics_core::Diagnostic` the same way
+# an analyzer finding does (D3): one Problems model, not a second one for
+# tests.
+diagnostics-core = { path = "../diagnostics-core" }
+# `process_exec::spawn`: pipes, not a PTY, for the same reason analyzers
+# avoid one (a tty hard-wraps output, fatal to a TeamCity service message
+# split mid-line), and streamed rather than collected-to-completion like
+# `process_exec::run`, so the tree fills while the run is in flight.
+process-exec = { path = "../process-exec" }
+# `TestFrameworkContribution`: the declarative manifest shape a run is
+# built from.
+plugin-api = { path = "../plugin-api" }
+quick-xml = "0.41"
+
+[dev-dependencies]
+tempfile = "3"

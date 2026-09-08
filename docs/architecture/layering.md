@@ -5,7 +5,7 @@ Hexagonal-lite with a humble Qt view: logic in Qt-free Rust, the view only displ
 
 ## Layers
 
-The layers are: domain (`editor-core`, `project-model`), application (`app-core`), support (`app-config`, `syntax-core`, `index-core`, `lsp-core`, `settings-model`, `edit-ops`, `vcs-core`, `pty-core`, `terminal-core`, `run-core`, `build-core`, `dap-core`, `stdio-framing`, `mcp-server`, `plugin-api`, `plugin-host`, `icon-theme`, `markdown-preview`), adapter + view (`ui-shell`), and the `app` binary.
+The layers are: domain (`editor-core`, `project-model`), application (`app-core`), support (`app-config`, `syntax-core`, `index-core`, `diagnostics-core`, `analysis-core`, `test-core`, `lsp-core`, `settings-model`, `edit-ops`, `vcs-core`, `process-exec`, `pty-core`, `terminal-core`, `run-core`, `build-core`, `dap-core`, `stdio-framing`, `mcp-server`, `plugin-api`, `plugin-host`, `icon-theme`, `markdown-preview`), adapter + view (`ui-shell`), and the `app` binary.
 The building-block diagram lives in [overview.md §3](overview.md#3-building-block-view) — one diagram, one place.
 
 ## Allowed imports
@@ -19,7 +19,8 @@ The building-block diagram lives in [overview.md §3](overview.md#3-building-blo
 | `mcp-server` | `index-core`, `editor-core` (+ std, serde, serde_json, tokio, axum) | **No** |
 | `pty-core` | (std, portable-pty) | **No** |
 | `terminal-core` | (std, alacritty_terminal) | **No** |
-| `lsp-core` | `editor-core`, `stdio-framing` (+ std, lsp-types, serde, serde_json, globset, notify); `syntax-core` as a normal dependency (ADR-0035, amending ADR-0018) for `semantic_tokens`'s LSP-token-to-`Scope` mapping and its tree-sitter-span overlay — ADR-0018's ban on `lsp-core` re-deciding file-to-language detection still holds, nothing here parses an extension or a language id. Stays free of `plugin-api`/`plugin-host`: `catalog::PluginServer` is a plain data type `lsp-core` defines for itself, and `ui-shell`/`settings-model` (which already depend on `plugin-host`) map `LanguageServerContribution` onto it at the call site. Also stays free of `project-model`: C5's `watched_files::FileChangeKind` converts from `notify::EventKind` directly rather than pulling in the domain crate for one enum. | **No** |
+| `diagnostics-core` | (std, serde, serde_json) — a leaf on purpose, see [ADR-0046](decisions/0046-one-diagnostics-model.md): every diagnostic publisher (`lsp-core`, `build-core`, and later an analyzer/test-runner crate) depends on this, never the reverse | **No** |
+| `lsp-core` | `editor-core`, `stdio-framing`, `diagnostics-core` (ADR-0046: `publish_diagnostics` converts into the shared model at ingest, and `path_from_uri`/`uri_from_path` now live there, re-exported unchanged) (+ std, lsp-types, serde, serde_json, globset, notify); `syntax-core` as a normal dependency (ADR-0035, amending ADR-0018) for `semantic_tokens`'s LSP-token-to-`Scope` mapping and its tree-sitter-span overlay — ADR-0018's ban on `lsp-core` re-deciding file-to-language detection still holds, nothing here parses an extension or a language id. Stays free of `plugin-api`/`plugin-host`: `catalog::PluginServer` is a plain data type `lsp-core` defines for itself, and `ui-shell`/`settings-model` (which already depend on `plugin-host`) map `LanguageServerContribution` onto it at the call site. Also stays free of `project-model`: C5's `watched_files::FileChangeKind` converts from `notify::EventKind` directly rather than pulling in the domain crate for one enum. | **No** |
 | `index-core` | `syntax-core`, `editor-core` (+ std, tantivy, grep-searcher, grep-regex, grep-matcher, ignore, rayon, nucleo-matcher, fs4, dirs) | **No** |
 | `plugin-api` | (std, serde, toml) — a leaf on purpose, see [ADR-0026](decisions/0026-plugin-host.md) | **No** |
 | `plugin-host` | `plugin-api` (+ std, wasmtime) — discovery, the registry and the built-ins ([ADR-0026](decisions/0026-plugin-host.md)), plus the sandboxed wasm tier ([ADR-0028](decisions/0028-wasm-plugin-tier.md)); `icon-theme` as a **dev**-dependency only, to check the vendored Material pack through the real load path | **No** |
@@ -27,14 +28,17 @@ The building-block diagram lives in [overview.md §3](overview.md#3-building-blo
 | `markdown-preview` | `syntax-core` (+ std, comrak, resvg, merman `=0.7.0-alpha.1` pinned exactly with its sibling crates, regex-lite) — **not** `plugin-api` and **not** `plugin-host`, the same isolation `icon-theme` keeps, see [ADR-0033](decisions/0033-markdown-preview.md) | **No** |
 | `settings-model` | `app-config`, `syntax-core`, `lsp-core`, `edit-ops`, `editor-core`, `plugin-api`, `plugin-host` (+ std, serde, toml, tree-sitter) | **No** |
 | `edit-ops` | `editor-core`, `syntax-core` (+ std, tree-sitter) | **No** |
-| `vcs-core` | `editor-core` (+ std, gix, serde) | **No** |
+| `vcs-core` | `editor-core`, `process-exec` (the piped `git` exec mechanism — B1 of the PHP tooling plan) (+ std, gix, serde) | **No** |
+| `process-exec` | (std only) — a leaf on purpose, extracted from `vcs-core/src/cli.rs` so `analysis-core`/`test-core` can share the same piped-exec mechanism rather than copy it | **No** |
+| `analysis-core` | `diagnostics-core` (a checkstyle-xml finding becomes a `Diagnostic` at parse time, ADR-0046's rule for every publisher), `process-exec` (the piped-exec mechanism analyzer runs use — pipes, not a PTY, since a tty hard-wraps at 120 columns and would corrupt JSON/XML output), `plugin-api` (`AnalyzerContribution` is what an `AnalyzerDef` is built from), `syntax-core` (reserved for a future "does this analyzer apply to this file" join, ADR-0018), `app-config` (`project_settings::ensure_root_gitignore_pattern`, so the B6 temp-copy strategy's dotfile is never committed or walked by the tool itself) (+ std, serde, serde_json, quick-xml). No tokio: every run happens on its own `std::thread` (B5's `Scheduler`), reporting back through a `Send` closure `ui-shell` forwards to `CxxQtThread::queue()`. | **No** |
+| `test-core` | `diagnostics-core` (a failing test becomes a `Diagnostic`, D3, same rule as every other publisher), `process-exec` (`process_exec::spawn`'s streamed-not-collected mode — a test run's tree has to fill while the process is still running, which `process_exec::run` cannot give it), `plugin-api` (`TestFrameworkContribution` is what a run's argv is built from) (+ std, quick-xml). Not `syntax-core` or `app-config`: nothing here needs a file-to-language join or a settings section yet. No tokio, same reason as `analysis-core`: `runner::run` blocks its caller's own `std::thread`, reporting through the `TestSink` trait `ui-shell` (D4) implements to forward into `CxxQtThread::queue()`. | **No** |
 | `run-core` | `pty-core`, `app-config`, `terminal-core` (+ std, serde, toml, serde_json, regex) | **No** |
-| `build-core` | `run-core` (+ std, serde_json, regex) | **No** |
+| `build-core` | `run-core`, `diagnostics-core` (ADR-0046: `BuildDiagnostic::severity` is the shared `Severity` enum directly, not a translated one) (+ std, serde_json, regex) | **No** |
 | `dap-core` | `run-core`, `app-config`, `stdio-framing` (+ std, serde, serde_json) | **No** |
 | `stdio-framing` | (std only) | **No** |
 | `app-core` | `editor-core`, `project-model`, `plugin-host`, `icon-theme`, `syntax-core`, `markdown-preview` — the last four only for the icon-theme and previews joins, see below | **No** |
 | `ai-chat-core` | `lsp-core` (+ std, serde, serde_json, base64, tiktoken-rs, reqwest/rustls) | **No** |
-| `ui-shell` | `app-core`, `editor-core`, `edit-ops`, `project-model`, `app-config`, `settings-model`, `syntax-core`, `mcp-server`, `index-core`, `lsp-core`, `ai-chat-core`, `pty-core`, `terminal-core`, `plugin-host`, `vcs-core`, `run-core`, `markdown-preview` (+ tokio, cxx, cxx-qt, cxx-qt-lib) | Yes (adapter + view live here) |
+| `ui-shell` | `app-core`, `editor-core`, `edit-ops`, `project-model`, `app-config`, `settings-model`, `syntax-core`, `mcp-server`, `index-core`, `lsp-core`, `diagnostics-core`, `analysis-core`, `test-core` (D4: `TestService` needs `test_core::run`/`TestTree`/`filter` directly, the same reason it already depends on `analysis-core`), `ai-chat-core`, `pty-core`, `terminal-core`, `plugin-host`, `plugin-api` (B8: `AnalysisService` needs `AnalyzerContribution` directly, the same reason `settings-model` already depends on it), `vcs-core`, `run-core`, `build-core`, `markdown-preview` (+ tokio, cxx, cxx-qt, cxx-qt-lib) | Yes (adapter + view live here) |
 | `app` | `ui-shell` | Yes |
 | `e2e` | (std, serde_json, tempfile) — **no workspace crate**; drives the built `app` binary over X11 and the filesystem, as a user does (ADR-0024) | **No** |
 
@@ -111,8 +115,13 @@ That test target is the one place `app-config` may be read from a test rather th
 - **How a project is built, and what its output means** lives in `build-core` (ADR-0040): which steps a build request runs, and how a tool's output becomes a `BuildDiagnostic`.
   It delegates and never models — no compiler, no output folder, no artifact, no build-automatically-on-save — because every one of those is a second opinion about something the build tool already decides.
   It reads `run_core::toolchain` for the invocation and `run_core::LaunchSpec` for the launch, so there is no second detection table and no second way to start a process.
-  Its diagnostics are deliberately the shape the Problems dock already renders for `lsp_core::DiagnosticStore`: one question, one place to look.
+  Its diagnostics publish into the same `diagnostics_core::DiagnosticStore` a language server's do (ADR-0046), keyed under their own `(source, uri)` so neither clobbers the other: one store, one question, one place to look.
   Its text patterns overlap `run_core::links`' catalogue and stay separate on purpose — a link resolver wants a location, a build wants the severity and message too, and one table serving both would satisfy neither.
+
+- **Which analyzers exist for a project, how to run them, and what their output means** lives in `analysis-core` (ADR-0047): program-candidate/config-file/`composer.json` detection, the `OnType`/`OnSave`/`Manual` trigger scheduler with its per-`(analyzer, file)` in-flight rule, the unsaved-buffer strategies, and the `checkstyle-xml` output parser.
+  It never decides which analyzers a project has enabled or how they are triggered — that is `settings_model::analysis` and `app_config::analysis`'s `[analysis]` section (ADR-0022's per-project-scoping rule, `ScopedField::Analysis`) — this crate only runs what it is asked to and reports back.
+  Its findings publish into the same `diagnostics_core::DiagnosticStore` a language server's and a build's do (ADR-0046), keyed under their own `analysis:<analyzer-id>` source.
+  Runs over pipes rather than a PTY, since `run_core::Supervisor`'s tty default hard-wraps at 120 columns and would corrupt a checkstyle-xml or JSON payload — the one place in the codebase that deliberately does not follow the PTY-for-everything rule.
 
 - **How a debugger is driven** lives in `dap-core` (ADR-0041): the Debug Adapter Protocol's envelope, the session handshake, the adapter catalog and, from D2, the breakpoint store.
   It reads `run_core::toolchain` for which adapter a project implies rather than keeping a second mapping, and it types only the protocol bodies something actually reads a field out of.
@@ -161,6 +170,7 @@ cargo tree -p edit-ops -e normal | grep -i qt       # must be empty
 cargo tree -p index-core -e normal | grep -i qt     # must be empty
 cargo tree -p index-core -e normal | grep -i tokio  # must be empty
 cargo tree -p mcp-server -e normal | grep -i qt     # must be empty
+cargo tree -p diagnostics-core -e normal | grep -i qt  # must be empty
 cargo tree -p lsp-core -e normal | grep -i qt       # must be empty
 cargo tree -p lsp-core -e normal | grep -i tokio    # must be empty
 cargo tree -p ai-chat-core -e normal | grep -i qt   # must be empty
@@ -175,6 +185,11 @@ cargo tree -p build-core -e normal | grep -i tokio   # must be empty
 cargo tree -p dap-core -e normal | grep -i qt        # must be empty
 cargo tree -p dap-core -e normal | grep -i tokio     # must be empty
 cargo tree -p stdio-framing -e normal | grep -i qt   # must be empty
+cargo tree -p process-exec -e normal | grep -i qt    # must be empty
+cargo tree -p analysis-core -e normal | grep -i qt      # must be empty
+cargo tree -p analysis-core -e normal | grep -i tokio   # must be empty
+cargo tree -p test-core -e normal | grep -i qt          # must be empty
+cargo tree -p test-core -e normal | grep -i tokio       # must be empty
 ```
 
 ## Known debt at time of writing

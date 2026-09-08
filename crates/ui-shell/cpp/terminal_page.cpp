@@ -2,6 +2,7 @@
 
 #include <QComboBox>
 #include <QFileDialog>
+#include <QFontDatabase>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -9,6 +10,7 @@
 #include <QObject>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QVBoxLayout>
 #include <QVariant>
 #include <QWidget>
@@ -40,6 +42,11 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
 
     auto *shellBox = new QComboBox(page);
     shellBox->addItem(QObject::tr("Default shell"), QString());
+    // Known ceiling: `AppSettings::availableShells()` still detects
+    // synchronously, unlike `TerminalSupervisor`'s cached/background
+    // version — built once per dialog open, so a settings dialog costs one
+    // detect rather than one per keystroke or open, which is the ceiling
+    // T1 left in place (see docs/architecture/terminal-experience-plan.md).
     for (const FfiShellCandidate &shell : appSettings->availableShells()) {
         shellBox->addItem(shell.label, shell.id);
     }
@@ -99,6 +106,40 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
     directoryLayout->addWidget(browseButton);
     form->addRow(QObject::tr("Start directory:"), directoryLayout);
 
+    // Empty/`0` means "follow the editor font" (T3, `app_config::
+    // TerminalSettings::font_family`/`font_size`'s own zero-is-unset idiom),
+    // which is what "Editor font" as the combo's first entry and the size
+    // spin box's special zero value both mean. A plain QComboBox rather than
+    // QFontComboBox: the latter's model is Qt's own and gets silently
+    // rebuilt (dropping anything inserted into it) whenever the font
+    // database changes, which would eventually erase the synthetic "Editor
+    // font" row.
+    auto *fontBox = new QComboBox(page);
+    fontBox->addItem(QObject::tr("Editor font"), QString());
+    QStringList monospacedFamilies;
+    for (const QString &family : QFontDatabase::families()) {
+        if (QFontDatabase::isFixedPitch(family)) {
+            monospacedFamilies << family;
+        }
+    }
+    monospacedFamilies.sort(Qt::CaseInsensitive);
+    for (const QString &family : monospacedFamilies) {
+        fontBox->addItem(family, family);
+    }
+    const int fontIndex =
+      current.font_family.isEmpty() ? 0 : fontBox->findData(current.font_family);
+    // A family named in the settings but no longer installed falls back to
+    // "Editor font", the same "unknown value reads as the default" rule
+    // `shellBox` above follows for a shell no longer on this machine.
+    fontBox->setCurrentIndex(fontIndex >= 0 ? fontIndex : 0);
+    form->addRow(QObject::tr("Font:"), fontBox);
+
+    auto *fontSizeSpin = new QSpinBox(page);
+    fontSizeSpin->setRange(0, 72);
+    fontSizeSpin->setSpecialValueText(QObject::tr("Editor size"));
+    fontSizeSpin->setValue(static_cast<int>(current.font_size));
+    form->addRow(QObject::tr("Font size:"), fontSizeSpin);
+
     auto *envEdit = new QPlainTextEdit(current.env, page);
     envEdit->setPlaceholderText(QStringLiteral("RUST_LOG=debug"));
     // Capped, or the only multi-line control on the page takes every pixel
@@ -118,7 +159,8 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
 
     return TerminalPage{
       page,
-      [appSettings, shellBox, pathEdit, argsEdit, directoryEdit, envEdit]() {
+      [appSettings, shellBox, pathEdit, argsEdit, directoryEdit, envEdit, fontBox,
+       fontSizeSpin]() {
           const QString selected = shellBox->currentData().toString();
           const bool custom = selected == QString::fromLatin1(kCustomShell);
           FfiTerminalSettings settings;
@@ -127,6 +169,8 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
           settings.shell_args = argsEdit->text();
           settings.start_directory = directoryEdit->text();
           settings.env = envEdit->toPlainText();
+          settings.font_family = fontBox->currentData().toString();
+          settings.font_size = static_cast<quint32>(fontSizeSpin->value());
           appSettings->saveTerminalSettings(settings);
       },
     };

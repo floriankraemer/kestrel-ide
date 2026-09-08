@@ -67,6 +67,15 @@ type LspJob = Box<dyn FnOnce(&lsp_core::LspManager) + Send>;
 /// noticeably longer than a human notices.
 const WATCHED_FILES_DEBOUNCE: Duration = Duration::from_millis(200);
 
+/// The shared diagnostics store's key for one language server's rows
+/// (ADR-0046): distinct from a build tool's (`build::source_key`) so the
+/// two never clobber each other's rows for the same file, and distinct per
+/// language id so two servers publishing for the same uri (rare, but not
+/// impossible for a multi-language file) replace only their own.
+fn lsp_source_key(language_id: &str) -> String {
+    format!("lsp:{language_id}")
+}
+
 /// LSP's `FileChangeType` wire values, as sent over `watchedFileChanged`
 /// (the Qt signal can't carry `lsp_core::watched_files::FileChangeKind`
 /// itself, only primitives).
@@ -102,9 +111,12 @@ pub struct LanguageServiceRust {
     /// Open document path -> language id, so a change/save/close for a file we
     /// never opened against a server is dropped rather than sent.
     pub(crate) open_docs: RefCell<std::collections::HashMap<String, String>>,
-    /// Shared with `AiChat`, which reads it for `attachDiagnostics` — two
-    /// stores would mean the chat attaching a different set of problems
-    /// than the Problems panel shows.
+    /// The one Problems model (ADR-0046), shared with `BuildService`,
+    /// `DiagnosticsService` and `AiChat` — a second store would mean the
+    /// editor underlining a different set of problems than the Problems
+    /// panel shows. Every row this adapter publishes is keyed under
+    /// [`lsp_source_key`], so a server's diagnostics for a file never
+    /// clobber (or get clobbered by) a build's for the same file.
     pub(crate) store: SharedDiagnostics,
     /// L3: which hover request is still the current one. The rule is
     /// `lsp_core`'s; what is kept here is only its state.
@@ -344,28 +356,6 @@ pub(crate) fn to_ffi_resource_op(op: &lsp_core::ResourceOp) -> ffi::FfiResourceO
     }
 }
 
-fn to_ffi_severity(severity: lsp_core::Severity) -> ffi::FfiSeverity {
-    match severity {
-        lsp_core::Severity::Error => ffi::FfiSeverity::Error,
-        lsp_core::Severity::Warning => ffi::FfiSeverity::Warning,
-        lsp_core::Severity::Information => ffi::FfiSeverity::Information,
-        lsp_core::Severity::Hint => ffi::FfiSeverity::Hint,
-    }
-}
-
-fn to_ffi_diagnostic(row: lsp_core::DiagnosticRow) -> ffi::FfiDiagnostic {
-    ffi::FfiDiagnostic {
-        path: QString::from(row.path.as_str()),
-        line: row.line,
-        column: row.column,
-        end_line: row.end_line,
-        end_column: row.end_column,
-        severity: to_ffi_severity(row.severity),
-        message: QString::from(row.message.as_str()),
-        source: QString::from(row.source.as_str()),
-    }
-}
-
 fn to_ffi_completion(item: lsp_core::CompletionItem, prefix_length: u32) -> ffi::FfiCompletionItem {
     let range = item.range.unwrap_or(lsp_core::TextRange {
         start_line: 0,
@@ -509,11 +499,13 @@ impl ffi::LanguageService {
 
     pub fn document_closed(mut self: Pin<&mut Self>, path: &QString) {
         let path = path.to_string();
-        if self.open_docs.borrow_mut().remove(&path).is_none() {
+        let Some(language_id) = self.open_docs.borrow_mut().remove(&path) else {
             return;
-        }
+        };
         let uri = lsp_core::uri_from_path(&path);
-        self.store.borrow_mut().remove(&uri);
+        self.store
+            .borrow_mut()
+            .remove(&lsp_source_key(&language_id), &uri);
         let closed = uri.clone();
         self.push_job(move |manager| {
             let _ = manager.did_close(&closed);
@@ -655,35 +647,6 @@ impl ffi::LanguageService {
             .push_job(move |manager| manager.stop(&stopping));
         self.started.borrow_mut().insert(language_id);
         self.as_mut().start_server(config);
-    }
-
-    pub fn diagnostics(&self) -> Vec<ffi::FfiDiagnostic> {
-        self.store
-            .borrow()
-            .rows()
-            .into_iter()
-            .map(to_ffi_diagnostic)
-            .collect()
-    }
-
-    pub fn diagnostics_for_file(&self, path: &QString) -> Vec<ffi::FfiDiagnostic> {
-        let uri = lsp_core::uri_from_path(&path.to_string());
-        self.store
-            .borrow()
-            .rows_for_uri(&uri)
-            .into_iter()
-            .map(to_ffi_diagnostic)
-            .collect()
-    }
-
-    pub fn diagnostic_counts(&self) -> ffi::FfiDiagnosticCounts {
-        let counts = self.store.borrow().counts();
-        ffi::FfiDiagnosticCounts {
-            errors: counts.errors as u32,
-            warnings: counts.warnings as u32,
-            infos: counts.infos as u32,
-            hints: counts.hints as u32,
-        }
     }
 
     pub fn has_server_for_file(&self, path: &QString) -> bool {
@@ -1108,9 +1071,16 @@ impl ffi::LanguageService {
         };
         match event {
             lsp_core::LspEvent::Diagnostics {
-                uri, diagnostics, ..
+                language_id,
+                uri,
+                diagnostics,
+                ..
             } => {
-                self.store.borrow_mut().replace(&uri, diagnostics);
+                self.store.borrow_mut().replace(
+                    &lsp_source_key(&language_id),
+                    &uri,
+                    lsp_core::to_diagnostics(diagnostics),
+                );
                 self.as_mut().diagnostics_changed();
             }
             lsp_core::LspEvent::ServerReady {

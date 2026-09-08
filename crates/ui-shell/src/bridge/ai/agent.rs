@@ -350,12 +350,12 @@ pub(crate) fn symbol_match_json(hit: &index_core::SymbolMatch) -> serde_json::Va
 
 /// The severity word the server itself used, kept as a string rather than
 /// re-classified — `context::DiagnosticNote` takes it that way on purpose.
-pub(crate) fn severity_word(severity: lsp_core::Severity) -> &'static str {
+pub(crate) fn severity_word(severity: diagnostics_core::Severity) -> &'static str {
     match severity {
-        lsp_core::Severity::Error => "error",
-        lsp_core::Severity::Warning => "warning",
-        lsp_core::Severity::Information => "information",
-        lsp_core::Severity::Hint => "hint",
+        diagnostics_core::Severity::Error => "error",
+        diagnostics_core::Severity::Warning => "warning",
+        diagnostics_core::Severity::Information => "information",
+        diagnostics_core::Severity::Hint => "hint",
     }
 }
 

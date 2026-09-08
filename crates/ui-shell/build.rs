@@ -422,6 +422,10 @@ fn main() {
         .cpp_file("cpp/plugins_page.cpp")
         .cpp_file("cpp/appearance_page.cpp")
         .cpp_file("cpp/language_servers_page.cpp")
+        // The PHP tooling plan's B9: the Analysis settings page and its
+        // menu action, Q_OBJECT-free like the pages/menus above.
+        .cpp_file("cpp/analysis_settings_page.cpp")
+        .cpp_file("cpp/analysis_menu.cpp")
         // The settings dialog and the last two pages that were still built
         // inline inside it. Q_OBJECT-free like the pages above — the dialog
         // is a stack-allocated QDialog and the pages are plain QWidgets
@@ -432,6 +436,11 @@ fn main() {
         .cpp_file("cpp/mcp_page.cpp")
         .cpp_file("cpp/terminal_page.cpp")
         .cpp_file("cpp/problems_panel.cpp")
+        // The PHP tooling plan's D5: the Tests dock. Q_OBJECT-free like
+        // `build_panel.cpp` (plain QWidget, lambdas and pointer-to-member
+        // connects), so only the source is listed.
+        .cpp_file("cpp/tests_panel.cpp")
+        .cpp_file("cpp/tests_menu.cpp")
         .cpp_file("cpp/icon_cache.cpp")
         // Declares Q_OBJECT (it overrides QIdentityProxyModel::data), so its
         // header is listed too — that is what runs moc on it.

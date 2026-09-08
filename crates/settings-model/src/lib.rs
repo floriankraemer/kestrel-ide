@@ -14,6 +14,7 @@
 //! Qt-free, like every crate below `ui-shell`.
 
 pub mod ai;
+pub mod analysis;
 pub mod editing;
 pub mod languages;
 pub mod plugins;

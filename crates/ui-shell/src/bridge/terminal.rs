@@ -37,12 +37,20 @@ use crate::bridge::ffi::{self, FfiResult};
 /// which is the whole point of the change: before this, a terminal
 /// inherited the IDE process's own directory, which is never what someone
 /// opening a terminal in a project meant.
+///
+/// `catalogue` is this machine's shell list, already detected — never
+/// re-detected here. Detection means a blocking `wsl.exe` round-trip on
+/// Windows, and this function runs on the Qt thread every time a terminal
+/// tab is opened, so it takes the answer as an argument instead of asking
+/// for it (see `TerminalSupervisorRust::ensure_shells_cached`).
 fn shell_for(
     settings: &app_config::TerminalSettings,
     requested_id: &str,
     project_root: Option<&std::path::Path>,
+    catalogue: &[pty_core::ShellCandidate],
 ) -> pty_core::ShellSpec {
-    let mut spec = requested_shell(settings, requested_id).unwrap_or_else(platform_default);
+    let mut spec =
+        requested_shell(settings, requested_id, catalogue).unwrap_or_else(platform_default);
 
     if !settings.start_directory.is_empty() {
         spec = spec.with_cwd(&settings.start_directory);
@@ -63,9 +71,12 @@ fn shell_for(
 fn requested_shell(
     settings: &app_config::TerminalSettings,
     requested_id: &str,
+    catalogue: &[pty_core::ShellCandidate],
 ) -> Option<pty_core::ShellSpec> {
+    let find = |id: &str| catalogue.iter().find(|candidate| candidate.id == id);
+
     if !requested_id.is_empty() {
-        if let Some(candidate) = pty_core::shells::find(requested_id) {
+        if let Some(candidate) = find(requested_id) {
             return Some(candidate.to_spec());
         }
     }
@@ -76,7 +87,7 @@ fn requested_shell(
         ));
     }
     if !settings.shell_id.is_empty() {
-        if let Some(candidate) = pty_core::shells::find(&settings.shell_id) {
+        if let Some(candidate) = find(&settings.shell_id) {
             let mut spec = candidate.to_spec();
             if !settings.shell_args.is_empty() {
                 spec.args = split_args(&settings.shell_args);
@@ -110,7 +121,7 @@ fn split_args(args: &str) -> Vec<String> {
 
 fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell {
     ffi::FfiTerminalCell {
-        character: QString::from(cell.character.to_string().as_str()),
+        character: cell.character as u32,
         fg_r: cell.fg.r,
         fg_g: cell.fg.g,
         fg_b: cell.fg.b,
@@ -122,6 +133,67 @@ fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell
         underline: cell.attrs.underline,
         inverse: cell.attrs.inverse,
         selected: cell.selected,
+        wide: cell.wide,
+    }
+}
+
+/// `FfiTerminalKey` -> `terminal_core::keys::Key` (Task T4). `code_point` is
+/// only meaningful for `Char` (a Unicode code point) and `F` (the
+/// function-key number, 1-12) — see `FfiTerminalKey`'s doc comment. `None`
+/// when `code_point` doesn't decode to anything sendable, so a stray/invalid
+/// key event is silently dropped rather than sending garbage to the shell.
+fn key_from_ffi(key: ffi::FfiTerminalKey, code_point: u32) -> Option<terminal_core::keys::Key> {
+    use terminal_core::keys::Key;
+    Some(match key {
+        ffi::FfiTerminalKey::Char => Key::Char(char::from_u32(code_point)?),
+        ffi::FfiTerminalKey::Enter => Key::Enter,
+        ffi::FfiTerminalKey::Tab => Key::Tab,
+        ffi::FfiTerminalKey::Backspace => Key::Backspace,
+        ffi::FfiTerminalKey::Escape => Key::Escape,
+        ffi::FfiTerminalKey::Up => Key::Up,
+        ffi::FfiTerminalKey::Down => Key::Down,
+        ffi::FfiTerminalKey::Left => Key::Left,
+        ffi::FfiTerminalKey::Right => Key::Right,
+        ffi::FfiTerminalKey::Home => Key::Home,
+        ffi::FfiTerminalKey::End => Key::End,
+        ffi::FfiTerminalKey::PageUp => Key::PageUp,
+        ffi::FfiTerminalKey::PageDown => Key::PageDown,
+        ffi::FfiTerminalKey::Insert => Key::Insert,
+        ffi::FfiTerminalKey::Delete => Key::Delete,
+        ffi::FfiTerminalKey::F => Key::F(u8::try_from(code_point).ok()?),
+        // `FfiTerminalKey` is a C++-facing enum, so it is not exhaustively
+        // matchable from Rust (same convention `selection_start`'s
+        // `FfiSelectionKind` match uses).
+        _ => return None,
+    })
+}
+
+fn cell_color_from_ffi(rgb: &ffi::FfiRgb) -> terminal_core::CellColor {
+    terminal_core::CellColor {
+        r: rgb.r,
+        g: rgb.g,
+        b: rgb.b,
+    }
+}
+
+/// `theme.cpp`'s `terminalPaletteForTheme()` result, resolved into
+/// `terminal_core::Palette` (T3). `ansi` always carries exactly 16 entries —
+/// `theme.cpp` builds it from a fixed 16-entry table, so a short/long `Vec`
+/// here would mean a bug on the C++ side, not a real "no ansi 7" case; the
+/// gap is filled with `Palette::xterm()`'s own slot rather than panicking on
+/// what would still be a paintable, if wrong, palette.
+fn terminal_palette_from_ffi(palette: &ffi::FfiTerminalPalette) -> terminal_core::Palette {
+    let default_ansi = terminal_core::Palette::xterm().ansi;
+    let mut ansi = default_ansi;
+    for (slot, rgb) in ansi.iter_mut().zip(palette.ansi.iter()) {
+        *slot = cell_color_from_ffi(rgb);
+    }
+    terminal_core::Palette {
+        foreground: cell_color_from_ffi(&palette.foreground),
+        background: cell_color_from_ffi(&palette.background),
+        cursor: cell_color_from_ffi(&palette.cursor),
+        selection: cell_color_from_ffi(&palette.selection),
+        ansi,
     }
 }
 
@@ -135,6 +207,13 @@ fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell
 struct TerminalEntry {
     pty_session: Rc<RefCell<Option<pty_core::PtySession>>>,
     emulator: std::sync::Arc<std::sync::Mutex<Option<terminal_core::TerminalEmulator>>>,
+    /// Coalesces `gridUpdated` (T2): the reader thread sets this the moment
+    /// it feeds new bytes into the emulator, but only actually queues a Qt
+    /// closure while it flips false -> true — a burst of PTY output (e.g.
+    /// `cat` on a large file) that arrives faster than the Qt thread can
+    /// drain its queue collapses to at most one pending notification per
+    /// session instead of one per 64 KiB chunk read.
+    repaint_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl TerminalEntry {
@@ -185,6 +264,18 @@ impl TerminalEntry {
 pub struct TerminalSupervisorRust {
     sessions: RefCell<HashMap<u64, TerminalEntry>>,
     next_id: std::cell::Cell<u64>,
+    /// This machine's shell catalogue, filled in the background so opening
+    /// the "+" dropdown never blocks the Qt thread on a `wsl.exe` round
+    /// trip. `None` until the first fill — either `refresh_shells`' thread
+    /// landing, or a synchronous one-time detect from `ensure_shells_cached`
+    /// if nothing has asked yet.
+    shells: RefCell<Option<Vec<pty_core::ShellCandidate>>>,
+    /// The palette every emulator paints with (T3): applied to every
+    /// currently-open session by `set_palette`, and to every session
+    /// `start()`s afterward. `terminal_core::Palette::xterm()` (this
+    /// struct's `#[derive(Default)]`) is what an emulator gets before the
+    /// view has ever pushed a theme-derived one down.
+    palette: RefCell<terminal_core::Palette>,
 }
 
 impl Drop for TerminalSupervisorRust {
@@ -243,14 +334,65 @@ impl ffi::TerminalSupervisor {
     /// Every shell this machine offers, for the dock's "+" dropdown and the
     /// settings page's combo. The view builds a menu from this and hands an
     /// id back to `start()`; it never decides what is on the list.
+    ///
+    /// Returns the cache — instant once `refresh_shells` has landed once.
+    /// Before that (the very first call of a session), there is nothing to
+    /// return yet, so this detects synchronously exactly once rather than
+    /// showing an empty menu; every call after is free.
     pub fn available_shells(&self) -> Vec<ffi::FfiShellCandidate> {
-        pty_core::shells::detect()
+        self.ensure_shells_cached()
             .into_iter()
             .map(|candidate| ffi::FfiShellCandidate {
                 id: QString::from(candidate.id.as_str()),
                 label: QString::from(candidate.label.as_str()),
             })
             .collect()
+    }
+
+    /// Detect this machine's shells on a background thread and hand the
+    /// result back to the Qt thread via `qt_thread().queue`, the same
+    /// thread-to-Qt idiom `apply_mcp_settings` (`bridge/editor.rs`) already
+    /// uses. Call from the panel's constructor and each time its shell menu
+    /// is about to show — never blocks, so calling it eagerly costs nothing.
+    pub fn refresh_shells(self: Pin<&mut Self>) {
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let detected = pty_core::shells::detect();
+            let _ = qt_thread.queue(move |mut supervisor: Pin<&mut Self>| {
+                *supervisor.shells.borrow_mut() = Some(detected);
+                supervisor.as_mut().shells_changed();
+            });
+        });
+    }
+
+    /// The cached catalogue, detecting synchronously once if nothing has
+    /// filled it yet (the window between construction and `refresh_shells`'
+    /// background thread landing). Every caller that needs the actual
+    /// `ShellCandidate` list — `available_shells` and `start` — goes through
+    /// this rather than calling `pty_core::shells::detect` a second time.
+    fn ensure_shells_cached(&self) -> Vec<pty_core::ShellCandidate> {
+        if let Some(cached) = self.shells.borrow().as_ref() {
+            return cached.clone();
+        }
+        let detected = pty_core::shells::detect();
+        *self.shells.borrow_mut() = Some(detected.clone());
+        detected
+    }
+
+    /// Apply a palette (T3) to every currently-open session's emulator, live
+    /// — a theme switch recolors an already-running terminal without
+    /// restarting its shell — and remember it for every session `start()`s
+    /// afterward.
+    pub fn set_palette(self: Pin<&mut Self>, palette: ffi::FfiTerminalPalette) {
+        let palette = terminal_palette_from_ffi(&palette);
+        *self.palette.borrow_mut() = palette;
+        for entry in self.sessions.borrow().values() {
+            if let Ok(mut guard) = entry.emulator.lock() {
+                if let Some(emulator) = guard.as_mut() {
+                    emulator.set_palette(palette);
+                }
+            }
+        }
     }
 
     pub fn start(
@@ -268,10 +410,12 @@ impl ffi::TerminalSupervisor {
         };
 
         let settings = crate::bridge::convert::load_resolved_settings();
+        let catalogue = self.ensure_shells_cached();
         let shell = shell_for(
             &settings.terminal,
             &shell_id.to_string(),
             crate::bridge::convert::current_project_root().as_deref(),
+            &catalogue,
         );
         let pty_size = pty_core::PtySize::new(rows as u16, cols as u16);
         let mut session = match pty_core::PtySession::spawn(&shell, pty_size) {
@@ -295,13 +439,22 @@ impl ffi::TerminalSupervisor {
         };
 
         let grid_size = terminal_core::GridSize::new(rows as usize, cols as usize);
-        *entry.emulator.lock().unwrap() = Some(terminal_core::TerminalEmulator::new(grid_size));
+        let palette = *self.palette.borrow();
+        *entry.emulator.lock().unwrap() =
+            Some(terminal_core::TerminalEmulator::new(grid_size, palette));
         *entry.pty_session.borrow_mut() = Some(session);
 
         let emulator_slot = std::sync::Arc::clone(&entry.emulator);
+        let repaint_pending = std::sync::Arc::clone(&entry.repaint_pending);
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
+            use std::sync::atomic::Ordering;
+            // 64 KiB, up from 4 KiB: a read this size is still one syscall,
+            // but a flood (`cat` on a large file) now takes 16x fewer trips
+            // through this loop — and, since `gridUpdated` is coalesced
+            // below, that many fewer opportunities to even consider queuing
+            // one.
+            let mut buf = [0u8; 65536];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break, // EOF: the shell exited.
@@ -314,7 +467,21 @@ impl ffi::TerminalSupervisor {
                         };
                         emulator.feed(&buf[..n]);
                         drop(guard);
+
+                        // Coalesce: only queue a Qt closure on the false ->
+                        // true edge, so a burst of reads that lands before
+                        // the Qt thread has drained the previous one still
+                        // produces at most one pending `gridUpdated` per
+                        // session. The closure stores `false` *before*
+                        // emitting, not after: bytes fed in exactly during
+                        // the emit still flip a later `swap` back to
+                        // false -> true, so they are never lost.
+                        if repaint_pending.swap(true, Ordering::AcqRel) {
+                            continue;
+                        }
+                        let pending = std::sync::Arc::clone(&repaint_pending);
                         let sent = qt_thread.queue(move |mut supervisor: Pin<&mut Self>| {
+                            pending.store(false, Ordering::Release);
                             supervisor.as_mut().grid_updated(session_id);
                         });
                         if sent.is_err() {
@@ -343,6 +510,7 @@ impl ffi::TerminalSupervisor {
             .map(|entry| TerminalEntry {
                 pty_session: Rc::clone(&entry.pty_session),
                 emulator: std::sync::Arc::clone(&entry.emulator),
+                repaint_pending: std::sync::Arc::clone(&entry.repaint_pending),
             })
     }
 
@@ -354,6 +522,48 @@ impl ffi::TerminalSupervisor {
         if let Some(session) = pty_session.as_mut() {
             let _ = session.write(input.to_string().as_bytes());
         }
+    }
+
+    /// Translate one key press (Task T4) and write the resulting xterm bytes
+    /// to `session_id`'s PTY — the keyboard counterpart of `paste()`: both
+    /// resolve their bytes against the emulator (here, its current
+    /// application-cursor-key mode) before writing them out.
+    pub fn send_key(
+        self: Pin<&mut Self>,
+        session_id: u64,
+        key: ffi::FfiTerminalKey,
+        code_point: u32,
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+    ) {
+        let Some(key) = key_from_ffi(key, code_point) else {
+            return;
+        };
+        let mods = terminal_core::keys::Modifiers { shift, ctrl, alt };
+        let Some(app_cursor) =
+            self.with_emulator(session_id, |emulator| emulator.app_cursor_mode())
+        else {
+            return;
+        };
+        let Some(bytes) = terminal_core::keys::encode(key, mods, app_cursor) else {
+            return;
+        };
+        let Some(entry) = self.handles(session_id) else {
+            return;
+        };
+        let mut pty_session = entry.pty_session.borrow_mut();
+        if let Some(session) = pty_session.as_mut() {
+            let _ = session.write(bytes.as_bytes());
+        }
+        drop(pty_session);
+        // Typing always returns the view to live output, matching every
+        // other terminal — a keystroke while reading scrollback jumps
+        // straight back to where it lands.
+        self.with_emulator(
+            session_id,
+            terminal_core::TerminalEmulator::scroll_to_bottom,
+        );
     }
 
     pub fn resize(self: Pin<&mut Self>, session_id: u64, rows: u32, cols: u32) {
@@ -377,46 +587,79 @@ impl ffi::TerminalSupervisor {
         }
     }
 
-    /// Shared snapshot fetch behind the four `grid*`/`cursor*` invokables
-    /// below — `terminal_core::Grid` isn't itself an FFI type, so there is
-    /// no way to expose "the" snapshot as a single call's return value
-    /// (see `FfiTerminalCell`'s doc comment); each accessor re-snapshots
-    /// instead. All four only ever run on the Qt thread, right after
-    /// `gridUpdated`, at repaint frequency — not a hot loop.
-    fn snapshot(&self, session_id: u64) -> Option<terminal_core::Grid> {
-        let sessions = self.sessions.borrow();
-        let entry = sessions.get(&session_id)?;
-        let guard = entry.emulator.lock().ok()?;
-        guard.as_ref().map(terminal_core::TerminalEmulator::grid)
+    /// Scroll `session_id`'s viewport by `delta` lines (T5). A no-op on an
+    /// unknown or not-yet-started session, the same tolerance every other
+    /// `with_emulator`-based invokable in this file has for a stale id.
+    pub fn scroll(&self, session_id: u64, delta: i32) {
+        self.with_emulator(session_id, |emulator| emulator.scroll(delta));
     }
 
-    pub fn grid_cells(&self, session_id: u64) -> Vec<ffi::FfiTerminalCell> {
-        let Some(snapshot) = self.snapshot(session_id) else {
-            return Vec::new();
+    /// Scroll `session_id`'s viewport to an absolute offset from the bottom
+    /// (T5) — what dragging the scrollbar thumb to a position means.
+    pub fn scroll_to(&self, session_id: u64, offset: u64) {
+        self.with_emulator(session_id, |emulator| emulator.scroll_to(offset as usize));
+    }
+
+    /// Snap `session_id`'s viewport back to live output (T5).
+    pub fn scroll_to_bottom(&self, session_id: u64) {
+        self.with_emulator(
+            session_id,
+            terminal_core::TerminalEmulator::scroll_to_bottom,
+        );
+    }
+
+    /// How far back `session_id`'s history goes, and how far the viewport
+    /// is currently scrolled into it (T5) — what the scrollbar's
+    /// range/value are derived from. `Default` (`history: 0, offset: 0`)
+    /// for an unknown or not-yet-started session, same "empty snapshot"
+    /// convention `snapshot()` itself uses.
+    pub fn scroll_state(&self, session_id: u64) -> ffi::FfiScrollState {
+        self.with_emulator(session_id, |emulator| emulator.scroll_state())
+            .map(|state| ffi::FfiScrollState {
+                history: state.history as u64,
+                offset: state.offset as u64,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether `session_id`'s running application is on the alternate
+    /// screen (T5) — `false` for an unknown or not-yet-started session.
+    pub fn alt_screen(&self, session_id: u64) -> bool {
+        self.with_emulator(session_id, |emulator| emulator.alt_screen())
+            .unwrap_or(false)
+    }
+
+    /// The grid, flattened for the FFI seam (T2): one call replaces what
+    /// used to be five (`gridCells`/`gridRows`/`gridCols`/`cursorRow`/
+    /// `cursorCol`), each independently re-snapshotting
+    /// `terminal_core::TerminalEmulator::grid` on every repaint. Runs on
+    /// the Qt thread only, called by `cpp/terminal_widget.cpp`'s
+    /// `paintEvent` exactly when its cache is stale — not a hot loop.
+    pub fn snapshot(&self, session_id: u64) -> ffi::FfiTerminalSnapshot {
+        let grid = (|| {
+            let sessions = self.sessions.borrow();
+            let entry = sessions.get(&session_id)?;
+            let guard = entry.emulator.lock().ok()?;
+            guard.as_ref().map(terminal_core::TerminalEmulator::grid)
+        })();
+        let Some(grid) = grid else {
+            return ffi::FfiTerminalSnapshot::default();
         };
-        snapshot
-            .rows
-            .into_iter()
-            .flatten()
-            .map(to_ffi_terminal_cell)
-            .collect()
-    }
-
-    pub fn grid_rows(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id).map_or(0, |g| g.rows.len() as u32)
-    }
-
-    pub fn grid_cols(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id)
-            .map_or(0, |g| g.rows.first().map_or(0, Vec::len) as u32)
-    }
-
-    pub fn cursor_row(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id).map_or(0, |g| g.cursor.row as u32)
-    }
-
-    pub fn cursor_col(&self, session_id: u64) -> u32 {
-        self.snapshot(session_id).map_or(0, |g| g.cursor.col as u32)
+        let rows = grid.rows.len() as u32;
+        let cols = grid.rows.first().map_or(0, Vec::len) as u32;
+        ffi::FfiTerminalSnapshot {
+            rows,
+            cols,
+            cursor_row: grid.cursor.row as u32,
+            cursor_col: grid.cursor.col as u32,
+            cursor_visible: grid.cursor_visible,
+            cells: grid
+                .rows
+                .into_iter()
+                .flatten()
+                .map(to_ffi_terminal_cell)
+                .collect(),
+        }
     }
 
     /// Run `body` against a live session's emulator, if `session_id` is
@@ -550,12 +793,31 @@ impl ffi::TerminalSupervisor {
 
 #[cfg(test)]
 mod shell_resolution_tests {
-    //! Qt-free: `shell_for` takes everything it depends on as an argument,
-    //! so the precedence rule the whole feature rests on is tested here
-    //! rather than by opening a terminal and looking at it.
+    //! Qt-free: `shell_for` takes everything it depends on as an argument —
+    //! including, now, the shell catalogue itself — so the precedence rule
+    //! the whole feature rests on is tested here, against an explicit
+    //! catalogue, rather than by opening a terminal and looking at it or by
+    //! depending on the test machine's own `$SHELL`.
     use super::{shell_for, split_args};
     use app_config::TerminalSettings;
+    use pty_core::ShellCandidate;
     use std::path::Path;
+
+    fn candidate(id: &str, program: &str) -> ShellCandidate {
+        ShellCandidate {
+            id: id.to_string(),
+            label: id.to_string(),
+            program: program.to_string(),
+            args: Vec::new(),
+        }
+    }
+
+    fn catalogue() -> Vec<ShellCandidate> {
+        vec![
+            candidate("system", "/bin/zsh"),
+            candidate("bash", "/bin/bash"),
+        ]
+    }
 
     #[test]
     fn a_new_terminal_starts_in_the_project_root() {
@@ -563,6 +825,7 @@ mod shell_resolution_tests {
             &TerminalSettings::default(),
             "",
             Some(Path::new("/home/dev/checkout")),
+            &catalogue(),
         );
         assert_eq!(spec.cwd.as_deref(), Some(Path::new("/home/dev/checkout")));
     }
@@ -571,7 +834,10 @@ mod shell_resolution_tests {
     /// own directory, which is what leaving `cwd` unset inherits.
     #[test]
     fn with_no_project_open_the_working_directory_is_inherited() {
-        assert_eq!(shell_for(&TerminalSettings::default(), "", None).cwd, None);
+        assert_eq!(
+            shell_for(&TerminalSettings::default(), "", None, &catalogue()).cwd,
+            None
+        );
     }
 
     #[test]
@@ -580,7 +846,12 @@ mod shell_resolution_tests {
             start_directory: "/srv/elsewhere".to_string(),
             ..TerminalSettings::default()
         };
-        let spec = shell_for(&settings, "", Some(Path::new("/home/dev/checkout")));
+        let spec = shell_for(
+            &settings,
+            "",
+            Some(Path::new("/home/dev/checkout")),
+            &catalogue(),
+        );
         assert_eq!(spec.cwd.as_deref(), Some(Path::new("/srv/elsewhere")));
     }
 
@@ -592,7 +863,7 @@ mod shell_resolution_tests {
             shell_args: "-l -c true".to_string(),
             ..TerminalSettings::default()
         };
-        let spec = shell_for(&settings, "", None);
+        let spec = shell_for(&settings, "", None, &catalogue());
         assert_eq!(spec.program, "/opt/toolchain/bin/ash");
         assert_eq!(spec.args, vec!["-l", "-c", "true"]);
     }
@@ -605,7 +876,7 @@ mod shell_resolution_tests {
             shell_id: "no-such-shell-anywhere".to_string(),
             ..TerminalSettings::default()
         };
-        let spec = shell_for(&settings, "", None);
+        let spec = shell_for(&settings, "", None, &catalogue());
         assert!(!spec.program.is_empty());
         assert_eq!(spec.program, super::platform_default().program);
     }
@@ -614,15 +885,21 @@ mod shell_resolution_tests {
     /// configured default — that is what the "+" dropdown means.
     #[test]
     fn the_requested_shell_beats_a_custom_path() {
-        // `system` is `$SHELL`, which the test environment always has.
-        let Some(system) = pty_core::shells::find("system") else {
-            return; // No `$SHELL` at all: nothing to assert against.
-        };
         let settings = TerminalSettings {
             shell_path: "/opt/toolchain/bin/ash".to_string(),
             ..TerminalSettings::default()
         };
-        assert_eq!(shell_for(&settings, "system", None).program, system.program);
+        let spec = shell_for(&settings, "system", None, &catalogue());
+        assert_eq!(spec.program, "/bin/zsh");
+    }
+
+    /// A requested id the catalogue no longer offers falls through to the
+    /// rest of the precedence list, the same as an uninstalled configured
+    /// shell — a stale id must not be a reason to refuse to open at all.
+    #[test]
+    fn a_requested_shell_the_catalogue_no_longer_offers_falls_through() {
+        let spec = shell_for(&TerminalSettings::default(), "gone", None, &catalogue());
+        assert_eq!(spec.program, super::platform_default().program);
     }
 
     #[test]
@@ -631,7 +908,7 @@ mod shell_resolution_tests {
         settings
             .env
             .insert("RUST_LOG".to_string(), "debug".to_string());
-        let spec = shell_for(&settings, "", None);
+        let spec = shell_for(&settings, "", None, &catalogue());
         assert_eq!(
             spec.env,
             vec![("RUST_LOG".to_string(), "debug".to_string())]
@@ -712,6 +989,7 @@ mod shutdown_order_tests {
         let entry = TerminalEntry {
             pty_session: std::rc::Rc::new(std::cell::RefCell::new(Some(session))),
             emulator: Default::default(),
+            repaint_pending: Default::default(),
         };
         (entry, grandchild)
     }

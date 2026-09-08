@@ -14,10 +14,12 @@
 // here, next to the bridge, and defined in the feature module that owns
 // them.
 use crate::bridge::ai::chat::AiChatRust;
+use crate::bridge::analysis::{AnalysisEditorRust, AnalysisServiceRust};
 use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::debug::DebugServiceRust;
+use crate::bridge::diagnostics::DiagnosticsServiceRust;
 use crate::bridge::editor::DocumentManagerRust;
 use crate::bridge::editor_ops::EditorOpsRust;
 use crate::bridge::icons::IconProviderRust;
@@ -31,6 +33,7 @@ use crate::bridge::settings::{
     LanguageCatalogRust, LanguageServerEditorRust, SyntaxColorEditorRust,
 };
 use crate::bridge::terminal::TerminalSupervisorRust;
+use crate::bridge::testing::TestServiceRust;
 use crate::bridge::tree::ProjectTreeModelRust;
 use crate::bridge::vcs::VcsServiceRust;
 
@@ -351,14 +354,17 @@ mod ffi {
         anchor: usize,
     }
 
-    /// One renderable terminal cell (Task F3), 1:1 with
-    /// `terminal_core::RenderCell` minus its `char`/`CellColor`/
-    /// `CellAttributes` Rust types, which cxx can't pass directly — `character`
-    /// is always exactly one code point (never empty: blank cells are `' '`,
-    /// matching `terminal_core`'s own convention).
+    /// One renderable terminal cell (Task F3, run-painting since T2), 1:1
+    /// with `terminal_core::RenderCell` minus its `char`/`CellColor`/
+    /// `CellAttributes` Rust types, which cxx can't pass directly.
+    /// `character` is a Unicode code point rather than a `QString` — one
+    /// `QString` per cell was T2's biggest single allocation source, so the
+    /// view builds runs of code points and turns those into text with
+    /// `QString::fromUcs4` instead. Blank cells are `' '` (0x20), matching
+    /// `terminal_core`'s own convention.
     #[derive(Default)]
     struct FfiTerminalCell {
-        character: QString,
+        character: u32,
         fg_r: u8,
         fg_g: u8,
         fg_b: u8,
@@ -369,9 +375,71 @@ mod ffi {
         italic: bool,
         underline: bool,
         inverse: bool,
-        /// Inside the current mouse selection — the view paints it by
-        /// swapping fg/bg, the same way it already handles `inverse`.
+        /// Inside the current mouse selection — the view tints the run's
+        /// background with the selection colour, keeping the glyph's own
+        /// foreground (unlike `inverse`, which swaps fg/bg).
         selected: bool,
+        /// The leading half of a double-width glyph — see
+        /// `terminal_core::RenderCell::wide`. The view skips painting the
+        /// cell right after a `wide` one; it is that glyph's spacer half.
+        wide: bool,
+    }
+
+    /// One RGB color as it crosses the FFI seam — the same r/g/b-bytes
+    /// convention `FfiTerminalCell`'s `fg_r`/`fg_g`/`fg_b` already uses,
+    /// wrapped here only because `FfiTerminalPalette::ansi` needs a `Vec`
+    /// element type (the same "table of N colors" shape `palette()`'s
+    /// `Vec<FfiScopeStyle>` already crosses the seam with).
+    #[derive(Default, Clone, Copy)]
+    struct FfiRgb {
+        r: u8,
+        g: u8,
+        b: u8,
+    }
+
+    /// A whole terminal palette (T3), in one call: `theme.cpp`'s
+    /// `terminalPaletteForTheme()` builds one from the active theme (and, for
+    /// background/foreground, the editor colors when configured — see that
+    /// function's doc comment), and `TerminalSupervisor::setPalette()`
+    /// applies it to every open session and remembers it for new ones.
+    /// `ansi` is always exactly 16 entries, ANSI 0-15.
+    struct FfiTerminalPalette {
+        background: FfiRgb,
+        foreground: FfiRgb,
+        cursor: FfiRgb,
+        selection: FfiRgb,
+        ansi: Vec<FfiRgb>,
+    }
+
+    /// One paint's worth of grid state (T2): the whole snapshot
+    /// `gridCells`/`gridRows`/`gridCols`/`cursorRow`/`cursorCol` used to
+    /// require five separate FFI round trips for — replaced with the one
+    /// call `cpp/terminal_widget.cpp`'s `paintEvent` makes when (and only
+    /// when) it is about to repaint. `cells` is `rows * cols` long,
+    /// row-major, same flattening convention the old `gridCells` used.
+    ///
+    /// `cursor_visible` (T5): false while the viewport is scrolled up into
+    /// history, so the view knows not to paint the cursor block over
+    /// unrelated history text — `terminal_core::Grid::cursor_visible`'s own
+    /// doc comment has the full reasoning.
+    #[derive(Default)]
+    struct FfiTerminalSnapshot {
+        rows: u32,
+        cols: u32,
+        cursor_row: u32,
+        cursor_col: u32,
+        cursor_visible: bool,
+        cells: Vec<FfiTerminalCell>,
+    }
+
+    /// Scrollback position (T5): how far back the buffer goes, and how far
+    /// the viewport is currently scrolled into it. 1:1 with
+    /// `terminal_core::ScrollState`. The view derives its scrollbar's
+    /// range/value from this, refetched alongside `FfiTerminalSnapshot`.
+    #[derive(Default)]
+    struct FfiScrollState {
+        history: u64,
+        offset: u64,
     }
 
     /// What a terminal mouse gesture selects (Task F4), 1:1 with
@@ -380,6 +448,38 @@ mod ffi {
         Simple,
         Word,
         Line,
+    }
+
+    /// A logical key press crossing the seam (Task T4), 1:1 with
+    /// `terminal_core::keys::Key`. `cpp/terminal_widget.cpp`'s
+    /// `keyPressEvent` maps `Qt::Key` to this — pure enum translation, a
+    /// humble view concern — and the actual xterm escape-sequence encoding
+    /// happens on the Rust side (`terminal_core::keys::encode`), never in
+    /// C++.
+    ///
+    /// `Char` and `F` carry no payload of their own: a cxx enum can't be a
+    /// Rust-style data-carrying enum, so `send_key`'s `code_point` parameter
+    /// carries the Unicode code point for `Char` and the function-key number
+    /// (1-12) for `F`, the same "typed flag plus a field that means
+    /// something only for certain variants" convention `FfiSymbolMatch`'s
+    /// `has_kind`/`kind` already uses.
+    enum FfiTerminalKey {
+        Char,
+        Enter,
+        Tab,
+        Backspace,
+        Escape,
+        Up,
+        Down,
+        Left,
+        Right,
+        Home,
+        End,
+        PageUp,
+        PageDown,
+        Insert,
+        Delete,
+        F,
     }
 
     /// One symbol row crossing the seam — a usage, an implementation, or
@@ -784,6 +884,14 @@ mod ffi {
         /// Empty means the open project's root.
         start_directory: QString,
         env: QString,
+        /// Empty means "follow the editor font" (T3) —
+        /// `AppSettings::terminalFont()` is where that precedence is
+        /// resolved; this raw, possibly-empty value is only for the
+        /// settings page to edit.
+        font_family: QString,
+        /// `0` means "follow the editor font size" (T3), same idiom as
+        /// `font_family`.
+        font_size: u32,
     }
 
     /// One local branch name. `cxx`'s `Vec<T>` needs `T: ImplVec`, which
@@ -2275,6 +2383,14 @@ mod ffi {
         #[cxx_name = "saveTerminalSettings"]
         fn save_terminal_settings(self: &AppSettings, terminal: &FfiTerminalSettings) -> FfiResult;
 
+        /// The terminal's effective font (T3): the project-resolved
+        /// `[terminal]` override when one is set, else the editor font —
+        /// always resolved, never empty/zero, so the view never re-derives
+        /// this precedence itself.
+        #[qinvokable]
+        #[cxx_name = "terminalFont"]
+        fn terminal_font(self: &AppSettings) -> FfiEditorFont;
+
         /// Every shell this machine offers, for the Terminal page's combo —
         /// the same list, from the same place, as the terminal dock's "+"
         /// dropdown.
@@ -2973,16 +3089,56 @@ mod ffi {
         /// The list is Rust's answer (`pty_core::shells::detect`) and the
         /// view only renders it: which shells exist, what they are called
         /// and in what order are decisions, and none of them belongs in
-        /// `cpp/`.
+        /// `cpp/`. Returns the cached catalogue — instant once
+        /// `refreshShells()` has landed once; detects synchronously exactly
+        /// once before that, rather than showing an empty menu.
         #[qinvokable]
         #[cxx_name = "availableShells"]
         fn available_shells(self: &TerminalSupervisor) -> Vec<FfiShellCandidate>;
+
+        /// Detect this machine's shells on a background thread and cache
+        /// the result, emitting `shellsChanged()` once it lands. Never
+        /// blocks the Qt thread — a `wsl.exe --list` round trip on Windows
+        /// takes 1-3s, which used to run on the Qt thread every time the
+        /// "+" dropdown opened. Call from the panel's constructor and again
+        /// each time the dropdown is about to show, so a WSL distro
+        /// installed while the IDE is running still turns up without a
+        /// restart.
+        #[qinvokable]
+        #[cxx_name = "refreshShells"]
+        fn refresh_shells(self: Pin<&mut TerminalSupervisor>);
+
+        /// Apply a palette (T3) to every open session, live, and remember it
+        /// for every session started afterward. `theme.cpp`'s
+        /// `terminalPaletteForTheme()` builds the argument; this call never
+        /// decides the colors itself.
+        #[qinvokable]
+        #[cxx_name = "setPalette"]
+        fn set_palette(self: Pin<&mut TerminalSupervisor>, palette: FfiTerminalPalette);
 
         /// Forward keystrokes (already translated to the byte sequence a
         /// shell expects by the view) to `session_id`'s PTY stdin.
         #[qinvokable]
         #[cxx_name = "write"]
         fn write(self: Pin<&mut TerminalSupervisor>, session_id: u64, input: &QString);
+
+        /// Translate one key press to the xterm bytes a shell expects
+        /// (`terminal_core::keys::encode`, honoring `session_id`'s current
+        /// application-cursor-key mode) and write them to its PTY stdin
+        /// (Task T4). `code_point` is a Unicode code point for
+        /// `FfiTerminalKey::Char`, or the function-key number (1-12) for
+        /// `FfiTerminalKey::F`; meaningless for every other variant.
+        #[qinvokable]
+        #[cxx_name = "sendKey"]
+        fn send_key(
+            self: Pin<&mut TerminalSupervisor>,
+            session_id: u64,
+            key: FfiTerminalKey,
+            code_point: u32,
+            shift: bool,
+            ctrl: bool,
+            alt: bool,
+        );
 
         /// Resize both `session_id`'s PTY and grid — call from
         /// `cpp/terminal_widget.cpp`'s `resizeEvent` whenever the
@@ -2991,36 +3147,61 @@ mod ffi {
         #[cxx_name = "resize"]
         fn resize(self: Pin<&mut TerminalSupervisor>, session_id: u64, rows: u32, cols: u32);
 
+        /// Scroll `session_id`'s viewport by `delta` lines (Task T5):
+        /// positive moves up into history, negative moves back toward live
+        /// output. The raw wheel/keyboard gesture — `terminal-core` clamps
+        /// the result, so the view never has to. `&self`, not
+        /// `Pin<&mut Self>`: the emulator this mutates lives behind the
+        /// `Arc<Mutex<..>>` `with_emulator` locks, the same reasoning
+        /// `selectionStart`/`selectionUpdate` already document. The caller
+        /// must still set `snapshotStale_` and repaint — this is a
+        /// synchronous, widget-driven call, not PTY output, so it does not
+        /// go through `gridUpdated`.
+        #[qinvokable]
+        #[cxx_name = "scroll"]
+        fn scroll(self: &TerminalSupervisor, session_id: u64, delta: i32);
+
+        /// Scroll `session_id`'s viewport to an absolute offset from the
+        /// bottom (0 = live) — what dragging the scrollbar thumb to a
+        /// position means (Task T5).
+        #[qinvokable]
+        #[cxx_name = "scrollTo"]
+        fn scroll_to(self: &TerminalSupervisor, session_id: u64, offset: u64);
+
+        /// Snap `session_id`'s viewport back to live output (Task T5) —
+        /// called after every keystroke (`sendKey`/`write`) and by
+        /// Shift+End, matching every other terminal.
+        #[qinvokable]
+        #[cxx_name = "scrollToBottom"]
+        fn scroll_to_bottom(self: &TerminalSupervisor, session_id: u64);
+
+        /// How far back `session_id`'s history goes, and how far the
+        /// viewport is currently scrolled into it (Task T5) — what the
+        /// scrollbar's range/value are derived from.
+        #[qinvokable]
+        #[cxx_name = "scrollState"]
+        fn scroll_state(self: &TerminalSupervisor, session_id: u64) -> FfiScrollState;
+
+        /// Whether `session_id`'s running application is on the alternate
+        /// screen (Task T5) — `vim`/`less`/other full-screen TUIs. The
+        /// widget reads this to decide whether the mouse wheel should
+        /// scroll history (normal screen) or send arrow keys to the app
+        /// (alt screen), matching every other terminal.
+        #[qinvokable]
+        #[cxx_name = "altScreen"]
+        fn alt_screen(self: &TerminalSupervisor, session_id: u64) -> bool;
+
         /// Pull-based grid read (Qt thread only — never touches the PTY):
-        /// `cpp/terminal_widget.cpp`'s paint routine calls this in response
-        /// to `gridUpdated`, same "signal says refresh, invokable getter
-        /// hands over the data" shape `ClassViewPanel` already uses for
-        /// `tabOutline`. Cells are `gridRows() * gridCols()` long, row-major
-        /// — flattened because cxx has no `Vec<Vec<T>>` support; the view
-        /// reshapes using `gridCols()`.
+        /// `cpp/terminal_widget.cpp`'s paint routine calls this once,
+        /// caches the result, and only calls it again when its
+        /// `snapshotStale_` flag says the cache is out of date (T2) — set by
+        /// `gridUpdated`, a selection change, or a resize. One call replaces
+        /// what used to be five (`gridCells`/`gridRows`/`gridCols`/
+        /// `cursorRow`/`cursorCol`), each re-snapshotting the grid on every
+        /// single repaint.
         #[qinvokable]
-        #[cxx_name = "gridCells"]
-        fn grid_cells(self: &TerminalSupervisor, session_id: u64) -> Vec<FfiTerminalCell>;
-
-        /// Row count of the snapshot `gridCells()` would return right now.
-        #[qinvokable]
-        #[cxx_name = "gridRows"]
-        fn grid_rows(self: &TerminalSupervisor, session_id: u64) -> u32;
-
-        /// Column count of the snapshot `gridCells()` would return right now.
-        #[qinvokable]
-        #[cxx_name = "gridCols"]
-        fn grid_cols(self: &TerminalSupervisor, session_id: u64) -> u32;
-
-        /// Cursor's current row, zero-indexed from the top.
-        #[qinvokable]
-        #[cxx_name = "cursorRow"]
-        fn cursor_row(self: &TerminalSupervisor, session_id: u64) -> u32;
-
-        /// Cursor's current column, zero-indexed from the left.
-        #[qinvokable]
-        #[cxx_name = "cursorCol"]
-        fn cursor_col(self: &TerminalSupervisor, session_id: u64) -> u32;
+        #[cxx_name = "snapshot"]
+        fn snapshot(self: &TerminalSupervisor, session_id: u64) -> FfiTerminalSnapshot;
 
         /// Begin a mouse selection at a grid cell (Task F4). `right_half`
         /// is which half of the cell the click landed on, which decides
@@ -3091,6 +3272,15 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "gridUpdated"]
         fn grid_updated(self: Pin<&mut TerminalSupervisor>, session_id: u64);
+
+        /// Emitted on the Qt thread once `refreshShells()`'s background
+        /// detect has landed and the cache `availableShells()` reads is
+        /// up to date. The dock's shell menu rebuilds from this only while
+        /// it is visible; the settings page's combo, built once per dialog
+        /// open, does not listen.
+        #[qsignal]
+        #[cxx_name = "shellsChanged"]
+        fn shells_changed(self: Pin<&mut TerminalSupervisor>);
     }
 
     // Enables `self.qt_thread()` on `TerminalSupervisor` for the background
@@ -3401,20 +3591,6 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "restartServer"]
         fn restart_server(self: Pin<&mut LanguageService>, language_id: &QString);
-
-        /// Every known diagnostic, grouped by file and ordered within it.
-        #[qinvokable]
-        fn diagnostics(self: &LanguageService) -> Vec<FfiDiagnostic>;
-
-        /// Just one file's diagnostics — what an editor underlines.
-        #[qinvokable]
-        #[cxx_name = "diagnosticsForFile"]
-        fn diagnostics_for_file(self: &LanguageService, path: &QString) -> Vec<FfiDiagnostic>;
-
-        /// Counts per severity, for the status bar and the filter buttons.
-        #[qinvokable]
-        #[cxx_name = "diagnosticCounts"]
-        fn diagnostic_counts(self: &LanguageService) -> FfiDiagnosticCounts;
 
         /// Whether a server is configured, enabled and started for this
         /// file's language — the difference between "no problems" and "no
@@ -4178,6 +4354,319 @@ mod ffi {
     // Enables `self.qt_thread()` on `LanguageService` for the LSP listener
     // thread's one cross-thread hop, same pattern as `SearchModel` above.
     impl cxx_qt::Threading for LanguageService {}
+
+    extern "RustQt" {
+        /// The one Problems model (ADR-0046): every diagnostic, from every
+        /// source, that `LanguageService` and `BuildService` have published
+        /// into the shared store. The Problems dock and the editor's
+        /// squiggles read only this — `LanguageService`/`BuildService` keep
+        /// their own `diagnosticsChanged` signals (meaning "my part of the
+        /// store changed"), but no longer answer "what are the
+        /// diagnostics" themselves.
+        ///
+        /// No worker thread of its own — reading the shared store never
+        /// blocks — so this QObject has no `cxx_qt::Threading` impl.
+        #[qobject]
+        type DiagnosticsService = super::DiagnosticsServiceRust;
+
+        /// Every known diagnostic, grouped by file and ordered within it.
+        #[qinvokable]
+        fn diagnostics(self: &DiagnosticsService) -> Vec<FfiDiagnostic>;
+
+        /// Just one file's diagnostics — what an editor underlines.
+        #[qinvokable]
+        #[cxx_name = "diagnosticsForFile"]
+        fn diagnostics_for_file(self: &DiagnosticsService, path: &QString) -> Vec<FfiDiagnostic>;
+
+        /// Counts per severity, for the status bar and the filter buttons.
+        #[qinvokable]
+        #[cxx_name = "diagnosticCounts"]
+        fn diagnostic_counts(self: &DiagnosticsService) -> FfiDiagnosticCounts;
+    }
+
+    /// `analysis_core::AnalyzerStatus`'s discriminant, crossed separately
+    /// from its sentence (`FfiAnalyzerRow::status_text`) so the status
+    /// bar's colour/icon choice is a `match` on this, translation the view
+    /// is allowed, rather than pattern-matching English text — which would
+    /// be a business decision leaking into `cpp/`.
+    enum FfiAnalyzerStatusKind {
+        Detected,
+        DeclaredNotInstalled,
+        NotDetected,
+    }
+
+    /// One row of the Analysis settings page and the status bar's
+    /// per-analyzer indicator (the PHP tooling plan's B7-B9): an
+    /// analyzer's configuration joined with its live detection status.
+    struct FfiAnalyzerRow {
+        id: QString,
+        name: QString,
+        enabled: bool,
+        /// `settings_model::analysis::Trigger::id()` — what a settings-page
+        /// edit writes back.
+        #[cxx_name = "triggerId"]
+        trigger_id: QString,
+        /// `Trigger::label()` — what the dropdown shows.
+        #[cxx_name = "triggerLabel"]
+        trigger_label: QString,
+        #[cxx_name = "statusKind"]
+        status_kind: FfiAnalyzerStatusKind,
+        /// `analysis_core::AnalyzerStatus::describe`'s sentence — detected,
+        /// declared-but-not-installed, or not detected.
+        #[cxx_name = "statusText"]
+        status_text: QString,
+    }
+
+    extern "RustQt" {
+        /// Runs analyzer jobs on worker threads (`analysis_core::Scheduler`)
+        /// and publishes their findings into the one Problems model
+        /// (ADR-0046), the PHP tooling plan's B8. One registered `#[qobject]`
+        /// per ADR-0032's precedent.
+        #[qobject]
+        type AnalysisService = super::AnalysisServiceRust;
+
+        /// Every contributed analyzer's configuration and live detection
+        /// status, for the settings page and the status bar.
+        #[qinvokable]
+        #[cxx_name = "analyzerRows"]
+        fn analyzer_rows(self: &AnalysisService) -> Vec<FfiAnalyzerRow>;
+
+        /// Whether "Inspect Project" is already running.
+        #[qinvokable]
+        #[cxx_name = "isInspecting"]
+        fn is_inspecting(self: &AnalysisService) -> bool;
+
+        /// Run every enabled, installed analyzer against the whole open
+        /// project (`Trigger::Manual`). Answers via `analysisStarted`, one
+        /// `analyzerStarted`/`analyzerFinished` pair per analyzer, then
+        /// `analysisFinished`.
+        #[qinvokable]
+        #[cxx_name = "inspectProject"]
+        fn inspect_project(self: Pin<&mut AnalysisService>) -> FfiResult;
+
+        /// A project-wide analysis run began.
+        #[qsignal]
+        #[cxx_name = "analysisStarted"]
+        fn analysis_started(self: Pin<&mut AnalysisService>);
+
+        /// One analyzer in the batch started running.
+        #[qsignal]
+        #[cxx_name = "analyzerStarted"]
+        fn analyzer_started(self: Pin<&mut AnalysisService>, analyzer_id: QString);
+
+        /// One analyzer in the batch finished. `ok` is false for a run
+        /// failure (not found, timed out, an I/O error) — never for the
+        /// tool having found something to report, which is success.
+        #[qsignal]
+        #[cxx_name = "analyzerFinished"]
+        fn analyzer_finished(
+            self: Pin<&mut AnalysisService>,
+            analyzer_id: QString,
+            ok: bool,
+            message: QString,
+        );
+
+        /// The whole batch finished — every queued analyzer has reported.
+        #[qsignal]
+        #[cxx_name = "analysisFinished"]
+        fn analysis_finished(self: Pin<&mut AnalysisService>);
+
+        /// This analyzer's rows in the shared store (ADR-0046) changed —
+        /// the same "my part of the store changed" meaning `LanguageService`
+        /// and `BuildService` already give their own `diagnosticsChanged`.
+        /// `EditorTabs::applyDiagnostics` and `ProblemsPanel::refresh` both
+        /// wire to this alongside the other two sources, so an analyzer
+        /// finding reaches the editor's squiggles and the Problems dock the
+        /// same way a build's or a language server's does — the finding-1
+        /// bug class ADR-0046 exists to prevent, for this third source too.
+        #[qsignal]
+        #[cxx_name = "diagnosticsChanged"]
+        fn diagnostics_changed(self: Pin<&mut AnalysisService>);
+    }
+
+    impl cxx_qt::Threading for AnalysisService {}
+
+    /// One row of the Analysis settings page (B9): an analyzer's enabled
+    /// flag and trigger, as edited by `AnalysisEditor`.
+    struct FfiAnalysisRow {
+        id: QString,
+        name: QString,
+        enabled: bool,
+        #[cxx_name = "triggerId"]
+        trigger_id: QString,
+        #[cxx_name = "triggerLabel"]
+        trigger_label: QString,
+    }
+
+    extern "RustQt" {
+        /// Settings > Analysis (B9): the draft the page edits, following
+        /// `LanguageServerEditor`'s begin_edit(scope)/rows/set_*/is_dirty/
+        /// commit shape.
+        #[qobject]
+        type AnalysisEditor = super::AnalysisEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &AnalysisEditor, scope: &QString);
+
+        #[qinvokable]
+        fn rows(self: &AnalysisEditor) -> Vec<FfiAnalysisRow>;
+
+        #[qinvokable]
+        #[cxx_name = "setEnabled"]
+        fn set_enabled(self: &AnalysisEditor, id: &QString, enabled: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setTrigger"]
+        fn set_trigger(self: &AnalysisEditor, id: &QString, trigger_id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "isDirty"]
+        fn is_dirty(self: &AnalysisEditor, id: &QString) -> bool;
+
+        #[qinvokable]
+        fn commit(self: &AnalysisEditor);
+    }
+
+    /// Whether a Tests dock row is a suite/class grouping or a leaf test
+    /// method — `test_core::NodeKind` crossed the seam.
+    enum FfiTestNodeKind {
+        Suite,
+        Test,
+    }
+
+    /// Where a Tests dock row stands — `test_core::TestStatus` crossed the
+    /// seam, kept as its own enum (rather than reusing `FfiSeverity`) since
+    /// a test's states (running, skipped) have no diagnostic-severity
+    /// analogue.
+    enum FfiTestStatusKind {
+        Failed,
+        Running,
+        Pending,
+        Passed,
+        Skipped,
+    }
+
+    /// One row of the Tests dock's tree (D4/D5): a flattened
+    /// `test_core::TestNode`, parent-qualified rather than nested, since a
+    /// `QTreeWidget` builds its own hierarchy from `parentId` the same way
+    /// `ProjectTreeModel`'s rows do.
+    struct FfiTestNode {
+        id: QString,
+        #[cxx_name = "parentId"]
+        parent_id: QString,
+        name: QString,
+        kind: FfiTestNodeKind,
+        status: FfiTestStatusKind,
+        /// `-1` when the node has not finished (no duration yet) — a
+        /// sentinel rather than a second `has_duration` bool, matching
+        /// `FfiAnalyzerRow`-adjacent rows that use a sentinel for "absent"
+        /// on a field a view only ever displays, never computes with.
+        #[cxx_name = "durationMs"]
+        duration_ms: i64,
+        #[cxx_name = "hasFailure"]
+        has_failure: bool,
+    }
+
+    extern "RustQt" {
+        /// Runs the project's test framework on worker threads
+        /// (`test_core::runner::run`), streaming TeamCity messages into a
+        /// `test_core::TestTree` and publishing failures into the one
+        /// Problems model (D3/ADR-0046) — the PHP tooling plan's D4. One
+        /// registered `#[qobject]` owning a `HashMap` of in-flight runs,
+        /// mirroring `BuildService`'s shape: a run is a single process read
+        /// to completion or a stop, not a queue of short operations.
+        #[qobject]
+        type TestService = super::TestServiceRust;
+
+        /// Every node of the current tree, flattened — the Tests dock's
+        /// tree widget. Empty before any run this session.
+        #[qinvokable]
+        fn nodes(self: &TestService) -> Vec<FfiTestNode>;
+
+        /// The failing node's assertion message, for the failure pane's
+        /// header line. Empty when the node has no failure or does not
+        /// exist.
+        #[qinvokable]
+        #[cxx_name = "failureMessage"]
+        fn failure_message(self: &TestService, node_id: &QString) -> QString;
+
+        /// The failing node's raw detail text (stack trace/diff) — where
+        /// `run_core::links::resolve_link` (D5) finds a clickable
+        /// `file:line`.
+        #[qinvokable]
+        #[cxx_name = "failureDetails"]
+        fn failure_details(self: &TestService, node_id: &QString) -> QString;
+
+        /// Resolve a `file:line` at `byte_offset` into this node's failure
+        /// details — the failure pane's click-to-open, same contract as
+        /// `RunService::resolveLink`.
+        #[qinvokable]
+        #[cxx_name = "resolveFailureLink"]
+        fn resolve_failure_link(
+            self: &TestService,
+            node_id: &QString,
+            byte_offset: u32,
+        ) -> FfiResolvedLink;
+
+        /// Whether a run is currently in flight — the toolbar's run/stop
+        /// enablement.
+        #[qinvokable]
+        #[cxx_name = "isRunning"]
+        fn is_running(self: &TestService) -> bool;
+
+        /// Run the whole project's tests with no filter. Replaces whatever
+        /// tree a previous run left behind.
+        #[qinvokable]
+        #[cxx_name = "runAll"]
+        fn run_all(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Rerun every currently `Failed` leaf test, built into one
+        /// `--filter` alternation (D1's `filter-flag`). Refused when
+        /// nothing is currently failing. Every other node's last result
+        /// stays on the tree untouched.
+        #[qinvokable]
+        #[cxx_name = "runFailed"]
+        fn run_failed(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Rerun one node — a single test, or every test under a suite —
+        /// from the tree's context menu (D6).
+        #[qinvokable]
+        #[cxx_name = "runNode"]
+        fn run_node(self: Pin<&mut TestService>, node_id: &QString) -> FfiResult;
+
+        /// Stop the run in progress, if any.
+        #[qinvokable]
+        fn stop(self: Pin<&mut TestService>);
+
+        /// A run began.
+        #[qsignal]
+        #[cxx_name = "testRunStarted"]
+        fn test_run_started(self: Pin<&mut TestService>);
+
+        /// The tree changed — a status, a duration, a new node. The view
+        /// re-reads `nodes()` rather than the signal carrying a payload,
+        /// the same rule `AnalysisService::analyzerFinished` follows for
+        /// its own list.
+        #[qsignal]
+        #[cxx_name = "testTreeChanged"]
+        fn test_tree_changed(self: Pin<&mut TestService>);
+
+        /// A chunk of the run's raw output, for the dock's output pane.
+        #[qsignal]
+        #[cxx_name = "testOutputAppended"]
+        fn test_output_appended(self: Pin<&mut TestService>, text: QString);
+
+        /// The run finished. `ok` is false for a run failure (not found,
+        /// an I/O error) — a nonzero *test* exit code (failures found) is
+        /// still `ok`, the same distinction `AnalysisService::
+        /// analyzerFinished` draws.
+        #[qsignal]
+        #[cxx_name = "testRunFinished"]
+        fn test_run_finished(self: Pin<&mut TestService>, ok: bool, message: QString);
+    }
+
+    impl cxx_qt::Threading for TestService {}
 
     /// One row of the Syntax Colors tree (T4).
     ///
@@ -5872,13 +6361,6 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "isBuilding"]
         fn is_building(self: &BuildService) -> bool;
-
-        /// What the last build said, in the shape the Problems dock already
-        /// renders for a language server's diagnostics; `source` names the
-        /// build tool, so the two are never confused. Cleared when a new
-        /// build starts.
-        #[qinvokable]
-        fn diagnostics(self: &BuildService) -> Vec<FfiDiagnostic>;
 
         /// A build started. `command` is what is being run, for the dock's
         /// header.

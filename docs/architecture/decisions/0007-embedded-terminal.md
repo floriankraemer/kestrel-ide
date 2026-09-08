@@ -89,6 +89,7 @@ No `tokio` or other async runtime in `pty-core` or `terminal-core`; `tokio` stay
   Both the viewport-row-to-`Line` mapping F4's selection and link lookup depend on and the
   "a resize clears the selection" rule rest on that invariant, which is asserted in debug
   builds — adding scrollback means revisiting both.
+  This limitation is closed — see "Rendering pipeline, palette, keys, scrollback" below.
 - The `WindowsShellKind` enum only names the shell; nothing in `pty-core` verifies the named
   executable actually exists on the target machine before spawning, that's a caller-side
   concern for whichever task builds the terminal dock widget's shell-picker (F3 or later).
@@ -109,6 +110,24 @@ Two consequences worth writing down:
   A machine that had `fish` yesterday is a normal thing to find, and a terminal that refuses to open because of it would be worse than one that opens `bash`.
 - A new terminal starts in the open project's root, not the IDE process's working directory.
   The old behaviour also quietly contradicted `TerminalSupervisor::linkAt`, which resolves a relative `file:line` against the project root on the stated grounds that this is where a terminal starts.
+
+## Rendering pipeline, palette, keys, scrollback (2026-09-08, later addition)
+
+`docs/architecture/terminal-experience-plan.md` closed four remaining gaps against a JetBrains-quality terminal, without moving anything across the humble-view line this ADR drew.
+
+- **Rendering.** The seam carried five full-grid accessors per paint (`gridRows`/`gridCols`/`gridCells`/`cursorRow`/`cursorCol`); it now carries one, `snapshot(session_id) -> FfiTerminalSnapshot`, with `cells: Vec<FfiTerminalCell>` nested directly in the cxx shared struct.
+  The reader thread's `feed` no longer emits one `grid_updated` per read: an `Arc<AtomicBool>` coalesces bursts into at most one signal in flight per session (swap-before-queue, store-before-emit), and its read buffer grew from 4 KiB to 64 KiB.
+  `TerminalWidget` caches the last snapshot behind a `snapshotStale_` flag and repaints by run — grouping consecutive cells sharing `(fg, bg, bold, italic, underline, selected, is_cursor)` into one `fillRect`/`drawText` pair — instead of one of each per cell.
+- **Palette.** `terminal_core::Palette` (foreground, background, cursor, selection, 16 ANSI colours) replaces the hardcoded ANSI 0-15-only table; `Palette::xterm()` is `Default` and is pinned byte-identical to the old hardcoded values by a dedicated test, so `sgr.rs` and the ANSI-stripped run console (ADR-0032) are unaffected.
+  Indexed colours 16-255 now resolve: the 6×6×6 cube and the greyscale ramp.
+  `theme.cpp::terminalPaletteForTheme` maps the active colour theme to a JetBrains Darcula/light ANSI set, falling back to `ChromePalette` when no editor colours are configured — the same theme-resolution helper the editor already uses, not a second one.
+- **Keys.** `terminal_core::keys::encode(Key, Modifiers, app_cursor) -> Option<String>` is the one place xterm's key encodings are decided — arrow/Home/End's `CSI`-vs-`SS3` split on app-cursor mode, modified-key `CSI 1;{m}` parameters, F-key `SS3`/`CSI ~` sequences, Ctrl/Alt encoding.
+  `TerminalWidget::keyPressEvent` is a `Qt::Key -> FfiTerminalKey` switch and nothing more; a `ShortcutOverride` handler keeps arrows/Tab/Home/End/PageUp/PageDown reaching the terminal instead of Qt's focus chain, while leaving Ctrl+` (dock toggle) and Ctrl+Shift+C/V (copy/paste) alone.
+- **Scrollback.** `alacritty_terminal`'s 10,000-line history is reachable: `scroll`/`scroll_to`/`scroll_to_bottom`/`scroll_state` wrap `Term::scroll_display`, and the two `debug_assert_eq!(display_offset, 0)` tripwires this ADR's Consequences section named are gone — `point_at`/`link_at` map a viewport row through `display_offset` instead of assuming it is zero.
+  The widget adds a `QScrollBar`, wheel-to-scroll (redirected to Up/Down key presses while `alt_screen()` is true, so `vim`/`less` still get arrow keys instead of a view scroll), and Shift+PgUp/PgDn/Home/End.
+  Any key input scrolls back to the bottom, matching every other terminal's behaviour.
+
+None of this moved logic across the seam: encoding, palette resolution, and scroll-offset math are still Qt-free and unit-tested in `terminal-core`; `bridge.rs` still only translates; `cpp/` still only paints and forwards input.
 
 ## Related
 

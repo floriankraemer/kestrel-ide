@@ -49,9 +49,9 @@ jobs:
             fi
           }
           for crate in editor-core project-model app-core pty-core terminal-core \
-                       app-config index-core mcp-server lsp-core ai-chat-core \
+                       app-config index-core diagnostics-core mcp-server lsp-core ai-chat-core \
                        plugin-api icon-theme plugin-host run-core build-core dap-core \
-                       stdio-framing; do
+                       stdio-framing process-exec; do
             check "$crate" qt
           done
           for crate in pty-core terminal-core index-core lsp-core build-core dap-core; do

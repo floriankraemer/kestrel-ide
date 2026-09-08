@@ -77,17 +77,35 @@ baseline() {
 	# whitespaceOptions/saveWhitespaceOptions just above them already uses.
 	# No split planned.
 	crates/ui-shell/src/bridge/settings.rs) echo 1505 ;;
-	# 1175 -> 1208 across the Git history UI revamp (commit-detail dock,
-	# repo-wide Commit Log panel, File History's buildFileHistoryDock
-	# retrofit): each new dock is one `buildXDock(dockManager, docks,
-	# bottomArea, ...)` call plus its `#include`, following the existing
+	# Raised from the 1200 ceiling by 11 lines for the PHP tooling plan's
+	# B9: constructing AnalysisEditor/AnalysisService alongside the other
+	# per-window settings-page editors and services, two new
+	# SettingsContext fields, wiring AnalysisService into buildStatusBar,
+	# and the one-line call to buildAnalysisMenu (its own translation
+	# unit, like buildBuildMenu/buildRunMenu). No split planned.
+	# Raised from 1211 by 6 lines for the PHP tooling plan's D5/D6:
+	# constructing TestService alongside the other per-window services,
+	# threading it through buildCentralWidget to build the Tests dock, and
+	# the one-line call to buildTestsMenu (its own translation unit, like
+	# buildBuildMenu/buildAnalysisMenu). No split planned.
+	# Raised from 1217 by 3 lines for the PHP tooling plan's E2: threading
+	# `analysisService` through `buildCentralWidget` into
+	# `wireDiagnosticsService`/`ProblemsPanel` too, so an analyzer's rows
+	# reach the editor's squiggles and the Problems dock the same way a
+	# build's or a language server's already did (ADR-0046's third-source
+	# gap this closes). No split planned.
+	# Raised from 1220 by 8 lines for the Git history UI revamp
+	# (commit-detail dock, repo-wide Commit Log panel, File History's
+	# buildFileHistoryDock retrofit): each new dock is one
+	# `buildXDock(dockManager, docks, bottomArea, ...)` call plus its
+	# `#include`, following the existing
 	# buildCommitLogDock/buildCommitDetailDock/buildFileHistoryDock
 	# pattern — the construction logic itself already lives in each
 	# panel's own .cpp. Further splitting main_window.cpp itself was
 	# already investigated and ruled out (see the extraction-wall note
 	# from the main_window.cpp split down to 1175 lines); no further
 	# split planned here.
-	crates/ui-shell/cpp/main_window.cpp) echo 1208 ;;
+	crates/ui-shell/cpp/main_window.cpp) echo 1228 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

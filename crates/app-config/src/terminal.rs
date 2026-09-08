@@ -62,6 +62,25 @@ pub struct TerminalSettings {
     /// bytes — a settings file that reorders itself is noise in a diff.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub env: BTreeMap<String, String>,
+
+    /// The terminal's own font family (T3), overriding the editor font.
+    /// Empty — the default — means "follow the editor font"
+    /// (`Settings::editor_font_family_or_default`), the same zero-is-unset
+    /// idiom every other field on this struct uses: a terminal that has
+    /// never been given a font of its own should not silently diverge from
+    /// the editor's when the editor font is changed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub font_family: String,
+
+    /// The terminal's own font size in points, `0` meaning "follow the
+    /// editor font size" (`Settings::editor_font_size_or_default`) — same
+    /// idiom as `font_family` above.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub font_size: u32,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl TerminalSettings {
@@ -85,6 +104,8 @@ mod tests {
         assert!(settings.shell_path.is_empty());
         assert!(settings.start_directory.is_empty());
         assert!(settings.env.is_empty());
+        assert!(settings.font_family.is_empty());
+        assert_eq!(settings.font_size, 0);
     }
 
     #[test]
@@ -93,6 +114,8 @@ mod tests {
             shell_id: "wsl:Ubuntu".to_string(),
             shell_args: "-l".to_string(),
             start_directory: "/srv/checkout".to_string(),
+            font_family: "Fira Code".to_string(),
+            font_size: 12,
             ..TerminalSettings::default()
         };
         settings

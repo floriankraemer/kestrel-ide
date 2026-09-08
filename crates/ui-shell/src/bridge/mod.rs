@@ -37,10 +37,12 @@
 // grows multi-bridge or incremental support for this pattern.
 
 pub mod ai;
+pub mod analysis;
 pub mod app_info;
 pub mod build;
 pub mod convert;
 pub mod debug;
+pub mod diagnostics;
 pub mod editor;
 pub mod editor_ops;
 pub mod errors;
@@ -55,6 +57,7 @@ pub mod run;
 pub mod search;
 pub mod settings;
 pub mod terminal;
+pub mod testing;
 pub mod tree;
 pub mod vcs;
 pub mod window_state;

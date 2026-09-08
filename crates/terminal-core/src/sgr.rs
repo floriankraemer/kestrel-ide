@@ -168,8 +168,11 @@ impl Handler for Sink {
     }
 }
 
+/// A run console has no live terminal's palette to follow — it always
+/// resolves through the fixed xterm 16-color table (`Palette::xterm().ansi`,
+/// this task's hard byte-identical requirement for streamed output).
 fn resolve(color: AnsiColor) -> Option<CellColor> {
-    CellColor::from_ansi_opt(color)
+    CellColor::from_ansi_opt(color, &crate::Palette::xterm().ansi)
 }
 
 #[cfg(test)]

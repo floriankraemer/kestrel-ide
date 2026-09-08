@@ -10,8 +10,12 @@
 //! than depending on `icon-theme` — `app_core::icons` is where the two get
 //! mapped to each other.
 
+mod vscode;
+
 use std::collections::HashMap;
 use std::fmt;
+
+pub use vscode::{parse_vscode_json, resolve_scope, ParsedTokenColor};
 
 /// A 32-bit colour: three colour channels plus alpha, each 0-255.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

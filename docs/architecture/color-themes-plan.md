@@ -11,7 +11,7 @@ through the same `<config_dir>/plugins/` install path a user-supplied theme uses
 | # | Task | Status | Commit |
 |---|------|--------|--------|
 | T1 | `color-theme` crate: `Rgba`, the structs, `parse_toml`, errors + unit tests | Done | this commit |
-| T2 | `color-theme`: `parse_vscode_json`, workbench-key mapping, TextMate→`SCOPES` table + tests | Not started | |
+| T2 | `color-theme`: `parse_vscode_json`, workbench-key mapping, TextMate→`SCOPES` table + tests | Done | this commit |
 | T3 | `plugin-api`: `ColorThemes` point, `ColorThemeContribution`, registry lookup + tests | Not started | |
 | T4 | `syntax-core`: `palette()` takes `ThemeStyles`; delete static tables and `BUILTIN_THEMES` | Not started | |
 | T5 | `core-themes` built-in plugin: the three existing themes as TOML, wired into `builtins.rs` | Not started | |

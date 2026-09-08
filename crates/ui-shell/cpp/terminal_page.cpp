@@ -116,13 +116,22 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
     // font" row.
     auto *fontBox = new QComboBox(page);
     fontBox->addItem(QObject::tr("Editor font"), QString());
-    QStringList monospacedFamilies;
-    for (const QString &family : QFontDatabase::families()) {
-        if (QFontDatabase::isFixedPitch(family)) {
-            monospacedFamilies << family;
+    // Scanning the whole font database (and querying fixed-pitch per family)
+    // takes noticeably long, and this page is rebuilt on every Settings open
+    // and every scope switch — cached for the process lifetime rather than
+    // redone each time. Installed fonts changing mid-session without a
+    // restart picking it up is an acceptable trade for a Settings dialog
+    // that opens instantly.
+    static const QStringList monospacedFamilies = [] {
+        QStringList families;
+        for (const QString &family : QFontDatabase::families()) {
+            if (QFontDatabase::isFixedPitch(family)) {
+                families << family;
+            }
         }
-    }
-    monospacedFamilies.sort(Qt::CaseInsensitive);
+        families.sort(Qt::CaseInsensitive);
+        return families;
+    }();
     for (const QString &family : monospacedFamilies) {
         fontBox->addItem(family, family);
     }

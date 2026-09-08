@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdlib>
+#include <limits>
 
 #include <QAction>
 #include <QApplication>
@@ -23,8 +25,11 @@
 #include <QPaintEvent>
 #include <QPalette>
 #include <QResizeEvent>
+#include <QScrollBar>
 #include <QShowEvent>
+#include <QSignalBlocker>
 #include <QUrl>
+#include <QWheelEvent>
 
 namespace ui_shell {
 
@@ -66,6 +71,13 @@ TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId
     pasteAction_->setShortcutContext(Qt::WidgetShortcut);
     connect(pasteAction_, &QAction::triggered, this, &TerminalWidget::pasteClipboard);
     addAction(pasteAction_);
+
+    // Scrollback (T5): a plain child scrollbar, positioned in
+    // `layoutScrollBar` — this widget paints its own grid rather than using
+    // `QAbstractScrollArea`, so there is no built-in one to reuse.
+    scrollBar_ = new QScrollBar(Qt::Vertical, this);
+    scrollBar_->setRange(0, 0);
+    connect(scrollBar_, &QScrollBar::valueChanged, this, &TerminalWidget::onScrollBarValueChanged);
 
     applyFont();
     applyPalette();
@@ -139,12 +151,19 @@ void TerminalWidget::showEvent(QShowEvent *event)
 void TerminalWidget::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    layoutScrollBar();
     syncGridSizeToWidget();
+}
+
+void TerminalWidget::layoutScrollBar()
+{
+    const int barWidth = scrollBar_->sizeHint().width();
+    scrollBar_->setGeometry(width() - barWidth, 0, barWidth, height());
 }
 
 void TerminalWidget::syncGridSizeToWidget()
 {
-    const int usableWidth = width() - 2 * kPadding;
+    const int usableWidth = width() - 2 * kPadding - scrollBar_->sizeHint().width();
     const int usableHeight = height() - 2 * kPadding;
     const quint32 newCols = static_cast<quint32>(std::max(1, usableWidth / cellWidth_));
     const quint32 newRows = static_cast<quint32>(std::max(1, usableHeight / cellHeight_));
@@ -223,9 +242,12 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
     painter.fillRect(rect(), bgColor_);
 
     // The actual perf win (T2): re-snapshot only when something changed the
-    // grid since the last paint, not on every repaint.
+    // grid since the last paint, not on every repaint. A scroll (T5) sets
+    // this stale too, so the scrollbar's range/value are refreshed here,
+    // alongside the grid it now reflects, rather than as a separate path.
     if (snapshotStale_) {
         cachedSnapshot_ = supervisor_->snapshot(sessionId_);
+        refreshScrollState();
         snapshotStale_ = false;
     }
 
@@ -235,8 +257,14 @@ void TerminalWidget::paintEvent(QPaintEvent *event)
         return;
     }
     const rust::Vec<FfiTerminalCell> &cells = cachedSnapshot_.cells;
-    const quint32 cursorRow = cachedSnapshot_.cursor_row;
-    const quint32 cursorCol = cachedSnapshot_.cursor_col;
+    // Scrolled up into history (T5), the cursor's row/col describe where it
+    // would be on the live screen, not anywhere in the current view — an
+    // out-of-range sentinel keeps every cell's `row == cursorRow` check
+    // false without special-casing `styleFor`'s call site further.
+    const quint32 cursorRow =
+      cachedSnapshot_.cursor_visible ? cachedSnapshot_.cursor_row : std::numeric_limits<quint32>::max();
+    const quint32 cursorCol =
+      cachedSnapshot_.cursor_visible ? cachedSnapshot_.cursor_col : std::numeric_limits<quint32>::max();
     const bool focused = hasFocus();
 
     for (quint32 row = 0; row < rows; ++row) {
@@ -341,6 +369,43 @@ void TerminalWidget::pasteClipboard()
         return;
     }
     supervisor_->paste(sessionId_, text);
+}
+
+void TerminalWidget::refreshScrollState()
+{
+    const FfiScrollState state = supervisor_->scrollState(sessionId_);
+    const quint64 clampedHistory =
+      std::min<quint64>(state.history, static_cast<quint64>(std::numeric_limits<int>::max()));
+    const quint64 clampedOffset = std::min<quint64>(state.offset, clampedHistory);
+    const int history = static_cast<int>(clampedHistory);
+    const int offset = static_cast<int>(clampedOffset);
+
+    // Block the bar's own `valueChanged` while syncing it from the model —
+    // otherwise this would immediately re-enter `onScrollBarValueChanged`
+    // and call `scrollTo` right back, fighting a wheel/keyboard scroll that
+    // is what triggered this refresh in the first place.
+    const QSignalBlocker blocker(scrollBar_);
+    scrollBar_->setRange(0, history);
+    scrollBar_->setValue(history - offset);
+}
+
+void TerminalWidget::scrollLines(int delta)
+{
+    if (delta == 0) {
+        return;
+    }
+    supervisor_->scroll(sessionId_, delta);
+    snapshotStale_ = true;
+    update();
+}
+
+void TerminalWidget::onScrollBarValueChanged(int value)
+{
+    const int history = scrollBar_->maximum();
+    const quint64 offset = static_cast<quint64>(std::max(0, history - value));
+    supervisor_->scrollTo(sessionId_, offset);
+    snapshotStale_ = true;
+    update();
 }
 
 void TerminalWidget::openLink(const FfiTerminalLink &link)
@@ -472,6 +537,30 @@ void TerminalWidget::mouseDoubleClickEvent(QMouseEvent *event)
     // other terminal.
     dragging_ = true;
     update();
+    event->accept();
+}
+
+void TerminalWidget::wheelEvent(QWheelEvent *event)
+{
+    // The alternate screen (T5) means a full-screen app — `vim`, `less`,
+    // `htop` — owns the viewport; there is no history to scroll, so the
+    // wheel becomes the arrow keys those apps already read wheel input as,
+    // matching every other terminal.
+    if (supervisor_->altScreen(sessionId_)) {
+        const int steps = event->angleDelta().y() / 120;
+        if (steps == 0) {
+            QWidget::wheelEvent(event);
+            return;
+        }
+        const FfiTerminalKey key = steps > 0 ? FfiTerminalKey::Up : FfiTerminalKey::Down;
+        for (int i = 0; i < std::abs(steps); ++i) {
+            supervisor_->sendKey(sessionId_, key, 0, false, false, false);
+        }
+        event->accept();
+        return;
+    }
+
+    scrollLines(event->angleDelta().y() / 120 * 3);
     event->accept();
 }
 
@@ -654,6 +743,41 @@ bool TerminalWidget::sendTranslatedKey(QKeyEvent *event)
 
 void TerminalWidget::keyPressEvent(QKeyEvent *event)
 {
+    // Scrollback (T5): Shift+PageUp/PageDown/Home/End are view-side
+    // gestures — they move the viewport, not the shell's own cursor — so
+    // they are handled here directly rather than through
+    // `sendTranslatedKey`/`terminal_core::keys::encode`. The page size is
+    // this widget's own current row count, the same value
+    // `syncGridSizeToWidget` derived it from.
+    if (event->modifiers() == Qt::ShiftModifier) {
+        switch (event->key()) {
+        case Qt::Key_PageUp:
+            scrollLines(static_cast<int>(rows_));
+            event->accept();
+            return;
+        case Qt::Key_PageDown:
+            scrollLines(-static_cast<int>(rows_));
+            event->accept();
+            return;
+        case Qt::Key_Home: {
+            const FfiScrollState state = supervisor_->scrollState(sessionId_);
+            supervisor_->scrollTo(sessionId_, state.history);
+            snapshotStale_ = true;
+            update();
+            event->accept();
+            return;
+        }
+        case Qt::Key_End:
+            supervisor_->scrollToBottom(sessionId_);
+            snapshotStale_ = true;
+            update();
+            event->accept();
+            return;
+        default:
+            break;
+        }
+    }
+
     if (sendTranslatedKey(event)) {
         event->accept();
         return;

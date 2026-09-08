@@ -556,7 +556,14 @@ impl ffi::TerminalSupervisor {
         if let Some(session) = pty_session.as_mut() {
             let _ = session.write(bytes.as_bytes());
         }
-        // TODO(T5): scroll_to_bottom on key input.
+        drop(pty_session);
+        // Typing always returns the view to live output, matching every
+        // other terminal — a keystroke while reading scrollback jumps
+        // straight back to where it lands.
+        self.with_emulator(
+            session_id,
+            terminal_core::TerminalEmulator::scroll_to_bottom,
+        );
     }
 
     pub fn resize(self: Pin<&mut Self>, session_id: u64, rows: u32, cols: u32) {
@@ -578,6 +585,48 @@ impl ffi::TerminalSupervisor {
                 emulator.resize(terminal_core::GridSize::new(rows as usize, cols as usize));
             }
         }
+    }
+
+    /// Scroll `session_id`'s viewport by `delta` lines (T5). A no-op on an
+    /// unknown or not-yet-started session, the same tolerance every other
+    /// `with_emulator`-based invokable in this file has for a stale id.
+    pub fn scroll(&self, session_id: u64, delta: i32) {
+        self.with_emulator(session_id, |emulator| emulator.scroll(delta));
+    }
+
+    /// Scroll `session_id`'s viewport to an absolute offset from the bottom
+    /// (T5) — what dragging the scrollbar thumb to a position means.
+    pub fn scroll_to(&self, session_id: u64, offset: u64) {
+        self.with_emulator(session_id, |emulator| emulator.scroll_to(offset as usize));
+    }
+
+    /// Snap `session_id`'s viewport back to live output (T5).
+    pub fn scroll_to_bottom(&self, session_id: u64) {
+        self.with_emulator(
+            session_id,
+            terminal_core::TerminalEmulator::scroll_to_bottom,
+        );
+    }
+
+    /// How far back `session_id`'s history goes, and how far the viewport
+    /// is currently scrolled into it (T5) — what the scrollbar's
+    /// range/value are derived from. `Default` (`history: 0, offset: 0`)
+    /// for an unknown or not-yet-started session, same "empty snapshot"
+    /// convention `snapshot()` itself uses.
+    pub fn scroll_state(&self, session_id: u64) -> ffi::FfiScrollState {
+        self.with_emulator(session_id, |emulator| emulator.scroll_state())
+            .map(|state| ffi::FfiScrollState {
+                history: state.history as u64,
+                offset: state.offset as u64,
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether `session_id`'s running application is on the alternate
+    /// screen (T5) — `false` for an unknown or not-yet-started session.
+    pub fn alt_screen(&self, session_id: u64) -> bool {
+        self.with_emulator(session_id, |emulator| emulator.alt_screen())
+            .unwrap_or(false)
     }
 
     /// The grid, flattened for the FFI seam (T2): one call replaces what
@@ -603,6 +652,7 @@ impl ffi::TerminalSupervisor {
             cols,
             cursor_row: grid.cursor.row as u32,
             cursor_col: grid.cursor.col as u32,
+            cursor_visible: grid.cursor_visible,
             cells: grid
                 .rows
                 .into_iter()

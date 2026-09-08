@@ -23,7 +23,7 @@ Living status table — update the relevant row **in the same commit** that fini
 | T2 — One snapshot, coalesced repaints, run-based painting | done | c24bae6 |
 | T3 — Font, padding, palette, 256 colours | done | 2e9386a |
 | T4 — Full keyboard translation, in terminal-core | done | this commit |
-| T5 — Scrollback | open | |
+| T5 — Scrollback | done | this commit |
 | T6 — Docs and plan bookkeeping | open | |
 
 ## Decisions worth keeping

@@ -414,13 +414,29 @@ mod ffi {
     /// call `cpp/terminal_widget.cpp`'s `paintEvent` makes when (and only
     /// when) it is about to repaint. `cells` is `rows * cols` long,
     /// row-major, same flattening convention the old `gridCells` used.
+    ///
+    /// `cursor_visible` (T5): false while the viewport is scrolled up into
+    /// history, so the view knows not to paint the cursor block over
+    /// unrelated history text — `terminal_core::Grid::cursor_visible`'s own
+    /// doc comment has the full reasoning.
     #[derive(Default)]
     struct FfiTerminalSnapshot {
         rows: u32,
         cols: u32,
         cursor_row: u32,
         cursor_col: u32,
+        cursor_visible: bool,
         cells: Vec<FfiTerminalCell>,
+    }
+
+    /// Scrollback position (T5): how far back the buffer goes, and how far
+    /// the viewport is currently scrolled into it. 1:1 with
+    /// `terminal_core::ScrollState`. The view derives its scrollbar's
+    /// range/value from this, refetched alongside `FfiTerminalSnapshot`.
+    #[derive(Default)]
+    struct FfiScrollState {
+        history: u64,
+        offset: u64,
     }
 
     /// What a terminal mouse gesture selects (Task F4), 1:1 with
@@ -3099,6 +3115,50 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "resize"]
         fn resize(self: Pin<&mut TerminalSupervisor>, session_id: u64, rows: u32, cols: u32);
+
+        /// Scroll `session_id`'s viewport by `delta` lines (Task T5):
+        /// positive moves up into history, negative moves back toward live
+        /// output. The raw wheel/keyboard gesture — `terminal-core` clamps
+        /// the result, so the view never has to. `&self`, not
+        /// `Pin<&mut Self>`: the emulator this mutates lives behind the
+        /// `Arc<Mutex<..>>` `with_emulator` locks, the same reasoning
+        /// `selectionStart`/`selectionUpdate` already document. The caller
+        /// must still set `snapshotStale_` and repaint — this is a
+        /// synchronous, widget-driven call, not PTY output, so it does not
+        /// go through `gridUpdated`.
+        #[qinvokable]
+        #[cxx_name = "scroll"]
+        fn scroll(self: &TerminalSupervisor, session_id: u64, delta: i32);
+
+        /// Scroll `session_id`'s viewport to an absolute offset from the
+        /// bottom (0 = live) — what dragging the scrollbar thumb to a
+        /// position means (Task T5).
+        #[qinvokable]
+        #[cxx_name = "scrollTo"]
+        fn scroll_to(self: &TerminalSupervisor, session_id: u64, offset: u64);
+
+        /// Snap `session_id`'s viewport back to live output (Task T5) —
+        /// called after every keystroke (`sendKey`/`write`) and by
+        /// Shift+End, matching every other terminal.
+        #[qinvokable]
+        #[cxx_name = "scrollToBottom"]
+        fn scroll_to_bottom(self: &TerminalSupervisor, session_id: u64);
+
+        /// How far back `session_id`'s history goes, and how far the
+        /// viewport is currently scrolled into it (Task T5) — what the
+        /// scrollbar's range/value are derived from.
+        #[qinvokable]
+        #[cxx_name = "scrollState"]
+        fn scroll_state(self: &TerminalSupervisor, session_id: u64) -> FfiScrollState;
+
+        /// Whether `session_id`'s running application is on the alternate
+        /// screen (Task T5) — `vim`/`less`/other full-screen TUIs. The
+        /// widget reads this to decide whether the mouse wheel should
+        /// scroll history (normal screen) or send arrow keys to the app
+        /// (alt screen), matching every other terminal.
+        #[qinvokable]
+        #[cxx_name = "altScreen"]
+        fn alt_screen(self: &TerminalSupervisor, session_id: u64) -> bool;
 
         /// Pull-based grid read (Qt thread only — never touches the PTY):
         /// `cpp/terminal_widget.cpp`'s paint routine calls this once,

@@ -9,7 +9,7 @@
 //! [`TerminalEmulator::feed`].
 
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionRange, SelectionType};
 use alacritty_terminal::term::cell::Flags as CellFlags;
@@ -265,6 +265,22 @@ pub struct CursorPosition {
 pub struct Grid {
     pub rows: Vec<Vec<RenderCell>>,
     pub cursor: CursorPosition,
+    /// Whether the cursor should actually be painted (T5). The live cursor
+    /// only makes sense on the bottom (0-offset) viewport — while scrolled
+    /// up into history, `cursor`'s row/col still point at where the cursor
+    /// *would* land the moment the view returns to live output, and drawing
+    /// a block there would paint it over unrelated history text.
+    pub cursor_visible: bool,
+}
+
+/// Scrollback position: how far back the buffer goes, and how far the
+/// viewport is currently scrolled into it (Task T5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScrollState {
+    /// Lines of history above the live screen.
+    pub history: usize,
+    /// Lines the viewport is scrolled up from the bottom; 0 is live.
+    pub offset: usize,
 }
 
 /// A `http(s)` URL found on one grid row. `start_col..end_col` is a
@@ -526,7 +542,52 @@ impl TerminalEmulator {
                 row: (cursor_point.line.0 + term_grid.display_offset() as i32).max(0) as usize,
                 col: cursor_point.column.0,
             },
+            cursor_visible: term_grid.display_offset() == 0,
         }
+    }
+
+    /// Scroll the viewport by `delta` lines: positive moves up into history,
+    /// negative moves back down toward live output. The raw wheel/keyboard
+    /// gesture — `alacritty_terminal` clamps the result to `0..=history()`
+    /// itself, so a caller need not.
+    pub fn scroll(&mut self, delta: i32) {
+        self.term.scroll_display(Scroll::Delta(delta));
+    }
+
+    /// Scroll the viewport to an absolute offset from the bottom (0 = live).
+    /// `alacritty_terminal` 0.26's `Scroll` enum has no absolute-position
+    /// variant (`Delta`/`PageUp`/`PageDown`/`Top`/`Bottom` only), so this
+    /// computes the `Delta` that gets from the current offset to `offset`.
+    pub fn scroll_to(&mut self, offset: usize) {
+        let current = self.term.grid().display_offset() as i64;
+        let delta = offset as i64 - current;
+        if delta != 0 {
+            self.term.scroll_display(Scroll::Delta(delta as i32));
+        }
+    }
+
+    /// Snap the viewport back to live output — typing does this (see
+    /// `bridge/terminal.rs`'s `send_key`), matching every other terminal.
+    pub fn scroll_to_bottom(&mut self) {
+        self.term.scroll_display(Scroll::Bottom);
+    }
+
+    /// How far back the buffer goes, and how far the viewport is currently
+    /// scrolled into it.
+    pub fn scroll_state(&self) -> ScrollState {
+        let grid = self.term.grid();
+        ScrollState {
+            history: grid.history_size(),
+            offset: grid.display_offset(),
+        }
+    }
+
+    /// Whether the running application is on the alternate screen
+    /// (`\x1b[?1049h`, what `vim`/`less`/full-screen TUIs switch to) — the
+    /// view reads this to decide whether the mouse wheel should scroll
+    /// history or send arrow keys to the app instead (T5).
+    pub fn alt_screen(&self) -> bool {
+        self.term.mode().contains(TermMode::ALT_SCREEN)
     }
 
     /// Whether the running application asked for bracketed paste
@@ -558,21 +619,19 @@ impl TerminalEmulator {
 
     /// Clamp a viewport `(row, col)` from the view to a grid [`Point`].
     ///
-    /// Viewport row `r` maps to `Line(r)` only because this crate has no
-    /// scrollback (`GridSize::total_lines() == screen_lines()`), which pins
-    /// `display_offset` at 0. The assert is the tripwire for the day
-    /// scrollback lands: without it, every mapping here would silently point
-    /// at the wrong line.
+    /// Viewport row `r` maps to `Line(r - display_offset)` (T5): row 0 is
+    /// always the top of whatever is currently visible, which is the live
+    /// screen only while `display_offset == 0` — scrolled up into history,
+    /// the same viewport row names an earlier, more negative `Line`. Matches
+    /// `grid()`'s own `row_idx = point.line + display_offset` mapping, just
+    /// solved for `line` instead of `row_idx`.
     fn point_at(&self, row: usize, col: usize) -> Point {
-        debug_assert_eq!(
-            self.term.grid().display_offset(),
-            0,
-            "viewport row -> Line mapping assumes no scrollback"
-        );
-        let rows = self.term.grid().screen_lines();
-        let cols = self.term.grid().columns();
+        let grid = self.term.grid();
+        let display_offset = grid.display_offset() as i32;
+        let rows = grid.screen_lines();
+        let cols = grid.columns();
         Point::new(
-            Line(row.min(rows.saturating_sub(1)) as i32),
+            Line(row.min(rows.saturating_sub(1)) as i32 - display_offset),
             Column(col.min(cols.saturating_sub(1))),
         )
     }
@@ -630,12 +689,7 @@ impl TerminalEmulator {
         if row >= grid.screen_lines() || col >= grid.columns() {
             return None;
         }
-        debug_assert_eq!(
-            grid.display_offset(),
-            0,
-            "viewport row -> Line mapping assumes no scrollback"
-        );
-        let line = Line(row as i32);
+        let line = Line(row as i32 - grid.display_offset() as i32);
         let text: String = (0..grid.columns())
             .map(|c| grid[Point::new(line, Column(c))].c)
             .collect();
@@ -1161,5 +1215,158 @@ mod tests {
         emulator.resize(GridSize::new(6, 30));
 
         assert!(!emulator.has_selection());
+    }
+
+    // --- scrollback (T5) ---------------------------------------------------
+
+    /// Feed `count` numbered lines (`line000`, `line001`, ...) starting at
+    /// `start`, each terminated with a real CRLF so every one lands on its
+    /// own row and rolls older rows into scrollback once the 5-row grid
+    /// tests below fill up.
+    fn feed_numbered_lines(emulator: &mut TerminalEmulator, start: u32, count: u32) {
+        for i in start..start + count {
+            emulator.feed(format!("line{i:03}\r\n").as_bytes());
+        }
+    }
+
+    /// The numeric suffix of the top visible row's `lineNNN` text — parsed
+    /// rather than hardcoded, so these tests assert *relative* movement
+    /// (scrolling by 2 moves the top row back by 2) instead of depending on
+    /// exactly how alacritty accounts for the trailing empty line after the
+    /// last `\r\n`.
+    fn top_row_line_number(emulator: &TerminalEmulator) -> u32 {
+        let text: String = emulator.grid().rows[0]
+            .iter()
+            .map(|c| c.character)
+            .collect();
+        text.trim()
+            .trim_start_matches("line")
+            .parse()
+            .unwrap_or_else(|_| panic!("top row {text:?} is not a numbered line"))
+    }
+
+    #[test]
+    fn scrolling_up_reveals_earlier_lines() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
+        feed_numbered_lines(&mut emulator, 0, 100);
+        let live_top = top_row_line_number(&emulator);
+
+        emulator.scroll(2);
+
+        assert_eq!(emulator.scroll_state().offset, 2);
+        assert_eq!(top_row_line_number(&emulator), live_top - 2);
+    }
+
+    #[test]
+    fn output_arriving_while_scrolled_does_not_move_the_viewport() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
+        feed_numbered_lines(&mut emulator, 0, 100);
+
+        emulator.scroll(3);
+        assert_eq!(emulator.scroll_state().offset, 3);
+        let scrolled_top = top_row_line_number(&emulator);
+
+        // New output must not yank a scrolled-up view back to live, or a
+        // user reading history would be interrupted by every line a
+        // background process prints. `alacritty_terminal` keeps the exact
+        // same lines on screen by growing `offset` along with `history` as
+        // new rows are appended at the bottom — the number that must not
+        // change is which line is on top, not the raw `offset` count.
+        feed_numbered_lines(&mut emulator, 100, 5);
+
+        assert_ne!(
+            emulator.scroll_state().offset,
+            0,
+            "must not snap back to live output"
+        );
+        assert_eq!(top_row_line_number(&emulator), scrolled_top);
+    }
+
+    #[test]
+    fn scroll_to_bottom_restores_a_zero_offset() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
+        feed_numbered_lines(&mut emulator, 0, 100);
+        emulator.scroll(10);
+        assert_ne!(emulator.scroll_state().offset, 0);
+
+        emulator.scroll_to_bottom();
+
+        assert_eq!(emulator.scroll_state().offset, 0);
+    }
+
+    #[test]
+    fn scroll_to_sets_an_absolute_offset_in_either_direction() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
+        feed_numbered_lines(&mut emulator, 0, 100);
+
+        emulator.scroll_to(20);
+        assert_eq!(emulator.scroll_state().offset, 20);
+
+        // Moving to a smaller offset exercises the negative-delta branch.
+        emulator.scroll_to(5);
+        assert_eq!(emulator.scroll_state().offset, 5);
+    }
+
+    #[test]
+    fn cursor_is_reported_hidden_while_scrolled_and_visible_when_live() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
+        feed_numbered_lines(&mut emulator, 0, 100);
+        assert!(emulator.grid().cursor_visible);
+
+        emulator.scroll(1);
+        assert!(!emulator.grid().cursor_visible);
+
+        emulator.scroll_to_bottom();
+        assert!(emulator.grid().cursor_visible);
+    }
+
+    #[test]
+    fn selection_while_scrolled_selects_the_historical_text_under_it() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 20), Palette::xterm());
+        feed_numbered_lines(&mut emulator, 0, 100);
+        let live_top = top_row_line_number(&emulator);
+
+        emulator.scroll(2);
+        assert_eq!(top_row_line_number(&emulator), live_top - 2);
+
+        // Select the whole top (now-historical) row.
+        emulator.selection_start(0, 0, false, SelectionKind::Line);
+
+        let expected = format!("line{:03}", live_top - 2);
+        assert_eq!(
+            emulator.selection_text().as_deref(),
+            Some(format!("{expected}\n").as_str())
+        );
+    }
+
+    #[test]
+    fn link_at_while_scrolled_finds_a_link_in_history_not_the_live_screen() {
+        let mut emulator = TerminalEmulator::new(GridSize::new(5, 40), Palette::xterm());
+        // A line with a URL, then enough plain lines to push it well into
+        // scrollback.
+        emulator.feed(b"see https://example.com/history\r\n");
+        feed_numbered_lines(&mut emulator, 0, 20);
+
+        // The live (offset 0) screen must not show the link.
+        assert_eq!(emulator.link_at(0, 6), None);
+
+        // Scroll until the URL's line is the top row again.
+        for _ in 0..40 {
+            if emulator
+                .grid()
+                .rows
+                .first()
+                .map(|row| row.iter().map(|c| c.character).collect::<String>())
+                .is_some_and(|text| text.contains("https://"))
+            {
+                break;
+            }
+            emulator.scroll(1);
+        }
+
+        let link = emulator
+            .link_at(0, 6)
+            .expect("the URL should be on the scrolled-to row");
+        assert_eq!(link.url, "https://example.com/history");
     }
 }

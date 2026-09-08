@@ -21,7 +21,9 @@ class QMouseEvent;
 class QPainter;
 class QPaintEvent;
 class QResizeEvent;
+class QScrollBar;
 class QShowEvent;
+class QWheelEvent;
 
 namespace ui_shell {
 
@@ -99,6 +101,10 @@ protected:
     // outline), so a focus change alone has to trigger a repaint.
     void focusInEvent(QFocusEvent *event) override;
     void focusOutEvent(QFocusEvent *event) override;
+    // Scrollback (T5): the wheel scrolls history, except on the alternate
+    // screen (`vim`/`less`), where it becomes arrow keys instead — see the
+    // .cpp's doc comment.
+    void wheelEvent(QWheelEvent *event) override;
 
 private:
     // One run of consecutive same-styled cells within a row, the unit
@@ -160,6 +166,20 @@ private:
     void pasteClipboard();
     void openLink(const FfiTerminalLink &link);
 
+    // Scrollback (T5). `layoutScrollBar` positions it against the widget's
+    // right edge (called from `resizeEvent`, alongside the grid-size sync);
+    // `refreshScrollState` re-reads `supervisor_->scrollState()` and updates
+    // the bar's range/value without re-entering `onScrollBarValueChanged`
+    // (it blocks the bar's own signal while doing so — otherwise dragging
+    // the thumb and a `gridUpdated`-driven refresh would fight each other).
+    // `scrollLines` is the one place wheel/Shift+PgUp/PgDn/Home/End funnel
+    // through: it calls the FFI scroll, marks the snapshot stale, refreshes
+    // the bar, and repaints.
+    void layoutScrollBar();
+    void refreshScrollState();
+    void scrollLines(int delta);
+    void onScrollBarValueChanged(int value);
+
     // Refresh `hoverLink_` for a mouse position, repainting when the
     // hovered span changed. Links only light up while Ctrl is held, so a
     // plain drag over output never turns into a link gesture.
@@ -217,12 +237,16 @@ private:
 
     // The last snapshot fetched from `supervisor_->snapshot()`, and whether
     // it is still current (T2). `paintEvent` re-fetches only when this is
-    // true — set by `gridUpdated`, a selection change, and a resize; a
-    // future scroll offset (T5) sets it too, which is the whole reason this
-    // is a flag `paintEvent` checks rather than an unconditional per-frame
-    // fetch.
+    // true — set by `gridUpdated`, a selection change, a resize, and now a
+    // scroll (T5), which is the whole reason this is a flag `paintEvent`
+    // checks rather than an unconditional per-frame fetch.
     FfiTerminalSnapshot cachedSnapshot_{};
     bool snapshotStale_ = true;
+
+    // Scrollback (T5): a plain vertical scrollbar this widget positions
+    // itself in `layoutScrollBar` (not a `QAbstractScrollArea`, which this
+    // custom-painted grid isn't one of).
+    QScrollBar *scrollBar_ = nullptr;
 };
 
 } // namespace ui_shell

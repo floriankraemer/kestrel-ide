@@ -14,97 +14,15 @@
 #include <QPixmap>
 #include <QWidget>
 
-#include <array>
 #include <utility>
 
 namespace ui_shell {
 
 namespace {
 
-// `top` at `alpha` composited over `base`, as a solid colour — see the
-// ChromePalette comment in theme.h for why the spec's rgba() values are
-// flattened here rather than written into the stylesheet.
-QColor over(const QColor &base, const QColor &top, double alpha)
-{
-    auto mix = [alpha](int b, int t) { return static_cast<int>(b + (t - b) * alpha + 0.5); };
-    return QColor(mix(base.red(), top.red()), mix(base.green(), top.green()),
-                  mix(base.blue(), top.blue()));
-}
-
 QColor hex(const char *value)
 {
     return QColor(QString::fromLatin1(value));
-}
-
-// The mockup's `#stage[data-mocktheme="dark"]` block, verbatim.
-ChromePalette darkPalette()
-{
-    ChromePalette p;
-    p.canvas = hex("#1e1f22");
-    p.surface = hex("#2b2d30");
-    p.surface2 = hex("#26282b");
-    p.raised = hex("#2f3136");
-    p.border = over(p.surface, Qt::white, 0.09);
-    p.text = hex("#dfe1e5");
-    p.textDim = hex("#8a8f98");
-    p.accent = hex("#3574f0");
-    p.accentInk = Qt::white;
-    p.selection = over(p.surface2, p.accent, 0.28);
-    p.statusBar = p.surface;
-    // A QSS `image:` can only be a file, so the one arrow glyph is a
-    // resource per theme rather than a runtime-tinted mask (resources/icons).
-    p.chevron = QStringLiteral(":/ui/icons/chevron_dark.png");
-    p.shadow = Qt::black;
-    p.shadowOpacity = 0.30;
-    return p;
-}
-
-// The mockup's `#stage[data-mocktheme="light"]` block, verbatim.
-ChromePalette lightPalette()
-{
-    ChromePalette p;
-    p.canvas = hex("#f7f8fa");
-    p.surface = Qt::white;
-    p.surface2 = hex("#f0f2f4");
-    p.raised = hex("#e6e9ed");
-    p.border = over(p.surface, hex("#0f172a"), 0.10);
-    p.text = hex("#1f2328");
-    p.textDim = hex("#6b7178");
-    p.accent = hex("#3574f0");
-    p.accentInk = Qt::white;
-    p.selection = over(p.surface2, p.accent, 0.14);
-    p.statusBar = p.surface;
-    // A QSS `image:` can only be a file, so the one arrow glyph is a
-    // resource per theme rather than a runtime-tinted mask (resources/icons).
-    p.chevron = QStringLiteral(":/ui/icons/chevron_light.png");
-    p.shadow = hex("#0f172a");
-    p.shadowOpacity = 0.18;
-    return p;
-}
-
-// Dark+ (default dark) as VS Code ships it, mapped onto the same roles so it
-// wears the blend chrome shape with its own colours — including the blue
-// status bar that makes it recognisable.
-ChromePalette vscodeDarkPalette()
-{
-    ChromePalette p;
-    p.canvas = hex("#1e1e1e");
-    p.surface = hex("#252526");
-    p.surface2 = hex("#252526");
-    p.raised = hex("#2a2d2e");
-    p.border = hex("#3c3c3c");
-    p.text = hex("#cccccc");
-    p.textDim = hex("#969696");
-    p.accent = hex("#007acc");
-    p.accentInk = Qt::white;
-    p.selection = hex("#264f78");
-    p.statusBar = hex("#007acc");
-    // A QSS `image:` can only be a file, so the one arrow glyph is a
-    // resource per theme rather than a runtime-tinted mask (resources/icons).
-    p.chevron = QStringLiteral(":/ui/icons/chevron_vscode_dark.png");
-    p.shadow = Qt::black;
-    p.shadowOpacity = 0.30;
-    return p;
 }
 
 // `{name}` placeholders, filled by name. Not QString::arg(): with a
@@ -144,18 +62,19 @@ QString fillTokens(const ChromePalette &c, QString sheet)
 
 } // namespace
 
-ChromePalette chromePaletteForTheme(const QString &themeName)
+// Leaked deliberately — see the declaration in theme.h.
+ThemeProvider *sharedThemeProvider()
 {
-    if (themeName == QStringLiteral("light")) {
-        return lightPalette();
-    }
-    if (themeName == QStringLiteral("vscode-dark")) {
-        return vscodeDarkPalette();
-    }
-    return darkPalette();
+    static ThemeProvider *provider = new ThemeProvider();
+    return provider;
 }
 
 namespace {
+
+QColor fromFfiRgb(const FfiRgb &color)
+{
+    return QColor(color.r, color.g, color.b);
+}
 
 FfiRgb toFfiRgb(const QColor &color)
 {
@@ -170,34 +89,115 @@ QColor colorOrFallback(const QString &hex, const QColor &fallback)
     return hex.isEmpty() ? fallback : QColor(hex);
 }
 
+// `chevron`/`shadow`/`shadowOpacity` are not colour data a theme supplies
+// (`color_theme::ChromeColors` deliberately excludes them, T1): every dark
+// theme shares one grey chevron glyph and shadow ink, every light theme the
+// other. `isDark` is `ThemeProvider::isDark()`'s answer for the theme this
+// palette was just resolved from.
+ChromePalette toChromePalette(const FfiChromePalette &c, bool isDark)
+{
+    ChromePalette p;
+    p.canvas = fromFfiRgb(c.canvas);
+    p.surface = fromFfiRgb(c.surface);
+    p.surface2 = fromFfiRgb(c.surface2);
+    p.raised = fromFfiRgb(c.raised);
+    p.border = fromFfiRgb(c.border);
+    p.text = fromFfiRgb(c.text);
+    p.textDim = fromFfiRgb(c.text_dim);
+    p.accent = fromFfiRgb(c.accent);
+    p.accentInk = fromFfiRgb(c.accent_ink);
+    p.selection = fromFfiRgb(c.selection);
+    p.statusBar = fromFfiRgb(c.status_bar);
+    if (isDark) {
+        p.chevron = QStringLiteral(":/ui/icons/chevron_dark.png");
+        p.shadow = Qt::black;
+        p.shadowOpacity = 0.30;
+    } else {
+        p.chevron = QStringLiteral(":/ui/icons/chevron_light.png");
+        p.shadow = hex("#0f172a");
+        p.shadowOpacity = 0.18;
+    }
+    return p;
+}
+
+SemanticColors toSemanticColors(const FfiSemanticColors &s)
+{
+    return SemanticColors{ fromFfiRgb(s.error), fromFfiRgb(s.warning), fromFfiRgb(s.info),
+                           fromFfiRgb(s.ok), fromFfiRgb(s.muted) };
+}
+
+DiffColors toDiffColors(const FfiDiffColors &d)
+{
+    return DiffColors{ fromFfiRgb(d.added_line),     fromFfiRgb(d.added_inline),
+                       fromFfiRgb(d.added_marker),    fromFfiRgb(d.modified_line),
+                       fromFfiRgb(d.modified_inline), fromFfiRgb(d.modified_marker),
+                       fromFfiRgb(d.deleted_line),    fromFfiRgb(d.deleted_inline),
+                       fromFfiRgb(d.deleted_marker) };
+}
+
+// What `applyTheme()` asks the provider for once and every other function in
+// this file reads back — the "ask once, cache, read the cache" the
+// color-themes plan describes. Every caller of `chromePaletteForTheme` and
+// friends passes either `activeThemeName()` or the name `applyTheme()` was
+// just given (confirmed by grepping every call site in `crates/ui-shell/cpp/`
+// while T7 was implemented — `splash_screen.cpp` is the one that looked like
+// it might not, but `main_window.cpp` calls `applyTheme(appSettings->themeName())`
+// immediately before constructing it with the same name), so none of them
+// need to resolve an arbitrary *other* theme's colours — reading this cache
+// regardless of the name argument is exactly as correct as the old
+// name-keyed static tables were.
+struct CachedTheme
+{
+    QString name;
+    ChromePalette chrome;
+    SemanticColors semantic;
+    DiffColors diff;
+    bool dark = true;
+};
+
+CachedTheme resolveCachedTheme(const QString &name)
+{
+    ThemeProvider *provider = sharedThemeProvider();
+    const bool dark = provider->isDark();
+    CachedTheme cached;
+    cached.name = name;
+    cached.chrome = toChromePalette(provider->chromePalette(), dark);
+    cached.semantic = toSemanticColors(provider->semanticColors());
+    cached.diff = toDiffColors(provider->diffColors());
+    cached.dark = dark;
+    return cached;
+}
+
+// Readable before any explicit applyTheme() call (the splash screen's own
+// reason for needing colorsForTheme() at all, per its doc comment above) —
+// resolved from whatever the shared ColorThemeService already picked at
+// process start (settings.toml's theme, or its own fallback), same as
+// `ThemeProvider` itself is available from process start.
+CachedTheme &cachedTheme()
+{
+    static CachedTheme cached = resolveCachedTheme(QStringLiteral("dark"));
+    return cached;
+}
+
 } // namespace
+
+ChromePalette chromePaletteForTheme(const QString &themeName)
+{
+    Q_UNUSED(themeName);
+    return cachedTheme().chrome;
+}
 
 FfiTerminalPalette terminalPaletteForTheme(const QString &themeName, AppSettings *appSettings)
 {
-    // JetBrains Darcula's console colours (ansi 0-7, then the bright 8-15).
-    static const std::array<const char *, 16> kDarkAnsi{
-        "#000000", "#FF6B68", "#A8C023", "#D6BF55", "#5394EC", "#AE8ABE", "#299999", "#BBBBBB",
-        "#555555", "#FF8785", "#A8C023", "#FFFF00", "#7EAEF1", "#FF99FF", "#6CDADA", "#FFFFFF",
-    };
-    // JetBrains Light's console colours, same layout.
-    static const std::array<const char *, 16> kLightAnsi{
-        "#000000", "#990000", "#00A600", "#999900", "#0000B2", "#B200B2", "#00A6B2", "#BFBFBF",
-        "#666666", "#E50000", "#00D900", "#E5E500", "#0000FF", "#E500E5", "#00E5E5", "#E5E5E5",
-    };
-    const bool isLight = themeName == QStringLiteral("light");
-
+    FfiTerminalPalette palette = sharedThemeProvider()->terminalPalette();
     const ChromePalette chrome = chromePaletteForTheme(themeName);
     const FfiEditorColors editorColors = appSettings->editorColors();
     const QColor foreground = colorOrFallback(editorColors.foreground, chrome.text);
 
-    FfiTerminalPalette palette;
     palette.background = toFfiRgb(colorOrFallback(editorColors.background, chrome.canvas));
     palette.foreground = toFfiRgb(foreground);
     palette.cursor = toFfiRgb(foreground);
     palette.selection = toFfiRgb(chrome.selection);
-    for (const char *hex : (isLight ? kLightAnsi : kDarkAnsi)) {
-        palette.ansi.push_back(toFfiRgb(QColor(QLatin1String(hex))));
-    }
     return palette;
 }
 
@@ -779,21 +779,8 @@ ThemeColors colorsForTheme(const QString &themeName)
 
 SemanticColors semanticColorsForTheme(const QString &themeName)
 {
-    // Each value clears 4.5:1 on its theme's surface-2 (the list ground).
-    if (themeName == QStringLiteral("light")) {
-        return SemanticColors{QColor(QStringLiteral("#c62828")),
-                              QColor(QStringLiteral("#8a6100")),
-                              QColor(QStringLiteral("#1565c0")),
-                              QColor(QStringLiteral("#2e7d32")),
-                              QColor(QStringLiteral("#5f5f5f"))};
-    }
-    // The vscode-dark set deliberately does not match VS Code's own #f14c4c,
-    // which measures 4.34:1 on #252526 and fails AA (spec open question 4).
-    return SemanticColors{QColor(QStringLiteral("#ff6b68")),
-                          QColor(QStringLiteral("#d9a441")),
-                          QColor(QStringLiteral("#74a7cc")),
-                          QColor(QStringLiteral("#6aab73")),
-                          QColor(QStringLiteral("#9a9a9a"))};
+    Q_UNUSED(themeName);
+    return cachedTheme().semantic;
 }
 
 SemanticColors semanticColors()
@@ -803,20 +790,8 @@ SemanticColors semanticColors()
 
 DiffColors diffColorsForTheme(const QString &themeName)
 {
-    if (themeName == QStringLiteral("light")) {
-        return DiffColors{QColor(QStringLiteral("#e6ffec")), QColor(QStringLiteral("#abf2bc")),
-                          QColor(QStringLiteral("#3c8c46")), QColor(QStringLiteral("#e8f0fe")),
-                          QColor(QStringLiteral("#b4d0fa")), QColor(QStringLiteral("#3870b4")),
-                          QColor(QStringLiteral("#f0f0f0")), QColor(QStringLiteral("#d6d6d6")),
-                          QColor(QStringLiteral("#b4463c"))};
-    }
-    // Both dark themes share one set: the line shades were picked on the
-    // default dark editor ground and read the same on vscode-dark's.
-    return DiffColors{QColor(QStringLiteral("#294436")), QColor(QStringLiteral("#3d6a3d")),
-                      QColor(87, 166, 74),                QColor(QStringLiteral("#385570")),
-                      QColor(QStringLiteral("#4e6f8f")), QColor(76, 130, 196),
-                      QColor(QStringLiteral("#484a4a")), QColor(QStringLiteral("#5f5f5f")),
-                      QColor(197, 81, 71)};
+    Q_UNUSED(themeName);
+    return cachedTheme().diff;
 }
 
 DiffColors diffColors()
@@ -831,10 +806,6 @@ QString styleSheetForTheme(const QString &themeName)
 
 namespace {
 
-// Mirrors the fallback in chromePaletteForTheme(): an unrecognized name is
-// the dark theme, so that is what an un-applied theme reports too.
-QString activeTheme = QStringLiteral("dark");
-
 // ADS keeps the stylesheet it installed on the dock manager here, so every
 // re-style starts from its rules instead of stacking ours on themselves.
 const char *const kAdsBaseStyleSheet = "ideAdsBaseStyleSheet";
@@ -848,7 +819,7 @@ void restyleDockManager(QWidget *dockManager)
         dockManager->setProperty(kAdsBaseStyleSheet, dockManager->styleSheet());
     }
     dockManager->setStyleSheet(dockManager->property(kAdsBaseStyleSheet).toString()
-                               + dockStyleSheet(chromePaletteForTheme(activeTheme)));
+                               + dockStyleSheet(chromePaletteForTheme(activeThemeName())));
 }
 
 bool isDockManager(const QObject *object)
@@ -936,7 +907,7 @@ QPalette paletteForTheme(const QString &themeName)
 
 QString activeThemeName()
 {
-    return activeTheme;
+    return cachedTheme().name;
 }
 
 QIcon maskIcon(const char *maskResource, QColor tint)
@@ -966,7 +937,12 @@ QIcon tabCloseIcon()
 
 void applyTheme(const QString &themeName)
 {
-    activeTheme = themeName;
+    // Switches the shared colour-theme service's active theme, then asks it
+    // once for everything downstream needs — the "ask once, cache, read the
+    // cache" strategy `cachedTheme()`'s doc comment above describes.
+    sharedThemeProvider()->applyColorTheme(themeName);
+    cachedTheme() = resolveCachedTheme(themeName);
+
     qApp->setPalette(paletteForTheme(themeName));
     // Re-setting the sheet after the palette forces Qt to re-resolve every
     // `palette(...)` reference in it, including the ones inside the dock

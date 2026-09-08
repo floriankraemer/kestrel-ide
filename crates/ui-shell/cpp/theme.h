@@ -8,8 +8,16 @@
 #include <QString>
 
 class QWidget;
+class ThemeProvider;
 
 namespace ui_shell {
+
+// The ThemeProvider applyTheme() reads every colour through (color-themes
+// plan T7), for the few callers that need the provider itself rather than a
+// palette it already derived — mirrors icon_cache.cpp's sharedIconProvider().
+// Leaked deliberately, same reason: destroying a QObject after
+// QGuiApplication is gone is a crash, not a cleanup.
+ThemeProvider *sharedThemeProvider();
 
 // The handful of theme colors a widget needs when it paints itself instead
 // of being styled by QSS — today only the splash screen, which exists

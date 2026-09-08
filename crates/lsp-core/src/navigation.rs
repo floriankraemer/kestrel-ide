@@ -133,6 +133,7 @@ impl crate::manager::LspManager {
         line: u32,
         character: u32,
     ) -> Result<Vec<DefinitionTarget>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let result = self.request_with_timeout(
             &language_id,
@@ -140,7 +141,19 @@ impl crate::manager::LspManager {
             position_params(uri, line, character),
             DEFINITION_TIMEOUT,
         )?;
-        Ok(parse_definition(&result))
+        let mut targets = parse_definition(&result);
+        // W3-2: `target()` computed `.path` with the plain (host-unaware)
+        // `path_from_uri` — correct on `ExecHost::Local`, a bare Linux path
+        // (e.g. inside `~/.cargo/registry`) on a WSL root. Recompute it
+        // through this manager's host, so Go to Definition opens the UNC
+        // path the share actually serves rather than a path that only
+        // resolves inside the distro.
+        for target in &mut targets {
+            if let Some(path) = crate::manager::path_for(self.host(), &target.uri) {
+                target.path = path;
+            }
+        }
+        Ok(targets)
     }
     /// C12: csharp-ls's custom `csharp/metadata` request — fetches the
     /// decompiled/generated source text a `csharp:/...` definition target

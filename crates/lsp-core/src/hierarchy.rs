@@ -208,6 +208,7 @@ impl crate::manager::LspManager {
         line: u32,
         character: u32,
     ) -> Result<Vec<HierarchyItem>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let result = self.request_with_timeout(
             language_id,
             "textDocument/prepareCallHierarchy",
@@ -265,6 +266,7 @@ impl crate::manager::LspManager {
         line: u32,
         character: u32,
     ) -> Result<Vec<HierarchyItem>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let result = self.request_with_timeout(
             language_id,
             "textDocument/prepareTypeHierarchy",

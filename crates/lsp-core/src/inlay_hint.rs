@@ -135,6 +135,7 @@ impl crate::manager::LspManager {
         first_line: u32,
         last_line: u32,
     ) -> Result<Vec<InlayHint>, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let result = self.request_with_timeout(
             &language_id,

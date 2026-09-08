@@ -6,6 +6,11 @@ edition = "2021"
 [dependencies]
 # Content-Length framing, shared with `dap-core` (ADR-0041).
 stdio-framing = { path = "../stdio-framing" }
+# The WSL execution/path-translation seam (ADR-0052): `connect` spawns
+# through `ExecHost::command` and `uri_for`/`path_for` translate every URI
+# site so a project opened from a WSL UNC path runs its language server
+# inside the distro. `process-exec` is std-only, so this stays legal.
+process-exec = { path = "../process-exec" }
 # The one Problems model (ADR-0046): `publish_diagnostics` converts a
 # server's `lsp_types::Diagnostic`s into `diagnostics_core::Diagnostic` at
 # ingest, and `path_from_uri`/`uri_from_path` now live there too.

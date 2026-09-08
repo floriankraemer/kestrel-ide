@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{self, BufReader, Write};
-use std::path::PathBuf;
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -32,6 +32,35 @@ use crate::registration::{Registration, Registrations};
 use crate::semantic_tokens::{self, SemanticTokensLegend};
 use crate::signature_help::{parse_signature_triggers, SignatureTriggers};
 use crate::watched_files::{FileChangeKind, WatchedFiles};
+use process_exec::host::ExecHost;
+
+/// Windows path -> Linux path (if `host` is remote) -> `file://` URI.
+///
+/// The one direction every outbound message needs: `rootUri`, `didOpen`'s
+/// `textDocument.uri`, a watched-file change's `uri`. `diagnostics_core`'s
+/// `uri_from_path` stays exactly as it is (ADR-0046) — this only decides
+/// *which* path string reaches it.
+pub fn uri_for(host: &ExecHost, path: &str) -> String {
+    if host.is_remote() {
+        crate::diagnostics::uri_from_path(&host.to_remote(Path::new(path)))
+    } else {
+        crate::diagnostics::uri_from_path(path)
+    }
+}
+
+/// `file://` URI -> Linux path (if `host` is remote) -> Windows path.
+///
+/// The reverse of [`uri_for`]: a definition target, a workspace-edit
+/// document, a resource operation's path — anything a server hands back
+/// that this crate returns to its own caller as a path rather than a URI.
+pub fn path_for(host: &ExecHost, uri: &str) -> Option<String> {
+    let raw = crate::diagnostics::path_from_uri(uri)?;
+    if host.is_remote() {
+        Some(host.to_local(&raw).to_string_lossy().into_owned())
+    } else {
+        Some(raw)
+    }
+}
 
 /// How long a request waits for its response before it is cancelled.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
@@ -403,8 +432,17 @@ struct DocState {
 /// correlation and document versions are rules, and the adapter is allowed
 /// none (`docs/architecture/layering.md`).
 pub struct LspManager {
-    /// Workspace root as a `file://` URI, sent in `initialize`.
+    /// Workspace root as a `file://` URI, sent in `initialize` — already
+    /// translated through `host` if the root is a WSL UNC path.
     root_uri: String,
+    /// The Windows-side workspace root path this manager was constructed
+    /// with, unmodified. Only [`Self::start`]'s subprocess spawn needs a
+    /// filesystem `current_dir`; everything else works from `root_uri`.
+    root_path: String,
+    /// Where this project's tooling runs — derived once, at construction,
+    /// from `root_path` (ADR-0052). Never recomputed: a project's host does
+    /// not change without a new `LspManager`.
+    host: ExecHost,
     servers: Mutex<HashMap<String, Arc<Server>>>,
     supervisors: Mutex<HashMap<String, JoinHandle<()>>>,
     documents: Mutex<HashMap<String, DocState>>,
@@ -418,10 +456,23 @@ impl LspManager {
     /// Create a manager for a workspace root, plus the channel every event is
     /// delivered on. The caller owns the receiver — typically a listener
     /// thread that forwards onto the UI thread.
+    ///
+    /// Takes the same naive `file://` URI callers already built with
+    /// `uri_from_path` before this plan — no caller needs to change. The
+    /// Windows path is recovered from it once, here, to derive [`ExecHost`]
+    /// (ADR-0052) and re-translate `root_uri` if the root is a WSL UNC path;
+    /// every other ingest/egress site in this crate normalizes off that one
+    /// `host`.
     pub fn new(root_uri: impl Into<String>) -> (Self, Receiver<LspEvent>) {
+        let naive_uri = root_uri.into();
+        let root_path =
+            crate::diagnostics::path_from_uri(&naive_uri).unwrap_or_else(|| naive_uri.clone());
+        let host = ExecHost::for_path(Path::new(&root_path));
         let (events, rx) = channel();
         let manager = LspManager {
-            root_uri: root_uri.into(),
+            root_uri: uri_for(&host, &root_path),
+            root_path,
+            host,
             servers: Mutex::new(HashMap::new()),
             supervisors: Mutex::new(HashMap::new()),
             documents: Mutex::new(HashMap::new()),
@@ -429,6 +480,21 @@ impl LspManager {
             sessions: Arc::new(RefactorSessions::default()),
         };
         (manager, rx)
+    }
+
+    /// Recover a caller-built naive URI (from the *pre-translation*
+    /// `uri_from_path` this crate's own callers still use, ADR-0052's
+    /// "ui-shell's URI users are untouched: translation happened at
+    /// ingest") back to the Windows path it encoded, then translate it
+    /// through this manager's `host`. A no-op on `ExecHost::Local`.
+    pub(crate) fn normalize_uri(&self, uri: &str) -> String {
+        if !self.host.is_remote() {
+            return uri.to_string();
+        }
+        match crate::diagnostics::path_from_uri(uri) {
+            Some(windows_path) => uri_for(&self.host, &windows_path),
+            None => uri.to_string(),
+        }
     }
 
     /// Launch a server and complete its `initialize`/`initialized` handshake.
@@ -462,6 +528,8 @@ impl LspManager {
             Arc::clone(&server),
             cfg.clone(),
             self.root_uri.clone(),
+            self.root_path.clone(),
+            self.host.clone(),
             self.events.clone(),
             ready_tx,
         );
@@ -533,9 +601,14 @@ impl LspManager {
 
     /// Tell the server a document is open. The manager owns the version
     /// counter: versions start at 1 and only ever increase, per document.
+    ///
+    /// `uri` is the naive `file://` URI a caller already built with
+    /// `uri_from_path` — [`Self::normalize_uri`] retranslates it through
+    /// this manager's host before it ever reaches the wire, or a lookup key.
     pub fn did_open(&self, uri: &str, language_id: &str, text: &str) -> Result<(), LspError> {
+        let uri = self.normalize_uri(uri);
         self.documents.lock().unwrap().insert(
-            uri.to_string(),
+            uri.clone(),
             DocState {
                 language_id: language_id.to_string(),
                 version: 1,
@@ -553,10 +626,11 @@ impl LspManager {
     /// Tell the server a document changed, as a full-text sync. Returns the
     /// new version.
     pub fn did_change(&self, uri: &str, text: &str) -> Result<i32, LspError> {
+        let uri = self.normalize_uri(uri);
         let (language_id, version) = {
             let mut docs = self.documents.lock().unwrap();
             let doc = docs
-                .get_mut(uri)
+                .get_mut(&uri)
                 .ok_or_else(|| LspError::Protocol(format!("{uri} was never opened")))?;
             doc.version += 1;
             (doc.language_id.clone(), doc.version)
@@ -574,7 +648,8 @@ impl LspManager {
 
     /// Tell the server a document was saved.
     pub fn did_save(&self, uri: &str) -> Result<(), LspError> {
-        let language_id = self.language_of(uri)?;
+        let uri = self.normalize_uri(uri);
+        let language_id = self.language_of(&uri)?;
         self.notify(
             &language_id,
             "textDocument/didSave",
@@ -584,8 +659,9 @@ impl LspManager {
 
     /// Tell the server a document is closed and forget its version.
     pub fn did_close(&self, uri: &str) -> Result<(), LspError> {
-        let language_id = self.language_of(uri)?;
-        self.documents.lock().unwrap().remove(uri);
+        let uri = self.normalize_uri(uri);
+        let language_id = self.language_of(&uri)?;
+        self.documents.lock().unwrap().remove(&uri);
         self.notify(
             &language_id,
             "textDocument/didClose",
@@ -624,7 +700,7 @@ impl LspManager {
             .filter(|(path, kind)| watched.interested(path, *kind))
             .map(|(path, kind)| {
                 json!({
-                    "uri": crate::diagnostics::uri_from_path(&path.to_string_lossy()),
+                    "uri": uri_for(&self.host, &path.to_string_lossy()),
                     "type": *kind as u8,
                 })
             })
@@ -699,7 +775,8 @@ impl LspManager {
 
     /// The version last sent for a document, if it is open.
     pub fn document_version(&self, uri: &str) -> Option<i32> {
-        self.documents.lock().unwrap().get(uri).map(|d| d.version)
+        let uri = self.normalize_uri(uri);
+        self.documents.lock().unwrap().get(&uri).map(|d| d.version)
     }
 
     /// Whether the running server has dynamically registered `method` via
@@ -784,6 +861,29 @@ impl LspManager {
         self.sessions.active()
     }
 
+    /// Where this project's tooling runs (ADR-0052) — `ExecHost::Local`
+    /// unless the workspace root is a WSL UNC path. Exposed so a feature
+    /// module (`rename`, and `LspManager::parse_workspace_changes` below)
+    /// can retranslate a server's response paths without duplicating
+    /// [`ExecHost::for_path`]'s classification.
+    pub fn host(&self) -> &ExecHost {
+        &self.host
+    }
+
+    /// [`crate::workspace_edit::parse_workspace_changes`], with every
+    /// step's path retranslated through this manager's host (W3-2) — the
+    /// method callers use instead of the free function, so a WSL project's
+    /// `workspace/applyEdit` and refactor-preview paths are the UNC path
+    /// `ui-shell` opened, not the Linux path the server actually sent.
+    pub fn parse_workspace_changes(
+        &self,
+        value: &Value,
+    ) -> Result<crate::workspace_edit::WorkspaceChanges, crate::workspace_edit::EditError> {
+        let mut changes = crate::workspace_edit::parse_workspace_changes(value)?;
+        changes.retranslate_paths(&self.host);
+        Ok(changes)
+    }
+
     pub(crate) fn language_of(&self, uri: &str) -> Result<String, LspError> {
         self.documents
             .lock()
@@ -806,6 +906,8 @@ fn spawn_supervisor(
     server: Arc<Server>,
     cfg: ServerConfig,
     root_uri: String,
+    root_path: String,
+    host: ExecHost,
     events: Sender<LspEvent>,
     ready: Sender<Result<(), LspError>>,
 ) -> JoinHandle<()> {
@@ -815,7 +917,7 @@ fn spawn_supervisor(
         let mut backoff = RESTART_BACKOFF_INITIAL;
 
         loop {
-            match connect(&server, &cfg, &root_uri) {
+            match connect(&server, &cfg, &root_uri, &root_path, &host) {
                 Ok((
                     stdout,
                     trigger_characters,
@@ -899,6 +1001,8 @@ fn connect(
     server: &Server,
     cfg: &ServerConfig,
     root_uri: &str,
+    root_path: &str,
+    host: &ExecHost,
 ) -> Result<
     (
         BufReader<std::process::ChildStdout>,
@@ -908,8 +1012,25 @@ fn connect(
     ),
     LspError,
 > {
-    let mut child = Command::new(&cfg.command)
-        .args(&cfg.args)
+    // W3-1/W3-3: `ExecHost::command` (ADR-0052) replaces a bare
+    // `Command::new`, which gains this crate `current_dir` and
+    // `CREATE_NO_WINDOW` it never had, and runs the server inside the
+    // distro for a WSL project root. `resolve_program` is what makes a
+    // missing server say so plainly instead of a generic spawn failure —
+    // `Local` never probes, so this is free on every project that isn't one.
+    let resolved_command =
+        process_exec::host::resolve_program(host, &cfg.command, Path::new(root_path)).ok_or_else(
+            || LspError::Spawn {
+                command: cfg.command.clone(),
+                source: io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{} not found inside the WSL distro", cfg.command),
+                ),
+            },
+        )?;
+    let args: Vec<&str> = cfg.args.iter().map(String::as_str).collect();
+    let mut command = host.command(&resolved_command, &args, Path::new(root_path), &[]);
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         // Servers are chatty on stderr and nothing reads it; a full pipe
@@ -1407,4 +1528,133 @@ fn client_capabilities() -> Value {
         "window": {"workDoneProgress": true},
         "general": {"positionEncodings": ["utf-16"]},
     })
+}
+
+#[cfg(test)]
+mod host_translation_tests {
+    use super::*;
+
+    fn wsl_host() -> ExecHost {
+        ExecHost::for_path(Path::new(r"\\wsl.localhost\Ubuntu\home\f\proj"))
+    }
+
+    #[test]
+    fn uri_for_is_unchanged_on_a_local_host() {
+        assert_eq!(
+            uri_for(&ExecHost::Local, "/home/f/proj/src/main.rs"),
+            crate::diagnostics::uri_from_path("/home/f/proj/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn uri_for_translates_a_windows_unc_path_to_a_linux_file_uri() {
+        let host = wsl_host();
+        assert_eq!(
+            uri_for(&host, r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs"),
+            "file:///home/f/proj/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn path_for_translates_a_linux_file_uri_back_to_the_unc_path() {
+        let host = wsl_host();
+        assert_eq!(
+            path_for(&host, "file:///home/f/proj/src/main.rs"),
+            Some(r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn uri_for_then_path_for_round_trips_to_identity() {
+        let host = wsl_host();
+        let original = r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs";
+        let uri = uri_for(&host, original);
+        assert_eq!(path_for(&host, &uri).as_deref(), Some(original));
+    }
+
+    #[test]
+    fn new_translates_root_uri_for_a_wsl_root() {
+        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
+            "//wsl.localhost/Ubuntu/home/f/proj",
+        ));
+        assert_eq!(manager.root_uri, "file:///home/f/proj");
+        assert!(manager.host.is_remote());
+    }
+
+    #[test]
+    fn new_leaves_root_uri_unchanged_for_a_local_root() {
+        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/home/f/proj"));
+        assert_eq!(manager.root_uri, "file:///home/f/proj");
+        assert!(!manager.host.is_remote());
+    }
+
+    /// normalize_uri applied twice must be a no-op — `format_range` falling
+    /// back to `self.format(uri, options)` and every other re-entrant call
+    /// in this crate depends on it.
+    #[test]
+    fn normalize_uri_is_idempotent() {
+        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
+            "//wsl.localhost/Ubuntu/home/f/proj",
+        ));
+        let naive =
+            crate::diagnostics::uri_from_path("//wsl.localhost/Ubuntu/home/f/proj/src/main.rs");
+        let once = manager.normalize_uri(&naive);
+        let twice = manager.normalize_uri(&once);
+        assert_eq!(once, "file:///home/f/proj/src/main.rs");
+        assert_eq!(once, twice);
+    }
+
+    /// W3-3: a server binary absent from the distro is reported plainly,
+    /// not as a generic spawn failure — proven with the same fake-`wsl.exe`
+    /// trick `process-exec`'s own tests use, since `command -v` (and
+    /// therefore `resolve_program`) genuinely finds nothing for it.
+    #[test]
+    fn starting_a_server_missing_from_the_distro_says_so() {
+        use std::sync::Mutex;
+        static PATH_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = PATH_LOCK.lock().unwrap();
+
+        let bin_dir = tempfile::tempdir().unwrap();
+        let script_path = bin_dir.path().join("wsl.exe");
+        std::fs::write(&script_path, "#!/bin/sh\nexit 1\n").unwrap();
+        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            perms.set_mode(0o755);
+        }
+        std::fs::set_permissions(&script_path, perms).unwrap();
+
+        let root = PathBuf::from("//wsl.localhost/Ubuntu/tmp/lsp-core-e2e");
+        std::fs::create_dir_all(&root).unwrap();
+
+        let original_path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: serialized by PATH_LOCK.
+        unsafe {
+            std::env::set_var(
+                "PATH",
+                format!("{}:{original_path}", bin_dir.path().display()),
+            );
+        }
+        let (manager, _rx) =
+            LspManager::new(crate::diagnostics::uri_from_path(&root.to_string_lossy()));
+        let result = manager.start(&ServerConfig {
+            language_id: "rust".to_string(),
+            name: "rust-analyzer".to_string(),
+            command: "rust-analyzer".to_string(),
+            args: Vec::new(),
+            enabled: true,
+            settings_section: None,
+            settings: Value::Null,
+            source: crate::catalog::ServerSource::Builtin,
+        });
+        unsafe {
+            std::env::set_var("PATH", original_path);
+        }
+
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, LspError::Spawn { source, .. } if source.to_string().contains("not found inside the WSL distro")),
+            "expected a WSL-specific not-found message, got {err:?}"
+        );
+    }
 }

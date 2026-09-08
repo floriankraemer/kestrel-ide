@@ -3652,6 +3652,7 @@ dependencies = [
  "globset",
  "lsp-types",
  "notify",
+ "process-exec",
  "serde",
  "serde_json",
  "stdio-framing",

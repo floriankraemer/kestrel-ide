@@ -178,6 +178,7 @@ impl crate::manager::LspManager {
         uri: &str,
         options: &FormattingOptions,
     ) -> Result<FormattingOutcome, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let params = json!({
             "textDocument": {"uri": uri},
@@ -210,6 +211,7 @@ impl crate::manager::LspManager {
         end: (u32, u32),
         options: &FormattingOptions,
     ) -> Result<FormattingOutcome, LspError> {
+        let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let params = json!({
             "textDocument": {"uri": uri},

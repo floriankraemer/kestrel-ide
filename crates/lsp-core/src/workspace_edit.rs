@@ -50,6 +50,30 @@ pub struct DocumentEdits {
     pub edits: Vec<TextEdit>,
 }
 
+impl DocumentEdits {
+    /// See [`ResourceOp::retranslate`] — same rule, one field.
+    fn retranslate(&mut self, host: &process_exec::host::ExecHost) {
+        if host.is_remote() {
+            if let Some(p) = crate::manager::path_for(host, &self.uri) {
+                self.path = p;
+            }
+        }
+    }
+}
+
+/// W3-2: retranslate every [`DocumentEdits::path`] in `edits` through `host`
+/// — the free-function counterpart of [`WorkspaceChanges::retranslate_paths`]
+/// for [`parse_workspace_edit`]'s callers (`rename`, code actions), which
+/// have no resource operations to also fix up.
+pub fn retranslate_document_edits(
+    edits: &mut [DocumentEdits],
+    host: &process_exec::host::ExecHost,
+) {
+    for edit in edits {
+        edit.retranslate(host);
+    }
+}
+
 /// Why an edit cannot be applied at all. Every variant refuses the *whole*
 /// edit, never a part of it: a half-applied extract-method is a corrupted
 /// file, so this mirrors `index_core::replace_in_files`' rule of validating
@@ -174,6 +198,38 @@ impl ResourceOp {
             } => vec![old_path, new_path],
         }
     }
+
+    /// W3-2: `path`/`old_path`/`new_path` were computed by [`resource_op`]
+    /// with the plain (host-unaware) `path_from_uri` — correct on
+    /// `ExecHost::Local`, a bare Linux path on a WSL root. Recomputes them
+    /// from `uri`/`old_uri`/`new_uri` through `host` instead. A no-op on
+    /// `ExecHost::Local`.
+    fn retranslate(&mut self, host: &process_exec::host::ExecHost) {
+        if !host.is_remote() {
+            return;
+        }
+        match self {
+            ResourceOp::Create { path, uri, .. } | ResourceOp::Delete { path, uri, .. } => {
+                if let Some(p) = crate::manager::path_for(host, uri) {
+                    *path = p;
+                }
+            }
+            ResourceOp::Rename {
+                old_path,
+                old_uri,
+                new_path,
+                new_uri,
+                ..
+            } => {
+                if let Some(p) = crate::manager::path_for(host, old_uri) {
+                    *old_path = p;
+                }
+                if let Some(p) = crate::manager::path_for(host, new_uri) {
+                    *new_path = p;
+                }
+            }
+        }
+    }
 }
 
 /// One step of a `WorkspaceEdit`, in the order the server sent it.
@@ -214,6 +270,18 @@ impl WorkspaceChanges {
 
     pub fn has_operations(&self) -> bool {
         self.operations().next().is_some()
+    }
+
+    /// W3-2: retranslate every step's path(s) through `host` — called once,
+    /// by `LspManager::parse_workspace_changes`, right after parsing. A
+    /// no-op on `ExecHost::Local`.
+    pub fn retranslate_paths(&mut self, host: &process_exec::host::ExecHost) {
+        for step in &mut self.steps {
+            match step {
+                ChangeStep::Edits(edits) => edits.retranslate(host),
+                ChangeStep::Op(op) => op.retranslate(host),
+            }
+        }
     }
 }
 

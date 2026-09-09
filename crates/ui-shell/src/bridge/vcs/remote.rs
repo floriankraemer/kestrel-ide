@@ -216,7 +216,7 @@ impl ffi::VcsService {
             let result =
                 worker
                     .history_cache
-                    .file_history(&worker.repo, relative, Some(HISTORY_MAX));
+                    .file_history(&worker.repo, &relative, Some(HISTORY_MAX));
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(entries) => {
                     let entries: Vec<ffi::FfiLogEntry> =
@@ -377,7 +377,7 @@ impl ffi::VcsService {
         let signal_path = path.clone();
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let relative = to_repo_relative(&worker.repo, Path::new(&path));
-            let result = worker.blame_cache.blame(&worker.repo, relative);
+            let result = worker.blame_cache.blame(&worker.repo, &relative);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(lines) => {
                     let lines: Vec<ffi::FfiBlameLine> =

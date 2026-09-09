@@ -32,6 +32,11 @@ constexpr int vcsErrorCode(FfiVcsErrorCode code)
     return static_cast<int>(code);
 }
 
+} // namespace
+
+// Promoted out of the anonymous namespace above (was `static`) for G6 —
+// declared in vcs_menu.h so `changes_toolbar.cpp`'s branch chip can reuse it
+// rather than copying the checkout/create/delete wiring.
 void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint &globalPos)
 {
     auto *menu = new QMenu(anchor);
@@ -101,8 +106,6 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint &globa
 
     menu->popup(globalPos);
 }
-
-} // namespace
 
 QToolButton *buildBranchWidget(VcsService *vcsService, QWidget *window, QStatusBar *statusBar)
 {

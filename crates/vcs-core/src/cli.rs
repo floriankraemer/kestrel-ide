@@ -123,6 +123,21 @@ fn display_command(args: &[&str]) -> String {
 /// [`run`] so the shape of a command can be asserted on without a real
 /// `git` binary. `staging`, `commit`, `branch` and `remote` build on these.
 pub mod argv {
+    /// `git status --porcelain=v2 -z --branch --untracked-files=all
+    /// --renames` — one command yielding branch/upstream/ahead-behind plus
+    /// every changed path, renames included, that `crate::status`'s
+    /// `parse_porcelain_v2` expects.
+    pub fn status() -> Vec<&'static str> {
+        vec![
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+            "--renames",
+        ]
+    }
+
     /// `git add -- <paths>`.
     pub fn add<'a>(paths: &'a [&str]) -> Vec<&'a str> {
         let mut args = vec!["add", "--"];
@@ -135,6 +150,17 @@ pub mod argv {
         let mut args = vec!["reset", "--"];
         args.extend_from_slice(paths);
         args
+    }
+
+    /// `git add -A` — stage every change in the repository, tracked or not.
+    pub fn add_all() -> Vec<&'static str> {
+        vec!["add", "-A"]
+    }
+
+    /// `git reset` — unstage everything, leaving the working tree and
+    /// `HEAD` untouched. The whole-repository counterpart to [`reset`].
+    pub fn reset_all() -> Vec<&'static str> {
+        vec!["reset"]
     }
 
     /// `git apply --cached [--reverse] -` (patch text goes on stdin).
@@ -227,6 +253,21 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
+    fn status_argv() {
+        assert_eq!(
+            argv::status(),
+            vec![
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+                "--untracked-files=all",
+                "--renames",
+            ]
+        );
+    }
+
+    #[test]
     fn add_argv() {
         assert_eq!(
             argv::add(&["a.txt", "b.txt"]),
@@ -240,6 +281,16 @@ mod tests {
             argv::reset(&["a.txt", "b.txt"]),
             vec!["reset", "--", "a.txt", "b.txt"]
         );
+    }
+
+    #[test]
+    fn add_all_argv() {
+        assert_eq!(argv::add_all(), vec!["add", "-A"]);
+    }
+
+    #[test]
+    fn reset_all_argv() {
+        assert_eq!(argv::reset_all(), vec!["reset"]);
     }
 
     #[test]

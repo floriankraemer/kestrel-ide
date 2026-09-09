@@ -439,6 +439,9 @@ fn main() {
         // The project tree's Git submenu. No Q_OBJECT (one free function),
         // so only the source is listed.
         .cpp_file("cpp/project_tree_git_menu.cpp")
+        // The Discard Changes confirm dialog shared by the project tree's
+        // Git submenu and the Changes dock (G8). No Q_OBJECT.
+        .cpp_file("cpp/git_dialogs.cpp")
         .cpp_file("cpp/rounded_corners.cpp")
         .cpp_file("cpp/panel_shadow.cpp")
         // First hand-written (non-generated) QObject in this crate: header
@@ -584,6 +587,11 @@ fn main() {
         // Q_OBJECT-free like the other panels/pages above, so only the
         // sources are listed.
         .cpp_file("cpp/changes_panel.cpp")
+        // The Changes dock's toolbar (G6). Q_OBJECT (its Refresh/Fetch/
+        // Pull/Push/Stage all/Unstage all signals), so its header is listed
+        // too, same as `diff_toolbar.h` above.
+        .cpp_file("cpp/changes_toolbar.h")
+        .cpp_file("cpp/changes_toolbar.cpp")
         // Q_OBJECT (signals `commitActivated`/`contextMenuRequestedFor`),
         // so its header is listed too, same as the chat/preview panels
         // above.

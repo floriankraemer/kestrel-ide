@@ -110,102 +110,22 @@ impl Repository {
         })
     }
 
-    /// Changed paths: staged (`HEAD` vs index), unstaged (index vs working
-    /// tree) and untracked, via `gix::Repository::status` — no subprocess.
-    /// See `gix-0.87`'s `status/mod.rs:99`, confirmed real and
-    /// non-experimental per the plan doc this task follows.
+    /// Changed paths: branch/upstream/ahead/behind, staged (`HEAD` vs
+    /// index), unstaged (index vs working tree), renamed, conflicted and
+    /// untracked — via `git status --porcelain=v2`, not `gix`.
+    ///
+    /// Shells out rather than walking `gix::Repository::status` in-process:
+    /// status is configuration-dependent (`.gitattributes`, `core.autocrlf`,
+    /// `core.excludesFile`, sparse-checkout, submodules) in exactly the way
+    /// ADR-0031 reserves for the `git` binary, and on a
+    /// `\\wsl.localhost\...` project it makes the *distro's* git compute
+    /// status against the *distro's* index — the same git that performs the
+    /// writes, which the previous `gix` walk (running Windows-side over the
+    /// 9P share) did not.
     pub fn status(&self) -> Result<RepoStatus, VcsError> {
-        let platform = self
-            .inner
-            .status(gix::progress::Discard)
-            .map_err(|e| VcsError::Read(e.to_string()))?
-            .untracked_files(gix::status::UntrackedFiles::Files);
-
-        let mut by_path: std::collections::BTreeMap<PathBuf, FileStatus> =
-            std::collections::BTreeMap::new();
-        let mut untracked = Vec::new();
-
-        let iter = platform
-            .into_iter(None)
-            .map_err(|e| VcsError::Read(e.to_string()))?;
-        for item in iter {
-            let item = item.map_err(|e| VcsError::Read(e.to_string()))?;
-            match item {
-                gix::status::Item::TreeIndex(change) => {
-                    let path = bstr_to_path(change.location());
-                    let kind = match &change {
-                        gix::diff::index::ChangeRef::Addition { .. } => ChangeKind::Added,
-                        gix::diff::index::ChangeRef::Deletion { .. } => ChangeKind::Deleted,
-                        gix::diff::index::ChangeRef::Modification { .. } => ChangeKind::Modified,
-                        gix::diff::index::ChangeRef::Rewrite { .. } => ChangeKind::Modified,
-                    };
-                    by_path
-                        .entry(path.clone())
-                        .or_insert_with(|| FileStatus {
-                            path,
-                            staged: None,
-                            unstaged: None,
-                        })
-                        .staged = Some(kind);
-                }
-                gix::status::Item::IndexWorktree(entry) => match entry {
-                    gix::status::index_worktree::Item::Modification {
-                        rela_path, status, ..
-                    } => {
-                        let Some(kind) = unstaged_kind(&status) else {
-                            continue;
-                        };
-                        let path = bstr_to_path(&rela_path);
-                        by_path
-                            .entry(path.clone())
-                            .or_insert_with(|| FileStatus {
-                                path,
-                                staged: None,
-                                unstaged: None,
-                            })
-                            .unstaged = Some(kind);
-                    }
-                    gix::status::index_worktree::Item::DirectoryContents { entry, .. } => {
-                        untracked.push(bstr_to_path(&entry.rela_path));
-                    }
-                    // ponytail: rewrites (renames on the worktree side) are
-                    // reported as a plain untracked addition rather than a
-                    // rename pair — real, but a smaller diff than teaching
-                    // FileStatus a Renamed variant nothing here reads yet.
-                    // Upgrade when the changes panel wants "renamed" shown.
-                    gix::status::index_worktree::Item::Rewrite { dirwalk_entry, .. } => {
-                        untracked.push(bstr_to_path(&dirwalk_entry.rela_path));
-                    }
-                },
-            }
-        }
-
-        Ok(RepoStatus {
-            files: by_path.into_values().collect(),
-            untracked,
-        })
-    }
-}
-
-fn bstr_to_path(b: impl AsRef<gix::bstr::BStr>) -> PathBuf {
-    gix::path::from_bstr(b.as_ref()).into_owned()
-}
-
-/// `gix_status::index_as_worktree::EntryStatus` covers conflicts and
-/// no-op "needs update" states this crate has no use for yet; only a real
-/// change is worth a [`ChangeKind`].
-fn unstaged_kind(
-    status: &gix::status::plumbing::index_as_worktree::EntryStatus<(), gix::submodule::Status>,
-) -> Option<ChangeKind> {
-    use gix::status::plumbing::index_as_worktree::{Change, EntryStatus};
-    match status {
-        EntryStatus::Change(Change::Removed) => Some(ChangeKind::Deleted),
-        EntryStatus::Change(Change::Type { .. }) => Some(ChangeKind::TypeChanged),
-        EntryStatus::Change(Change::Modification { .. }) => Some(ChangeKind::Modified),
-        EntryStatus::Change(Change::SubmoduleModification(_)) => Some(ChangeKind::Modified),
-        EntryStatus::Conflict { .. } | EntryStatus::NeedsUpdate(_) | EntryStatus::IntentToAdd => {
-            None
-        }
+        let work_dir = self.work_dir_or_err()?;
+        let output = crate::cli::run(&work_dir, &crate::cli::argv::status())?;
+        Ok(crate::status::parse_porcelain_v2(&output))
     }
 }
 
@@ -228,24 +148,54 @@ pub enum ChangeKind {
     Modified,
     Deleted,
     TypeChanged,
+    Renamed,
+    Copied,
+    /// A merge/rebase conflict — `git status --porcelain=v2`'s `u` entries.
+    /// Never paired with a staged state: a conflicted path is not a thing
+    /// the Changes panel offers to stage (plan doc, "a conflicted row has
+    /// no checkbox").
+    Conflicted,
+    /// Not in the index at all. Folded into [`FileStatus::unstaged`] rather
+    /// than kept as `RepoStatus`'s own separate list — see that struct's
+    /// doc comment.
+    Untracked,
 }
 
-/// One changed path's staged and/or unstaged state. A path can be both —
-/// staged one edit and then edited again — which is exactly why this is two
-/// `Option`s rather than one flag.
+/// One changed path's staged and/or unstaged state, plus — for a rename or
+/// copy — the path it was renamed/copied from. A path can be both staged
+/// and unstaged (staged one edit, then edited again), which is exactly why
+/// `staged`/`unstaged` are two `Option`s rather than one flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileStatus {
     pub path: PathBuf,
     pub staged: Option<ChangeKind>,
     pub unstaged: Option<ChangeKind>,
+    /// The path this entry was renamed or copied from. `Some` only when
+    /// `staged` or `unstaged` is [`ChangeKind::Renamed`]/[`ChangeKind::Copied`].
+    pub orig_path: Option<PathBuf>,
 }
 
-/// The repository's current changed-files picture: `git status`'s three
-/// piles, minus the plumbing.
+/// The repository's current picture: branch/upstream/ahead-behind plus
+/// every changed path, staged, unstaged, renamed, conflicted or untracked.
+///
+/// Untracked paths are entries in `files` with `unstaged: Some(Untracked)`
+/// rather than a separate list — `git status --porcelain=v2` already
+/// reports them as one stream of paths, and every caller of the previous
+/// two-list shape (`crates/ui-shell/src/bridge/vcs/mod.rs`) immediately
+/// merged them back into one anyway.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RepoStatus {
     pub files: Vec<FileStatus>,
-    pub untracked: Vec<PathBuf>,
+    /// The current branch's short name, or `"(detached)"` when `HEAD` does
+    /// not point at a branch. `None` only for a repository status could not
+    /// determine a branch header for at all (unborn `HEAD` on some git
+    /// versions) — callers that need to tell that apart from `(detached)`
+    /// compare the string, not this being `None`.
+    pub branch: Option<String>,
+    /// The upstream's name (`origin/main`), `None` when the branch has none.
+    pub upstream: Option<String>,
+    pub ahead: u32,
+    pub behind: u32,
 }
 
 #[cfg(test)]
@@ -376,7 +326,6 @@ mod tests {
         let repo = open(dir.path());
         let status = repo.status().unwrap();
         assert!(status.files.is_empty());
-        assert!(status.untracked.is_empty());
     }
 
     #[test]
@@ -389,8 +338,9 @@ mod tests {
         std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
         let repo = open(dir.path());
         let status = repo.status().unwrap();
-        assert_eq!(status.untracked, vec![PathBuf::from("new.txt")]);
-        assert!(status.files.is_empty());
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].path, PathBuf::from("new.txt"));
+        assert_eq!(status.files[0].unstaged, Some(ChangeKind::Untracked));
     }
 
     #[test]
@@ -423,6 +373,121 @@ mod tests {
         assert_eq!(status.files.len(), 1);
         assert_eq!(status.files[0].path, PathBuf::from("b.txt"));
         assert_eq!(status.files[0].staged, Some(ChangeKind::Added));
-        assert!(status.untracked.is_empty());
+    }
+
+    #[test]
+    fn status_reports_a_staged_and_unstaged_combination_on_one_path() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        // Stage one edit, then edit again without staging the second one.
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        std::fs::write(dir.path().join("a.txt"), "three\n").unwrap();
+        let repo = open(dir.path());
+        let status = repo.status().unwrap();
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].path, PathBuf::from("a.txt"));
+        assert_eq!(status.files[0].staged, Some(ChangeKind::Modified));
+        assert_eq!(status.files[0].unstaged, Some(ChangeKind::Modified));
+    }
+
+    #[test]
+    fn status_reports_a_deletion() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        std::fs::remove_file(dir.path().join("a.txt")).unwrap();
+        let repo = open(dir.path());
+        let status = repo.status().unwrap();
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].path, PathBuf::from("a.txt"));
+        assert_eq!(status.files[0].unstaged, Some(ChangeKind::Deleted));
+    }
+
+    #[test]
+    fn status_reports_a_staged_rename_with_its_original_path() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        // Rename detection needs enough shared content between old and new
+        // to score above git's similarity threshold.
+        let body = "one\ntwo\nthree\nfour\nfive\n".repeat(4);
+        std::fs::write(dir.path().join("old.txt"), &body).unwrap();
+        git(dir.path(), &["add", "old.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        std::fs::rename(dir.path().join("old.txt"), dir.path().join("new.txt")).unwrap();
+        git(dir.path(), &["add", "-A"]);
+        let repo = open(dir.path());
+        let status = repo.status().unwrap();
+        assert_eq!(status.files.len(), 1);
+        let file = &status.files[0];
+        assert_eq!(file.path, PathBuf::from("new.txt"));
+        assert_eq!(file.staged, Some(ChangeKind::Renamed));
+        assert_eq!(file.orig_path, Some(PathBuf::from("old.txt")));
+    }
+
+    #[test]
+    fn status_reports_a_merge_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "base\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "base"]);
+        git(dir.path(), &["checkout", "--quiet", "-b", "side"]);
+        std::fs::write(dir.path().join("a.txt"), "side\n").unwrap();
+        git(dir.path(), &["commit", "-am", "side change"]);
+        git(dir.path(), &["checkout", "--quiet", "-"]);
+        std::fs::write(dir.path().join("a.txt"), "main\n").unwrap();
+        git(dir.path(), &["commit", "-am", "main change"]);
+        // Merge is expected to conflict; ignore its non-zero exit. `git
+        // merge` checks committer identity up front — before it even knows
+        // whether it will conflict, since a clean merge needs a commit —
+        // so this needs the same author/committer env the `git()` helper
+        // sets, or it fails on identity before ever attempting the merge.
+        let _ = std::process::Command::new("git")
+            .args(["merge", "side"])
+            .env("GIT_AUTHOR_NAME", "Test")
+            .env("GIT_AUTHOR_EMAIL", "test@example.com")
+            .env("GIT_COMMITTER_NAME", "Test")
+            .env("GIT_COMMITTER_EMAIL", "test@example.com")
+            .current_dir(dir.path())
+            .status();
+
+        let repo = open(dir.path());
+        let status = repo.status().unwrap();
+        assert_eq!(status.files.len(), 1);
+        assert_eq!(status.files[0].path, PathBuf::from("a.txt"));
+        assert_eq!(status.files[0].unstaged, Some(ChangeKind::Conflicted));
+        assert_eq!(status.files[0].staged, None);
+    }
+
+    #[test]
+    fn status_does_not_list_an_ignored_file() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join(".gitignore"), "ignored.log\n").unwrap();
+        git(dir.path(), &["add", ".gitignore"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        std::fs::write(dir.path().join("ignored.log"), "noise\n").unwrap();
+        let repo = open(dir.path());
+        let status = repo.status().unwrap();
+        assert!(status.files.is_empty());
+    }
+
+    #[test]
+    fn status_reports_the_branch_name() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        git(dir.path(), &["branch", "-M", "main"]);
+        let repo = open(dir.path());
+        let status = repo.status().unwrap();
+        assert_eq!(status.branch, Some("main".to_string()));
     }
 }

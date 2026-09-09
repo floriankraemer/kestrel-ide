@@ -393,6 +393,31 @@ fn e2e_commit_log_expand_and_open_commit_detail() {
     assert_eq!(ide.quit(), 0);
 }
 
+/// A point on a `changes_row` marker's checkbox glyph, `e2e.rs`'s own
+/// `checkbox_point` — duplicated for the reason `git_fixture` above already
+/// gives for this file's other helpers.
+fn checkbox_point(rect: &serde_json::Value) -> (i32, i32) {
+    let rect: Vec<i64> = rect
+        .as_array()
+        .expect("the marker carries a rect")
+        .iter()
+        .map(|v| v.as_i64().expect("an integer"))
+        .collect();
+    (rect[0] as i32 + 10, (rect[1] + rect[3] / 2) as i32)
+}
+
+/// Run `git args` against `root`, panicking on a non-zero exit — the same
+/// shape `git_fixture`'s own closure uses, pulled out here because G9's
+/// three tests below all set up history beyond what `git_fixture` builds.
+fn git(root: &std::path::Path, args: &[&str]) {
+    let status = std::process::Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .status()
+        .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
+    assert!(status.success(), "git {args:?} failed");
+}
+
 /// Double-clicking a row in the Changes dock opens that file.
 ///
 /// `changedFiles()` reports git's own vocabulary — repository-relative paths
@@ -450,6 +475,178 @@ fn e2e_double_clicking_a_changed_file_opens_it() {
     // test runner, so this marker never arrived.
     ide.wait_for_event(opened, "a tab for the double-clicked file", |e| {
         e["ev"] == "tab_added" && e["title"] == "draft.txt"
+    });
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// A rename `git status --renames` only pairs with its old path once both
+/// sides are in the index (an unstaged rename reads as a plain delete plus
+/// an untracked add) — so this stages it with a real `git add -A`, the way
+/// a user's own "Stage all" would, and checks the dock shows `R` for it:
+/// `status.rs`'s rename parsing (G1/G2), visible end to end through the
+/// row marker `changes_panel.cpp` reports from.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_a_renamed_and_staged_file_shows_letter_r() {
+    let name = "e2e_a_renamed_and_staged_file_shows_letter_r";
+
+    let repo = git_fixture(&[("old.txt", "content that survives the rename\n")]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    let mark = ide.mark();
+    ide.key("alt+9");
+    ide.wait_for_event(
+        Mark::start(),
+        "the Changes dock to report its geometry",
+        |e| e["ev"] == "changes_panel_shown",
+    );
+
+    let root = ide.project_root().to_path_buf();
+    std::fs::rename(root.join("old.txt"), root.join("new.txt")).expect("renaming old.txt");
+    git(&root, &["add", "-A"]);
+
+    let row = ide.wait_for_event(mark, "new.txt to show up renamed and staged", |e| {
+        e["ev"] == "changes_row" && e["path"] == "new.txt" && e["group"] == "staged"
+    });
+    assert_eq!(
+        row["status"], "R",
+        "a staged rename should show the R status letter"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// A real, unresolved merge conflict — built before launch so the app's own
+/// first status read already sees it — shows up in its own "Merge
+/// Conflicts" group with the `C` status letter, and offers no checkbox to
+/// stage it with (the plan's own wording: resolving a conflict is not a
+/// checkbox toggle). Verified by clicking exactly where a checkable row's
+/// indicator would sit and then reading `git status` with the test's own,
+/// independent `git` process — the same "trust the seam, not the mirror"
+/// reasoning `status_porcelain` above already gives — to confirm the file
+/// is still unmerged rather than staged.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_a_conflicted_file_shows_letter_c_with_no_checkbox() {
+    let name = "e2e_a_conflicted_file_shows_letter_c_with_no_checkbox";
+
+    let repo = git_fixture(&[("shared.txt", "base\n")]);
+    git(repo.path(), &["checkout", "-b", "feature", "--quiet"]);
+    std::fs::write(repo.path().join("shared.txt"), "feature change\n").expect("feature edit");
+    git(repo.path(), &["commit", "--quiet", "-am", "feature change"]);
+    git(repo.path(), &["checkout", "master", "--quiet"]);
+    std::fs::write(repo.path().join("shared.txt"), "main change\n").expect("main edit");
+    git(repo.path(), &["commit", "--quiet", "-am", "main change"]);
+    // Deliberately unresolved: `git merge` exits non-zero here, which is
+    // exactly what leaves the unmerged (`UU`) entry `status.rs`'s own
+    // `ChangeKind::Conflicted` parsing reads.
+    let _ = std::process::Command::new("git")
+        .args(["merge", "feature", "--quiet", "--no-edit"])
+        .current_dir(repo.path())
+        .status()
+        .expect("running git merge");
+
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    let mark = ide.mark();
+    ide.key("alt+9");
+    let row = ide.wait_for_event(mark, "shared.txt to show up conflicted", |e| {
+        e["ev"] == "changes_row" && e["path"] == "shared.txt" && e["group"] == "conflicts"
+    });
+    assert_eq!(
+        row["status"], "C",
+        "a conflicted file should show the C status letter"
+    );
+
+    let (checkbox_x, checkbox_y) = checkbox_point(&row["rect"]);
+    ide.click_at(checkbox_x, checkbox_y, 1);
+
+    let root = ide.project_root().to_path_buf();
+    assert!(
+        status_porcelain(&root).contains("UU shared.txt"),
+        "clicking where a conflicted row's checkbox would be must not stage it"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// Push's own ahead count, read off `changes_toolbar_shown`, starts at 0
+/// right after this fixture's one push and moves to 1 the moment a real
+/// commit lands through the Changes dock's own Commit button — the same
+/// commit flow `e2e_stage_and_commit_through_the_changes_dock` drives, this
+/// time against a branch with a real upstream rather than none at all.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_push_carries_the_ahead_count_after_a_local_commit() {
+    let name = "e2e_push_carries_the_ahead_count_after_a_local_commit";
+
+    let repo = git_fixture(&[("draft.txt", "first draft\n")]);
+    // A bare remote pushed once before launch, closer to a real clone's own
+    // starting point than a same-commit tracking branch declared without
+    // ever exchanging history would be.
+    let remote = tempfile::TempDir::new().expect("temp bare remote dir");
+    git(remote.path(), &["init", "--quiet", "--bare"]);
+    git(
+        repo.path(),
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
+    git(repo.path(), &["push", "--quiet", "-u", "origin", "master"]);
+
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+    drop(remote);
+
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    let mark = ide.mark();
+    ide.key("alt+9");
+    let toolbar = ide.wait_for_event(
+        Mark::start(),
+        "the Changes toolbar to report its geometry",
+        |e| e["ev"] == "changes_toolbar_shown",
+    );
+    assert_eq!(
+        toolbar["ahead"].as_i64(),
+        Some(0),
+        "a branch just pushed should not already show ahead"
+    );
+    let shown = ide.wait_for_event(
+        Mark::start(),
+        "the Changes dock to report its geometry",
+        |e| e["ev"] == "changes_panel_shown",
+    );
+
+    // Edit, stage, commit — written straight to disk, the same reach
+    // `e2e_the_project_trees_git_submenu_stages_a_file` uses, since the
+    // flow under test is the toolbar's ahead count, not the editor.
+    std::fs::write(
+        ide.project_root().join("draft.txt"),
+        "first draft, revised\n",
+    )
+    .expect("editing draft.txt");
+    let row = ide.wait_for_event(mark, "the edit to reach the dock", |e| {
+        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "unstaged"
+    });
+    let (checkbox_x, checkbox_y) = checkbox_point(&row["rect"]);
+    ide.click_at(checkbox_x, checkbox_y, 1);
+    ide.wait_for_event(mark, "the file to move to Staged Changes", |e| {
+        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "staged"
+    });
+
+    let (message_x, message_y) = rect_centre(&shown["message_rect"]);
+    ide.click_at(message_x, message_y, 1);
+    ide.type_text("bump the draft");
+    let (commit_x, commit_y) = rect_centre(&shown["commit_rect"]);
+    ide.click_at(commit_x, commit_y, 1);
+
+    ide.wait_for_event(mark, "the ahead count to move after the commit", |e| {
+        e["ev"] == "changes_toolbar_shown" && e["ahead"].as_i64() == Some(1)
     });
 
     assert_eq!(ide.quit(), 0);

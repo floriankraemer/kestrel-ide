@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QPoint>
 #include <QString>
 #include <QWidget>
 #include <functional>
@@ -15,14 +16,19 @@ class QTreeWidgetItem;
 
 namespace ui_shell {
 
-// The Changes dock (F3-17): staged / unstaged / untracked trees with
-// per-file checkboxes, a commit message box, and Commit / Commit and Push /
-// Amend.
+class ChangesToolbar;
+
+// The Changes dock (F3-17, rebuilt G6-G8 to read like VS/JetBrains): a
+// toolbar (branch chip, Refresh/Fetch/Pull/Push, Stage all/Unstage all),
+// Merge Conflicts / Staged / Unstaged / Untracked trees with per-file
+// checkboxes and a row context menu, a commit message box, and Commit /
+// Commit and Push / Amend.
 //
-// Humble view per CLAUDE.md: what is staged, what changed and what a commit
-// does are `vcs-core`'s rules (`VcsService`'s translation of them); this
-// widget only builds the trees from `changedFiles()` and turns a checkbox
-// toggle into `stageFile`/`unstageFile`.
+// Humble view per CLAUDE.md: what is staged, what changed, a file's rename
+// origin, and the branch/ahead-behind picture are all `vcs-core`'s rules
+// (`VcsService`'s translation of them); this widget only builds the trees
+// from `changedFiles()`/`branchStatus()` and turns a checkbox toggle or a
+// context-menu entry into the matching `VcsService` call.
 //
 // Deliberately per-file only, not per-hunk: `VcsService::stageHunk`/
 // `unstageHunk`'s own doc comment already flags that they diff against
@@ -37,11 +43,20 @@ public:
     // `showDiff` is F3-14's entry point into `EditorTabs`' editable diff
     // window, reached by callback rather than a dependency on
     // editor_tabs.h — same shape `ProjectTreeActions::openFile` uses.
-    // Double-clicking a changed file's row calls it instead of the old
-    // count-only behaviour this dock never actually had (there was no
-    // per-file diff action here before F3-14).
+    // Double-clicking a changed file's row (or its context menu's "Show
+    // Diff") calls it.
+    //
+    // A row's path is repository-relative; turning it into the absolute
+    // path "Copy Path" and "Show File History" need goes through
+    // `vcsService->absolutePath()` (the bridge is the one place that knows
+    // the repository root — see the double-click handler in the .cpp).
+    //
+    // `showFileHistory` reveals the File History dock for an absolute path
+    // — `ProjectTreeActions::fileHistoryPanel`'s call shape, reached by
+    // callback here because `FileHistoryPanel` is built after this panel in
+    // `main_window.cpp`.
     ChangesPanel(VcsService *vcsService, std::function<void(const QString &)> showDiff,
-                  QWidget *parent);
+                  std::function<void(const QString &)> showFileHistory, QWidget *parent);
 
 protected:
     void showEvent(QShowEvent *event) override;
@@ -51,9 +66,12 @@ private:
     void onItemChanged(QTreeWidgetItem *item, int column);
     void doCommit(bool amend, bool push);
     void refreshEmptyState();
+    void showContextMenu(const QPoint &pos);
 
     VcsService *vcsService_;
     std::function<void(const QString &)> showDiff_;
+    std::function<void(const QString &)> showFileHistory_;
+    ChangesToolbar *toolbar_ = nullptr;
     QTreeWidget *tree_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
     QPushButton *commitButton_ = nullptr;

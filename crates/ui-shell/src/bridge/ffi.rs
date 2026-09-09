@@ -839,6 +839,12 @@ mod ffi {
         Deleted,
         TypeChanged,
         Untracked,
+        // Appended for G5 (ADR-0003: append-only) — `vcs_core::ChangeKind`
+        // variants `git status --porcelain=v2` reports that the original
+        // four-plus-Untracked shape had no room for.
+        Renamed,
+        Copied,
+        Conflicted,
     }
 
     /// The two `vcs_core::VcsError` codes the view has to *act* on rather
@@ -862,6 +868,24 @@ mod ffi {
         path: QString,
         staged: FfiChangeKind,
         unstaged: FfiChangeKind,
+        /// The path this entry was renamed/copied from
+        /// (`vcs_core::FileStatus::orig_path`); empty otherwise. Appended
+        /// for G5 (ADR-0003: append-only).
+        orig_path: QString,
+    }
+
+    /// The repository's branch/upstream/ahead-behind picture, 1:1 with
+    /// `vcs_core::RepoStatus`'s own four fields — refreshed by the same
+    /// `statusChanged` signal `changedFiles`/`fileStatus` already answer
+    /// off of, not a new signal.
+    #[derive(Default)]
+    struct FfiBranchStatus {
+        branch: QString,
+        upstream: QString,
+        ahead: u32,
+        behind: u32,
+        has_upstream: bool,
+        detached: bool,
     }
 
     /// One commit, 1:1 with `vcs_core::LogEntry` (F3-12d).
@@ -5998,6 +6022,15 @@ mod ffi {
         #[cxx_name = "fileStatus"]
         fn file_status(self: &VcsService, path: &QString) -> FfiChangedFile;
 
+        /// The branch/upstream/ahead-behind picture the last `refreshStatus`
+        /// found — the Changes dock toolbar's branch chip and Pull/Push
+        /// counts. Answers via the same `statusChanged` signal
+        /// `changedFiles`/`fileStatus` already do; there is no separate
+        /// "branch status changed" signal.
+        #[qinvokable]
+        #[cxx_name = "branchStatus"]
+        fn branch_status(self: &VcsService) -> FfiBranchStatus;
+
         /// Ask for `path`'s hunks against `HEAD`, diffed against
         /// `workingText` (the live buffer) and cached by `revision` — the
         /// open document's own revision, which is what makes the cache
@@ -6054,6 +6087,20 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "unstageFile"]
         fn unstage_file(self: Pin<&mut VcsService>, path: &QString);
+
+        /// `git add -A`; the "Stage all" toolbar button's whole-worktree
+        /// counterpart to `stageFile`. `statusChanged` follows on success,
+        /// `vcsFailed` on failure.
+        #[qinvokable]
+        #[cxx_name = "stageAll"]
+        fn stage_all(self: Pin<&mut VcsService>);
+
+        /// `git reset`; the "Unstage all" toolbar button's whole-worktree
+        /// counterpart to `unstageFile`. `statusChanged` follows on success,
+        /// `vcsFailed` on failure.
+        #[qinvokable]
+        #[cxx_name = "unstageAll"]
+        fn unstage_all(self: Pin<&mut VcsService>);
 
         /// `git checkout HEAD -- <path>`: discard the file's staged *and*
         /// unstaged changes, putting it back the way `HEAD` has it.

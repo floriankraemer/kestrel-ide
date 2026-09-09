@@ -3,6 +3,7 @@
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "file_history_panel.h"
+#include "git_dialogs.h"
 #include "project_tree_dock.h"
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
@@ -11,8 +12,6 @@
 #include <QFileInfo>
 #include <QMainWindow>
 #include <QMenu>
-#include <QMessageBox>
-#include <QPushButton>
 
 namespace ui_shell {
 
@@ -71,23 +70,10 @@ void appendGitSubmenu(QMenu &menu, const QString &absolutePath,
     QObject::connect(revertAction, &QAction::triggered, git, [vcs, window, absolutePath]() {
         // The working-tree content is gone once `git checkout HEAD --` has
         // run, and nothing in the IDE can bring it back — so this asks, every
-        // time, naming the file, with Cancel as the default button.
+        // time, naming the file (git_dialogs.h, shared with the Changes
+        // dock's own Discard Changes… entry, G8).
         const QString name = QFileInfo(absolutePath).fileName();
-        QMessageBox confirm(QMessageBox::Warning, QObject::tr("Revert File Changes"),
-                             QObject::tr("Discard all changes to \"%1\"?").arg(name),
-                             QMessageBox::Cancel, window);
-        confirm.setInformativeText(
-          QObject::tr("The file goes back to its last committed state. This cannot be undone."));
-        QAbstractButton *revert =
-          confirm.addButton(QObject::tr("Revert"), QMessageBox::DestructiveRole);
-        confirm.setDefaultButton(QMessageBox::Cancel);
-        e2eMark("{\"ev\":\"dialog_shown\",\"name\":\"revert_file_confirm\"}");
-        confirm.exec();
-        const bool accepted = confirm.clickedButton() == revert;
-        e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"revert_file_confirm\","
-                                "\"accepted\":%1}")
-                  .arg(accepted ? "true" : "false"));
-        if (accepted) {
+        if (confirmDiscardChanges(window, name, "revert_file_confirm")) {
             vcs->revertFile(absolutePath);
         }
     });

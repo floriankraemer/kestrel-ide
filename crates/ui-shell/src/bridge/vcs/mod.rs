@@ -1,7 +1,7 @@
 use core::pin::Pin;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -143,11 +143,58 @@ fn to_ffi_result(err: &vcs_core::VcsError) -> ffi::FfiResult {
 /// One shared place to do that strip, so a caller can't reintroduce the bug
 /// `requestHunks`/`requestBlobAt` already fixed independently of
 /// `file_history`/`blame` (see PR discussion on issue #164).
-pub(crate) fn to_repo_relative<'a>(repo: &vcs_core::Repository, absolute: &'a Path) -> &'a Path {
+///
+/// Owned rather than borrowed (G4): the Windows-tolerant fallback below can
+/// only produce a re-normalized path, not a slice of `absolute`, so both
+/// paths through this function return the same type.
+pub(crate) fn to_repo_relative(repo: &vcs_core::Repository, absolute: &Path) -> PathBuf {
     match repo.work_dir() {
-        Some(root) => absolute.strip_prefix(&root).unwrap_or(absolute),
-        None => absolute,
+        Some(root) => strip_work_dir(&root, absolute).unwrap_or_else(|| absolute.to_path_buf()),
+        None => absolute.to_path_buf(),
     }
+}
+
+/// `to_repo_relative`/`file_status`'s shared Windows path match (G4):
+/// `gix`'s `work_dir()` and a Qt absolute path can disagree on drive-letter
+/// case and `/` vs `\` for a `\\wsl.localhost\...` project, which made every
+/// file compare unequal and silently report "no change". Strips `root` off
+/// `candidate` tolerating that: separators are normalized unconditionally,
+/// and components compare case-insensitively only on Windows, where the
+/// mismatch actually occurs.
+fn strip_work_dir(root: &Path, candidate: &Path) -> Option<PathBuf> {
+    strip_prefix_tolerant(
+        root.to_string_lossy().as_ref(),
+        candidate.to_string_lossy().as_ref(),
+        cfg!(windows),
+    )
+}
+
+/// The pure comparison behind [`strip_work_dir`], kept independent of the
+/// actual OS (`case_insensitive` is an explicit parameter, not `cfg!`
+/// itself) so both platforms' matching behavior are unit-testable from
+/// Linux. Splits on both `/` and `\` regardless of host, since the mismatch
+/// this exists for is exactly a `\` vs `/` and drive-letter-case disagreement
+/// between two strings that may each use either separator.
+fn strip_prefix_tolerant(root: &str, candidate: &str, case_insensitive: bool) -> Option<PathBuf> {
+    fn split(s: &str) -> Vec<&str> {
+        s.split(['/', '\\']).filter(|c| !c.is_empty()).collect()
+    }
+    let root_parts = split(root);
+    let candidate_parts = split(candidate);
+    if candidate_parts.len() < root_parts.len() {
+        return None;
+    }
+    let root_matches = root_parts.iter().zip(candidate_parts.iter()).all(|(r, c)| {
+        if case_insensitive {
+            r.eq_ignore_ascii_case(c)
+        } else {
+            r == c
+        }
+    });
+    if !root_matches {
+        return None;
+    }
+    Some(candidate_parts[root_parts.len()..].iter().collect())
 }
 
 fn to_ffi_change_kind(kind: Option<vcs_core::ChangeKind>) -> ffi::FfiChangeKind {
@@ -157,6 +204,19 @@ fn to_ffi_change_kind(kind: Option<vcs_core::ChangeKind>) -> ffi::FfiChangeKind 
         Some(vcs_core::ChangeKind::Modified) => ffi::FfiChangeKind::Modified,
         Some(vcs_core::ChangeKind::Deleted) => ffi::FfiChangeKind::Deleted,
         Some(vcs_core::ChangeKind::TypeChanged) => ffi::FfiChangeKind::TypeChanged,
+        Some(vcs_core::ChangeKind::Untracked) => ffi::FfiChangeKind::Untracked,
+        Some(vcs_core::ChangeKind::Renamed) => ffi::FfiChangeKind::Renamed,
+        Some(vcs_core::ChangeKind::Copied) => ffi::FfiChangeKind::Copied,
+        Some(vcs_core::ChangeKind::Conflicted) => ffi::FfiChangeKind::Conflicted,
+    }
+}
+
+/// `orig_path` as `FfiChangedFile` carries it: empty unless the file was
+/// renamed or copied, never `None` (ADR-0003 "no `Option` at the seam").
+fn to_ffi_orig_path(orig_path: &Option<std::path::PathBuf>) -> QString {
+    match orig_path {
+        Some(path) => QString::from(path.to_string_lossy().as_ref()),
+        None => QString::default(),
     }
 }
 
@@ -274,13 +334,15 @@ impl ffi::VcsService {
             path: QString::default(),
             staged: ffi::FfiChangeKind::None,
             unstaged: ffi::FfiChangeKind::None,
+            orig_path: QString::default(),
         };
         let work_dir = self.work_dir.borrow();
         if work_dir.is_empty() {
             return none;
         }
         let absolute = path.to_string();
-        let Ok(relative) = Path::new(&absolute).strip_prefix(work_dir.as_str()) else {
+        let Some(relative) = strip_work_dir(Path::new(work_dir.as_str()), Path::new(&absolute))
+        else {
             // Outside the repository entirely.
             return none;
         };
@@ -290,17 +352,7 @@ impl ffi::VcsService {
                 path: QString::from(file.path.to_string_lossy().as_ref()),
                 staged: to_ffi_change_kind(file.staged),
                 unstaged: to_ffi_change_kind(file.unstaged),
-            };
-        }
-        if status
-            .untracked
-            .iter()
-            .any(|untracked| untracked == relative)
-        {
-            return ffi::FfiChangedFile {
-                path: QString::from(relative.to_string_lossy().as_ref()),
-                staged: ffi::FfiChangeKind::None,
-                unstaged: ffi::FfiChangeKind::Untracked,
+                orig_path: to_ffi_orig_path(&file.orig_path),
             };
         }
         none
@@ -335,21 +387,37 @@ impl ffi::VcsService {
 
     pub fn changed_files(&self) -> Vec<ffi::FfiChangedFile> {
         let status = self.status.borrow();
-        let mut out: Vec<ffi::FfiChangedFile> = status
+        status
             .files
             .iter()
             .map(|file| ffi::FfiChangedFile {
                 path: QString::from(file.path.to_string_lossy().as_ref()),
                 staged: to_ffi_change_kind(file.staged),
                 unstaged: to_ffi_change_kind(file.unstaged),
+                orig_path: to_ffi_orig_path(&file.orig_path),
             })
-            .collect();
-        out.extend(status.untracked.iter().map(|path| ffi::FfiChangedFile {
-            path: QString::from(path.to_string_lossy().as_ref()),
-            staged: ffi::FfiChangeKind::None,
-            unstaged: ffi::FfiChangeKind::Untracked,
-        }));
-        out
+            .collect()
+    }
+
+    /// The branch/upstream/ahead-behind picture the last `refreshStatus`
+    /// found. `detached` is true when `branch` is the literal
+    /// `"(detached)"` marker [`vcs_core::status::parse_porcelain_v2`]
+    /// reports for a detached `HEAD` (`RepoStatus::branch`'s own doc
+    /// comment) — there is no separate `HeadInfo` read here, this is
+    /// exactly what `git status --porcelain=v2`'s `# branch.head` line said.
+    pub fn branch_status(&self) -> ffi::FfiBranchStatus {
+        const DETACHED_MARKER: &str = "(detached)";
+        let status = self.status.borrow();
+        let branch = status.branch.clone().unwrap_or_default();
+        let detached = branch == DETACHED_MARKER;
+        ffi::FfiBranchStatus {
+            branch: QString::from(branch.as_str()),
+            upstream: QString::from(status.upstream.clone().unwrap_or_default().as_str()),
+            ahead: status.ahead,
+            behind: status.behind,
+            has_upstream: status.upstream.is_some(),
+            detached,
+        }
     }
 
     pub fn request_hunks(
@@ -382,7 +450,7 @@ impl ffi::VcsService {
             // second tree walk and blob inflate on every settle tick.
             let outcome = worker
                 .hunk_cache
-                .hunks(&worker.repo, relative, &job_text, revision)
+                .hunks(&worker.repo, &relative, &job_text, revision)
                 .map(|working| (working.before_text, working.hunks));
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match outcome {
                 Ok((before_text, hunks)) => {
@@ -439,7 +507,7 @@ impl ffi::VcsService {
             // Same absolute-vs-repository-relative fix `requestHunks` already
             // needs (`job_path` is a tab's own path via `tabPath`).
             let relative = to_repo_relative(&worker.repo, Path::new(&job_path));
-            let outcome = worker.repo.blob_at(&job_revision, relative);
+            let outcome = worker.repo.blob_at(&job_revision, &relative);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match outcome {
                 Ok(text) => {
                     service.blobs.borrow_mut().insert(
@@ -577,5 +645,72 @@ impl ffi::VcsService {
             Some(jobs) => jobs.send(Box::new(job)).is_ok(),
             None => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_match_strips_the_prefix_case_sensitively() {
+        let relative = strip_prefix_tolerant(
+            "/home/user/project",
+            "/home/user/project/src/main.rs",
+            false,
+        );
+        assert_eq!(relative, Some(PathBuf::from("src/main.rs")));
+    }
+
+    #[test]
+    fn case_sensitive_mode_rejects_a_differently_cased_root() {
+        let relative = strip_prefix_tolerant(
+            "/Home/user/project",
+            "/home/user/project/src/main.rs",
+            false,
+        );
+        assert_eq!(relative, None);
+    }
+
+    #[test]
+    fn windows_mode_tolerates_drive_letter_case() {
+        let relative = strip_prefix_tolerant(
+            r"c:\Users\flo\project",
+            r"C:\Users\flo\project\src\main.rs",
+            true,
+        );
+        assert_eq!(relative, Some(PathBuf::from("src/main.rs")));
+    }
+
+    #[test]
+    fn windows_mode_tolerates_mixed_separators() {
+        let relative = strip_prefix_tolerant(
+            r"C:\Users\flo\project",
+            "C:/Users/flo/project/src/main.rs",
+            true,
+        );
+        assert_eq!(relative, Some(PathBuf::from("src/main.rs")));
+    }
+
+    #[test]
+    fn windows_mode_still_rejects_a_path_outside_the_root() {
+        let relative =
+            strip_prefix_tolerant(r"C:\Users\flo\project", r"C:\Users\flo\other\main.rs", true);
+        assert_eq!(relative, None);
+    }
+
+    #[test]
+    fn a_path_shorter_than_the_root_never_matches() {
+        let relative = strip_prefix_tolerant(r"C:\Users\flo\project", r"C:\Users\flo", true);
+        assert_eq!(relative, None);
+    }
+
+    #[test]
+    fn strip_work_dir_delegates_with_the_platform_case_sensitivity() {
+        let relative = strip_work_dir(
+            Path::new("/home/user/project"),
+            Path::new("/home/user/project/src/main.rs"),
+        );
+        assert_eq!(relative, Some(PathBuf::from("src/main.rs")));
     }
 }

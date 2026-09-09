@@ -20,7 +20,7 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let result = worker
                 .repo
-                .stage_file(to_repo_relative(&worker.repo, Path::new(&path)));
+                .stage_file(&to_repo_relative(&worker.repo, Path::new(&path)));
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => service.as_mut().refresh_status(),
                 Err(err) => {
@@ -37,7 +37,35 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let result = worker
                 .repo
-                .unstage_file(to_repo_relative(&worker.repo, Path::new(&path)));
+                .unstage_file(&to_repo_relative(&worker.repo, Path::new(&path)));
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
+                Ok(()) => service.as_mut().refresh_status(),
+                Err(err) => {
+                    let result = to_ffi_result(&err);
+                    service.as_mut().vcs_failed(result);
+                }
+            });
+        });
+    }
+
+    pub fn stage_all(mut self: Pin<&mut Self>) {
+        let qt_thread = self.as_mut().qt_thread();
+        self.as_ref().push_job(move |worker: &VcsWorker| {
+            let result = worker.repo.stage_all();
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
+                Ok(()) => service.as_mut().refresh_status(),
+                Err(err) => {
+                    let result = to_ffi_result(&err);
+                    service.as_mut().vcs_failed(result);
+                }
+            });
+        });
+    }
+
+    pub fn unstage_all(mut self: Pin<&mut Self>) {
+        let qt_thread = self.as_mut().qt_thread();
+        self.as_ref().push_job(move |worker: &VcsWorker| {
+            let result = worker.repo.unstage_all();
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => service.as_mut().refresh_status(),
                 Err(err) => {
@@ -54,7 +82,7 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let result = worker
                 .repo
-                .discard_file(to_repo_relative(&worker.repo, Path::new(&path)));
+                .discard_file(&to_repo_relative(&worker.repo, Path::new(&path)));
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => service.as_mut().refresh_status(),
                 Err(err) => {

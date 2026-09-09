@@ -22,6 +22,7 @@ pub mod hunks;
 pub mod repo;
 pub mod revert;
 pub mod staging;
+pub mod status;
 
 pub use blame::{BlameCache, BlameLine};
 pub use commit_diff::{ChangedCommitFile, FileDiff};

@@ -123,6 +123,21 @@ fn display_command(args: &[&str]) -> String {
 /// [`run`] so the shape of a command can be asserted on without a real
 /// `git` binary. `staging`, `commit`, `branch` and `remote` build on these.
 pub mod argv {
+    /// `git status --porcelain=v2 -z --branch --untracked-files=all
+    /// --renames` — one command yielding branch/upstream/ahead-behind plus
+    /// every changed path, renames included, that `crate::status`'s
+    /// `parse_porcelain_v2` expects.
+    pub fn status() -> Vec<&'static str> {
+        vec![
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+            "--renames",
+        ]
+    }
+
     /// `git add -- <paths>`.
     pub fn add<'a>(paths: &'a [&str]) -> Vec<&'a str> {
         let mut args = vec!["add", "--"];
@@ -225,6 +240,21 @@ mod tests {
     // -----------------------------------------------------------------
     // argv construction — no git binary needed.
     // -----------------------------------------------------------------
+
+    #[test]
+    fn status_argv() {
+        assert_eq!(
+            argv::status(),
+            vec![
+                "status",
+                "--porcelain=v2",
+                "-z",
+                "--branch",
+                "--untracked-files=all",
+                "--renames",
+            ]
+        );
+    }
 
     #[test]
     fn add_argv() {

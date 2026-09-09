@@ -157,6 +157,14 @@ fn to_ffi_change_kind(kind: Option<vcs_core::ChangeKind>) -> ffi::FfiChangeKind 
         Some(vcs_core::ChangeKind::Modified) => ffi::FfiChangeKind::Modified,
         Some(vcs_core::ChangeKind::Deleted) => ffi::FfiChangeKind::Deleted,
         Some(vcs_core::ChangeKind::TypeChanged) => ffi::FfiChangeKind::TypeChanged,
+        Some(vcs_core::ChangeKind::Untracked) => ffi::FfiChangeKind::Untracked,
+        // TODO(G5): `FfiChangeKind` gains its own `Renamed`/`Copied`/
+        // `Conflicted` variants in the seam task; until then these three
+        // report as `Modified` rather than fail to compile — a minimal
+        // compile-fix per the G1-G3 task brief, not the real seam work.
+        Some(vcs_core::ChangeKind::Renamed)
+        | Some(vcs_core::ChangeKind::Copied)
+        | Some(vcs_core::ChangeKind::Conflicted) => ffi::FfiChangeKind::Modified,
     }
 }
 
@@ -292,17 +300,6 @@ impl ffi::VcsService {
                 unstaged: to_ffi_change_kind(file.unstaged),
             };
         }
-        if status
-            .untracked
-            .iter()
-            .any(|untracked| untracked == relative)
-        {
-            return ffi::FfiChangedFile {
-                path: QString::from(relative.to_string_lossy().as_ref()),
-                staged: ffi::FfiChangeKind::None,
-                unstaged: ffi::FfiChangeKind::Untracked,
-            };
-        }
         none
     }
 
@@ -335,7 +332,7 @@ impl ffi::VcsService {
 
     pub fn changed_files(&self) -> Vec<ffi::FfiChangedFile> {
         let status = self.status.borrow();
-        let mut out: Vec<ffi::FfiChangedFile> = status
+        status
             .files
             .iter()
             .map(|file| ffi::FfiChangedFile {
@@ -343,13 +340,7 @@ impl ffi::VcsService {
                 staged: to_ffi_change_kind(file.staged),
                 unstaged: to_ffi_change_kind(file.unstaged),
             })
-            .collect();
-        out.extend(status.untracked.iter().map(|path| ffi::FfiChangedFile {
-            path: QString::from(path.to_string_lossy().as_ref()),
-            staged: ffi::FfiChangeKind::None,
-            unstaged: ffi::FfiChangeKind::Untracked,
-        }));
-        out
+            .collect()
     }
 
     pub fn request_hunks(

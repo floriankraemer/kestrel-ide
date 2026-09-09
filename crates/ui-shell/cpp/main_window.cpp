@@ -314,15 +314,6 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     docks->registerDock(QStringLiteral("preview"), previewDock, ads::CenterDockWidgetArea, rightArea);
     docks->hide(QStringLiteral("preview"));
 
-    // F3-17/18: both start hidden; vcs_menu.cpp reveals each in turn.
-    auto *changesPanel = new ChangesPanel(
-      vcsService, [editorTabs](const QString &path) { editorTabs->showDiffForPath(path); },
-      dockManager);
-    auto *changesDock = new ads::CDockWidget(dockManager, QObject::tr("Changes"));
-    changesDock->setWidget(changesPanel);
-    docks->registerDock(QStringLiteral("changes"), changesDock, ads::CenterDockWidgetArea, rightArea);
-    docks->hide(QStringLiteral("changes"));
-
     // Built first so `openCommit` below has somewhere to send a commit id.
     auto *commitDetailPanel = buildCommitDetailDock(dockManager, docks, bottomArea, vcsService);
     auto openCommit = [docks, commitDetailPanel](const QString &commitId) {
@@ -339,6 +330,15 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
       },
       openCommit);
     buildCommitLogDock(dockManager, docks, bottomArea, vcsService, openCommit);
+
+    auto *changesPanel = new ChangesPanel( // F3-17/18, after fileHistoryPanel (G8)
+      vcsService, [editorTabs](const QString &p) { editorTabs->showDiffForPath(p); },
+      [docks, fileHistoryPanel](const QString &p) {
+          docks->show(QStringLiteral("fileHistory")); fileHistoryPanel->setCurrentFile(p); }, dockManager);
+    auto *changesDock = new ads::CDockWidget(dockManager, QObject::tr("Changes"));
+    changesDock->setWidget(changesPanel);
+    docks->registerDock(QStringLiteral("changes"), changesDock, ads::CenterDockWidgetArea, rightArea);
+    docks->hide(QStringLiteral("changes"));
 
     // Search Everywhere: a transient popup parented to the top-level window
     // (not the dock manager) since it's a floating overlay, not a dock

@@ -439,6 +439,9 @@ fn main() {
         // The project tree's Git submenu. No Q_OBJECT (one free function),
         // so only the source is listed.
         .cpp_file("cpp/project_tree_git_menu.cpp")
+        // The Discard Changes confirm dialog shared by the project tree's
+        // Git submenu and the Changes dock (G8). No Q_OBJECT.
+        .cpp_file("cpp/git_dialogs.cpp")
         .cpp_file("cpp/rounded_corners.cpp")
         .cpp_file("cpp/panel_shadow.cpp")
         // First hand-written (non-generated) QObject in this crate: header

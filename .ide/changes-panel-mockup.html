@@ -1,0 +1,126 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Changes panel UI mockup</title>
+<style>
+  :root {
+    --bg: #f3f3f3; --panel: #ffffff; --border: #d7d7d7; --text: #1e1e1e;
+    --muted: #6b6b6b; --hover: #eef3fb; --accent: #2f6fdb;
+    --add: #57a64a; --del: #c55147; --mod: #4c82c4; --conflict: #ff6b68;
+    --mono: "SF Mono", Consolas, monospace;
+  }
+  body { background: var(--bg); color: var(--text); font: 13px/1.4 -apple-system, Segoe UI, sans-serif; margin:0; padding: 24px; }
+  h2 { font-size: 14px; margin: 24px 0 8px; color: var(--muted); }
+
+  .toolbar { width: 640px; background: var(--panel); border: 1px solid var(--border); border-radius: 4px 4px 0 0; display: flex; align-items: center; gap: 12px; padding: 6px 10px; font-size: 12.5px; }
+  .toolbar .branch-chip { font-weight: 600; }
+  .toolbar .group { display: flex; gap: 6px; }
+  .toolbar button { border: none; background: transparent; color: var(--text); font-size: 12.5px; padding: 3px 6px; border-radius: 3px; cursor: pointer; }
+  .toolbar button:hover { background: var(--hover); }
+  .toolbar button:disabled { color: var(--muted); cursor: default; }
+  .toolbar .spacer { flex: 1; }
+
+  .tree { width: 640px; background: var(--panel); border: 1px solid var(--border); border-top: none; border-radius: 0 0 4px 4px; overflow: hidden; }
+  .group-row { font-weight: 600; padding: 5px 10px; border-bottom: 1px solid var(--border); background: #fafafa; }
+  .file-row { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--border); font-family: var(--mono); font-size: 12.5px; }
+  .file-row:hover { background: var(--hover); }
+  .file-row .checkbox { width: 13px; height: 13px; border: 1px solid #9a9a9a; border-radius: 2px; flex: none; }
+  .file-row .checkbox.checked { background: var(--accent); border-color: var(--accent); }
+  .file-row .checkbox.none { visibility: hidden; }
+  .file-row .letter { width: 14px; text-align: center; flex: none; font-weight: 700; }
+  .file-row .letter.M { color: var(--mod); }
+  .file-row .letter.A { color: var(--add); }
+  .file-row .letter.D { color: var(--del); }
+  .file-row .letter.R { color: var(--mod); }
+  .file-row .letter.U { color: var(--add); }
+  .file-row .letter.C { color: var(--conflict); font-weight: 800; }
+  .file-row .name { flex: none; }
+  .file-row .dir { color: var(--muted); }
+  .commit-box { width: 640px; background: var(--panel); border: 1px solid var(--border); border-top: none; padding: 8px 10px; }
+  .commit-box textarea { width: 100%; height: 40px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 3px; font: inherit; padding: 4px; color: var(--muted); }
+  .commit-buttons { display: flex; gap: 8px; margin-top: 8px; }
+  .commit-buttons button { border: 1px solid var(--border); background: #fafafa; border-radius: 3px; padding: 4px 10px; font-size: 12.5px; }
+
+  table.letters { border-collapse: collapse; width: 420px; }
+  table.letters th, table.letters td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; font-size: 12.5px; }
+  table.letters .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<h2>Changes dock toolbar — normal state (ChangesToolbar)</h2>
+<div class="toolbar">
+  <span class="branch-chip">⎇ main  ↓2 ↑1</span>
+  <div class="group">
+    <button>⟳</button>
+    <button>⇩ Fetch</button>
+    <button>⇩ Pull 2</button>
+    <button>⇧ Push 1</button>
+  </div>
+  <div class="group">
+    <button>✓ Stage all</button>
+    <button>✗ Unstage all</button>
+  </div>
+  <span class="spacer"></span>
+</div>
+
+<h2>Changes dock tree — normal state (ChangesPanel)</h2>
+<div class="tree">
+  <div class="group-row">▾ Staged Changes (2)</div>
+  <div class="file-row"><span class="checkbox checked"></span><span class="letter M">M</span><span class="name">bridge.rs</span><span class="dir">crates/ui-shell/src</span></div>
+  <div class="file-row"><span class="checkbox checked"></span><span class="letter A">A</span><span class="name">status.rs</span><span class="dir">crates/vcs-core/src</span></div>
+  <div class="group-row">▾ Unstaged Changes (3)</div>
+  <div class="file-row"><span class="checkbox"></span><span class="letter M">M</span><span class="name">main_window.cpp</span><span class="dir">crates/ui-shell/cpp</span></div>
+  <div class="file-row"><span class="checkbox"></span><span class="letter R">R</span><span class="name">changes_panel.cpp</span><span class="dir">crates/ui-shell/cpp  ← was: changes.cpp</span></div>
+  <div class="file-row"><span class="checkbox"></span><span class="letter D">D</span><span class="name">old_notes.md</span><span class="dir">docs</span></div>
+  <div class="group-row">▾ Untracked Files (1)</div>
+  <div class="file-row"><span class="checkbox"></span><span class="letter U">U</span><span class="name">scratch.md</span><span class="dir">docs</span></div>
+</div>
+<div class="commit-box">
+  <textarea placeholder="Commit message" readonly></textarea>
+  <div class="commit-buttons">
+    <button>Commit</button>
+    <button>Commit and Push</button>
+    <button>Amend</button>
+  </div>
+</div>
+
+<h2>Changes dock toolbar — mid-merge state (ChangesToolbar)</h2>
+<div class="toolbar">
+  <span class="branch-chip">⎇ feature/x  ↓0 ↑3</span>
+  <div class="group">
+    <button>⟳</button>
+    <button>⇩ Fetch</button>
+    <button disabled>⇩ Pull</button>
+    <button>⇧ Push 3</button>
+  </div>
+  <div class="group">
+    <button disabled>✓</button>
+    <button disabled>✗</button>
+  </div>
+  <span class="spacer"></span>
+</div>
+
+<h2>Changes dock tree — mid-merge state (ChangesPanel)</h2>
+<div class="tree">
+  <div class="group-row">▾ Merge Conflicts (1)</div>
+  <div class="file-row"><span class="checkbox none"></span><span class="letter C">C</span><span class="name">parser.rs</span><span class="dir">crates/syntax-core/src</span></div>
+  <div class="group-row">▾ Staged Changes (1)</div>
+  <div class="file-row"><span class="checkbox checked"></span><span class="letter M">M</span><span class="name">lib.rs</span><span class="dir">crates/syntax-core/src</span></div>
+</div>
+
+<h2>Status letter colours (changeKindColor, dark.toml tokens)</h2>
+<table class="letters">
+  <tr><th>Letter</th><th>Meaning</th><th>Colour token</th></tr>
+  <tr><td><span class="swatch" style="background:var(--mod)"></span>M</td><td>Modified</td><td><code>diff.modified_marker</code></td></tr>
+  <tr><td><span class="swatch" style="background:var(--add)"></span>A</td><td>Added</td><td><code>diff.added_marker</code></td></tr>
+  <tr><td><span class="swatch" style="background:var(--del)"></span>D</td><td>Deleted</td><td><code>diff.deleted_marker</code></td></tr>
+  <tr><td><span class="swatch" style="background:var(--mod)"></span>R</td><td>Renamed</td><td><code>diff.modified_marker</code></td></tr>
+  <tr><td><span class="swatch" style="background:var(--conflict)"></span>C</td><td>Conflict (bold)</td><td><code>semantic.error</code></td></tr>
+  <tr><td><span class="swatch" style="background:var(--add)"></span>U</td><td>Untracked</td><td><code>diff.added_marker</code></td></tr>
+  <tr><td><span class="swatch" style="background:var(--mod)"></span>T</td><td>Type changed</td><td><code>diff.modified_marker</code></td></tr>
+</table>
+
+</body>
+</html>

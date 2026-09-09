@@ -4,6 +4,7 @@
 
 Accepted.
 Amended by [§7, what measurement changed](#7-what-measurement-changed-amendment), added after the first time anyone timed this crate rather than reasoning about it.
+§1's status read is superseded by [ADR-0053](0053-git-status-via-porcelain-v2.md): `Repository::status` now shells out to `git status --porcelain=v2` rather than calling `gix::Repository::status(progress)`, to represent merge conflicts, renames and ahead/behind, and to close the WSL host asymmetry ADR-0052 left open for this one read.
 
 ## Context
 

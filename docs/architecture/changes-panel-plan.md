@@ -113,10 +113,10 @@ This plan doc, ADR-0053, the `docs/README.md` index lines, and `.ide/changes-pan
 | G7 | Panel: letter column, name + dim directory, group counts, Merge Conflicts group, rename suffix | done | 674f0b2 |
 | G8 | Row context menu; Discard confirm dialog extracted and shared with the project tree | done | 674f0b2 |
 | G9 | E2E markers + three new tests in `e2e_vcs.rs` | done | 830ef01 |
-| G10 | ADR-0053, this plan doc, `docs/README.md`, `.ide/changes-panel-mockup.html` | done | *(recorded in a follow-up commit — see below)* |
+| G10 | ADR-0053, this plan doc, `docs/README.md`, `.ide/changes-panel-mockup.html` | done | a939fa2 |
 | G11 | Windows/WSL manual pass, recorded in this plan doc | **open — awaits a manual Windows/WSL session.** The implementing sessions ran in a Linux-only Docker container with no Windows machine or real `\\wsl.localhost\...` project available. Every backend and UI change was verified on Linux CI (unit tests against a real `git` binary, and the E2E suite under Xvfb); the manual check below needs a real Windows/WSL box, the same `remote-wsl-plan.md` W8-2 precedent. | |
 
-G10's own commit hash could not be written into this table by that commit (it would have to name itself before it exists), so it is recorded by a small follow-up commit immediately after — `remote-wsl-plan.md`'s own W8-1/W8-2 precedent for the same problem.
+G10's own commit hash could not be written into this table by that commit (it would have to name itself before it exists), so it was recorded by this small follow-up commit immediately after — `remote-wsl-plan.md`'s own W8-1 precedent for the same problem.
 
 ## Verification
 

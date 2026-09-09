@@ -1,11 +1,13 @@
 #include "changes_toolbar.h"
 
+#include "e2e_mark.h"
 #include "theme.h"
 #include "ui_tokens.h"
 #include "vcs_menu.h"
 
 #include <QHBoxLayout>
 #include <QPoint>
+#include <QShowEvent>
 #include <QToolButton>
 
 namespace ui_shell {
@@ -97,6 +99,12 @@ ChangesToolbar::ChangesToolbar(VcsService *vcsService, QWidget *parent)
     refresh();
 }
 
+void ChangesToolbar::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    markShown();
+}
+
 void ChangesToolbar::refresh()
 {
     const bool isRepo = vcsService_->isRepository();
@@ -138,6 +146,40 @@ void ChangesToolbar::refresh()
     }
     stageAllButton_->setEnabled(hasUnstaged);
     unstageAllButton_->setEnabled(hasStaged);
+
+    markShown();
+}
+
+void ChangesToolbar::markShown()
+{
+    // Same reasoning as `ChangesPanel::showEvent`/`markChangesRow`: an E2E
+    // flow reads a control's on-screen rect from here rather than computing
+    // one from the toolbar's own layout metrics. Re-emitted on every
+    // `refresh()`, not only the first `showEvent`, so a flow can watch
+    // `ahead`/`behind` move — after a commit, a pull, or a push — the same
+    // way `changes_row` is re-marked on every `ChangesPanel::refresh()`.
+    const FfiBranchStatus status = vcsService_->branchStatus();
+    const QRect refreshRect(refreshButton_->mapToGlobal(QPoint(0, 0)), refreshButton_->size());
+    const QRect pullRect(pullButton_->mapToGlobal(QPoint(0, 0)), pullButton_->size());
+    const QRect pushRect(pushButton_->mapToGlobal(QPoint(0, 0)), pushButton_->size());
+    e2eMark(QStringLiteral("{\"ev\":\"changes_toolbar_shown\",\"ahead\":%1,\"behind\":%2,"
+                            "\"refresh_rect\":[%3,%4,%5,%6],"
+                            "\"pull_rect\":[%7,%8,%9,%10],"
+                            "\"push_rect\":[%11,%12,%13,%14]}")
+              .arg(status.ahead)
+              .arg(status.behind)
+              .arg(refreshRect.x())
+              .arg(refreshRect.y())
+              .arg(refreshRect.width())
+              .arg(refreshRect.height())
+              .arg(pullRect.x())
+              .arg(pullRect.y())
+              .arg(pullRect.width())
+              .arg(pullRect.height())
+              .arg(pushRect.x())
+              .arg(pushRect.y())
+              .arg(pushRect.width())
+              .arg(pushRect.height()));
 }
 
 } // namespace ui_shell

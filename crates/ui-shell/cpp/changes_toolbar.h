@@ -4,6 +4,7 @@
 
 #include <QWidget>
 
+class QShowEvent;
 class QToolButton;
 
 namespace ui_shell {
@@ -30,6 +31,9 @@ class ChangesToolbar : public QWidget
 public:
     explicit ChangesToolbar(VcsService *vcsService, QWidget *parent = nullptr);
 
+protected:
+    void showEvent(QShowEvent *event) override;
+
 signals:
     void refreshRequested();
     void fetchRequested();
@@ -40,6 +44,7 @@ signals:
 
 private:
     void refresh();
+    void markShown();
 
     VcsService *vcsService_;
     QToolButton *branchChip_ = nullptr;

@@ -33,7 +33,7 @@ namespace {
 constexpr int kLetterColumn = 0;
 constexpr int kNameColumn = 1;
 constexpr int kLocationColumn = 2;
-constexpr int kLetterColumnWidth = 28;
+constexpr int kLetterColumnWidth = 64;
 
 constexpr int kPathRole = Qt::UserRole;
 // Whether checking this item stages (true) or unstages (false) its path —
@@ -137,6 +137,10 @@ QTreeWidgetItem *makeGroup(QTreeWidget *tree, const QString &title)
     group->setFont(0, font);
     group->setFlags(Qt::ItemIsEnabled);
     group->setExpanded(true);
+    // Otherwise the title is squeezed into the letter column's own narrow
+    // width, which fits a one-character status letter but not a group
+    // title like "Staged Changes (2)".
+    group->setFirstColumnSpanned(true);
     return group;
 }
 
@@ -201,16 +205,18 @@ QTreeWidgetItem *makeFileRow(QTreeWidgetItem *group, const FileRowSpec &spec)
 // same reason `EditorTabs::markTab` reports a tab's rect: an E2E flow that
 // has to click a specific file's checkbox would otherwise compute a row's
 // position from the tree's font metrics and row height, which move for
-// reasons unrelated to whatever it is testing.
+// reasons unrelated to whatever it is testing. `status` is the single-letter
+// code (`changeKindLetter`'s own text) so a test can assert it without
+// decoding a colour.
 void markChangesRow(QTreeWidget *tree, QTreeWidgetItem *row, const QString &path,
-                     const QString &group)
+                     const QString &group, const QString &status)
 {
     const QRect rect = tree->visualItemRect(row);
     const QPoint origin =
       rect.isEmpty() ? QPoint() : tree->viewport()->mapToGlobal(rect.topLeft());
-    e2eMark(QStringLiteral("{\"ev\":\"changes_row\",\"path\":%1,\"group\":%2,"
-                            "\"rect\":[%3,%4,%5,%6]}")
-              .arg(e2eJson(path), e2eJson(group))
+    e2eMark(QStringLiteral("{\"ev\":\"changes_row\",\"path\":%1,\"group\":%2,\"status\":%3,"
+                            "\"rect\":[%4,%5,%6,%7]}")
+              .arg(e2eJson(path), e2eJson(group), e2eJson(status))
               .arg(origin.x())
               .arg(origin.y())
               .arg(rect.width())
@@ -258,6 +264,12 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     tree_->header()->setSectionResizeMode(kNameColumn, QHeaderView::Stretch);
     tree_->header()->setSectionResizeMode(kLocationColumn, QHeaderView::ResizeToContents);
     tree_->setUniformRowHeights(true);
+    // A file row is one level deep under its group, and Qt reserves *two*
+    // indentation widths for it — one for the group's own expand arrow, one
+    // for a (non-existent) arrow of its own — inside the fixed-width letter
+    // column. A narrower `kLetterColumnWidth` leaves no room left over for
+    // the checkbox and letter the column is supposed to show.
+    tree_->setIndentation(12);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
         // Only a file row carries a path (kPathRole) — a group header
@@ -400,7 +412,7 @@ void ChangesPanel::refresh()
     // taking up a header row above "draft.txt" at the moment a row is
     // inserted is not the layout an E2E flow clicking that row's marked
     // rect will find on screen once `setHidden` below collapses it.
-    QVector<std::tuple<QTreeWidgetItem *, QString, QString>> rows;
+    QVector<std::tuple<QTreeWidgetItem *, QString, QString, QString>> rows;
 
     const ::rust::Vec<FfiChangedFile> files = vcsService_->changedFiles();
     for (const FfiChangedFile &file : files) {
@@ -413,7 +425,7 @@ void ChangesPanel::refresh()
             QTreeWidgetItem *row = makeFileRow(
               staged, {path, origPath, file.staged, /*checkable=*/true, /*checked=*/true,
                        /*checksToStage=*/false, QStringLiteral("staged")});
-            rows.append({row, path, QStringLiteral("staged")});
+            rows.append({row, path, QStringLiteral("staged"), changeKindLetter(file.staged)});
         }
         if (file.unstaged == FfiChangeKind::Conflicted) {
             // No checkbox: staging a conflict is not a thing this panel
@@ -422,17 +434,19 @@ void ChangesPanel::refresh()
             QTreeWidgetItem *row = makeFileRow(
               conflicts, {path, origPath, file.unstaged, /*checkable=*/false, /*checked=*/false,
                           /*checksToStage=*/false, QStringLiteral("conflicts")});
-            rows.append({row, path, QStringLiteral("conflicts")});
+            rows.append(
+              {row, path, QStringLiteral("conflicts"), changeKindLetter(file.unstaged)});
         } else if (file.unstaged == FfiChangeKind::Untracked) {
             QTreeWidgetItem *row = makeFileRow(
               untracked, {path, origPath, file.unstaged, /*checkable=*/true, /*checked=*/false,
                           /*checksToStage=*/true, QStringLiteral("untracked")});
-            rows.append({row, path, QStringLiteral("untracked")});
+            rows.append(
+              {row, path, QStringLiteral("untracked"), changeKindLetter(file.unstaged)});
         } else if (file.unstaged != FfiChangeKind::None) {
             QTreeWidgetItem *row = makeFileRow(
               unstaged, {path, origPath, file.unstaged, /*checkable=*/true, /*checked=*/false,
                          /*checksToStage=*/true, QStringLiteral("unstaged")});
-            rows.append({row, path, QStringLiteral("unstaged")});
+            rows.append({row, path, QStringLiteral("unstaged"), changeKindLetter(file.unstaged)});
         }
     }
 
@@ -442,8 +456,8 @@ void ChangesPanel::refresh()
         group->setHidden(count == 0);
     }
 
-    for (const auto &[row, path, group] : rows) {
-        markChangesRow(tree_, row, path, group);
+    for (const auto &[row, path, group, status] : rows) {
+        markChangesRow(tree_, row, path, group, status);
     }
 
     populating_ = false;

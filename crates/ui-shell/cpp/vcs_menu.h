@@ -3,6 +3,7 @@
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <QHash>
+#include <QPoint>
 #include <QString>
 
 class AppSettings;
@@ -46,5 +47,13 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
 // the button so the caller can add it to the status bar alongside the
 // others.
 QToolButton *buildBranchWidget(VcsService *vcsService, QWidget *window, QStatusBar *statusBar);
+
+// The branch menu itself: checkout / New Branch... / Delete Branch..., for
+// `anchor`, popped up at `globalPos`. Promoted out of `vcs_menu.cpp` (was
+// `static`) for G6: the Changes dock toolbar's branch chip opens the same
+// menu `buildBranchWidget`'s status-bar chip and the VCS menu's
+// "Branches..." action already do, rather than a second copy of the
+// checkout/create/delete wiring.
+void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint &globalPos);
 
 } // namespace ui_shell

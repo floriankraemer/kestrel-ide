@@ -584,6 +584,11 @@ fn main() {
         // Q_OBJECT-free like the other panels/pages above, so only the
         // sources are listed.
         .cpp_file("cpp/changes_panel.cpp")
+        // The Changes dock's toolbar (G6). Q_OBJECT (its Refresh/Fetch/
+        // Pull/Push/Stage all/Unstage all signals), so its header is listed
+        // too, same as `diff_toolbar.h` above.
+        .cpp_file("cpp/changes_toolbar.h")
+        .cpp_file("cpp/changes_toolbar.cpp")
         // Q_OBJECT (signals `commitActivated`/`contextMenuRequestedFor`),
         // so its header is listed too, same as the chat/preview panels
         // above.

@@ -30,6 +30,24 @@ impl Repository {
         Ok(())
     }
 
+    /// `git add -A` — stage every change in the repository, the whole-tree
+    /// counterpart to [`Self::stage_file`] behind the Changes dock's
+    /// "Stage all" button.
+    pub fn stage_all(&self) -> Result<(), VcsError> {
+        let work_dir = self.work_dir_or_err()?;
+        cli::run(&work_dir, &argv::add_all())?;
+        Ok(())
+    }
+
+    /// `git reset` — unstage everything, leaving the working tree and
+    /// `HEAD` untouched. The whole-tree counterpart to [`Self::unstage_file`]
+    /// behind the Changes dock's "Unstage all" button.
+    pub fn unstage_all(&self) -> Result<(), VcsError> {
+        let work_dir = self.work_dir_or_err()?;
+        cli::run(&work_dir, &argv::reset_all())?;
+        Ok(())
+    }
+
     /// Stage exactly one hunk, via a generated patch applied with
     /// `git apply --cached`. `before`/`after` must be the same two texts
     /// the hunk was computed from (typically the index's copy and the
@@ -299,5 +317,44 @@ mod tests {
 
         repo.unstage_file(Path::new("a.txt")).unwrap();
         assert_eq!(status_porcelain(dir.path()), " M a.txt\n");
+    }
+
+    #[test]
+    fn stage_all_stages_every_change_tracked_and_untracked() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
+        let repo = open(dir.path());
+        repo.stage_all().unwrap();
+
+        let output = status_porcelain(dir.path());
+        let mut lines: Vec<&str> = output.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(lines, vec!["A  new.txt", "M  a.txt"]);
+    }
+
+    #[test]
+    fn unstage_all_reverses_every_staged_change() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+        std::fs::write(dir.path().join("new.txt"), "new\n").unwrap();
+        git(dir.path(), &["add", "-A"]);
+        let repo = open(dir.path());
+        repo.unstage_all().unwrap();
+
+        let output = status_porcelain(dir.path());
+        let mut lines: Vec<&str> = output.lines().collect();
+        lines.sort_unstable();
+        assert_eq!(lines, vec![" M a.txt", "?? new.txt"]);
     }
 }

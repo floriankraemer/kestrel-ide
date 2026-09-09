@@ -152,6 +152,17 @@ pub mod argv {
         args
     }
 
+    /// `git add -A` — stage every change in the repository, tracked or not.
+    pub fn add_all() -> Vec<&'static str> {
+        vec!["add", "-A"]
+    }
+
+    /// `git reset` — unstage everything, leaving the working tree and
+    /// `HEAD` untouched. The whole-repository counterpart to [`reset`].
+    pub fn reset_all() -> Vec<&'static str> {
+        vec!["reset"]
+    }
+
     /// `git apply --cached [--reverse] -` (patch text goes on stdin).
     pub fn apply_cached(reverse: bool) -> Vec<&'static str> {
         if reverse {
@@ -270,6 +281,16 @@ mod tests {
             argv::reset(&["a.txt", "b.txt"]),
             vec!["reset", "--", "a.txt", "b.txt"]
         );
+    }
+
+    #[test]
+    fn add_all_argv() {
+        assert_eq!(argv::add_all(), vec!["add", "-A"]);
+    }
+
+    #[test]
+    fn reset_all_argv() {
+        assert_eq!(argv::reset_all(), vec!["reset"]);
     }
 
     #[test]

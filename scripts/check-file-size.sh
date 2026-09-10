@@ -115,7 +115,9 @@ baseline() {
 	# run_app() — the translator-load logic itself lives in the new
 	# i18n_startup.cpp, following the same split-out-a-.cpp pattern as
 	# status_bar.cpp/navigate_menu.cpp/ai_menu.cpp above it.
-	crates/ui-shell/cpp/main_window.cpp) echo 1230 ;;
+	# Ratcheted down from 1230 when the tab close-button proxy style moved
+	# to theme.cpp, next to the close icon it installs.
+	crates/ui-shell/cpp/main_window.cpp) echo 1209 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

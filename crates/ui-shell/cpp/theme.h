@@ -7,6 +7,7 @@
 #include <QPalette>
 #include <QString>
 
+class QStyle;
 class QWidget;
 class ThemeProvider;
 
@@ -184,6 +185,11 @@ QIcon maskIcon(const char *maskResource, QColor tint);
 // QTabWidget close buttons (via a QProxyStyle) and ADS's own dock/tab close
 // buttons (via ads::CIconProvider) in sync with a live theme switch.
 QIcon tabCloseIcon();
+
+// The application-wide QProxyStyle that puts tabCloseIcon() on every plain
+// QTabWidget's close button and gives that button the horizontal slack the
+// stylesheet cannot reach. Ownership passes to QApplication::setStyle().
+QStyle *makeTabCloseStyle(QStyle *base);
 
 // The magnifying-glass glyph for filter/search boxes (issue #233), tinted to
 // the active theme's dim text color the same way tabCloseIcon() is — same

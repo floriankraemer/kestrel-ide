@@ -318,8 +318,12 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&script_path, perms).unwrap();
 
+        // Not created on disk, and deliberately so: `ExecHost::for_path`
+        // parses the UNC spelling and never touches the filesystem, which is
+        // the whole point of the remote path. Creating it would write
+        // `/wsl.localhost` at the filesystem root, which only succeeds when
+        // the test runs as root.
         let root = std::path::PathBuf::from("//wsl.localhost/Ubuntu/tmp/analysis-core-e2e");
-        fs::create_dir_all(&root).unwrap();
 
         let original_path = std::env::var("PATH").unwrap_or_default();
         // SAFETY: serialized by PATH_LOCK.

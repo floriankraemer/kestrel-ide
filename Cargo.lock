@@ -182,7 +182,6 @@ dependencies = [
 name = "app-core"
 version = "0.1.0"
 dependencies = [
- "carve-lang",
  "color-theme",
  "editor-core",
  "icon-theme",
@@ -3734,6 +3733,7 @@ dependencies = [
 name = "markdown-preview"
 version = "0.1.0"
 dependencies = [
+ "carve-lang",
  "comrak",
  "dugong",
  "dugong-graphlib",

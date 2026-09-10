@@ -175,14 +175,11 @@ impl PreviewService {
             });
         }
         if provider.contribution_id == "carve" {
-            // `carve-lang` does not expose source-line positions from its
-            // convenience renderer, so Carve currently has heading links but
-            // no editor-to-preview scroll map. Keep that honest rather than
-            // deriving a second, approximate heading parser here.
+            let rendered = self.renderer.render_carve(source);
             return Ok(Rendered {
-                html: carve::to_html(source),
-                images: Vec::new(),
-                anchors: Vec::new(),
+                html: rendered.html,
+                images: rendered.images,
+                anchors: rendered.anchors,
             });
         }
         // A `previews` id this build does not recognise and that names no

@@ -19,10 +19,9 @@ The upstream highlight query is vendored with editor-only paint-suppression, con
 A built-in `carve` plugin contributes the `carve-lsp` process definition and a preview provider for both extensions.
 The executable is discovered on `PATH` and is not bundled, matching every other language-server contribution.
 
-`app_core::preview` dispatches that provider to `carve-lang::to_html`.
+`carve-lang` is a rendering engine, so it is a dependency of `markdown-preview` — next to comrak and merman — behind `Renderer::render_carve`, and `app_core::preview` only dispatches to it, exactly as it already dispatches Markdown and standalone Mermaid.
 The renderer's default rejects raw HTML and unsafe URL behavior, so its output is suitable for Kestrel's non-navigating `QTextBrowser` preview.
-Unlike `markdown-preview`, Carve needs no stateful diagram cache, image rasterizer, theme integration, or link resolver; adding a new crate whose only API forwarded one function would add indirection without isolating any policy.
-The direct `app-core` dependency is therefore deliberate, and this ADR records the widening required by the repository's layering rule.
+Carve needs none of `markdown-preview`'s stateful machinery — no diagram cache, image rasterizer, theme integration, or link resolver — but that argues against a *new* crate, not for pulling a rendering engine up into the application layer: `app-core` decides which provider serves a document, and never how HTML is produced.
 
 Carve heading links render normally, but editor-to-preview scroll sync has no source-line map because the convenience renderer exposes no positions.
 Kestrel leaves `anchors` empty instead of maintaining an approximate second heading parser; adding position-aware rendering upstream is the clean upgrade path.
@@ -31,5 +30,5 @@ Kestrel leaves `anchors` empty instead of maintaining an approximate second head
 
 - `.crv` and `.carve` files receive incremental syntax highlighting, folding, fenced-language injection, reference locals, preview, and the standard LSP surface when `carve-lsp` is installed.
 - Disabling the built-in plugin removes its preview and language-server offers, while syntax recognition remains part of the compiled language catalog, the same separation used by C#.
-- `syntax-core` gains `tree-sitter-carve`, and `app-core` gains `carve-lang`; both dependencies are Qt-free and preserve the hard layering rule.
+- `syntax-core` gains `tree-sitter-carve`, and `markdown-preview` gains `carve-lang`; both dependencies are Qt-free and preserve the hard layering rule, and `app-core`'s dependency row is unchanged.
 - Carve preview currently has no source-line scroll synchronization.

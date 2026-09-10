@@ -23,9 +23,6 @@ color-theme = { path = "../color-theme" }
 # neither may depend on the other. Qt-free, so app-core's no-Qt rule is
 # untouched.
 markdown-preview = { path = "../markdown-preview" }
-# Native renderer behind the built-in Carve preview contribution. The plugin
-# host owns discovery; this application-layer join owns dispatch.
-carve-lang = "0.1.5"
 
 [dev-dependencies]
 tempfile = "3"

@@ -5,11 +5,10 @@
 //! `/bin/sh`. See `docs/architecture/remote-wsl-plan.md`'s Verification
 //! section.
 //!
-//! Linux does not special-case a leading `//` the way some UNC-aware
-//! filesystems do — `cd '//wsl.localhost/Ubuntu/tmp/x'` lands on the exact
-//! same directory as `/wsl.localhost/Ubuntu/tmp/x` — so a real directory
-//! tree rooted at `/wsl.localhost/<distro>/...` doubles as a work_dir that
-//! [`process_exec::host::ExecHost::for_path`] classifies as remote.
+//! The work_dir is a UNC path that exists nowhere:
+//! [`process_exec::host::ExecHost::for_path`] classifies it by spelling
+//! alone, and a remote command is not launched from its work_dir, so the
+//! fake `wsl.exe` runs with no such directory on disk.
 
 use std::fs;
 use std::io::Write;
@@ -22,8 +21,8 @@ use std::time::Duration;
 // touch it so they cannot see each other's prepended fake-bin directory.
 static PATH_LOCK: Mutex<()> = Mutex::new(());
 
-/// A fake `wsl.exe` on `PATH`, in its own tempdir, and a real directory
-/// tree at `/wsl.localhost/<distro>/<remote_tail>` for `run`'s `work_dir`.
+/// A fake `wsl.exe` on `PATH`, in its own tempdir, plus the UNC-spelled
+/// `work_dir` for `run` — a path that is classified, never opened.
 struct Fixture {
     _bin_dir: tempfile::TempDir,
     work_dir: PathBuf,
@@ -61,8 +60,12 @@ printf ']'
     perms.set_mode(0o755);
     fs::set_permissions(&script_path, perms).unwrap();
 
+    // Deliberately not created on disk: `ExecHost` only parses the UNC
+    // spelling of a remote work_dir, and `wsl.exe` is no longer launched
+    // *from* it (see `ExecHost::command`), so nothing here touches the path.
+    // Creating it would write `/wsl.localhost` at the filesystem root, which
+    // only succeeds when the test runs as root — the trap #251/#252 hit.
     let work_dir = PathBuf::from(format!("//wsl.localhost/{distro}/{remote_tail}"));
-    fs::create_dir_all(&work_dir).unwrap();
 
     Fixture {
         _bin_dir: bin_dir,

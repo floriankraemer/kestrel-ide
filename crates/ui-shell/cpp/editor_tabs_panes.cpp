@@ -423,6 +423,12 @@ void EditorTabs::showTabContextMenu(QTabWidget *group, const QPoint &pos)
     QAction *closeAction = menu.addAction(tr("Close"));
     QAction *closeOthersAction = menu.addAction(tr("Close Others"));
     closeOthersAction->setEnabled(group->count() > 1);
+    // Only offered when this group is one of several split panes — the
+    // single default group isn't a "group" from the user's point of view.
+    QAction *closeAllInGroupAction = nullptr;
+    if (groups_.size() > 1) {
+        closeAllInGroupAction = menu.addAction(tr("Close All in Group"));
+    }
     menu.addSeparator();
     // JetBrains naming: "vertical" describes the divider, so a vertical
     // split puts the panes side by side (a Qt::Horizontal splitter).
@@ -444,6 +450,8 @@ void EditorTabs::showTabContextMenu(QTabWidget *group, const QPoint &pos)
         requestCloseTab(group, index);
     } else if (chosen == closeOthersAction) {
         closeOtherTabs(group, index);
+    } else if (closeAllInGroupAction && chosen == closeAllInGroupAction) {
+        closeAllInGroup(group);
     } else if (chosen == splitVerticalAction) {
         splitTab(group, index, Qt::Horizontal);
     } else if (chosen == splitHorizontalAction) {
@@ -458,6 +466,24 @@ void EditorTabs::closeOtherTabs(QTabWidget *group, int keptIndex)
         if (i != keptIndex) {
             victims.append(tabIdAt(group, i));
         }
+    }
+    for (const quint64 tabId : std::as_const(victims)) {
+        const TabLoc loc = locate(tabId);
+        if (!loc.group) {
+            continue;
+        }
+        if (!confirmCloseTab(loc.group, loc.index)) {
+            return; // Cancel on one tab abandons the rest, as on exit.
+        }
+        docManager_->closeTab(tabId);
+    }
+}
+
+void EditorTabs::closeAllInGroup(QTabWidget *group)
+{
+    QList<quint64> victims;
+    for (int i = 0; i < group->count(); ++i) {
+        victims.append(tabIdAt(group, i));
     }
     for (const quint64 tabId : std::as_const(victims)) {
         const TabLoc loc = locate(tabId);

@@ -1,0 +1,20 @@
+# First-party Carve support. Syntax highlighting lives in syntax-core's single
+# language registry; this plugin supplies the optional process and preview
+# contributions that can be disabled together in Settings > Plugins.
+id = "carve"
+name = "Carve"
+version = "0.1.0"
+api_version = 1
+license = "MIT"
+description = "Carve markup support with live preview and language-server features."
+
+[[contributes.previews]]
+id = "carve"
+label = "Carve"
+extensions = ["crv", "carve"]
+
+[[contributes.language-servers]]
+id = "carve-lsp"
+language-id = "carve"
+name = "Carve Language Server"
+command = "carve-lsp"

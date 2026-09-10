@@ -1,0 +1,1 @@
+keyword # Carve markup has no keyword construct; structural markers use markup and punctuation scopes.

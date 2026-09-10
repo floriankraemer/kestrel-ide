@@ -55,6 +55,27 @@ public:
         setAcceptDrops(true);
     }
 
+    // Qt's stylesheet style pads every tab with an icon by a hardcoded
+    // 12px — `spaceForIcon = 6 + 4 + 2 /* magic */` in QStyleSheetStyle::
+    // sizeFromContents(CT_TabBarTab) — on top of the icon width and spacing
+    // QTabBar::tabSizeHint() has already counted. Nothing consumes it: the
+    // text rect comes out 12px wider than the text, so Qt centres the label
+    // in it and the slack lands as a gap on either side of the label, the
+    // one before the [x] most visibly. Taking it back here is the only
+    // seam that reaches it — the size hint is the widget's, while
+    // CT_TabBarTab itself is answered by the stylesheet style and ignores a
+    // QProxyStyle override of it (see makeTabCloseStyle() in theme.cpp for
+    // the same trap one sub-element over).
+    QSize tabSizeHint(int index) const override
+    {
+        constexpr int kStyleSheetIconPadding = 12;
+        QSize hint = QTabBar::tabSizeHint(index);
+        if (!tabIcon(index).isNull()) {
+            hint.setWidth(hint.width() - kStyleSheetIconPadding);
+        }
+        return hint;
+    }
+
     // Both set by EditorTabs::makeGroup; the bar itself decides nothing
     // about what a tab is or where it may land.
     std::function<quint64(int index)> tabIdAt_;

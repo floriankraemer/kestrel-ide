@@ -534,15 +534,13 @@ QTabBar {
 }
 
 /* Asymmetric padding on purpose: the right side carries the close button.
-   Qt lays a closable tab out as [padding-left][icon][label][reserved][x] and
-   spends everything but a fixed, base-style-dependent edge offset on the gap
-   before the [x] — a gap that measures padding-right + 13 + half the close
-   indicator's own slack. The [x]'s breathing room is owned by that indicator
-   (TabCloseIconStyle::pixelMetric in main_window.cpp), which is the only
-   lever that reaches the space to its *right*; this padding only sizes the
-   space to its left, so it stays small enough that the [x] reads as
-   belonging to the label it closes. Measured under Fusion: 22px left of the
-   [x], 15px right of it. */
+   Qt lays a closable tab out as [padding-left][icon][label][x], and this
+   padding-right sizes only the space to the *left* of the [x] — the space to
+   its right belongs to the close indicator (TabCloseStyle::pixelMetric
+   below) and the base style's edge offset. {sp-1} is what balances the two,
+   and it is deliberately not 0: every other QTabBar in the app has no close
+   button and would lose its right padding entirely. Measured under Fusion
+   with a real screenshot: 10px left of the [x], 9px right of it. */
 QTabBar::tab {
     background-color: {surface};
     color: {textDim};
@@ -957,23 +955,25 @@ public:
         return QProxyStyle::standardIcon(standardIcon, option, widget);
     }
 
-    // Breathing room around the [x]. QCommonStyle centres the close glyph in
-    // a button PM_TabCloseIndicatorWidth wide and the base style pins that
-    // button a fixed distance off the tab's right edge — 11px under Fusion,
-    // ~5px under the Windows style, which is why the [x] sat flush against
-    // the tab's border there. Nothing in the stylesheet can reach that space:
+    // Breathing room around the [x], and the same amount of it on every
+    // platform. QCommonStyle centres the close glyph — 8px of ink at this
+    // icon size — in a button PM_TabCloseIndicatorWidth wide, and the base
+    // styles disagree wildly about that width (20 under Fusion, 12 under the
+    // Windows style), so the slack around the glyph was 6px on one platform
+    // and 2px on the other. Nothing in the stylesheet can correct it:
     // QStyleSheetStyle answers SE_TabBarTabRightButton itself and ignores
     // both `QTabBar::close-button`'s margins and a subElementRect override
-    // (see the QTabBar rules in chromeStyleSheet() above). Widening the
-    // indicator does reach it,
-    // on every platform: the extra 8px split evenly around the centred glyph
-    // buys 4px on each side, and the tab's padding-right is trimmed to match
-    // so the gap to the label does not grow with it.
+    // (see the QTabBar rules in chromeStyleSheet() above). This metric is
+    // still delegated, so pinning it to 16 gives the glyph 4px of its own on
+    // each side everywhere. What is left over — the base style's offset from
+    // the tab's edge, 4px under Fusion and ~3px under Windows — is small
+    // enough not to read as a difference.
     int pixelMetric(PixelMetric metric, const QStyleOption *option,
                      const QWidget *widget) const override
     {
-        if (metric == QStyle::PM_TabCloseIndicatorWidth) {
-            return QProxyStyle::pixelMetric(metric, option, widget) + 8;
+        if (metric == QStyle::PM_TabCloseIndicatorWidth
+            || metric == QStyle::PM_TabCloseIndicatorHeight) {
+            return 16;
         }
         return QProxyStyle::pixelMetric(metric, option, widget);
     }

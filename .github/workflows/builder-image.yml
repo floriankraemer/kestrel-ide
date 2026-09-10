@@ -43,7 +43,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A pull request from a fork runs with a read-only GITHUB_TOKEN, so it
+      # cannot push to GHCR. Such a run reuses the image main already
+      # published for this Dockerfile -- the tag is the Dockerfile's hash, and
+      # the package is public, so a pull needs no write access. A fork PR that
+      # edits docker/Dockerfile has no image to reuse and fails on the check
+      # below with an explicit message.
       - uses: docker/build-push-action@v6
+        if: ${{ !github.event.pull_request.head.repo.fork }}
         with:
           context: .
           file: docker/Dockerfile
@@ -52,3 +59,12 @@ jobs:
           tags: ${{ steps.ref.outputs.image }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Reuse the published image (fork pull request)
+        if: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          image="${{ steps.ref.outputs.image }}"
+          if ! docker manifest inspect "$image" > /dev/null 2>&1; then
+            echo "::error::$image is not published. A pull request from a fork cannot build it, because its GITHUB_TOKEN cannot write packages. Rebase onto a main whose docker/Dockerfile is unchanged by this branch, or have a maintainer push the branch to this repository."
+            exit 1
+          fi

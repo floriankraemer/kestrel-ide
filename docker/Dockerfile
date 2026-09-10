@@ -112,6 +112,32 @@ RUN curl -fsSL -o /tmp/sccache.tar.gz \
     && rm -rf /tmp/sccache.tar.gz "/tmp/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl" \
     && sccache --version
 
+# Every path a build writes to, made writable by whatever uid the Makefile
+# runs the container as (`--user $(id -u):$(id -g)`, see `RUN_LINUX`).
+#
+# Without this the container runs as root, and root is the owner of every file
+# it creates on the bind-mounted `/workspace` — so `target/` comes back
+# `root:root` on the host and the developer who owns the checkout cannot
+# delete it without `sudo`. That is not a theoretical tidiness point: removing
+# a finished agent worktree failed with "Permission denied" until its `target/`
+# was deleted from inside a container, and 25 GB of dead build output sat on a
+# 98%-full disk in the meantime.
+#
+# `chmod 0777` on the mountpoints rather than `chown` to a fixed uid, and
+# `--user` in the Makefile rather than a `USER` line here: the right uid is a
+# property of the machine running the build (whoever owns the checkout), not
+# of the image, and CI runs this image via `container:` as root with no bind
+# mount to spoil. Only the directories themselves are chmodded — never a
+# recursive `chown -R` over the crate registry, which would rewrite every file
+# into a new layer for nothing.
+#
+# `/usr/local/cargo` itself is included because cargo takes its `.package-cache`
+# lock there, and `git` because a git dependency is checked out under it; both
+# sit outside the registry volume.
+RUN mkdir -p /ccache /sccache /usr/local/cargo/registry /usr/local/cargo/git \
+    && chmod 0777 /ccache /sccache \
+        /usr/local/cargo /usr/local/cargo/registry /usr/local/cargo/git
+
 # ---------------------------------------------------------------------------
 # lsp-conformance: linux-builder plus real language servers, for the
 # conformance suites (crates/lsp-core/tests/real_server_conformance.rs and
@@ -330,7 +356,7 @@ RUN git clone https://github.com/mxe/mxe.git /opt/mxe \
 # not part of the layer — keeps them out of the image for free.
 RUN --mount=type=cache,target=/opt/mxe/pkg,sharing=locked \
     --mount=type=cache,target=/root/.ccache,sharing=locked \
-    make -C /opt/mxe qt6-qtbase \
+    make -C /opt/mxe qt6-qtbase qt6-qttools \
         MXE_TARGETS=x86_64-w64-mingw32.shared \
         JOBS="$(nproc)"
 

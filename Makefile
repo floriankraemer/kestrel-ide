@@ -10,7 +10,23 @@ DOCKER_MOUNTS = -v "$(CURDIR)":/workspace -w /workspace \
 	-v ide-cargo-registry:/usr/local/cargo/registry \
 	-v ide-ccache:/ccache \
 	-v ide-sccache:/sccache
-RUN_LINUX = $(DOCKER) run --rm $(DOCKER_MOUNTS) $(LINUX_IMAGE)
+
+# Run as the developer who owns the checkout, not as root. `/workspace` is a
+# bind mount, so a root container leaves `target/` owned by `root:root` on the
+# host and `rm -rf` (or `git worktree remove`) then fails with "Permission
+# denied" until the tree is deleted from inside another container. The image
+# chmods the cache mountpoints 0777 for exactly this, so any uid can write
+# them; see `docker/Dockerfile`'s linux-builder stage.
+#
+# HOME is redirected because the image's `/root` is not writable by this uid,
+# and tools that expect a home (git config, sccache's server) fail without one.
+# CI is unaffected: it runs the `*-ci` inner targets inside a `container:`,
+# never through RUN_LINUX.
+#
+# `--init` gives the container a PID 1 that reaps: without it `xvfb-run` in the
+# E2E target never returns after its child exits and the run hangs forever.
+DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
+RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IMAGE)
 
 .PHONY: help all test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
 	lsp-image lsp-conformance lsp-conformance-ci

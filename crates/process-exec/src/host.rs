@@ -176,8 +176,9 @@ impl ExecHost {
     }
 
     /// A ready-to-spawn [`Command`]: [`Self::argv`]'s program/args, the
-    /// Windows-side working directory (`--cd` decides the *remote* cwd;
-    /// this is what `wsl.exe` itself is launched from), `env` set on the
+    /// working directory for a local host only (a remote one takes its cwd
+    /// from `--cd`, inside the distro, and `wsl.exe` itself is launched from
+    /// wherever this process already is), `env` set on the
     /// Windows-side process and, for a remote host, merged onto `WSLENV`
     /// with the `/u` (translate-as-UTF-8-string) flag so `wsl.exe` actually
     /// passes each variable through — without a name in `WSLENV`, `wsl.exe`
@@ -194,7 +195,16 @@ impl ExecHost {
     ) -> Command {
         let (resolved_program, resolved_args) = self.argv(program, args, cwd);
         let mut command = Command::new(&resolved_program);
-        command.args(&resolved_args).current_dir(cwd);
+        command.args(&resolved_args);
+        // Only a local host is launched *from* the working directory. For a
+        // remote one `--cd` already decides where the command runs inside
+        // the distro, so `wsl.exe`'s own Windows-side directory buys
+        // nothing — and pinning it to the `\\wsl.localhost\...` path is a
+        // way to fail: the spawn needs that UNC path to resolve, which it
+        // does not when the distro is stopped or the share is unavailable.
+        if !self.is_remote() {
+            command.current_dir(cwd);
+        }
 
         for (key, value) in env {
             command.env(key, value);

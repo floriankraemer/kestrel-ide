@@ -603,14 +603,19 @@ private:
 
     void setActiveGroup(QTabWidget *group, int index);
 
-    // Right-click on a tab: Close / Close Others (this group only) / the
-    // two splits. Splitting *moves* the clicked tab, so it needs a second
-    // tab to leave behind — with one tab the split would just relabel the
-    // same group.
+    // Right-click on a tab: Close / Close Others (this group only) / Close
+    // All in Group (only offered when the group is one of several split
+    // panes) / the two splits. Splitting *moves* the clicked tab, so it
+    // needs a second tab to leave behind — with one tab the split would
+    // just relabel the same group.
     void showTabContextMenu(QTabWidget *group, const QPoint &pos);
 
     // Ids, not indices: each close shifts the ones after it.
     void closeOtherTabs(QTabWidget *group, int keptIndex);
+
+    // Closes every tab in the group unconditionally, which empties it and
+    // (via onTabClosed's count()==0 check) collapses the pane.
+    void closeAllInGroup(QTabWidget *group);
 
     // Moves the tab into a brand-new group beside (Qt::Horizontal) or below
     // (Qt::Vertical) its current one. Pure widget surgery: no AppSession

@@ -169,8 +169,14 @@ impl Scheduler {
         let project_root = project_root.to_path_buf();
         thread::spawn(move || {
             let result = run_process(&program, &args, &project_root, None, timeout);
-            on_result(result);
+            // Cleared *before* the callback, not after: a caller that has
+            // been handed the result is entitled to start the next manual
+            // run from inside it, and to see `is_manual_run_in_progress()`
+            // already false. Clearing afterwards left a window where the
+            // run was over but a second one was still refused — and left
+            // the flag stuck for good if `on_result` panicked.
             running.store(false, Ordering::SeqCst);
+            on_result(result);
         });
         true
     }
@@ -299,5 +305,35 @@ mod tests {
 
         let _ = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(!scheduler.is_manual_run_in_progress());
+    }
+
+    #[test]
+    fn the_next_manual_run_may_start_from_inside_the_callback() {
+        let scheduler = Arc::new(Scheduler::new());
+        let (tx, rx) = mpsc::channel();
+        let inner = Arc::clone(&scheduler);
+        let started = scheduler.run_manual(
+            PathBuf::from("/bin/sh"),
+            vec!["-c".to_string(), "true".to_string()],
+            Path::new("."),
+            Duration::from_secs(5),
+            move |_| {
+                // The run this callback reports is over, so the flag must
+                // already be clear and a second run must be accepted.
+                let again = inner.run_manual(
+                    PathBuf::from("/bin/sh"),
+                    vec!["-c".to_string(), "true".to_string()],
+                    Path::new("."),
+                    Duration::from_secs(5),
+                    |_| {},
+                );
+                tx.send(again).unwrap();
+            },
+        );
+        assert!(started);
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            "a manual run started from the previous run's callback must be accepted"
+        );
     }
 }

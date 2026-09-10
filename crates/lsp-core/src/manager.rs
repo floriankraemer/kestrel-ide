@@ -1624,8 +1624,12 @@ mod host_translation_tests {
         }
         std::fs::set_permissions(&script_path, perms).unwrap();
 
+        // Not created on disk, and deliberately so: the WSL root is only
+        // ever parsed for its UNC spelling — nothing here touches the
+        // filesystem under it. Creating it would write `/wsl.localhost` at
+        // the filesystem root, which only succeeds when the test runs as
+        // root (see #251 for the same trap in analysis-core).
         let root = PathBuf::from("//wsl.localhost/Ubuntu/tmp/lsp-core-e2e");
-        std::fs::create_dir_all(&root).unwrap();
 
         let original_path = std::env::var("PATH").unwrap_or_default();
         // SAFETY: serialized by PATH_LOCK.

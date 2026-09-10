@@ -356,7 +356,7 @@ RUN git clone https://github.com/mxe/mxe.git /opt/mxe \
 # not part of the layer — keeps them out of the image for free.
 RUN --mount=type=cache,target=/opt/mxe/pkg,sharing=locked \
     --mount=type=cache,target=/root/.ccache,sharing=locked \
-    make -C /opt/mxe qt6-qtbase \
+    make -C /opt/mxe qt6-qtbase qt6-qttools \
         MXE_TARGETS=x86_64-w64-mingw32.shared \
         JOBS="$(nproc)"
 

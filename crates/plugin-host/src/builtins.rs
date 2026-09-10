@@ -54,6 +54,13 @@ pub(crate) const CSHARP: BuiltinPlugin = BuiltinPlugin {
     files: &[],
 };
 
+/// Carve preview and language-server support. The preview renderer is linked
+/// into `app-core`; `carve-lsp` is discovered on `PATH`, not bundled.
+pub(crate) const CARVE: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/carve/plugin.toml"),
+    files: &[],
+};
+
 /// PHPStan and PHP_CodeSniffer support (the PHP tooling plan's C1), first-
 /// party like C# above: an `analyzers` contribution needs no `[wasm]`
 /// component either, since both tools are native processes on `PATH` (or

@@ -18,8 +18,8 @@
 //!    same as [`plugin_host::WasmTier::invoke`], and is never silently
 //!    swapped for the native path: two different answers for one file
 //!    would be worse than one honest error.
-//! 3. Otherwise the built-in Markdown provider (`contributes.previews[].id
-//!    == "markdown"`) is served by [`markdown_preview::Renderer`] directly.
+//! 3. Otherwise a recognised built-in provider (`markdown`, `mermaid`, or
+//!    `carve`) is served by its native renderer directly.
 //!    A `previews` id this build does not recognise and that names no
 //!    component is inert — not a load error, because the manifest itself
 //!    is well-formed; `plugin-api` already accepts a componentless
@@ -174,6 +174,14 @@ impl PreviewService {
                 anchors: rendered.anchors,
             });
         }
+        if provider.contribution_id == "carve" {
+            let rendered = self.renderer.render_carve(source);
+            return Ok(Rendered {
+                html: rendered.html,
+                images: rendered.images,
+                anchors: rendered.anchors,
+            });
+        }
         // A `previews` id this build does not recognise and that names no
         // component: well-formed, inert. See the module doc, point 3.
         Err(PreviewError::NoProvider)
@@ -294,6 +302,41 @@ mod tests {
         // this in a `<p>` of prose rather than rasterising it.
         assert_eq!(rendered.images.len(), 1);
         assert!(rendered.html.contains("ide-preview:"), "{}", rendered.html);
+    }
+
+    #[test]
+    fn rendering_a_carve_file_reaches_the_native_carve_renderer() {
+        let mut service = PreviewService::from_registry(builtin_registry(&[]), empty_tier());
+        let rendered = service
+            .render(
+                Path::new("guide.crv"),
+                "# Carve\n\n/clear/ and *strong*.\n",
+                800,
+            )
+            .expect("Carve is served natively");
+
+        assert!(
+            rendered.html.contains("<h1>Carve</h1>"),
+            "{}",
+            rendered.html
+        );
+        assert!(
+            rendered.html.contains("<em>clear</em>"),
+            "{}",
+            rendered.html
+        );
+        assert!(
+            rendered.html.contains("<strong>strong</strong>"),
+            "{}",
+            rendered.html
+        );
+    }
+
+    #[test]
+    fn both_carve_extensions_are_previewed() {
+        let service = PreviewService::from_registry(builtin_registry(&[]), empty_tier());
+        assert!(service.has_preview(Path::new("guide.crv")));
+        assert!(service.has_preview(Path::new("guide.carve")));
     }
 
     #[test]

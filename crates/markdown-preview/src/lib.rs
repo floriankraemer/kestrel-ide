@@ -167,6 +167,20 @@ impl Renderer {
             },
         }
     }
+
+    /// Renders a Carve document (ADR-0054).
+    ///
+    /// `carve-lang`'s convenience renderer exposes no source positions, so a
+    /// Carve preview has heading links but no editor-to-preview scroll map;
+    /// the anchors are empty rather than guessed at by a second, approximate
+    /// heading parser here.
+    pub fn render_carve(&mut self, source: &str) -> Rendered {
+        Rendered {
+            html: carve::to_html(source),
+            images: Vec::new(),
+            anchors: Vec::new(),
+        }
+    }
 }
 
 /// What a diagram that failed to rasterise shows instead of an image: its

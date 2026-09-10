@@ -485,6 +485,26 @@ fn the_csharp_builtin_loads_through_the_real_path() {
 }
 
 #[test]
+fn the_carve_builtin_loads_preview_and_language_server_contributions() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::CARVE], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let plugin = registry.by_id("carve").expect("the built-in loaded");
+    assert_eq!(plugin.source(), PluginSource::Builtin);
+
+    let previews: Vec<_> = registry.previews().collect();
+    assert_eq!(previews.len(), 1);
+    assert_eq!(previews[0].1.id, "carve");
+    assert_eq!(previews[0].1.extensions, vec!["crv", "carve"]);
+
+    let servers: Vec<_> = registry.language_servers().collect();
+    assert_eq!(servers.len(), 1);
+    assert_eq!(servers[0].1.language_id, "carve");
+    assert_eq!(servers[0].1.command, "carve-lsp");
+}
+
+#[test]
 fn a_language_server_contribution_needs_no_wasm_component_either() {
     // Same asymmetry as `previews` (M1 vs the built-in Markdown preview):
     // a native process launched by `command`/`args` is not

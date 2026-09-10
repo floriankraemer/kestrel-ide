@@ -49,6 +49,9 @@ tree-sitter-xml = "0.7"
 # renderer agree on what Mermaid is. It declares `rust-version = 1.95`,
 # which is what forced this repository's toolchain up to 1.98.1.
 tree-sitter-mermaid = "0.1.0"
+# Carve markup. The crate exports a `tree_sitter::Language` directly and
+# ships the authoritative queries that Kestrel adapts to its scope contract.
+tree-sitter-carve = "0.1.5"
 streaming-iterator = "0.1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

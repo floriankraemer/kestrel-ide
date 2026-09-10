@@ -1,0 +1,7 @@
+# Carve preview {audience="editors"}
+
+%% A comment belongs in source, not in the rendered document.
+
+/Readable/ markup with *strong text*, [links](https://example.com), and `code`.
+
+*[IDE]: integrated development environment

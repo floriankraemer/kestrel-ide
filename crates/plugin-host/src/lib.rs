@@ -70,6 +70,7 @@ pub use wasm::{
 pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::MATERIAL_ICON_THEME,
     builtins::MARKDOWN_PREVIEW,
+    builtins::CARVE,
     builtins::CSHARP,
     builtins::PHP_TOOLS,
     builtins::CORE_THEMES,

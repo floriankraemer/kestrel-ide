@@ -91,7 +91,7 @@ The following are documented direction per ADR-0001 but have no code and no crat
 - **Plugin host** — *built.* [The plugin host and icon themes plan](plugin-host-and-icon-themes-plan.md) delivered the contract crate `plugin-api`, discovery and the registry in `plugin-host` ([ADR-0026](decisions/0026-plugin-host.md)), and the sandboxed wasmtime tier with fuel, epoch and memory limits ([ADR-0028](decisions/0028-wasm-plugin-tier.md)).
   A plugin declares contributions in `plugin.toml`; the Material icon pack ships as the first built-in and the Plugins settings page turns any of them off.
   ADR-0001's other half — a native dylib loader over a stable C ABI — remains unbuilt and unscheduled, and the sandbox is the reason it is not missed.
-- **Markdown preview** — *built.* [The markdown preview plan](markdown-preview-plan.md) delivered the plugin host's third contribution point, `previews`, with a built-in native renderer (`markdown-preview`: comrak, merman, resvg) and a second, additive wasm world (`preview-plugin`) a sandboxed component may implement instead ([ADR-0033](decisions/0033-markdown-preview.md)).
+- **Document preview** — *built.* [The markdown preview plan](markdown-preview-plan.md) delivered the plugin host's third contribution point, `previews`, with built-in native renderers for Markdown, Mermaid, and Carve, plus a second, additive wasm world (`preview-plugin`) a sandboxed component may implement instead ([ADR-0033](decisions/0033-markdown-preview.md)).
   The Preview dock renders the active tab's Markdown, with inline Mermaid diagrams, off the Qt thread.
 - **QML view** — the planned replacement for the Widgets view; the humble-view split exists so this swap stays cheap.
 

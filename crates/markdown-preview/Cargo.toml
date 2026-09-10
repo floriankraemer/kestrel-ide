@@ -5,6 +5,10 @@ edition = "2021"
 
 [dependencies]
 comrak = "0.54"
+# Native renderer behind the built-in Carve preview contribution
+# (ADR-0054), the same shape as comrak behind Markdown: a rendering
+# engine belongs here, never in the application layer.
+carve-lang = "0.1.5"
 syntax-core = { path = "../syntax-core" }
 resvg = { version = "0.45", default-features = false, features = ["text"] }
 merman = { version = "=0.7.0-alpha.1", default-features = false, features = ["render"] }

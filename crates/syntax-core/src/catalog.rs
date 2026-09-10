@@ -476,6 +476,25 @@ pub const BUILTIN_LANGUAGES: &[LanguageDef] = &[
         queries: queries!("markdown", injections),
     },
     LanguageDef {
+        id: "carve",
+        name: "Carve",
+        extensions: &["crv", "carve"],
+        filenames: &[],
+        line_comment: Some("%%"),
+        block_comment: Some(("%%%", "%%%")),
+        brackets: BRACKETS,
+        quotes: QUOTES_DOUBLE,
+        grammar: tree_sitter_carve::language,
+        queries: QuerySet {
+            highlights: Some(include_str!("../queries/carve/highlights.scm")),
+            locals: Some(include_str!("../queries/carve/locals.scm")),
+            folds: Some(include_str!("../queries/carve/folds.scm")),
+            tags: Some(include_str!("../queries/carve/tags.scm")),
+            inherits: Some(include_str!("../queries/carve/inherits.scm")),
+            injections: Some(tree_sitter_carve::INJECTIONS_QUERY),
+        },
+    },
+    LanguageDef {
         id: "markdown_inline",
         name: "Markdown (inline)",
         // Deliberately pattern-less: no file is written in the inline

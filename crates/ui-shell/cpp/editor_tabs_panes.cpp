@@ -415,6 +415,11 @@ void EditorTabs::showTabContextMenu(QTabWidget *group, const QPoint &pos)
         closeAllInGroupAction = menu.addAction(tr("Close All in Group"));
     }
     menu.addSeparator();
+    const quint64 tabId = tabIdAt(group, index);
+    QAction *showMinimapAction = menu.addAction(tr("Show Code Map"));
+    showMinimapAction->setCheckable(true);
+    showMinimapAction->setChecked(minimapVisibleForTab(tabId));
+    menu.addSeparator();
     // JetBrains naming: "vertical" describes the divider, so a vertical
     // split puts the panes side by side (a Qt::Horizontal splitter).
     QAction *splitVerticalAction = menu.addAction(tr("Split Vertical"));
@@ -437,6 +442,8 @@ void EditorTabs::showTabContextMenu(QTabWidget *group, const QPoint &pos)
         closeOtherTabs(group, index);
     } else if (closeAllInGroupAction && chosen == closeAllInGroupAction) {
         closeAllInGroup(group);
+    } else if (chosen == showMinimapAction) {
+        toggleMinimapVisibleForTab(tabId);
     } else if (chosen == splitVerticalAction) {
         splitTab(group, index, Qt::Horizontal);
     } else if (chosen == splitHorizontalAction) {

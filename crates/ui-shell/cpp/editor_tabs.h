@@ -413,6 +413,12 @@ public:
     // Editor minimap (issue #199), same S2 live-apply convention.
     void setMinimapOptions(const MinimapOptions &options);
 
+    // Per-tab minimap visibility, transient (not persisted, unlike
+    // minimapOptions_ above): whether the minimap shows for this one tab,
+    // following the global setting until the tab context menu overrides it.
+    bool minimapVisibleForTab(quint64 tabId) const;
+    void toggleMinimapVisibleForTab(quint64 tabId);
+
     // L6: the language-server settings were committed and stale servers
     // were stopped, so every open document has to be announced again — to a
     // replacement server for the languages that changed, and to nobody at
@@ -907,6 +913,11 @@ private:
     bool inlayHintsEnabled_ = false;
     WhitespaceOptions whitespaceOptions_;
     MinimapOptions minimapOptions_;
+    // Per-tab minimap visibility override, transient UI state: absent means
+    // "follow minimapOptions_", same optional-by-absence convention as
+    // diffWindows_ above. Cleared in onTabClosed so it does not grow for the
+    // life of the process.
+    QHash<quint64, bool> minimapVisibilityOverrides_;
 };
 
 } // namespace ui_shell

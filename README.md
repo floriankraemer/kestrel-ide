@@ -1,6 +1,6 @@
 # Kestrel IDE
 
-![Screenshot](docs/kestrel.jpg)
+![Screenshot](docs/kestrel.png)
 
 A fast, open-source, multi-language IDE **experiment** — built as a Rust core with a Qt6 Widgets UI, bridged via [cxx-qt](https://github.com/KDAB/cxx-qt) (QML planned later).
 

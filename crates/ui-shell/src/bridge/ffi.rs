@@ -22,6 +22,7 @@ use crate::bridge::debug::DebugServiceRust;
 use crate::bridge::diagnostics::DiagnosticsServiceRust;
 use crate::bridge::editor::DocumentManagerRust;
 use crate::bridge::editor_ops::EditorOpsRust;
+use crate::bridge::file_associations::FileAssociationsEditorRust;
 use crate::bridge::icons::IconProviderRust;
 use crate::bridge::language::LanguageServiceRust;
 use crate::bridge::plugins::PluginCatalogRust;
@@ -1855,10 +1856,11 @@ mod ffi {
         fn tab_path(self: &DocumentManager, tab_id: u64) -> QString;
 
         /// Which kind of page the tab needs: `app_core::TabKind`'s code —
-        /// 0 text, 1 binary (ADR-0020). The view builds a `CodeEditor` or a
-        /// `HexViewer` from this; it never decides the kind itself from the
-        /// path or the bytes. Unknown ids answer 0, the same "treat it as
-        /// ordinary" default the widget-construction path already takes.
+        /// 0 text, 1 binary, 2 diff, 3 image (ADR-0020). The
+        /// view builds a `CodeEditor`, a `HexViewer`, a `DiffView` or an
+        /// `ImageViewer` from this; it never decides the kind itself from
+        /// the path or the bytes. Unknown ids answer 0, the same "treat it
+        /// as ordinary" default the widget-construction path already takes.
         #[qinvokable]
         #[cxx_name = "tabKind"]
         fn tab_kind(self: &DocumentManager, tab_id: u64) -> i32;
@@ -1887,6 +1889,15 @@ mod ffi {
             first_row: u64,
             count: u64,
         ) -> Vec<FfiHexRow>;
+
+        /// Rasterises an image tab's SVG file — raster formats
+        /// (PNG/JPG/GIF/BMP/WEBP) are decoded by `ImageViewer` itself via
+        /// `QImageReader`, straight from `tabPath`, and never reach here.
+        /// An empty result (zero width and height) means the file could not
+        /// be read or parsed as SVG.
+        #[qinvokable]
+        #[cxx_name = "renderSvgImage"]
+        fn render_svg_image(self: &DocumentManager, tab_id: u64) -> FfiImagePixels;
 
         /// The authoritative dirty flag for `tab_id` (ADR-0003: the view
         /// reads this rather than trusting its own copy).
@@ -2218,6 +2229,19 @@ mod ffi {
     /// shared between the two rather than written twice.
     struct FfiPreviewImage {
         key: QString,
+        width: u32,
+        height: u32,
+        pixels: QByteArray,
+    }
+
+    /// An SVG image tab's file, rasterised at its own intrinsic size —
+    /// premultiplied RGBA8, the same byte order [`FfiPreviewImage`] and
+    /// `IconProvider::iconPixels` already use, via `icon-theme`'s `resvg`
+    /// pipeline. `ImageViewer` builds one `QImage` from this
+    /// and scales it for fit/zoom itself, the same as a raster format it
+    /// decoded through `QImageReader` directly.
+    #[derive(Default)]
+    struct FfiImagePixels {
         width: u32,
         height: u32,
         pixels: QByteArray,
@@ -5003,6 +5027,16 @@ mod ffi {
         disable: bool,
     }
 
+    /// One `[[file_associations.rule]]` row: `pattern` is a
+    /// glob (`*.svg`), `handler` one of `FileAssociationsEditor::handlerNames`.
+    /// Which pattern syntax `pattern` accepts and what a `handler` name
+    /// means are `settings_model::file_associations`'s answers, not this
+    /// struct's — it only carries the two strings across the seam.
+    struct FfiFileAssociationRule {
+        pattern: QString,
+        handler: QString,
+    }
+
     /// The configuration half of a Language Servers row's status; the live
     /// half arrives on `LanguageService::serverStateChanged`.
     enum FfiServerRowStatus {
@@ -5190,6 +5224,65 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "pluginsDir"]
         fn plugins_dir(self: &PluginCatalog) -> QString;
+    }
+
+    extern "RustQt" {
+        /// Settings > File Associations: which handler a file
+        /// pattern opens with. Live-effect like `PluginCatalog` — no draft,
+        /// every add/remove/edit writes through immediately.
+        #[qobject]
+        type FileAssociationsEditor = super::FileAssociationsEditorRust;
+
+        /// Whether a project is open, so the page can disable its Project
+        /// tab rather than offer to write nowhere.
+        #[qinvokable]
+        #[cxx_name = "hasProject"]
+        fn has_project(self: &FileAssociationsEditor) -> bool;
+
+        /// Every handler the combo may offer, in display order, one per
+        /// line — `cxx`'s `Vec<T>` needs `T: ImplVec`, which bare `QString`
+        /// does not satisfy (see `FfiBranch`'s doc comment), and three fixed
+        /// names do not need a wrapper struct's ceremony.
+        #[qinvokable]
+        #[cxx_name = "handlerNames"]
+        fn handler_names(self: &FileAssociationsEditor) -> QString;
+
+        /// The global `[[file_associations.rule]]` list.
+        #[qinvokable]
+        #[cxx_name = "globalRules"]
+        fn global_rules(self: &FileAssociationsEditor) -> Vec<FfiFileAssociationRule>;
+
+        /// Whether the open project overrides the global rules at all.
+        #[qinvokable]
+        #[cxx_name = "projectOverrides"]
+        fn project_overrides(self: &FileAssociationsEditor) -> bool;
+
+        /// The project's own rules — empty when it does not override.
+        #[qinvokable]
+        #[cxx_name = "projectRules"]
+        fn project_rules(self: &FileAssociationsEditor) -> Vec<FfiFileAssociationRule>;
+
+        /// Replaces the global rule list.
+        #[qinvokable]
+        #[cxx_name = "setGlobalRules"]
+        fn set_global_rules(
+            self: &FileAssociationsEditor,
+            rules: Vec<FfiFileAssociationRule>,
+        ) -> FfiResult;
+
+        /// Turns the project's override on or off, leaving its rules alone.
+        #[qinvokable]
+        #[cxx_name = "setProjectOverrides"]
+        fn set_project_overrides(self: &FileAssociationsEditor, overrides: bool) -> FfiResult;
+
+        /// Replaces the project's rule list. Refused when the project does
+        /// not currently override — turn that on first.
+        #[qinvokable]
+        #[cxx_name = "setProjectRules"]
+        fn set_project_rules(
+            self: &FileAssociationsEditor,
+            rules: Vec<FfiFileAssociationRule>,
+        ) -> FfiResult;
     }
 
     extern "RustQt" {

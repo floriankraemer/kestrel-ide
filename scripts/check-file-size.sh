@@ -117,7 +117,12 @@ baseline() {
 	# status_bar.cpp/navigate_menu.cpp/ai_menu.cpp above it.
 	# Ratcheted down from 1230 when the tab close-button proxy style moved
 	# to theme.cpp, next to the close icon it installs.
-	crates/ui-shell/cpp/main_window.cpp) echo 1209 ;;
+	# Raised from 1209 by 2 lines: constructing
+	# FileAssociationsEditor alongside the other per-window settings-page
+	# editors, and its one new SettingsContext field — the page and
+	# resolver themselves live in file_associations_page.cpp/
+	# bridge/file_associations.rs.
+	crates/ui-shell/cpp/main_window.cpp) echo 1211 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

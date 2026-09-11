@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use editor_core::{BinaryFile, Document, HexRow};
+use editor_core::{BinaryFile, Document, HexRow, ImageFile};
 use project_model::{Project, ProjectSession};
 
 use diff_tab::DiffContent;
@@ -28,6 +28,8 @@ mod error;
 pub mod file_ops;
 /// Where plugins and icon packs are joined (ADR-0026, ADR-0027).
 pub mod icons;
+/// Rasterising an SVG image tab's file, reusing `icon-theme`'s pipeline.
+pub mod image_render;
 /// Where plugins and the Markdown/Mermaid renderer are joined (ADR-0033).
 pub mod preview;
 mod project_open; // Swap-in half of an off-thread project open/rebuild (ADR-0037).
@@ -100,6 +102,8 @@ pub enum TabKind {
     /// side; see `diff_tab`'s module doc for why the working-tree-vs-`HEAD`
     /// diff is deliberately not this kind.
     Diff,
+    /// A read-only image view.
+    Image,
 }
 
 impl TabKind {
@@ -108,12 +112,14 @@ impl TabKind {
     pub const CODE_TEXT: i32 = 0;
     pub const CODE_BINARY: i32 = 1;
     pub const CODE_DIFF: i32 = 2;
+    pub const CODE_IMAGE: i32 = 3;
 
     pub fn code(self) -> i32 {
         match self {
             TabKind::Text => Self::CODE_TEXT,
             TabKind::Binary => Self::CODE_BINARY,
             TabKind::Diff => Self::CODE_DIFF,
+            TabKind::Image => Self::CODE_IMAGE,
         }
     }
 }
@@ -126,6 +132,7 @@ enum TabContent {
     Text(Document),
     Binary(BinaryFile),
     Diff(DiffContent),
+    Image(ImageFile),
 }
 
 impl TabContent {
@@ -134,6 +141,7 @@ impl TabContent {
             TabContent::Text(_) => TabKind::Text,
             TabContent::Binary(_) => TabKind::Binary,
             TabContent::Diff(_) => TabKind::Diff,
+            TabContent::Image(_) => TabKind::Image,
         }
     }
 
@@ -142,6 +150,7 @@ impl TabContent {
             TabContent::Text(doc) => doc.path(),
             TabContent::Binary(file) => Some(file.path()),
             TabContent::Diff(diff) => Some(&diff.path),
+            TabContent::Image(file) => Some(file.path()),
         }
     }
 
@@ -153,6 +162,7 @@ impl TabContent {
             TabContent::Text(doc) => doc.set_path(path),
             TabContent::Binary(file) => file.set_path(path),
             TabContent::Diff(_) => {}
+            TabContent::Image(file) => file.set_path(path),
         }
     }
 
@@ -161,6 +171,7 @@ impl TabContent {
             TabContent::Text(doc) => doc.title(),
             TabContent::Binary(file) => file.title(),
             TabContent::Diff(diff) => diff.title(),
+            TabContent::Image(file) => file.title(),
         }
     }
 
@@ -169,6 +180,7 @@ impl TabContent {
             TabContent::Text(doc) => doc.is_deleted(),
             TabContent::Binary(file) => file.is_deleted(),
             TabContent::Diff(_) => false,
+            TabContent::Image(file) => file.is_deleted(),
         }
     }
 
@@ -177,6 +189,7 @@ impl TabContent {
             TabContent::Text(doc) => doc.mark_deleted(),
             TabContent::Binary(file) => file.mark_deleted(),
             TabContent::Diff(_) => {}
+            TabContent::Image(file) => file.mark_deleted(),
         }
     }
 }
@@ -393,15 +406,24 @@ impl AppSession {
     // --- tab commands -----------------------------------------------------
 
     /// Open `path` as a new tab, or focus the existing tab if the file is
-    /// already open (US-3: focus, don't duplicate).
-    ///
-    /// The binary sniff decides which *kind* of tab to open, not whether to
-    /// open one (ADR-0020): a file whose content looks binary gets a
-    /// read-only hex tab instead of the "cannot open" dialog it used to get.
-    /// A file that can't be sniffed at all is a genuine error and is
-    /// reported as one, rather than being silently called binary.
+    /// already open (US-3: focus, don't duplicate). No hint (see
+    /// [`AppSession::open_file_with_hint`]): the binary sniff alone decides
+    /// the kind, as it always has (ADR-0020).
     pub fn open_file(&mut self, path: &Path) -> Result<OpenedTab, AppError> {
-        let is_binary = editor_core::looks_binary_file(path).map_err(AppError::OpenFile)?;
+        self.open_file_with_hint(path, None)
+    }
+
+    /// Like [`AppSession::open_file`], but `hint` — resolved by the adapter
+    /// through `settings_model::file_associations`, since this crate may
+    /// not depend on that crate (ADR-0017/ADR-0029) — decides the tab kind
+    /// directly, skipping the binary sniff. `None` (no association matched)
+    /// or `Some(TabKind::Diff)` (never produced by that resolver) both fall
+    /// back to the sniff, exactly `open_file`'s old behaviour.
+    pub fn open_file_with_hint(
+        &mut self,
+        path: &Path,
+        hint: Option<TabKind>,
+    ) -> Result<OpenedTab, AppError> {
         if let Some(id) = self.find_tab_by_path(path) {
             self.active = Some(id);
             let title = self.tab_title(id).expect("tab found by path exists");
@@ -412,10 +434,23 @@ impl AppSession {
                 kind: self.tab_kind(id).expect("tab found by path exists"),
             });
         }
-        let content = if is_binary {
-            TabContent::Binary(BinaryFile::open(path).map_err(AppError::OpenFile)?)
-        } else {
-            TabContent::Text(Document::open(path).map_err(AppError::OpenFile)?)
+        let kind = match hint {
+            Some(kind @ (TabKind::Text | TabKind::Binary | TabKind::Image)) => kind,
+            Some(TabKind::Diff) | None => {
+                if editor_core::looks_binary_file(path).map_err(AppError::OpenFile)? {
+                    TabKind::Binary
+                } else {
+                    TabKind::Text
+                }
+            }
+        };
+        let content = match kind {
+            TabKind::Image => TabContent::Image(ImageFile::open(path).map_err(AppError::OpenFile)?),
+            TabKind::Binary => {
+                TabContent::Binary(BinaryFile::open(path).map_err(AppError::OpenFile)?)
+            }
+            TabKind::Text => TabContent::Text(Document::open(path).map_err(AppError::OpenFile)?),
+            TabKind::Diff => unreachable!("Diff never reaches here; matched above"),
         };
         let id = TabId(self.next_tab_id);
         self.next_tab_id += 1;
@@ -566,7 +601,9 @@ impl AppSession {
     pub fn tab_is_dirty(&self, id: TabId) -> Option<bool> {
         match self.entry(id).map(|e| &e.content) {
             Some(TabContent::Text(doc)) => Some(doc.is_dirty()),
-            Some(TabContent::Binary(_)) | Some(TabContent::Diff(_)) => Some(false),
+            Some(TabContent::Binary(_))
+            | Some(TabContent::Diff(_))
+            | Some(TabContent::Image(_)) => Some(false),
             None => None,
         }
     }
@@ -821,6 +858,7 @@ impl AppSession {
             Some(TabContent::Text(doc)) => Ok(doc),
             Some(TabContent::Binary(file)) => Err(AppError::NotATextTab(file.path().to_path_buf())),
             Some(TabContent::Diff(diff)) => Err(AppError::NotATextTab(diff.path.clone())),
+            Some(TabContent::Image(file)) => Err(AppError::NotATextTab(file.path().to_path_buf())),
             None => Err(AppError::NoSuchTab),
         }
     }
@@ -914,6 +952,53 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].offset, "00000000");
         assert!(rows[0].hex.starts_with("00 9f 92 96 00 01 02"));
+    }
+
+    #[test]
+    fn open_file_with_hint_image_opens_an_image_tab_even_for_binary_looking_bytes() {
+        // A hint bypasses the sniff entirely — an SVG's bytes would sniff
+        // as `Text` otherwise.
+        let (project_dir, _config, mut session) = session_with_project();
+        let svg = project_dir.path().join("logo.svg");
+        fs::write(&svg, b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>").unwrap();
+
+        let opened = session
+            .open_file_with_hint(&svg, Some(TabKind::Image))
+            .unwrap();
+
+        assert_eq!(opened.kind, TabKind::Image);
+        assert_eq!(opened.title, "logo.svg");
+        assert_eq!(session.tab_kind(opened.id), Some(TabKind::Image));
+    }
+
+    #[test]
+    fn open_file_with_hint_none_falls_back_to_the_binary_sniff() {
+        let (project_dir, _config, mut session) = session_with_project();
+        let binary = project_dir.path().join("blob.bin");
+        fs::write(&binary, [0u8, 159, 146, 150]).unwrap();
+
+        let opened = session.open_file_with_hint(&binary, None).unwrap();
+
+        assert_eq!(opened.kind, TabKind::Binary);
+    }
+
+    #[test]
+    fn open_file_with_hint_focuses_an_already_open_tab_regardless_of_hint() {
+        let (project_dir, _config, mut session) = session_with_project();
+        let path = project_dir.path().join("a.txt");
+        fs::write(&path, "hello").unwrap();
+
+        let first = session.open_file(&path).unwrap();
+        assert!(first.newly_opened);
+        assert_eq!(first.kind, TabKind::Text);
+
+        // A disagreeing hint loses to US-3's focus-don't-duplicate rule.
+        let second = session
+            .open_file_with_hint(&path, Some(TabKind::Image))
+            .unwrap();
+        assert!(!second.newly_opened);
+        assert_eq!(second.id, first.id);
+        assert_eq!(second.kind, TabKind::Text);
     }
 
     #[test]

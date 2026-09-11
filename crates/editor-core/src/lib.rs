@@ -17,6 +17,10 @@ pub use binary_detect::{looks_binary, looks_binary_file};
 pub mod diff;
 pub mod hex;
 
+/// Read-only handle behind an image tab; see [`ImageFile`].
+mod image_file;
+pub use image_file::ImageFile;
+
 /// Byte <-> UTF-16 offset conversion, shared by every place Rust text meets
 /// a Qt cursor position.
 pub mod offsets;

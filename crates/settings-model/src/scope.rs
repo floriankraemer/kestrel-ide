@@ -131,6 +131,9 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     if let Some(editing) = &project.editing {
         resolved.editing = editing.clone();
     }
+    if let Some(file_associations) = &project.file_associations {
+        resolved.file_associations = file_associations.clone();
+    }
     if let Some(servers) = &project.language_servers {
         resolved.language_servers = servers.clone();
     }

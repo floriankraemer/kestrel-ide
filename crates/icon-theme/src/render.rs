@@ -104,6 +104,47 @@ impl IconRenderer {
     }
 }
 
+/// Safety ceiling on a rasterised SVG's longer side, so an SVG with an
+/// absurd `viewBox` never produces a multi-hundred-megabyte pixmap.
+const MAX_SVG_DIMENSION: u32 = 4096;
+
+/// Rasterises arbitrary SVG bytes at their own intrinsic size (scaled down
+/// to fit [`MAX_SVG_DIMENSION`] when larger), for viewers that show an SVG
+/// as an image rather than a themed icon.
+///
+/// Reuses this crate's own `resvg`/`usvg` pipeline rather than a second SVG
+/// rasteriser: the byte order and premultiplication of [`RenderedIcon`] are
+/// exactly [`IconRenderer::render`]'s, so a consumer decodes both the same
+/// way.
+pub fn rasterise_svg(svg_bytes: &[u8]) -> Result<RenderedIcon, IconError> {
+    let tree = usvg::Tree::from_data(svg_bytes, &usvg::Options::default()).map_err(|e| {
+        IconError::MalformedSvg {
+            icon: "<image>".to_owned(),
+            message: e.to_string(),
+        }
+    })?;
+
+    let size = tree.size();
+    let longest = size.width().max(size.height()).max(1.0);
+    let scale = (MAX_SVG_DIMENSION as f32 / longest).min(1.0);
+    let width = (size.width() * scale).round().max(1.0) as u32;
+    let height = (size.height() * scale).round().max(1.0) as u32;
+
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)
+        .ok_or(IconError::UnsupportedSize(width.max(height)))?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
+
+    Ok(RenderedIcon {
+        width,
+        height,
+        pixels: pixmap.take(),
+    })
+}
+
 fn rasterise(
     pack: &IconPack,
     assets: &dyn IconAssets,
@@ -137,6 +178,44 @@ fn rasterise(
         height: px,
         pixels: pixmap.take(),
     })
+}
+
+#[cfg(test)]
+mod rasterise_svg_tests {
+    use super::*;
+
+    fn svg_with_viewbox(width: u32, height: u32) -> Vec<u8> {
+        format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}"><rect width="{width}" height="{height}" fill="#dea584"/></svg>"##
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn a_small_svg_rasterises_at_its_own_intrinsic_size() {
+        let icon = rasterise_svg(&svg_with_viewbox(32, 16)).expect("renders");
+        assert_eq!((icon.width, icon.height), (32, 16));
+        assert_eq!(icon.pixels.len(), 32 * 16 * 4);
+        assert!(
+            icon.pixels.as_chunks::<4>().0.iter().any(|px| px[3] != 0),
+            "a filled rect must produce opaque pixels"
+        );
+    }
+
+    #[test]
+    fn an_oversized_svg_is_scaled_down_to_the_ceiling_preserving_aspect() {
+        let icon = rasterise_svg(&svg_with_viewbox(20_000, 10_000)).expect("renders");
+        assert_eq!(icon.width, MAX_SVG_DIMENSION);
+        assert_eq!(icon.height, MAX_SVG_DIMENSION / 2);
+    }
+
+    #[test]
+    fn malformed_svg_bytes_are_a_typed_error_rather_than_a_panic() {
+        assert!(matches!(
+            rasterise_svg(b"not an svg"),
+            Err(IconError::MalformedSvg { .. })
+        ));
+    }
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@
 #include "find_bar.h"
 #include "hex_viewer.h"
 #include "icon_cache.h"
+#include "image_viewer.h"
 #include "syntax_highlighter.h"
 
 #include <QApplication>
@@ -17,6 +18,8 @@
 #include <QFileInfo>
 #include <QFont>
 #include <QHash>
+#include <QImage>
+#include <QImageReader>
 #include <QInputDialog>
 #include <QLabel>
 #include <QMenu>
@@ -979,6 +982,45 @@ void EditorTabs::addDiffTab(QTabWidget *group, quint64 tabId, const QString &tit
               .arg(docManager_->diffLeftText(tabId).size())
               .arg(docManager_->diffRightText(tabId).size()));
     markTab("tab_added", tabId, group, group->indexOf(page), title);
+}
+
+void EditorTabs::addImageTab(QTabWidget *group, quint64 tabId, const QString &title)
+{
+    const QString path = docManager_->tabPath(tabId);
+    QImage image;
+    // Which decode path a file needs is a rendering mechanism, not a
+    // business rule — the association resolver already decided *that* this
+    // is an image tab (ADR-0002/ADR-0020); this only decides *how* to turn
+    // its bytes into pixels. Raster formats go through Qt's own decoder;
+    // SVG has none in this build, so it goes through the FFI's
+    // `renderSvgImage` (icon-theme's `resvg` pipeline) instead.
+    if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+        const auto pixels = docManager_->renderSvgImage(tabId);
+        const auto width = static_cast<int>(pixels.width);
+        const auto height = static_cast<int>(pixels.height);
+        if (width > 0 && height > 0
+            && pixels.pixels.size() == static_cast<qsizetype>(width) * height * 4) {
+            // Format_RGBA8888_Premultiplied, not Format_ARGB32_Premultiplied
+            // — same reason `icon_cache.cpp`'s `pixmapFor` picks it: the
+            // bytes are tiny-skia's premultiplied RGBA, and Qt's ARGB32 is
+            // BGRA on little-endian.
+            const QImage view(reinterpret_cast<const uchar *>(pixels.pixels.constData()), width,
+                              height, width * 4, QImage::Format_RGBA8888_Premultiplied);
+            // `view` does not own `pixels.pixels`' buffer, which is a local
+            // about to go out of scope — copy() detaches before it can.
+            image = view.copy();
+        }
+    } else {
+        QImageReader reader(path);
+        image = reader.read();
+    }
+
+    auto *viewer = new ImageViewer(group);
+    viewer->setProperty("tabId", QVariant::fromValue(tabId));
+    viewer->setImage(image);
+    group->addTab(viewer, title);
+    renderTabText(group, group->indexOf(viewer), title, false);
+    markTab("tab_added", tabId, group, group->indexOf(viewer), title);
 }
 
 void EditorTabs::onTabClosed(quint64 tabId)

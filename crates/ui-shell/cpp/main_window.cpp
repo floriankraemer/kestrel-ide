@@ -153,6 +153,13 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // undocked by dragging its tab.
     ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHasUndockButton, false);
     ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHasTabsMenuButton, false);
+    // ADS's default base config carries only `ActiveTabHasCloseButton`, so an
+    // inactive dock tab (e.g. "Find Usages" sitting behind "Search Results")
+    // never gets a close button at all — not even on hover, since ADS decides
+    // this per config flag in CDockWidgetTabPrivate::updateCloseButtonVisibility,
+    // not via stylesheet hover state. Editor tabs show a close button on every
+    // tab regardless of which one is active; match that here.
+    ads::CDockManager::setConfigFlag(ads::CDockManager::AllTabsHaveCloseButton, true);
     auto *dockManager = new ads::CDockManager(window);
     // --panel-gap (blend spec), the margin *around* the docked panels. It has
     // to go on the layout: ADS gives the dock manager a layout of its own in

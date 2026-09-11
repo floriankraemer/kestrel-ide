@@ -129,7 +129,11 @@ baseline() {
 	# it replaced (a separate top-level window) all live in the new
 	# diff_panel.h/.cpp, following the buildCommitDetailDock/
 	# buildFileHistoryDock pattern above.
-	crates/ui-shell/cpp/main_window.cpp) echo 1213 ;;
+	# Raised from 1213 by 7 lines: one more `setConfigFlag` call, alongside
+	# the other dock-manager config flags set here before `CDockManager` is
+	# constructed, plus the comment explaining why it is needed — ADS's
+	# default only gives the *active* tab in a dock area a close button.
+	crates/ui-shell/cpp/main_window.cpp) echo 1220 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

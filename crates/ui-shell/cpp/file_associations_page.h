@@ -6,7 +6,7 @@ class QWidget;
 
 namespace ui_shell {
 
-// Settings > File Associations (issue #258): which handler (text, image,
+// Settings > File Associations: which handler (text, image,
 // binary, ...) a file pattern opens with.
 //
 // Live-effect like `plugins_page.cpp`/`languages_page.cpp` (ADR-0002): no

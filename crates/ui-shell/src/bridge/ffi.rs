@@ -1856,7 +1856,7 @@ mod ffi {
         fn tab_path(self: &DocumentManager, tab_id: u64) -> QString;
 
         /// Which kind of page the tab needs: `app_core::TabKind`'s code —
-        /// 0 text, 1 binary, 2 diff, 3 image (ADR-0020, issue #258). The
+        /// 0 text, 1 binary, 2 diff, 3 image (ADR-0020). The
         /// view builds a `CodeEditor`, a `HexViewer`, a `DiffView` or an
         /// `ImageViewer` from this; it never decides the kind itself from
         /// the path or the bytes. Unknown ids answer 0, the same "treat it
@@ -1890,7 +1890,7 @@ mod ffi {
             count: u64,
         ) -> Vec<FfiHexRow>;
 
-        /// Rasterises an image tab's SVG file (issue #258) — raster formats
+        /// Rasterises an image tab's SVG file — raster formats
         /// (PNG/JPG/GIF/BMP/WEBP) are decoded by `ImageViewer` itself via
         /// `QImageReader`, straight from `tabPath`, and never reach here.
         /// An empty result (zero width and height) means the file could not
@@ -2237,7 +2237,7 @@ mod ffi {
     /// An SVG image tab's file, rasterised at its own intrinsic size —
     /// premultiplied RGBA8, the same byte order [`FfiPreviewImage`] and
     /// `IconProvider::iconPixels` already use, via `icon-theme`'s `resvg`
-    /// pipeline (issue #258). `ImageViewer` builds one `QImage` from this
+    /// pipeline. `ImageViewer` builds one `QImage` from this
     /// and scales it for fit/zoom itself, the same as a raster format it
     /// decoded through `QImageReader` directly.
     #[derive(Default)]
@@ -5027,7 +5027,7 @@ mod ffi {
         disable: bool,
     }
 
-    /// One `[[file_associations.rule]]` row (issue #258): `pattern` is a
+    /// One `[[file_associations.rule]]` row: `pattern` is a
     /// glob (`*.svg`), `handler` one of `FileAssociationsEditor::handlerNames`.
     /// Which pattern syntax `pattern` accepts and what a `handler` name
     /// means are `settings_model::file_associations`'s answers, not this
@@ -5227,7 +5227,7 @@ mod ffi {
     }
 
     extern "RustQt" {
-        /// Settings > File Associations (issue #258): which handler a file
+        /// Settings > File Associations: which handler a file
         /// pattern opens with. Live-effect like `PluginCatalog` — no draft,
         /// every add/remove/edit writes through immediately.
         #[qobject]

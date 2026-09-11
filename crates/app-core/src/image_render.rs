@@ -1,4 +1,4 @@
-//! Rasterising an SVG image tab's file for the view (issue #258).
+//! Rasterising an SVG image tab's file for the view.
 //!
 //! Reuses `icon-theme`'s own `resvg` pipeline (`icon_theme::rasterise_svg`)
 //! rather than a second SVG rasteriser, the same join `app_core::icons`

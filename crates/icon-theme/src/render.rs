@@ -110,7 +110,7 @@ const MAX_SVG_DIMENSION: u32 = 4096;
 
 /// Rasterises arbitrary SVG bytes at their own intrinsic size (scaled down
 /// to fit [`MAX_SVG_DIMENSION`] when larger), for viewers that show an SVG
-/// as an image rather than a themed icon (issue #258's image viewer).
+/// as an image rather than a themed icon.
 ///
 /// Reuses this crate's own `resvg`/`usvg` pipeline rather than a second SVG
 /// rasteriser: the byte order and premultiplication of [`RenderedIcon`] are

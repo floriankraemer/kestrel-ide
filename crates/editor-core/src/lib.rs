@@ -17,7 +17,7 @@ pub use binary_detect::{looks_binary, looks_binary_file};
 pub mod diff;
 pub mod hex;
 
-/// Read-only handle behind an image tab (issue #258); see [`ImageFile`].
+/// Read-only handle behind an image tab; see [`ImageFile`].
 mod image_file;
 pub use image_file::ImageFile;
 

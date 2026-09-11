@@ -103,7 +103,7 @@ pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editing: Option<EditingSettings>,
 
-    /// The project's `[file_associations]` overrides (issue #258): a
+    /// The project's `[file_associations]` overrides: a
     /// checked-out project may want its generated `*.svg` diagrams to open
     /// as text for editing even though the global default is `image`.
     ///

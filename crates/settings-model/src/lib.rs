@@ -17,7 +17,7 @@ pub mod ai;
 pub mod analysis;
 pub mod editing;
 /// Which handler a file-association rule (or a shipped default) names for a
-/// path — see [`file_associations::resolve_handler`] (issue #258).
+/// path — see [`file_associations::resolve_handler`].
 pub mod file_associations;
 pub mod languages;
 pub mod plugins;

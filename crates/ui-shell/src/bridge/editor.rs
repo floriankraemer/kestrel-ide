@@ -468,7 +468,7 @@ impl ffi::DocumentManager {
             .collect()
     }
 
-    /// Rasterises an image tab's SVG file (issue #258); see the invokable's
+    /// Rasterises an image tab's SVG file; see the invokable's
     /// own doc comment in `ffi.rs` for why raster formats never reach here.
     pub fn render_svg_image(&self, tab_id: u64) -> ffi::FfiImagePixels {
         let session = self.session.borrow();

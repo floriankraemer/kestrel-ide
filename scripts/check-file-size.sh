@@ -117,7 +117,7 @@ baseline() {
 	# status_bar.cpp/navigate_menu.cpp/ai_menu.cpp above it.
 	# Ratcheted down from 1230 when the tab close-button proxy style moved
 	# to theme.cpp, next to the close icon it installs.
-	# Raised from 1209 by 2 lines for issue #258: constructing
+	# Raised from 1209 by 2 lines: constructing
 	# FileAssociationsEditor alongside the other per-window settings-page
 	# editors, and its one new SettingsContext field — the page and
 	# resolver themselves live in file_associations_page.cpp/

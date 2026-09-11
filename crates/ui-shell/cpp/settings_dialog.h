@@ -47,7 +47,7 @@ struct SettingsContext
     AiProviderEditor *aiProviderEditor;
     AiChat *aiChat;
     PluginCatalog *pluginCatalog;
-    // Settings > File Associations (issue #258): live-effect, like
+    // Settings > File Associations: live-effect, like
     // `pluginCatalog` above.
     FileAssociationsEditor *fileAssociationsEditor;
     // The PHP tooling plan's B7/B9: which analyzers are enabled and their

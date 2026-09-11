@@ -520,7 +520,7 @@ pub(crate) fn load_resolved_settings() -> app_config::Settings {
 }
 
 /// The `TabKind` hint `AppSession::open_file_with_hint` needs for `path`,
-/// resolved from the file-association rules in force (issue #258).
+/// resolved from the file-association rules in force.
 ///
 /// `app-core` may not depend on `settings-model` (ADR-0017: settings-model
 /// owns what a value means, and it sits above `app-core`'s layer), so the

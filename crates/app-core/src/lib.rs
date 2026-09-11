@@ -28,8 +28,7 @@ mod error;
 pub mod file_ops;
 /// Where plugins and icon packs are joined (ADR-0026, ADR-0027).
 pub mod icons;
-/// Rasterising an SVG image tab's file, reusing `icon-theme`'s pipeline
-/// (issue #258).
+/// Rasterising an SVG image tab's file, reusing `icon-theme`'s pipeline.
 pub mod image_render;
 /// Where plugins and the Markdown/Mermaid renderer are joined (ADR-0033).
 pub mod preview;
@@ -103,7 +102,7 @@ pub enum TabKind {
     /// side; see `diff_tab`'s module doc for why the working-tree-vs-`HEAD`
     /// diff is deliberately not this kind.
     Diff,
-    /// A read-only image view (issue #258).
+    /// A read-only image view.
     Image,
 }
 

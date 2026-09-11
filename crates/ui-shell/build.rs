@@ -572,7 +572,7 @@ fn main() {
         .cpp_file("cpp/terminal_sessions_panel.cpp")
         .cpp_file("cpp/hex_viewer.h")
         .cpp_file("cpp/hex_viewer.cpp")
-        // Read-only image tab (issue #258): raster via QImageReader, SVG
+        // Read-only image tab: raster via QImageReader, SVG
         // via the FFI's renderSvgImage (icon-theme's resvg pipeline).
         .cpp_file("cpp/image_viewer.h")
         .cpp_file("cpp/image_viewer.cpp")

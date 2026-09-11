@@ -1,4 +1,4 @@
-//! Read-only handle behind an image tab (issue #258).
+//! Read-only handle behind an image tab.
 //!
 //! Mirrors the parts of [`crate::BinaryFile`]'s surface a tab needs
 //! regardless of kind — path, title, rename retargeting, delete flagging —

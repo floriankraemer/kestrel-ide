@@ -11,7 +11,7 @@ class QKeyEvent;
 
 namespace ui_shell {
 
-// Read-only view of one already-decoded image (issue #258): 1:1 when it
+// Read-only view of one already-decoded image: 1:1 when it
 // fits the viewport, scaled down to fit otherwise, with Ctrl+wheel/keyboard
 // zoom on top of that base scale and panning via the inherited scrollbars —
 // the same `QAbstractScrollArea` shape `HexViewer` uses, so panning a large
@@ -41,7 +41,7 @@ protected:
 
 private:
     // Scale that fits the image inside the viewport, never upscaling past
-    // 1:1 — the "1:1 if it fits, else scaled" rule (issue #258).
+    // 1:1 — the "1:1 if it fits, else scaled" rule.
     qreal baseScale() const;
     qreal effectiveScale() const { return baseScale() * zoom_; }
     void setZoom(qreal zoom);

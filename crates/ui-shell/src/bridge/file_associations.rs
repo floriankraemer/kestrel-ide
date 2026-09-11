@@ -1,5 +1,5 @@
 //! Rust side of the `FileAssociationsEditor` QObject: the Settings > File
-//! Associations page's rows (issue #258).
+//! Associations page's rows.
 //!
 //! Live-effect, like `PluginCatalog`/`LanguageCatalog`: there is no draft
 //! and no OK-shaped promise, and every add/remove/edit writes straight to

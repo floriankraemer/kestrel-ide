@@ -1,5 +1,5 @@
 //! What a file-association rule means, and which handler applies to a given
-//! path (issue #258).
+//! path.
 //!
 //! `app-config` stores `[[file_associations.rule]]` as bare
 //! `{pattern, handler}` strings and does not interpret either (ADR-0017).
@@ -33,7 +33,7 @@ pub enum HandlerKind {
     /// An editable text document — the same tab a file with no rule at all
     /// gets when it doesn't sniff as binary.
     Text,
-    /// A read-only image view (issue #258).
+    /// A read-only image view.
     Image,
     /// A read-only hex view — the same tab a file with no rule at all gets
     /// when it does sniff as binary.
@@ -62,7 +62,7 @@ impl HandlerKind {
 }
 
 /// Shipped defaults, checked when neither the project nor the global layer
-/// names a rule matching the path. Image formats only, per issue #258 —
+/// names a rule matching the path. Image formats only —
 /// widening this list is additive and does not touch the resolver.
 const BUILTIN_RULES: &[(&str, HandlerKind)] = &[
     ("*.png", HandlerKind::Image),

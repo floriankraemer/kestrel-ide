@@ -22,7 +22,7 @@ pub mod analysis;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
 /// The `[file_associations]` section: which handler a file pattern opens
-/// with (issue #258).
+/// with.
 pub mod file_associations;
 pub mod keymap;
 pub mod syntax_colors;
@@ -343,8 +343,8 @@ pub struct Settings {
     /// crate's — see [`editing`].
     #[serde(default)]
     pub editing: EditingSettings,
-    /// Which handler (text, image, binary, ...) a file pattern opens with
-    /// (issue #258). What a pattern matches and which built-in defaults
+    /// Which handler (text, image, binary, ...) a file pattern opens with.
+    /// What a pattern matches and which built-in defaults
     /// apply when this is empty is `settings_model::file_associations`'s
     /// rule, not this crate's — see [`file_associations`].
     #[serde(default, rename = "file_associations")]

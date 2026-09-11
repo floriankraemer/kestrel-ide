@@ -1,5 +1,5 @@
 //! The `[file_associations]` section: which "handler" a file pattern opens
-//! with (issue #258, generalising the original "always show images" ask).
+//! with, generalising the original "always show images" ask.
 //!
 //! Persistence only, like the rest of this crate. What a pattern matches,
 //! what a handler name means, and which built-in defaults apply when the

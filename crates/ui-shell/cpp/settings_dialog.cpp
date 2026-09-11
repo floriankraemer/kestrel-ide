@@ -198,7 +198,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     // OK-shaped promise.
     pages->addWidget(buildPluginsPage(&dialog, context.pluginCatalog, refreshIcons));
 
-    // File Associations (issue #258) needs no draft either, for the same
+    // File Associations needs no draft either, for the same
     // reason Plugins/Languages need none: every row change writes through
     // at once, there is nothing left to promise on OK.
     pages->addWidget(buildFileAssociationsPage(&dialog, context.fileAssociationsEditor));

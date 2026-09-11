@@ -47,7 +47,7 @@ pub mod editor;
 pub mod editor_ops;
 pub mod errors;
 pub mod ffi;
-/// The Settings > File Associations page (issue #258): a live-effect page,
+/// The Settings > File Associations page: a live-effect page,
 /// like `plugins`/`language` — no draft, no OK-shaped promise, every
 /// add/remove/edit writes through immediately.
 pub mod file_associations;

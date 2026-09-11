@@ -44,7 +44,7 @@ qreal ImageViewer::baseScale() const
     }
     const qreal vw = std::max(1, viewport()->width());
     const qreal vh = std::max(1, viewport()->height());
-    // 1:1 if it fits, else scaled down to fit (issue #258) — never upscale
+    // 1:1 if it fits, else scaled down to fit — never upscale
     // past 1:1 just because the viewport happens to be roomy.
     return std::min(1.0, std::min(vw / image_.width(), vh / image_.height()));
 }

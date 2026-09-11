@@ -535,12 +535,13 @@ QTabBar {
 
 /* Asymmetric padding on purpose: the right side carries the close button.
    Qt lays a closable tab out as [padding-left][icon][label][x], and this
-   padding-right sizes only the space to the *left* of the [x] — the space to
-   its right belongs to the close indicator (TabCloseStyle::pixelMetric
-   below) and the base style's edge offset. {sp-1} is what balances the two,
-   and it is deliberately not 0: every other QTabBar in the app has no close
-   button and would lose its right padding entirely. Measured under Fusion
-   with a real screenshot: 10px left of the [x], 9px right of it. */
+   padding-right sizes only the space the *label* rect gives up — the [x]
+   itself is positioned from the tab's full rect and ignores it. Where it
+   lands is therefore not this sheet's decision: PaneTabBar pins it 4px
+   inside the tab's border (editor_tabs_panes.cpp), which is what puts the
+   same 8px of air on both sides of the glyph under Fusion and the Windows
+   style alike. {sp-1} is deliberately not 0 here: every other QTabBar in
+   the app has no close button and would lose its right padding entirely. */
 QTabBar::tab {
     background-color: {surface};
     color: {textDim};
@@ -965,9 +966,10 @@ public:
     // both `QTabBar::close-button`'s margins and a subElementRect override
     // (see the QTabBar rules in chromeStyleSheet() above). This metric is
     // still delegated, so pinning it to 16 gives the glyph 4px of its own on
-    // each side everywhere. What is left over — the base style's offset from
-    // the tab's edge, 4px under Fusion and ~3px under Windows — is small
-    // enough not to read as a difference.
+    // each side everywhere. The button's own offset from the tab's edge is
+    // what the base styles still disagree about — flush under Windows, 4px
+    // in under Fusion — and PaneTabBar pins that itself, so the glyph ends
+    // up 8px clear of both the label and the border on either platform.
     int pixelMetric(PixelMetric metric, const QStyleOption *option,
                      const QWidget *widget) const override
     {

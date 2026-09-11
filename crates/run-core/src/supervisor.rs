@@ -67,8 +67,13 @@ impl Supervisor {
                 "program must not be empty".to_string(),
             ));
         }
+        // A remote (WSL UNC) cwd is the distro's to check, not ours: the
+        // share only resolves while the distro is up, so `is_dir()` here
+        // answers "is the distro running", not "does the directory exist",
+        // and `wsl.exe --cd` reports a missing one itself. Same reason
+        // #255 stopped launching `wsl.exe` *from* the UNC path.
         if let Some(cwd) = &spec.cwd {
-            if !cwd.is_dir() {
+            if !process_exec::host::ExecHost::for_path(cwd).is_remote() && !cwd.is_dir() {
                 return Err(RunError::CwdNotFound(cwd.display().to_string()));
             }
         }
@@ -90,8 +95,15 @@ impl Supervisor {
         let (program, args) = host.argv(&resolved_program, &arg_refs, &cwd_for_host);
 
         let mut shell = ShellSpec::new(program, args).with_env(spec.env.clone());
+        // Only a local cwd reaches the spawn. A remote one is already
+        // carried by `--cd` inside the distro, and handing the UNC path to
+        // the PTY as a working directory is the failure #255 removed from
+        // `ExecHost::command`: the spawn needs the share to resolve, which
+        // it does not when the distro is stopped.
         if let Some(cwd) = &spec.cwd {
-            shell = shell.with_cwd(cwd.clone());
+            if !host.is_remote() {
+                shell = shell.with_cwd(cwd.clone());
+            }
         }
 
         let pty_session = PtySession::spawn(&shell, DEFAULT_PTY_SIZE)?;
@@ -523,8 +535,12 @@ mod tests {
         perms.set_mode(0o755);
         std::fs::set_permissions(&script_path, perms).unwrap();
 
+        // Not created on disk, and deliberately so: a remote cwd is
+        // classified by its UNC spelling, never opened — neither the
+        // existence check nor the PTY spawn touches it. Creating it would
+        // write `/wsl.localhost` at the filesystem root, which only
+        // succeeds when the test runs as root (see #251, #252, #255).
         let cwd = std::path::PathBuf::from("//wsl.localhost/Ubuntu/tmp/run-core-e2e");
-        std::fs::create_dir_all(&cwd).unwrap();
 
         let original_path = std::env::var("PATH").unwrap_or_default();
         // SAFETY: serialized by PATH_LOCK.

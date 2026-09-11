@@ -47,8 +47,13 @@ done
     perms.set_mode(0o755);
     fs::set_permissions(&script_path, perms).unwrap();
 
+    // Not created on disk, and deliberately so: the WSL root is only ever
+    // parsed for its UNC spelling — wsl.exe is handed the distro path it
+    // names, and the process itself is spawned from a local directory
+    // (#255). Creating it would write `/wsl.localhost` at the filesystem
+    // root, which only succeeds when the test runs as root (see #251, #252
+    // for the same trap in analysis-core and lsp-core).
     let work_dir = std::path::PathBuf::from("//wsl.localhost/Ubuntu/tmp/vcs-core-e2e");
-    fs::create_dir_all(&work_dir).unwrap();
 
     let original_path = std::env::var("PATH").unwrap_or_default();
     // SAFETY: serialized by PATH_LOCK; nothing else in this test binary

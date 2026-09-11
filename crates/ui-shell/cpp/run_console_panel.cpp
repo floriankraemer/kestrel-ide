@@ -3,6 +3,7 @@
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "run_toolbar.h"
+#include "styled_tab_widget.h"
 
 #include "DockAreaWidget.h"
 #include "DockManager.h"
@@ -150,7 +151,7 @@ RunConsolePanel::RunConsolePanel(RunService *runService, RunToolbar *toolbar, Op
   , openAt_(std::move(openAt))
   , toolbar_(toolbar)
 {
-    tabs_ = new QTabWidget(this);
+    tabs_ = new StyledTabWidget(this);
     tabs_->setTabsClosable(true);
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &RunConsolePanel::closeTab);
     connect(tabs_, &QTabWidget::currentChanged, this,

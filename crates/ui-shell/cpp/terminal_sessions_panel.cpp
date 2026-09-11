@@ -2,6 +2,7 @@
 
 #include "terminal_widget.h"
 #include "theme.h"
+#include "styled_tab_widget.h"
 
 #include <QAction>
 #include <QKeySequence>
@@ -20,7 +21,7 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
   , appSettings_(appSettings)
   , openAt_(std::move(openAt))
 {
-    tabs_ = new QTabWidget(this);
+    tabs_ = new StyledTabWidget(this);
     tabs_->setTabsClosable(true);
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &TerminalSessionsPanel::closeTab);
 

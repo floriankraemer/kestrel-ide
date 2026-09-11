@@ -2,6 +2,7 @@
 
 #include "commit_detail_view.h"
 #include "dock_layout.h"
+#include "styled_tab_widget.h"
 
 #include "DockAreaWidget.h"
 #include "DockManager.h"
@@ -15,9 +16,8 @@ namespace ui_shell {
 CommitDetailPanel::CommitDetailPanel(VcsService *vcsService, QWidget *parent)
   : QWidget(parent), vcsService_(vcsService)
 {
-    tabs_ = new QTabWidget(this);
+    tabs_ = new StyledTabWidget(this);
     tabs_->setTabsClosable(true);
-    tabs_->setDocumentMode(true);
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &CommitDetailPanel::closeTab);
 
     auto *layout = new QVBoxLayout(this);

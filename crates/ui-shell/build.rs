@@ -463,6 +463,9 @@ fn main() {
         .cpp_file("cpp/intention_bulb.cpp")
         // Free functions, no Q_OBJECT, so only the source is listed.
         .cpp_file("cpp/signature_tip.cpp")
+        // StyledTabBar/StyledTabWidget declare no Q_OBJECT, so only the
+        // source is listed — its header runs no moc.
+        .cpp_file("cpp/styled_tab_widget.cpp")
         // EditorTabs is one class defined across three translation units:
         // the tab surface, the pane tree, and the language-server leg.
         // It declares no Q_OBJECT (main_window.cpp holds none by design),

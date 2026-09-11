@@ -1,20 +1,18 @@
 #include "editor_tabs.h"
 
 #include "code_editor.h"
+#include "diff_panel.h"
 #include "diff_view.h"
 #include "diff_view_page.h"
 #include "e2e_mark.h"
 #include "vcs_gutter.h"
 
-#include <QCloseEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
-#include <QKeySequence>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QShortcut>
 #include <QTabWidget>
 #include <QTextDocument>
 #include <QTimer>
@@ -22,33 +20,6 @@
 #include <QVector>
 
 namespace ui_shell {
-
-namespace {
-
-// The floating window `openEditableDiffWindow` shows. `closeEvent` (not
-// `destroyed`, and not `WA_DeleteOnClose` alone) is what runs `onClosing`:
-// `QObject::destroyed` fires only once `~QWidget` has already torn down its
-// children, by which point the real `CodeEditor` this window borrowed would
-// already be gone. Deferring the actual delete to `deleteLater()` keeps
-// this safe to close from within its own event handling.
-class DiffWindow : public QWidget
-{
-public:
-    using QWidget::QWidget;
-    std::function<void()> onClosing;
-
-protected:
-    void closeEvent(QCloseEvent *event) override
-    {
-        if (onClosing) {
-            onClosing();
-        }
-        QWidget::closeEvent(event);
-        deleteLater();
-    }
-};
-
-} // namespace
 
 namespace {
 
@@ -112,6 +83,12 @@ void wireVcsService(VcsService *vcsService, ProjectTreeModel *treeModel, EditorT
 void EditorTabs::setVcsService(VcsService *vcsService)
 {
     vcsService_ = vcsService;
+}
+
+void EditorTabs::setDiffPanel(DiffPanel *diffPanel, std::function<void()> revealDiffDock)
+{
+    diffPanel_ = diffPanel;
+    revealDiffDock_ = std::move(revealDiffDock);
 }
 
 void EditorTabs::requestHunksFor(CodeEditor *editor)
@@ -244,13 +221,13 @@ void EditorTabs::showDiffForPath(const QString &path)
 
 void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const QString &path)
 {
-    if (const auto it = diffWindows_.constFind(tabId); it != diffWindows_.constEnd()) {
-        it->window->show();
-        it->window->raise();
-        it->window->activateWindow();
+    if (diffPanel_ && diffPanel_->raiseIfOpen(tabId)) {
+        if (revealDiffDock_) {
+            revealDiffDock_();
+        }
         return;
     }
-    if (!vcsService_) {
+    if (!vcsService_ || !diffPanel_) {
         return;
     }
     const TabLoc loc = locate(tabId);
@@ -264,21 +241,19 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
 
     // A placeholder, not a blank page: the tab still exists (it can be
     // renamed by a file rename, closed, dragged into a split) while its
-    // editor is off in the diff window, and a blank page reads as a bug
-    // rather than "look elsewhere".
+    // editor is showing in the Diff dock instead, and a blank page reads as
+    // a bug rather than "look elsewhere".
     auto *placeholder = new QWidget(loc.group);
     placeholder->setProperty("tabId", QVariant::fromValue(tabId));
     auto *placeholderLayout = new QVBoxLayout(placeholder);
     placeholderLayout->addStretch(1);
-    auto *label = new QLabel(tr("This file's diff is open in a separate window."), placeholder);
+    auto *label = new QLabel(tr("This file's diff is open in the Diff dock."), placeholder);
     label->setAlignment(Qt::AlignCenter);
     placeholderLayout->addWidget(label);
-    auto *showButton = new QPushButton(tr("Show Diff Window"), placeholder);
+    auto *showButton = new QPushButton(tr("Show Diff"), placeholder);
     connect(showButton, &QPushButton::clicked, this, [this, tabId] {
-        if (const auto it = diffWindows_.constFind(tabId); it != diffWindows_.constEnd()) {
-            it->window->show();
-            it->window->raise();
-            it->window->activateWindow();
+        if (diffPanel_ && diffPanel_->raiseIfOpen(tabId) && revealDiffDock_) {
+            revealDiffDock_();
         }
     });
     auto *buttonRow = new QHBoxLayout;
@@ -289,6 +264,7 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
     placeholderLayout->addStretch(1);
     loc.group->insertTab(loc.index, placeholder, title);
     loc.group->setCurrentIndex(loc.index);
+    diffPlaceholders_.insert(tabId, placeholder);
 
     auto *diffView =
       new DiffView(headText, editor, vcsService_->hunks(path), ::rust::Vec<FfiInlineSpan>(), path);
@@ -328,36 +304,32 @@ void EditorTabs::openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const
             qOverload<>(&QTimer::start));
     connect(refreshTimer, &QTimer::timeout, page, &DiffViewPage::refresh);
 
-    // A top-level window of its own, but the main window's child: it closes
-    // when the IDE does, rather than outliving it as the last window and
-    // keeping the process alive after Ctrl+Q.
-    auto *window = new DiffWindow(window_, Qt::Window);
-    window->setWindowTitle(tr("Diff — %1").arg(path));
-    auto *layout = new QVBoxLayout(window);
-    layout->setContentsMargins(0, 0, 0, 0);
-    layout->addWidget(page);
-    window->resize(1100, 750);
-    window->onClosing = [this, tabId] { restoreEditorFromDiffWindow(tabId); };
+    diffPages_.insert(tabId, page);
 
-    auto *saveShortcut = new QShortcut(QKeySequence::Save, window);
-    connect(saveShortcut, &QShortcut::activated, this,
-            [this, tabId, editor] { saveEditor(tabId, editor, editor); });
-
-    diffWindows_.insert(tabId, DiffWindowState{window, placeholder});
-    window->show();
+    // Revealed before the page is added, not after: `DiffToolbar`'s
+    // `showEvent` marks its own on-screen rect via `mapToGlobal` for the
+    // E2E harness, and a page added to a still-hidden (or not yet current)
+    // dock gets that `showEvent` while its ancestor chain has no real
+    // screen position yet — the rect it reports then is wrong, though
+    // nothing else about the dock's own rendering seemed to notice.
+    if (revealDiffDock_) {
+        revealDiffDock_();
+    }
+    diffPanel_->openDiff(tabId, tr("Diff — %1").arg(path), page);
 }
 
-void EditorTabs::restoreEditorFromDiffWindow(quint64 tabId)
+void EditorTabs::restoreEditorFromDiffWindow(quint64 tabId, QWidget *page)
 {
-    const auto it = diffWindows_.find(tabId);
-    if (it == diffWindows_.end()) {
+    const auto it = diffPlaceholders_.find(tabId);
+    if (it == diffPlaceholders_.end()) {
         return;
     }
-    DiffWindowState state = it.value();
-    diffWindows_.erase(it);
+    QWidget *placeholder = it.value();
+    diffPlaceholders_.erase(it);
+    diffPages_.remove(tabId);
 
-    auto *page = state.window->findChild<DiffViewPage *>();
-    QPlainTextEdit *editor = page ? page->diffView()->releaseRightPane() : nullptr;
+    auto *diffPage = qobject_cast<DiffViewPage *>(page);
+    QPlainTextEdit *editor = diffPage ? diffPage->diffView()->releaseRightPane() : nullptr;
     if (!editor) {
         return;
     }
@@ -372,7 +344,7 @@ void EditorTabs::restoreEditorFromDiffWindow(quint64 tabId)
     }
     const QString title = loc.group->tabText(loc.index);
     loc.group->removeTab(loc.index);
-    delete state.placeholder;
+    delete placeholder;
     loc.group->insertTab(loc.index, editor, title);
     loc.group->setCurrentIndex(loc.index);
     editor->setFocus();

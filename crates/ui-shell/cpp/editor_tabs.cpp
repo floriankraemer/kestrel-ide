@@ -1,6 +1,7 @@
 #include "editor_tabs.h"
 
 #include "code_editor.h"
+#include "diff_panel.h"
 #include "diff_view.h"
 #include "diff_view_page.h"
 #include "e2e_mark.h"
@@ -526,6 +527,24 @@ void EditorTabs::goToLine()
 
 void EditorTabs::saveCurrentTab()
 {
+    // Ctrl+S with focus inside an open diff tab saves *that* diff's editor,
+    // not whatever `activeGroup_` says is current — the file.save QAction
+    // (main_window.cpp) is the only Ctrl+S left registered on this window
+    // since the Diff dock stopped being a separate top-level window
+    // (F3-14): a second `QShortcut` scoped to the diff page would only
+    // have raced this one for the same key sequence, which Qt resolves by
+    // firing neither.
+    QWidget *focused = QApplication::focusWidget();
+    for (auto it = diffPages_.constBegin(); focused && it != diffPages_.constEnd(); ++it) {
+        DiffViewPage *page = it.value();
+        if (page && (page == focused || page->isAncestorOf(focused))) {
+            auto *editor = qobject_cast<CodeEditor *>(page->diffView()->rightPane());
+            if (editor) {
+                saveEditor(it.key(), editor, editor);
+            }
+            return;
+        }
+    }
     if (activeGroup_) {
         saveTab(activeGroup_, activeGroup_->currentIndex());
     }
@@ -1058,15 +1077,16 @@ void EditorTabs::onTabClosed(quint64 tabId)
     // accumulated, or the map grows for the life of the process.
     editorOps_->forgetTab(tabId);
 
-    // The tab's own page is a placeholder while its editor lives in a
-    // floating diff window (F3-14) — the file is going away regardless of
-    // whether its diff was ever closed, so the window (and the editor still
-    // inside it) closes with it rather than leaking a window over a tab
-    // that no longer exists.
-    if (const auto it = diffWindows_.constFind(tabId); it != diffWindows_.constEnd()) {
-        delete it->window;
-        diffWindows_.remove(tabId);
+    // The tab's own page is a placeholder while its editor lives in a diff
+    // tab in the Diff dock (F3-14) — the file is going away regardless
+    // of whether its diff was ever closed, so that tab (and the editor
+    // still inside it) closes with it rather than leaking a tab over a file
+    // that no longer exists. `discardDiff` skips `DiffClosed` deliberately:
+    // there is no tab left here to restore the editor into.
+    if (diffPlaceholders_.remove(tabId) > 0 && diffPanel_) {
+        diffPanel_->discardDiff(tabId);
     }
+    diffPages_.remove(tabId);
     minimapVisibilityOverrides_.remove(tabId);
 
     const TabLoc loc = locate(tabId);

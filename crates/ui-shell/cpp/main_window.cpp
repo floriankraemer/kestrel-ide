@@ -19,6 +19,7 @@
 #include "editor_tabs.h"
 #include "commit_detail_panel.h"
 #include "commit_log_panel.h"
+#include "diff_panel.h"
 #include "file_history_panel.h"
 #include "find_bar.h"
 #include "find_usages_panel.h"
@@ -233,6 +234,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // rather than each stacking one more split between editor and status bar.
     auto *bottomArea = docks->registerDock(QStringLiteral("searchResults"), searchResultsDock,
                                            ads::BottomDockWidgetArea, editorArea);
+    buildDiffDock(dockManager, docks, bottomArea, editorTabs); // dockable diff tabs, full window width
 
     // Task J: bottom dock panel, tabbed alongside Find in Files — same
     // "list of locations" shape, just fed by a symbol name instead of typed

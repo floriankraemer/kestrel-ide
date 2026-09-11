@@ -29,6 +29,7 @@
 #include <QFont>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHash>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -43,6 +44,8 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+
+#include <functional>
 
 namespace ui_shell {
 
@@ -95,6 +98,48 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
       200, categoryList->fontMetrics().horizontalAdvance(QObject::tr("Language Servers")) + 40));
 
     auto *pages = new QStackedWidget(&dialog);
+
+    // #278: nine of the thirteen categories build their page only once its
+    // category is actually clicked, rather than all at dialog-open time.
+    // Analysis and AI Providers alone cost tens of milliseconds each to
+    // build — Analysis walks every contributed analyzer's program
+    // candidates against `PATH` and the project's `composer.json`
+    // (`analysis_core::status`), AI Providers, Keymap, Languages, Language
+    // Servers, Plugins and File Associations all do comparable
+    // catalog/detection work — and a dialog open pays for all thirteen
+    // whether or not the category behind eleven of them is ever clicked.
+    // Appearance, Language, Editor, Terminal, Tabs and MCP stay eager: each
+    // is either the page shown immediately (Appearance) or backed by a
+    // local `commit()`/`revert()` this function calls unconditionally on
+    // Accept/Cancel below, which only a built widget can answer safely.
+    // Every deferred category instead commits through its `*Editor`
+    // (`context.editingEditor->commit()` and friends), which only ever
+    // touches the Rust-held draft — safe to call whether or not the page
+    // was ever built, since `beginEdit()` below still runs eagerly and a
+    // never-opened page's draft is simply never edited.
+    //
+    // Reuses the exact placeholder-swap the scope switch below already
+    // does for Editing/Language Servers/Terminal/Tabs/Analysis: a builder
+    // stored per stack index, run once — on first selection here, or by
+    // `applySettingsFilter` below when a search needs a page's real
+    // content — and then discarded.
+    QHash<int, std::function<void()>> lazyBuilders;
+    auto deferPage = [&lazyBuilders, pages, &dialog](std::function<QWidget *()> build) {
+        const int index = pages->addWidget(new QWidget(&dialog));
+        lazyBuilders.insert(index, [pages, index, build = std::move(build)]() {
+            QWidget *placeholder = pages->widget(index);
+            pages->insertWidget(index, build());
+            pages->removeWidget(placeholder);
+            placeholder->deleteLater();
+        });
+        return index;
+    };
+    auto ensureBuilt = [&lazyBuilders](int index) {
+        const std::function<void()> build = lazyBuilders.take(index);
+        if (build) {
+            build();
+        }
+    };
 
     // A page whose settings a project may override carries a badge saying
     // which layer the values it shows came from. The badge is per *area*,
@@ -150,60 +195,77 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     // width a user is halfway through typing is not a setting worth
     // applying keystroke by keystroke.
     context.editingEditor->beginEdit(appSettings->settingsScope());
-    const int editingIndex = pages->addWidget(
-      scopedPage(QStringLiteral("editing"), buildEditingPage(&dialog, context.editingEditor)));
+    const int editingIndex = deferPage([&dialog, editingEditor = context.editingEditor,
+                                         scopedPage]() {
+        return scopedPage(QStringLiteral("editing"), buildEditingPage(&dialog, editingEditor));
+    });
 
     // Syntax Colors follows Appearance rather than Keymap: it applies live,
     // so the user sees the colour in the open editor while picking it, and
     // the Cancel branch below reverts it the same way the theme is reverted.
     context.syntaxColorEditor->beginEdit();
-    pages->addWidget(buildSyntaxColorsPage(
-      &dialog, context.syntaxColorEditor,
-      QFont(originalFont.family, static_cast<int>(originalFont.size)),
-      [editorTabs]() { editorTabs->refreshHighlighting(); }));
+    deferPage([&dialog, syntaxColorEditor = context.syntaxColorEditor, originalFont, editorTabs]() {
+        return buildSyntaxColorsPage(
+          &dialog, syntaxColorEditor,
+          QFont(originalFont.family, static_cast<int>(originalFont.size)),
+          [editorTabs]() { editorTabs->refreshHighlighting(); });
+    });
 
     // Unlike Appearance/Editor, the keymap isn't applied live: the page edits
     // a draft held in Rust, so Cancel discards it by never committing, and
     // the next beginEdit() re-reads from disk.
     context.keymapEditor->beginEdit();
-    pages->addWidget(buildKeymapPage(&dialog, context.keymapEditor));
+    deferPage([&dialog, keymapEditor = context.keymapEditor]() {
+        return buildKeymapPage(&dialog, keymapEditor);
+    });
 
     // Languages needs no draft: nothing on it is a setting. Adding a
     // language, clearing a quarantine and reloading all take effect when
     // pressed, which is why the page offers no OK-shaped promise.
-    pages->addWidget(buildLanguagesPage(
-      &dialog, context.languageCatalog,
-      [&dialog, editorTabs](const QString &path) {
-          editorTabs->openFileAtLine(path, 1, 1);
-          dialog.accept();
-      },
-      [editorTabs]() { editorTabs->reloadHighlighterLanguages(); }));
+    deferPage([&dialog, editorTabs, languageCatalog = context.languageCatalog]() {
+        return buildLanguagesPage(
+          &dialog, languageCatalog,
+          [&dialog, editorTabs](const QString &path) {
+              editorTabs->openFileAtLine(path, 1, 1);
+              dialog.accept();
+          },
+          [editorTabs]() { editorTabs->reloadHighlighterLanguages(); });
+    });
 
     // Language Servers commits on OK, like Keymap and MCP: starting and
     // stopping a server on every keystroke in a command field is not a
     // preview.
     context.languageServerEditor->beginEdit(appSettings->settingsScope());
-    const int languageServersIndex = pages->addWidget(scopedPage(
-      QStringLiteral("languageServers"),
-      buildLanguageServersPage(&dialog, context.languageServerEditor, context.languageService)));
+    const int languageServersIndex = deferPage(
+      [&dialog, languageServerEditor = context.languageServerEditor,
+       languageService = context.languageService, scopedPage]() {
+          return scopedPage(QStringLiteral("languageServers"),
+                             buildLanguageServersPage(&dialog, languageServerEditor, languageService));
+      });
 
     // AI Providers sits next to Language Servers — both configure an
     // external process the IDE talks to — and commits on OK for the same
     // reason: a half-typed base URL is not a setting worth applying. There
     // is no API key field on the page, by ADR-0021 decision 3.
     context.aiProviderEditor->beginEdit();
-    pages->addWidget(buildAiProvidersPage(&dialog, context.aiProviderEditor));
+    deferPage([&dialog, aiProviderEditor = context.aiProviderEditor]() {
+        return buildAiProvidersPage(&dialog, aiProviderEditor);
+    });
 
     // Plugins needs no draft, for the reason Languages needs none: nothing
     // on it is a setting the dialog holds. Switching a plugin off rebuilds
     // the registry there and then, which is why the page makes no
     // OK-shaped promise.
-    pages->addWidget(buildPluginsPage(&dialog, context.pluginCatalog, refreshIcons));
+    deferPage([&dialog, pluginCatalog = context.pluginCatalog, refreshIcons]() {
+        return buildPluginsPage(&dialog, pluginCatalog, refreshIcons);
+    });
 
     // File Associations needs no draft either, for the same
     // reason Plugins/Languages need none: every row change writes through
     // at once, there is nothing left to promise on OK.
-    pages->addWidget(buildFileAssociationsPage(&dialog, context.fileAssociationsEditor));
+    deferPage([&dialog, fileAssociationsEditor = context.fileAssociationsEditor]() {
+        return buildFileAssociationsPage(&dialog, fileAssociationsEditor);
+    });
 
     // Terminal is project-scoped, so it is rebuilt when the scope changes
     // like Editing and Language Servers. Held by handle rather than by
@@ -227,19 +289,23 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     // Servers are: which analyzers a checkout wants on, and how eagerly, is
     // a property of the project at least as often as of the person.
     context.analysisEditor->beginEdit(appSettings->settingsScope());
-    const int analysisIndex = pages->addWidget(scopedPage(
-      QStringLiteral("analysis"),
-      buildAnalysisSettingsPage(&dialog, context.analysisEditor, context.analysisService)));
+    const int analysisIndex =
+      deferPage([&dialog, analysisEditor = context.analysisEditor,
+                 analysisService = context.analysisService, scopedPage]() {
+          return scopedPage(QStringLiteral("analysis"),
+                             buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService));
+      });
 
     const McpPage mcp =
       buildMcpPage(&dialog, appSettings, context.docManager, *context.mcpStatus);
     pages->addWidget(mcp.widget);
 
     // #233: does any label/button/group text on `page` match `query`? Every
-    // category's page is already built and stacked by this point (including
-    // after a scope switch rebuilds one, since that happens in place at the
-    // same stack index), so this walks the live widget tree rather than
-    // keeping a separate label catalog in step with twelve page builders.
+    // category's page is real by the time this runs — either it was one of
+    // the ones built eagerly above, or `applySettingsFilter` below has
+    // already forced `deferPage`'s placeholders open for a non-empty query
+    // — so this walks the live widget tree rather than keeping a separate
+    // label catalog in step with a dozen page builders.
     auto pageMatchesQuery = [](QWidget *page, AppSettings *appSettings, const QString &query) {
         for (QLabel *label : page->findChildren<QLabel *>()) {
             if (appSettings->settingsSearchMatches(label->text(), query)) {
@@ -258,8 +324,20 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
         }
         return false;
     };
-    auto applySettingsFilter = [categoryList, pages, appSettings,
-                                 pageMatchesQuery](const QString &query) {
+    auto applySettingsFilter = [categoryList, pages, appSettings, pageMatchesQuery,
+                                 &lazyBuilders](const QString &query) {
+        // A search has to see every page's real content, not a #278
+        // placeholder: build whatever is still lazy before matching against
+        // it. Cheap to skip on a cleared query, which is the common case of
+        // typing and then backspacing back to nothing.
+        if (!query.isEmpty()) {
+            for (const int index : lazyBuilders.keys()) {
+                const std::function<void()> build = lazyBuilders.take(index);
+                if (build) {
+                    build();
+                }
+            }
+        }
         int firstVisible = -1;
         for (int i = 0; i < categoryList->count(); ++i) {
             QListWidgetItem *item = categoryList->item(i);
@@ -290,8 +368,15 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     clearSearchShortcut->setContext(Qt::WidgetShortcut);
     QObject::connect(clearSearchShortcut, &QShortcut::activated, searchEdit, &QLineEdit::clear);
 
-    QObject::connect(categoryList, &QListWidget::currentRowChanged, pages,
-                      &QStackedWidget::setCurrentIndex);
+    QObject::connect(categoryList, &QListWidget::currentRowChanged, &dialog,
+                      [pages, ensureBuilt](int index) {
+                          // #278: this category's page, if it is still one
+                          // of the placeholders `deferPage` handed the
+                          // stack, is built right now — the first (and
+                          // only) time anything needs it to be real.
+                          ensureBuilt(index);
+                          pages->setCurrentIndex(index);
+                      });
     // #199: a stacked page is only laid out once `setCurrentIndex` actually
     // shows it, so the Editor page's "Show minimap" checkbox has no valid
     // on-screen rect before that — report it fresh every time the category
@@ -390,7 +475,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
        languageServerEditor = context.languageServerEditor,
        languageService = context.languageService, terminalPage, terminalIndex,
        tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
-       analysisService = context.analysisService, analysisIndex]() {
+       analysisService = context.analysisService, analysisIndex, &lazyBuilders]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -399,22 +484,33 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
 
           const int current = pages->currentIndex();
 
+          // #278: Editing, Language Servers and Analysis are three of the
+          // categories `deferPage` may still owe a real widget. `beginEdit`
+          // always re-reads the new scope's draft — cheap, and correct
+          // whether or not a widget exists yet — but the widget itself is
+          // only rebuilt if the category was already visited; a page still
+          // lazy has nothing on screen to rebuild; it will read the fresh
+          // draft `beginEdit` just loaded whenever it is finally opened.
           editingEditor->beginEdit(scope);
-          QWidget *staleEditing = pages->widget(editingIndex);
-          pages->insertWidget(
-            editingIndex,
-            scopedPage(QStringLiteral("editing"), buildEditingPage(&dialog, editingEditor)));
-          pages->removeWidget(staleEditing);
-          staleEditing->deleteLater();
+          if (!lazyBuilders.contains(editingIndex)) {
+              QWidget *staleEditing = pages->widget(editingIndex);
+              pages->insertWidget(
+                editingIndex,
+                scopedPage(QStringLiteral("editing"), buildEditingPage(&dialog, editingEditor)));
+              pages->removeWidget(staleEditing);
+              staleEditing->deleteLater();
+          }
 
           languageServerEditor->beginEdit(scope);
-          QWidget *staleServers = pages->widget(languageServersIndex);
-          pages->insertWidget(
-            languageServersIndex,
-            scopedPage(QStringLiteral("languageServers"),
-                       buildLanguageServersPage(&dialog, languageServerEditor, languageService)));
-          pages->removeWidget(staleServers);
-          staleServers->deleteLater();
+          if (!lazyBuilders.contains(languageServersIndex)) {
+              QWidget *staleServers = pages->widget(languageServersIndex);
+              pages->insertWidget(
+                languageServersIndex,
+                scopedPage(QStringLiteral("languageServers"),
+                           buildLanguageServersPage(&dialog, languageServerEditor, languageService)));
+              pages->removeWidget(staleServers);
+              staleServers->deleteLater();
+          }
 
           QWidget *staleTerminal = pages->widget(terminalIndex);
           *terminalPage = buildTerminalPage(&dialog, appSettings);
@@ -432,13 +528,15 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
           staleTabPadding->deleteLater();
 
           analysisEditor->beginEdit(scope);
-          QWidget *staleAnalysis = pages->widget(analysisIndex);
-          pages->insertWidget(
-            analysisIndex,
-            scopedPage(QStringLiteral("analysis"),
-                       buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService)));
-          pages->removeWidget(staleAnalysis);
-          staleAnalysis->deleteLater();
+          if (!lazyBuilders.contains(analysisIndex)) {
+              QWidget *staleAnalysis = pages->widget(analysisIndex);
+              pages->insertWidget(
+                analysisIndex,
+                scopedPage(QStringLiteral("analysis"),
+                           buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService)));
+              pages->removeWidget(staleAnalysis);
+              staleAnalysis->deleteLater();
+          }
 
           pages->setCurrentIndex(current);
 
@@ -500,9 +598,15 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
               .arg(rect.height());
         };
         const QRect scopeRect(scopeBox->mapToGlobal(QPoint(0, 0)), scopeBox->size());
+        // Row 3: Appearance(0), Language(1), Editor(2), Editing(3) — this
+        // and `editorCategoryRect` below both named the row one before
+        // their own category until now (a real, if latent, bug found
+        // while working #278: nothing noticed because eager page
+        // construction made the scope-switch rebuild below fire
+        // regardless of which category was actually on screen).
         const QRect editingCategoryRect(
-          categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(2)).topLeft()),
-          categoryList->visualItemRect(categoryList->item(2)).size());
+          categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(3)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(3)).size());
         auto *tabWidthSpin = pages->widget(editingIndex)->findChild<QSpinBox *>(
           QStringLiteral("editingTabWidth"));
         const QRect tabWidthRect = tabWidthSpin
@@ -522,8 +626,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
         // — the same lesson `editingIndex`'s `settings_scope_switched`
         // marker already encodes for the Editing page.
         const QRect editorCategoryRect(
-          categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(1)).topLeft()),
-          categoryList->visualItemRect(categoryList->item(1)).size());
+          categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(2)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(2)).size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"settings_dialog\","
                                 "\"scope_rect\":%1,\"editing_category_rect\":%2,"
                                 "\"tab_width_rect\":%3,\"ok_rect\":%4,"

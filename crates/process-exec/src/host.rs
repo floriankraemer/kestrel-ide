@@ -265,7 +265,10 @@ fn parse_distro_list(decoded: &str) -> Vec<String> {
 /// default) first. Empty wherever `wsl.exe` is not on `PATH` — every other
 /// platform, and a Windows machine without WSL.
 pub fn distros() -> Vec<String> {
-    let output = Command::new("wsl.exe").args(["--list", "--quiet"]).output();
+    let mut command = Command::new("wsl.exe");
+    command.args(["--list", "--quiet"]);
+    suppress_console_window(&mut command);
+    let output = command.output();
     match output {
         Ok(output) => parse_distro_list(&decode_utf16le(&output.stdout)),
         Err(_) => Vec::new(),
@@ -325,8 +328,10 @@ pub fn resolve_program(host: &ExecHost, program: &str, cwd: &Path) -> Option<Str
 }
 
 fn probe_executable(distro: &str, remote_path: &str) -> bool {
-    Command::new("wsl.exe")
-        .args(["-d", distro, "-e", "test", "-x", remote_path])
+    let mut command = Command::new("wsl.exe");
+    command.args(["-d", distro, "-e", "test", "-x", remote_path]);
+    suppress_console_window(&mut command);
+    command
         .output()
         .map(|out| out.status.success())
         .unwrap_or(false)
@@ -334,10 +339,10 @@ fn probe_executable(distro: &str, remote_path: &str) -> bool {
 
 fn probe_command_v(distro: &str, program: &str) -> Option<String> {
     let script = format!("command -v {program}");
-    let output = Command::new("wsl.exe")
-        .args(["-d", distro, "-e", "/bin/sh", "-lc", &script])
-        .output()
-        .ok()?;
+    let mut command = Command::new("wsl.exe");
+    command.args(["-d", distro, "-e", "/bin/sh", "-lc", &script]);
+    suppress_console_window(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

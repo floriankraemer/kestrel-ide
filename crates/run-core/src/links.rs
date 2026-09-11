@@ -355,32 +355,30 @@ mod tests {
     // W5-2: a Linux `file:line` in a WSL run's output opens the UNC path
     // the share actually serves, not a path pasted straight under the
     // (Windows-shaped) cwd.
+    //
+    // Both cases go at `resolve_path` rather than `resolve_link`: the rule
+    // under test is how a Linux path joins onto a UNC cwd, and nothing of
+    // that touches the filesystem. Driving them through `resolve_link`
+    // would also demand the resolved file exist, and creating one means
+    // writing `/wsl.localhost` at the filesystem root — which only succeeds
+    // as root (see #251, #252 for the same trap in analysis-core and
+    // lsp-core).
     #[test]
     fn a_relative_linux_path_resolves_to_the_unc_path_on_a_wsl_cwd() {
         let cwd = PathBuf::from("//wsl.localhost/Ubuntu/tmp/links-e2e-relative");
-        fs::create_dir_all(cwd.join("src")).unwrap();
-        fs::write(cwd.join("src/main.rs"), "").unwrap();
 
-        let text = "src/main.rs:12:5";
-        let offset = text.len() / 2;
-        let resolved = resolve_link(text, offset, &cwd).expect("a link");
-        assert_eq!(resolved.path, cwd.join("src/main.rs"));
-        assert_eq!(resolved.line, 12);
-        assert_eq!(resolved.col, Some(5));
+        assert_eq!(resolve_path("src/main.rs", &cwd), cwd.join("src/main.rs"));
     }
 
     #[test]
     fn an_absolute_linux_path_resolves_to_the_unc_path_on_a_wsl_cwd() {
         let cwd = PathBuf::from("//wsl.localhost/Ubuntu/tmp/links-e2e-absolute");
-        fs::create_dir_all(&cwd).unwrap();
         let target = PathBuf::from("//wsl.localhost/Ubuntu/tmp/elsewhere-abs");
-        fs::create_dir_all(&target).unwrap();
-        fs::write(target.join("lib.rs"), "").unwrap();
 
-        let text = "/tmp/elsewhere-abs/lib.rs:3:1";
-        let offset = text.len() / 2;
-        let resolved = resolve_link(text, offset, &cwd).expect("a link");
-        assert_eq!(resolved.path, target.join("lib.rs"));
+        assert_eq!(
+            resolve_path("/tmp/elsewhere-abs/lib.rs", &cwd),
+            target.join("lib.rs")
+        );
     }
 
     #[test]

@@ -19,7 +19,7 @@ class EditorTabs;
 // `requestOutgoingCalls`/`requestTypeHierarchy`/`requestSupertypes`/
 // `requestSubtypes`) is wired and reachable end to end (stub_server_session.rs's
 // C11 tests, lsp_core::hierarchy's unit tests); this is the first `cpp/`
-// consumer, the same shape ClassViewPanel's outline tree and
+// consumer, the same shape StructurePanel's outline tree and
 // FindUsagesPanel's location list already established for their own data.
 //
 // `modeCombo_` picks one of four edges (Incoming/Outgoing Calls,
@@ -32,7 +32,7 @@ class EditorTabs;
 // `showCallHierarchyAt`/`showTypeHierarchyAt` do for the root. `expandTarget_`
 // is the one node currently waiting on that round trip — like
 // `EditorTabs::inlayHintsEditor_`'s single-latch pattern, not guarded against
-// a second expand landing first, matching ClassViewPanel/FindUsagesPanel's
+// a second expand landing first, matching StructurePanel/FindUsagesPanel's
 // own lack of stale-answer protection for this class of panel.
 class HierarchyPanel : public QWidget
 {

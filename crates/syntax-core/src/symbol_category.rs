@@ -25,7 +25,7 @@ pub enum SymbolCategory {
 }
 
 impl SymbolKind {
-    /// This kind's fixed Class View group (Task 4b). `Function` joins
+    /// This kind's fixed Structure group (Task 4b). `Function` joins
     /// `Method` under `Methods`: several languages (Rust's `impl` blocks,
     /// Go, Kotlin) have one grammar node for both free functions and
     /// methods, and a function nested under a container reads as a method

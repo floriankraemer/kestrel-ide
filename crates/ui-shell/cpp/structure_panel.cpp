@@ -1,4 +1,4 @@
-#include "class_view_panel.h"
+#include "structure_panel.h"
 
 #include "editor_tabs.h"
 #include "symbol_icon.h"
@@ -39,10 +39,10 @@ void sortEachLevelAlphabetically(QTreeWidgetItem *item)
 
 } // namespace
 
-ClassViewPanel::ClassViewPanel(DocumentManager *docManager, SearchModel *searchModel,
-                                EditorTabs *editorTabs,
-                                std::function<void(const QString &)> onFindUsagesRequested,
-                                QWidget *parent)
+StructurePanel::StructurePanel(DocumentManager *docManager, SearchModel *searchModel,
+                               EditorTabs *editorTabs,
+                               std::function<void(const QString &)> onFindUsagesRequested,
+                               QWidget *parent)
   : QWidget(parent)
   , docManager_(docManager)
   , searchModel_(searchModel)
@@ -85,9 +85,9 @@ ClassViewPanel::ClassViewPanel(DocumentManager *docManager, SearchModel *searchM
     layout->addLayout(topLayout);
     layout->addWidget(tree_);
 
-    connect(tree_, &QTreeWidget::itemDoubleClicked, this, &ClassViewPanel::onItemDoubleClicked);
+    connect(tree_, &QTreeWidget::itemDoubleClicked, this, &StructurePanel::onItemDoubleClicked);
     connect(tree_, &QTreeWidget::customContextMenuRequested, this,
-            &ClassViewPanel::onContextMenuRequested);
+            &StructurePanel::onContextMenuRequested);
     connect(modeCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
         projectMode_ = (index == 1);
         if (projectMode_) {
@@ -97,7 +97,7 @@ ClassViewPanel::ClassViewPanel(DocumentManager *docManager, SearchModel *searchM
         }
     });
 
-    connect(searchModel_, &SearchModel::projectSymbolFound, this, &ClassViewPanel::addProjectSymbol);
+    connect(searchModel_, &SearchModel::projectSymbolFound, this, &StructurePanel::addProjectSymbol);
     connect(searchModel_, &SearchModel::projectSymbolsFinished, this,
             [this]() { tree_->expandAll(); });
     connect(searchModel_, &SearchModel::projectSymbolsFailed, this,
@@ -107,7 +107,7 @@ ClassViewPanel::ClassViewPanel(DocumentManager *docManager, SearchModel *searchM
             });
 }
 
-void ClassViewPanel::refresh(quint64 tabId)
+void StructurePanel::refresh(quint64 tabId)
 {
     if (projectMode_) {
         return;
@@ -149,7 +149,7 @@ void ClassViewPanel::refresh(quint64 tabId)
     tree_->expandAll();
 }
 
-void ClassViewPanel::refreshProject()
+void StructurePanel::refreshProject()
 {
     tree_->clear();
     fileItems_.clear();
@@ -158,7 +158,7 @@ void ClassViewPanel::refreshProject()
     searchModel_->projectSymbols();
 }
 
-void ClassViewPanel::addProjectSymbol(const FfiSymbolMatch &row)
+void StructurePanel::addProjectSymbol(const FfiSymbolMatch &row)
 {
     QTreeWidgetItem *fileItem = fileItems_.value(row.path, nullptr);
     if (!fileItem) {
@@ -193,7 +193,7 @@ void ClassViewPanel::addProjectSymbol(const FfiSymbolMatch &row)
     item->setData(0, Qt::UserRole + 3, row.column);
 }
 
-QTreeWidgetItem *ClassViewPanel::categoryGroup(
+QTreeWidgetItem *StructurePanel::categoryGroup(
   QHash<QTreeWidgetItem *, QHash<int, QTreeWidgetItem *>> &groups, QTreeWidgetItem *parent,
   FfiSymbolCategory category)
 {
@@ -223,7 +223,7 @@ QTreeWidgetItem *ClassViewPanel::categoryGroup(
     return group;
 }
 
-void ClassViewPanel::onItemDoubleClicked(QTreeWidgetItem *item)
+void StructurePanel::onItemDoubleClicked(QTreeWidgetItem *item)
 {
     if (!item) {
         return;
@@ -243,7 +243,7 @@ void ClassViewPanel::onItemDoubleClicked(QTreeWidgetItem *item)
     }
 }
 
-void ClassViewPanel::onContextMenuRequested(const QPoint &pos)
+void StructurePanel::onContextMenuRequested(const QPoint &pos)
 {
     QTreeWidgetItem *item = tree_->itemAt(pos);
     if (!item) {

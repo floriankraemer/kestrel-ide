@@ -250,8 +250,11 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Ctrl+Shift+=",
     },
     ActionDef {
+        // `id` stays "view.classView": it's the stable key a user's
+        // persisted keymap override is stored under, unrelated to the
+        // "Structure" display label below.
         id: "view.classView",
-        label: "Class View",
+        label: "Structure",
         category: "View",
         default_shortcut: "Ctrl+Alt+C",
     },
@@ -333,7 +336,7 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "",
     },
     // The View menu is where every other dock's show-action lives
-    // (Class View, Problems, Terminal). AI Chat having its toggle only on
+    // (Structure, Problems, Terminal). AI Chat having its toggle only on
     // the AI menu is what made the panel hard to find after a restored
     // layout closed it.
     ActionDef {

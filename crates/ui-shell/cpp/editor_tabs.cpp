@@ -62,7 +62,7 @@ SyntaxHighlighter *highlighterOf(QTextDocument *document)
 
 // Moves `editor`'s caret to (1-based) `line`, `column` characters into it,
 // and centres the view on it — the shared tail of every jump the IDE makes
-// (Find in Files, Class View, Go to Line).
+// (Find in Files, Structure, Go to Line).
 //
 // `line` is clamped to the document: QTextDocument::findBlockByNumber returns
 // an invalid block past the end, which silently lands the caret at position 0

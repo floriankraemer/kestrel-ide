@@ -103,6 +103,7 @@ void TerminalWidget::reapplyKeymap()
 
 void TerminalWidget::reapplyAppearance()
 {
+    fontSizeOverride_ = -1;
     applyFont();
     applyPalette();
     snapshotStale_ = true;
@@ -113,7 +114,9 @@ void TerminalWidget::reapplyAppearance()
 void TerminalWidget::applyFont()
 {
     const FfiEditorFont terminalFont = appSettings_->terminalFont();
-    font_ = QFont(terminalFont.family, static_cast<int>(terminalFont.size));
+    const int pointSize =
+      fontSizeOverride_ >= 0 ? fontSizeOverride_ : static_cast<int>(terminalFont.size);
+    font_ = QFont(terminalFont.family, pointSize);
     // A terminal grid is only a grid if every glyph is one cell wide. The
     // configured family need not exist on this machine — "JetBrains Mono" is
     // the default and is not installed on a stock Windows — and without these
@@ -560,6 +563,21 @@ void TerminalWidget::mouseDoubleClickEvent(QMouseEvent *event)
 
 void TerminalWidget::wheelEvent(QWheelEvent *event)
 {
+    if (event->modifiers() & Qt::ControlModifier) {
+        const int steps = event->angleDelta().y() / 120;
+        if (steps != 0) {
+            const int current =
+              fontSizeOverride_ >= 0 ? fontSizeOverride_ : static_cast<int>(font_.pointSize());
+            fontSizeOverride_ = std::clamp(current + steps, 6, 72);
+            applyFont();
+            snapshotStale_ = true;
+            syncGridSizeToWidget();
+            update();
+        }
+        event->accept();
+        return;
+    }
+
     // The alternate screen (T5) means a full-screen app — `vim`, `less`,
     // `htop` — owns the viewport; there is no history to scroll, so the
     // wheel becomes the arrow keys those apps already read wheel input as,

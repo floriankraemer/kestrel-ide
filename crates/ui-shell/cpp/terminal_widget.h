@@ -215,6 +215,11 @@ private:
     QFont fontBold_;
     QFont fontItalic_;
     QFont fontBoldItalic_;
+    // Ctrl+wheel zoom (transient, per session): -1 defers to
+    // `appSettings_->terminalFont().size`; a real point size overrides it
+    // until the next `reapplyAppearance()` (Settings > Terminal OK), which
+    // resets it so an explicit font change always wins.
+    int fontSizeOverride_ = -1;
     qreal ascent_ = 0;
     int cellWidth_ = 1;
     int cellHeight_ = 1;

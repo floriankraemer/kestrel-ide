@@ -28,6 +28,7 @@ class QStandardItemModel;
 class QMenu;
 class QPaintEvent;
 class QResizeEvent;
+class QWheelEvent;
 
 namespace ui_shell {
 
@@ -553,6 +554,9 @@ protected:
     bool viewportEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
+    // Ctrl+wheel: zoom this editor's own font, IntelliJ/VS Code convention.
+    // Plain wheel falls through to QPlainTextEdit's own scrolling.
+    void wheelEvent(QWheelEvent *event) override;
     // L5: Ctrl+Space, the keys the popup owns while it is open, and the
     // per-keystroke completion request.
     void keyPressEvent(QKeyEvent *event) override;

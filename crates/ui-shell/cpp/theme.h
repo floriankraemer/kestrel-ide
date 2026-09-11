@@ -107,6 +107,8 @@ struct ChromePalette
     QColor selection;  // --ide-selection: the selected tree/list row
     QColor statusBar;  // the status bar's own ground (== surface except vscode-dark)
     QString chevron;   // resource path of the combo box arrow, tinted textDim
+    QString chevronUp; // resource path of the spin box's up arrow (its own
+                        // asset — a plain vertical mirror of chevron)
     QColor shadow;     // --panel-shadow ink (alpha ignored; see shadowOpacity)
     double shadowOpacity; // --panel-shadow alpha at the card's edge
 };

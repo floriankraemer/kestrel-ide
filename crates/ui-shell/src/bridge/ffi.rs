@@ -304,7 +304,7 @@ mod ffi {
     }
 
     /// Which fixed-order group (Task 4b) a symbol belongs to among its
-    /// siblings under the same parent in the Class View tree, 1:1 with
+    /// siblings under the same parent in the Structure tree, 1:1 with
     /// `syntax_core::SymbolCategory`. An ordinal rather than a label: the
     /// view groups children by this value alone (equal category -> same
     /// group, groups created in ascending order) and never has to know
@@ -1829,7 +1829,7 @@ mod ffi {
         #[cxx_name = "tabLanguageName"]
         fn tab_language_name(self: &DocumentManager, tab_id: u64) -> QString;
 
-        /// Class View's per-file tier (Task D): the tab's symbol outline
+        /// Structure's per-file tier (Task D): the tab's symbol outline
         /// (`syntax_core::outline()` on its current content, language-
         /// picked the same way `tabLanguageName` picks a display name),
         /// pre-order-flattened per `FfiSymbolNode`'s doc comment. Pull-
@@ -2029,7 +2029,7 @@ mod ffi {
         /// Record where the caret is *before* a jump, so Back can return
         /// here (N5). Called from the shared tail every jump in the app
         /// funnels through, which is what gives Find in Files, Go to
-        /// Symbol, Class View and Go to Line their history for free.
+        /// Symbol, Structure and Go to Line their history for free.
         #[qinvokable]
         #[cxx_name = "recordJump"]
         fn record_jump(self: Pin<&mut DocumentManager>, path: &QString, line: u32, column: u32);
@@ -3097,7 +3097,7 @@ mod ffi {
         #[cxx_name = "searchFailed"]
         fn search_failed(self: Pin<&mut SearchModel>, generation: u64, message: QString);
 
-        /// Class View's project-wide tier (Task I): list every indexed
+        /// Structure's project-wide tier (Task I): list every indexed
         /// symbol *definition* across the whole project — same
         /// `index_core::TextIndex` this QObject already owns for Find in
         /// Files (`find_definitions("")`, an empty substring query matches
@@ -3111,7 +3111,7 @@ mod ffi {
 
         /// One project-wide symbol definition. Carries the same
         /// `FfiSymbolMatch` row every other symbol signal does, so a jump
-        /// from Class View lands on the identifier rather than at column
+        /// from Structure lands on the identifier rather than at column
         /// 0 like it used to.
         #[qsignal]
         #[cxx_name = "projectSymbolFound"]

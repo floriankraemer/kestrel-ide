@@ -10,7 +10,7 @@
 #include "debug_menu.h"
 #include "debug_panel.h"
 #include "build_panel.h"
-#include "class_view_panel.h"
+#include "structure_panel.h"
 #include "code_editor.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
@@ -115,7 +115,7 @@ struct CentralWidgets
     // applyUiFontScales().
     QTreeView *projectTree;
     SearchResultsPanel *searchResultsPanel;
-    ClassViewPanel *classViewPanel;
+    StructurePanel *structurePanel;
     TerminalSessionsPanel *terminalPanel;
     FindUsagesPanel *findUsagesPanel;
     HierarchyPanel *hierarchyPanel;
@@ -236,7 +236,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
 
     // Task J: bottom dock panel, tabbed alongside Find in Files — same
     // "list of locations" shape, just fed by a symbol name instead of typed
-    // free text. Built before ClassViewPanel so its "Find Usages" callback
+    // free text. Built before StructurePanel so its "Find Usages" callback
     // (below) can capture this panel and its dock widget.
     auto *findUsagesPanel = new FindUsagesPanel(searchModel, editorTabs, dockManager);
     auto *findUsagesDock = new ads::CDockWidget(dockManager, QObject::tr("Find Usages"));
@@ -259,16 +259,16 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // above (its jumpToByteOffset) rather than a second navigation path.
     // Task J extends it with a "Find Usages" context-menu action that
     // raises the Find Usages dock and runs the query there.
-    auto *classViewPanel = new ClassViewPanel(
+    auto *structurePanel = new StructurePanel(
       docManager, searchModel, editorTabs,
       [docks, findUsagesPanel](const QString &name) {
           docks->show(QStringLiteral("findUsages"));
           findUsagesPanel->findUsages(name);
       },
       dockManager);
-    auto *classViewDock = new ads::CDockWidget(dockManager, QObject::tr("Class View"));
-    classViewDock->setWidget(classViewPanel);
-    auto *rightArea = docks->registerDock(QStringLiteral("classView"), classViewDock,
+    auto *structureDock = new ads::CDockWidget(dockManager, QObject::tr("Structure"));
+    structureDock->setWidget(structurePanel);
+    auto *rightArea = docks->registerDock(QStringLiteral("structure"), structureDock,
                                           ads::RightDockWidgetArea, editorArea);
 
     // AC16/AC17: the AI Chat dock, tabbed into the right-hand area
@@ -282,7 +282,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     aiChatDock->setWidget(aiChatPanel);
     docks->registerDock(QStringLiteral("aiChat"), aiChatDock, ads::CenterDockWidgetArea, rightArea);
 
-    // ADR-0033: the Preview dock, tabbed beside AI Chat and Class View —
+    // ADR-0033: the Preview dock, tabbed beside AI Chat and Structure —
     // it sits next to the document it is showing rather than squeezing a
     // third split into the window, the same reasoning the AI Chat comment
     // above gives. Starts hidden; `view.preview` and opening a previewable
@@ -359,7 +359,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
 
-    // Class View tracks whatever tab is current: refresh on open, on
+    // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
     // firing with `modified == false` doubles as "just saved" — there is
     // no separate "save completed" signal, and this one already fires
@@ -367,9 +367,9 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // QTextDocument::modificationChanged, which setModified(false) there
     // triggers). It also fires on initial load and on undo-to-clean, both
     // harmless extra refreshes of the same content.
-    QObject::connect(docManager, &DocumentManager::tabOpened, classViewPanel,
-                      [classViewPanel, editorTabs](quint64, const QString &) {
-                          classViewPanel->refresh(editorTabs->currentTabId());
+    QObject::connect(docManager, &DocumentManager::tabOpened, structurePanel,
+                      [structurePanel, editorTabs](quint64, const QString &) {
+                          structurePanel->refresh(editorTabs->currentTabId());
                       });
     DockRegistry *previewDocks = docks;
     editorTabs->setPreviewProvider(previewProvider);
@@ -385,9 +385,9 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     });
 
     editorTabs->setActiveTabChangedCallback(
-      [classViewPanel, editorTabs, problemsPanel, fileHistoryPanel, previewPanel,
+      [structurePanel, editorTabs, problemsPanel, fileHistoryPanel, previewPanel,
        previewDocks, previewProvider, projectTreeLocateAction]() {
-          classViewPanel->refresh(editorTabs->currentTabId());
+          structurePanel->refresh(editorTabs->currentTabId());
           // The current file's group sorts to the top of the Problems panel.
           problemsPanel->setCurrentFile(editorTabs->currentPath());
           // F3-18: keep File History pinned to the current tab, but only
@@ -446,10 +446,10 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
         }
         previewPanel->setCurrentTab(tabId, editorTabs->currentPath(), editorTabs->currentContent());
     });
-    QObject::connect(docManager, &DocumentManager::tabModifiedChanged, classViewPanel,
-                      [classViewPanel, editorTabs](quint64 tabId, bool modified) {
+    QObject::connect(docManager, &DocumentManager::tabModifiedChanged, structurePanel,
+                      [structurePanel, editorTabs](quint64 tabId, bool modified) {
                           if (!modified && tabId == editorTabs->currentTabId()) {
-                              classViewPanel->refresh(tabId);
+                              structurePanel->refresh(tabId);
                           }
                       });
 
@@ -596,7 +596,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                        }});
 
     return CentralWidgets{editorTabs,       diagnosticsService, dockManager,      docks,
-                           treeView,         searchResultsPanel, classViewPanel,
+                           treeView,         searchResultsPanel, structurePanel,
                            terminalPanel,    findUsagesPanel,  hierarchyPanel,
                            searchEverywhereDialog,
                            problemsPanel,    aiChatPanel,      changesPanel,
@@ -988,10 +988,10 @@ void buildMainWindow(AppSettings *appSettings,
     // Each entry's rect, the same convention `vcs_menu.cpp` uses for its menu.
     e2eMarkMenuActions(viewMenu, "view_menu_action");
     wireProjectTreeViewAction(viewMenu, central.docks, appSettings, *actions);
-    QAction *classViewAction = registerAction(viewMenu, QStringLiteral("view.classView"),
-                                               QObject::tr("Class View"), appSettings, *actions);
-    QObject::connect(classViewAction, &QAction::triggered, window,
-                      [central]() { central.docks->show(QStringLiteral("classView")); });
+    QAction *structureAction = registerAction(viewMenu, QStringLiteral("view.classView"),
+                                               QObject::tr("Structure"), appSettings, *actions);
+    QObject::connect(structureAction, &QAction::triggered, window,
+                      [central]() { central.docks->show(QStringLiteral("structure")); });
     // The AI panel's show-action belongs here with every other dock's, not
     // only on the AI menu: a user looking for a hidden panel opens View.
     QAction *aiChatViewAction = registerAction(viewMenu, QStringLiteral("view.aiChat"),

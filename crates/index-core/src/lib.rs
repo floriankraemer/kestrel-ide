@@ -3123,7 +3123,7 @@ mod tests {
 
     #[test]
     fn find_definitions_empty_query_lists_every_definition() {
-        // Class View's project-wide tier (Task I) relies on this: an empty
+        // Structure's project-wide tier (Task I) relies on this: an empty
         // substring query (`str::contains("")` is always true) lists every
         // indexed definition project-wide, with no separate "list all"
         // method needed.

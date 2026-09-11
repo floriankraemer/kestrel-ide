@@ -17,7 +17,7 @@ namespace ui_shell {
 
 class EditorTabs;
 
-// Class View dock panel: a QTreeWidget with two data-source tiers, toggled
+// Structure dock panel: a QTreeWidget with two data-source tiers, toggled
 // by `modeCombo_` (Task I extends Task D's original per-file-only panel —
 // "same widget/model, second data-source impl" per the plan doc, not a
 // second panel). Humble view per CLAUDE.md's hard rule — outline/symbol
@@ -37,7 +37,7 @@ class EditorTabs;
 // to Project mode doesn't track tab-switch/save events the way the per-file
 // tier does (`refresh()` becomes a no-op in project mode); switching back
 // re-syncs it.
-class ClassViewPanel : public QWidget
+class StructurePanel : public QWidget
 {
 public:
     // Task J: `onFindUsagesRequested` is called with a symbol's exact name
@@ -45,7 +45,7 @@ public:
     // the panel doesn't know or care what happens with that name (main_window
     // wires it to FindUsagesPanel), keeping this class's only job "show the
     // outline, forward intents".
-    ClassViewPanel(DocumentManager *docManager, SearchModel *searchModel, EditorTabs *editorTabs,
+    StructurePanel(DocumentManager *docManager, SearchModel *searchModel, EditorTabs *editorTabs,
                     std::function<void(const QString &)> onFindUsagesRequested, QWidget *parent);
 
     // Repopulate the tree from `tabId`'s current outline — called on tab

@@ -668,7 +668,7 @@ impl AppSession {
 
     /// Record where the caret is *before* a jump, so back can return here.
     /// Called by the view from the shared tail every jump funnels through,
-    /// which is what gives Find in Files, Go to Symbol, Class View and Go
+    /// which is what gives Find in Files, Go to Symbol, Structure and Go
     /// to Line their history for free.
     pub fn record_jump(&mut self, path: PathBuf, line: u32, column: u32) {
         self.navigation.record(Location { path, line, column });

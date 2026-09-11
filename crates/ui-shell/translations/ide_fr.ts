@@ -239,7 +239,7 @@
     </message>
 </context>
 <context>
-    <name>ClassViewPanel</name>
+    <name>StructurePanel</name>
     <message>
         <source>A→Z</source>
         <translation>A→Z</translation>
@@ -1266,8 +1266,8 @@
         <translation>Choisir…</translation>
     </message>
     <message>
-        <source>Class View</source>
-        <translation>Vue des classes</translation>
+        <source>Structure</source>
+        <translation>Structure</translation>
     </message>
     <message>
         <source>Clear</source>

@@ -1040,7 +1040,7 @@ impl ffi::SearchModel {
         }
     }
 
-    /// Task I: project-wide Class View tier — see `project_symbols`'s
+    /// Task I: project-wide Structure tier — see `project_symbols`'s
     /// bridge doc comment for why this reuses `search`'s index handle and
     /// background-thread/per-match-signal shape instead of a new one.
     pub fn project_symbols(self: Pin<&mut Self>) {

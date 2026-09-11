@@ -6,7 +6,7 @@
 
 namespace ui_shell {
 
-// A small colored glyph for a symbol's kind or its Class View category
+// A small colored glyph for a symbol's kind or its Structure category
 // (Task 4c) — same alpha-mask-plus-tint mechanism `theme.cpp`'s
 // `tabCloseIcon()` uses, except the tint is a fixed per-kind/per-category
 // color rather than one looked up from the active theme: unlike a chrome

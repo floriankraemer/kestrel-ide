@@ -352,7 +352,7 @@ struct RawSymbol {
 }
 
 /// Per-file symbol outline of `text`, parsed as `language` (Task D) — the
-/// data source for Class View's per-file tier. Stateless one-shot, matching
+/// data source for Structure's per-file tier. Stateless one-shot, matching
 /// [`highlight`]/[`identifier_occurrences`]'s convention: does its own
 /// parse rather than reusing a [`Highlighter`]'s persistent tree. `outline`
 /// is refreshed on save (a project-wide-scope panel doesn't need live

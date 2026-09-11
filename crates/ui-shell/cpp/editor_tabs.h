@@ -87,9 +87,9 @@ public:
     EditorTabs(DocumentManager *docManager, LanguageService *languageService, QSplitter *root,
                 QWidget *window);
 
-    // Class View follows whatever tab is current; EditorTabs has no
+    // Structure follows whatever tab is current; EditorTabs has no
     // Q_OBJECT (no moc target) so it hands out a callback rather than a
-    // signal, matching how ClassViewPanel already receives its "Find
+    // signal, matching how StructurePanel already receives its "Find
     // Usages" hook.
     void setActiveTabChangedCallback(std::function<void()> callback);
 
@@ -124,7 +124,7 @@ public:
     //
     // N5: this and `jumpWithinCurrentTab` are the two functions every jump
     // in the app funnels through, so recording the pre-jump position here
-    // is what gives Find in Files, Go to Symbol, Class View, Go to Line
+    // is what gives Find in Files, Go to Symbol, Structure, Go to Line
     // and Go to Declaration their Back/Forward history at once.
     void openFileAtLine(const QString &path, int line, int column);
 
@@ -323,14 +323,14 @@ public:
     // Task D: the TabId of whichever tab is current in the active group, or
     // 0 (the "no tab" sentinel, matching FfiOpenResult's convention) when
     // none is open. Public wrapper over the private tabIdAt/activeGroup_
-    // pair below, for ClassViewPanel to know which tab its outline belongs
+    // pair below, for StructurePanel to know which tab its outline belongs
     // to.
     quint64 currentTabId() const;
 
     // Task D: move the caret to a byte offset within the *current* tab's
-    // text and focus it — used by ClassViewPanel's jump-to-symbol, which
+    // text and focus it — used by StructurePanel's jump-to-symbol, which
     // (unlike Find in Files' openFileAtLine) never needs to open a
-    // different file, since Class View always describes the active tab.
+    // different file, since Structure always describes the active tab.
     // `byteOffset` is a UTF-8 byte offset into the tab's content (matching
     // `syntax_core::SymbolNode`); converted to a line + in-line byte column
     // here, then to a UTF-16 column by moveCursorToByteColumn.

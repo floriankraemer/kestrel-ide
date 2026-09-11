@@ -12,7 +12,7 @@ The goal is a JetBrains-like experience without the subscription but with the _p
 
 
 - Open a project folder, browse the tree, edit and save tabs.
-- Tree-sitter syntax highlighting, folding, and a Class View outline — including first-class Carve markup support.
+- Tree-sitter syntax highlighting, folding, and a Structure outline — including first-class Carve markup support.
 - Project-wide text and symbol index: search, Go to Declaration, Find Usages, Go to Implementation, jump history.
 - An LSP client with diagnostics, hover, completion, and refactoring (rename, Extract Method/Class via code actions).
 - Live Markdown, Mermaid, and Carve document previews.

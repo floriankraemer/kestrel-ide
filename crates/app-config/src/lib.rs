@@ -26,6 +26,8 @@ pub mod editing;
 pub mod file_associations;
 pub mod keymap;
 pub mod syntax_colors;
+/// The `[tab_padding]` section: air around an editor tab's label, per side.
+pub mod tab_padding;
 /// The `[terminal]` section: which shell the embedded terminal spawns.
 pub mod terminal;
 
@@ -66,6 +68,7 @@ pub use file_associations::{FileAssociationRule, FileAssociationSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
+pub use tab_padding::TabPaddingSettings;
 pub use terminal::TerminalSettings;
 pub use ui_locale::SUPPORTED_UI_LOCALES;
 pub use window::{Layout, WindowGeometry};
@@ -389,6 +392,11 @@ pub struct Settings {
     /// light up on it. See [`MinimapSettings`] for the default-on rationale.
     #[serde(default)]
     pub minimap: MinimapSettings,
+    /// Air around an editor tab's label, per side. Project-scoped like
+    /// [`Settings::editing`] — see [`tab_padding`] for the validate-not-clamp
+    /// rule this section follows instead of `editing`'s.
+    #[serde(default)]
+    pub tab_padding: TabPaddingSettings,
 }
 
 /// Cap on remembered recent projects — enough for a useful menu without
@@ -575,6 +583,11 @@ pub enum ConfigError {
     /// `project_settings`), and a panic on the save path of a file that has
     /// already caused data loss once is the wrong failure mode.
     Serialize(toml::ser::Error),
+    /// A value parsed as valid TOML but violates a bound this crate enforces
+    /// at load time — e.g. a tab padding over 100px (`tab_padding`'s own
+    /// validate-not-clamp rule). Distinct from `Parse`: the file is
+    /// syntactically fine, the value in it is not.
+    OutOfRange(String),
 }
 
 impl fmt::Display for ConfigError {
@@ -585,6 +598,7 @@ impl fmt::Display for ConfigError {
             ConfigError::Serialize(err) => {
                 write!(f, "settings could not be written: {err}")
             }
+            ConfigError::OutOfRange(message) => write!(f, "settings value out of range: {message}"),
         }
     }
 }
@@ -681,9 +695,14 @@ fn update_toml<T: DeserializeOwned + Serialize + Default>(
 
 /// Load settings from `<config_dir>/settings.toml`. A missing file is not an
 /// error — it means no settings have been saved yet, so this returns
-/// `Settings::default()`. A malformed file is an error.
+/// `Settings::default()`. A malformed file is an error, and so is a
+/// syntactically valid one whose tab padding is over `tab_padding`'s bound —
+/// reported rather than silently clamped, unlike `EditingSettings`'s own
+/// bounded fields.
 pub fn load(config_dir: &Path) -> Result<Settings, ConfigError> {
-    load_toml(&config_dir.join(SETTINGS_FILE))
+    let settings: Settings = load_toml(&config_dir.join(SETTINGS_FILE))?;
+    settings.tab_padding.validate()?;
+    Ok(settings)
 }
 
 /// Save `settings` to `<config_dir>/settings.toml`, creating `config_dir` if
@@ -989,6 +1008,11 @@ mod tests {
                 vcs_changes: false,
                 breakpoints: true,
                 caret_line: false,
+            },
+            tab_padding: TabPaddingSettings {
+                left: Some(20),
+                right: Some(10),
+                ..TabPaddingSettings::default()
             },
         };
 
@@ -1443,5 +1467,30 @@ use_spaces = false
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join(SETTINGS_FILE), "theme = \"light\"\n").unwrap();
         assert!(load(dir.path()).unwrap().language_servers.is_empty());
+    }
+
+    /// `load` reports an out-of-range tab padding rather than clamping
+    /// it, unlike `[editing]`'s bounded fields — see `tab_padding`'s module
+    /// docs for why this section is the exception.
+    #[test]
+    fn an_out_of_range_tab_padding_fails_load_instead_of_clamping() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join(SETTINGS_FILE),
+            "[tab_padding]\nleft = 500\n",
+        )
+        .unwrap();
+
+        let err = load(dir.path()).unwrap_err();
+        assert!(matches!(err, ConfigError::OutOfRange(_)), "got {err:?}");
+    }
+
+    #[test]
+    fn a_settings_file_without_tab_padding_parses_to_the_hardcoded_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(SETTINGS_FILE), "theme = \"light\"\n").unwrap();
+        let padding = load(dir.path()).unwrap().tab_padding;
+        assert_eq!(padding.left_or_default(), 12);
+        assert_eq!(padding.right_or_default(), 4);
     }
 }

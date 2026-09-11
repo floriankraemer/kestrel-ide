@@ -60,6 +60,7 @@ pub mod registry;
 pub mod run;
 pub mod search;
 pub mod settings;
+pub mod tab_padding;
 pub mod terminal;
 pub mod testing;
 pub mod theme;

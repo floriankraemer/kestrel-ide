@@ -212,6 +212,13 @@ void applyUiFontScale(int percent);
 // applyUiFontScale().
 void applyWidgetFontScale(QWidget *widget, int percent);
 
+// Sets the air around an editor tab's label (Settings > Tabs) and
+// re-applies the stylesheet so open tab strips pick it up immediately —
+// the same "re-set the sheet to re-polish every widget" trick
+// applyUiFontScale() uses. Called once at startup with the resolved
+// setting, and again whenever the Settings dialog commits a change to it.
+void applyTabPadding(const FfiTabPadding &padding);
+
 // Nudges `base` away from itself so a band or column drawn in the result
 // reads as a subtle tint on both dark and light editor backgrounds. Used by
 // every widget that paints its own chrome against QPalette::Base — the

@@ -84,17 +84,21 @@ pub enum ScopedField {
     Terminal,
     /// The `[[analyzer]]` overrides (the PHP tooling plan's B7).
     Analysis,
+    /// The `[tab_padding]` section: air around an editor tab's label, per
+    /// side.
+    TabPadding,
 }
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 6] = [
+    pub const ALL: [ScopedField; 7] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
         ScopedField::IndexExcludes,
         ScopedField::Terminal,
         ScopedField::Analysis,
+        ScopedField::TabPadding,
     ];
 
     /// The stable id the view names this field by — the same string the
@@ -108,6 +112,7 @@ impl ScopedField {
             ScopedField::IndexExcludes => "indexExcludes",
             ScopedField::Terminal => "terminal",
             ScopedField::Analysis => "analysis",
+            ScopedField::TabPadding => "tabPadding",
         }
     }
 
@@ -146,6 +151,9 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     if let Some(analyzers) = &project.analysis {
         resolved.analysis.analyzers = analyzers.clone();
     }
+    if let Some(tab_padding) = &project.tab_padding {
+        resolved.tab_padding = *tab_padding;
+    }
     // Run configurations are deliberately *not* folded in: they have no
     // counterpart in the global layer at all (ADR-0029 — a run configuration
     // is the definition of a project, never a preference), so there is
@@ -180,6 +188,7 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::IndexExcludes => project.index_excludes.is_some(),
         ScopedField::Terminal => project.terminal.is_some(),
         ScopedField::Analysis => project.analysis.is_some(),
+        ScopedField::TabPadding => project.tab_padding.is_some(),
     };
     if overridden {
         return Scope::Project;
@@ -269,13 +278,14 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
         ScopedField::IndexExcludes => global.index_excludes != defaults.index_excludes,
         ScopedField::Terminal => global.terminal != defaults.terminal,
         ScopedField::Analysis => global.analysis != defaults.analysis,
+        ScopedField::TabPadding => global.tab_padding != defaults.tab_padding,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app_config::{EditingSettings, TerminalSettings};
+    use app_config::{EditingSettings, TabPaddingSettings, TerminalSettings};
 
     fn project_editing(tab_width: u32) -> ProjectSettings {
         ProjectSettings {
@@ -379,6 +389,58 @@ mod tests {
     }
 
     #[test]
+    fn a_project_tab_padding_override_wins_over_the_persons_own() {
+        let global = Settings {
+            tab_padding: TabPaddingSettings {
+                right: Some(4),
+                ..TabPaddingSettings::default()
+            },
+            ..Settings::default()
+        };
+        let project = ProjectSettings {
+            tab_padding: Some(TabPaddingSettings {
+                right: Some(30),
+                ..TabPaddingSettings::default()
+            }),
+            ..ProjectSettings::default()
+        };
+
+        assert_eq!(
+            resolve(&global, &project).tab_padding.right_or_default(),
+            30
+        );
+        assert_eq!(
+            origin(ScopedField::TabPadding, &global, &project),
+            Scope::Project
+        );
+    }
+
+    #[test]
+    fn a_tab_padding_section_nobody_touched_reports_default_not_global() {
+        let global = Settings::default();
+        let project = ProjectSettings::default();
+
+        assert_eq!(
+            origin(ScopedField::TabPadding, &global, &project),
+            Scope::Default
+        );
+        assert_eq!(
+            origin(
+                ScopedField::TabPadding,
+                &Settings {
+                    tab_padding: TabPaddingSettings {
+                        left: Some(20),
+                        ..TabPaddingSettings::default()
+                    },
+                    ..Settings::default()
+                },
+                &project
+            ),
+            Scope::Global
+        );
+    }
+
+    #[test]
     fn a_project_may_not_override_a_person_shaped_setting() {
         // The list is the type: there is no `ScopedField::Theme` to pass,
         // and `ProjectSettings` has no field to put one in. This test exists
@@ -390,8 +452,9 @@ mod tests {
         assert!(ScopedField::from_id("editorFontSize").is_none());
         assert_eq!(
             ScopedField::ALL.len(),
-            6,
-            "ADR-0022 names five areas, plus Analysis added by the PHP tooling plan (B7)"
+            7,
+            "ADR-0022 names five areas, plus Analysis (the PHP tooling plan's B7) \
+             and TabPadding (tab padding, per-side, project-overridable)"
         );
     }
 

@@ -33,7 +33,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     load_toml, save_toml, update_toml, ConfigError, DebugAdapterSetting, EditingSettings,
-    FileAssociationSettings, LanguageServerSetting, Layout, RunConfigSetting, TerminalSettings,
+    FileAssociationSettings, LanguageServerSetting, Layout, RunConfigSetting, TabPaddingSettings,
+    TerminalSettings,
 };
 
 /// Directory holding a project's IDE files, inside the project root.
@@ -206,6 +207,16 @@ pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layouts: Option<BTreeMap<String, Layout>>,
 
+    /// The project's `[tab_padding]` override — air around an editor tab's
+    /// label, per side. Project-shaped for the same reason as `[editing]`:
+    /// a checkout's own convention about how tight its tabs read is a
+    /// property of the project, not the person opening it.
+    ///
+    /// Sparse like the rest: `None` is "the project overrides no side".
+    /// Validated on [`load`], not clamped — see `tab_padding`'s module docs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_padding: Option<TabPaddingSettings>,
+
     /// Keys this build does not understand, kept verbatim so a round trip
     /// through an older binary does not delete what a newer one wrote.
     ///
@@ -228,6 +239,7 @@ impl ProjectSettings {
             && self.terminal.is_none()
             && self.layouts.is_none()
             && self.analysis.is_none()
+            && self.tab_padding.is_none()
             && self.unknown.is_empty()
     }
 }
@@ -275,6 +287,10 @@ pub(crate) fn project_dir(project_root: &Path) -> Result<PathBuf, ConfigError> {
 /// A file whose `version` is newer than this build understands is also an
 /// error, for the same reason: it is likelier to be a file this build would
 /// damage than one it should reset.
+///
+/// So is a `[tab_padding]` override over its bound — reported rather than
+/// clamped, unlike `[editing]`'s own bounded fields (`tab_padding`'s module
+/// docs explain why this one section differs).
 pub fn load(project_root: &Path) -> Result<ProjectSettings, ConfigError> {
     let dir = project_dir(project_root)?;
     let settings: ProjectSettings = load_toml(&dir.join(PROJECT_SETTINGS_FILE))?;
@@ -289,6 +305,9 @@ pub fn load(project_root: &Path) -> Result<ProjectSettings, ConfigError> {
                 ),
             )));
         }
+    }
+    if let Some(tab_padding) = &settings.tab_padding {
+        tab_padding.validate()?;
     }
     Ok(settings)
 }
@@ -691,5 +710,44 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn tab_padding_overrides_round_trip_and_stay_sparse() {
+        let root = project();
+        update(root.path(), |s| {
+            s.tab_padding = Some(TabPaddingSettings {
+                left: Some(20),
+                ..TabPaddingSettings::default()
+            });
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        let padding = loaded.tab_padding.expect("tab padding section");
+        assert_eq!(padding.left, Some(20));
+        // Everything the project did not say stays absent, so the global
+        // layer still shows through.
+        assert_eq!(padding.top, None);
+        let body =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        assert!(!body.contains("top"), "{body}");
+    }
+
+    #[test]
+    fn a_project_that_never_touched_tab_padding_has_no_override() {
+        let root = project();
+        assert!(load(root.path()).unwrap().tab_padding.is_none());
+    }
+
+    /// An out-of-range padding is reported, not clamped into range —
+    /// the opposite of `[editing]`'s own `tab_width`/`wrap_column` bounds,
+    /// and worth its own regression test because of it.
+    #[test]
+    fn an_out_of_range_tab_padding_is_reported_not_clamped() {
+        let root = project();
+        write_settings(root.path(), "version = 1\n[tab_padding]\nright = 101\n");
+        let err = load(root.path()).unwrap_err();
+        assert!(matches!(err, ConfigError::OutOfRange(_)), "got {err:?}");
     }
 }

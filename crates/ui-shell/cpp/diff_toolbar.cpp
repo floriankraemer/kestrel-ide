@@ -8,6 +8,7 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QShowEvent>
+#include <QTimer>
 #include <QToolButton>
 
 namespace ui_shell {
@@ -135,11 +136,22 @@ void DiffToolbar::setDifferenceCount(int count)
 void DiffToolbar::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
-    e2eMark(QStringLiteral("{\"ev\":\"diff_toolbar_shown\",\"previous_rect\":%1,"
-                           "\"next_rect\":%2,\"viewer_rect\":%3,\"whitespace_rect\":%4,"
-                           "\"highlight_rect\":%5,\"collapse_rect\":%6,\"sync_rect\":%7}")
-              .arg(rectJson(previous_), rectJson(next_), rectJson(viewer_), rectJson(whitespace_),
-                   rectJson(highlight_), rectJson(collapse_), rectJson(sync_)));
+    // Deferred to the next event-loop turn rather than read right here:
+    // when this diff opens into the Diff dock — nested many layouts deep
+    // in the main window's dock tree, unlike a freshly resized standalone
+    // window — the `LayoutRequest`s that place this row at its real
+    // position are still queued at `showEvent` time, and `mapToGlobal`
+    // below would report where the row *used to* sit. `QTimer::singleShot`
+    // with a 0ms delay runs after those posted events drain, by which
+    // point layout has settled.
+    QTimer::singleShot(0, this, [this] {
+        e2eMark(QStringLiteral("{\"ev\":\"diff_toolbar_shown\",\"previous_rect\":%1,"
+                               "\"next_rect\":%2,\"viewer_rect\":%3,\"whitespace_rect\":%4,"
+                               "\"highlight_rect\":%5,\"collapse_rect\":%6,\"sync_rect\":%7}")
+                  .arg(rectJson(previous_), rectJson(next_), rectJson(viewer_),
+                       rectJson(whitespace_), rectJson(highlight_), rectJson(collapse_),
+                       rectJson(sync_)));
+    });
 }
 
 } // namespace ui_shell

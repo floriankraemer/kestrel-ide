@@ -122,7 +122,14 @@ baseline() {
 	# editors, and its one new SettingsContext field — the page and
 	# resolver themselves live in file_associations_page.cpp/
 	# bridge/file_associations.rs.
-	crates/ui-shell/cpp/main_window.cpp) echo 1211 ;;
+	# Raised from 1211 by 2 lines: constructing the Diff dock alongside the
+	# other per-window docks, one `buildDiffDock(dockManager, docks,
+	# editorArea, editorTabs)` call plus its `#include` — the dock's own
+	# widget, its wiring into EditorTabs, and the working-tree-vs-HEAD diff
+	# it replaced (a separate top-level window) all live in the new
+	# diff_panel.h/.cpp, following the buildCommitDetailDock/
+	# buildFileHistoryDock pattern above.
+	crates/ui-shell/cpp/main_window.cpp) echo 1213 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

@@ -10,6 +10,7 @@
 #include <QObject>
 #include <QPair>
 #include <QPoint>
+#include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <functional>
@@ -25,6 +26,8 @@ class QWidget;
 namespace ui_shell {
 
 class CodeEditor;
+class DiffPanel;
+class DiffViewPage;
 class FindBar;
 class HexViewer;
 class ImageViewer;
@@ -495,6 +498,12 @@ public:
     // Git — every gutter/popup path below is a no-op without it, the same
     // "no server for this language" shape LanguageService's absence has.
     void setVcsService(VcsService *vcsService);
+    // F3-14: the dock an editable HEAD-vs-working-tree diff opens a tab
+    // in, and the callback that reveals that dock — same retrofit shape
+    // `setVcsService` uses, set once after both the dock and this class
+    // exist. Null in a window built without one, in which case
+    // `showDiffAgainstHead`/`showDiffForPath` are a no-op.
+    void setDiffPanel(DiffPanel *diffPanel, std::function<void()> revealDiffDock);
     // ADR-0033: the provider the in-tab preview asks for a render. Null in
     // a window built without one, in which case view mode is a no-op —
     // the same "no service, no feature" shape as the three below.
@@ -789,27 +798,32 @@ private:
     // working-tree-vs-HEAD diff deliberately keeps the tab's *real*
     // `CodeEditor` — not a copy — as the diff's right pane, so undo/save/LSP
     // stay on the one true `Document` (ADR-0003). That means the editor is
-    // physically reparented out of its tab for as long as the diff window
-    // is open: this method removes it from `group`, drops a placeholder in
-    // its place (a `Show Diff Window` button, since the tab still exists
-    // and can still be closed, renamed by a file rename, etc.), and shows a
-    // floating, non-modal window built around it. Re-opening an
-    // already-open diff for the same tab raises the existing window instead
-    // of reparenting a second time. Closing the window restores the editor
-    // to its original tab and index.
+    // physically reparented out of its tab for as long as the diff is open:
+    // this method removes it from `group`, drops a placeholder in its place
+    // (a `Show Diff` button, since the tab still exists and can still be
+    // closed, renamed by a file rename, etc.), and hands the diff to
+    // `diffPanel_` as a tab in the dockable Diff dock (a separate
+    // top-level window before this, outside the dock layout entirely).
+    // Re-opening an already-open diff for the same tab raises the existing
+    // tab instead of reparenting a second time. Closing that tab restores
+    // the editor to its original tab and index.
     void openEditableDiffWindow(quint64 tabId, CodeEditor *editor, const QString &path);
-
-    // Undoes `openEditableDiffWindow`: pulls the editor back out of the
-    // (about to close) diff window and puts it back as `tabId`'s page,
-    // wherever that tab now sits (a split/reorder may have moved it while
-    // the diff window was open). No-op if `tabId` isn't currently diffing.
-    void restoreEditorFromDiffWindow(quint64 tabId);
 
     // Public for the same reason onBufferEditedExternally is: an agent's
     // tool can open a tab (AiChat::toolOpenedTab), and that relay lives in
-    // buildMainWindow beside MCP's.
+    // buildMainWindow beside MCP's. `restoreEditorFromDiffWindow` joins it
+    // here for the same reason: it is `diffPanel_`'s `DiffClosed` callback,
+    // wired from buildMainWindow (main_window.cpp), not called from within
+    // this class.
 public:
     void onTabOpened(quint64 tabId, const QString &title);
+
+    // `diffPanel_`'s `DiffClosed` callback: pulls the editor back out of
+    // `page` (the closed diff's tab, about to be deleted) and puts it back
+    // as `tabId`'s page, wherever that tab now sits (a split/reorder may
+    // have moved it while the diff was open). No-op if `tabId` isn't
+    // currently diffing.
+    void restoreEditorFromDiffWindow(quint64 tabId, QWidget *page);
 
 private:
     void onTabClosed(quint64 tabId);
@@ -854,16 +868,22 @@ private:
     // F3-18: vcs.annotate's state, applied to whichever editor is active.
     bool annotateEnabled_ = false;
 
-    // F3-14: which tabs currently have their `CodeEditor` reparented into a
-    // floating editable diff window (see `openEditableDiffWindow`), and what
-    // to restore. Absent from this map is the overwhelmingly common case —
-    // a tab not being diffed right now.
-    struct DiffWindowState
-    {
-        QWidget *window = nullptr;      // Top-level, WA_DeleteOnClose.
-        QWidget *placeholder = nullptr; // Sits in the tab meanwhile.
-    };
-    QHash<quint64, DiffWindowState> diffWindows_;
+    // F3-14: which tabs currently have their `CodeEditor` reparented
+    // into an open diff tab in the Diff dock (see `openEditableDiffWindow`),
+    // and the placeholder to restore. Absent from this map is the
+    // overwhelmingly common case — a tab not being diffed right now.
+    QHash<quint64, QWidget *> diffPlaceholders_;
+    // The same tabs' `DiffViewPage`s, kept so `saveCurrentTab` can tell
+    // whether the widget the user is typing Ctrl+S into right now is one
+    // of them (their `CodeEditor` isn't `activeGroup_`'s current page, so
+    // the ordinary "save whatever the current tab is" path would miss it
+    // entirely). A `QPointer` because `discardDiff`/`DiffPanel::closeTab`
+    // delete the page; nothing here re-derives from `diffPlaceholders_`'s
+    // keys since that map answers "is tabId diffing", not "which widget".
+    QHash<quint64, QPointer<DiffViewPage>> diffPages_;
+    // Null in a window built without a Diff dock (see `setDiffPanel`).
+    DiffPanel *diffPanel_ = nullptr;
+    std::function<void()> revealDiffDock_;
     // F1-13/F1-15: carets and the language-aware editing operations, for
     // every editor this class opens. Owned here rather than passed in
     // because nothing outside the editor surface has anything to ask it.
@@ -915,8 +935,8 @@ private:
     MinimapOptions minimapOptions_;
     // Per-tab minimap visibility override, transient UI state: absent means
     // "follow minimapOptions_", same optional-by-absence convention as
-    // diffWindows_ above. Cleared in onTabClosed so it does not grow for the
-    // life of the process.
+    // diffPlaceholders_ above. Cleared in onTabClosed so it does not grow
+    // for the life of the process.
     QHash<quint64, bool> minimapVisibilityOverrides_;
 };
 

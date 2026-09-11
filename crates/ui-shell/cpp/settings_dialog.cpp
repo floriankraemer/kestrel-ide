@@ -16,6 +16,7 @@
 #include "plugins_page.h"
 #include "icon_decoration_proxy.h"
 #include "syntax_colors_page.h"
+#include "tab_padding_page.h"
 #include "terminal_page.h"
 #include "terminal_sessions_panel.h"
 #include "theme.h"
@@ -82,6 +83,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     categoryList->addItem(QObject::tr("Plugins"));
     categoryList->addItem(QObject::tr("File Associations"));
     categoryList->addItem(QObject::tr("Terminal"));
+    categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
@@ -213,6 +215,14 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     const int terminalIndex =
       pages->addWidget(scopedPage(QStringLiteral("terminal"), terminalPage->widget));
 
+    // Tabs is project-scoped for the same reason Terminal is: a checkout's
+    // own convention about how tight its tabs read is a property of the
+    // project at least as often as of the person.
+    auto tabPaddingPage =
+      std::make_shared<TabPaddingPage>(buildTabPaddingPage(&dialog, appSettings));
+    const int tabPaddingIndex =
+      pages->addWidget(scopedPage(QStringLiteral("tabPadding"), tabPaddingPage->widget));
+
     // Analysis is project-scoped for the same reason Terminal and Language
     // Servers are: which analyzers a checkout wants on, and how eagerly, is
     // a property of the project at least as often as of the person.
@@ -315,16 +325,16 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     categoryList->setCurrentRow(0);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    // OK runs the AI page's commit first, because it is the one page that
-    // can refuse: `settings-model` validates the draft and says what is
-    // wrong with it, and a false answer means the dialog stays open on the
-    // field the user has to fix. Nothing else is committed until it passes.
+    // OK runs every page that can refuse first — AI Providers and Editing
+    // validate their draft, Tabs its own bound — and a false answer means
+    // the dialog stays open on the field the user has to fix. Nothing else
+    // is committed until all three pass.
     QObject::connect(
       buttons, &QDialogButtonBox::accepted, &dialog,
       [&dialog, aiProviderEditor = context.aiProviderEditor,
-       editingEditor = context.editingEditor]() {
+       editingEditor = context.editingEditor, tabPaddingPage]() {
           if (commitAiProvidersPage(&dialog, aiProviderEditor)
-              && commitEditingPage(&dialog, editingEditor)) {
+              && commitEditingPage(&dialog, editingEditor) && tabPaddingPage->commit()) {
               dialog.accept();
           }
       });
@@ -379,7 +389,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
        scopeBox, scopedPage, editingEditor = context.editingEditor,
        languageServerEditor = context.languageServerEditor,
        languageService = context.languageService, terminalPage, terminalIndex,
-       analysisEditor = context.analysisEditor,
+       tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
        analysisService = context.analysisService, analysisIndex]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
@@ -412,6 +422,14 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
                               scopedPage(QStringLiteral("terminal"), terminalPage->widget));
           pages->removeWidget(staleTerminal);
           staleTerminal->deleteLater();
+
+          QWidget *staleTabPadding = pages->widget(tabPaddingIndex);
+          *tabPaddingPage = buildTabPaddingPage(&dialog, appSettings);
+          pages->insertWidget(
+            tabPaddingIndex,
+            scopedPage(QStringLiteral("tabPadding"), tabPaddingPage->widget));
+          pages->removeWidget(staleTabPadding);
+          staleTabPadding->deleteLater();
 
           analysisEditor->beginEdit(scope);
           QWidget *staleAnalysis = pages->widget(analysisIndex);

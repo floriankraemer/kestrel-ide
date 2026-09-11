@@ -28,7 +28,11 @@ use crate::bridge::ffi::{
 /// selector and the origin badges cannot disagree about which layer is being
 /// looked at.
 pub struct AppSettingsRust {
-    scope: RefCell<settings_model::Scope>,
+    // `pub(crate)`, not private: a scoped-field module split out of this
+    // file for the ADR-0025 size ceiling (`tab_padding.rs`, following
+    // `layouts.rs`'s precedent) still needs to read which layer is being
+    // edited, the same way every method in this file does.
+    pub(crate) scope: RefCell<settings_model::Scope>,
 }
 
 impl Default for AppSettingsRust {

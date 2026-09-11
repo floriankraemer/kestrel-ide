@@ -180,6 +180,18 @@ CachedTheme &cachedTheme()
     return cached;
 }
 
+// Same "ask once, cache, read the cache" shape as `cachedTheme()`, for the
+// one other piece of chrome the stylesheet builder needs that is not a
+// colour: how much air surrounds an editor tab's label. Defaults to the
+// pixel values this file hardcoded before the setting existed (`tokens::
+// kSp3` left, `tokens::kSp1` right, none top/bottom), so a user who never
+// opens Settings > Tabs sees no change at all.
+FfiTabPadding &cachedTabPadding()
+{
+    static FfiTabPadding padding{ 0, 0, tokens::kSp3, tokens::kSp1 };
+    return padding;
+}
+
 } // namespace
 
 ChromePalette chromePaletteForTheme(const QString &themeName)
@@ -218,7 +230,10 @@ QString chromeStyleSheet(const ChromePalette &c)
     //   {statusBar} statusBar
     //   {r-ctl} r-ctl  {row-h} row-h   {sp-1} sp-1     {sp-2} sp-2   {sp-3} sp-3
     //   {toolbar-h} toolbar-h  {control-h} control-h (toolbar-h - 10)
-    return fillTokens(c, QStringLiteral(R"(
+    //   {tab-pad-top} {tab-pad-right} {tab-pad-bottom} {tab-pad-left}: the
+    //   editor tab's own padding (Settings > Tabs), filled in below rather
+    //   than by fillTokens() — cachedTabPadding() is declared after it.
+    QString sheet = fillTokens(c, QStringLiteral(R"(
 /* ---- ground ------------------------------------------------------ */
 QWidget {
     color: {text};
@@ -533,19 +548,24 @@ QTabBar {
     border: none;
 }
 
-/* Asymmetric padding on purpose: the right side carries the close button.
-   Qt lays a closable tab out as [padding-left][icon][label][x], and this
-   padding-right sizes only the space the *label* rect gives up — the [x]
-   itself is positioned from the tab's full rect and ignores it. Where it
-   lands is therefore not this sheet's decision: PaneTabBar pins it 4px
-   inside the tab's border (editor_tabs_panes.cpp), which is what puts the
-   same 8px of air on both sides of the glyph under Fusion and the Windows
-   style alike. {sp-1} is deliberately not 0 here: every other QTabBar in
-   the app has no close button and would lose its right padding entirely. */
+/* Every side is configurable (Settings > Tabs, project-overridable) via
+   `cachedTabPadding()`, defaulting to the pixel values this rule hardcoded
+   before that setting existed — asymmetric on purpose, since the right side
+   carries the close button. Qt lays a closable tab out as
+   [padding-left][icon][label][x], and this padding-right sizes only the
+   space the *label* rect gives up — the [x] itself is positioned from the
+   tab's full rect and ignores it. Where it lands is therefore not this
+   sheet's decision, and is untouched by whatever the user configures here:
+   PaneTabBar pins it 4px inside the tab's border from a hardcoded token
+   (editor_tabs_panes.cpp), which is what puts the same 8px of air on both
+   sides of the glyph under Fusion and the Windows style alike regardless of
+   this padding. The default right padding is deliberately not 0: every
+   other QTabBar in the app has no close button and would lose its right
+   padding entirely if it were. */
 QTabBar::tab {
     background-color: {surface};
     color: {textDim};
-    padding: 0 {sp-1}px 0 {sp-3}px;
+    padding: {tab-pad-top}px {tab-pad-right}px {tab-pad-bottom}px {tab-pad-left}px;
     min-height: 32px;
     border: none;
     border-right: 1px solid {border};
@@ -640,6 +660,12 @@ QStatusBar QLabel, QStatusBar QProgressBar, QStatusBar QToolButton {
 }
 )")
     );
+    const FfiTabPadding &padding = cachedTabPadding();
+    sheet.replace(QLatin1String("{tab-pad-top}"), QString::number(padding.top));
+    sheet.replace(QLatin1String("{tab-pad-right}"), QString::number(padding.right));
+    sheet.replace(QLatin1String("{tab-pad-bottom}"), QString::number(padding.bottom));
+    sheet.replace(QLatin1String("{tab-pad-left}"), QString::number(padding.left));
+    return sheet;
 }
 
 QString dockStyleSheet(const ChromePalette &c)
@@ -1089,6 +1115,15 @@ void applyWidgetFontScale(QWidget *widget, int percent)
     if (widget != nullptr) {
         widget->setFont(scaled(baseUiFont(), percent));
     }
+}
+
+void applyTabPadding(const FfiTabPadding &padding)
+{
+    cachedTabPadding() = padding;
+    // Re-setting the sheet re-polishes every open tab strip against the new
+    // padding, the same trick applyUiFontScale() uses above.
+    qApp->setStyleSheet(styleSheetForTheme(activeThemeName()));
+    restyleDockManagers();
 }
 
 QColor tinted(const QColor &base, int darkFactor, int lightFactor)

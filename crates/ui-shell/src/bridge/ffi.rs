@@ -118,6 +118,17 @@ mod ffi {
         menu: u32,
     }
 
+    /// Air around an editor tab's label, per side, in pixels. Always
+    /// resolved (`TabPaddingSettings::*_or_default`) — never absent — so the
+    /// view applies what it is given directly.
+    #[derive(Default)]
+    struct FfiTabPadding {
+        top: u32,
+        bottom: u32,
+        left: u32,
+        right: u32,
+    }
+
     /// Editor text colors (S2), hex strings ("#rrggbb") or empty for "use
     /// the theme's default palette role" — the view (not this struct)
     /// decides what empty means.
@@ -2572,6 +2583,30 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "saveTerminalSettings"]
         fn save_terminal_settings(self: &AppSettings, terminal: &FfiTerminalSettings) -> FfiResult;
+
+        /// The `[tab_padding]` section of the layer the dialog is editing
+        /// (`settingsScope()`), for the Settings > Tabs page. Always
+        /// resolved, never absent.
+        #[qinvokable]
+        #[cxx_name = "tabPadding"]
+        fn tab_padding(self: &AppSettings) -> FfiTabPadding;
+
+        /// Persist the whole `[tab_padding]` section together, on OK.
+        /// Writes to the global file or the project's, whichever
+        /// `settingsScope()` names, and refuses (rather than silently
+        /// clamping) a side over `app_config::tab_padding::MAX_TAB_PADDING`,
+        /// reporting a typed error (ADR-0003) the page shows.
+        #[qinvokable]
+        #[cxx_name = "saveTabPadding"]
+        fn save_tab_padding(self: &AppSettings, padding: &FfiTabPadding) -> FfiResult;
+
+        /// The tab padding actually in force: the global default with the
+        /// open project's override applied, if it has one — what the
+        /// stylesheet builder applies, as opposed to `tabPadding()`'s
+        /// dialog-editing draft.
+        #[qinvokable]
+        #[cxx_name = "resolvedTabPadding"]
+        fn resolved_tab_padding(self: &AppSettings) -> FfiTabPadding;
 
         /// The terminal's effective font (T3): the project-resolved
         /// `[terminal]` override when one is set, else the editor font —

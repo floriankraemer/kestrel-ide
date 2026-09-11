@@ -1173,11 +1173,11 @@ int run_app()
     // application font, and applyUiFontScale() scales whatever is installed.
     installBundledFonts();
     applyTheme(appSettings->themeName());
-    // The global half of the interface font scale, before the splash for the
-    // same reason: no frame is ever painted at a size the user did not pick.
-    // The menu bar's and project tree's own scales are applied in
-    // buildMainWindow(), where those widgets exist.
+    // The global half of the interface font scale, for the same reason: no
+    // frame is painted at a size the user did not pick. The menu bar's and
+    // project tree's own scales are applied in buildMainWindow() instead.
     applyUiFontScale(static_cast<int>(appSettings->uiFontScales().ui));
+    applyTabPadding(appSettings->resolvedTabPadding()); // Settings > Tabs, same reasoning
     // Build the language registry from what the config directory holds and
     // which languages the user turned off, before the first file can be
     // opened — otherwise a disabled language would come back every restart.

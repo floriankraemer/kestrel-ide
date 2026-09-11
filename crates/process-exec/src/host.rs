@@ -633,4 +633,131 @@ mod tests {
     fn an_ordinary_nonzero_exit_is_not_a_missing_program() {
         assert!(!is_missing_program(Some(1), b"fatal: not a git repository"));
     }
+
+    // The three tests below cover `distros`, `probe_executable` and
+    // `probe_command_v` — the spawn sites this branch adds
+    // `suppress_console_window` to (they used to build their own bare
+    // `Command::new("wsl.exe")`, bypassing `ExecHost::command`'s call to it).
+    // All three serialize on `PATH_LOCK` since they mutate the process-wide
+    // `PATH` to put a fake `wsl.exe` in front of the real one, the same
+    // technique `run_core::supervisor`'s `launch_wraps_a_remote_cwd_...` test
+    // uses.
+    static PATH_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Prepends `dir` to `PATH` and returns the previous value to restore.
+    fn prepend_to_path(dir: &Path) -> String {
+        let original = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: serialized by `PATH_LOCK`, held by every caller.
+        unsafe {
+            std::env::set_var("PATH", format!("{}:{original}", dir.display()));
+        }
+        original
+    }
+
+    fn restore_path(original: String) {
+        // SAFETY: serialized by `PATH_LOCK`, held by every caller.
+        unsafe {
+            std::env::set_var("PATH", original);
+        }
+    }
+
+    fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = dir.join(name);
+        let mut file = std::fs::File::create(&path).unwrap();
+        write!(file, "#!/bin/sh\n{body}").unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[test]
+    fn distros_lists_every_distro_a_fake_wsl_exe_reports() {
+        let _guard = PATH_LOCK.lock().unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+
+        // `wsl.exe --list --quiet` really writes UTF-16LE with a leading
+        // BOM (see `wsl_output_is_decoded_as_utf16le_not_utf8` above) — the
+        // fake binary here just `cat`s a file holding those exact bytes,
+        // built with the same encoding this module's own decoder expects.
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in "Ubuntu (Default)\r\ndebian\r\n".encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        let output_path = bin_dir.path().join("distros_output.bin");
+        std::fs::write(&output_path, &bytes).unwrap();
+
+        write_executable_script(
+            bin_dir.path(),
+            "wsl.exe",
+            &format!("cat \"{}\"\n", output_path.display()),
+        );
+
+        let original_path = prepend_to_path(bin_dir.path());
+        let result = distros();
+        restore_path(original_path);
+
+        assert_eq!(result, vec!["Ubuntu".to_string(), "debian".to_string()]);
+    }
+
+    #[test]
+    fn distros_is_empty_when_wsl_exe_is_not_on_path() {
+        let _guard = PATH_LOCK.lock().unwrap();
+        let original_path = prepend_to_path(Path::new("/does/not/exist"));
+        let result = distros();
+        restore_path(original_path);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn probe_executable_reports_true_when_the_fake_wsl_exe_confirms_it() {
+        let _guard = PATH_LOCK.lock().unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+        write_executable_script(
+            bin_dir.path(),
+            "wsl.exe",
+            "case \"$*\" in\n  *present*) exit 0;;\n  *) exit 1;;\nesac\n",
+        );
+
+        let original_path = prepend_to_path(bin_dir.path());
+        let found = probe_executable("Ubuntu", "/opt/present-tool");
+        let missing = probe_executable("Ubuntu", "/opt/absent-tool");
+        restore_path(original_path);
+
+        assert!(found);
+        assert!(!missing);
+    }
+
+    #[test]
+    fn probe_command_v_returns_the_resolved_path_on_success() {
+        let _guard = PATH_LOCK.lock().unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+        write_executable_script(
+            bin_dir.path(),
+            "wsl.exe",
+            "echo /usr/bin/rust-analyzer\nexit 0\n",
+        );
+
+        let original_path = prepend_to_path(bin_dir.path());
+        let resolved = probe_command_v("Ubuntu", "rust-analyzer");
+        restore_path(original_path);
+
+        assert_eq!(resolved, Some("/usr/bin/rust-analyzer".to_string()));
+    }
+
+    #[test]
+    fn probe_command_v_returns_none_when_the_fake_wsl_exe_fails() {
+        let _guard = PATH_LOCK.lock().unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+        write_executable_script(bin_dir.path(), "wsl.exe", "exit 1\n");
+
+        let original_path = prepend_to_path(bin_dir.path());
+        let resolved = probe_command_v("Ubuntu", "does-not-exist");
+        restore_path(original_path);
+
+        assert_eq!(resolved, None);
+    }
 }

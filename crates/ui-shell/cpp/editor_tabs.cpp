@@ -608,11 +608,40 @@ void EditorTabs::setWhitespaceOptions(const WhitespaceOptions &options)
 void EditorTabs::setMinimapOptions(const MinimapOptions &options)
 {
     minimapOptions_ = options;
-    forEachEditor([&options](QPlainTextEdit *editor) {
-        if (auto *codeEditor = qobject_cast<CodeEditor *>(editor)) {
-            codeEditor->setMinimapOptions(options);
+    // Not a plain forEachEditor: a per-tab override (see
+    // minimapVisibilityOverrides_) must survive a global settings change,
+    // so each tab needs its own tabId to look one up.
+    for (QTabWidget *group : std::as_const(groups_)) {
+        for (int i = 0; i < group->count(); ++i) {
+            auto *codeEditor = qobject_cast<CodeEditor *>(group->widget(i));
+            if (!codeEditor) {
+                continue;
+            }
+            MinimapOptions effective = options;
+            const auto it = minimapVisibilityOverrides_.constFind(tabIdAt(group, i));
+            if (it != minimapVisibilityOverrides_.constEnd()) {
+                effective.enabled = it.value();
+            }
+            codeEditor->setMinimapOptions(effective);
         }
-    });
+    }
+}
+
+bool EditorTabs::minimapVisibleForTab(quint64 tabId) const
+{
+    const auto it = minimapVisibilityOverrides_.constFind(tabId);
+    return it != minimapVisibilityOverrides_.constEnd() ? it.value() : minimapOptions_.enabled;
+}
+
+void EditorTabs::toggleMinimapVisibleForTab(quint64 tabId)
+{
+    const bool visible = !minimapVisibleForTab(tabId);
+    minimapVisibilityOverrides_[tabId] = visible;
+    if (auto *codeEditor = qobject_cast<CodeEditor *>(editorForTab(tabId))) {
+        MinimapOptions options = minimapOptions_;
+        options.enabled = visible;
+        codeEditor->setMinimapOptions(options);
+    }
 }
 
 void EditorTabs::setInlayHintsEnabled(bool enabled)
@@ -1038,6 +1067,7 @@ void EditorTabs::onTabClosed(quint64 tabId)
         delete it->window;
         diffWindows_.remove(tabId);
     }
+    minimapVisibilityOverrides_.remove(tabId);
 
     const TabLoc loc = locate(tabId);
     if (!loc.group) {

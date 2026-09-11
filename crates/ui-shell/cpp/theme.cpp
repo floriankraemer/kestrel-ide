@@ -45,6 +45,7 @@ QString fillTokens(const ChromePalette &c, QString sheet)
         {"{selection}", c.selection.name()},
         {"{statusBar}", c.statusBar.name()},
         {"{chevron}", c.chevron},
+        {"{chevronUp}", c.chevronUp},
         {"{r-ctl}", QString::number(tokens::kRadiusControl)},
         {"{r-panel}", QString::number(tokens::kRadiusPanel)},
         {"{panel-gap}", QString::number(tokens::kPanelGap)},
@@ -111,10 +112,12 @@ ChromePalette toChromePalette(const FfiChromePalette &c, bool isDark)
     p.statusBar = fromFfiRgb(c.status_bar);
     if (isDark) {
         p.chevron = QStringLiteral(":/ui/icons/chevron_dark.png");
+        p.chevronUp = QStringLiteral(":/ui/icons/chevron_up_dark.png");
         p.shadow = Qt::black;
         p.shadowOpacity = 0.30;
     } else {
         p.chevron = QStringLiteral(":/ui/icons/chevron_light.png");
+        p.chevronUp = QStringLiteral(":/ui/icons/chevron_up_light.png");
         p.shadow = hex("#0f172a");
         p.shadowOpacity = 0.18;
     }
@@ -480,9 +483,59 @@ ui_shell--CodeEditor, ui_shell--HexViewer {
     padding: 0;
 }
 
+QSpinBox {
+    background-color: {surface2};
+    color: {text};
+    border: 1px solid {border};
+    border-radius: {r-ctl}px;
+    padding: 0 {sp-2}px;
+    min-height: {control-h}px;
+    max-height: {control-h}px;
+}
+
+QSpinBox:focus {
+    border-color: {accent};
+}
+
+/* Own flat, borderless boxes carved out of the field's right edge — same
+   treatment as QComboBox::drop-down above. */
+QSpinBox::up-button, QSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 16px;
+    border: none;
+    border-left: 1px solid {border};
+    background-color: {surface2};
+}
+
+QSpinBox::up-button { subcontrol-position: top right; border-bottom: 1px solid {border}; border-top-right-radius: {r-ctl}px; }
+QSpinBox::down-button { subcontrol-position: bottom right; border-bottom-right-radius: {r-ctl}px; }
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background-color: {raised}; }
+QSpinBox::up-button:pressed, QSpinBox::down-button:pressed { background-color: {selection}; }
+QSpinBox::up-arrow { image: url({chevronUp}); width: 8px; height: 8px; }
+QSpinBox::down-arrow { image: url({chevron}); width: 8px; height: 8px; }
+
 QCheckBox, QRadioButton {
     spacing: 6px;
 }
+
+QCheckBox::indicator, QRadioButton::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid {border};
+    background-color: {surface2};
+}
+
+QCheckBox::indicator { border-radius: 3px; }
+QRadioButton::indicator { border-radius: 8px; }
+QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: {accent}; }
+QCheckBox::indicator:checked { background-color: {accent}; border-color: {accent}; }
+
+/* No check-glyph asset exists yet (only the chevron/close/search masks) — a
+   solid fill reads as "checked" without a new icon pipeline for one
+   control; the radio's ring-style fill keeps it visually distinct. */
+QRadioButton::indicator:checked { background-color: {surface2}; border: 4px solid {accent}; }
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: {textDim}; }
+QCheckBox::indicator:checked:disabled { background-color: {textDim}; border-color: {textDim}; }
 
 QProgressBar {
     background-color: {surface2};

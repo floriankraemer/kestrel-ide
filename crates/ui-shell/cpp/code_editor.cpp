@@ -31,6 +31,9 @@
 #include <QTextCursor>
 #include <QTextDocument>
 #include <QTextEdit>
+#include <QWheelEvent>
+
+#include <algorithm>
 
 namespace ui_shell {
 
@@ -630,6 +633,23 @@ void CodeEditor::leaveEvent(QEvent *event)
     clearHoverSpan();
     cancelHover();
     QPlainTextEdit::leaveEvent(event);
+}
+
+void CodeEditor::wheelEvent(QWheelEvent *event)
+{
+    if (!(event->modifiers() & Qt::ControlModifier)) {
+        QPlainTextEdit::wheelEvent(event);
+        return;
+    }
+
+    const int steps = event->angleDelta().y() / 120;
+    if (steps == 0) {
+        return;
+    }
+    QFont zoomed = font();
+    zoomed.setPointSize(std::clamp(zoomed.pointSize() + steps, 6, 72));
+    setFont(zoomed);
+    event->accept();
 }
 
 void CodeEditor::setCurrentLineColor(const QString &hex)

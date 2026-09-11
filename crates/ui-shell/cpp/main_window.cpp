@@ -644,6 +644,7 @@ void buildMainWindow(AppSettings *appSettings,
     // P7's Plugins page, the same arrangement again: it holds the rows of
     // the last scan between the dialog's refresh() calls.
     auto *pluginCatalog = new PluginCatalog(window);
+    auto *fileAssociationsEditor = new FileAssociationsEditor(window); // issue #258
     // The PHP tooling plan's B7-B9: the Analysis page's draft, alongside
     // the other per-window settings-page editors above.
     auto *analysisEditor = new AnalysisEditor(window);
@@ -838,6 +839,7 @@ void buildMainWindow(AppSettings *appSettings,
       aiProviderEditor,
       aiChat,
       pluginCatalog,
+      fileAssociationsEditor,
       analysisEditor,
       analysisService,
       uiFontTargets,

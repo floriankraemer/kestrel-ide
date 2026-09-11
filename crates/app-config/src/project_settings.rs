@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     load_toml, save_toml, update_toml, ConfigError, DebugAdapterSetting, EditingSettings,
-    LanguageServerSetting, Layout, RunConfigSetting, TerminalSettings,
+    FileAssociationSettings, LanguageServerSetting, Layout, RunConfigSetting, TerminalSettings,
 };
 
 /// Directory holding a project's IDE files, inside the project root.
@@ -102,6 +102,15 @@ pub struct ProjectSettings {
     /// overrides nothing, not that it overrides everything with defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub editing: Option<EditingSettings>,
+
+    /// The project's `[file_associations]` overrides (issue #258): a
+    /// checked-out project may want its generated `*.svg` diagrams to open
+    /// as text for editing even though the global default is `image`.
+    ///
+    /// Sparse like the rest: `None` is "the project overrides no
+    /// associations", not "the project associates nothing".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_associations: Option<FileAssociationSettings>,
 
     /// The project's `[[run_config]]` entries (F4-4, ADR-0022): a run
     /// configuration is the definition of a project, not a preference, so it
@@ -211,6 +220,7 @@ impl ProjectSettings {
     pub fn is_empty(&self) -> bool {
         self.language_servers.is_none()
             && self.editing.is_none()
+            && self.file_associations.is_none()
             && self.run_configs.is_none()
             && self.debug_adapters.is_none()
             && self.remote_attach.is_none()

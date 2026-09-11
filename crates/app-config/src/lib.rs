@@ -21,6 +21,9 @@ use serde::{Deserialize, Serialize};
 pub mod analysis;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
+/// The `[file_associations]` section: which handler a file pattern opens
+/// with (issue #258).
+pub mod file_associations;
 pub mod keymap;
 pub mod syntax_colors;
 /// The `[terminal]` section: which shell the embedded terminal spawns.
@@ -59,6 +62,7 @@ pub mod ai_settings;
 pub use ai_settings::{AiProviderSetting, AiToolPolicySetting};
 pub use analysis::{AnalysisSettings, AnalyzerSetting};
 pub use editing::EditingSettings;
+pub use file_associations::{FileAssociationRule, FileAssociationSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
@@ -339,6 +343,12 @@ pub struct Settings {
     /// crate's — see [`editing`].
     #[serde(default)]
     pub editing: EditingSettings,
+    /// Which handler (text, image, binary, ...) a file pattern opens with
+    /// (issue #258). What a pattern matches and which built-in defaults
+    /// apply when this is empty is `settings_model::file_associations`'s
+    /// rule, not this crate's — see [`file_associations`].
+    #[serde(default, rename = "file_associations")]
+    pub file_associations: FileAssociationSettings,
     /// Which shell the embedded terminal spawns, where it starts, and what
     /// it adds to the environment. Project-scoped like [`Settings::editing`]
     /// — see [`terminal`] for why the shell belongs to the checkout at least
@@ -905,6 +915,12 @@ mod tests {
                 tab_width: 2,
                 use_spaces: Some(false),
                 ..EditingSettings::default()
+            },
+            file_associations: FileAssociationSettings {
+                rules: vec![FileAssociationRule {
+                    pattern: "*.svg".to_string(),
+                    handler: "text".to_string(),
+                }],
             },
             terminal: TerminalSettings {
                 shell_id: "wsl:Ubuntu".to_string(),

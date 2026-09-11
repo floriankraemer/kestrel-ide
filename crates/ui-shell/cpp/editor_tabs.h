@@ -27,6 +27,7 @@ namespace ui_shell {
 class CodeEditor;
 class FindBar;
 class HexViewer;
+class ImageViewer;
 class IntentionBulb;
 
 // F3-12a/F3-16: joins a window's VcsService to the project-open lifecycle
@@ -56,6 +57,8 @@ DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *lan
 constexpr int kTabKindBinary = 1;
 // app_core::TabKind's stable code for a read-only diff tab (F3-14).
 constexpr int kTabKindDiff = 2;
+// app_core::TabKind's stable code for a read-only image tab (issue #258).
+constexpr int kTabKindImage = 3;
 
 // Humble view for the editor area (ADR-0002): owns the QTabWidget <->
 // DocumentManager wiring, decides nothing. Tabs are identified by the
@@ -694,6 +697,12 @@ private:
     // Like `addHexTab`, `currentEditor()` is `nullptr` for this page — there
     // is no live document, by design (see `TabKind::Diff`'s doc comment).
     void addDiffTab(QTabWidget *group, quint64 tabId, const QString &title);
+
+    // Builds the page for a read-only image tab (issue #258): an
+    // `ImageViewer` fed a `QImage` decoded via `QImageReader` for raster
+    // formats, or via the FFI's `renderSvgImage` for SVG. Like `addHexTab`
+    // and `addDiffTab`, `currentEditor()` is `nullptr` for this page.
+    void addImageTab(QTabWidget *group, quint64 tabId, const QString &title);
 
     // F2-10: the caret-settle debounce fired, or Alt+Return asked directly
     // (`explicitRequest`). Remembers which editor and document position the

@@ -519,6 +519,26 @@ pub(crate) fn load_resolved_settings() -> app_config::Settings {
     settings_model::scope::resolve(&load_settings(), &load_project_settings())
 }
 
+/// The `TabKind` hint `AppSession::open_file_with_hint` needs for `path`,
+/// resolved from the file-association rules in force (issue #258).
+///
+/// `app-core` may not depend on `settings-model` (ADR-0017: settings-model
+/// owns what a value means, and it sits above `app-core`'s layer), so the
+/// resolution happens here and the answer crosses as a `TabKind` — the same
+/// "adapter maps one type onto the other and decides nothing else" split
+/// `FileOp`/`ResourceOp` already use (ADR-0029). `None` (no rule, user or
+/// built-in, matched the path) is passed straight through: `open_file_with_hint`
+/// treats it exactly like `open_file` always has, running the binary sniff.
+pub(crate) fn resolve_open_hint(path: &Path) -> Option<app_core::TabKind> {
+    let handler =
+        settings_model::file_associations::resolve_handler(&load_resolved_settings(), path)?;
+    Some(match handler {
+        settings_model::file_associations::HandlerKind::Text => app_core::TabKind::Text,
+        settings_model::file_associations::HandlerKind::Image => app_core::TabKind::Image,
+        settings_model::file_associations::HandlerKind::Binary => app_core::TabKind::Binary,
+    })
+}
+
 /// Same as [`load_resolved_settings`], but for an explicitly given project
 /// root rather than whatever `shared_session` currently has open.
 ///

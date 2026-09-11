@@ -35,7 +35,8 @@ impl Default for DocumentManagerRust {
 impl ffi::DocumentManager {
     pub fn open_file(mut self: Pin<&mut Self>, path: &QString) -> FfiOpenResult {
         let path = std::path::PathBuf::from(path.to_string());
-        let result = self.session.borrow_mut().open_file(&path);
+        let hint = convert::resolve_open_hint(&path);
+        let result = self.session.borrow_mut().open_file_with_hint(&path, hint);
         match result {
             Ok(opened) => {
                 if opened.newly_opened {
@@ -465,6 +466,23 @@ impl ffi::DocumentManager {
                 ascii: QString::from(row.ascii.as_str()),
             })
             .collect()
+    }
+
+    /// Rasterises an image tab's SVG file (issue #258); see the invokable's
+    /// own doc comment in `ffi.rs` for why raster formats never reach here.
+    pub fn render_svg_image(&self, tab_id: u64) -> ffi::FfiImagePixels {
+        let session = self.session.borrow();
+        let Some(path) = session.tab_path(TabId::from_raw(tab_id)) else {
+            return ffi::FfiImagePixels::default();
+        };
+        match app_core::image_render::render_svg_file(&path) {
+            Ok(icon) => ffi::FfiImagePixels {
+                width: icon.width,
+                height: icon.height,
+                pixels: cxx_qt_lib::QByteArray::from(icon.pixels.as_slice()),
+            },
+            Err(_) => ffi::FfiImagePixels::default(),
+        }
     }
 
     pub fn check_external_change(mut self: Pin<&mut Self>, path: &QString) {

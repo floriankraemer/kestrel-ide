@@ -509,6 +509,7 @@ fn main() {
         .cpp_file("cpp/syntax_colors_page.cpp")
         .cpp_file("cpp/languages_page.cpp")
         .cpp_file("cpp/plugins_page.cpp")
+        .cpp_file("cpp/file_associations_page.cpp")
         .cpp_file("cpp/appearance_page.cpp")
         .cpp_file("cpp/language_page.cpp")
         .cpp_file("cpp/i18n_startup.cpp")
@@ -571,6 +572,10 @@ fn main() {
         .cpp_file("cpp/terminal_sessions_panel.cpp")
         .cpp_file("cpp/hex_viewer.h")
         .cpp_file("cpp/hex_viewer.cpp")
+        // Read-only image tab (issue #258): raster via QImageReader, SVG
+        // via the FFI's renderSvgImage (icon-theme's resvg pipeline).
+        .cpp_file("cpp/image_viewer.h")
+        .cpp_file("cpp/image_viewer.cpp")
         // The chat panel declares Q_OBJECT, so its header is listed too
         // (passing a header to cpp_file() is what runs moc on it); the
         // providers page is a free function like every other settings

@@ -16,6 +16,9 @@
 pub mod ai;
 pub mod analysis;
 pub mod editing;
+/// Which handler a file-association rule (or a shipped default) names for a
+/// path — see [`file_associations::resolve_handler`] (issue #258).
+pub mod file_associations;
 pub mod languages;
 pub mod plugins;
 pub mod scope;
@@ -28,6 +31,7 @@ pub use ai::{
     DefaultProvider, KeyStatus, ProviderField, ProviderKind, ToolPolicy, ValidationProblem,
 };
 pub use editing::{resolve_for_language, EditingDraft, EditingField, EditingProblem, EditingRules};
+pub use file_associations::{handler_name, resolve_handler, HandlerKind, ALL_HANDLERS};
 pub use languages::{
     explain, scan_manifests, toggle, LanguageAction, LanguageRow, LanguageSource, LanguageStatus,
     LanguageToggle, ManifestInfo, Problem,

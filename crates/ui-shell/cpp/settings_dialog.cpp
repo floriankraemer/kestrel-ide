@@ -8,6 +8,7 @@
 #include "editor_page.h"
 #include "editing_page.h"
 #include "editor_tabs.h"
+#include "file_associations_page.h"
 #include "keymap_page.h"
 #include "language_servers_page.h"
 #include "languages_page.h"
@@ -79,6 +80,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     categoryList->addItem(QObject::tr("Language Servers"));
     categoryList->addItem(QObject::tr("AI Providers"));
     categoryList->addItem(QObject::tr("Plugins"));
+    categoryList->addItem(QObject::tr("File Associations"));
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Analysis"));
     categoryList->addItem(QObject::tr("MCP"));
@@ -195,6 +197,11 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     // the registry there and then, which is why the page makes no
     // OK-shaped promise.
     pages->addWidget(buildPluginsPage(&dialog, context.pluginCatalog, refreshIcons));
+
+    // File Associations (issue #258) needs no draft either, for the same
+    // reason Plugins/Languages need none: every row change writes through
+    // at once, there is nothing left to promise on OK.
+    pages->addWidget(buildFileAssociationsPage(&dialog, context.fileAssociationsEditor));
 
     // Terminal is project-scoped, so it is rebuilt when the scope changes
     // like Editing and Language Servers. Held by handle rather than by

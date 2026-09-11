@@ -63,6 +63,7 @@ impl AppSession {
             Some(TabContent::Text(doc)) => Some(doc.is_read_only()),
             Some(TabContent::Binary(_)) => Some(true),
             Some(TabContent::Diff(_)) => Some(true),
+            Some(TabContent::Image(_)) => Some(true),
             None => None,
         }
     }

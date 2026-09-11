@@ -69,6 +69,7 @@
 #include <QFont>
 #include <QHash>
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -620,13 +621,11 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
 // SplashScreen::StageCount) so the splash can show what is taking time. The
 // stages are the blocking steps below, in the order they already ran.
 //
-// `whenReady` is called exactly once, with the finished window, once startup
-// has genuinely finished — which is no longer necessarily before this
-// function returns (ADR-0037): reopening the last project walks its
-// directory tree on a worker thread, so "restore the editor layout and show
-// the window" waits for that walk's outcome (`projectOpened` or
-// `projectOpenFailed`) instead of running synchronously inline the way it
-// used to when `reopenLastProject()` blocked.
+// `whenReady` is called exactly once, with the finished window, before this
+// function returns. Reopening the last project (ADR-0037) walks its
+// directory tree on a worker thread and is fire-and-forget from here — its
+// outcome (`projectOpened`/`projectOpenFailed`) lands whenever the walk
+// finishes, not before the window is shown.
 void buildMainWindow(AppSettings *appSettings,
                       const std::function<void(int, const QString &)> &progress,
                       const std::function<void(QMainWindow *)> &whenReady)
@@ -1117,49 +1116,43 @@ void buildMainWindow(AppSettings *appSettings,
         central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::All);
     });
 
-    // Reopens the persisted editor split layout, then hands the finished
-    // window to `whenReady` — shared tail for both branches below, run once
-    // the project (if any) has actually settled, so restored files show up
-    // under a live tree (files are addressed by absolute path and reopen
-    // even if they sit outside the reopened project).
-    auto finishStartup = [progress, editorTabs, appSettings, whenReady, window]() {
-        progress(6, QObject::tr("Restoring editors..."));
-        editorTabs->restoreLayout(appSettings->editorLayout());
-        whenReady(window);
-    };
-
     // US-1: relaunching the app reopens the last project automatically.
-    // Reuses the same worker-thread path as "Open Folder..." (ADR-0037), so
-    // the tree is live-refreshing from the moment it's populated rather than
-    // blocking startup on the walk. `reopenLastProject()` returns whether a
-    // reopen was even kicked off — false means nothing was ever persisted,
-    // so no `projectOpened`/`projectOpenFailed` is ever coming and startup
-    // must proceed on its own rather than wait forever.
+    // Reuses the same worker-thread path as "Open Folder..." (ADR-0037): the
+    // directory walk runs on a worker thread and its outcome —
+    // `projectOpened` or `projectOpenFailed` — lands later, whenever it
+    // lands.
+    //
+    // Startup used to hold the splash and delay showing the window until
+    // that outcome arrived, so a large project's walk (node_modules, a
+    // monorepo, ...) sat directly on top of time-to-interactive even though
+    // the walk itself never touched the Qt thread. Nothing past this point
+    // needs the walk finished first: the tree lives in its own dock and
+    // repaints itself off `projectOpened`/the watcher whenever it settles,
+    // and every other consumer (status bar detection, VCS, run
+    // configurations) is already wired to those signals rather than to
+    // startup order.
     progress(5, QObject::tr("Restoring project..."));
-    if (treeModel->reopenLastProject()) {
-        // Parented to `window` so it cannot outlive it; deletes itself the
-        // moment either outcome signal fires, since only the first of the
-        // two ever arrives for a given reopen.
-        auto *waiter = new QObject(window);
-        QObject::connect(treeModel, &ProjectTreeModel::projectOpened, waiter,
-                         [waiter, finishStartup]() {
-                             finishStartup();
-                             waiter->deleteLater();
-                         });
-        QObject::connect(treeModel, &ProjectTreeModel::projectOpenFailed, waiter,
-                         [waiter, finishStartup](const FfiResult &) {
-                             finishStartup();
-                             waiter->deleteLater();
-                         });
-    } else {
-        finishStartup();
-    }
+    treeModel->reopenLastProject();
+
+    // Reopens the persisted editor split layout and shows the window.
+    // Files are addressed by absolute path, so this does not need the
+    // project (if any) to have opened first — it reopens them under a live
+    // tree if one lands, or a plain path if it doesn't.
+    progress(6, QObject::tr("Restoring editors..."));
+    editorTabs->restoreLayout(appSettings->editorLayout());
+    whenReady(window);
 }
 
 } // namespace
 
 int run_app()
 {
+    // Startup timing: captured before anything else runs, so
+    // `main_window_shown`'s `elapsed_ms` below is wall-clock time from
+    // process entry to interactive, not an estimate. Free when
+    // `IDE_E2E_EVENTS` is unset, like every other e2eMark.
+    const auto startupBegan = std::chrono::steady_clock::now();
+
     int argc = 0;
     QApplication app(argc, nullptr);
     // Taskbar/alt-tab/window-decoration icon on Linux and macOS (Windows
@@ -1198,20 +1191,19 @@ int run_app()
     buildMainWindow(
       appSettings,
       [&splash](int step, const QString &text) { splash.setStage(step, text); },
-      [&splash, appSettings](QMainWindow *window) {
+      [&splash, appSettings, startupBegan](QMainWindow *window) {
           showRestored(window, appSettings);
           applyNativeWindowChrome(window);
-          // Closes the splash exactly when the main window is up and its
-          // project has settled (opened, failed, or there was none to
-          // reopen) — no timer, no gap. When a reopen was kicked off, this
-          // callback fires from a `qt_thread.queue`d closure (ADR-0037),
-          // which needs the event loop below to actually be pumping to be
-          // delivered — but queuing it before `QApplication::exec()` starts
-          // is still sound, since Qt holds a posted event queued rather
-          // than dropping it, and delivers it the moment the loop begins.
+          // Closes the splash the moment the main window is up — no timer,
+          // no gap, and no wait on the reopened project's directory walk
+          // either: that runs on its own worker thread and settles later.
           splash.finish(window);
-          e2eMark(QStringLiteral("{\"ev\":\"main_window_shown\",\"maximized\":%1}")
-                    .arg(window->isMaximized() ? "true" : "false"));
+          const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - startupBegan)
+                                    .count();
+          e2eMark(QStringLiteral("{\"ev\":\"main_window_shown\",\"maximized\":%1,\"elapsed_ms\":%2}")
+                    .arg(window->isMaximized() ? "true" : "false")
+                    .arg(elapsedMs));
       });
 
     return QApplication::exec();

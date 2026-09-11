@@ -5,6 +5,7 @@
 #include "DockManager.h"
 #include "IconProvider.h"
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QEvent>
 #include <QFile>
@@ -13,6 +14,7 @@
 #include <QImage>
 #include <QPixmap>
 #include <QProxyStyle>
+#include <QTimer>
 #include <QWidget>
 
 #include <utility>
@@ -893,6 +895,20 @@ namespace {
 // re-style starts from its rules instead of stacking ours on themselves.
 const char *const kAdsBaseStyleSheet = "ideAdsBaseStyleSheet";
 
+// Vendored `createDockWidgetTab()` sets a tab's close icon while still
+// unparented, so it never paints; re-setting it a tick later (once shown) fixes it.
+void refreshAdsTabCloseIcons(QWidget *dockManager)
+{
+    QTimer::singleShot(0, dockManager, [dockManager]() {
+        const QIcon icon = tabCloseIcon();
+        const auto buttons = dockManager->findChildren<QAbstractButton *>("tabCloseButton");
+        for (QAbstractButton *button : buttons) {
+            button->setIcon(QIcon()); // clearing forces the repaint; setIcon(icon) alone skips it
+            button->setIcon(icon);
+        }
+    });
+}
+
 void restyleDockManager(QWidget *dockManager)
 {
     if (dockManager == nullptr) {
@@ -903,6 +919,7 @@ void restyleDockManager(QWidget *dockManager)
     }
     dockManager->setStyleSheet(dockManager->property(kAdsBaseStyleSheet).toString()
                                + dockStyleSheet(chromePaletteForTheme(activeThemeName())));
+    refreshAdsTabCloseIcons(dockManager);
 }
 
 bool isDockManager(const QObject *object)
@@ -1094,13 +1111,9 @@ void applyTheme(const QString &themeName)
     restyleDockManagers();
 
     // ads::CIconProvider is a process-wide singleton (CDockManager::
-    // iconProvider() is static), so this is safe to call before any
-    // CDockManager exists — it just primes what the first one will read.
-    // Existing dock tabs/title bars already painted keep their old-tint
-    // icon until they're recreated (ADS caches the QIcon on the button at
-    // construction, not resolved per paint) — a live theme switch fully
-    // catching up needs restarting the app, same as it already does for a
-    // few other chrome details.
+    // iconProvider() is static), safe before any CDockManager exists — it
+    // primes what the first one reads; restyleDockManagers() above already
+    // gave existing tabs the new tint.
     const QIcon closeIcon = tabCloseIcon();
     ads::CDockManager::iconProvider().registerCustomIcon(ads::TabCloseIcon, closeIcon);
     ads::CDockManager::iconProvider().registerCustomIcon(ads::DockAreaCloseIcon, closeIcon);

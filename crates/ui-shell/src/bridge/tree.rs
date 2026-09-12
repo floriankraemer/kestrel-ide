@@ -334,14 +334,14 @@ impl ffi::ProjectTreeModel {
     /// (Re)start the filesystem watcher for whatever project is now
     /// current, replacing any previous watcher (single watcher). Each fs
     /// event queues a closure onto this `ProjectTreeModel`'s own Qt thread —
-    /// the one cross-thread hop in the whole design — which, only for a
-    /// *structural* event (see `project_model::is_structural_change`),
-    /// rebuilds the tree and resets the model; every event (structural or
-    /// not) still emits `filesChangedExternally(path)` for `main_window.cpp`
-    /// to relay to `DocumentManager` via an ordinary (already-on-the-Qt-
-    /// thread) signal connection, so US-3's reload/keep prompt for an open
-    /// tab's content change keeps working. That relay is why `project-model`'s
-    /// watcher only ever needs one `CxxQtThread` handle, not two.
+    /// the one cross-thread hop in the whole design — which reads
+    /// `project_model::route_change`'s two-boolean answer for the event:
+    /// `rebuild_tree` resets the model, `refresh_vcs` emits
+    /// `filesChangedExternally(path)` for `main_window.cpp` to relay to
+    /// `DocumentManager` via an ordinary (already-on-the-Qt-thread) signal
+    /// connection, so US-3's reload/keep prompt for an open tab's content
+    /// change keeps working. That relay is why `project-model`'s watcher
+    /// only ever needs one `CxxQtThread` handle, not two.
     ///
     /// Root cause of the "saving a file collapses the sidebar" bug: this
     /// used to reset the model on *every* fs event unconditionally,
@@ -357,20 +357,31 @@ impl ffi::ProjectTreeModel {
         // W6-1 (ADR-0052): the classification lives here, past the
         // domain/support boundary `project-model`/`app-core` stay below —
         // see `ProjectSession::start_watcher`'s doc comment.
-        let is_remote = crate::bridge::convert::current_project_root()
-            .map(|root| lsp_core::ExecHost::for_path(&root).is_remote())
+        let root = crate::bridge::convert::current_project_root();
+        let is_remote = root
+            .as_ref()
+            .map(|root| lsp_core::ExecHost::for_path(root).is_remote())
             .unwrap_or(false);
         let result =
             self.session
                 .borrow_mut()
                 .start_watcher(is_remote, move |kind, changed_path| {
-                    let structural = project_model::is_structural_change(&kind);
+                    // `project_model::route_change` (issue #285) is the
+                    // whole decision: `bridge.rs` only reads its answer,
+                    // never re-derives it — see CLAUDE.md's "translation
+                    // only" rule for this file.
+                    let Some(root) = root.as_deref() else {
+                        // No project open — the watcher shouldn't be running
+                        // at all in this state, so there is nothing to route.
+                        return;
+                    };
+                    let routing = project_model::route_change(root, &kind, &changed_path);
                     // C5: the same event, mapped onto LSP's `FileChangeType` for
                     // `LanguageService::watchedFileChanged` — computed here,
                     // once, rather than in every listener.
                     let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
                     let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                        if structural {
+                        if routing.rebuild_tree {
                             // Off the Qt thread (ADR-0037): a `git checkout` of
                             // a branch with many new files re-walks the whole
                             // tree here, and that walk must not block the UI
@@ -381,7 +392,9 @@ impl ffi::ProjectTreeModel {
                         model
                             .as_mut()
                             .watched_file_changed(path.clone(), watched_kind);
-                        model.as_mut().files_changed_externally(path);
+                        if routing.refresh_vcs {
+                            model.as_mut().files_changed_externally(path);
+                        }
                     });
                 });
         // The project itself is already open; a failed watch only means

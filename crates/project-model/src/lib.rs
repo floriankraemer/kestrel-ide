@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 mod rebuild;
 mod watcher;
 pub use rebuild::RebuildCoalescer;
-pub use watcher::{is_structural_change, EventKind, ProjectWatcher};
+pub use watcher::{route_change, ChangeRouting, EventKind, ProjectWatcher};
 
 /// File name used to persist the last-opened project path, per the plan's
 /// "single plain-text line, no serde/toml/json" decision.

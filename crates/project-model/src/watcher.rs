@@ -7,7 +7,7 @@
 //! `CxxQtThread`. This crate never touches Qt or knows what the callback
 //! does with the path.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -33,6 +33,83 @@ pub fn is_structural_change(kind: &EventKind) -> bool {
             | EventKind::Remove(_)
             | EventKind::Modify(notify::event::ModifyKind::Name(_))
     )
+}
+
+/// What a filesystem-watcher event should cause, decided once here rather
+/// than as inline business logic in `ui-shell`'s adapter — `bridge.rs`
+/// QObjects are translation only (CLAUDE.md), so the two-boolean answer
+/// this crate hands back is all `ProjectTreeModel::start_watcher` may read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeRouting {
+    /// Rebuild and reset the project tree model.
+    pub rebuild_tree: bool,
+    /// Trigger a VCS (`git status`) refresh.
+    pub refresh_vcs: bool,
+}
+
+/// Route one watcher event: whether it should rebuild the project tree
+/// and/or trigger a VCS refresh (issue #285).
+///
+/// `.git` is deliberately still watched (see [`is_ignored`]'s doc comment)
+/// because the Changes dock needs to notice a commit, checkout or rebase
+/// made outside the app — so a path under it can still `refresh_vcs`. But
+/// it is never project *structure*, so it can never `rebuild_tree`,
+/// regardless of [`is_structural_change`]'s answer for the event's kind.
+/// `.git/index.lock` is the one path excluded from `refresh_vcs` too: it is
+/// the file the Changes dock's own `git status` refresh creates then
+/// removes while it runs, so treating it as a reason to refresh again is
+/// the self-triggering loop the issue reports — the file it renamed away,
+/// `.git/index`, still fires its own event and carries the same
+/// information, so nothing is lost by ignoring this one.
+///
+/// A `path` outside `root` entirely (shouldn't happen from a real watcher
+/// event, but must not panic or misbehave) never rebuilds the tree either —
+/// it cannot be project structure if it isn't even inside the project — but
+/// conservatively still allows `refresh_vcs`: an unrecognized path is not
+/// grounds to suppress a debounced (300 ms, `editor_tabs_vcs.cpp`), harmless
+/// refresh the way it is grounds to suppress a tree reset.
+pub fn route_change(root: &Path, kind: &EventKind, path: &Path) -> ChangeRouting {
+    let git_path = classify_git_path(root, path);
+    let inside_root = path.strip_prefix(root).is_ok();
+    ChangeRouting {
+        rebuild_tree: inside_root && is_structural_change(kind) && git_path == GitPathKind::NotGit,
+        refresh_vcs: git_path != GitPathKind::IndexLock,
+    }
+}
+
+/// Where a path falls relative to `<root>/.git` — [`route_change`]'s own
+/// helper, not exposed beyond it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitPathKind {
+    /// Not under `<root>/.git` at all (including paths outside `root`) —
+    /// an ordinary project path as far as this classification goes;
+    /// [`route_change`] applies the separate outside-root check itself.
+    NotGit,
+    /// `<root>/.git/index.lock` itself.
+    IndexLock,
+    /// Some other path under `<root>/.git` (`HEAD`, `refs/...`, `index`,
+    /// etc.).
+    OtherGit,
+}
+
+fn classify_git_path(root: &Path, path: &Path) -> GitPathKind {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return GitPathKind::NotGit;
+    };
+    let mut components = relative.components();
+    match components.next() {
+        Some(Component::Normal(first)) if first == ".git" => {
+            if relative
+                .file_name()
+                .is_some_and(|name| name == "index.lock")
+            {
+                GitPathKind::IndexLock
+            } else {
+                GitPathKind::OtherGit
+            }
+        }
+        _ => GitPathKind::NotGit,
+    }
 }
 
 /// Whether `path` should be excluded from the watch because it matches the
@@ -256,6 +333,135 @@ mod is_structural_change_tests {
         assert!(!is_structural_change(&EventKind::Modify(
             ModifyKind::Metadata(notify::event::MetadataKind::Any)
         )));
+    }
+}
+
+#[cfg(test)]
+mod route_change_tests {
+    use super::{route_change, ChangeRouting};
+    use notify::event::{CreateKind, ModifyKind, RemoveKind};
+    use notify::EventKind;
+    use std::path::Path;
+
+    #[test]
+    fn an_ordinary_project_file_created_rebuilds_the_tree_and_refreshes_vcs() {
+        let root = Path::new("/project");
+        let routing = route_change(
+            root,
+            &EventKind::Create(CreateKind::File),
+            &root.join("src/new.rs"),
+        );
+        assert_eq!(
+            routing,
+            ChangeRouting {
+                rebuild_tree: true,
+                refresh_vcs: true
+            }
+        );
+    }
+
+    // Every `Ctrl+S` save of an already-existing file looks like this — no
+    // reason to reset the tree (same rows, same structure), but still worth
+    // a VCS refresh since the file's diff/status may have changed.
+    #[test]
+    fn a_content_only_write_to_an_ordinary_file_only_refreshes_vcs() {
+        let root = Path::new("/project");
+        let routing = route_change(
+            root,
+            &EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Any)),
+            &root.join("src/a.rs"),
+        );
+        assert_eq!(
+            routing,
+            ChangeRouting {
+                rebuild_tree: false,
+                refresh_vcs: true
+            }
+        );
+    }
+
+    // `.git` is watched deliberately (the Changes dock needs to notice a
+    // commit/checkout/rebase made outside the app) but is never project
+    // *structure* — a `HEAD` create must never rebuild the tree, but should
+    // still refresh the Changes dock.
+    #[test]
+    fn a_git_metadata_change_never_rebuilds_the_tree_but_still_refreshes_vcs() {
+        let root = Path::new("/project");
+        let routing = route_change(
+            root,
+            &EventKind::Create(CreateKind::File),
+            &root.join(".git/HEAD"),
+        );
+        assert_eq!(
+            routing,
+            ChangeRouting {
+                rebuild_tree: false,
+                refresh_vcs: true
+            }
+        );
+    }
+
+    // The exact case issue #285's loop closed through: `git status` writes
+    // then removes `.git/index.lock`. Treating either edge as a reason to
+    // rebuild the tree or refresh again is the self-triggering loop, so
+    // both must be suppressed for this one path — Create and Remove alike.
+    #[test]
+    fn the_index_lock_file_never_rebuilds_the_tree_or_refreshes_vcs() {
+        let root = Path::new("/project");
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Remove(RemoveKind::File),
+        ] {
+            let routing = route_change(root, &kind, &root.join(".git/index.lock"));
+            assert_eq!(
+                routing,
+                ChangeRouting {
+                    rebuild_tree: false,
+                    refresh_vcs: false
+                },
+                "expected {kind:?} on .git/index.lock to suppress both"
+            );
+        }
+    }
+
+    // A path outside `root` entirely shouldn't happen from a real watcher
+    // event, but must not panic or be mistaken for project structure — it
+    // is defensively still allowed to refresh the (harmless, debounced) VCS
+    // status, but never rebuilds a tree it cannot belong to.
+    #[test]
+    fn a_path_outside_root_never_rebuilds_the_tree() {
+        let root = Path::new("/project");
+        let routing = route_change(
+            root,
+            &EventKind::Create(CreateKind::File),
+            Path::new("/elsewhere/new.rs"),
+        );
+        assert_eq!(
+            routing,
+            ChangeRouting {
+                rebuild_tree: false,
+                refresh_vcs: true
+            }
+        );
+    }
+
+    // A file that merely contains ".git" as a substring of its own name
+    // (not the directory) must not be mistaken for the git directory.
+    #[test]
+    fn a_file_named_dot_git_something_at_the_root_is_treated_as_an_ordinary_file() {
+        let root = Path::new("/project");
+        let routing = route_change(
+            root,
+            &EventKind::Create(CreateKind::File),
+            &root.join(".gitignore"),
+        );
+        assert_eq!(
+            routing,
+            ChangeRouting {
+                rebuild_tree: true,
+                refresh_vcs: true
+            }
+        );
     }
 }
 

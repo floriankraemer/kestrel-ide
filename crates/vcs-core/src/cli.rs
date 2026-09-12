@@ -123,12 +123,22 @@ fn display_command(args: &[&str]) -> String {
 /// [`run`] so the shape of a command can be asserted on without a real
 /// `git` binary. `staging`, `commit`, `branch` and `remote` build on these.
 pub mod argv {
-    /// `git status --porcelain=v2 -z --branch --untracked-files=all
-    /// --renames` — one command yielding branch/upstream/ahead-behind plus
-    /// every changed path, renames included, that `crate::status`'s
-    /// `parse_porcelain_v2` expects.
+    /// `git --no-optional-locks status --porcelain=v2 -z --branch
+    /// --untracked-files=all --renames` — one command yielding
+    /// branch/upstream/ahead-behind plus every changed path, renames
+    /// included, that `crate::status`'s `parse_porcelain_v2` expects.
+    ///
+    /// `--no-optional-locks` (a global flag, so it precedes the `status`
+    /// subcommand) stops this read from taking the index lock at all —
+    /// `git status` refreshes the on-disk index by default, which writes
+    /// `.git/index.lock` then `.git/index`. Those writes fire the project
+    /// watcher on `.git`, which used to re-trigger this same refresh: issue
+    /// #285's ~8/s rebuild loop on every opened repository. A stat-only
+    /// status without the refresh is what every other IDE's polling status
+    /// check does for the same reason.
     pub fn status() -> Vec<&'static str> {
         vec![
+            "--no-optional-locks",
             "status",
             "--porcelain=v2",
             "-z",
@@ -257,6 +267,7 @@ mod tests {
         assert_eq!(
             argv::status(),
             vec![
+                "--no-optional-locks",
                 "status",
                 "--porcelain=v2",
                 "-z",

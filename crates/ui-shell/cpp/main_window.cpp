@@ -13,6 +13,7 @@
 #include "structure_panel.h"
 #include "code_editor.h"
 #include "dock_layout.h"
+#include "dock_tab_factory.h"
 #include "e2e_mark.h"
 #include "i18n_startup.h"
 #include "editing_actions.h"
@@ -161,6 +162,9 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // not via stylesheet hover state. Editor tabs show a close button on every
     // tab regardless of which one is active; match that here.
     ads::CDockManager::setConfigFlag(ads::CDockManager::AllTabsHaveCloseButton, true);
+    // Dock tabs laid out to the editor tab's geometry — see dock_tab_factory.h.
+    // ADS takes ownership (it wraps the pointer in a QSharedPointer).
+    ads::CDockComponentsFactory::setFactory(new DockTabFactory);
     auto *dockManager = new ads::CDockManager(window);
     // --panel-gap (blend spec), the margin *around* the docked panels. It has
     // to go on the layout: ADS gives the dock manager a layout of its own in

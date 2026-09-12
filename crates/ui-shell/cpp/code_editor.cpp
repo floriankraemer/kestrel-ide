@@ -156,6 +156,7 @@ void CodeEditor::showCompletions(const QVector<CompletionEntry> &items)
     anchor.setWidth(popup->sizeHintForColumn(0) + popup->verticalScrollBar()->sizeHint().width()
                     + kPopupWidthPadding);
     completer_->complete(anchor);
+    e2eMark(QStringLiteral("{\"ev\":\"completion_shown\",\"count\":%1}").arg(items.size()));
 }
 
 void CodeEditor::updateCompletionPreview(const QString &detail, const QString &documentation)

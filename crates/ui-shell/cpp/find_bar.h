@@ -11,6 +11,7 @@ class QObject;
 class QEvent;
 class QKeyEvent;
 class QToolButton;
+class QPushButton;
 class DocumentManager;
 
 namespace ui_shell {
@@ -76,6 +77,7 @@ private:
     QLabel *counterLabel_ = nullptr;
     QWidget *replaceRow_ = nullptr;
     QToolButton *closeButton_ = nullptr;
+    QPushButton *replaceAllButton_ = nullptr;
 
     QVector<QPair<int, int>> matches_;
     int current_ = -1;

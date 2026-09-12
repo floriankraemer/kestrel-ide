@@ -118,6 +118,9 @@ void EditorTabs::applyEditsTo(QPlainTextEdit *editor, const ::rust::Vec<FfiTextE
         spliceEdit(cursor, edit);
     }
     cursor.endEditBlock();
+    // Every same-buffer splice — find/replace, completion, the line and
+    // multi-caret operations — lands here, so one mark covers them all.
+    e2eMark(QStringLiteral("{\"ev\":\"edits_applied\",\"count\":%1}").arg(edits.size()));
 }
 
 void EditorTabs::refreshCarets(CodeEditor *editor)

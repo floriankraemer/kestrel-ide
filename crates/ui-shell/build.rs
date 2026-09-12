@@ -432,6 +432,9 @@ fn main() {
         // F0-7: the dock show/hide registry. Free of Q_OBJECT (plain class,
         // no signals/slots), so only the source is listed.
         .cpp_file("cpp/dock_layout.cpp")
+        // ADS components factory pinning dock-tab layout gaps to the editor
+        // tab's. No Q_OBJECT, so only the source is listed.
+        .cpp_file("cpp/dock_tab_factory.cpp")
         // The Help menu and its About dialog. No Q_OBJECT (free functions and
         // a locally built QDialog), so only the source is listed.
         .cpp_file("cpp/help_menu.cpp")
@@ -568,6 +571,7 @@ fn main() {
         .cpp_file("cpp/search_everywhere_dialog.cpp")
         .cpp_file("cpp/splash_screen.cpp")
         .cpp_file("cpp/theme.cpp")
+        .cpp_file("cpp/theme_icons.cpp")
         .cpp_file("cpp/syntax_highlighter.cpp")
         .cpp_file("cpp/terminal_widget.h")
         .cpp_file("cpp/terminal_widget.cpp")

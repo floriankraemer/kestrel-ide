@@ -11,10 +11,7 @@
 #include <QFile>
 #include <QFont>
 #include <QFontDatabase>
-#include <QImage>
-#include <QPixmap>
-#include <QProxyStyle>
-#include <QTimer>
+#include <QRegularExpression>
 #include <QWidget>
 
 #include <utility>
@@ -195,6 +192,19 @@ FfiTabPadding &cachedTabPadding()
 {
     static FfiTabPadding padding{ 0, 0, tokens::kSp3, tokens::kSp1 };
     return padding;
+}
+
+// `{tab-pad-*}` placeholders, filled from cachedTabPadding() rather than by
+// fillTokens() so the setting reaches both the editor tab rule in
+// chromeStyleSheet() and the dock tab rule in dockStyleSheet().
+QString fillTabPadding(QString sheet)
+{
+    const FfiTabPadding &padding = cachedTabPadding();
+    sheet.replace(QLatin1String("{tab-pad-top}"), QString::number(padding.top));
+    sheet.replace(QLatin1String("{tab-pad-right}"), QString::number(padding.right));
+    sheet.replace(QLatin1String("{tab-pad-bottom}"), QString::number(padding.bottom));
+    sheet.replace(QLatin1String("{tab-pad-left}"), QString::number(padding.left));
+    return sheet;
 }
 
 } // namespace
@@ -715,12 +725,7 @@ QStatusBar QLabel, QStatusBar QProgressBar, QStatusBar QToolButton {
 }
 )")
     );
-    const FfiTabPadding &padding = cachedTabPadding();
-    sheet.replace(QLatin1String("{tab-pad-top}"), QString::number(padding.top));
-    sheet.replace(QLatin1String("{tab-pad-right}"), QString::number(padding.right));
-    sheet.replace(QLatin1String("{tab-pad-bottom}"), QString::number(padding.bottom));
-    sheet.replace(QLatin1String("{tab-pad-left}"), QString::number(padding.left));
-    return sheet;
+    return fillTabPadding(std::move(sheet));
 }
 
 QString dockStyleSheet(const ChromePalette &c)
@@ -730,7 +735,7 @@ QString dockStyleSheet(const ChromePalette &c)
     // also the only way to reach the splitter handles between docked panes:
     // Qt gives a widget's own stylesheet priority over the application's,
     // and ADS installs one on the dock manager.
-    return fillTokens(c, QStringLiteral(R"(
+    return fillTabPadding(fillTokens(c, QStringLiteral(R"(
 /* The gap between two docked panels: `--panel-gap` wide and see-through,
    so what separates two panels is the canvas — and the panel shadows
    panel_shadow.cpp paints on it — rather than a divider line. ADS has no
@@ -802,12 +807,18 @@ ads--CDockAreaTitleBar QToolButton:hover {
     background-color: {raised};
 }
 
+/* The same air an editor tab gets (Settings > Tabs): its left/top/bottom
+   padding, and nothing on the right — a dock tab's inner layout already
+   ends 4px after a 16px [x], pinned by DockTabFactory to where StyledTabBar
+   puts the editor tab's, so the glyph sits 8px clear of label and border on
+   both. (The editor tab's own right padding shrinks only the label rect, not
+   the tab, so it has no counterpart here.) */
 ads--CDockWidgetTab {
     background: {surface};
     border: none;
     border-right: 1px solid {border};
     border-bottom: 2px solid transparent;
-    padding: 0 {sp-3}px 0 {sp-3}px;
+    padding: {tab-pad-top}px 0 {tab-pad-bottom}px {tab-pad-left}px;
     min-height: 32px;
 }
 
@@ -835,12 +846,25 @@ ads--CDockWidgetTab[activeTab="true"] QLabel {
     background: transparent;
 }
 
+/* A 16px box around ADS's own 16px icon size — the editor tab's
+   PM_TabCloseIndicatorWidth around the same 8px glyph (TabCloseStyle). The
+   min/max-height have to be repeated:
+   the generic QPushButton rule above sets both to control-h, which would
+   otherwise stretch this button to 26px. The 2px top margin is the same
+   glyph row as the editor tab's: Qt centres that [x] in the tab's full
+   34px rect, bottom border included, while this layout centres in the
+   32px content box above the border — one row higher. Adding 2px to the
+   item makes the centring land the box one row lower, and the label,
+   already taller than the box, does not move. */
 ads--CDockWidgetTab #tabCloseButton {
     background: none;
     border: none;
-    margin: 0px 0px 0px 2px;
+    margin: 2px 0px 0px 0px;
     padding: 0px;
-    qproperty-iconSize: 12px;
+    min-width: 16px;
+    max-width: 16px;
+    min-height: 16px;
+    max-height: 16px;
 }
 
 ads--CDockWidgetTab #tabCloseButton:hover {
@@ -853,7 +877,7 @@ ads--CDockWidgetTab #tabCloseButton:pressed {
     background: {selection};
 }
 )")
-    );
+    ));
 }
 
 ThemeColors colorsForTheme(const QString &themeName)
@@ -895,18 +919,27 @@ namespace {
 // re-style starts from its rules instead of stacking ours on themselves.
 const char *const kAdsBaseStyleSheet = "ideAdsBaseStyleSheet";
 
-// Vendored `createDockWidgetTab()` sets a tab's close icon while still
-// unparented, so it never paints; re-setting it a tick later (once shown) fixes it.
+// ADS's own sheet assigns its bundled SVG close/menu/pin glyphs through
+// `qproperty-icon`, which Qt re-applies at every polish — that is, after
+// every setIcon() ADS's iconProvider or we ever make, and for a dock tab
+// created after startup on its first show — leaving the button with an SVG
+// that paints nothing in this build (no SVG icon engine). Stripping those
+// declarations lets the icon the provider registers at creation stand.
+QString withoutIconProperties(QString sheet)
+{
+    static const QRegularExpression iconProperty(QStringLiteral("qproperty-icon\\s*:[^;}]*;?"));
+    return sheet.remove(iconProperty);
+}
+
+// The theme's tint for every tab already on screen: ADS resolves the icon
+// once at creation, so a live theme switch has to hand the new one out.
 void refreshAdsTabCloseIcons(QWidget *dockManager)
 {
-    QTimer::singleShot(0, dockManager, [dockManager]() {
-        const QIcon icon = tabCloseIcon();
-        const auto buttons = dockManager->findChildren<QAbstractButton *>("tabCloseButton");
-        for (QAbstractButton *button : buttons) {
-            button->setIcon(QIcon()); // clearing forces the repaint; setIcon(icon) alone skips it
-            button->setIcon(icon);
-        }
-    });
+    const QIcon icon = tabCloseIcon();
+    const auto buttons = dockManager->findChildren<QAbstractButton *>("tabCloseButton");
+    for (QAbstractButton *button : buttons) {
+        button->setIcon(icon);
+    }
 }
 
 void restyleDockManager(QWidget *dockManager)
@@ -915,7 +948,8 @@ void restyleDockManager(QWidget *dockManager)
         return;
     }
     if (!dockManager->property(kAdsBaseStyleSheet).isValid()) {
-        dockManager->setProperty(kAdsBaseStyleSheet, dockManager->styleSheet());
+        dockManager->setProperty(kAdsBaseStyleSheet,
+                                 withoutIconProperties(dockManager->styleSheet()));
     }
     dockManager->setStyleSheet(dockManager->property(kAdsBaseStyleSheet).toString()
                                + dockStyleSheet(chromePaletteForTheme(activeThemeName())));
@@ -1008,91 +1042,6 @@ QPalette paletteForTheme(const QString &themeName)
 QString activeThemeName()
 {
     return cachedTheme().name;
-}
-
-QIcon maskIcon(const char *maskResource, QColor tint)
-{
-    constexpr int kSide = 32;
-    QFile file(QString::fromLatin1(maskResource));
-    file.open(QIODevice::ReadOnly);
-    const QByteArray mask = file.readAll();
-    Q_ASSERT(mask.size() == kSide * kSide);
-
-    QImage image(kSide, kSide, QImage::Format_ARGB32_Premultiplied);
-    image.fill(Qt::transparent);
-    for (int y = 0; y < kSide; ++y) {
-        for (int x = 0; x < kSide; ++x) {
-            QColor pixel = tint;
-            pixel.setAlpha(static_cast<uchar>(mask[y * kSide + x]));
-            image.setPixelColor(x, y, pixel);
-        }
-    }
-    return QIcon(QPixmap::fromImage(image));
-}
-
-namespace {
-
-// Swaps Qt's platform close glyph for tabCloseIcon() below, so every plain
-// QTabWidget's close button — editor tab groups, terminal session tabs —
-// matches ADS's own dock/tab close buttons, themed the same way (see
-// applyTheme()'s ads::CIconProvider registration for that half of the swap),
-// and widens that button so the glyph is not flush against the tab's edge.
-// Everything else falls through to the base style unchanged.
-class TabCloseStyle : public QProxyStyle
-{
-public:
-    using QProxyStyle::QProxyStyle;
-
-    QIcon standardIcon(StandardPixmap standardIcon, const QStyleOption *option,
-                        const QWidget *widget) const override
-    {
-        if (standardIcon == QStyle::SP_TabCloseButton) {
-            return tabCloseIcon();
-        }
-        return QProxyStyle::standardIcon(standardIcon, option, widget);
-    }
-
-    // Breathing room around the [x], and the same amount of it on every
-    // platform. QCommonStyle centres the close glyph — 8px of ink at this
-    // icon size — in a button PM_TabCloseIndicatorWidth wide, and the base
-    // styles disagree wildly about that width (20 under Fusion, 12 under the
-    // Windows style), so the slack around the glyph was 6px on one platform
-    // and 2px on the other. Nothing in the stylesheet can correct it:
-    // QStyleSheetStyle answers SE_TabBarTabRightButton itself and ignores
-    // both `QTabBar::close-button`'s margins and a subElementRect override
-    // (see the QTabBar rules in chromeStyleSheet() above). This metric is
-    // still delegated, so pinning it to 16 gives the glyph 4px of its own on
-    // each side everywhere. The button's own offset from the tab's edge is
-    // what the base styles still disagree about — flush under Windows, 4px
-    // in under Fusion — and PaneTabBar pins that itself, so the glyph ends
-    // up 8px clear of both the label and the border on either platform.
-    int pixelMetric(PixelMetric metric, const QStyleOption *option,
-                     const QWidget *widget) const override
-    {
-        if (metric == QStyle::PM_TabCloseIndicatorWidth
-            || metric == QStyle::PM_TabCloseIndicatorHeight) {
-            return 16;
-        }
-        return QProxyStyle::pixelMetric(metric, option, widget);
-    }
-};
-
-} // namespace
-
-QIcon tabCloseIcon()
-{
-    return maskIcon(":/ui/icons/close_mask_32.a8", chromePaletteForTheme(activeThemeName()).textDim);
-}
-
-QStyle *makeTabCloseStyle(QStyle *base)
-{
-    return new TabCloseStyle(base);
-}
-
-QIcon searchIcon()
-{
-    return maskIcon(":/ui/icons/search_mask_32.a8",
-                     chromePaletteForTheme(activeThemeName()).textDim);
 }
 
 void applyTheme(const QString &themeName)

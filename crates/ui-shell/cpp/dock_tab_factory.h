@@ -10,7 +10,7 @@ namespace ui_shell {
 // whatever the stylesheet pads the tab with, so a dock tab never lines up
 // with an editor tab, whose air is the sheet's alone. This factory hands out
 // tabs with those layout gaps pinned to the editor tab's geometry (see
-// StyledTabBar and TabCloseStyle: 4px between label and a 16px [x], 4px
+// StyledTabBar and ChromeStyle: 4px between label and a 16px [x], 4px
 // between the [x] and the border), leaving the sheet's `padding` the one
 // lever for the rest — the same lever Settings > Tabs drives for editor tabs.
 class DockTabFactory : public ads::CDockComponentsFactory

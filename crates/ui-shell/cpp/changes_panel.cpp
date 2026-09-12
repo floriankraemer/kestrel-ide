@@ -33,7 +33,12 @@ namespace {
 constexpr int kLetterColumn = 0;
 constexpr int kNameColumn = 1;
 constexpr int kLocationColumn = 2;
-constexpr int kLetterColumnWidth = 64;
+// A file row is one level deep under its group, and Qt reserves *two*
+// indentation widths (PM_TreeViewIndentation, pinned by ChromeStyle) for it
+// — one for the group's own chevron, one for the elbow into the row — inside
+// this fixed-width column. A narrower column leaves no room left over for
+// the checkbox and letter it is supposed to show.
+constexpr int kLetterColumnWidth = 72;
 
 constexpr int kPathRole = Qt::UserRole;
 // Whether checking this item stages (true) or unstages (false) its path —
@@ -264,12 +269,6 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     tree_->header()->setSectionResizeMode(kNameColumn, QHeaderView::Stretch);
     tree_->header()->setSectionResizeMode(kLocationColumn, QHeaderView::ResizeToContents);
     tree_->setUniformRowHeights(true);
-    // A file row is one level deep under its group, and Qt reserves *two*
-    // indentation widths for it — one for the group's own expand arrow, one
-    // for a (non-existent) arrow of its own — inside the fixed-width letter
-    // column. A narrower `kLetterColumnWidth` leaves no room left over for
-    // the checkbox and letter the column is supposed to show.
-    tree_->setIndentation(12);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
         // Only a file row carries a path (kPathRole) — a group header

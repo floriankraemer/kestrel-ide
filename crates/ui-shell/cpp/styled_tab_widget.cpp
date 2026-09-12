@@ -21,7 +21,7 @@ StyledTabBar::StyledTabBar(QWidget *parent)
 // one before the [x] most visibly. Taking it back here is the only
 // seam that reaches it — the size hint is the widget's, while
 // CT_TabBarTab itself is answered by the stylesheet style and ignores a
-// QProxyStyle override of it (see makeTabCloseStyle() in theme.cpp for
+// QProxyStyle override of it (see makeChromeStyle() in theme.cpp for
 // the same trap one sub-element over).
 QSize StyledTabBar::tabSizeHint(int index) const
 {
@@ -74,7 +74,7 @@ bool StyledTabBar::eventFilter(QObject *watched, QEvent *event)
 
 // 4px of air between the [x] and the tab's border, matching the 4px the
 // close indicator carries on its other side (PM_TabCloseIndicatorWidth
-// is pinned to 16 around an 8px glyph — see makeTabCloseStyle() in
+// is pinned to 16 around an 8px glyph — see makeChromeStyle() in
 // theme.cpp), so the glyph sits 8px clear of both the label and the
 // border.
 void StyledTabBar::placeCloseButton(int index, QWidget *button) const

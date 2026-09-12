@@ -847,7 +847,7 @@ ads--CDockWidgetTab[activeTab="true"] QLabel {
 }
 
 /* A 16px box around ADS's own 16px icon size — the editor tab's
-   PM_TabCloseIndicatorWidth around the same 8px glyph (TabCloseStyle). The
+   PM_TabCloseIndicatorWidth around the same 8px glyph (ChromeStyle). The
    min/max-height have to be repeated:
    the generic QPushButton rule above sets both to control-h, which would
    otherwise stretch this button to 26px. The 2px top margin is the same

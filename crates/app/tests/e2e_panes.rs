@@ -54,12 +54,12 @@ fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
     })
 }
 
-/// The centre of a tab's label on screen, from its `tab_added` (or
-/// `tab_moved`) marker.
-fn tab_centre(tab: &serde_json::Value) -> (i32, i32) {
-    let rect: Vec<i64> = tab["rect"]
+/// The centre of a `[x, y, w, h]` rect field, carried by a tab marker
+/// (`tab_added`, `tab_moved`) or a `tab_context_menu_action` entry.
+fn rect_centre(marker: &serde_json::Value) -> (i32, i32) {
+    let rect: Vec<i64> = marker["rect"]
         .as_array()
-        .expect("the marker carries the tab's rect")
+        .expect("the marker carries a rect")
         .iter()
         .map(|v| v.as_i64().expect("an integer"))
         .collect();
@@ -73,15 +73,15 @@ fn tab_centre(tab: &serde_json::Value) -> (i32, i32) {
 /// returning the `tab_moved` marker that says where it landed.
 fn split_tab_out(ide: &Ide, tab: &serde_json::Value) -> serde_json::Value {
     let mark = ide.mark();
-    let (x, y) = tab_centre(tab);
+    let (x, y) = rect_centre(tab);
     ide.click_at(x, y, 3);
-    ide.wait_for_event(mark, "the tab context menu", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "tab_context_menu"
+    // Click the entry by its label and reported rect, not by counting
+    // Down presses — that broke the moment the menu gained "Show Code Map".
+    let split_vertical = ide.wait_for_event(mark, "Split Vertical in the tab context menu", |e| {
+        e["ev"] == "tab_context_menu_action" && e["label"] == "Split Vertical"
     });
-    for _ in 0..3 {
-        ide.key("Down"); // Close, Close Others, (separator), Split Vertical
-    }
-    ide.key("Return");
+    let (sx, sy) = rect_centre(&split_vertical);
+    ide.click_at(sx, sy, 1);
     ide.wait_for_ev(mark, "tab_moved")
 }
 
@@ -303,7 +303,7 @@ fn e2e_drag_tab_between_panes() {
     // Drag it back onto the first pane's tab strip, at that strip's own
     // reported coordinates.
     let mark = ide.mark();
-    ide.drag(tab_centre(&split), tab_centre(&first));
+    ide.drag(rect_centre(&split), rect_centre(&first));
 
     let moved = ide.wait_for_ev(mark, "tab_moved");
     assert_eq!(moved["title"], "greeting.rs");

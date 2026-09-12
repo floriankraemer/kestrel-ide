@@ -427,6 +427,10 @@ void EditorTabs::showTabContextMenu(QTabWidget *group, const QPoint &pos)
     splitVerticalAction->setEnabled(group->count() > 1);
     splitHorizontalAction->setEnabled(group->count() > 1);
 
+    // So a test can click an entry by its label instead of counting
+    // Down-key presses, which breaks every time this menu gains an item.
+    e2eMarkMenuActions(&menu, "tab_context_menu_action");
+
     // A popup menu takes a keyboard grab rather than the input focus, so
     // this mark is the only way anything outside the process can know it
     // is up. `exec()` does not return until it is gone, hence the mark

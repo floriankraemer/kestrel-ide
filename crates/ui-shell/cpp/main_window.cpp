@@ -1168,9 +1168,9 @@ int run_app()
     // instead — this QIcon is just its in-window icon there).
     app.setWindowIcon(QIcon(QStringLiteral(":/ui/icons/app_icon.png")));
     // Wraps whatever platform style Qt picked, intercepting only the tab
-    // close button's glyph and size (see makeTabCloseStyle() in theme.cpp) —
+    // close button's glyph and size (see makeChromeStyle() in theme.cpp) —
     // every QTabWidget in the app picks it up with no per-call-site change.
-    app.setStyle(makeTabCloseStyle(app.style()));
+    app.setStyle(makeChromeStyle(app.style()));
 
     // Parentless for now: the splash needs the persisted theme before any
     // window exists, and buildMainWindow() adopts this object as soon as it

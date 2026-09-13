@@ -44,22 +44,22 @@ fn completions_are_parsed_ordered_and_filtered() {
     assert!(!plain.is_incomplete);
     let ordered: Vec<String> = lsp_core::filter_completions(&plain.items, "p")
         .into_iter()
-        .map(|i| i.label)
+        .map(|m| m.item.label)
         .collect();
     assert_eq!(ordered, ["pop", "push"], "sortText wins over the label");
     // filterText, not the label, decides what a prefix matches.
     let filtered = lsp_core::filter_completions(&plain.items, "allo");
     assert_eq!(filtered.len(), 1);
-    assert_eq!(filtered[0].label, "#[allow]");
-    assert_eq!(filtered[0].insert, "#[allow(dead_code)]", "insertText");
+    assert_eq!(filtered[0].item.label, "#[allow]");
+    assert_eq!(filtered[0].item.insert, "#[allow(dead_code)]", "insertText");
 
     // Line 1: a CompletionList, incomplete, with a snippet and a textEdit.
     let list = manager.completion(uri, 1, 0).expect("completion");
     assert!(list.is_incomplete, "ask again as the word grows");
     let snippet = &list.items[0];
-    assert_eq!(
-        snippet.insert, "map(f)",
-        "no placeholders left in the buffer"
+    assert!(
+        snippet.is_snippet,
+        "insertTextFormat: 2 — snippetSupport is now advertised as true"
     );
     let edit = &list.items[1];
     assert_eq!(edit.insert, "max()");

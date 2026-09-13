@@ -39,6 +39,9 @@ pub mod comment;
 pub mod indent;
 pub mod pairs;
 pub mod selection_expand;
+/// R2: the LSP snippet grammar (`${1:name}`, `$0`, choices, nesting,
+/// escapes) parsed into inserted text plus tab-stop ranges.
+pub mod snippet;
 mod syntax;
 
 pub use syntax::{Syntax, Tokens};

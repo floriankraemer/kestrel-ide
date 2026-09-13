@@ -210,21 +210,31 @@ impl ExecHost {
             command.env(key, value);
         }
         if self.is_remote() && !env.is_empty() {
-            let inherited = std::env::var("WSLENV").unwrap_or_default();
-            let mut names: Vec<String> = if inherited.is_empty() {
-                Vec::new()
-            } else {
-                inherited.split(':').map(str::to_string).collect()
-            };
-            for (key, _) in env {
-                names.push(format!("{key}/u"));
-            }
-            command.env("WSLENV", names.join(":"));
+            command.env("WSLENV", wslenv_with(env));
         }
 
         suppress_console_window(&mut command);
         command
     }
+}
+
+/// The `WSLENV` value that makes `wsl.exe` pass each of `env`'s variables
+/// through to the distro: the inherited list plus every key with the `/u`
+/// (translate-as-UTF-8-string) flag. Without a name in `WSLENV`, `wsl.exe`
+/// drops the variable silently. Shared with callers that build a
+/// `wsl.exe` argv themselves (a container connection through a WSL
+/// distro) and therefore cannot go through [`ExecHost::command`].
+pub fn wslenv_with(env: &[(&str, &str)]) -> String {
+    let inherited = std::env::var("WSLENV").unwrap_or_default();
+    let mut names: Vec<String> = if inherited.is_empty() {
+        Vec::new()
+    } else {
+        inherited.split(':').map(str::to_string).collect()
+    };
+    for (key, _) in env {
+        names.push(format!("{key}/u"));
+    }
+    names.join(":")
 }
 
 // --------------------------------------------------------- discovery -----

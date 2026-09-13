@@ -5252,20 +5252,54 @@ mod ffi {
 
     impl cxx_qt::Threading for TestService {}
 
+    /// A Containers dock row's status, as data — `container_core::tree::
+    /// NodeStatus` crossed the seam. The view owns the word for each
+    /// (ADR-0049: every user-visible string is `tr()`'d in C++); `Exited`
+    /// reads its code from `exitCode`, `Connected`/`Error`/`Other` their
+    /// text from `statusText`.
+    enum FfiContainerNodeStatus {
+        None,
+        Disconnected,
+        Connecting,
+        Connected,
+        Error,
+        Running,
+        Paused,
+        Restarting,
+        Exited,
+        Created,
+        Dead,
+        Other,
+    }
+
+    /// The unit of a row's `ageValue` — `container_core::model::AgeUnit`
+    /// plus `None` for "no age". The bucket is chosen in Rust, the word
+    /// (`h`, `d`, plural forms) in the view.
+    enum FfiAgeUnit {
+        None,
+        Seconds,
+        Minutes,
+        Hours,
+        Days,
+        Months,
+        Years,
+    }
+
     /// One row of the Containers dock's tree (containers plan C2): a
     /// flattened `container_core::tree::TreeNode`, parent-qualified like
     /// `FfiTestNode`. `kind` is the node kind's stable id (`connection`,
-    /// `containers-group`, `container`, `image`, ...), `icon` the icon key
-    /// the view looks up — both decided in Rust so the view never branches
-    /// on a status string.
+    /// `containers-group`, `container`, `image`, ...) — group rows carry
+    /// no `name`, the view labels them by kind. `icon` is the icon key the
+    /// view looks up. Every other field is discrete data (a status code,
+    /// an exit code, an age bucket, counts, bytes) or engine-supplied
+    /// text (`name`, `statusText`, `detail`, `tooltip`); nothing is
+    /// pre-worded in Rust.
     struct FfiContainerNode {
         id: QString,
         #[cxx_name = "parentId"]
         parent_id: QString,
         kind: QString,
         name: QString,
-        status: QString,
-        detail: QString,
         #[cxx_name = "connectionId"]
         connection_id: QString,
         /// The engine's own id for the row (container/image/network/pod
@@ -5273,8 +5307,28 @@ mod ffi {
         /// empty for groups. What "Copy ID" copies.
         #[cxx_name = "resourceId"]
         resource_id: QString,
-        tooltip: QString,
         icon: QString,
+        status: FfiContainerNodeStatus,
+        #[cxx_name = "statusText"]
+        status_text: QString,
+        #[cxx_name = "exitCode"]
+        exit_code: i64,
+        #[cxx_name = "ageUnit"]
+        age_unit: FfiAgeUnit,
+        #[cxx_name = "ageValue"]
+        age_value: i64,
+        /// Group rows: items in the group; networks and pods: connected
+        /// containers. `-1` when not applicable.
+        count: i64,
+        /// Compose rows: running / total containers. `-1` when not
+        /// applicable.
+        running: i64,
+        total: i64,
+        /// Images: size in bytes. `-1` when not applicable.
+        #[cxx_name = "sizeBytes"]
+        size_bytes: i64,
+        detail: QString,
+        tooltip: QString,
     }
 
     /// Where one connection stands: `state` is one of `disconnected`,

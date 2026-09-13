@@ -21,6 +21,7 @@ use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
 use container_core::connection::ConnectionConfig;
+use container_core::model::{Age, AgeUnit};
 use container_core::snapshot::EngineSnapshot;
 use container_core::tree::{self, ConnectionRow, ConnectionState};
 use container_core::watcher::{self, ContainerEvent, ContainerEventKind, WatcherHandle};
@@ -62,18 +63,67 @@ fn work_dir() -> std::path::PathBuf {
         .unwrap_or_default()
 }
 
+fn to_ffi_status(status: tree::NodeStatus) -> ffi::FfiContainerNodeStatus {
+    use ffi::FfiContainerNodeStatus as Ffi;
+    use tree::NodeStatus;
+    match status {
+        NodeStatus::None => Ffi::None,
+        NodeStatus::Disconnected => Ffi::Disconnected,
+        NodeStatus::Connecting => Ffi::Connecting,
+        NodeStatus::Connected => Ffi::Connected,
+        NodeStatus::Error => Ffi::Error,
+        NodeStatus::Running => Ffi::Running,
+        NodeStatus::Paused => Ffi::Paused,
+        NodeStatus::Restarting => Ffi::Restarting,
+        NodeStatus::Exited => Ffi::Exited,
+        NodeStatus::Created => Ffi::Created,
+        NodeStatus::Dead => Ffi::Dead,
+        NodeStatus::Other => Ffi::Other,
+    }
+}
+
+fn to_ffi_age_unit(age: Option<Age>) -> ffi::FfiAgeUnit {
+    match age.map(|age| age.unit) {
+        None => ffi::FfiAgeUnit::None,
+        Some(AgeUnit::Seconds) => ffi::FfiAgeUnit::Seconds,
+        Some(AgeUnit::Minutes) => ffi::FfiAgeUnit::Minutes,
+        Some(AgeUnit::Hours) => ffi::FfiAgeUnit::Hours,
+        Some(AgeUnit::Days) => ffi::FfiAgeUnit::Days,
+        Some(AgeUnit::Months) => ffi::FfiAgeUnit::Months,
+        Some(AgeUnit::Years) => ffi::FfiAgeUnit::Years,
+    }
+}
+
+/// `-1` is the "not applicable" sentinel for a count a view only displays
+/// — the same convention `FfiTestNode::durationMs` uses.
+fn optional_count(value: Option<usize>) -> i64 {
+    value.map(|value| value as i64).unwrap_or(-1)
+}
+
 fn to_ffi_node(node: &tree::TreeNode) -> ffi::FfiContainerNode {
+    let (running, total) = node
+        .running
+        .map(|(running, total)| (running as i64, total as i64))
+        .unwrap_or((-1, -1));
     ffi::FfiContainerNode {
         id: QString::from(node.id.as_str()),
         parent_id: QString::from(node.parent_id.as_str()),
         kind: QString::from(node.kind.id()),
         name: QString::from(node.name.as_str()),
-        status: QString::from(node.status.as_str()),
-        detail: QString::from(node.detail.as_str()),
         connection_id: QString::from(node.connection_id.as_str()),
         resource_id: QString::from(node.resource_id.as_str()),
-        tooltip: QString::from(node.tooltip.as_str()),
         icon: QString::from(node.icon),
+        status: to_ffi_status(node.status),
+        status_text: QString::from(node.status_text.as_str()),
+        exit_code: node.exit_code,
+        age_unit: to_ffi_age_unit(node.age),
+        age_value: node.age.map(|age| age.value as i64).unwrap_or(-1),
+        count: optional_count(node.count),
+        running,
+        total,
+        size_bytes: node.size_bytes.map(|bytes| bytes as i64).unwrap_or(-1),
+        detail: QString::from(node.detail.as_str()),
+        tooltip: QString::from(node.tooltip.as_str()),
     }
 }
 
@@ -140,7 +190,7 @@ impl ffi::ContainerService {
             .unwrap_or(ConnectionState::Disconnected);
         let message = match &state {
             ConnectionState::Error(message) => message.clone(),
-            ConnectionState::Connected(info) => info.to_string(),
+            ConnectionState::Connected(info) => info.server_version.clone(),
             _ => String::new(),
         };
         ffi::FfiConnectionState {

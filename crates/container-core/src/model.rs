@@ -40,20 +40,6 @@ pub enum ContainerStatus {
 }
 
 impl ContainerStatus {
-    /// The status word the tree shows: `running`, `paused`, `restarting`,
-    /// `exited (1)`, `created`, `dead`.
-    pub fn label(&self) -> String {
-        match self {
-            ContainerStatus::Running => "running".to_string(),
-            ContainerStatus::Paused => "paused".to_string(),
-            ContainerStatus::Restarting => "restarting".to_string(),
-            ContainerStatus::Exited(code) => format!("exited ({code})"),
-            ContainerStatus::Created => "created".to_string(),
-            ContainerStatus::Dead => "dead".to_string(),
-            ContainerStatus::Other(status) => status.clone(),
-        }
-    }
-
     /// Whether the container's process is alive (running or paused) — the
     /// "stopped containers" filter's complement.
     pub fn is_live(&self) -> bool {
@@ -607,49 +593,46 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
-/// `human_age(then, now)`: the short relative age the tree shows —
-/// `"5 s"`, `"12 min"`, `"2 h"`, `"3 d"`, `"6 mo"`, `"2 y"`. Empty when
-/// `then` does not parse or lies in the future.
-pub fn human_age(then: &str, now: SystemTime) -> String {
-    let Some(then) = parse_timestamp(then) else {
-        return String::new();
-    };
-    let Ok(elapsed) = now.duration_since(then) else {
-        return String::new();
-    };
-    let seconds = elapsed.as_secs();
+/// The unit a relative age is shown in. The bucket rule lives here; the
+/// words (`"2 h"`, `"3 d"`, translated) are the view's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgeUnit {
+    Seconds,
+    Minutes,
+    Hours,
+    Days,
+    Months,
+    Years,
+}
+
+/// A relative age, already bucketed: `(Hours, 2)` reads "2 h".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Age {
+    pub unit: AgeUnit,
+    pub value: u64,
+}
+
+/// `age(then, now)`: how long ago `then` was, in the largest unit that
+/// gives a whole number — seconds under a minute, minutes under an hour,
+/// hours under a day, days under 30, months under a year, else years.
+/// `None` when `then` does not parse or lies in the future.
+pub fn age(then: &str, now: SystemTime) -> Option<Age> {
+    let then = parse_timestamp(then)?;
+    let seconds = now.duration_since(then).ok()?.as_secs();
     const MINUTE: u64 = 60;
     const HOUR: u64 = 60 * MINUTE;
     const DAY: u64 = 24 * HOUR;
     const MONTH: u64 = 30 * DAY;
     const YEAR: u64 = 365 * DAY;
-    match seconds {
-        s if s < MINUTE => format!("{s} s"),
-        s if s < HOUR => format!("{} min", s / MINUTE),
-        s if s < DAY => format!("{} h", s / HOUR),
-        s if s < MONTH => format!("{} d", s / DAY),
-        s if s < YEAR => format!("{} mo", s / MONTH),
-        s => format!("{} y", s / YEAR),
-    }
-}
-
-/// `1.2 GB` / `275 MB` / `8.4 MB` / `512 kB` / `12 B` — decimal units, as
-/// both CLIs print sizes.
-pub fn human_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "kB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else if value >= 100.0 {
-        format!("{value:.0} {}", UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
-    }
+    let (unit, value) = match seconds {
+        s if s < MINUTE => (AgeUnit::Seconds, s),
+        s if s < HOUR => (AgeUnit::Minutes, s / MINUTE),
+        s if s < DAY => (AgeUnit::Hours, s / HOUR),
+        s if s < MONTH => (AgeUnit::Days, s / DAY),
+        s if s < YEAR => (AgeUnit::Months, s / MONTH),
+        s => (AgeUnit::Years, s / YEAR),
+    };
+    Some(Age { unit, value })
 }
 
 #[cfg(test)]
@@ -693,9 +676,8 @@ mod tests {
     }
 
     #[test]
-    fn status_labels_and_liveness() {
-        assert_eq!(ContainerStatus::Exited(3).label(), "exited (3)");
-        assert_eq!(ContainerStatus::Running.label(), "running");
+    fn liveness() {
+        assert!(ContainerStatus::Running.is_live());
         assert!(ContainerStatus::Paused.is_live());
         assert!(!ContainerStatus::Exited(0).is_live());
         assert!(!ContainerStatus::Created.is_live());
@@ -827,25 +809,17 @@ mod tests {
     }
 
     #[test]
-    fn human_age_buckets() {
+    fn age_buckets() {
         let now = UNIX_EPOCH + Duration::from_secs(20_707 * 86_400);
-        let then = |text: &str| human_age(text, now);
-        assert_eq!(then("2026-09-10T23:59:30Z"), "30 s");
-        assert_eq!(then("2026-09-10T23:48:00Z"), "12 min");
-        assert_eq!(then("2026-09-10T21:00:00Z"), "3 h");
-        assert_eq!(then("2026-09-08T00:00:00Z"), "3 d");
-        assert_eq!(then("2026-07-01T00:00:00Z"), "2 mo");
-        assert_eq!(then("2024-01-01T00:00:00Z"), "2 y");
-        assert_eq!(then("2026-09-12T00:00:00Z"), "", "future is blank");
-        assert_eq!(then("0001-01-01T00:00:00Z"), "");
-    }
-
-    #[test]
-    fn human_size_uses_decimal_units() {
-        assert_eq!(human_size(12), "12 B");
-        assert_eq!(human_size(512_000), "512 kB");
-        assert_eq!(human_size(8_420_000), "8.4 MB");
-        assert_eq!(human_size(274_852_063), "275 MB");
-        assert_eq!(human_size(2_260_000_000), "2.3 GB");
+        let at = |text: &str| age(text, now);
+        let bucket = |unit, value| Some(Age { unit, value });
+        assert_eq!(at("2026-09-10T23:59:30Z"), bucket(AgeUnit::Seconds, 30));
+        assert_eq!(at("2026-09-10T23:48:00Z"), bucket(AgeUnit::Minutes, 12));
+        assert_eq!(at("2026-09-10T21:00:00Z"), bucket(AgeUnit::Hours, 3));
+        assert_eq!(at("2026-09-08T00:00:00Z"), bucket(AgeUnit::Days, 3));
+        assert_eq!(at("2026-07-01T00:00:00Z"), bucket(AgeUnit::Months, 2));
+        assert_eq!(at("2024-01-01T00:00:00Z"), bucket(AgeUnit::Years, 2));
+        assert_eq!(at("2026-09-12T00:00:00Z"), None, "future is unknown");
+        assert_eq!(at("0001-01-01T00:00:00Z"), None);
     }
 }

@@ -16,6 +16,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMenu>
 #include <QPoint>
 #include <QSplitter>
@@ -71,6 +72,121 @@ QToolButton *iconButton(const char *mask, const QString &toolTip, QWidget *paren
     button->setFocusPolicy(Qt::NoFocus);
     button->setToolTip(toolTip);
     return button;
+}
+
+// Group rows carry no name: the label is the view's, by kind.
+QString kindLabel(const QString &kind)
+{
+    if (kind == QStringLiteral("containers-group")) {
+        return QObject::tr("Containers");
+    }
+    if (kind == QStringLiteral("images-group")) {
+        return QObject::tr("Images");
+    }
+    if (kind == QStringLiteral("networks-group")) {
+        return QObject::tr("Networks");
+    }
+    if (kind == QStringLiteral("volumes-group")) {
+        return QObject::tr("Volumes");
+    }
+    if (kind == QStringLiteral("compose-group")) {
+        return QObject::tr("Compose");
+    }
+    if (kind == QStringLiteral("pods-group")) {
+        return QObject::tr("Pods");
+    }
+    return QString();
+}
+
+QString ageText(FfiAgeUnit unit, qint64 value)
+{
+    const int n = static_cast<int>(value);
+    switch (unit) {
+    case FfiAgeUnit::None:
+        return QString();
+    case FfiAgeUnit::Seconds:
+        return QObject::tr("%n s", "age in seconds", n);
+    case FfiAgeUnit::Minutes:
+        return QObject::tr("%n min", "age in minutes", n);
+    case FfiAgeUnit::Hours:
+        return QObject::tr("%n h", "age in hours", n);
+    case FfiAgeUnit::Days:
+        return QObject::tr("%n d", "age in days", n);
+    case FfiAgeUnit::Months:
+        return QObject::tr("%n mo", "age in months", n);
+    case FfiAgeUnit::Years:
+        return QObject::tr("%n y", "age in years", n);
+    }
+    return QString();
+}
+
+// The status word for a row. Which status applies was decided in Rust;
+// only the wording happens here.
+QString statusWord(const FfiContainerNode &node)
+{
+    switch (node.status) {
+    case FfiContainerNodeStatus::None:
+        return QString();
+    case FfiContainerNodeStatus::Disconnected:
+        return QObject::tr("disconnected");
+    case FfiContainerNodeStatus::Connecting:
+        return QObject::tr("connecting...");
+    case FfiContainerNodeStatus::Connected:
+        // `detail` is the engine's product name, `statusText` its version.
+        return QObject::tr("%1 Engine %2").arg(QString(node.detail), QString(node.statusText));
+    case FfiContainerNodeStatus::Error:
+        // One row, one line: the hint lines stay in the tooltip/Dashboard.
+        return QObject::tr("error: %1").arg(QString(node.statusText).section(QLatin1Char('\n'), 0, 0));
+    case FfiContainerNodeStatus::Running:
+        return QObject::tr("running");
+    case FfiContainerNodeStatus::Paused:
+        return QObject::tr("paused");
+    case FfiContainerNodeStatus::Restarting:
+        return QObject::tr("restarting");
+    case FfiContainerNodeStatus::Exited:
+        return QObject::tr("exited (%1)").arg(node.exitCode);
+    case FfiContainerNodeStatus::Created:
+        return QObject::tr("created");
+    case FfiContainerNodeStatus::Dead:
+        return QObject::tr("dead");
+    case FfiContainerNodeStatus::Other:
+        return QString(node.statusText);
+    }
+    return QString();
+}
+
+// The Status column: the status word with its age, a compose row's
+// running/total, a group's or network's count, or an image's/volume's age.
+QString statusColumn(const FfiContainerNode &node)
+{
+    const QString word = statusWord(node);
+    const QString age = ageText(node.ageUnit, node.ageValue);
+    if (!word.isEmpty()) {
+        return age.isEmpty() ? word : QObject::tr("%1 (%2)").arg(word, age);
+    }
+    if (node.running >= 0) {
+        return QObject::tr("%1/%2 running").arg(node.running).arg(node.total);
+    }
+    if (node.kind == QStringLiteral("network")) {
+        return QObject::tr("%n container(s)", nullptr, static_cast<int>(node.count));
+    }
+    if (node.count >= 0) {
+        return QString::number(node.count);
+    }
+    return age;
+}
+
+// The Details column: engine text as-is, or an image's size in the
+// locale's own SI units, or a pod's container count.
+QString detailColumn(const FfiContainerNode &node)
+{
+    if (node.sizeBytes >= 0) {
+        return QLocale().formattedDataSize(node.sizeBytes, 1, QLocale::DataSizeSIFormat);
+    }
+    if (node.kind == QStringLiteral("pod")) {
+        return QObject::tr("%n container(s)", nullptr, static_cast<int>(node.count));
+    }
+    return QString(node.detail);
 }
 
 QLabel *readOnlyValue(QWidget *parent)
@@ -271,9 +387,12 @@ void ContainersPanel::onTreeChanged()
         const QString parentId = QString(node.parentId);
         QTreeWidgetItem *parentItem = parentId.isEmpty() ? nullptr : itemsById_.value(parentId);
         auto *item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
-        item->setText(0, QString(node.name));
-        item->setText(1, QString(node.status));
-        item->setText(2, QString(node.detail));
+        const QString name = QString(node.name);
+        const QString status = statusColumn(node);
+        const QString detail = detailColumn(node);
+        item->setText(0, name.isEmpty() ? kindLabel(QString(node.kind)) : name);
+        item->setText(1, status);
+        item->setText(2, detail);
         item->setIcon(0, rowIcon(QString(node.icon)));
         const QString tooltip = QString(node.tooltip);
         if (!tooltip.isEmpty()) {
@@ -282,8 +401,12 @@ void ContainersPanel::onTreeChanged()
         item->setData(0, kIdRole, id);
         item->setData(0, kKindRole, QString(node.kind));
         item->setData(0, kConnectionRole, QString(node.connectionId));
-        item->setData(0, kStatusRole, QString(node.status));
-        item->setData(0, kDetailRole, QString(node.detail));
+        // The Dashboard has room for the whole error, hint lines included.
+        item->setData(0, kStatusRole,
+                      node.status == FfiContainerNodeStatus::Error
+                        ? QObject::tr("error: %1").arg(QString(node.statusText))
+                        : status);
+        item->setData(0, kDetailRole, detail);
         item->setData(0, kResourceIdRole, QString(node.resourceId));
         // A connection row opens by default so a fresh connection shows
         // its groups without a click; groups and deeper rows start

@@ -38,6 +38,8 @@ build-core = { path = "../build-core" }
 # D3: the debugger.
 dap-core = { path = "../dap-core" }
 container-core = { path = "../container-core" }
+# C6: the Docker Hub worker behind image-name completion (`bridge/language/containers.rs`).
+container-registry = { path = "../container-registry" }
 process-exec = { path = "../process-exec" }
 mcp-server = { path = "../mcp-server" }
 ai-chat-core = { path = "../ai-chat-core" }

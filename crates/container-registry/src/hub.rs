@@ -2,10 +2,12 @@
 //! completion, and a repository's tags once the prefix has a `:`.
 //!
 //! Only what the editor's completion needs — registry browsing, tokens
-//! and private registries are C7's `registry.rs`. Blocking `reqwest`, the
-//! same TLS stack `ai-chat-core` already pulls in; callers put it on a
-//! worker thread. Short timeout: a popup that waits three seconds for a
-//! network answer is worse than one without Hub results.
+//! and private registries are C7's, in this crate. Blocking `reqwest`,
+//! the same TLS stack `ai-chat-core` already pulls in; callers put it on
+//! a worker thread. Short timeout: a popup that waits three seconds for a
+//! network answer is worse than one without Hub results. Parsing lands in
+//! [`container_core::completion::HubRepo`], the pure DTO the ranking
+//! takes, so the ranking never sees a client.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -18,18 +20,7 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 const SEARCH_PAGE_SIZE: u32 = 25;
 const TAGS_PAGE_SIZE: u32 = 50;
 
-/// One Hub search hit, reduced to what completion ranks and shows.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct HubRepo {
-    #[serde(rename = "repo_name")]
-    pub name: String,
-    #[serde(default)]
-    pub is_official: bool,
-    #[serde(default)]
-    pub star_count: u64,
-    #[serde(default, rename = "short_description")]
-    pub description: String,
-}
+pub use container_core::completion::HubRepo;
 
 #[derive(Deserialize)]
 struct SearchResponse {
@@ -49,7 +40,7 @@ struct Tag {
 }
 
 /// Search Hub repositories matching `query` — official images come back
-/// flagged, ranking is [`crate::completion::image_completions`]'s.
+/// flagged, ranking is `container_core::completion::image_completions`'s.
 pub fn search(query: &str) -> Result<Vec<HubRepo>, String> {
     let response = client()?
         .get(SEARCH_URL)
@@ -66,7 +57,7 @@ pub fn search(query: &str) -> Result<Vec<HubRepo>, String> {
 }
 
 /// The most recent tags of a Hub repository (`library/nginx`,
-/// `bitnami/redis` — [`crate::image_ref::ImageRef::hub_repository`]'s shape).
+/// `bitnami/redis` — `container_core::image_ref::ImageRef::hub_repository`'s shape).
 pub fn tags(repository: &str) -> Result<Vec<String>, String> {
     let response = client()?
         .get(format!("{TAGS_URL}{repository}/tags/"))

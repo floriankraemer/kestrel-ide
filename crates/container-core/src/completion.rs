@@ -1,8 +1,28 @@
 //! Image-name completion (C6): one ranking over what the local engine has
 //! and what Docker Hub answered, for the editor's popup on a Dockerfile
 //! `FROM` or a compose `image:`.
+//!
+//! Pure: the Hub answer arrives as already-fetched [`HubRepo`]s — the
+//! client that fetches them is `container-registry`'s `hub` module, kept
+//! out of this crate so no HTTP stack (and reqwest's private tokio
+//! runtime) enters the tree beneath `run-core`.
 
-use crate::hub::HubRepo;
+use serde::Deserialize;
+
+/// One Docker Hub search hit, reduced to what completion ranks and shows.
+/// A plain DTO with Hub's own field names so `container-registry` parses
+/// straight into it; nothing here performs I/O.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HubRepo {
+    #[serde(rename = "repo_name")]
+    pub name: String,
+    #[serde(default)]
+    pub is_official: bool,
+    #[serde(default)]
+    pub star_count: u64,
+    #[serde(default, rename = "short_description")]
+    pub description: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ImageCompletionKind {

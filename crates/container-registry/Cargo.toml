@@ -1,0 +1,19 @@
+[package]
+name = "container-registry"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `ImageRef::hub_repository` decides which Hub repository a typed prefix
+# names; the pure DTO the answers are parsed into (`completion::HubRepo`)
+# lives there too, so the ranking stays network-free.
+container-core = { path = "../container-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Blocking HTTP on a `std::thread`, the same feature set `ai-chat-core`
+# pulls (`rustls-tls`, not `native-tls`, so the MXE Windows cross-build
+# never vendors OpenSSL). reqwest's blocking client carries its own private
+# tokio runtime, which is why this is its own crate: `container-core` sits
+# under `run-core`, `build-core` and `dap-core`, whose layering gate
+# forbids tokio anywhere in their tree.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }

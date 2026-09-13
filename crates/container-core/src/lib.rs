@@ -16,7 +16,8 @@
 //! configurations, registries, run targets and recreate/editing land in
 //! later tasks and are not implemented yet.
 
-/// Image-name completion ranking (C6) over local images + Docker Hub.
+/// Image-name completion ranking (C6) over local images + already-fetched
+/// Docker Hub hits (`container-registry` fetches them).
 pub mod completion;
 /// Connections: [`connection::Engine`], [`connection::ConnectionKind`], and
 /// [`connection::Invocation`] — a persisted connection turned into an
@@ -34,8 +35,6 @@ pub mod files;
 /// Image operations (C4): `rmi`/`image prune`/`tag`/`history`/`save`/`load`
 /// argv builders, the `history` parser (Docker NDJSON and Podman array),
 /// `containers_using` and local image-name completion.
-/// Docker Hub search/tags (C6) behind image-name completion.
-pub mod hub;
 /// Image references in editor text (C6): parsing, the one under the
 /// caret in a `FROM`/`image:` line, and the completion trigger.
 pub mod image_ref;

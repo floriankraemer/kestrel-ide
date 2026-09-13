@@ -20,9 +20,11 @@ use std::time::{Duration, Instant};
 use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 
-use container_core::completion::{image_completions, ImageCompletion, ImageCompletionKind};
-use container_core::hub::{self, HubRepo};
+use container_core::completion::{
+    image_completions, HubRepo, ImageCompletion, ImageCompletionKind,
+};
 use container_core::image_ref::{self, ImageRef};
+use container_registry::hub;
 
 use crate::bridge::ffi;
 

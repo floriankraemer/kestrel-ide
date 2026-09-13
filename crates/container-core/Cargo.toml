@@ -12,9 +12,6 @@ pty-core = { path = "../pty-core" }
 # against, a node tree cannot cross two of them (the `edit-ops` precedent).
 syntax-core = { path = "../syntax-core" }
 tree-sitter = "0.26"
-# C6: Docker Hub search/tags for image-name completion — the same feature
-# set `ai-chat-core` already pulls, so no second TLS stack enters the tree.
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

@@ -706,12 +706,21 @@ dependencies = [
  "app-config",
  "process-exec",
  "pty-core",
- "reqwest",
  "serde",
  "serde_json",
  "syntax-core",
  "tempfile",
  "tree-sitter",
+]
+
+[[package]]
+name = "container-registry"
+version = "0.1.0"
+dependencies = [
+ "container-core",
+ "reqwest",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -6857,6 +6866,7 @@ dependencies = [
  "build-core",
  "color-theme",
  "container-core",
+ "container-registry",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",

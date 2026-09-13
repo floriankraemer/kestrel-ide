@@ -54,15 +54,6 @@ QString pickRemote(QWidget *anchor, VcsService *vcsService)
     return ok ? remote : QString();
 }
 
-namespace {
-
-/// `merge`/`rebase`/`cherryPick`/`revertCommit` all share the same outcome
-/// shape: silence on success (the branch/status signals every other write
-/// already fires are enough), and a conflict shown as what it is rather
-/// than a bare error — the Changes dock's existing "Merge Conflicts" group
-/// already reflects it via the same `statusChanged`. A full merge editor is
-/// out of scope (ADR-0031 amendment); this only points the user at
-/// "Resolve..." in the Changes dock.
 void watchIntegrationResult(QWidget *anchor, VcsService *vcsService, const QString &verb)
 {
     auto connection = std::make_shared<QMetaObject::Connection>();
@@ -81,8 +72,6 @@ void watchIntegrationResult(QWidget *anchor, VcsService *vcsService, const QStri
           QMessageBox::warning(anchor, verb, error.message);
       });
 }
-
-} // namespace
 
 void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*globalPos*/)
 {

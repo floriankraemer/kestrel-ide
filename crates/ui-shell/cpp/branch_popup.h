@@ -17,6 +17,16 @@ namespace ui_shell {
 // Fetch actions, rather than two copies of the same picker.
 QString pickRemote(QWidget *anchor, VcsService *vcsService);
 
+// R7: shared outcome handling for `merge`/`rebase`/`cherryPick`/
+// `revertCommit` — silence on success (the branch/status signals every
+// other write already fires are enough), a conflict shown as what it is
+// (pointing at the Changes dock's "Merge Conflicts" group and
+// "Resolve...") rather than a bare error, since a full merge editor is out
+// of scope (ADR-0031 amendment). Shared between the branch popup's own
+// Merge/Rebase actions and the commit log's row context menu's Cherry-pick/
+// Revert Commit.
+void watchIntegrationResult(QWidget *anchor, VcsService *vcsService, const QString &verb);
+
 // R7: the branch popup — Local and Remote sections with search, and a
 // per-branch context menu (Checkout, Merge into Current, Rebase Current
 // onto, Rename, Delete, Push, Compare with Current). Replaces the flat

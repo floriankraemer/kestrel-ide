@@ -576,6 +576,7 @@ fn main() {
         .cpp_file("cpp/recent_projects_menu.cpp")
         .cpp_file("cpp/project_tree_dock.cpp")
         .cpp_file("cpp/search_results_panel.cpp")
+        .cpp_file("cpp/search_preview_pane.cpp")
         .cpp_file("cpp/refactor_preview_dialog.cpp")
         // Declares Q_OBJECT, so its header is listed too — that is what
         // runs moc on it.

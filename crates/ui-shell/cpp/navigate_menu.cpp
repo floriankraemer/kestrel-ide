@@ -39,11 +39,15 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
     QObject::connect(findUsagesAction, &QAction::triggered, window,
                       [docks, findUsagesPanel, editorTabs]() {
         const QString name = editorTabs->wordUnderCursor();
-        if (name.isEmpty()) {
+        const QString path = editorTabs->currentPath();
+        if (name.isEmpty() || path.isEmpty()) {
             return;
         }
+        // R8: from the caret, so a running language server's own
+        // `textDocument/references` answer can be tried first.
+        const auto at = editorTabs->lspPositionAt(editorTabs->caretPosition());
         docks->show(QStringLiteral("findUsages"));
-        findUsagesPanel->findUsages(name);
+        findUsagesPanel->findUsagesAt(name, path, at.first, at.second);
     });
 
     QAction *goToImplementationAction =

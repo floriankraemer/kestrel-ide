@@ -1,16 +1,20 @@
 #include "search_results_panel.h"
 
+#include "editor_tabs.h"
 #include "highlight_delegate.h"
 #include "icon_cache.h"
 #include "refactor_preview_dialog.h"
+#include "search_preview_pane.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSplitter>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 #include <QVariantList>
@@ -23,21 +27,42 @@ constexpr int kLineRole = Qt::UserRole + 1;
 constexpr int kStartRole = Qt::UserRole + 2;
 constexpr int kEndRole = Qt::UserRole + 3;
 
+// R8's scope combo. `Directory...` (a picker dialog) is out of scope for
+// this pass — see the PR's Plan deviations — so the choices are the three
+// that need no extra UI: the whole project, every open tab, or just the
+// one the caret is in.
+enum ScopeChoice
+{
+    kScopeProject = 0,
+    kScopeOpenFiles = 1,
+    kScopeCurrentFile = 2,
+};
+
 } // namespace
 
-SearchResultsPanel::SearchResultsPanel(SearchModel *searchModel, OpenAt openAt, QWidget *parent)
+SearchResultsPanel::SearchResultsPanel(SearchModel *searchModel, ui_shell::EditorTabs *editorTabs,
+                                        OpenAt openAt, QWidget *parent)
   : QWidget(parent)
   , searchModel_(searchModel)
+  , editorTabs_(editorTabs)
   , openAt_(std::move(openAt))
 {
     queryEdit_ = new QLineEdit(this);
     queryEdit_->setPlaceholderText(tr("Find in files..."));
     regexCheck_ = new QCheckBox(tr("Regex"), this);
     caseCheck_ = new QCheckBox(tr("Match case"), this);
+    wholeWordCheck_ = new QCheckBox(tr("Whole word"), this);
     replaceEdit_ = new QLineEdit(this);
     replaceEdit_->setPlaceholderText(tr("Replace with..."));
     auto *replaceAllButton = new QPushButton(tr("Replace All"), this);
     statusLabel_ = new QLabel(this);
+
+    maskEdit_ = new QLineEdit(this);
+    maskEdit_->setPlaceholderText(tr("File mask (*.rs, !*_test.rs)"));
+    scopeCombo_ = new QComboBox(this);
+    scopeCombo_->addItem(tr("Project"), kScopeProject);
+    scopeCombo_->addItem(tr("Open Files"), kScopeOpenFiles);
+    scopeCombo_->addItem(tr("Current File"), kScopeCurrentFile);
 
     results_ = new QTreeWidget(this);
     results_->setColumnCount(1);
@@ -45,26 +70,45 @@ SearchResultsPanel::SearchResultsPanel(SearchModel *searchModel, OpenAt openAt, 
     results_->setUniformRowHeights(true);
     results_->setItemDelegate(new HighlightDelegate(results_));
 
+    preview_ = new ui_shell::SearchPreviewPane(this);
+
     auto *topRow = new QHBoxLayout();
     topRow->addWidget(queryEdit_, 1);
     topRow->addWidget(regexCheck_);
     topRow->addWidget(caseCheck_);
+    topRow->addWidget(wholeWordCheck_);
+
+    auto *scopeRow = new QHBoxLayout();
+    scopeRow->addWidget(maskEdit_, 1);
+    scopeRow->addWidget(scopeCombo_);
 
     auto *replaceRow = new QHBoxLayout();
     replaceRow->addWidget(replaceEdit_, 1);
     replaceRow->addWidget(replaceAllButton);
 
+    auto *splitter = new QSplitter(Qt::Horizontal, this);
+    splitter->addWidget(results_);
+    splitter->addWidget(preview_);
+    splitter->setStretchFactor(0, 1);
+    splitter->setStretchFactor(1, 1);
+
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(topRow);
+    layout->addLayout(scopeRow);
     layout->addLayout(replaceRow);
     layout->addWidget(statusLabel_);
-    layout->addWidget(results_, 1);
+    layout->addWidget(splitter, 1);
 
     connect(queryEdit_, &QLineEdit::returnPressed, this, &SearchResultsPanel::runSearch);
     connect(regexCheck_, &QCheckBox::toggled, this, &SearchResultsPanel::runSearch);
     connect(caseCheck_, &QCheckBox::toggled, this, &SearchResultsPanel::runSearch);
+    connect(wholeWordCheck_, &QCheckBox::toggled, this, &SearchResultsPanel::runSearch);
+    connect(maskEdit_, &QLineEdit::returnPressed, this, &SearchResultsPanel::runSearch);
+    connect(scopeCombo_, &QComboBox::currentIndexChanged, this, &SearchResultsPanel::runSearch);
     connect(replaceAllButton, &QPushButton::clicked, this, &SearchResultsPanel::replaceAll);
     connect(results_, &QTreeWidget::itemDoubleClicked, this, &SearchResultsPanel::openMatch);
+    connect(results_, &QTreeWidget::currentItemChanged, this,
+            &SearchResultsPanel::previewSelection);
 
     connect(searchModel_, &SearchModel::indexReady, this, [this]() {
         statusLabel_->setText(tr("Index ready."));
@@ -73,13 +117,17 @@ SearchResultsPanel::SearchResultsPanel(SearchModel *searchModel, OpenAt openAt, 
         statusLabel_->setText(tr("Index build failed: %1").arg(message));
     });
     connect(searchModel_, &SearchModel::searchBatch, this, &SearchResultsPanel::appendHits);
-    connect(searchModel_, &SearchModel::searchFinished, this, [this](quint64 generation) {
+    connect(searchModel_, &SearchModel::searchFinished, this,
+            [this](quint64 generation, quint32 totalHint) {
         if (generation != generation_) {
             return;
         }
-        // A replace re-runs the search to drop now-stale rows; its report is
-        // what the user wants to read, so it survives that refresh.
-        const QString counts = tr("%1 match(es).").arg(matchCount_);
+        // R8: "N of M, refine" only when the cap actually cut the scan
+        // short — an uncapped search's total_hint always equals the
+        // number of rows shown, so the plain count is the honest phrasing.
+        const QString counts = totalHint > static_cast<quint32>(matchCount_)
+          ? tr("Showing %1 of %2 match(es) — refine your search.").arg(matchCount_).arg(totalHint)
+          : tr("%1 match(es).").arg(matchCount_);
         statusLabel_->setText(pendingReplaceStatus_.isEmpty()
                                 ? counts
                                 : pendingReplaceStatus_ + QStringLiteral(" ") + counts);
@@ -139,10 +187,40 @@ void SearchResultsPanel::runSearch()
         return;
     }
     results_->clear();
+    preview_->clearPreview();
     matchCount_ = 0;
     ++generation_;
     statusLabel_->setText(tr("Searching..."));
-    searchModel_->search(pattern, regexCheck_->isChecked(), caseCheck_->isChecked(), generation_);
+    FfiSearchOptions options;
+    options.is_regex = regexCheck_->isChecked();
+    options.case_sensitive = caseCheck_->isChecked();
+    options.whole_word = wholeWordCheck_->isChecked();
+    searchModel_->search(pattern, options, maskEdit_->text(), resolveScopePaths(), generation_);
+}
+
+QStringList SearchResultsPanel::resolveScopePaths() const
+{
+    switch (scopeCombo_->currentData().toInt()) {
+    case kScopeOpenFiles:
+        return editorTabs_->openPaths();
+    case kScopeCurrentFile: {
+        const QString path = editorTabs_->currentPath();
+        return path.isEmpty() ? QStringList() : QStringList{path};
+    }
+    case kScopeProject:
+    default:
+        return QStringList();
+    }
+}
+
+void SearchResultsPanel::previewSelection()
+{
+    QTreeWidgetItem *item = results_->currentItem();
+    if (!item || item->childCount() > 0) {
+        return;
+    }
+    preview_->showMatch(item->data(0, kPathRole).toString(), item->data(0, kLineRole).toInt(),
+                        item->data(0, kStartRole).toInt(), item->data(0, kEndRole).toInt());
 }
 
 QTreeWidgetItem *SearchResultsPanel::fileGroup(const QString &path)

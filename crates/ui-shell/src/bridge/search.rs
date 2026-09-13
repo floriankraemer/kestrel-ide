@@ -486,11 +486,22 @@ impl ffi::SearchModel {
     pub fn search(
         self: Pin<&mut Self>,
         pattern: &QString,
-        is_regex: bool,
-        case_sensitive: bool,
+        options: ffi::FfiSearchOptions,
+        mask: &QString,
+        scope_paths: &QStringList,
         generation: u64,
     ) {
         let pattern = pattern.to_string();
+        let ffi::FfiSearchOptions {
+            is_regex,
+            case_sensitive,
+            whole_word,
+        } = options;
+        let mask = mask.to_string();
+        let scope_paths: Vec<std::path::PathBuf> = scope_paths
+            .iter()
+            .map(|p| std::path::PathBuf::from(p.to_string()))
+            .collect();
         let qt_thread = self.qt_thread();
         let slot = std::sync::Arc::clone(&self.index);
         let guard = std::sync::Arc::clone(&self.find_in_files);
@@ -508,10 +519,29 @@ impl ffi::SearchModel {
                 });
                 return;
             };
-            let result = index.search_with(
+            let file_mask = match index_core::FileMask::parse(&mask) {
+                Ok(mask) => mask,
+                Err(err) => {
+                    let message = err.to_string();
+                    drop(index_guard);
+                    let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                        model
+                            .as_mut()
+                            .search_failed(generation, QString::from(message.as_str()));
+                    });
+                    return;
+                }
+            };
+            let scope = index_core::SearchScope {
+                paths: (!scope_paths.is_empty()).then_some(scope_paths),
+                mask: file_mask,
+                whole_word,
+            };
+            let result = index.search_scoped(
                 &pattern,
                 is_regex,
                 case_sensitive,
+                &scope,
                 MAX_FIND_IN_FILES_MATCHES,
                 &cancel,
             );
@@ -519,8 +549,9 @@ impl ffi::SearchModel {
             drop(index_guard);
 
             match result {
-                Ok(matches) => {
-                    for chunk in matches.chunks(SEARCH_BATCH_SIZE) {
+                Ok(scoped) => {
+                    let total_hint = scoped.total_hint as u32;
+                    for chunk in scoped.matches.chunks(SEARCH_BATCH_SIZE) {
                         if !guard.is_current(generation) {
                             break;
                         }
@@ -531,7 +562,7 @@ impl ffi::SearchModel {
                         });
                     }
                     let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                        model.as_mut().search_finished(generation);
+                        model.as_mut().search_finished(generation, total_hint);
                     });
                 }
                 Err(err) => {
@@ -1133,6 +1164,101 @@ impl ffi::SearchModel {
                     });
                 }
             }
+        });
+    }
+
+    /// R8: LSP `textDocument/references`, falling back to the index's
+    /// name-based `find_usages` — see `usagesAt`'s doc comment in
+    /// `ffi.rs` for the precedence, and `lsp_core::prefer_lsp_references`
+    /// for the rule itself.
+    ///
+    /// Both legs run inside the one job queued onto the LSP worker thread
+    /// (via `registry::push_lsp_job`), not two racing threads: the worker
+    /// already serialises every call for a project's servers, so doing the
+    /// index read there too is one extra (usually fast) lock acquisition
+    /// rather than a second thread whose result would have to be
+    /// reconciled with this one's. `push_lsp_job` returns `false` when no
+    /// project's servers are running at all (no project open, or between
+    /// projects) — the index-only path below covers exactly that case.
+    pub fn usages_at(
+        self: Pin<&mut Self>,
+        name: &QString,
+        path: &QString,
+        line: u32,
+        character: u32,
+    ) {
+        let name = name.to_string();
+        let path = path.to_string();
+        let qt_thread = self.qt_thread();
+        let slot = std::sync::Arc::clone(&self.index);
+
+        let uri = lsp_core::uri_from_path(&path);
+        let job_name = name.clone();
+        let job_slot = std::sync::Arc::clone(&slot);
+        let job_qt_thread = qt_thread.clone();
+        let queued = crate::bridge::registry::push_lsp_job(Box::new(move |manager| {
+            let lsp_result = manager.references(&uri, line, character, false);
+            let matches = if lsp_core::prefer_lsp_references(&lsp_result) {
+                lsp_result
+                    .unwrap()
+                    .into_iter()
+                    .filter_map(|loc| {
+                        let path = lsp_core::path_from_uri(&loc.uri)?;
+                        Some(index_core::SymbolMatch {
+                            name: job_name.clone(),
+                            kind: None,
+                            path: std::path::PathBuf::from(path),
+                            // LSP positions are 0-based; `SymbolMatch::line`
+                            // is 1-based like every other row this QObject
+                            // emits.
+                            line: loc.line as usize + 1,
+                            col: loc.character as usize,
+                            is_definition: false,
+                            container: None,
+                        })
+                    })
+                    .collect()
+            } else {
+                job_slot
+                    .read()
+                    .unwrap()
+                    .ready()
+                    .and_then(|index| index.find_usages(&job_name).ok())
+                    .unwrap_or_default()
+            };
+            for m in matches {
+                let row = to_ffi_symbol_match(m);
+                let _ = job_qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                    model.as_mut().usages_found(row);
+                });
+            }
+            let _ = job_qt_thread.queue(|mut model: Pin<&mut Self>| {
+                model.as_mut().usages_finished();
+            });
+        }));
+        if queued {
+            return;
+        }
+
+        // No project's servers are running at all: the same index-only
+        // path `findUsages` itself runs, inline rather than a second call
+        // through `self` (already partly moved above).
+        std::thread::spawn(move || {
+            let guard = slot.read().unwrap();
+            let matches = guard
+                .ready()
+                .and_then(|index| index.find_usages(&name).ok())
+                .unwrap_or_default();
+            drop(guard);
+            for m in matches {
+                let row = to_ffi_symbol_match(m);
+                let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                    model.as_mut().usages_found(row);
+                });
+            }
+            let _ = qt_thread.queue(|mut model: Pin<&mut Self>| {
+                model.as_mut().usages_finished();
+            });
         });
     }
 

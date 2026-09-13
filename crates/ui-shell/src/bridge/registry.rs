@@ -174,6 +174,38 @@ pub(crate) fn index_slot() -> mcp_server::IndexHandle {
     std::sync::Arc::clone(INDEX.get_or_init(Default::default))
 }
 
+/// One unit of work for `LanguageService`'s LSP worker thread — the same
+/// closure shape `language/mod.rs` sends over its own job channel.
+/// Re-declared here (rather than imported from `language/mod.rs`, which
+/// keeps it private) since `set_lsp_jobs`/`push_lsp_job` are the shared
+/// side of that same channel.
+pub(crate) type LspJob = Box<dyn FnOnce(&lsp_core::LspManager) + Send>;
+
+thread_local! {
+    /// R8: `SearchModel` has no `LspManager` of its own — cxx-qt gives no
+    /// constructor-injection point, same reasoning as `index_slot` above —
+    /// so Find Usages reaches the live server the same way it reaches the
+    /// live index: through a handle `LanguageService::open_project`
+    /// publishes here when its worker starts, and clears when it stops.
+    static LSP_JOBS: RefCell<Option<std::sync::mpsc::Sender<LspJob>>> = const { RefCell::new(None) };
+}
+
+/// Called by `LanguageService::open_project` (a fresh sender, once its
+/// worker thread is up) and when that worker stops (`None`).
+pub(crate) fn set_lsp_jobs(sender: Option<std::sync::mpsc::Sender<LspJob>>) {
+    LSP_JOBS.with(|cell| *cell.borrow_mut() = sender);
+}
+
+/// Queue `job` on the LSP worker thread. `false` when no project's servers
+/// are running (no project open, or the worker already stopped) — the
+/// caller's index-only fallback covers that case.
+pub(crate) fn push_lsp_job(job: LspJob) -> bool {
+    LSP_JOBS.with(|cell| match cell.borrow().as_ref() {
+        Some(sender) => sender.send(job).is_ok(),
+        None => false,
+    })
+}
+
 /// The handle `apply_mcp_settings` keeps on a running server so a later
 /// call (or app shutdown) can take it down again.
 pub(crate) struct McpControl {

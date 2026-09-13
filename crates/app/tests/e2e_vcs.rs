@@ -915,20 +915,18 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
     // (like `rollbackHunkAtCaret`) finds whichever cached hunk contains it.
     ide.key("ctrl+Home");
 
-    // Drive `vcs.stageHunk` through the VCS menu, the same keyboard-only
-    // reach `e2e_hunk_revert_is_one_undo_never_touches_disk` uses for
-    // `vcs.rollbackHunk` — no coordinate computed for a 1px gutter marker.
-    // Commit, Push, Pull, Fetch, Branches, (separator), Show Diff, Rollback
-    // Hunk, Stage Hunk: one more Down than that test's 6, since Stage Hunk
-    // sits right after Rollback Hunk (`vcs_menu.cpp`).
+    // Drive `vcs.stageHunk` through the VCS menu, opened with the keyboard
+    // and then clicked by its own `vcs_menu_action` label/rect rather than
+    // a fixed arrow-key count — the same reach
+    // `e2e_hunk_revert_is_one_undo_never_touches_disk` uses for
+    // `vcs.rollbackHunk`, both switched off counting Downs because R7's
+    // "Stash Changes.../Unstash..." entries (`vcs_menu.cpp`) moved Rollback
+    // Hunk/Stage Hunk two slots further down the menu.
     ide.key("alt+c");
     ide.wait_for_event(mark, "the VCS menu to open", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "vcs_menu"
     });
-    for _ in 0..7 {
-        ide.key("Down");
-    }
-    ide.key("Return");
+    click_labelled_action(&ide, mark, "vcs_menu_action", "Stage Hunk");
     ide.wait_for_event(mark, "the VCS menu to close", |e| {
         e["ev"] == "dialog_closed" && e["name"] == "vcs_menu"
     });

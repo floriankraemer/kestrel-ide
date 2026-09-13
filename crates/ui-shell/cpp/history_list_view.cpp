@@ -3,11 +3,14 @@
 #include "e2e_mark.h"
 
 #include <QDateTime>
+#include <QFont>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLocale>
 #include <QMenu>
+#include <QPainter>
 #include <QPointer>
+#include <QStyledItemDelegate>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
@@ -21,15 +24,93 @@ constexpr int kCommitIdRole = Qt::UserRole;
 // `populateBody` has replaced its text with the real one, so a later
 // collapse/expand does not re-fetch.
 constexpr int kPlaceholderRole = Qt::UserRole + 1;
+// R7: this row's lane-graph column (int) and the columns its parent lines
+// continue into (`QVariantList` of int) — `LaneGraphDelegate::paint`'s own
+// data.
+constexpr int kLaneRole = Qt::UserRole + 2;
+constexpr int kParentLanesRole = Qt::UserRole + 3;
 
 enum Column
 {
+    kLaneColumn,
     kDateColumn,
     kIdColumn,
     kAuthorColumn,
+    kRefsColumn,
     kSummaryColumn,
     kColumnCount,
 };
+
+// R7: a simple lane graph — one coloured dot per commit, a vertical line
+// through every lane still "live" at this row, and a short diagonal for a
+// merge's second-and-later parent lines. Not a full curve renderer (out of
+// scope per the plan): each cell is painted independently, so a line only
+// ever spans this row's own height, which is enough to read as continuous
+// once rows are stacked.
+class LaneGraphDelegate : public QStyledItemDelegate
+{
+public:
+    explicit LaneGraphDelegate(QObject *parent)
+      : QStyledItemDelegate(parent)
+    {
+    }
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->fillRect(option.rect, option.palette.base());
+
+        const int lane = index.data(kLaneRole).toInt();
+        const QVariantList parentLanes = index.data(kParentLanesRole).toList();
+        const int cx = option.rect.left() + kLaneSpacing / 2 + lane * kLaneSpacing;
+        const int cy = option.rect.center().y();
+        const QColor color = laneColor(lane);
+
+        painter->setPen(QPen(color, 2));
+        // This lane continues through the row: a line top-to-bottom.
+        painter->drawLine(cx, option.rect.top(), cx, option.rect.bottom());
+        // Every other parent lane (a merge's second-and-later parent) gets
+        // a short line from this dot down to its own column.
+        for (const QVariant &parentLaneVariant : parentLanes) {
+            const int parentLane = parentLaneVariant.toInt();
+            if (parentLane == lane) {
+                continue;
+            }
+            const int px = option.rect.left() + kLaneSpacing / 2 + parentLane * kLaneSpacing;
+            painter->setPen(QPen(laneColor(parentLane), 2));
+            painter->drawLine(cx, cy, px, option.rect.bottom());
+        }
+
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(color);
+        painter->drawEllipse(QPoint(cx, cy), 4, 4);
+        painter->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        const int lanes = qMax(1, index.data(kLaneRole).toInt() + 1);
+        return QSize(lanes * kLaneSpacing + kLaneSpacing, option.rect.height());
+    }
+
+private:
+    static constexpr int kLaneSpacing = 14;
+
+    static QColor laneColor(int lane)
+    {
+        // A small fixed palette, cycled — distinguishing adjacent lanes is
+        // the only job this does, not carrying meaning per index.
+        static const QColor kPalette[] = {
+            QColor(0x4c, 0xaf, 0x50), QColor(0x21, 0x96, 0xf3), QColor(0xff, 0x98, 0x00),
+            QColor(0x9c, 0x27, 0xb0), QColor(0xf4, 0x43, 0x36), QColor(0x00, 0xbc, 0xd4),
+        };
+        constexpr int kPaletteSize = sizeof(kPalette) / sizeof(kPalette[0]);
+        return kPalette[lane % kPaletteSize];
+    }
+};
+
 } // namespace
 
 HistoryListView::HistoryListView(VcsService *vcsService, QWidget *parent)
@@ -43,6 +124,7 @@ HistoryListView::HistoryListView(VcsService *vcsService, QWidget *parent)
     tree_->setSelectionMode(QAbstractItemView::ExtendedSelection);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
     tree_->header()->setSectionResizeMode(kSummaryColumn, QHeaderView::Stretch);
+    tree_->setItemDelegateForColumn(kLaneColumn, new LaneGraphDelegate(tree_));
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -68,6 +150,32 @@ void HistoryListView::setEntries(const ::rust::Vec<FfiLogEntry> &entries)
         item->setText(kAuthorColumn, QString(entry.author_name));
         item->setText(kSummaryColumn, QString(entry.summary));
         item->setData(kIdColumn, kCommitIdRole, commitId);
+        item->setData(kLaneColumn, kLaneRole, static_cast<int>(entry.lane));
+        QVariantList parentLanes;
+        for (std::size_t i = 0; i < entry.parent_lanes.size(); ++i) {
+            parentLanes.append(static_cast<int>(entry.parent_lanes[i]));
+        }
+        item->setData(kLaneColumn, kParentLanesRole, parentLanes);
+
+        // R7: ref chips — `HEAD`/branches/tags decorating this commit,
+        // comma-joined; a bold, tinted font marks the branch `HEAD` sits
+        // on so it reads apart from every other decoration at a glance.
+        QStringList refNames;
+        bool hasHead = false;
+        for (const FfiRefDecoration &ref : vcsService_->commitRefs(commitId)) {
+            refNames.append(QString(ref.name));
+            hasHead = hasHead || ref.kind == FfiRefKind::Head;
+        }
+        if (!refNames.isEmpty()) {
+            item->setText(kRefsColumn, refNames.join(QStringLiteral(", ")));
+            QColor refColor = palette().color(QPalette::Link);
+            if (hasHead) {
+                QFont font = item->font(kRefsColumn);
+                font.setBold(true);
+                item->setFont(kRefsColumn, font);
+            }
+            item->setForeground(kRefsColumn, refColor);
+        }
 
         // A placeholder child so the expand arrow shows before the body is
         // fetched — replaced with the real wrapped text on first expand.

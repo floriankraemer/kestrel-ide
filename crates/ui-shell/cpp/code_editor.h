@@ -73,10 +73,18 @@ struct FoldRange
 // pre-formatted summary this widget paints verbatim ("author, summary" or
 // similar) — deciding what that string says is EditorTabs's job (it reads
 // `FfiBlameLine`), not this widget's, the same split `ChangeMarker` draws.
+//
+// R7 adds `commitId` (click-through to the commit-detail dock), `authorTime`
+// (age-shaded background — seconds since the Unix epoch) and `tooltip` (the
+// full message and date, shown on hover) — still EditorTabs's job to fill
+// in from `FfiBlameLine`, this widget only paints and reports gestures.
 struct BlameAnnotation
 {
     int block;
     QString text;
+    QString commitId;
+    qint64 authorTime = 0;
+    QString tooltip;
 };
 
 // One diagnostic's underline, view-local: [start, end) document (UTF-16)
@@ -297,6 +305,9 @@ public:
 
     void lineNumberAreaPaintEvent(QPaintEvent *event);
     void lineNumberAreaMousePressEvent(QMouseEvent *event);
+    // R7: hover over the blame column shows the full message and date as a
+    // tooltip.
+    void lineNumberAreaMouseMoveEvent(QMouseEvent *event);
     // Right-click anywhere in the gutter: a small "Collapse All"/"Expand
     // All" menu, independent of which (if any) fold marker sits under the
     // pointer.
@@ -643,6 +654,11 @@ signals:
     // own caret-position request) is `EditorTabs`'s job.
     void diagnosticMarkerClicked(int blockNumber);
 
+    // R7: a click landed on the blame column for a line that has an
+    // annotation. `commitId` is the full hex id; opening the commit-detail
+    // dock for it (or anything else) is `EditorTabs`'s job.
+    void blameLineClicked(const QString &commitId);
+
     // R1-7: the gutter's Run icon was clicked. What that runs is
     // EditorTabs's business, via `RunService::runContext`.
     void runRequested();
@@ -774,7 +790,7 @@ private:
     // F3-18: blame text keyed by block, and whether the gutter currently
     // widens to show it — same "empty means default, off by default"
     // arrangement inlay hints already use.
-    QHash<int, QString> blameAnnotations_;
+    QHash<int, BlameAnnotation> blameAnnotations_;
     bool blameEnabled_ = false;
     QVector<QPair<int, int>> matchSelections_;
     int currentMatch_ = -1;
@@ -872,6 +888,8 @@ public:
       : QWidget(editor)
       , codeEditor_(editor)
     {
+        // R7: blame's hover tooltip needs move events with no button held.
+        setMouseTracking(true);
     }
 
     QSize sizeHint() const override { return QSize(codeEditor_->lineNumberAreaWidth(), 0); }
@@ -881,6 +899,10 @@ protected:
     void mousePressEvent(QMouseEvent *event) override
     {
         codeEditor_->lineNumberAreaMousePressEvent(event);
+    }
+    void mouseMoveEvent(QMouseEvent *event) override
+    {
+        codeEditor_->lineNumberAreaMouseMoveEvent(event);
     }
     void contextMenuEvent(QContextMenuEvent *event) override
     {

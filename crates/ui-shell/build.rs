@@ -648,6 +648,8 @@ fn main() {
         .cpp_file("cpp/commit_detail_view.h")
         .cpp_file("cpp/commit_detail_view.cpp")
         .cpp_file("cpp/vcs_menu.cpp")
+        // R7: the branch popup, Q_OBJECT-free like the VCS menu above.
+        .cpp_file("cpp/branch_popup.cpp")
         // F4-11/F4-12: the Run Console dock, its toolbar, the run
         // configuration dialog and the Run menu. Q_OBJECT-free, same as the
         // VCS panels above.

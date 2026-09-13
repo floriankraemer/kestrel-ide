@@ -6,6 +6,9 @@
 #include <QWidget>
 #include <functional>
 
+class QCheckBox;
+class QDateEdit;
+class QLineEdit;
 class QPushButton;
 
 namespace ads {
@@ -19,13 +22,14 @@ class DockRegistry;
 class HistoryListView;
 
 // The repo-wide Commit Log dock: every commit reachable from `HEAD`, newest
-// first, via `VcsService::commitLog`/`commitLogReady` — the same
-// `HistoryListView` the File History panel uses, with a "Load more" button
+// first, via `VcsService::commitLog`/`commitLogFiltered`/`commitLogReady` —
+// the same `HistoryListView` the File History panel uses, with a filter bar
+// (R7: text, author, path, date range) above it and a "Load more" button
 // growing the page instead of a per-file title.
 //
-// Humble view: what the log is, and how many commits `commitLog(max)`
-// returns for a given `max`, are `vcs-core`'s; this only re-asks with a
-// bigger `max` and re-renders what comes back.
+// Humble view: what the log is, how a filter narrows it, and how many
+// commits a given `max` returns are all `vcs-core`'s; this only re-asks
+// with the current filter/page and re-renders what comes back.
 class CommitLogPanel : public QWidget
 {
 public:
@@ -46,12 +50,25 @@ private:
     void onCommitLogReady(const ::rust::Vec<FfiLogEntry> &entries);
     void refresh();
     void loadMore();
+    // R7: the row context menu — Checkout Revision, New Branch Here,
+    // Cherry-pick, Revert Commit, Reset Current Branch Here (soft/mixed/
+    // hard, with confirmation), Copy Hash.
+    void showRowContextMenu(const QPoint &globalPos, const QStringList &selectedIds);
 
     VcsService *vcsService_;
     std::function<void(const QString &)> openCommit_;
     HistoryListView *list_ = nullptr;
     QPushButton *loadMoreButton_ = nullptr;
     quint32 currentMax_ = 0;
+
+    // Filter bar (R7).
+    QLineEdit *authorFilter_ = nullptr;
+    QLineEdit *pathFilter_ = nullptr;
+    QLineEdit *textFilter_ = nullptr;
+    QCheckBox *sinceEnabled_ = nullptr;
+    QDateEdit *sinceDate_ = nullptr;
+    QCheckBox *untilEnabled_ = nullptr;
+    QDateEdit *untilDate_ = nullptr;
 };
 
 // Builds the panel, wraps it in a dock widget and registers it with `docks`

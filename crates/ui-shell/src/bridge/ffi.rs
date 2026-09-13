@@ -938,6 +938,23 @@ mod ffi {
     enum FfiVcsErrorCode {
         UnmergedBranch = 705,
         DubiousOwnership = 710,
+        MergeConflict = 711,
+        NoUpstream = 712,
+    }
+
+    /// 1:1 with `vcs_core::ResetMode` — R7's "Reset Current Branch Here".
+    enum FfiResetMode {
+        Soft,
+        Mixed,
+        Hard,
+    }
+
+    /// 1:1 with `vcs_core::RefKind` — R7's log-row ref chips.
+    enum FfiRefKind {
+        Head,
+        Local,
+        Remote,
+        Tag,
     }
 
     /// One path `VcsService::changedFiles` reports: `vcs_core::FileStatus`
@@ -967,7 +984,10 @@ mod ffi {
         detached: bool,
     }
 
-    /// One commit, 1:1 with `vcs_core::LogEntry` (F3-12d).
+    /// One commit, 1:1 with `vcs_core::LogEntry` (F3-12d), plus R7's lane
+    /// graph position — computed once per `commitLog`/`commitLogFiltered`
+    /// answer from `vcs_core::graph::lanes` rather than a second round trip
+    /// the delegate would have to correlate back to this same list by id.
     struct FfiLogEntry {
         id: QString,
         summary: QString,
@@ -975,6 +995,31 @@ mod ffi {
         author_email: QString,
         /// Seconds since the Unix epoch, author time.
         author_time: i64,
+        /// R7: this commit's lane-graph column.
+        lane: u32,
+        /// R7: the column each parent's line continues into, same order as
+        /// `vcs_core::LogEntry::parent_ids`.
+        parent_lanes: Vec<u32>,
+    }
+
+    /// One ref decorating a commit, 1:1 with `vcs_core::RefDecoration`
+    /// (R7's log-row chips).
+    struct FfiRefDecoration {
+        name: QString,
+        kind: FfiRefKind,
+    }
+
+    /// One stash entry, 1:1 with `vcs_core::StashEntry` (R7).
+    struct FfiStashEntry {
+        index: u32,
+        message: QString,
+    }
+
+    /// One configured remote, 1:1 with `vcs_core::RemoteInfo` (R7's remote
+    /// picker).
+    struct FfiRemoteInfo {
+        name: QString,
+        url: QString,
     }
 
     /// One commit in full, 1:1 with `vcs_core::CommitDetail`, for the
@@ -1290,6 +1335,9 @@ mod ffi {
         commit: QString,
         author_name: QString,
         author_email: QString,
+        /// Seconds since the Unix epoch, author time (R7: the gutter's
+        /// hover tooltip and age-shaded background).
+        author_time: i64,
         summary: QString,
         content: QString,
     }
@@ -7118,6 +7166,126 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "historyUnavailable"]
         fn history_unavailable(self: Pin<&mut VcsService>, path: QString);
+
+        // -- R7: filtered log, ref chips, remotes, integration ops, stash,
+        // and the per-file blame toggle memory. --
+
+        /// `commitLog`, filtered (R7's log filter bar). Every string
+        /// parameter empty means "no filter on that field"; `since`/`until`
+        /// are seconds since the Unix epoch, `i64::MIN` meaning "unset" (no
+        /// real commit predates it). Answers via `commitLogReady`, the same
+        /// signal `commitLog` uses — only one repo-wide log is ever in
+        /// flight.
+        #[qinvokable]
+        #[cxx_name = "commitLogFiltered"]
+        fn commit_log_filtered(
+            self: Pin<&mut VcsService>,
+            author: &QString,
+            path: &QString,
+            text: &QString,
+            since: i64,
+            until: i64,
+            max: u32,
+        );
+
+        /// The refs (`HEAD`, local branches, tags) decorating commit `id`,
+        /// or empty if none do — read from the cache `refreshBranches`
+        /// fills alongside `branches()`/`refNames()`.
+        #[qinvokable]
+        #[cxx_name = "commitRefs"]
+        fn commit_refs(self: &VcsService, id: &QString) -> Vec<FfiRefDecoration>;
+
+        /// Every configured remote, filled by the same `refreshBranches`
+        /// round trip — R7's remote picker, replacing the hard-coded
+        /// `origin` every push/pull/fetch call used before.
+        #[qinvokable]
+        fn remotes(self: &VcsService) -> Vec<FfiRemoteInfo>;
+
+        /// Every remote-tracking branch (e.g. `origin/main`), filled by the
+        /// same round trip — R7's branch popup Remote section.
+        #[qinvokable]
+        #[cxx_name = "remoteBranches"]
+        fn remote_branches(self: &VcsService) -> Vec<FfiBranch>;
+
+        /// `git merge <branch>`. A conflict surfaces via `vcsFailed` with
+        /// `FfiVcsErrorCode::MergeConflict` — the Changes dock's existing
+        /// "Merge Conflicts" group picks it up on the `statusChanged` this
+        /// still fires.
+        #[qinvokable]
+        fn merge(self: Pin<&mut VcsService>, branch: &QString);
+
+        /// `git rebase <onto>`. Conflict handling matches `merge`.
+        #[qinvokable]
+        fn rebase(self: Pin<&mut VcsService>, onto: &QString);
+
+        /// `git cherry-pick <id>`. Conflict handling matches `merge`.
+        #[qinvokable]
+        #[cxx_name = "cherryPick"]
+        fn cherry_pick(self: Pin<&mut VcsService>, id: &QString);
+
+        /// `git revert --no-edit <id>` — reverts a whole commit as a new
+        /// commit. Conflict handling matches `merge`.
+        #[qinvokable]
+        #[cxx_name = "revertCommit"]
+        fn revert_commit(self: Pin<&mut VcsService>, id: &QString);
+
+        /// `git reset --soft|--mixed|--hard <id>` — moves the current
+        /// branch to `id`.
+        #[qinvokable]
+        #[cxx_name = "resetTo"]
+        fn reset_to(self: Pin<&mut VcsService>, id: &QString, mode: FfiResetMode);
+
+        /// `git branch -m <old> <new>`.
+        #[qinvokable]
+        #[cxx_name = "renameBranch"]
+        fn rename_branch(self: Pin<&mut VcsService>, old: &QString, new_name: &QString);
+
+        /// A bare `git push`, relying on the configured upstream — the VCS
+        /// menu's plain "Push" action, which has no explicit remote/branch
+        /// to hand `push`. A "no upstream" refusal surfaces via `vcsFailed`
+        /// with `FfiVcsErrorCode::NoUpstream`, for the caller to fall back
+        /// to the branch popup's explicit remote picker.
+        #[qinvokable]
+        #[cxx_name = "pushTracking"]
+        fn push_tracking(self: Pin<&mut VcsService>);
+
+        /// `git stash push [-m <message>]`. Empty `message` lets `git`
+        /// generate its own.
+        #[qinvokable]
+        #[cxx_name = "stashPush"]
+        fn stash_push(self: Pin<&mut VcsService>, message: &QString);
+
+        /// `git stash pop stash@{index}`.
+        #[qinvokable]
+        #[cxx_name = "stashPop"]
+        fn stash_pop(self: Pin<&mut VcsService>, index: u32);
+
+        /// `git stash drop stash@{index}`.
+        #[qinvokable]
+        #[cxx_name = "stashDrop"]
+        fn stash_drop(self: Pin<&mut VcsService>, index: u32);
+
+        /// `git stash list`. Answers via `stashListReady`.
+        #[qinvokable]
+        #[cxx_name = "requestStashList"]
+        fn request_stash_list(self: Pin<&mut VcsService>);
+
+        /// Whether `path` (a tab's absolute path) last had "Annotate with
+        /// Blame" toggled on for this project, per
+        /// `app_config::vcs_local_settings` — R7's per-file blame memory.
+        #[qinvokable]
+        #[cxx_name = "blameEnabledFor"]
+        fn blame_enabled_for(self: &VcsService, path: &QString) -> bool;
+
+        /// Record this machine's blame-toggle choice for `path`.
+        #[qinvokable]
+        #[cxx_name = "setBlameEnabledFor"]
+        fn set_blame_enabled_for(self: &VcsService, path: &QString, enabled: bool);
+
+        /// `requestStashList`'s answer.
+        #[qsignal]
+        #[cxx_name = "stashListReady"]
+        fn stash_list_ready(self: Pin<&mut VcsService>, entries: Vec<FfiStashEntry>);
     }
 
     // Enables `self.qt_thread()` on `VcsService` for its worker thread,

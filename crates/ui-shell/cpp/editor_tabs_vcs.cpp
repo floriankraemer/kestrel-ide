@@ -8,10 +8,12 @@
 #include "theme.h"
 #include "vcs_gutter.h"
 
+#include <QDateTime>
 #include <QFile>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLocale>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QTabWidget>
@@ -198,20 +200,52 @@ void EditorTabs::applyVcsHunks(const QString &path)
 
 void EditorTabs::setAnnotateEnabled(bool enabled)
 {
+    const bool changed = annotateEnabled_ != enabled;
     annotateEnabled_ = enabled;
+    if (changed && annotateEnabledChanged_) {
+        annotateEnabledChanged_(enabled);
+    }
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
     if (!editor) {
         return;
     }
     editor->setBlameEnabled(enabled);
-    if (!enabled || !vcsService_) {
+    if (!vcsService_) {
         return;
     }
     const quint64 tabId = editor->property("tabId").toULongLong();
     const QString path = docManager_->tabPath(tabId);
-    if (!path.isEmpty()) {
+    if (path.isEmpty()) {
+        return;
+    }
+    // R7: remembered per file, per project — a toggle the user makes
+    // explicitly (as opposed to `restoreAnnotateForActiveTab` re-applying
+    // an already-saved value) writes it back.
+    vcsService_->setBlameEnabledFor(path, enabled);
+    if (enabled) {
         vcsService_->blame(path);
     }
+}
+
+void EditorTabs::setAnnotateEnabledChangedCallback(std::function<void(bool)> callback)
+{
+    annotateEnabledChanged_ = std::move(callback);
+}
+
+void EditorTabs::setBlameCommitClickedCallback(std::function<void(const QString &)> callback)
+{
+    blameCommitClicked_ = std::move(callback);
+}
+
+void EditorTabs::restoreAnnotateForActiveTab()
+{
+    if (!vcsService_) {
+        setAnnotateEnabled(annotateEnabled_);
+        return;
+    }
+    const QString path = currentPath();
+    const bool enabled = path.isEmpty() ? false : vcsService_->blameEnabledFor(path);
+    setAnnotateEnabled(enabled);
 }
 
 void EditorTabs::applyVcsBlame(const QString &path, const ::rust::Vec<FfiBlameLine> &lines)
@@ -222,11 +256,23 @@ void EditorTabs::applyVcsBlame(const QString &path, const ::rust::Vec<FfiBlameLi
     }
     QVector<BlameAnnotation> annotations;
     annotations.reserve(static_cast<int>(lines.size()));
+    const QLocale locale;
     for (const FfiBlameLine &line : lines) {
         const QString shortId = QString(line.commit).left(8);
-        annotations.append(BlameAnnotation{
-          static_cast<int>(line.line) - 1,
-          QStringLiteral("%1 %2 %3").arg(shortId, QString(line.author_name), QString(line.summary))});
+        const QDateTime when = QDateTime::fromSecsSinceEpoch(line.author_time);
+        BlameAnnotation annotation;
+        annotation.block = static_cast<int>(line.line) - 1;
+        annotation.text = QStringLiteral("%1 %2 %3")
+                             .arg(shortId, QString(line.author_name), QString(line.summary));
+        annotation.commitId = QString(line.commit);
+        annotation.authorTime = line.author_time;
+        // R7: hover tooltip — full message and date, not the elided
+        // one-line summary the gutter itself paints.
+        annotation.tooltip =
+          QStringLiteral("%1\n%2 <%3>\n%4")
+            .arg(QString(line.summary), QString(line.author_name), QString(line.author_email),
+                 locale.toString(when, QLocale::LongFormat));
+        annotations.append(annotation);
     }
     editor->setBlameAnnotations(annotations);
     editor->setBlameEnabled(annotateEnabled_);

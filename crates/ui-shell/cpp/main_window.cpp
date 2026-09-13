@@ -327,7 +327,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
       },
       openCommit);
     buildCommitLogDock(dockManager, docks, bottomArea, vcsService, openCommit);
-
+    editorTabs->setBlameCommitClickedCallback(openCommit); // R7: blame click -> commit detail.
     auto *changesPanel = new ChangesPanel( // F3-17/18, after fileHistoryPanel (G8)
       vcsService, [editorTabs](const QString &p) { editorTabs->showDiffForPath(p); },
       [docks, fileHistoryPanel](const QString &p) {
@@ -417,7 +417,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
           if (!previewDocks->isClosed(QStringLiteral("fileHistory"))) {
               fileHistoryPanel->setCurrentFile(editorTabs->currentPath());
           }
-          editorTabs->setAnnotateEnabled(editorTabs->annotateEnabled());
+          editorTabs->restoreAnnotateForActiveTab();
           // Locate-in-tree only makes sense while a tab is open.
           projectTreeLocateAction->setEnabled(!editorTabs->currentPath().isEmpty());
 

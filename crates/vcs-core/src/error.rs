@@ -72,6 +72,20 @@ pub enum VcsError {
     /// (`git config --global --add safe.directory <path>`) rather than just
     /// showing the raw message.
     DubiousOwnership { path: std::path::PathBuf },
+    /// `merge`, `rebase`, `cherry_pick` or `revert_commit` (R7) left the
+    /// working tree with unmerged paths — `git`'s own exit code for this is
+    /// the same `1` a dozen other refusals share, so this crate tells the
+    /// two apart by checking `git diff --name-only --diff-filter=U`
+    /// afterwards rather than by exit code. `paths` are repository-relative,
+    /// ready for the Changes dock's existing "Merge Conflicts" group (R7's
+    /// ADR-0031 amendment).
+    MergeConflict { paths: Vec<String> },
+    /// `push` was attempted with no `<remote> <branch>` pair the branch
+    /// already tracks and none was given explicitly — `git`'s "no upstream
+    /// branch" refusal (F3-9's `push` always names both explicitly, so this
+    /// is reached only through R7's "Push" per-branch action offering to
+    /// push a newly created local branch).
+    NoUpstream { branch: String },
 }
 
 impl VcsError {
@@ -86,6 +100,8 @@ impl VcsError {
     pub const CODE_MALFORMED_PATCH: i32 = 708;
     pub const CODE_PUSH_REJECTED: i32 = 709;
     pub const CODE_DUBIOUS_OWNERSHIP: i32 = 710;
+    pub const CODE_MERGE_CONFLICT: i32 = 711;
+    pub const CODE_NO_UPSTREAM: i32 = 712;
 
     /// The variant's stable numeric code. Append-only once this crosses an
     /// FFI seam (ADR-0003): existing numbers must never be renumbered.
@@ -102,6 +118,8 @@ impl VcsError {
             VcsError::MalformedPatch(_) => Self::CODE_MALFORMED_PATCH,
             VcsError::PushRejected { .. } => Self::CODE_PUSH_REJECTED,
             VcsError::DubiousOwnership { .. } => Self::CODE_DUBIOUS_OWNERSHIP,
+            VcsError::MergeConflict { .. } => Self::CODE_MERGE_CONFLICT,
+            VcsError::NoUpstream { .. } => Self::CODE_NO_UPSTREAM,
         }
     }
 }
@@ -140,6 +158,15 @@ impl fmt::Display for VcsError {
             VcsError::DubiousOwnership { path } => {
                 write!(f, "Git doesn't trust the ownership of {}", path.display())
             }
+            VcsError::MergeConflict { paths } => write!(
+                f,
+                "conflicts in {} file(s); resolve them and commit",
+                paths.len()
+            ),
+            VcsError::NoUpstream { branch } => write!(
+                f,
+                "\"{branch}\" has no upstream branch; push with an explicit remote"
+            ),
         }
     }
 }

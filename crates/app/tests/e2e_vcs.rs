@@ -993,3 +993,239 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// `git rev-parse --abbrev-ref HEAD`, trimmed — this suite's own reach for
+/// "which branch is currently checked out", the same shell-out-and-trim
+/// shape `head_commit_subject` already uses for "what did HEAD just say".
+fn current_branch(repo: &std::path::Path) -> String {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .expect("git rev-parse");
+    String::from_utf8(output.stdout)
+        .expect("git rev-parse output is UTF-8")
+        .trim()
+        .to_string()
+}
+
+/// One `vcs_menu_action`/`branch_context_action` marker's rect, centred —
+/// shared by every step below that clicks a menu action by its label
+/// rather than counting arrow-key presses, the same reach
+/// `e2e_diff.rs`'s "Show Diff" click already uses for the VCS menu itself.
+fn click_labelled_action(ide: &Ide, mark: Mark, ev: &str, label: &str) {
+    let action = ide.wait_for_event(mark, &format!("{ev} '{label}'"), |e| {
+        e["ev"] == ev && e["label"] == label
+    });
+    let (x, y) = rect_centre(&action["rect"]);
+    ide.click_at(x, y, 1);
+}
+
+/// Give a just-opened toplevel window input focus at the X level, by
+/// window title.
+///
+/// Required for every dialog this flow opens (the branch popup, and the
+/// "New Branch" prompt it opens in turn): `open_tree_git_submenu`'s own
+/// comment already explains why — there is no window manager under Xvfb,
+/// so nothing hands a newly mapped window the input focus the way a real
+/// desktop would, and `QWidget::activateWindow()` alone is not enough to
+/// get it either. Unlike `Ide::focus_main`, this looks the window up by
+/// title rather than using the one id `Ide` already knows, since a dialog
+/// is a toplevel `Ide` never captured one for.
+fn focus_window_titled(pattern: &str) {
+    let windows = e2e::xdotool::visible_windows(pattern);
+    let window = windows
+        .first()
+        .unwrap_or_else(|| panic!("no visible window titled like {pattern:?}"));
+    e2e::xdotool::run(&["windowfocus", "--sync", window]);
+    e2e::wait_for(&format!("{pattern:?} to take the input focus"), || {
+        e2e::xdotool::focused_window().filter(|focused| focused == window)
+    });
+}
+
+/// One `branch_row` marker for `name`, in `section` ("local"/"remote") —
+/// `BranchPopupDialog`'s own row geometry (`branch_popup.cpp::markRows`),
+/// the same convention `commit_log_row` already follows for the commit log.
+fn branch_row_rect(ide: &Ide, mark: Mark, section: &str, name: &str) -> serde_json::Value {
+    ide.wait_for_event(mark, &format!("branch_row {section}/{name}"), |e| {
+        e["ev"] == "branch_row" && e["section"] == section && e["name"] == name
+    })["rect"]
+        .clone()
+}
+
+/// R7: create a branch, commit on it, and merge it back into the base
+/// branch — entirely through the branch popup (`branch_popup.cpp`), the
+/// same surface a person uses, never `VcsService` called directly by the
+/// test. `git log --oneline`'s own head, read by the *test's* own `git`
+/// (independent of anything the app reports), is the proof the merge
+/// actually landed: this repository's history is linear, so `merge`
+/// (`git merge`, no `--no-ff`) fast-forwards rather than adding a merge
+/// commit, and the base branch's `HEAD` becomes the feature commit itself.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_create_branch_commit_and_merge_through_the_branch_popup() {
+    const BRANCH: &str = "feature";
+    const MESSAGE: &str = "add feature file";
+    let name = "e2e_create_branch_commit_and_merge_through_the_branch_popup";
+
+    let repo = git_fixture(&[("a.txt", "one\n")]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    let repo_root = ide.project_root().to_path_buf();
+    drop(repo);
+
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    let base_branch = current_branch(&repo_root);
+
+    // Open the VCS menu and click "Branches..." by label — the same
+    // reach `e2e_diff.rs` uses for "Show Diff", rather than counting
+    // arrow-key presses the way `e2e_stage_hunk_touches_only_that_hunks_
+    // index_entry` does (Stash/Unstash's arrival between Branches and the
+    // separator would silently shift a hard-coded Down count).
+    let mark = ide.mark();
+    ide.key("alt+c");
+    ide.wait_for_event(mark, "the VCS menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "vcs_menu"
+    });
+    click_labelled_action(&ide, mark, "vcs_menu_action", "Branches...");
+    ide.wait_for_event(mark, "the branch popup to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "branch_popup"
+    });
+    focus_window_titled("Branches");
+
+    // New Branch... -> a QInputDialog, its own toplevel needing the same
+    // explicit focus.
+    let popup_shown = ide.wait_for_event(mark, "the branch popup's own geometry", |e| {
+        e["ev"] == "branch_popup_shown"
+    });
+    let (new_branch_x, new_branch_y) = rect_centre(&popup_shown["new_branch_rect"]);
+    ide.click_at(new_branch_x, new_branch_y, 1);
+    focus_window_titled("New Branch");
+    ide.type_text(BRANCH);
+    ide.key("Return");
+
+    // Checkout the new branch through its own row's context menu. A plain
+    // left-click first, selecting the row, the same two-click shape
+    // `open_tree_git_submenu` uses — a right-click alone on a row nothing
+    // has selected yet does not reliably raise `customContextMenuRequested`
+    // under Xvfb.
+    focus_window_titled("Branches");
+    let row = branch_row_rect(&ide, mark, "local", BRANCH);
+    let (row_x, row_y) = rect_centre(&row);
+    let checkout_mark = ide.mark();
+    ide.click_at(row_x, row_y, 1);
+    ide.click_at(row_x, row_y, 3); // right-click
+    click_labelled_action(&ide, checkout_mark, "branch_context_action", "Checkout");
+    e2e::wait_for("the checkout to land", || {
+        (current_branch(&repo_root) == BRANCH).then_some(())
+    });
+
+    // Close the branch popup (Escape -> QDialogButtonBox::rejected ->
+    // QDialog::reject, wired in branch_popup.cpp) so the editor/Changes
+    // dock below get real keyboard/mouse focus back. Refocused first: the
+    // context menu the checkout above opened and closed may have left
+    // input focus somewhere other than the popup itself.
+    focus_window_titled("Branches");
+    ide.key("Escape");
+    ide.wait_for_event(mark, "the branch popup to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "branch_popup"
+    });
+    ide.focus_main();
+
+    // Commit on the feature branch through the Changes dock, the same
+    // stage-then-commit reach `e2e_stage_and_commit_through_the_changes_
+    // dock` uses.
+    // A modification to the existing tracked file, not a new untracked
+    // one: `stage_via_checkbox` waits for the row's `group` to become
+    // "unstaged", which is what a change to a tracked file reports — a
+    // brand-new file reports "untracked", a different group in the
+    // Changes dock that this same helper does not look for.
+    std::fs::write(repo_root.join("a.txt"), "one\nfeature line\n").expect("write a.txt");
+    ide.sync(&mcp);
+    let refresh_mark = ide.mark();
+    ide.key("alt+9"); // vcs.view.changes' default shortcut (keymap.rs).
+    let staged_mark = stage_via_checkbox(&ide, refresh_mark, "a.txt");
+    let shown = ide.wait_for_event(
+        staged_mark,
+        "the Changes dock to report its geometry",
+        |e| e["ev"] == "changes_panel_shown",
+    );
+    let (message_x, message_y) = rect_centre(&shown["message_rect"]);
+    ide.click_at(message_x, message_y, 1);
+    ide.type_text(MESSAGE);
+    let (commit_x, commit_y) = rect_centre(&shown["commit_rect"]);
+    ide.click_at(commit_x, commit_y, 1);
+    e2e::wait_for("the feature commit to land", || {
+        (head_commit_subject(&repo_root) == MESSAGE).then_some(())
+    });
+
+    // Back to the base branch, then merge the feature branch into it —
+    // both through the branch popup again.
+    let merge_mark = ide.mark();
+    ide.key("alt+c");
+    ide.wait_for_event(merge_mark, "the VCS menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "vcs_menu"
+    });
+    click_labelled_action(&ide, merge_mark, "vcs_menu_action", "Branches...");
+    ide.wait_for_event(merge_mark, "the branch popup to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "branch_popup"
+    });
+    focus_window_titled("Branches");
+
+    let base_row = branch_row_rect(&ide, merge_mark, "local", &base_branch);
+    let (base_x, base_y) = rect_centre(&base_row);
+    let checkout_base_mark = ide.mark();
+    ide.click_at(base_x, base_y, 1);
+    ide.click_at(base_x, base_y, 3); // right-click
+    click_labelled_action(
+        &ide,
+        checkout_base_mark,
+        "branch_context_action",
+        "Checkout",
+    );
+    e2e::wait_for("the checkout back to the base branch to land", || {
+        (current_branch(&repo_root) == base_branch).then_some(())
+    });
+
+    let feature_row = branch_row_rect(&ide, merge_mark, "local", BRANCH);
+    let (feature_x, feature_y) = rect_centre(&feature_row);
+    let merge_action_mark = ide.mark();
+    ide.click_at(feature_x, feature_y, 1);
+    ide.click_at(feature_x, feature_y, 3); // right-click
+    click_labelled_action(
+        &ide,
+        merge_action_mark,
+        "branch_context_action",
+        "Merge into Current",
+    );
+
+    e2e::wait_for("the merge to land", || {
+        (head_commit_subject(&repo_root) == MESSAGE).then_some(())
+    });
+    assert_eq!(
+        current_branch(&repo_root),
+        base_branch,
+        "the merge should have landed on the base branch, not left HEAD on the feature branch"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo_root.join("a.txt")).expect("read a.txt"),
+        "one\nfeature line\n",
+        "the base branch should now carry the feature branch's edit"
+    );
+
+    // Close the branch popup and give the main window focus back before
+    // quitting: `Ctrl+Q`'s shortcut is scoped to the main window, and the
+    // popup — still open since the merge above never closed it — would
+    // otherwise swallow it, the same reasoning `focus_main` exists for
+    // elsewhere in this suite.
+    focus_window_titled("Branches");
+    ide.key("Escape");
+    ide.wait_for_event(merge_mark, "the branch popup to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "branch_popup"
+    });
+    ide.focus_main();
+
+    assert_eq!(ide.quit(), 0);
+}

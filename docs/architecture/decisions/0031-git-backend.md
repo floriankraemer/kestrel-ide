@@ -5,6 +5,7 @@
 Accepted.
 Amended by [§7, what measurement changed](#7-what-measurement-changed-amendment), added after the first time anyone timed this crate rather than reasoning about it.
 Amended by [§8, index reads join §1](#8-index-reads-join-1-amendment), added when R6 needed the git index's own blob content, not just `HEAD`'s.
+Amended by [§9, merge/rebase/stash and the two error variants §Consequences called permanently unreachable](#9-merge-rebase-stash-and-the-two-error-variants-consequences-called-permanently-unreachable-amendment), added when R7 gave both a real caller.
 §1's status read is superseded by [ADR-0053](0053-git-status-via-porcelain-v2.md): `Repository::status` now shells out to `git status --porcelain=v2` rather than calling `gix::Repository::status(progress)`, to represent merge conflicts, renames and ahead/behind, and to close the WSL host asymmetry ADR-0052 left open for this one read.
 
 ## Context
@@ -158,9 +159,9 @@ Ignored-ness is exactly the kind of `.gitignore`/`core.excludesFile`/sparse-chec
 - `vcs-core` has no Qt/cxx-qt dependency, direct or transitive (`docs/architecture/layering.md`'s new row), and depends only on `editor-core`, `gix`, `serde`, and std.
 - Every `vcs-core` operation that shells out is tested against a real `git` binary in a `tempfile` scratch repository (staging round-trips, commit with a real rejecting hook, branch force-delete, fetch/pull/push over a real filesystem-transport clone) rather than against a mocked `Command`, matching this repo's stated preference for testing as close to real behaviour as the layer allows.
 - `VcsError` carries stable numeric codes in the 700-799 range `next-five-features-plan.md` §5 reserves for `vcs-core`, laid out now even though no FFI seam crosses yet, so the future bridge (F3-12) does not have to translate a wrong shape.
-- Two speculative error variants from the task breakdown were not built, and are recorded here rather than left as silent scope-narrowing.
+- One speculative error variant from the task breakdown was not built, and is recorded here rather than left as silent scope-narrowing.
   There is no distinct "hook rejected the commit" error: a pre-commit or commit-msg hook's own stderr is inherited by `git commit` and already lands verbatim in `VcsError::GitFailed`'s `stderr`, and there is no reliable, non-heuristic signal in `git`'s exit code that distinguishes "a hook said no" from any other commit failure — inventing one would mean guessing from stderr text, exactly the fragile parsing this crate exists to avoid doing to a future UI layer.
-  There is no distinct "no upstream configured" error either: `vcs_core::Repository::push` always names an explicit remote and branch, and `git push` only refuses for a missing upstream on a bare `git push` with neither named, a shape this crate's own argv construction cannot produce — a `NoUpstream` variant would have been permanently unreachable dead code.
+  A second variant, "no upstream configured", was called permanently unreachable dead code here for the same reason — see [§9](#9-merge-rebase-stash-and-the-two-error-variants-consequences-called-permanently-unreachable-amendment) for why that stopped being true.
 
 ## Alternatives rejected
 
@@ -180,3 +181,24 @@ Then this project owns `git`'s own CVEs and per-platform builds, and overrides t
 **`gix`'s own blame implementation, once it matures.**
 Rejected outright as of §7, having been merely deferred here.
 The maturity condition was met (rename following landed in `gix-blame` 0.3.0), but `Repository::blame_file` blames a commit, and this IDE blames the working tree.
+
+## 9. Merge/rebase/stash, and the two error variants §Consequences called permanently unreachable (amendment)
+
+R7 (Git log, blame and branch operations) added `Repository::merge`, `rebase`, `cherry_pick`, `revert_commit` and `reset_to`, a new `stash` module (`stash_push`/`stash_pop`/`stash_list`/`stash_drop`), `rename_branch`, `remote_branches`/`remotes`, and `push_tracking`.
+Every one of them shells out to `git`, for the same reason §2 already gives for `commit`/`staging`/`branch`/`remote`: each can run a hook (`pre-rebase`, `post-merge`, `post-checkout`), and `merge`/`rebase`/`cherry-pick`/`revert` in particular have conflict-resolution machinery (`.git/MERGE_HEAD`, rerere, `--continue`/`--abort` state) this crate has no reason to reimplement when the user's own `git` already carries it.
+
+`refs_by_commit` (grouping `HEAD`, every local branch and every tag by the commit each points at, for the log's ref chips) and `graph::lanes` (the lane-graph column layout) are pure reads/computation and join §1: `refs_by_commit` is three more `gix` ref-listing reads on top of `branches`/`tags`, no subprocess; `lanes` touches no repository at all, a pure function over `LogEntry`'s existing `parent_ids`.
+`LogFilter`/`Repository::log_filtered` shells out to `git log` for the same reason `file_history` already does (§1, referencing `gix-0.87.1/src/revision/walk.rs`): combining an author match, a path, a date range and a message grep is exactly the pathspec/date-range/grep intersection `gix`'s revwalk still has no equivalent for.
+
+**A conflicted merge/rebase/cherry-pick/revert is `VcsError::MergeConflict`, not `VcsError::GitFailed`.**
+`git`'s own exit code for a conflict is the same `1` a dozen unrelated refusals share, so `Repository`'s integration methods check `git diff --name-only --diff-filter=U` after a failure and return the conflicted paths as a typed variant when that list is non-empty, falling back to the bare `GitFailed` otherwise.
+This crate stops there: the conflict lands in the Changes dock's existing "Merge Conflicts" group (unchanged from R6 — that grouping already came from `RepoStatus`'s conflicted-file kind) with a "Resolve…" action that opens the existing two-pane `DiffView`.
+**A full three-way merge editor — a base/local/remote view with per-hunk pick, matching what a dedicated merge tool offers — is out of scope for R7 and remains so.**
+Building one is a real, standalone feature (its own conflict-marker parser, its own layout, its own "mark resolved" state), not a small addition to the log/blame/branch-operations item this ADR amendment covers; it should be scoped and planned on its own if it is ever taken up.
+
+**§Consequences's "no distinct 'no upstream configured' error… would be permanently unreachable dead code" no longer holds, because the shape that made it true no longer describes every `push` path.**
+`Repository::push` still always names an explicit remote and branch, exactly as before, and still cannot hit this refusal.
+But `Repository::push_tracking` is new: a bare `git push` relying entirely on the configured upstream (or `remote.pushDefault`), added because the VCS menu's plain "Push" action has no remote/branch selection to hand `push` the way the branch popup's per-branch Push does.
+A bare `git push` on a branch with no upstream configured is exactly the shape `git` refuses with "has no upstream branch", so `VcsError::NoUpstream` is real and reachable through `push_tracking` alone — `push`'s own doc comment is unchanged, and this is a second method, not a widened contract on the first.
+
+Nothing here changes §5's code range or numbering scheme: `MergeConflict` is 711, `NoUpstream` is 712, both allocated in sequence after `DubiousOwnership` (710).

@@ -396,6 +396,9 @@ void wireProjectTree(QTreeView *treeView,
               menu.addSeparator();
               addToChatAction = menu.addAction(QObject::tr("Add to AI Chat"));
               addToNewChatAction = menu.addAction(QObject::tr("Add to New AI Chat"));
+          } else {
+              // The empty area is the project itself (R6).
+              appendProjectGitSubmenu(menu, actions);
           }
 
           // The context menu is the only way into the Git submenu, and an

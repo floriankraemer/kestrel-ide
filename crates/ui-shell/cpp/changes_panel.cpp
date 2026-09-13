@@ -6,6 +6,7 @@
 #include "theme.h"
 
 #include <QAction>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFileInfo>
 #include <QFont>
@@ -14,12 +15,15 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QToolButton>
 #include <QPushButton>
 #include <QShowEvent>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 #include <QVector>
 
@@ -53,6 +57,11 @@ constexpr int kChecksToStageRole = Qt::UserRole + 1;
 // an untracked row has no history to show, the same thing
 // `markChangesRow`'s own `group` parameter already reports to E2E.
 constexpr int kGroupRole = Qt::UserRole + 2;
+// R6, hunk child rows only: the hunk's index into `fileHunks(absolute
+// path)` and that absolute path — the pair `stageFileHunk` takes. Null on
+// a file row, which is how `onItemChanged` tells the two apart.
+constexpr int kHunkIndexRole = Qt::UserRole + 3;
+constexpr int kHunkPathRole = Qt::UserRole + 4;
 
 QString changeKindLabel(FfiChangeKind kind)
 {
@@ -286,6 +295,31 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     messageEdit_->setPlaceholderText(tr("Commit message"));
     messageEdit_->setMaximumHeight(80);
 
+    // Collapsed by default behind a small disclosure button: the two
+    // options are rare enough that a permanently visible row would cost
+    // every commit a line of dock height for nothing (R6).
+    auto *optionsToggle = new QToolButton(this);
+    optionsToggle->setText(tr("Author / Sign-off"));
+    optionsToggle->setCheckable(true);
+    optionsToggle->setArrowType(Qt::RightArrow);
+    optionsToggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    optionsToggle->setAutoRaise(true);
+    commitOptions_ = new QWidget(this);
+    commitOptions_->setVisible(false);
+    auto *optionsLayout = new QHBoxLayout(commitOptions_);
+    optionsLayout->setContentsMargins(0, 0, 0, 0);
+    authorEdit_ = new QLineEdit(commitOptions_);
+    authorEdit_->setPlaceholderText(tr("Author (Name <email>), empty for your git identity"));
+    authorEdit_->setClearButtonEnabled(true);
+    signoffCheck_ = new QCheckBox(tr("Sign-off"), commitOptions_);
+    signoffCheck_->setToolTip(tr("Add a Signed-off-by trailer (git commit --signoff)"));
+    optionsLayout->addWidget(authorEdit_, 1);
+    optionsLayout->addWidget(signoffCheck_);
+    connect(optionsToggle, &QToolButton::toggled, this, [this, optionsToggle](bool open) {
+        optionsToggle->setArrowType(open ? Qt::DownArrow : Qt::RightArrow);
+        commitOptions_->setVisible(open);
+    });
+
     commitButton_ = new QPushButton(tr("Commit"), this);
     commitAndPushButton_ = new QPushButton(tr("Commit and Push"), this);
     amendButton_ = new QPushButton(tr("Amend"), this);
@@ -303,6 +337,8 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     repoLayout->addWidget(tree_, 1);
     repoLayout->addWidget(messageHistory_);
     repoLayout->addWidget(messageEdit_);
+    repoLayout->addWidget(optionsToggle);
+    repoLayout->addWidget(commitOptions_);
     repoLayout->addLayout(buttonRow);
 
     // Shown instead of `repoWidgets_` for a project that isn't a Git
@@ -367,6 +403,7 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     });
 
     connect(vcsService_, &VcsService::statusChanged, this, &ChangesPanel::refresh);
+    connect(vcsService_, &VcsService::fileHunksReady, this, &ChangesPanel::addHunkRows);
     connect(vcsService_, &VcsService::repositoryChanged, this, &ChangesPanel::refresh);
 
     refresh();
@@ -495,6 +532,15 @@ void ChangesPanel::refresh()
         markChangesRow(tree_, row, path, group, status);
     }
 
+    // Per-hunk rows (R6) for every modified tracked file — an addition,
+    // deletion or rename is the whole file, and a conflict is not staged
+    // by hunk. Answered asynchronously via `fileHunksReady` → `addHunkRows`.
+    for (const FfiChangedFile &file : files) {
+        if (file.staged == FfiChangeKind::Modified || file.unstaged == FfiChangeKind::Modified) {
+            vcsService_->requestFileHunks(vcsService_->absolutePath(QString(file.path)));
+        }
+    }
+
     populating_ = false;
     // After the row markers above, not before: an E2E flow that already
     // waited for a `changes_row` event from this same refresh can then
@@ -518,9 +564,87 @@ void ChangesPanel::refreshEmptyState()
     notNowButton_->setVisible(!declined);
 }
 
+void ChangesPanel::addHunkRows(const QString &absolutePath)
+{
+    // The unstaged row when the file sits in both groups: that is where a
+    // still-unstaged hunk is looked for, and one set of rows per file is
+    // enough — every hunk's own check state already says which side it is
+    // on.
+    QTreeWidgetItem *target = nullptr;
+    for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
+        QTreeWidgetItem *row = *it;
+        const QVariant rel = row->data(kLetterColumn, kPathRole);
+        if (rel.isNull() || !row->data(kLetterColumn, kHunkIndexRole).isNull()) {
+            continue;
+        }
+        if (vcsService_->absolutePath(rel.toString()) != absolutePath) {
+            continue;
+        }
+        const QString group = row->data(kLetterColumn, kGroupRole).toString();
+        if (target == nullptr || group == QStringLiteral("unstaged")) {
+            target = row;
+        }
+    }
+    if (target == nullptr) {
+        return;
+    }
+
+    const ::rust::Vec<FfiHunk> hunks = vcsService_->fileHunks(absolutePath);
+    const ::rust::Vec<FfiHunkState> states = vcsService_->fileHunkStates(absolutePath);
+    populating_ = true;
+    qDeleteAll(target->takeChildren());
+    for (std::size_t i = 0; i < hunks.size(); ++i) {
+        const FfiHunk &hunk = hunks[i];
+        auto *child = new QTreeWidgetItem(target);
+        // The unified-diff header, 1-based like `git diff` prints it — the
+        // one line a user already knows how to read.
+        child->setText(kNameColumn, tr("@@ -%1,%2 +%3,%4 @@")
+                                       .arg(hunk.old_start + 1)
+                                       .arg(hunk.old_len)
+                                       .arg(hunk.new_start + 1)
+                                       .arg(hunk.new_len));
+        child->setForeground(kNameColumn, chromePaletteForTheme(activeThemeName()).textDim);
+        // User-checkable but not user-tristate: a click toggles straight
+        // between checked and unchecked; PartiallyChecked is only ever set
+        // here, from `fileHunkStates`.
+        child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+        const FfiHunkStageState state =
+          i < states.size() ? states[i].state : FfiHunkStageState::Unstaged;
+        child->setCheckState(kLetterColumn, state == FfiHunkStageState::Staged ? Qt::Checked
+                                             : state == FfiHunkStageState::Both ? Qt::PartiallyChecked
+                                                                                : Qt::Unchecked);
+        child->setData(kLetterColumn, kPathRole, target->data(kLetterColumn, kPathRole));
+        child->setData(kLetterColumn, kGroupRole, target->data(kLetterColumn, kGroupRole));
+        child->setData(kLetterColumn, kHunkIndexRole, static_cast<uint>(i));
+        child->setData(kLetterColumn, kHunkPathRole, absolutePath);
+        e2eMark(QStringLiteral("{\"ev\":\"changes_hunk_row\",\"path\":%1,\"hunk_index\":%2,"
+                                "\"state\":%3}")
+                  .arg(e2eJson(absolutePath))
+                  .arg(i)
+                  .arg(state == FfiHunkStageState::Staged ? QStringLiteral("\"staged\"")
+                       : state == FfiHunkStageState::Both ? QStringLiteral("\"both\"")
+                                                          : QStringLiteral("\"unstaged\"")));
+    }
+    // Collapsed: expanding would push every row below it down, and the
+    // file rows' own `changes_row` rects were published before these
+    // children existed.
+    target->setExpanded(false);
+    populating_ = false;
+}
+
 void ChangesPanel::onItemChanged(QTreeWidgetItem *item, int column)
 {
     if (populating_ || column != kLetterColumn || item->data(kLetterColumn, kPathRole).isNull()) {
+        return;
+    }
+    const QVariant hunkIndex = item->data(kLetterColumn, kHunkIndexRole);
+    if (!hunkIndex.isNull()) {
+        const QString absolutePath = item->data(kLetterColumn, kHunkPathRole).toString();
+        if (item->checkState(kLetterColumn) == Qt::Checked) {
+            vcsService_->stageFileHunk(absolutePath, hunkIndex.toUInt());
+        } else {
+            vcsService_->unstageFileHunk(absolutePath, hunkIndex.toUInt());
+        }
         return;
     }
     const QString path = item->data(kLetterColumn, kPathRole).toString();
@@ -606,7 +730,7 @@ void ChangesPanel::doCommit(bool amend, bool push)
     if (message.isEmpty()) {
         return;
     }
-    vcsService_->commit(message, amend);
+    vcsService_->commit(message, amend, authorEdit_->text(), signoffCheck_->isChecked());
     if (push) {
         // Queued right behind the commit above on the same worker job
         // queue (VcsService's jobs run FIFO on one thread), so this always

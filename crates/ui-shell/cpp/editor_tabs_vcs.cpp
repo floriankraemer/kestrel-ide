@@ -28,6 +28,19 @@ namespace {
 // a pure deletion (no line of its own on the new side, so it marks the line
 // the deletion happened in front of). Shared so rollback-at-caret and
 // next/previous-change agree with what the gutter actually shows.
+ChangeMarkerState toMarkerState(FfiHunkStageState state)
+{
+    switch (state) {
+    case FfiHunkStageState::Staged:
+        return ChangeMarkerState::Staged;
+    case FfiHunkStageState::Both:
+        return ChangeMarkerState::Both;
+    case FfiHunkStageState::Unstaged:
+        break;
+    }
+    return ChangeMarkerState::Unstaged;
+}
+
 quint32 hunkMarkerLine(const FfiHunk &hunk)
 {
     if (hunk.kind == FfiHunkKind::Removed) {
@@ -151,22 +164,25 @@ void EditorTabs::applyVcsHunks(const QString &path)
 
     QVector<ChangeMarker> markers;
     const ::rust::Vec<FfiHunk> hunks = vcsService_->hunks(path);
+    const ::rust::Vec<FfiHunkState> states = vcsService_->hunkStates(path);
     for (std::size_t i = 0; i < hunks.size(); ++i) {
         const FfiHunk &hunk = hunks[i];
         const int hunkIndex = static_cast<int>(i);
         ChangeMarkerKind kind = hunk.kind == FfiHunkKind::Added   ? ChangeMarkerKind::Added
                                  : hunk.kind == FfiHunkKind::Removed ? ChangeMarkerKind::Removed
                                                                       : ChangeMarkerKind::Modified;
+        const ChangeMarkerState state =
+          i < states.size() ? toMarkerState(states[i].state) : ChangeMarkerState::Unstaged;
         if (hunk.kind == FfiHunkKind::Removed) {
             // An empty new-side range has no line of its own to sit on;
             // mark the line the deletion happened in front of (or the
             // first line, for a deletion at the very top of the file).
             const int block = hunk.new_start > 0 ? static_cast<int>(hunk.new_start) - 1 : 0;
-            markers.append(ChangeMarker{block, kind, hunkIndex});
+            markers.append(ChangeMarker{block, kind, hunkIndex, state});
             continue;
         }
         for (quint32 line = hunk.new_start; line < hunk.new_start + hunk.new_len; ++line) {
-            markers.append(ChangeMarker{static_cast<int>(line), kind, hunkIndex});
+            markers.append(ChangeMarker{static_cast<int>(line), kind, hunkIndex, state});
         }
     }
     editor->setChangeMarkers(markers);
@@ -591,6 +607,11 @@ void EditorTabs::onChangeMarkerClicked(CodeEditor *editor, int hunkIndex, const 
     }
 
     HunkPopupActions actions;
+    actions.removedText = vcsService_->hunkRemovedText(path, static_cast<quint32>(hunkIndex));
+    const ::rust::Vec<FfiHunkState> states = vcsService_->hunkStates(path);
+    if (hunkIndex >= 0 && static_cast<std::size_t>(hunkIndex) < states.size()) {
+        actions.state = toMarkerState(states[static_cast<std::size_t>(hunkIndex)].state);
+    }
     actions.revert = [this, editor, path, hunkIndex]() {
         const ::rust::Vec<FfiTextEdit> edits = vcsService_->revertHunk(path, hunkIndex);
         if (!edits.empty()) {

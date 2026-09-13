@@ -46,6 +46,9 @@ struct CachedHunks {
     before_text: String,
     working_text: String,
     hunks: Vec<editor_core::diff::Hunk>,
+    /// `vcs_core::classify_hunks` for `hunks`, index for index — the
+    /// gutter's three-state colouring (R6).
+    states: Vec<vcs_core::HunkStageState>,
 }
 
 /// Rust side of the `VcsService` QObject: a handle to the worker, and
@@ -74,12 +77,19 @@ pub struct VcsServiceRust {
     /// read failed.
     head_message: RefCell<String>,
     hunks: RefCell<HashMap<String, CachedHunks>>,
+    /// `requestFileHunks`'s answers (R6, the Changes dock's per-hunk rows):
+    /// disk-read rather than buffer-read, kept apart from `hunks` so a dock
+    /// refresh never overwrites what an open editor's gutter shows.
+    file_hunks: RefCell<HashMap<String, CachedHunks>>,
     /// `requestBlobAt`'s answers, keyed by `(path, revision)` — a diff tab
     /// comparing two revisions asks for both sides of the same path, so a
     /// single-path cache like `hunks`' would have one answer overwrite the
     /// other.
     blobs: RefCell<HashMap<(String, String), String>>,
     branches: RefCell<Vec<String>>,
+    /// Local branches then tags, filled by the same `refreshBranches` round
+    /// trip as `branches` (R6's revision picker).
+    ref_names: RefCell<Vec<String>>,
     current_branch: RefCell<String>,
     /// The project root `openProject` was last called with. Kept so
     /// `trustDirectory`/`initRepository` — both of which have to happen
@@ -122,8 +132,10 @@ impl Default for VcsServiceRust {
             head_message: RefCell::default(),
             project_root: RefCell::default(),
             hunks: RefCell::default(),
+            file_hunks: RefCell::default(),
             blobs: RefCell::default(),
             branches: RefCell::default(),
+            ref_names: RefCell::default(),
             current_branch: RefCell::default(),
             commit_details: RefCell::default(),
             changed_commit_files: RefCell::default(),
@@ -235,8 +247,10 @@ impl ffi::VcsService {
         // stop path to keep in sync, same shutdown `LanguageService` uses.
         self.jobs.borrow_mut().take();
         self.hunks.borrow_mut().clear();
+        self.file_hunks.borrow_mut().clear();
         self.blobs.borrow_mut().clear();
         self.branches.borrow_mut().clear();
+        self.ref_names.borrow_mut().clear();
         self.current_branch.borrow_mut().clear();
         self.head_message.borrow_mut().clear();
         *self.status.borrow_mut() = vcs_core::RepoStatus::default();
@@ -465,15 +479,21 @@ impl ffi::VcsService {
             let outcome = worker
                 .hunk_cache
                 .hunks(&worker.repo, &relative, &job_text, revision)
-                .map(|working| (working.before_text, working.hunks));
+                .and_then(|working| {
+                    // The three-state colouring (R6): one index read per
+                    // answer, alongside the `HEAD` read the cache made.
+                    let states = worker.repo.classify_hunks(&relative, &working.hunks)?;
+                    Ok((working.before_text, working.hunks, states))
+                });
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match outcome {
-                Ok((before_text, hunks)) => {
+                Ok((before_text, hunks, states)) => {
                     service.hunks.borrow_mut().insert(
                         job_path.clone(),
                         CachedHunks {
                             before_text,
                             working_text: job_text,
                             hunks,
+                            states,
                         },
                     );
                     service
@@ -491,6 +511,7 @@ impl ffi::VcsService {
     pub fn forget_path(&self, path: &QString) {
         let path = path.to_string();
         self.hunks.borrow_mut().remove(&path);
+        self.file_hunks.borrow_mut().remove(&path);
         // `blobs` is keyed by `(path, revision)`, so a closed tab's entries
         // are every key whose path half matches — a diff tab asks for two
         // revisions of the same file.

@@ -7,8 +7,10 @@
 #include <QWidget>
 #include <functional>
 
+class QCheckBox;
 class QComboBox;
 class QLabel;
+class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
 class QShowEvent;
@@ -71,6 +73,12 @@ private:
     // to make an E2E flow flaky.
     void markShown();
     void onItemChanged(QTreeWidgetItem *item, int column);
+    // R6: `fileHunksReady(absolutePath)` — add one checkable child row per
+    // hunk under that file's row (the unstaged group's row when the file is
+    // in both), collapsed, checked per `fileHunkStates`: checked = in the
+    // index, partially = partly, unchecked = not yet. Checking stages that
+    // hunk alone; unchecking unstages it.
+    void addHunkRows(const QString &absolutePath);
     void doCommit(bool amend, bool push);
     void refreshEmptyState();
     void showContextMenu(const QPoint &pos);
@@ -86,6 +94,13 @@ private:
     // by itself.
     QComboBox *messageHistory_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
+    // R6: the collapsible "Author / Sign-off" row under the message box.
+    // `authorEdit_` is the literal `Name <email>` `git --author` takes,
+    // empty for the configured identity; the view forwards it verbatim and
+    // lets `git` validate it — see `VcsService::commit`.
+    QWidget *commitOptions_ = nullptr;
+    QLineEdit *authorEdit_ = nullptr;
+    QCheckBox *signoffCheck_ = nullptr;
     QPushButton *commitButton_ = nullptr;
     QPushButton *commitAndPushButton_ = nullptr;
     QPushButton *amendButton_ = nullptr;

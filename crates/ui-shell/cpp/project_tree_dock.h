@@ -60,6 +60,11 @@ struct ProjectTreeActions
     // path. A callback for the same reason `openFile` is: it is EditorTabs'
     // job, and the tree does not depend on editor_tabs.h to say so.
     std::function<void(const QString &)> showDiffAgainstHead;
+    // R6: "Compare with Branch, Tag or Revision…" — `revision`'s blob on
+    // the left, the live working text on the right, in the existing diff
+    // tab (`EditorTabs::openCompareRevisions`). Same callback reason as
+    // `showDiffAgainstHead`.
+    std::function<void(const QString &, const QString &)> compareWithRevision;
 };
 
 // The tree view plus the toolbar's locate action, which the active-tab-

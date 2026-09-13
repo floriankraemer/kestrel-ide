@@ -365,7 +365,42 @@ pub(crate) fn to_ffi_resource_op(op: &lsp_core::ResourceOp) -> ffi::FfiResourceO
     }
 }
 
-fn to_ffi_completion(item: lsp_core::CompletionItem, prefix_length: u32) -> ffi::FfiCompletionItem {
+/// Markdown to the HTML subset `QTextBrowser`/`QTextDocument` understand
+/// (R2) — the same one-shot, cache-free entry point the Preview dock's
+/// `PreviewProviderRust` uses for a single render, appropriate here since a
+/// completion row's documentation is short and rendered at most once per
+/// selection, not on every keystroke.
+fn render_doc_html(markdown: &str) -> String {
+    if markdown.is_empty() {
+        return String::new();
+    }
+    markdown_preview::render(markdown, &markdown_preview::RenderOptions::default()).html
+}
+
+/// One candidate for [`LanguageServiceRust::fallback_completion`]: a bare
+/// keyword or document word, with nothing a server would have added
+/// (detail, documentation, a `textEdit` range) — `kind` is `Some(14)`
+/// ("keyword", `lsp_core::completion::kind_name`) for a grammar keyword,
+/// `None` for a document word, matching how the popup already tells a
+/// plain identifier from a typed one apart.
+fn fallback_item(text: String, kind: Option<u32>) -> lsp_core::CompletionItem {
+    lsp_core::CompletionItem {
+        insert: text.clone(),
+        label: text,
+        kind,
+        detail: String::new(),
+        documentation: String::new(),
+        sort_text: None,
+        filter_text: None,
+        is_snippet: false,
+        deprecated: false,
+        range: None,
+        raw: serde_json::Value::Null,
+    }
+}
+
+fn to_ffi_completion(m: lsp_core::CompletionMatch, prefix_length: u32) -> ffi::FfiCompletionItem {
+    let item = m.item;
     let range = item.range.unwrap_or(lsp_core::TextRange {
         start_line: 0,
         start_character: 0,
@@ -378,11 +413,12 @@ fn to_ffi_completion(item: lsp_core::CompletionItem, prefix_length: u32) -> ffi:
     // Whether it is worth sending anywhere is `completion_resolve_supported`'s
     // decision, not this translation's.
     let resolve_data = serde_json::to_string(&item.raw).unwrap_or_default();
+    let documentation_html = render_doc_html(&item.documentation);
     ffi::FfiCompletionItem {
         label: QString::from(item.label.as_str()),
         kind: QString::from(lsp_core::kind_name(item.kind)),
         detail: QString::from(item.detail.as_str()),
-        documentation: QString::from(item.documentation.as_str()),
+        documentation: QString::from(documentation_html.as_str()),
         insert: QString::from(item.insert.as_str()),
         has_range: item.range.is_some(),
         start_line: range.start_line,
@@ -391,6 +427,9 @@ fn to_ffi_completion(item: lsp_core::CompletionItem, prefix_length: u32) -> ffi:
         end_character: range.end_character,
         prefix_length,
         resolve_data: QString::from(resolve_data.as_str()),
+        deprecated: item.deprecated,
+        is_snippet: item.is_snippet,
+        match_positions: m.positions.iter().map(|&p| p as u32).collect(),
     }
 }
 
@@ -815,6 +854,14 @@ impl ffi::LanguageService {
     ) {
         let path = path.to_string();
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
+            // R2: no server for this file's language (or none at all) —
+            // keyword and document-word completion fill in, so Ctrl+Space
+            // always offers something rather than nothing.
+            self.as_mut().fallback_completion(
+                &path,
+                &text_before_cursor.to_string(),
+                explicit_request,
+            );
             return;
         };
         let text_before_cursor = text_before_cursor.to_string();
@@ -857,6 +904,53 @@ impl ffi::LanguageService {
         });
     }
 
+    /// R2: keyword and document-word completion, for the file whose
+    /// language has no running server at all (`completion_at`'s early
+    /// return, above). Synchronous — no network round trip to wait for —
+    /// so this fills in `self.completions`/`self.completion` exactly the
+    /// way a server's answer would and fires the same `completion_ready`,
+    /// letting the view's `completionItems`/`showCompletions` path stay
+    /// unaware anything different happened.
+    fn fallback_completion(
+        mut self: Pin<&mut Self>,
+        path: &str,
+        text_before_cursor: &str,
+        explicit_request: bool,
+    ) {
+        let worth_asking = lsp_core::should_request(
+            &[],
+            text_before_cursor,
+            explicit_request,
+            &self.completion.borrow(),
+        );
+        if !worth_asking {
+            return;
+        }
+        *self.completion_language.borrow_mut() = None;
+        self.completion
+            .borrow_mut()
+            .begin(lsp_core::completion_prefix(text_before_cursor));
+
+        let language = syntax_core::language_for_path(Path::new(path));
+        let content = self
+            .session
+            .borrow()
+            .content_for_path(Path::new(path))
+            .unwrap_or_default();
+        let mut words = editor_core::words_in(&content);
+        words.retain(|word| !word.is_empty());
+        let items = syntax_core::keywords(language)
+            .into_iter()
+            .map(|keyword| fallback_item(keyword, Some(14)))
+            .chain(words.into_iter().map(|word| fallback_item(word, None)))
+            .collect();
+        *self.completions.borrow_mut() = lsp_core::CompletionList {
+            items,
+            is_incomplete: false,
+        };
+        self.as_mut().completion_ready();
+    }
+
     pub fn cancel_completion(self: Pin<&mut Self>) {
         self.completion.borrow_mut().cancel();
         *self.completions.borrow_mut() = lsp_core::CompletionList::default();
@@ -871,7 +965,7 @@ impl ffi::LanguageService {
         let prefix_length = prefix.encode_utf16().count() as u32;
         lsp_core::filter_completions(&self.completions.borrow().items, prefix)
             .into_iter()
-            .map(|item| to_ffi_completion(item, prefix_length))
+            .map(|m| to_ffi_completion(m, prefix_length))
             .collect()
     }
 
@@ -904,6 +998,41 @@ impl ffi::LanguageService {
             caret_line,
             caret_character,
         );
+
+        // R2: a snippet item's `insert` is the server's raw grammar
+        // (`is_snippet` says so — `lsp_core::completion::CompletionItem`'s
+        // own doc comment). `edit_ops::snippet::parse` turns it into the
+        // text to splice plus its tab stops; `snippet_ready` hands the
+        // stops to the view in the same units they were found in (char
+        // offsets into the flattened text), and the view adds the
+        // insertion point once the edit has actually landed.
+        //
+        // Scoped down deliberately: a snippet accept skips the C7
+        // resolve/`additionalTextEdits` merge below. Combining "the
+        // accepted item resolves to more edits elsewhere in the file" with
+        // "the accepted item is also a multi-stop snippet" is a rare
+        // intersection, and skipping it keeps this the one splice whose
+        // position `snippet_ready` can describe unambiguously.
+        if item.is_snippet {
+            let parsed = edit_ops::snippet::parse(&item.insert.to_string());
+            let own_edit = lsp_core::completion_own_edit(span, &parsed.text);
+            let stops: Vec<ffi::FfiSnippetStop> = edit_ops::snippet::stops(&parsed)
+                .into_iter()
+                .map(|range| ffi::FfiSnippetStop {
+                    has_stop: true,
+                    start: range.start as u32,
+                    end: range.end as u32,
+                    more: false,
+                })
+                .collect();
+            self.as_mut().emit_completion_edit(vec![own_edit]);
+            if !stops.is_empty() {
+                self.as_mut()
+                    .snippet_ready(span.start_line, span.start_character, stops);
+            }
+            return;
+        }
+
         let own_edit = lsp_core::completion_own_edit(span, &item.insert.to_string());
 
         let language_id = self.completion_language.borrow().clone();
@@ -1002,9 +1131,10 @@ impl ffi::LanguageService {
                 if !service.completion_resolve.borrow().accept(token) {
                     return;
                 }
+                let documentation_html = render_doc_html(&item.documentation);
                 service.as_mut().completion_preview_ready(
                     QString::from(item.detail.as_str()),
-                    QString::from(item.documentation.as_str()),
+                    QString::from(documentation_html.as_str()),
                 );
             });
         });

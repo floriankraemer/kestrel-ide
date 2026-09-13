@@ -280,6 +280,33 @@ pub fn highlight(language: Language, text: &str) -> Vec<HighlightSpan> {
     Highlighter::new(language).set_text(text)
 }
 
+/// Keyword-shaped literal tokens straight out of `language`'s grammar (R2):
+/// every anonymous, visible node kind that reads as a word — `fn`, `let`,
+/// `if`, `return`, and so on for whichever language this is.
+///
+/// Derived rather than hand-listed on purpose: a per-language keyword table
+/// would drift from the grammar the moment either one changed, and every
+/// grammar already carries this list as its own literal-token kinds — tree-
+/// sitter just never named it "keywords". [`Language::PLAIN_TEXT`] (or a
+/// language with no grammar loaded) yields an empty vec, same as every
+/// other one-shot query here.
+pub fn keywords(language: Language) -> Vec<String> {
+    let Some(compiled) = registry::compiled(language) else {
+        return Vec::new();
+    };
+    let grammar = &compiled.grammar;
+    let count = grammar.node_kind_count() as u16;
+    let mut words: Vec<String> = (0..count)
+        .filter(|&id| !grammar.node_kind_is_named(id) && grammar.node_kind_is_visible(id))
+        .filter_map(|id| grammar.node_kind_for_id(id))
+        .filter(|kind| kind.len() >= 2 && kind.chars().all(|c| c.is_ascii_alphabetic()))
+        .map(str::to_string)
+        .collect();
+    words.sort();
+    words.dedup();
+    words
+}
+
 /// Every identifier-like node in `text`, parsed as `language`, in document
 /// order — not just declaration sites (A2). Stateless one-shot, matching
 /// [`highlight`]'s convention: does its own parse rather than reusing a

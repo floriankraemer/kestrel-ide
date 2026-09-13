@@ -656,7 +656,11 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
                 QVector<CompletionEntry> entries;
                 for (const FfiCompletionItem &item :
                      languageService_->completionItems(textBefore)) {
-                    entries.append(CompletionEntry{
+                    QVector<int> matchPositions;
+                    for (quint32 position : item.match_positions) {
+                        matchPositions.append(static_cast<int>(position));
+                    }
+                    CompletionEntry entry{
                         item.label,
                         item.kind,
                         item.detail,
@@ -669,7 +673,11 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
                         static_cast<int>(item.end_character),
                         static_cast<int>(item.prefix_length),
                         item.resolve_data,
-                    });
+                    };
+                    entry.deprecated = item.deprecated;
+                    entry.isSnippet = item.is_snippet;
+                    entry.matchPositions = matchPositions;
+                    entries.append(entry);
                 }
                 editor->showCompletions(entries);
             });
@@ -711,9 +719,34 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
                                              static_cast<quint32>(entry.endLine),
                                              static_cast<quint32>(entry.endCharacter),
                                              static_cast<quint32>(entry.prefixLength),
-                                             entry.resolveData};
+                                             entry.resolveData,
+                                             entry.deprecated,
+                                             entry.isSnippet,
+                                             {}};
                 languageService_->acceptCompletion(item, caret.first, caret.second);
             });
+
+    // R2: Tab/Shift+Tab while a snippet session owns them — move to the
+    // next/previous stop and select it, or fall back to the ordinary Tab
+    // (indent) when there was nowhere left to go.
+    connect(editor, &CodeEditor::snippetStepRequested, this,
+            [this, editor, tabId](bool backward) {
+                const FfiSnippetStop step = editorOps_->stepSnippet(tabId, backward);
+                if (!step.has_stop) {
+                    editor->setSnippetActive(false);
+                    applyEditsTo(editor, editorOps_->indentSelection(tabId, editor->toPlainText(), backward));
+                    refreshCarets(editor);
+                    return;
+                }
+                QTextCursor cursor = editor->textCursor();
+                cursor.setPosition(static_cast<int>(step.start));
+                cursor.setPosition(static_cast<int>(step.end), QTextCursor::KeepAnchor);
+                editor->setTextCursor(cursor);
+                editor->setSnippetActive(step.more);
+            });
+    connect(editor, &CodeEditor::snippetCanceled, this, [this, tabId]() {
+        editorOps_->endSnippet(tabId);
+    });
 
     // F1-15: the multi-caret gestures. The widget reports what happened;
     // every one of these asks `editor_ops` for a transaction and splices

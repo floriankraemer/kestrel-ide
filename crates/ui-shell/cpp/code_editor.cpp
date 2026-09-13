@@ -1,5 +1,7 @@
 #include "code_editor.h"
 
+#include "completion_delegate.h"
+#include "completion_docs_panel.h"
 #include "diff_pane.h"
 #include "e2e_mark.h"
 #include "theme.h"
@@ -25,6 +27,7 @@
 #include <QStringList>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <QTimer>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -40,6 +43,10 @@ constexpr int kEntryIndexRole = Qt::UserRole + 1;
 
 // Slack added to the popup's ideal width so the last glyph is not clipped.
 constexpr int kPopupWidthPadding = 8;
+
+// R2: auto-popup's debounce window. Ctrl+Space (`explicitRequest`) skips
+// it — see `completionDebounce_`'s own doc comment.
+constexpr int kCompletionDebounceMs = 50;
 
 // `EditorOps::moveCarets`'s motion constants, in the order the bridge
 // declares them (R1).
@@ -100,6 +107,10 @@ CodeEditor::CodeEditor(QWidget *parent)
     completer_ = new QCompleter(completionModel_, this);
     completer_->setWidget(this);
     completer_->setCompletionMode(QCompleter::UnfilteredPopupCompletion);
+    // R2: kind icon, bolded match, right-aligned detail, struck-through
+    // deprecated label — see completion_delegate.h.
+    completer_->popup()->setItemDelegate(new CompletionItemDelegate(completer_));
+    completionDocsPanel_ = new CompletionDocsPanel(this);
     connect(completer_,
             qOverload<const QModelIndex &>(&QCompleter::activated),
             this,
@@ -118,10 +129,23 @@ CodeEditor::CodeEditor(QWidget *parent)
             this,
             [this](const QModelIndex &index) {
                 const int entry = index.data(kEntryIndexRole).toInt();
-                if (entry >= 0 && entry < completionEntries_.size()) {
-                    emit completionPreviewRequested(completionEntries_.at(entry).resolveData);
+                if (entry < 0 || entry >= completionEntries_.size()) {
+                    return;
                 }
+                emit completionPreviewRequested(completionEntries_.at(entry).resolveData);
+                completionDocsPanel_->showBeside(completionEntries_.at(entry).documentation,
+                                                  completer_->popup()->geometry());
             });
+
+    // R2: the auto-popup debounce — see `completionDebounce_`'s doc
+    // comment. Single-shot: each keystroke restarts the window rather than
+    // stacking timers.
+    completionDebounce_ = new QTimer(this);
+    completionDebounce_->setSingleShot(true);
+    completionDebounce_->setInterval(kCompletionDebounceMs);
+    connect(completionDebounce_, &QTimer::timeout, this, [this]() {
+        emit completionRequested(pendingCompletionPosition_, pendingCompletionText_, false);
+    });
 
     updateLineNumberAreaWidth(0);
     highlightCurrentLine();
@@ -146,13 +170,19 @@ void CodeEditor::showCompletions(const QVector<CompletionEntry> &items)
         auto *row = new QStandardItem(entry.label);
         row->setEditable(false);
         row->setData(i, kEntryIndexRole);
-        QStringList tooltip;
-        for (const QString &part : {entry.kind, entry.detail, entry.documentation}) {
-            if (!part.isEmpty()) {
-                tooltip << part;
-            }
+        row->setData(entry.kind, CompletionItemDelegate::KindRole);
+        row->setData(entry.detail, CompletionItemDelegate::DetailRole);
+        row->setData(entry.deprecated, CompletionItemDelegate::DeprecatedRole);
+        QVariantList positions;
+        for (int position : entry.matchPositions) {
+            positions << position;
         }
-        row->setToolTip(tooltip.join(QStringLiteral("\n")));
+        row->setData(positions, CompletionItemDelegate::MatchPositionsRole);
+        // The delegate paints kind/detail/highlight/strike-through itself
+        // (R2); the tooltip stays a plain fallback for a view that can't
+        // render the delegate (e.g. an accessibility tool reading it back).
+        row->setToolTip(entry.kind.isEmpty() ? entry.detail
+                                              : entry.kind + QStringLiteral(" — ") + entry.detail);
         completionModel_->appendRow(row);
     }
     QAbstractItemView *popup = completer_->popup();
@@ -161,6 +191,7 @@ void CodeEditor::showCompletions(const QVector<CompletionEntry> &items)
     anchor.setWidth(popup->sizeHintForColumn(0) + popup->verticalScrollBar()->sizeHint().width()
                     + kPopupWidthPadding);
     completer_->complete(anchor);
+    completionDocsPanel_->showBeside(items.first().documentation, popup->geometry());
     e2eMark(QStringLiteral("{\"ev\":\"completion_shown\",\"count\":%1}").arg(items.size()));
 }
 
@@ -183,15 +214,11 @@ void CodeEditor::updateCompletionPreview(const QString &detail, const QString &d
         return;
     }
     const CompletionEntry &original = completionEntries_.at(entry);
-    QStringList tooltip;
-    for (const QString &part :
-         {original.kind, detail.isEmpty() ? original.detail : detail,
-          documentation.isEmpty() ? original.documentation : documentation}) {
-        if (!part.isEmpty()) {
-            tooltip << part;
-        }
+    if (!detail.isEmpty()) {
+        row->setData(detail, CompletionItemDelegate::DetailRole);
     }
-    row->setToolTip(tooltip.join(QStringLiteral("\n")));
+    completionDocsPanel_->showBeside(documentation.isEmpty() ? original.documentation : documentation,
+                                      completer_->popup()->geometry());
 }
 
 void CodeEditor::refreshCompletions()
@@ -201,12 +228,19 @@ void CodeEditor::refreshCompletions()
 
 void CodeEditor::hideCompletionPopup()
 {
+    completionDebounce_->stop();
     if (!completer_->popup()->isVisible() && completionEntries_.isEmpty()) {
         return;
     }
     completer_->popup()->hide();
+    completionDocsPanel_->hidePanel();
     completionEntries_.clear();
     emit completionCanceled();
+}
+
+void CodeEditor::setSnippetActive(bool active)
+{
+    snippetActive_ = active;
 }
 
 void CodeEditor::insertCompletion(const CompletionEntry &entry)
@@ -247,11 +281,35 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
         }
     }
 
-    // Ctrl+Space: ask regardless of what is typed, mid-word or not.
+    // Ctrl+Space: ask regardless of what is typed, mid-word or not, and
+    // regardless of the debounce window — an explicit gesture is never
+    // deferred.
     if (event->key() == Qt::Key_Space && event->modifiers().testFlag(Qt::ControlModifier)) {
         event->accept();
+        completionDebounce_->stop();
         emit completionRequested(textCursor().position(), textBeforeCursor(), true);
         return;
+    }
+
+    // R2: a snippet session owns Tab/Shift+Tab and Escape ahead of
+    // everything below — including R1's own Tab/Shift+Tab indent handling
+    // further down, which is exactly the precedence the target asks for.
+    // Only reachable when the completion popup is not itself showing (it
+    // already claimed Tab/Escape above), so accepting a snippet item and
+    // tabbing through its stops never conflicts with accepting the next
+    // one.
+    if (snippetActive_) {
+        if (event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) {
+            event->accept();
+            emit snippetStepRequested(event->key() == Qt::Key_Backtab);
+            return;
+        }
+        if (event->key() == Qt::Key_Escape) {
+            event->accept();
+            snippetActive_ = false;
+            emit snippetCanceled();
+            return;
+        }
     }
 
     // A bare modifier key press (Shift held before the letter it modifies
@@ -311,11 +369,15 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
             refreshCompletions();
         }
         if (typed) {
-            // Fired on every character: whether it is worth a request — a
+            // R2: debounced (`completionDebounce_`) rather than fired on
+            // every character — whether it is worth a request at all (a
             // trigger character, enough of a word, a list already in
-            // hand — is `lsp_core::completion`'s decision, not this
-            // widget's.
-            emit completionRequested(textCursor().position(), textBeforeCursor(), false);
+            // hand) is still `lsp_core::completion`'s decision, made once
+            // the window lapses rather than on every keystroke of a fast
+            // typist.
+            pendingCompletionPosition_ = textCursor().position();
+            pendingCompletionText_ = textBeforeCursor();
+            completionDebounce_->start();
         }
         return;
     }
@@ -367,6 +429,22 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
                                 event->modifiers().testFlag(Qt::ShiftModifier));
             return;
         }
+    }
+
+    // R2: Left/Right within the word being completed no longer closes the
+    // popup — only re-filters it. The caret motion itself is still Qt's own
+    // (single-caret; the multi-caret case above already claimed
+    // Left/Right when there is more than one caret), so this only changes
+    // what happens to the completion list, not how the caret moves.
+    // `completionFilterChanged`'s own staleness check
+    // (`lsp_core::CompletionTracker::still_typing`) is what actually closes
+    // the popup once the caret leaves the word — an empty answer there
+    // already hides it (`showCompletions`).
+    if ((event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)
+        && completer_->popup()->isVisible() && !hasSecondaryCarets()) {
+        QPlainTextEdit::keyPressEvent(event);
+        refreshCompletions();
+        return;
     }
 
     // Everything else — a shortcut, or any of the above with only one caret

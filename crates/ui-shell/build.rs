@@ -453,6 +453,11 @@ fn main() {
         .cpp_file("cpp/code_editor.h")
         .cpp_file("cpp/code_editor.cpp")
         .cpp_file("cpp/code_editor_gutter.cpp")
+        // R2: the completion popup's delegate (icon/detail/highlight/
+        // strike-through) and docs side panel. Neither declares Q_OBJECT
+        // (no signals/slots of their own), so only the sources are listed.
+        .cpp_file("cpp/completion_delegate.cpp")
+        .cpp_file("cpp/completion_docs_panel.cpp")
         // R1: `code_editor.cpp` reached the 1200-line ceiling again with the
         // wrap guide and live bracket-pair highlight; its whole paint
         // surface (paintEvent, highlightCurrentLine) moved here, the same

@@ -51,8 +51,8 @@ pub use completion::{
     accept_range as completion_accept_range, additional_text_edits as completion_additional_edits,
     completion_prefix, filter as filter_completions, kind_name, own_edit as completion_own_edit,
     parse_completion, parse_resolve_provider as parse_completion_resolve_provider, should_request,
-    strip_snippet, CompletionItem, CompletionList, CompletionResolveTracker, CompletionTracker,
-    TextRange,
+    strip_snippet, CompletionItem, CompletionList, CompletionMatch, CompletionResolveTracker,
+    CompletionTracker, MatchKind, TextRange,
 };
 pub use configuration::resolve as resolve_configuration;
 pub use diagnostics::{path_from_uri, to_diagnostics, uri_from_path};

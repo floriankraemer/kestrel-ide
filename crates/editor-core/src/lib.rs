@@ -39,6 +39,14 @@ pub use transaction::{map_carets, TextEdit, Transaction, TransactionError};
 /// Whole-line operations: duplicate, move, delete, join.
 pub mod line_ops;
 
+/// R2: which tab stop an accepted snippet is sitting on.
+pub mod snippet_session;
+pub use snippet_session::SnippetSession;
+
+/// R2: document-word completion fallback.
+pub mod words;
+pub use words::words_in;
+
 /// What a file is tidied into on the way to disk.
 pub mod save_rules;
 pub use save_rules::{detect_line_ending, LineEnding, SaveRules};

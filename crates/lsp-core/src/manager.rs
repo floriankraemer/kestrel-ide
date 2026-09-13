@@ -1385,13 +1385,14 @@ fn client_capabilities() -> Value {
             // and `linkSupport` opts into the richer `LocationLink` reply.
             "hover": {"contentFormat": ["markdown", "plaintext"]},
             "definition": {"linkSupport": true},
-            // L5: `snippetSupport: false` is the honest answer — snippet
-            // items are inserted as their plain text, with no tabstops (see
-            // `completion::strip_snippet`), so a server that would send
-            // placeholder-heavy items is told to prefer plain ones.
+            // R2: `snippetSupport: true` — `edit_ops::snippet` parses the
+            // placeholder grammar into inserted text plus tab stops, and
+            // `EditorOps`'s snippet session (ui-shell) walks them with
+            // Tab/Shift+Tab, so a server offering `${1:name}`-style items is
+            // no longer asked to hold back.
             "completion": {
                 "completionItem": {
-                    "snippetSupport": false,
+                    "snippetSupport": true,
                     "documentationFormat": ["plaintext", "markdown"],
                     // C7: which fields are worth a `completionItem/resolve`
                     // round trip for — `additionalTextEdits` is the `using`

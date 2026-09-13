@@ -676,6 +676,9 @@ mod ffi {
         label: QString,
         kind: QString,
         detail: QString,
+        /// R2: already-rendered HTML (`markdown_preview::render`), ready
+        /// for the docs panel's `QTextBrowser::setHtml` — never raw
+        /// Markdown, so the view never has to decide how to render it.
         documentation: QString,
         insert: QString,
         has_range: bool,
@@ -690,6 +693,40 @@ mod ffi {
         /// only so `acceptCompletion`/`resolveCompletionPreview` can hand it
         /// back for `completionItem/resolve`. The view never reads it.
         resolve_data: QString,
+        /// R2: the server marked this item deprecated — the delegate
+        /// strikes its label through.
+        deprecated: bool,
+        /// R2: `insertTextFormat: 2` — `insert` is snippet source
+        /// (`edit_ops::snippet::parse` still has to run on it) rather than
+        /// plain text.
+        is_snippet: bool,
+        /// R2: char indices into `label` the typed prefix matched
+        /// (`lsp_core::completion::CompletionMatch::positions`), for the
+        /// delegate to bold. Empty when there is nothing to highlight.
+        match_positions: Vec<u32>,
+    }
+
+    /// R2: one snippet tab stop, in two different units depending on which
+    /// direction it is crossing the seam.
+    ///
+    /// Outgoing (`LanguageService::snippetReady`): `start`/`end` are UTF-16
+    /// char offsets *within the snippet's own flattened text*
+    /// (`edit_ops::snippet::parse`'s output), not document positions —
+    /// `snippetReady` also carries the insertion point, and the view adds
+    /// the two once the edit has landed.
+    ///
+    /// Incoming (`EditorOps::beginSnippet`) and the return of
+    /// `EditorOps::stepSnippet`: `start`/`end` are absolute flat document
+    /// positions (`QTextCursor::position()`'s own unit), and `has_stop`
+    /// false means "no stop to select" — the caller falls through to
+    /// whatever the key ordinarily does. `more` is false on the last stop:
+    /// per R2's target, landing there ends the session outright.
+    #[derive(Default)]
+    struct FfiSnippetStop {
+        has_stop: bool,
+        start: u32,
+        end: u32,
+        more: bool,
     }
 
     /// One caret, as flat document positions in UTF-16 code units — the
@@ -3781,6 +3818,37 @@ mod ffi {
         #[cxx_name = "toggleSoftWrap"]
         fn toggle_soft_wrap(self: Pin<&mut EditorOps>) -> bool;
 
+        /// R2: a snippet was just accepted and its text spliced in —
+        /// `stops` are the absolute document positions each tab stop landed
+        /// at (`FfiSnippetStop`'s own doc comment). Starts a session for
+        /// this tab (replacing any it already had) and returns the first
+        /// stop to select; `has_stop` false means the snippet had no tab
+        /// stops at all, so there is nothing to begin.
+        #[qinvokable]
+        #[cxx_name = "beginSnippet"]
+        fn begin_snippet(
+            self: Pin<&mut EditorOps>,
+            tab_id: u64,
+            stops: Vec<FfiSnippetStop>,
+        ) -> FfiSnippetStop;
+
+        /// Tab (`backward == false`) or Shift+Tab: move this tab's snippet
+        /// session, if it has one, and return the stop now current.
+        /// `has_stop` false means either there is no session or the move
+        /// had nowhere to go (Tab past the last stop, Shift+Tab before the
+        /// first) — either way the keystroke falls through to its ordinary
+        /// meaning. Landing on the last stop ends the session (`more ==
+        /// false`), per R2's target.
+        #[qinvokable]
+        #[cxx_name = "stepSnippet"]
+        fn step_snippet(self: Pin<&mut EditorOps>, tab_id: u64, backward: bool) -> FfiSnippetStop;
+
+        /// Escape, or the caret left the snippet some other way: drop this
+        /// tab's session, if any.
+        #[qinvokable]
+        #[cxx_name = "endSnippet"]
+        fn end_snippet(self: Pin<&mut EditorOps>, tab_id: u64);
+
         /// The edits a save would make before it writes the file (F1-11):
         /// trim, final newline, line-ending normalisation. Splice these
         /// into the buffer first so the tidying is one undo entry, then
@@ -4116,6 +4184,21 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "completionReady"]
         fn completion_ready(self: Pin<&mut LanguageService>);
+
+        /// R2: `acceptCompletion` accepted a snippet item. `start`/
+        /// `start_character` are the protocol position (0-based line,
+        /// UTF-16 character) the flattened text was inserted at —
+        /// `FfiSnippetStop`'s own doc comment says what `stops` are
+        /// relative to. Never fired for a plain item; the view only wires
+        /// this up when there is a session to begin.
+        #[qsignal]
+        #[cxx_name = "snippetReady"]
+        fn snippet_ready(
+            self: Pin<&mut LanguageService>,
+            start_line: u32,
+            start_character: u32,
+            stops: Vec<FfiSnippetStop>,
+        );
 
         /// RF8 — ask the server what refactorings it offers for a range.
         ///

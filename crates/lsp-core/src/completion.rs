@@ -41,9 +41,23 @@ pub struct CompletionItem {
     pub documentation: String,
     pub sort_text: Option<String>,
     pub filter_text: Option<String>,
-    /// What accepting this item types, with snippet placeholders already
-    /// resolved to their default text ([`strip_snippet`]).
+    /// What accepting this item types.
+    ///
+    /// R2: the client now advertises `snippetSupport: true`
+    /// (`manager::client_capabilities`), so a snippet item's `insert` is the
+    /// server's raw snippet source (`${1:name}`, `$0` and all) rather than
+    /// [`strip_snippet`]'s flattened text — [`is_snippet`](Self::is_snippet)
+    /// says which, and turning that source into inserted text plus tab
+    /// stops is `edit_ops::snippet::parse`'s job, one layer up from here.
     pub insert: String,
+    /// `insertTextFormat == 2`: [`Self::insert`] is snippet source, not
+    /// plain text.
+    pub is_snippet: bool,
+    /// The server marked this item deprecated (`deprecated: true`, or `1`
+    /// — `Deprecated` — in `tags`), so the popup strikes its label through
+    /// rather than hiding it: a deprecated symbol is still a valid choice,
+    /// just a discouraged one.
+    pub deprecated: bool,
     /// The range the insertion replaces, when the server named one. `None`
     /// means "replace whatever word the caret is in", which is the caller's
     /// business, not the protocol's.
@@ -125,11 +139,18 @@ fn item(value: &Value) -> Option<CompletionItem> {
         .or_else(|| value.get("insertText"))
         .and_then(Value::as_str)
         .unwrap_or(&label);
-    let insert = if snippet {
-        strip_snippet(raw)
-    } else {
-        raw.to_string()
-    };
+    // R2: kept verbatim, snippet source and all — see `is_snippet`'s doc
+    // comment for why this is no longer flattened here.
+    let insert = raw.to_string();
+
+    let deprecated = value
+        .get("deprecated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || value
+            .get("tags")
+            .and_then(Value::as_array)
+            .is_some_and(|tags| tags.iter().any(|tag| tag.as_u64() == Some(1)));
 
     Some(CompletionItem {
         label,
@@ -145,6 +166,8 @@ fn item(value: &Value) -> Option<CompletionItem> {
             .and_then(Value::as_str)
             .map(str::to_string),
         insert,
+        is_snippet: snippet,
+        deprecated,
         range: edit.and_then(edit_range),
         raw: value.clone(),
     })
@@ -180,20 +203,207 @@ fn string_at(value: Option<&Value>) -> String {
     }
 }
 
+/// How a candidate matched the typed prefix, best first — the ranking tier
+/// [`filter`] sorts by before it ever looks at `sortText`.
+///
+/// IntelliJ's own order: an identical word first, then a plain prefix, then
+/// "CamelHumps" (`fBr` for `fooBar` — each of the needle's own humps has to
+/// land on one of the candidate's, in order), and only then a bare
+/// subsequence (`fbr` scattered anywhere in `fooBar`) — noisy enough that it
+/// is worth offering only when nothing sharper matched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MatchKind {
+    Exact,
+    Prefix,
+    CamelHump,
+    Subsequence,
+}
+
+/// One candidate as [`filter`] ranked it: the item, the tier it matched at,
+/// and which of its label's characters the typed prefix actually hit, for
+/// the popup to highlight.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionMatch {
+    pub item: CompletionItem,
+    pub kind: MatchKind,
+    /// Char indices into `item.label`. Empty when the prefix is empty (an
+    /// unfiltered list has nothing to highlight), and also when the item
+    /// carries its own `filterText` distinct from the label: the positions
+    /// [`score`] found describe an offset into *that* string, which is not
+    /// the one the popup shows, so highlighting it would point at the wrong
+    /// characters.
+    pub positions: Vec<usize>,
+}
+
 /// The candidates for a typed prefix, in the order the server asked for.
 ///
-/// Matching is a case-insensitive prefix test against [`CompletionItem::match_text`]
-/// and ordering is by [`CompletionItem::sort_key`] with the label as the
-/// tie-break — both the server's choice, never the label's by default.
-pub fn filter(items: &[CompletionItem], prefix: &str) -> Vec<CompletionItem> {
-    let needle = prefix.to_lowercase();
-    let mut matched: Vec<CompletionItem> = items
+/// Matching is [`score`] against [`CompletionItem::match_text`] — exact,
+/// then prefix, then CamelHumps, then a bare subsequence, case-insensitive
+/// throughout — and ordering is by tier first, [`CompletionItem::sort_key`]
+/// second, the label last: the server's own choice breaks a tie inside one
+/// tier, never crosses one.
+pub fn filter(items: &[CompletionItem], prefix: &str) -> Vec<CompletionMatch> {
+    let mut matched: Vec<CompletionMatch> = items
         .iter()
-        .filter(|item| item.match_text().to_lowercase().starts_with(&needle))
-        .cloned()
+        .filter_map(|item| {
+            let (kind, positions) = score(item.match_text(), prefix)?;
+            let positions = if item.filter_text.is_none() {
+                positions
+            } else {
+                Vec::new()
+            };
+            Some(CompletionMatch {
+                item: item.clone(),
+                kind,
+                positions,
+            })
+        })
         .collect();
-    matched.sort_by(|a, b| a.sort_key().cmp(b.sort_key()).then(a.label.cmp(&b.label)));
+    matched.sort_by(|a, b| {
+        a.kind
+            .cmp(&b.kind)
+            .then_with(|| a.item.sort_key().cmp(b.item.sort_key()))
+            .then_with(|| a.item.label.cmp(&b.item.label))
+    });
     matched
+}
+
+/// Whether — and at what [`MatchKind`] tier — `needle` matches `text`,
+/// case-insensitively, plus the char indices in `text` it matched at. `None`
+/// means no tier matched at all.
+///
+/// An empty needle matches everything at the weakest tier that still sorts
+/// purely by `sortText`/label (an unfiltered list, e.g. right after
+/// Ctrl+Space): there is nothing to highlight and nothing to prefer one item
+/// over another for.
+pub fn score(text: &str, needle: &str) -> Option<(MatchKind, Vec<usize>)> {
+    if needle.is_empty() {
+        return Some((MatchKind::Prefix, Vec::new()));
+    }
+    exact(text, needle)
+        .or_else(|| prefix_match(text, needle))
+        .or_else(|| camel_hump(text, needle))
+        .or_else(|| subsequence(text, needle))
+}
+
+fn chars_of(s: &str) -> Vec<char> {
+    s.chars().collect()
+}
+
+fn exact(text: &str, needle: &str) -> Option<(MatchKind, Vec<usize>)> {
+    text.to_lowercase()
+        .eq(&needle.to_lowercase())
+        .then(|| (MatchKind::Exact, (0..needle.chars().count()).collect()))
+}
+
+fn prefix_match(text: &str, needle: &str) -> Option<(MatchKind, Vec<usize>)> {
+    text.to_lowercase()
+        .starts_with(&needle.to_lowercase())
+        .then(|| (MatchKind::Prefix, (0..needle.chars().count()).collect()))
+}
+
+/// The start of every "hump" in `text`: index 0, every letter that begins an
+/// uppercase run right after a lowercase/digit one (`fooBar` -> `B`), and
+/// every letter right after a `_`/`-` separator (`foo_bar` -> the second
+/// `b`) — what a human calls a new word inside an identifier.
+fn hump_starts(chars: &[char]) -> Vec<usize> {
+    let mut starts: Vec<usize> = if chars.is_empty() {
+        Vec::new()
+    } else {
+        vec![0]
+    };
+    for i in 1..chars.len() {
+        let (prev, cur) = (chars[i - 1], chars[i]);
+        if (cur.is_uppercase() && !prev.is_uppercase())
+            || ((prev == '_' || prev == '-') && cur.is_alphanumeric())
+        {
+            starts.push(i);
+        }
+    }
+    starts
+}
+
+/// `segment`, matched case-insensitively as a subsequence inside
+/// `text[start..end]`, anchored on `segment`'s own first character landing
+/// exactly on `text[start]` — a hump's word only counts as hit when the
+/// typed hump actually starts it, or `Br` would just as happily match
+/// halfway through `barBaz`.
+fn subsequence_within(
+    text: &[char],
+    start: usize,
+    end: usize,
+    segment: &[char],
+) -> Option<Vec<usize>> {
+    if start >= end || segment.is_empty() || !text[start].eq_ignore_ascii_case(&segment[0]) {
+        return None;
+    }
+    let mut positions = vec![start];
+    let mut at = start + 1;
+    for needle_char in &segment[1..] {
+        let found = (at..end).find(|&i| text[i].eq_ignore_ascii_case(needle_char))?;
+        positions.push(found);
+        at = found + 1;
+    }
+    Some(positions)
+}
+
+/// CamelHumps matching (IntelliJ's term): `needle` is split into segments at
+/// each of its own uppercase letters, and segment *k* must subsequence-match
+/// inside `text`'s *k*-th (or later) hump — so `fBr` finds `fooBar` (`f` in
+/// `foo`, `Br` as `B`...`r` inside `Bar`), but not `barFoo` (no hump left for
+/// the leading `f`).
+///
+/// Only tried when `text` actually has more than one hump: a single-word
+/// candidate has nothing for this tier to add over [`subsequence`], which
+/// runs next regardless.
+fn camel_hump(text: &str, needle: &str) -> Option<(MatchKind, Vec<usize>)> {
+    let text_chars = chars_of(text);
+    let humps = hump_starts(&text_chars);
+    if humps.len() < 2 {
+        return None;
+    }
+    let needle_chars = chars_of(needle);
+    let mut segments: Vec<Vec<char>> = Vec::new();
+    for &c in &needle_chars {
+        if c.is_uppercase() || segments.is_empty() {
+            segments.push(vec![c]);
+        } else {
+            segments.last_mut().expect("just ensured non-empty").push(c);
+        }
+    }
+
+    let mut positions = Vec::new();
+    let mut hump_idx = 0usize;
+    for segment in &segments {
+        let mut matched = None;
+        while hump_idx < humps.len() {
+            let start = humps[hump_idx];
+            let end = humps.get(hump_idx + 1).copied().unwrap_or(text_chars.len());
+            hump_idx += 1;
+            if let Some(found) = subsequence_within(&text_chars, start, end, segment) {
+                matched = Some(found);
+                break;
+            }
+        }
+        positions.extend(matched?);
+    }
+    Some((MatchKind::CamelHump, positions))
+}
+
+/// The weakest tier: every character of `needle`, in order, found somewhere
+/// in `text` case-insensitively — not necessarily contiguous and not
+/// necessarily at a hump start.
+fn subsequence(text: &str, needle: &str) -> Option<(MatchKind, Vec<usize>)> {
+    let text_chars = chars_of(text);
+    let mut positions = Vec::with_capacity(needle.chars().count());
+    let mut at = 0usize;
+    for needle_char in needle.chars() {
+        let found =
+            (at..text_chars.len()).find(|&i| text_chars[i].eq_ignore_ascii_case(&needle_char))?;
+        positions.push(found);
+        at = found + 1;
+    }
+    Some((MatchKind::Subsequence, positions))
 }
 
 /// The word the caret is inside, i.e. what a completion replaces and what the
@@ -615,6 +825,10 @@ mod tests {
         items.iter().map(|i| i.label.as_str()).collect()
     }
 
+    fn matched_labels(matches: &[CompletionMatch]) -> Vec<&str> {
+        matches.iter().map(|m| m.item.label.as_str()).collect()
+    }
+
     fn range(start: (u32, u32), end: (u32, u32)) -> TextRange {
         TextRange {
             start_line: start.0,
@@ -735,19 +949,34 @@ mod tests {
     }
 
     #[test]
-    fn a_snippet_item_inserts_its_plain_text() {
+    fn a_snippet_item_keeps_its_raw_source_for_edit_ops_snippet_to_parse() {
+        // R2: `snippetSupport: true` now, so this crate no longer flattens
+        // the placeholder syntax away — `edit_ops::snippet::parse` does,
+        // one layer up, where the tab-stop session lives.
         let list = parse_completion(&json!([{
             "label": "map",
             "insertTextFormat": 2,
             "insertText": "map(${1:f})$0",
         }]));
-        assert_eq!(list.items[0].insert, "map(f)");
+        assert_eq!(list.items[0].insert, "map(${1:f})$0");
+        assert!(list.items[0].is_snippet);
     }
 
     #[test]
-    fn a_plain_item_is_never_snippet_expanded() {
+    fn a_plain_item_is_never_marked_a_snippet() {
         let list = parse_completion(&json!([{"label": "cost", "insertText": "${1:literal}"}]));
         assert_eq!(list.items[0].insert, "${1:literal}");
+        assert!(!list.items[0].is_snippet, "no insertTextFormat: 2 here");
+    }
+
+    #[test]
+    fn deprecated_is_read_from_either_the_flag_or_the_tag() {
+        let flagged = parse_completion(&json!([{"label": "a", "deprecated": true}]));
+        assert!(flagged.items[0].deprecated);
+        let tagged = parse_completion(&json!([{"label": "a", "tags": [1]}]));
+        assert!(tagged.items[0].deprecated);
+        let neither = parse_completion(&json!([{"label": "a"}]));
+        assert!(!neither.items[0].deprecated);
     }
 
     #[test]
@@ -781,7 +1010,7 @@ mod tests {
         // "beta" has no sortText, so its own label is the key it sorts by —
         // and a label sorts after the digits servers conventionally use.
         assert_eq!(
-            labels(&filter(&list.items, "")),
+            matched_labels(&filter(&list.items, "")),
             ["zebra", "alpha", "beta"],
             "the server's order, not alphabetical by label"
         );
@@ -794,7 +1023,7 @@ mod tests {
             {"label": "increment"},
         ]));
         assert_eq!(
-            labels(&filter(&list.items, "inc")),
+            matched_labels(&filter(&list.items, "inc")),
             ["#include", "increment"],
             "the label does not start with `inc`, but its filterText does"
         );
@@ -804,7 +1033,10 @@ mod tests {
     #[test]
     fn filtering_is_case_insensitive_and_an_empty_prefix_keeps_everything() {
         let list = parse_completion(&json!([{"label": "Vec"}, {"label": "vec_deque"}]));
-        assert_eq!(labels(&filter(&list.items, "VE")), ["Vec", "vec_deque"]);
+        assert_eq!(
+            matched_labels(&filter(&list.items, "VE")),
+            ["Vec", "vec_deque"]
+        );
         assert_eq!(filter(&list.items, "").len(), 2);
         assert!(filter(&list.items, "x").is_empty());
     }
@@ -920,5 +1152,80 @@ mod tests {
         let token = tracker.begin("pu");
         tracker.cancel();
         assert!(!tracker.is_current(token));
+    }
+
+    // --- R2: the scorer ----------------------------------------------------
+
+    #[test]
+    fn exact_beats_prefix_beats_camel_hump_beats_subsequence() {
+        assert_eq!(score("Foo", "foo").unwrap().0, MatchKind::Exact);
+        assert_eq!(score("fooBar", "foo").unwrap().0, MatchKind::Prefix);
+        assert_eq!(score("fooBar", "fBr").unwrap().0, MatchKind::CamelHump);
+        assert_eq!(score("fooBar", "obr").unwrap().0, MatchKind::Subsequence);
+        assert!(score("fooBar", "xyz").is_none());
+    }
+
+    #[test]
+    fn camel_hump_lands_each_segment_on_its_own_hump_in_order() {
+        let (kind, positions) = score("fooBarBaz", "fBB").unwrap();
+        assert_eq!(kind, MatchKind::CamelHump);
+        // 'f' in "foo", 'B' of "Bar", 'B' of "Baz" — one hump each, in order.
+        assert_eq!(positions, [0, 3, 6]);
+    }
+
+    #[test]
+    fn camel_hump_matches_letters_scattered_inside_one_hump() {
+        let (kind, positions) = score("fooBar", "fBr").unwrap();
+        assert_eq!(kind, MatchKind::CamelHump);
+        assert_eq!(positions, [0, 3, 5], "f, then B..r inside \"Bar\"");
+    }
+
+    #[test]
+    fn camel_hump_refuses_a_segment_that_does_not_start_its_hump() {
+        // "ar" would be a subsequence of "Bar", but CamelHumps requires each
+        // segment to start the hump it lands on — this only matches at the
+        // weaker, whole-string subsequence tier.
+        let (kind, _) = score("fooBar", "far").unwrap();
+        assert_eq!(kind, MatchKind::Subsequence);
+    }
+
+    #[test]
+    fn subsequence_is_the_fallback_for_a_single_word_candidate() {
+        // "increment" has one hump, so CamelHump never applies and this
+        // falls all the way to a bare subsequence — scattered letters, in
+        // order, anywhere.
+        let (kind, positions) = score("increment", "irt").unwrap();
+        assert_eq!(kind, MatchKind::Subsequence);
+        assert_eq!(positions, [0, 3, 8]);
+    }
+
+    #[test]
+    fn filter_ranks_camel_hump_above_subsequence_and_ties_break_on_sort_text() {
+        let list = parse_completion(&json!([
+            {"label": "objBarrel", "sortText": "1"},
+            {"label": "fooBar", "sortText": "2"},
+        ]));
+        // "fBr": "fooBar" hits CamelHump (f, B, r); "objBarrel" only hits
+        // Subsequence (no hump starts with 'f'). CamelHump outranks it
+        // regardless of sortText.
+        assert_eq!(matched_labels(&filter(&list.items, "fBr")), ["fooBar"]);
+    }
+
+    #[test]
+    fn filter_highlights_positions_only_against_the_label_not_a_differing_filter_text() {
+        let list = parse_completion(&json!([{"label": "#include", "filterText": "include"}]));
+        let matches = filter(&list.items, "inc");
+        assert_eq!(matches[0].kind, MatchKind::Prefix);
+        assert!(
+            matches[0].positions.is_empty(),
+            "the match was against filterText, not the label the popup shows"
+        );
+    }
+
+    #[test]
+    fn filter_highlights_positions_against_a_plain_label() {
+        let list = parse_completion(&json!([{"label": "increment"}]));
+        let matches = filter(&list.items, "inc");
+        assert_eq!(matches[0].positions, [0, 1, 2]);
     }
 }

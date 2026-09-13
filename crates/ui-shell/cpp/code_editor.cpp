@@ -1,7 +1,6 @@
 #include "code_editor.h"
 
 #include "diff_pane.h"
-
 #include "e2e_mark.h"
 #include "theme.h"
 #include <QContextMenuEvent>
@@ -20,17 +19,12 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPalette>
-#include <QPaintEvent>
-#include <QPainter>
-#include <QPolygon>
 #include <QResizeEvent>
 #include <QScrollBar>
 #include <QStandardItemModel>
 #include <QStringList>
 #include <QTextBlock>
 #include <QTextCursor>
-#include <QTextDocument>
-#include <QTextEdit>
 #include <QWheelEvent>
 
 #include <algorithm>
@@ -46,6 +40,17 @@ constexpr int kEntryIndexRole = Qt::UserRole + 1;
 
 // Slack added to the popup's ideal width so the last glyph is not clipped.
 constexpr int kPopupWidthPadding = 8;
+
+// `EditorOps::moveCarets`'s motion constants, in the order the bridge
+// declares them (R1).
+constexpr quint8 kMotionLeft = 0;
+constexpr quint8 kMotionRight = 1;
+constexpr quint8 kMotionUp = 2;
+constexpr quint8 kMotionDown = 3;
+constexpr quint8 kMotionHome = 4;
+constexpr quint8 kMotionEnd = 5;
+constexpr quint8 kMotionWordLeft = 6;
+constexpr quint8 kMotionWordRight = 7;
 
 } // namespace
 
@@ -315,11 +320,59 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
         return;
     }
 
-    // Everything else — arrows, Home, End, a shortcut — is not a
-    // multi-caret operation in this version: the extra carets are dropped
-    // and the key does exactly what it always did, which is a stated
-    // ceiling (ADR-0023). Moving N carets is its own rule and belongs in
-    // `editor_core::selection`, not here.
+    // R1: Tab/Shift+Tab indent/unindent every caret's lines, or insert one
+    // indent unit at a bare caret — `EditorOps::indentSelection` decides
+    // which, this only reports which key it was. The popup already owns
+    // Tab while it is visible (handled above), so reaching here means it
+    // is not.
+    if (event->key() == Qt::Key_Tab || event->key() == Qt::Key_Backtab) {
+        event->accept();
+        emit multiCaretIndent(event->key() == Qt::Key_Backtab);
+        return;
+    }
+
+    // R1/ADR-0023 follow-up: with more than one caret active, arrows, Home,
+    // End and the word-move combos move every caret at once rather than
+    // falling through to Qt's own single-cursor motion (which is what
+    // "everything else" below still does for a single caret, unchanged).
+    if (hasSecondaryCarets()) {
+        int motion = -1;
+        switch (event->key()) {
+        case Qt::Key_Left:
+            motion = event->modifiers().testFlag(Qt::ControlModifier) ? kMotionWordLeft
+                                                                       : kMotionLeft;
+            break;
+        case Qt::Key_Right:
+            motion = event->modifiers().testFlag(Qt::ControlModifier) ? kMotionWordRight
+                                                                       : kMotionRight;
+            break;
+        case Qt::Key_Up:
+            motion = kMotionUp;
+            break;
+        case Qt::Key_Down:
+            motion = kMotionDown;
+            break;
+        case Qt::Key_Home:
+            motion = kMotionHome;
+            break;
+        case Qt::Key_End:
+            motion = kMotionEnd;
+            break;
+        default:
+            break;
+        }
+        if (motion >= 0) {
+            event->accept();
+            emit multiCaretMove(static_cast<quint8>(motion),
+                                event->modifiers().testFlag(Qt::ShiftModifier));
+            return;
+        }
+    }
+
+    // Everything else — a shortcut, or any of the above with only one caret
+    // — is not a multi-caret operation in this version: the extra carets
+    // are dropped and the key does exactly what it always did, which is a
+    // stated ceiling (ADR-0023).
     if (hasSecondaryCarets()) {
         emit secondaryCaretsDropped();
     }
@@ -438,123 +491,6 @@ void CodeEditor::setSecondaryCarets(const QVector<SecondaryCaret> &carets)
     // does; the bars are painted in paintEvent, which this repaints for.
     highlightCurrentLine();
     viewport()->update();
-}
-
-void CodeEditor::paintEvent(QPaintEvent *event)
-{
-    QPlainTextEdit::paintEvent(event);
-    if (!secondaryCarets_.isEmpty()) {
-        QPainter painter(viewport());
-        const QColor caretColor = palette().color(QPalette::Text);
-        const int width = qMax(1, cursorWidth());
-        for (const SecondaryCaret &caret : secondaryCarets_) {
-            QTextCursor cursor(document());
-            cursor.setPosition(qBound(0, caret.head, document()->characterCount() - 1));
-            const QRect rect = cursorRect(cursor);
-            painter.fillRect(QRect(rect.left(), rect.top(), width, rect.height()), caretColor);
-        }
-    }
-
-    // F2-11: inlay hints, off unless the user turned them on
-    // (code.toggleInlayHints) — a hint is text the server invented, not
-    // text in the file, so it defaults to not being drawn at all.
-    if (inlayHintsEnabled_ && !inlayHints_.isEmpty()) {
-        QPainter painter(viewport());
-        QFont hintFont = font();
-        hintFont.setPointSizeF(hintFont.pointSizeF() * 0.85);
-        painter.setFont(hintFont);
-        const QColor hintColor = tinted(palette().color(QPalette::Text), 100, 100);
-        const QColor hintBackground = tinted(palette().color(QPalette::Base), 100, 108);
-        const int maxPosition = document()->characterCount() - 1;
-        for (const InlayHintSpan &hint : inlayHints_) {
-            if (hint.position < 0 || hint.position > maxPosition) {
-                continue;
-            }
-            QTextCursor cursor(document());
-            cursor.setPosition(hint.position);
-            const QRect rect = cursorRect(cursor);
-            const QString text = (hint.paddingLeft ? QStringLiteral(" ") : QString())
-              + hint.label + (hint.paddingRight ? QStringLiteral(" ") : QString());
-            const QRect textRect(rect.left(), rect.top(),
-                                 painter.fontMetrics().horizontalAdvance(text) + 4,
-                                 rect.height());
-            painter.fillRect(textRect, hintBackground);
-            painter.setPen(hintColor);
-            painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft,
-                             QStringLiteral(" ") + text);
-        }
-    }
-
-    // C10-followup: one pill per lens, after its line's text. Rebuilt every
-    // paint, keyed by index into codeLenses_ for mousePressEvent's hit test.
-    codeLensClickRects_.clear();
-    if (!codeLenses_.isEmpty()) {
-        QPainter painter(viewport());
-        QFont lensFont = font();
-        lensFont.setPointSizeF(lensFont.pointSizeF() * 0.85);
-        painter.setFont(lensFont);
-        const QColor lensColor = tinted(palette().color(QPalette::Text), 100, 100);
-        const QColor lensBg = tinted(palette().color(QPalette::Base), 100, 108);
-        const int maxBlock = document()->blockCount() - 1;
-        for (int i = 0; i < codeLenses_.size(); ++i) {
-            const CodeLensSpan &lens = codeLenses_.at(i);
-            if (lens.line < 0 || lens.line > maxBlock) {
-                continue;
-            }
-            const QTextBlock block = document()->findBlockByNumber(lens.line);
-            if (!block.isValid() || !block.isVisible()) {
-                continue;
-            }
-            const QRect lineRect = blockBoundingGeometry(block).translated(contentOffset()).toRect();
-            const int textEnd = lineRect.left() + fontMetrics().horizontalAdvance(block.text());
-            const QString text = QStringLiteral(" ") + lens.label + QStringLiteral(" ");
-            const QRect textRect(textEnd + 12, lineRect.top(),
-                                 painter.fontMetrics().horizontalAdvance(text), lineRect.height());
-            painter.fillRect(textRect, lensBg);
-            painter.setPen(lensColor);
-            painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, text);
-            if (lens.clickable) {
-                codeLensClickRects_.insert(i, textRect);
-            }
-        }
-    }
-
-    // D3-7: the stopped frame's values, after the line's text and past
-    // whatever a code lens already put there. Which value belongs on which
-    // line is `dap_core::inline_values`' answer, arriving through
-    // `EditorTabs`; this paints where it was told to.
-    if (!inlineValues_.isEmpty()) {
-        QPainter painter(viewport());
-        QFont valueFont = font();
-        valueFont.setItalic(true);
-        valueFont.setPointSizeF(valueFont.pointSizeF() * 0.85);
-        painter.setFont(valueFont);
-        const QColor valueColor = tinted(palette().color(QPalette::Text), 100, 120);
-        const int maxBlock = document()->blockCount() - 1;
-        for (const InlineValueSpan &value : inlineValues_) {
-            if (value.line < 0 || value.line > maxBlock) {
-                continue;
-            }
-            const QTextBlock block = document()->findBlockByNumber(value.line);
-            if (!block.isValid() || !block.isVisible()) {
-                continue;
-            }
-            const QRect lineRect = blockBoundingGeometry(block).translated(contentOffset()).toRect();
-            const int textEnd = lineRect.left() + fontMetrics().horizontalAdvance(block.text());
-            const QRect textRect(textEnd + 24, lineRect.top(),
-                                 painter.fontMetrics().horizontalAdvance(value.text) + 8,
-                                 lineRect.height());
-            painter.setPen(valueColor);
-            painter.drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, value.text);
-        }
-    }
-
-    // Show-whitespace-characters task: off by default, like inlay hints
-    // above, and for the same reason — a glyph that isn't in the file
-    // should cost nothing to a user who never turned it on.
-    if (whitespaceOptions_.enabled || whitespaceOptions_.eolMarkers) {
-        paintWhitespace();
-    }
 }
 
 bool CodeEditor::viewportEvent(QEvent *event)
@@ -755,6 +691,30 @@ void CodeEditor::setWhitespaceClassifier(WhitespaceClassifier classifier)
     whitespaceClassifier_ = std::move(classifier);
 }
 
+void CodeEditor::setWrapColumn(int column)
+{
+    if (wrapColumn_ == column) {
+        return;
+    }
+    wrapColumn_ = column;
+    viewport()->update();
+}
+
+void CodeEditor::setSoftWrapEnabled(bool enabled)
+{
+    if (softWrapEnabled_ == enabled) {
+        return;
+    }
+    softWrapEnabled_ = enabled;
+    setLineWrapMode(enabled ? QPlainTextEdit::WidgetWidth : QPlainTextEdit::NoWrap);
+}
+
+void CodeEditor::setBracketPairSpans(const QVector<BracketPairSpan> &spans)
+{
+    bracketPairSpans_ = spans;
+    highlightCurrentLine();
+}
+
 void CodeEditor::setEditorTabWidth(int columns)
 {
     tabWidthColumns_ = qMax(1, columns);
@@ -764,200 +724,6 @@ void CodeEditor::setEditorTabWidth(int columns)
 void CodeEditor::refreshTabStopDistance()
 {
     setTabStopDistance(fontMetrics().horizontalAdvance(QLatin1Char(' ')) * tabWidthColumns_);
-}
-
-namespace {
-
-// A small filled dot, centered in [start, end)'s cell — the space glyph.
-void paintSpaceGlyph(QPainter &painter, const QRect &start, const QRect &end)
-{
-    const int cx = (start.left() + qMax(end.left(), start.left() + 2)) / 2;
-    const int cy = start.center().y();
-    const int r = qMax(1, start.height() / 10);
-    painter.drawEllipse(QPoint(cx, cy), r, r);
-}
-
-// A right-pointing arrow spanning [start, end)'s cell — the tab glyph. The
-// cell's width already reflects `setTabStopDistance` (Qt's own layout, not
-// anything computed here), so the arrow visually ends where the tab does.
-void paintTabGlyph(QPainter &painter, const QRect &start, const QRect &end)
-{
-    const int y = start.center().y();
-    const int x1 = start.left() + 2;
-    const int x2 = qMax(x1 + 4, end.left() - 3);
-    painter.drawLine(x1, y, x2, y);
-    const QPolygon arrow{QPoint(x2, y - 3), QPoint(x2, y + 3), QPoint(x2 + 3, y)};
-    painter.drawPolygon(arrow);
-}
-
-} // namespace
-
-void CodeEditor::paintWhitespace()
-{
-    QTextBlock block = firstVisibleBlock();
-    if (!block.isValid()) {
-        return;
-    }
-    const int firstBlockNumber = block.blockNumber();
-    QStringList lines;
-    QVector<int> blockNumbers;
-    int top = qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
-    const int viewportBottom = viewport()->rect().bottom();
-    while (block.isValid() && top <= viewportBottom) {
-        if (block.isVisible()) {
-            lines.append(block.text());
-            blockNumbers.append(block.blockNumber());
-        }
-        top += qRound(blockBoundingRect(block).height());
-        block = block.next();
-    }
-    if (blockNumbers.isEmpty()) {
-        return;
-    }
-    const int lastBlockNumber = blockNumbers.last();
-
-    if (whitespaceOptions_.enabled && whitespaceClassifier_) {
-        // Simple "recompute on revision or visible-range change" cache
-        // (documented on whitespaceCache*_ in the header): cheap to check,
-        // and it turns "one classifier call per paint" into "one per
-        // scroll step or edit".
-        const int revision = document()->revision();
-        if (revision != whitespaceCacheRevision_ || firstBlockNumber != whitespaceCacheFirstBlock_
-            || lastBlockNumber != whitespaceCacheLastBlock_) {
-            whitespaceCache_ = whitespaceClassifier_(lines.join(QLatin1Char('\n')));
-            whitespaceCacheRevision_ = revision;
-            whitespaceCacheFirstBlock_ = firstBlockNumber;
-            whitespaceCacheLastBlock_ = lastBlockNumber;
-        }
-
-        QPainter painter(viewport());
-        const QColor glyphColor = tinted(palette().color(QPalette::Text), 100, 145);
-        painter.setPen(glyphColor);
-        painter.setBrush(glyphColor);
-        const int maxPosition = document()->characterCount() - 1;
-        for (const WhitespaceSpan &span : std::as_const(whitespaceCache_)) {
-            const bool categoryOn = (span.category == 0 && whitespaceOptions_.leading)
-              || (span.category == 1 && whitespaceOptions_.inner)
-              || (span.category == 2 && whitespaceOptions_.trailing);
-            if (!categoryOn) {
-                continue;
-            }
-            const QTextBlock lineBlock =
-              document()->findBlockByNumber(firstBlockNumber + span.line);
-            if (!lineBlock.isValid() || !lineBlock.isVisible()) {
-                continue;
-            }
-            const int startPos = qBound(0, lineBlock.position() + span.column, maxPosition);
-            const int endPos = qBound(0, startPos + 1, maxPosition);
-            QTextCursor startCursor(document());
-            startCursor.setPosition(startPos);
-            QTextCursor endCursor(document());
-            endCursor.setPosition(endPos);
-            const QRect startRect = cursorRect(startCursor);
-            const QRect endRect = cursorRect(endCursor);
-            if (span.isTab) {
-                paintTabGlyph(painter, startRect, endRect);
-            } else {
-                paintSpaceGlyph(painter, startRect, endRect);
-            }
-        }
-    }
-
-    if (whitespaceOptions_.eolMarkers) {
-        QPainter painter(viewport());
-        painter.setPen(tinted(palette().color(QPalette::Text), 100, 145));
-        const int maxPosition = document()->characterCount() - 1;
-        for (int blockNumber : std::as_const(blockNumbers)) {
-            const QTextBlock lineBlock = document()->findBlockByNumber(blockNumber);
-            if (!lineBlock.isValid() || !lineBlock.isVisible()) {
-                continue;
-            }
-            const int endPos = qBound(0, lineBlock.position() + lineBlock.length() - 1, maxPosition);
-            QTextCursor cursor(document());
-            cursor.setPosition(endPos);
-            const QRect rect = cursorRect(cursor);
-            const QRect markerRect(rect.right() + 2, rect.top(),
-                                   painter.fontMetrics().horizontalAdvance(QChar(0xB6)) + 2,
-                                   rect.height());
-            painter.drawText(markerRect, Qt::AlignVCenter | Qt::AlignLeft, QString(QChar(0xB6)));
-        }
-    }
-}
-
-void CodeEditor::highlightCurrentLine()
-{
-    QList<QTextEdit::ExtraSelection> selections;
-
-    QTextEdit::ExtraSelection line;
-    line.format.setBackground(currentLineBandColor());
-    // Without this the band stops at the end of the text on that line.
-    line.format.setProperty(QTextFormat::FullWidthSelection, true);
-    line.cursor = textCursor();
-    line.cursor.clearSelection();
-    selections.append(line);
-
-    // Diff backgrounds sit over the current-line band and under everything
-    // that marks a *position* (matches, occurrences, carets).
-    selections.append(diffSelections(document(), diffBackgrounds_, diffSpans_));
-
-    const QColor matchColor = tinted(palette().color(QPalette::Base), 190, 135);
-    const QColor currentMatchColor = tinted(palette().color(QPalette::Base), 260, 175);
-    for (int i = 0; i < matchSelections_.size(); ++i) {
-        QTextEdit::ExtraSelection match;
-        match.format.setBackground(i == currentMatch_ ? currentMatchColor : matchColor);
-        match.cursor = textCursor();
-        match.cursor.setPosition(matchSelections_[i].first);
-        match.cursor.setPosition(matchSelections_[i].second, QTextCursor::KeepAnchor);
-        selections.append(match);
-    }
-
-    if (hoverSpan_.first >= 0) {
-        QTextEdit::ExtraSelection hover;
-        hover.format.setFontUnderline(true);
-        hover.format.setUnderlineStyle(QTextCharFormat::SingleUnderline);
-        hover.cursor = textCursor();
-        hover.cursor.setPosition(hoverSpan_.first);
-        hover.cursor.setPosition(hoverSpan_.second, QTextCursor::KeepAnchor);
-        selections.append(hover);
-    }
-
-    for (const SecondaryCaret &caret : secondaryCarets_) {
-        if (caret.anchor == caret.head) {
-            continue;
-        }
-        QTextEdit::ExtraSelection secondary;
-        secondary.format.setBackground(palette().color(QPalette::Highlight));
-        secondary.format.setForeground(palette().color(QPalette::HighlightedText));
-        secondary.cursor = textCursor();
-        secondary.cursor.setPosition(caret.anchor);
-        secondary.cursor.setPosition(caret.head, QTextCursor::KeepAnchor);
-        selections.append(secondary);
-    }
-
-    const QColor readColor = tinted(palette().color(QPalette::Base), 205, 190);
-    const QColor writeColor = tinted(palette().color(QPalette::Base), 230, 165);
-    for (const OccurrenceSpan &span : occurrenceSpans_) {
-        QTextEdit::ExtraSelection occurrence;
-        occurrence.format.setBackground(span.isWrite ? writeColor : readColor);
-        occurrence.cursor = textCursor();
-        occurrence.cursor.setPosition(span.start);
-        occurrence.cursor.setPosition(span.end, QTextCursor::KeepAnchor);
-        selections.append(occurrence);
-    }
-
-    for (const DiagnosticSpan &span : diagnosticSpans_) {
-        QTextEdit::ExtraSelection diagnostic;
-        diagnostic.format.setUnderlineStyle(QTextCharFormat::SpellCheckUnderline);
-        diagnostic.format.setUnderlineColor(span.color);
-        diagnostic.cursor = textCursor();
-        diagnostic.cursor.setPosition(span.start);
-        diagnostic.cursor.setPosition(span.end, QTextCursor::KeepAnchor);
-        selections.append(diagnostic);
-    }
-
-    setExtraSelections(selections);
-    lineNumberArea_->update();
-    minimap_->update();
 }
 
 void CodeEditor::changeEvent(QEvent *event)

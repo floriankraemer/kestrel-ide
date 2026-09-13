@@ -44,7 +44,7 @@ use crate::bridge::errors;
 
 use editor_core::line_ops;
 use editor_core::offsets::{line_of, line_range, line_starts, Utf16Cursor};
-use editor_core::selection::{Caret, SelectionError, SelectionSet};
+use editor_core::selection::{Caret, CaretMotion, SelectionError, SelectionSet};
 use editor_core::transaction::{map_carets, Transaction};
 
 use edit_ops::indent::IndentStyle;
@@ -64,6 +64,18 @@ const LINE_OP_MOVE_UP: u8 = 1;
 const LINE_OP_MOVE_DOWN: u8 = 2;
 const LINE_OP_DELETE: u8 = 3;
 const LINE_OP_JOIN: u8 = 4;
+
+/// Which motion `moveCarets` was asked for, in the order `CodeEditor`
+/// declares them — the ADR-0023 follow-up: every caret moves instead of
+/// collapsing to the primary one.
+const MOTION_LEFT: u8 = 0;
+const MOTION_RIGHT: u8 = 1;
+const MOTION_UP: u8 = 2;
+const MOTION_DOWN: u8 = 3;
+const MOTION_HOME: u8 = 4;
+const MOTION_END: u8 = 5;
+const MOTION_WORD_LEFT: u8 = 6;
+const MOTION_WORD_RIGHT: u8 = 7;
 
 /// Everything one open tab remembers between gestures.
 struct TabOps {
@@ -545,6 +557,33 @@ impl ffi::EditorOps {
         let edits = match (chars.next(), chars.next()) {
             (Some(ch), None) => {
                 let language = language_of(&self.session.borrow(), tab_id);
+                let selection = self.selection_of(tab_id);
+                // A closer typed at a bare caret with nothing but whitespace
+                // before it on the line dedents that line first (F1's
+                // dedent-on-closer rule). This is a narrower ceiling than
+                // the rest of this method's multi-caret reach — it only
+                // looks at a single collapsed caret — in exchange for not
+                // combining it with the pair tracker's own auto-close/
+                // type-over transaction, which `edit_ops::pairs` was never
+                // asked to compute against a text this rule has already
+                // edited.
+                if selection.len() == 1 && selection.primary().is_empty() {
+                    let style = self.indent_style(language);
+                    let offset = selection.primary().start();
+                    if let Some(mut dedent) =
+                        edit_ops::indent::dedent_closer(language, &text, offset, ch, style)
+                    {
+                        dedent
+                            .edits
+                            .push(editor_core::transaction::TextEdit::insert(
+                                offset,
+                                ch.to_string(),
+                            ));
+                        let edits = self.commit(tab_id, &text, dedent);
+                        self.as_mut().carets_changed(tab_id);
+                        return edits;
+                    }
+                }
                 let type_edit = {
                     let mut tabs = self.tabs.borrow_mut();
                     let ops = tabs.entry(tab_id).or_default();
@@ -622,25 +661,64 @@ impl ffi::EditorOps {
     }
 
     /// Enter at every caret: the newline plus the indent the language wants
-    /// at that point. The newline is `\n` here — normalising to the file's
-    /// line ending is the save path's job (`editor_core::save_rules`).
+    /// at that point, or — when the caret sits between a bracket and its own
+    /// closer with nothing between them — a three-line block instead
+    /// (`edit_ops::indent::enter_between_pair`). The newline is `\n` here —
+    /// normalising to the file's line ending is the save path's job
+    /// (`editor_core::save_rules`).
     pub fn newline(mut self: Pin<&mut Self>, tab_id: u64, text: &QString) -> Vec<ffi::FfiTextEdit> {
         let text = text.to_string();
         let selection = self.selection_of(tab_id);
         let language = language_of(&self.session.borrow(), tab_id);
         let style = self.indent_style(language);
-        let edits = selection
-            .carets()
-            .iter()
-            .map(|caret| {
-                let indent =
-                    edit_ops::indent::indent_for_new_line(language, &text, caret.start(), style);
-                editor_core::transaction::TextEdit::new(caret.range(), format!("\n{indent}"))
-            })
-            .collect();
-        let edits = self.commit(tab_id, &text, Transaction::new(edits));
+
+        // `enter_between_pair`'s caret target sits *inside* what it
+        // inserts, not at the end of it — the one case the generic
+        // collapsed-caret mapping below (ride to the end of the insertion)
+        // gets wrong. `pair_trim` is how much shorter such a caret's final
+        // position is than that generic rule would put it, so it can be
+        // corrected after `commit` maps every caret the usual way.
+        let mut edits = Vec::with_capacity(selection.len());
+        let mut pair_trim = vec![0usize; selection.len()];
+        for (i, caret) in selection.carets().iter().enumerate() {
+            if let Some((transaction, trim)) =
+                edit_ops::indent::enter_between_pair(language, &text, caret.start(), style)
+            {
+                edits.extend(transaction.edits);
+                pair_trim[i] = trim;
+                continue;
+            }
+            let indent =
+                edit_ops::indent::indent_for_new_line(language, &text, caret.start(), style);
+            edits.push(editor_core::transaction::TextEdit::new(
+                caret.range(),
+                format!("\n{indent}"),
+            ));
+        }
+
+        let ffi_edits = self.commit(tab_id, &text, Transaction::new(edits));
+        if pair_trim.iter().any(|trim| *trim > 0) {
+            let mut tabs = self.tabs.borrow_mut();
+            if let Some(ops) = tabs.get_mut(&tab_id) {
+                // Same caret order `commit`'s `map_carets` produced them in:
+                // neither the between-pair inserts nor the plain newlines
+                // above can make two carets swap places or merge, since
+                // each is a non-overlapping insertion at its own caret.
+                let carets: Vec<Caret> = ops
+                    .selection
+                    .carets()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| Caret::at(c.start().saturating_sub(pair_trim[i])))
+                    .collect();
+                let primary = ops.selection.primary_index();
+                if let Ok(set) = SelectionSet::from_carets(carets, primary) {
+                    ops.selection = set;
+                }
+            }
+        }
         self.as_mut().carets_changed(tab_id);
-        edits
+        ffi_edits
     }
 
     /// Duplicate / move / delete / join, by the constants above.
@@ -686,6 +764,11 @@ impl ffi::EditorOps {
     }
 
     /// Tab / Shift+Tab over a selection.
+    ///
+    /// Shift+Tab always unindents the lines any caret touches. Tab does the
+    /// same when a caret is selecting something; a bare (collapsed) caret
+    /// instead gets one indent unit inserted at the caret, which is what
+    /// typing Tab into the middle of a line has always meant.
     pub fn indent_selection(
         mut self: Pin<&mut Self>,
         tab_id: u64,
@@ -698,8 +781,10 @@ impl ffi::EditorOps {
         let style = self.indent_style(language);
         let transaction = if outdent {
             edit_ops::indent::unindent_selection(&text, &selection, style)
-        } else {
+        } else if selection.carets().iter().any(|c| !c.is_empty()) {
             edit_ops::indent::indent_selection(&text, &selection, style)
+        } else {
+            Transaction::type_text(&selection, &style.unit())
         };
         let edits = self.commit(tab_id, &text, transaction);
         self.as_mut().carets_changed(tab_id);
@@ -733,6 +818,43 @@ impl ffi::EditorOps {
         self.as_mut().carets_changed(tab_id);
     }
 
+    /// Left/Right/Up/Down/Home/End/word-move with more than one caret
+    /// active: every caret moves at once (ADR-0023's ceiling lifted for the
+    /// keys `editor_core::selection::CaretMotion` covers), rather than the
+    /// widget's default of collapsing to the primary caret and moving only
+    /// it. `extend` is Shift held.
+    pub fn move_carets(
+        mut self: Pin<&mut Self>,
+        tab_id: u64,
+        text: &QString,
+        motion: u8,
+        extend: bool,
+    ) {
+        let text = text.to_string();
+        let language = language_of(&self.session.borrow(), tab_id);
+        let tab_width = self.tab_width(language);
+        let motion = match motion {
+            MOTION_LEFT => CaretMotion::Left,
+            MOTION_RIGHT => CaretMotion::Right,
+            MOTION_UP => CaretMotion::Up,
+            MOTION_DOWN => CaretMotion::Down,
+            MOTION_HOME => CaretMotion::Home,
+            MOTION_END => CaretMotion::End,
+            MOTION_WORD_LEFT => CaretMotion::WordLeft,
+            MOTION_WORD_RIGHT => CaretMotion::WordRight,
+            _ => CaretMotion::Right,
+        };
+        let moved = {
+            let mut tabs = self.tabs.borrow_mut();
+            let ops = tabs.entry(tab_id).or_default();
+            ops.selection.move_carets(&text, motion, extend, tab_width)
+        };
+        if let Ok(selection) = moved {
+            self.tabs.borrow_mut().entry(tab_id).or_default().selection = selection;
+        }
+        self.as_mut().carets_changed(tab_id);
+    }
+
     /// Ctrl+]: where the bracket under `position` is answered by, as a
     /// document position, or -1 when the caret is not on a bracket.
     pub fn matching_bracket(&self, tab_id: u64, text: &QString, position: u32) -> i64 {
@@ -742,6 +864,39 @@ impl ffi::EditorOps {
         match edit_ops::brackets::jump_target(language, &text, at) {
             Some(target) => to_utf16(&text, &[target])[0] as i64,
             None => -1,
+        }
+    }
+
+    /// The bracket at `position` and its partner, for the live pair
+    /// highlight — painted while the caret sits on either side of a pair,
+    /// in the error colour when the bracket has no partner. `has_bracket`
+    /// false means the caret is not on one at all, which is not the same
+    /// thing as an unmatched bracket and paints nothing.
+    pub fn bracket_pair_at(
+        &self,
+        tab_id: u64,
+        text: &QString,
+        position: u32,
+    ) -> ffi::FfiBracketPair {
+        let text = text.to_string();
+        let language = language_of(&self.session.borrow(), tab_id);
+        let at = to_bytes(&text, &[position as usize])[0];
+        let Some(found) = edit_ops::brackets::pair_at(language, &text, at) else {
+            return ffi::FfiBracketPair::default();
+        };
+        let mut offsets = vec![found.bracket.start, found.bracket.end];
+        if let Some(partner) = &found.partner {
+            offsets.push(partner.start);
+            offsets.push(partner.end);
+        }
+        let utf16 = to_utf16(&text, &offsets);
+        ffi::FfiBracketPair {
+            has_bracket: true,
+            bracket_start: utf16[0] as u32,
+            bracket_end: utf16[1] as u32,
+            has_partner: found.partner.is_some(),
+            partner_start: utf16.get(2).copied().unwrap_or(0) as u32,
+            partner_end: utf16.get(3).copied().unwrap_or(0) as u32,
         }
     }
 
@@ -775,6 +930,46 @@ impl ffi::EditorOps {
     pub fn tab_width_for_tab(&self, tab_id: u64) -> u32 {
         let language = language_of(&self.session.borrow(), tab_id);
         self.tab_width(language) as u32
+    }
+
+    /// The column this tab's language wants the wrap guide painted at, `0`
+    /// for "never". Resolved the same way `tabWidthForTab` is, and read once
+    /// at tab-open time — the same reasoning: it does not change for the
+    /// tab's lifetime.
+    pub fn wrap_column_for_tab(&self, tab_id: u64) -> u32 {
+        let language = language_of(&self.session.borrow(), tab_id);
+        let settings = self.settings.borrow();
+        settings_model::editing::resolve_for_language(&settings, &language.id()).wrap_column
+    }
+
+    /// Whether this tab's language wants text reflowed at that column rather
+    /// than only guided by it.
+    pub fn soft_wrap_for_tab(&self, tab_id: u64) -> bool {
+        let language = language_of(&self.session.borrow(), tab_id);
+        let settings = self.settings.borrow();
+        settings_model::editing::resolve_for_language(&settings, &language.id()).soft_wrap
+    }
+
+    /// The cached global soft-wrap setting, for the View menu's toggle to
+    /// show its current state when the menu is built.
+    pub fn soft_wrap_enabled(&self) -> bool {
+        self.settings.borrow().editing.soft_wrap_or_default()
+    }
+
+    /// Flip the *global* soft-wrap setting and persist it — the View menu's
+    /// quick toggle (`view.toggleSoftWrap`), as opposed to the per-language
+    /// override the Editing settings page offers. Best-effort: a settings
+    /// write failure here must not stop the toggle from taking effect for
+    /// the running session, the same tolerance `push_recent_project` already
+    /// applies to its own settings write.
+    pub fn toggle_soft_wrap(self: Pin<&mut Self>) -> bool {
+        let config_dir = app_core::resolve_config_dir();
+        let mut settings = app_config::load(&config_dir).unwrap_or_default();
+        let enabled = !settings.editing.soft_wrap_or_default();
+        settings.editing.soft_wrap = Some(enabled);
+        let _ = app_config::save(&config_dir, &settings);
+        *self.settings.borrow_mut() = settings;
+        enabled
     }
 
     /// Classifies every space/tab character in `text` into leading, inner,

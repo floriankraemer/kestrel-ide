@@ -5,6 +5,7 @@
 
 #include <QAction>
 #include <QMenu>
+#include <QSignalBlocker>
 #include <QWidget>
 
 namespace ui_shell {
@@ -135,6 +136,20 @@ void buildEditingActions(QMenu *editMenu, QWidget *window, AppSettings *appSetti
                                        actions);
     QObject::connect(matching, &QAction::triggered, window,
                      [editorTabs]() { editorTabs->jumpToMatchingBracket(); });
+}
+
+void wireSoftWrapToggle(QMenu *viewMenu, AppSettings *appSettings,
+                        QHash<QString, QAction *> &actions, EditorTabs *editorTabs)
+{
+    QAction *action = registerAction(viewMenu, QStringLiteral("view.toggleSoftWrap"),
+                                     QObject::tr("Soft Wrap"), appSettings, actions);
+    action->setCheckable(true);
+    action->setChecked(editorTabs->softWrapEnabled());
+    QObject::connect(action, &QAction::triggered, viewMenu, [editorTabs, action]() {
+        const bool enabled = editorTabs->toggleSoftWrap();
+        const QSignalBlocker blocker(action);
+        action->setChecked(enabled);
+    });
 }
 
 } // namespace ui_shell

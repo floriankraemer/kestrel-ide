@@ -72,10 +72,7 @@ pub fn indent_for_new_line(
     let starts = line_starts(text);
     let line = line_range(text, &starts, line_of(&starts, offset));
     let before = &text[line.start..offset.min(line.end).max(line.start)];
-    let base: String = before
-        .chars()
-        .take_while(|c| *c == ' ' || *c == '\t')
-        .collect();
+    let base = base_indent(before);
 
     let syntax = Syntax::parse(language, text);
     if !syntax.has_tree() {
@@ -87,6 +84,92 @@ pub fn indent_for_new_line(
         return base + &style.unit();
     }
     base
+}
+
+/// The leading run of spaces and tabs at the start of `before` — the
+/// indentation a line already has, read off the text before some offset on
+/// it. Shared by [`indent_for_new_line`] and [`enter_between_pair`], which
+/// both need "what this line currently starts with" rather than "what a new
+/// line under it should start with".
+fn base_indent(before: &str) -> String {
+    before
+        .chars()
+        .take_while(|c| *c == ' ' || *c == '\t')
+        .collect()
+}
+
+/// Enter pressed with the caret between an opening bracket and its own
+/// closer, nothing else between them: `{|}` becomes a three-line block
+/// rather than `{` and `}` staying glued to one blank line, which is what
+/// the plain newline-plus-indent path above would produce.
+///
+/// Returns the transaction together with a trim: how much shorter the
+/// caret's target is than the end of what was inserted. A collapsed caret
+/// at a plain insertion rides to the *end* of the inserted text, but this
+/// one belongs *between* the two new lines — `1 + base.len()`, the length
+/// of the trailing `"\n" + base` that comes after it — so a caller that
+/// already mapped every caret generically can correct just this one by
+/// subtracting the trim, rather than recomputing an absolute position that
+/// would have to independently account for every other caret's own edits.
+pub fn enter_between_pair(
+    language: Language,
+    text: &str,
+    offset: usize,
+    style: IndentStyle,
+) -> Option<(Transaction, usize)> {
+    let tokens = Tokens::of(language);
+    let before = text[..offset].chars().next_back()?;
+    let after = text[offset..].chars().next()?;
+    tokens.brackets.iter().find(|(open, close)| {
+        open.chars().eq(std::iter::once(before)) && close.chars().eq(std::iter::once(after))
+    })?;
+
+    let starts = line_starts(text);
+    let line = line_range(text, &starts, line_of(&starts, offset));
+    let base = base_indent(&text[line.start..offset.min(line.end).max(line.start)]);
+    let inner = base.clone() + &style.unit();
+    let inserted = format!("\n{inner}\n{base}");
+    let trim = 1 + base.len();
+    Some((
+        Transaction::new(vec![TextEdit::insert(offset, inserted)]),
+        trim,
+    ))
+}
+
+/// A closing delimiter typed with nothing but whitespace before it on the
+/// line: that whitespace is one indent level deeper than the closer wants,
+/// so one unit of it comes off before the character lands — `    }` typed
+/// on a blank, over-indented line becomes `}` at the enclosing depth.
+///
+/// Only fires for a bare (collapsed) caret; a caret with a selection is
+/// typing over something, not closing an empty block.
+pub fn dedent_closer(
+    language: Language,
+    text: &str,
+    offset: usize,
+    closer: char,
+    style: IndentStyle,
+) -> Option<Transaction> {
+    let tokens = Tokens::of(language);
+    let mut closer_buf = [0u8; 4];
+    let closer_str = closer.encode_utf8(&mut closer_buf);
+    if !tokens.brackets.iter().any(|(_, close)| close == closer_str) {
+        return None;
+    }
+
+    let starts = line_starts(text);
+    let line = line_range(text, &starts, line_of(&starts, offset));
+    let before = &text[line.start..offset.min(line.end).max(line.start)];
+    if before.is_empty() || !before.chars().all(|c| c == ' ' || c == '\t') {
+        return None;
+    }
+    let removed = one_unit_of_whitespace(before, style.tab_width.max(1));
+    if removed == 0 {
+        return None;
+    }
+    Some(Transaction::new(vec![TextEdit::delete(
+        line.start..line.start + removed,
+    )]))
 }
 
 /// Indent every line any caret touches by one unit.
@@ -111,21 +194,28 @@ pub fn unindent_selection(text: &str, selection: &SelectionSet, style: IndentSty
     let mut edits = Vec::new();
     for line in covered_lines(text, &starts, selection) {
         let range = line_range(text, &starts, line);
-        let content = &text[range.clone()];
-        let removed = if content.starts_with('\t') {
-            1
-        } else {
-            content
-                .bytes()
-                .take(width)
-                .take_while(|b| *b == b' ')
-                .count()
-        };
+        let removed = one_unit_of_whitespace(&text[range.clone()], width);
         if removed > 0 {
             edits.push(TextEdit::delete(range.start..range.start + removed));
         }
     }
     Transaction::new(edits)
+}
+
+/// One unit of leading whitespace off the front of `content`: one tab, or up
+/// to `width` spaces. Shared by [`unindent_selection`] (one unit off every
+/// covered line) and [`dedent_closer`] (one unit off the line a closer just
+/// landed on).
+fn one_unit_of_whitespace(content: &str, width: usize) -> usize {
+    if content.starts_with('\t') {
+        1
+    } else {
+        content
+            .bytes()
+            .take(width)
+            .take_while(|b| *b == b' ')
+            .count()
+    }
 }
 
 /// Whether the text before the caret leaves a block open: an unmatched
@@ -323,6 +413,81 @@ mod tests {
         let text = "\t\ta\n";
         let transaction = unindent_selection(text, &set(&[(0, text.len())]), style);
         assert_eq!(transaction.apply(text).expect("applies"), "\ta\n");
+    }
+
+    // --- enter_between_pair -----------------------------------------------
+
+    #[test]
+    fn enter_between_a_brace_pair_opens_a_three_line_block() {
+        let text = "fn main() {}\n";
+        let offset = text.find('{').expect("fixture") + 1;
+        let (transaction, trim) =
+            enter_between_pair(lang("rust"), text, offset, spaces()).expect("is a pair");
+        let applied = transaction.apply(text).expect("applies");
+        assert_eq!(applied, "fn main() {\n    \n}\n");
+        // The generic "collapsed caret at an insertion rides to its end"
+        // rule would put the caret right after the inserted text; `trim`
+        // is how much that overshoots the real target, between the two
+        // new lines.
+        let inserted_len = transaction.edits[0].text.len();
+        let end_of_insertion = offset + inserted_len;
+        let caret = end_of_insertion - trim;
+        assert_eq!(&applied[caret..caret + 1], "\n");
+        assert_eq!(&applied[..caret], "fn main() {\n    ");
+    }
+
+    #[test]
+    fn enter_between_a_nested_pair_keeps_the_enclosing_indent() {
+        let text = "fn f() {\n    {}\n}\n";
+        let offset = text.rfind('{').expect("fixture") + 1;
+        let (transaction, _) =
+            enter_between_pair(lang("rust"), text, offset, spaces()).expect("is a pair");
+        assert_eq!(
+            transaction.apply(text).expect("applies"),
+            "fn f() {\n    {\n        \n    }\n}\n"
+        );
+    }
+
+    #[test]
+    fn enter_with_no_bracket_pair_at_the_caret_does_nothing() {
+        let text = "let x = 1;\n";
+        assert!(enter_between_pair(lang("rust"), text, 4, spaces()).is_none());
+    }
+
+    #[test]
+    fn enter_between_mismatched_brackets_does_nothing() {
+        let text = "(]\n";
+        assert!(enter_between_pair(lang("rust"), text, 1, spaces()).is_none());
+    }
+
+    // --- dedent_closer ------------------------------------------------------
+
+    #[test]
+    fn a_closer_on_an_otherwise_blank_overindented_line_dedents_it() {
+        let text = "fn f() {\n        ";
+        let offset = text.len();
+        let transaction =
+            dedent_closer(lang("rust"), text, offset, '}', spaces()).expect("dedents");
+        assert_eq!(transaction.apply(text).expect("applies"), "fn f() {\n    ");
+    }
+
+    #[test]
+    fn a_closer_after_real_content_does_not_dedent() {
+        let text = "    x = 1";
+        let offset = text.len();
+        assert!(dedent_closer(lang("rust"), text, offset, ')', spaces()).is_none());
+    }
+
+    #[test]
+    fn a_flush_left_closer_has_nothing_to_dedent() {
+        let text = "";
+        assert!(dedent_closer(lang("rust"), text, 0, '}', spaces()).is_none());
+    }
+
+    #[test]
+    fn a_non_bracket_character_never_dedents() {
+        let text = "    ";
+        assert!(dedent_closer(lang("rust"), text, 4, 'x', spaces()).is_none());
     }
 
     #[test]

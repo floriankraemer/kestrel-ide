@@ -22,7 +22,7 @@
 //! truncating — a selection that quietly stops covering what the user dragged
 //! over is worse than one that refuses.
 
-use crate::offsets::{clamp_to_boundary, line_range, line_starts};
+use crate::offsets::{clamp_to_boundary, line_of, line_range, line_starts};
 
 /// The most carets one [`SelectionSet`] may hold.
 ///
@@ -311,6 +311,150 @@ impl SelectionSet {
             .iter()
             .any(|c| c.start() <= start && c.end() >= end)
     }
+
+    /// Move every caret by `motion` at once — the tested rule that lifts the
+    /// ADR-0023 ceiling ("more than one caret collapses to the primary")
+    /// for the keys it actually applies to. `extend` is Shift held: the
+    /// anchor stays put and only the head moves, same as a single caret's
+    /// arrow keys. `tab_width` only matters for `Up`/`Down`, which keep the
+    /// caret's visual column the way [`column_block`] already does for a
+    /// column-selection drag.
+    pub fn move_carets(
+        &self,
+        text: &str,
+        motion: CaretMotion,
+        extend: bool,
+        tab_width: usize,
+    ) -> Result<SelectionSet, SelectionError> {
+        let starts = line_starts(text);
+        let mapped: Vec<Caret> = self
+            .carets
+            .iter()
+            .map(|caret| {
+                let head = moved_head(text, &starts, caret, motion, tab_width);
+                let anchor = if extend { caret.anchor } else { head };
+                Caret::new(anchor, head)
+            })
+            .collect();
+        SelectionSet::from_carets(mapped, self.primary)
+    }
+}
+
+/// A keyboard motion every caret in a [`SelectionSet`] can make at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaretMotion {
+    Left,
+    Right,
+    Up,
+    Down,
+    Home,
+    End,
+    WordLeft,
+    WordRight,
+}
+
+/// Where `caret`'s head goes for `motion`, un-extended.
+///
+/// A caret that already carries a selection collapses to the edge `Left` or
+/// `Right` points at rather than moving past it — the same "first press
+/// dismisses the selection" rule a single caret's arrow keys already follow.
+/// Every other motion (and the two horizontal ones once there is no
+/// selection to collapse) reads from the head.
+fn moved_head(
+    text: &str,
+    starts: &[usize],
+    caret: &Caret,
+    motion: CaretMotion,
+    tab_width: usize,
+) -> usize {
+    if !caret.is_empty() {
+        match motion {
+            CaretMotion::Left => return caret.start(),
+            CaretMotion::Right => return caret.end(),
+            _ => {}
+        }
+    }
+    match motion {
+        CaretMotion::Left => prev_char(text, caret.head),
+        CaretMotion::Right => next_char(text, caret.head),
+        CaretMotion::Home => line_range(text, starts, line_of(starts, caret.head)).start,
+        CaretMotion::End => line_range(text, starts, line_of(starts, caret.head)).end,
+        CaretMotion::Up => vertical(text, starts, caret.head, tab_width, -1),
+        CaretMotion::Down => vertical(text, starts, caret.head, tab_width, 1),
+        CaretMotion::WordLeft => word_left(text, caret.head),
+        CaretMotion::WordRight => word_right(text, caret.head),
+    }
+}
+
+fn prev_char(text: &str, offset: usize) -> usize {
+    let offset = clamp_to_boundary(text, offset);
+    match text[..offset].chars().next_back() {
+        Some(c) => offset - c.len_utf8(),
+        None => 0,
+    }
+}
+
+fn next_char(text: &str, offset: usize) -> usize {
+    let offset = clamp_to_boundary(text, offset);
+    match text[offset..].chars().next() {
+        Some(c) => offset + c.len_utf8(),
+        None => text.len(),
+    }
+}
+
+/// The visual column of `offset` on its own line — a tab counts as the
+/// distance to the next tab stop, matching [`column_block`]'s own rule so a
+/// caret moved by Up/Down lines up with one dragged out as a column block.
+fn visual_column_of(text: &str, starts: &[usize], offset: usize, tab_width: usize) -> usize {
+    let tab_width = tab_width.max(1);
+    let range = line_range(text, starts, line_of(starts, offset));
+    let mut column = 0usize;
+    for ch in text[range.start..offset.clamp(range.start, range.end)].chars() {
+        column += if ch == '\t' {
+            tab_width - (column % tab_width)
+        } else {
+            1
+        };
+    }
+    column
+}
+
+/// `offset` moved `delta` lines up (negative) or down (positive), landing on
+/// the target line at the same visual column — clipped to that line's own
+/// length rather than padded, the same ragged-line rule [`column_block`]
+/// uses.
+fn vertical(text: &str, starts: &[usize], offset: usize, tab_width: usize, delta: isize) -> usize {
+    let line = line_of(starts, offset) as isize;
+    let last = starts.len().saturating_sub(1) as isize;
+    let target = (line + delta).clamp(0, last) as usize;
+    let column = visual_column_of(text, starts, offset, tab_width);
+    let range = line_range(text, starts, target);
+    range.start + byte_at_visual_column(&text[range.clone()], column, tab_width)
+}
+
+/// One word (or one run of non-word characters) to the left of `offset` —
+/// the same target Ctrl+Backspace uses, and what Ctrl+Left lands on.
+fn word_left(text: &str, offset: usize) -> usize {
+    let mut at = clamp_to_boundary(text, offset);
+    while let Some(c) = text[..at].chars().next_back().filter(|c| !is_word_byte(*c)) {
+        at -= c.len_utf8();
+    }
+    while let Some(c) = text[..at].chars().next_back().filter(|c| is_word_byte(*c)) {
+        at -= c.len_utf8();
+    }
+    at
+}
+
+/// The mirror of [`word_left`], one word (or non-word run) to the right.
+fn word_right(text: &str, offset: usize) -> usize {
+    let mut at = clamp_to_boundary(text, offset);
+    while let Some(c) = text[at..].chars().next().filter(|c| !is_word_byte(*c)) {
+        at += c.len_utf8();
+    }
+    while let Some(c) = text[at..].chars().next().filter(|c| is_word_byte(*c)) {
+        at += c.len_utf8();
+    }
+    at
 }
 
 /// Alt+Shift+drag: one caret per line between two (line, visual column)
@@ -740,6 +884,72 @@ mod tests {
         let text = "ab\ncd";
         let s = column_block(text, 0, 0, 99, 2, 4).unwrap();
         assert_eq!(spans(&s), vec![(0, 2), (3, 5)]);
+    }
+
+    // --- caret motion ------------------------------------------------------
+
+    #[test]
+    fn left_and_right_move_every_caret_by_one_character() {
+        let text = "abc\ndef";
+        let s = set(&[1, 5]);
+        let moved = s.move_carets(text, CaretMotion::Right, false, 4).unwrap();
+        assert_eq!(spans(&moved), vec![(2, 2), (6, 6)]);
+        let back = moved
+            .move_carets(text, CaretMotion::Left, false, 4)
+            .unwrap();
+        assert_eq!(spans(&back), vec![(1, 1), (5, 5)]);
+    }
+
+    #[test]
+    fn left_on_a_selection_collapses_to_its_start_without_moving_further() {
+        let s = SelectionSet::single(Caret::new(2, 8));
+        let moved = s
+            .move_carets("0123456789", CaretMotion::Left, false, 4)
+            .unwrap();
+        assert_eq!(spans(&moved), vec![(2, 2)]);
+    }
+
+    #[test]
+    fn shift_extends_instead_of_collapsing() {
+        let s = set(&[1]);
+        let moved = s
+            .move_carets("abcdef", CaretMotion::Right, true, 4)
+            .unwrap();
+        assert_eq!(moved.carets(), &[Caret::new(1, 2)]);
+    }
+
+    #[test]
+    fn home_and_end_land_on_the_lines_own_bounds() {
+        let text = "  abc\ndef";
+        let s = set(&[3]);
+        let home = s.move_carets(text, CaretMotion::Home, false, 4).unwrap();
+        assert_eq!(spans(&home), vec![(0, 0)]);
+        let end = s.move_carets(text, CaretMotion::End, false, 4).unwrap();
+        assert_eq!(spans(&end), vec![(5, 5)]);
+    }
+
+    #[test]
+    fn down_keeps_every_carets_own_visual_column_and_clamps_at_the_end() {
+        let text = "abcdef\nab\nabcdef";
+        let s = set(&[3, 13]); // column 3 on line 0, column 3 (of 6) on line 2
+        let down = s.move_carets(text, CaretMotion::Down, false, 4).unwrap();
+        // Line 0 -> line 1 clips to "ab"'s length; line 2 is already last, so
+        // it clamps in place rather than falling off the end of the text.
+        assert_eq!(spans(&down), vec![(9, 9), (13, 13)]);
+    }
+
+    #[test]
+    fn word_motions_move_every_caret_to_the_next_word_boundary() {
+        let text = "one two three";
+        let s = set(&[0, 4]);
+        let moved = s
+            .move_carets(text, CaretMotion::WordRight, false, 4)
+            .unwrap();
+        assert_eq!(spans(&moved), vec![(3, 3), (7, 7)]);
+        let back = moved
+            .move_carets(text, CaretMotion::WordLeft, false, 4)
+            .unwrap();
+        assert_eq!(spans(&back), vec![(0, 0), (4, 4)]);
     }
 
     #[test]

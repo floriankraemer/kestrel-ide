@@ -49,6 +49,7 @@ struct RowFields
     QCheckBox *trimTrailingWhitespace;
     QCheckBox *insertFinalNewline;
     QSpinBox *wrapColumn;
+    QCheckBox *softWrap;
 };
 
 RowFields addRowFields(QFormLayout *form)
@@ -67,7 +68,9 @@ RowFields addRowFields(QFormLayout *form)
     wrapColumn->setSpecialValueText(QObject::tr("Never wrap"));
     form->addRow(QObject::tr("Wrap column:"), wrapColumn);
 
-    return RowFields{tabWidth, useSpaces, trim, finalNewline, wrapColumn};
+    QCheckBox *softWrap = addTriState(form, QObject::tr("Wrap lines at the guide (soft wrap):"));
+
+    return RowFields{tabWidth, useSpaces, trim, finalNewline, wrapColumn, softWrap};
 }
 
 void setRowFields(const RowFields &fields, const FfiEditingRow &row)
@@ -81,6 +84,7 @@ void setRowFields(const RowFields &fields, const FfiEditingRow &row)
                row.insert_final_newline);
     const QSignalBlocker wrapBlocker(fields.wrapColumn);
     fields.wrapColumn->setValue(static_cast<int>(row.wrap_column));
+    setTriState(fields.softWrap, row.has_soft_wrap, row.soft_wrap);
 }
 
 // The inverse of `setRowFields`: what the widgets say right now, folded back
@@ -109,6 +113,8 @@ FfiEditingRow readRowFields(const RowFields &fields, const QString &languageId,
     // distinguish them — zero always reads back as unset.
     row.has_wrap_column = fields.wrapColumn->value() > 0;
     row.wrap_column = static_cast<quint32>(fields.wrapColumn->value());
+    row.has_soft_wrap = fields.softWrap->checkState() != Qt::PartiallyChecked;
+    row.soft_wrap = fields.softWrap->checkState() == Qt::Checked;
     row.default_encoding = defaultEncoding;
     row.line_endings = lineEndings;
     return row;
@@ -165,6 +171,7 @@ QWidget *buildEditingPage(QWidget *parent, EditingEditor *editor)
     QObject::connect(globalFields.insertFinalNewline, &QCheckBox::stateChanged, page,
                      pushGlobalRow);
     QObject::connect(globalFields.wrapColumn, &QSpinBox::valueChanged, page, pushGlobalRow);
+    QObject::connect(globalFields.softWrap, &QCheckBox::stateChanged, page, pushGlobalRow);
     QObject::connect(encodingEdit, &QLineEdit::textChanged, page, pushGlobalRow);
     QObject::connect(lineEndingCombo, &QComboBox::currentIndexChanged, page, pushGlobalRow);
 
@@ -224,6 +231,7 @@ QWidget *buildEditingPage(QWidget *parent, EditingEditor *editor)
     QObject::connect(languageFields.insertFinalNewline, &QCheckBox::stateChanged, page,
                      pushLanguageRow);
     QObject::connect(languageFields.wrapColumn, &QSpinBox::valueChanged, page, pushLanguageRow);
+    QObject::connect(languageFields.softWrap, &QCheckBox::stateChanged, page, pushLanguageRow);
 
     if (!languageRows.empty()) {
         showLanguageRow();

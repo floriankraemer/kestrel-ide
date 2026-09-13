@@ -30,18 +30,43 @@ pub struct BracketMatch {
     pub partner: Range<usize>,
 }
 
-/// The bracket at (or immediately before) `offset` and its partner.
+/// The bracket at (or immediately before) `offset`, whether or not it has a
+/// partner — what a live pair highlight needs and [`matching_bracket`] does
+/// not give: a caret on an unmatched closer still names a bracket, it just
+/// has nothing to pair it with, and the highlight paints that bracket in the
+/// error colour rather than not painting anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairAt {
+    /// The bracket the caret was on or just after.
+    pub bracket: Range<usize>,
+    /// Its partner, when the file has one.
+    pub partner: Option<Range<usize>>,
+}
+
+/// The bracket at (or immediately before) `offset`, and its partner if it
+/// has one.
 ///
 /// The caret is treated as being on the bracket to its right first, then
 /// the one to its left — the convention every editor uses, and the one
 /// that makes `foo()|` jump backwards.
-pub fn matching_bracket(language: Language, text: &str, offset: usize) -> Option<BracketMatch> {
+pub fn pair_at(language: Language, text: &str, offset: usize) -> Option<PairAt> {
     let tokens = Tokens::of(language);
     let (bracket, delimiter, forward) = bracket_at(&tokens, text, offset)?;
     let syntax = Syntax::parse(language, text);
     let partner = by_grammar(&syntax, &bracket, &delimiter, forward)
-        .or_else(|| by_counting(&syntax, text, &bracket, &delimiter, forward))?;
-    Some(BracketMatch { bracket, partner })
+        .or_else(|| by_counting(&syntax, text, &bracket, &delimiter, forward));
+    Some(PairAt { bracket, partner })
+}
+
+/// The bracket at (or immediately before) `offset` and its partner — `None`
+/// when either there is no bracket there or it has no partner, which is
+/// exactly what jumping to it needs (`None` either way refuses the jump).
+pub fn matching_bracket(language: Language, text: &str, offset: usize) -> Option<BracketMatch> {
+    let found = pair_at(language, text, offset)?;
+    Some(BracketMatch {
+        bracket: found.bracket,
+        partner: found.partner?,
+    })
 }
 
 /// Where the caret goes for "go to matching bracket": just past the
@@ -217,6 +242,18 @@ mod tests {
         let text = "fn main() { \n";
         let open = text.find('{').expect("fixture");
         assert!(matching_bracket(lang("rust"), text, open).is_none());
+    }
+
+    #[test]
+    fn pair_at_still_names_an_unmatched_bracket() {
+        // matching_bracket refuses this (nothing to jump to); pair_at is
+        // what a live highlight needs — the bracket itself, painted as
+        // unmatched rather than not painted at all.
+        let text = "fn main() { \n";
+        let open = text.find('{').expect("fixture");
+        let found = pair_at(lang("rust"), text, open).expect("names the bracket");
+        assert_eq!(found.bracket, open..open + 1);
+        assert!(found.partner.is_none());
     }
 
     #[test]

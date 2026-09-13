@@ -197,6 +197,121 @@ fn e2e_replace_all_and_completion_are_one_undo_each() {
     assert_eq!(ide.quit(), 0);
 }
 
+/// R1: Tab/Shift+Tab over a selection, and Enter between a bracket pair —
+/// the same real keystrokes an end user presses, through the widget's
+/// `keyPressEvent`, not a direct MCP call, so a regression that only shows
+/// up at the Qt seam (the wrong key falling through to `QPlainTextEdit`,
+/// say) still fails this.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_indent_tab_and_enter_between_braces() {
+    let name = "e2e_indent_tab_and_enter_between_braces";
+    let mut ide = Ide::launch(name, APP, fixture("tiny"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    let mcp = ide.mcp();
+    wait_for_index(&mcp);
+    let original = fixture_text("tiny", "src/main.rs");
+    let tab = open_file(&ide, "main.rs");
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+
+    // Select the file's first three lines ("mod greeting;", a blank line,
+    // "fn main() {") and indent them. The blank line contributes no edit
+    // (`indent_selection` skips blank lines), so the splice is two edits.
+    //
+    // Shift is held down for all three `Down`s in one xdotool invocation
+    // rather than sent as three separate `ide.key("shift+Down")` calls:
+    // each of those presses and releases Shift on its own, and three bare
+    // Shift presses inside JetBrains' double-Shift window
+    // (`IdeMainWindow::kDoubleShiftMs`) pop open Search Everywhere — a
+    // gesture a real user holding Shift down the whole time never makes.
+    ide.key("ctrl+Home");
+    e2e::xdotool::run(&[
+        "keydown", "shift", "key", "Down", "key", "Down", "key", "Down", "keyup", "shift",
+    ]);
+    let mark = ide.mark();
+    ide.key("Tab");
+    let applied = ide.wait_for_ev(mark, "edits_applied");
+    assert_eq!(
+        applied["count"].as_u64(),
+        Some(2),
+        "Tab did not indent both non-blank lines"
+    );
+    // `read_buffer` answers from the rope, which is one save behind the
+    // live widget (`editor_core::Document`'s own doc comment) — every
+    // buffer assertion below saves first, the same as the Replace-All flow
+    // above.
+    save_and_sync(&ide, &mcp, tab_id);
+    let indented = original.replacen(
+        "mod greeting;\n\nfn main() {",
+        "    mod greeting;\n\n    fn main() {",
+        1,
+    );
+    assert_eq!(
+        buffer(&mcp, tab_id),
+        indented,
+        "Tab did not indent the selected lines"
+    );
+
+    // Shift+Tab undoes exactly that indentation, back to the original text.
+    let mark = ide.mark();
+    ide.key("shift+Tab");
+    let applied = ide.wait_for_ev(mark, "edits_applied");
+    assert_eq!(
+        applied["count"].as_u64(),
+        Some(2),
+        "Shift+Tab did not unindent both lines"
+    );
+    save_and_sync(&ide, &mcp, tab_id);
+    assert_eq!(
+        buffer(&mcp, tab_id),
+        original,
+        "Shift+Tab did not restore the original indent"
+    );
+
+    // Enter between a bracket pair with nothing between them opens a
+    // three-line block. The fixture's last line, `fn empty() {}`, is
+    // already such a pair — reaching it by navigation only (`ctrl+End`,
+    // `Up` to its line, `End` to its close, `Left` between the two) means
+    // no typing, so nothing here depends on auto-close/type-over timing.
+    ide.key("ctrl+End");
+    ide.sync(&mcp);
+    ide.key("Up");
+    ide.sync(&mcp);
+    ide.key("End");
+    ide.sync(&mcp);
+    ide.key("Left"); // caret now between the `{` and `}` of `fn empty() {}`
+    ide.sync(&mcp);
+    ide.key("Return");
+    ide.sync(&mcp);
+    // `read_buffer` needs a save to see anything (the rope is one save
+    // behind the live widget), and saving trims the inner line's "    " —
+    // it is trailing whitespace on a line with nothing else on it, exactly
+    // as `trim_trailing_whitespace` (on by default) is supposed to. So the
+    // saved shape has an empty middle line, not an indented one; the
+    // indent itself is `enter_between_pair`'s own unit test's job.
+    save_and_sync(&ide, &mcp, tab_id);
+    assert_eq!(
+        buffer(&mcp, tab_id),
+        original.replacen("fn empty() {}", "fn empty() {\n\n}", 1),
+        "Enter between `{{` and `}}` did not open a three-line block"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// Ctrl+S, then wait for the tab to go clean — what every buffer assertion
+/// needs first, since `read_buffer` answers from the rope and that is one
+/// save behind the live widget.
+fn save_and_sync(ide: &Ide, mcp: &Mcp, tab_id: u64) {
+    let mark = ide.mark();
+    ide.key("ctrl+s");
+    ide.wait_for_event(mark, "the tab to go clean after saving", |e| {
+        e["ev"] == "tab_dirty" && e["tab_id"].as_u64() == Some(tab_id) && e["dirty"] == false
+    });
+    ide.sync(mcp);
+}
+
 /// One Ctrl+Z, then a save so `read_buffer` sees the result — the "after
 /// one undo" half every one-undo flow asserts.
 fn undo_once_and_save(ide: &Ide, mcp: &Mcp, tab_id: u64) {

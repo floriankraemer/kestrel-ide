@@ -678,6 +678,25 @@ void EditorTabs::setInlayHintsEnabled(bool enabled)
     });
 }
 
+bool EditorTabs::toggleSoftWrap()
+{
+    const bool enabled = editorOps_->toggleSoftWrap();
+    forEachEditor([this](QPlainTextEdit *editor) {
+        auto *codeEditor = qobject_cast<CodeEditor *>(editor);
+        if (!codeEditor) {
+            return;
+        }
+        const quint64 tabId = editor->property("tabId").toULongLong();
+        codeEditor->setSoftWrapEnabled(editorOps_->softWrapForTab(tabId));
+    });
+    return enabled;
+}
+
+bool EditorTabs::softWrapEnabled() const
+{
+    return editorOps_->softWrapEnabled();
+}
+
 void EditorTabs::collapseAllFolds()
 {
     if (auto *codeEditor = qobject_cast<CodeEditor *>(currentEditor())) {

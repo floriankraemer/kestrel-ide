@@ -82,6 +82,9 @@ pub struct EditingRules {
     pub insert_final_newline: bool,
     /// `0` means "never wrap".
     pub wrap_column: u32,
+    /// Whether the editor reflows text at `wrap_column` rather than only
+    /// painting the guide line there.
+    pub soft_wrap: bool,
     /// Encoding name assumed when the file gives no clue about its own.
     pub encoding: String,
     /// The terminator to normalise to on save, or `None` to keep the file's
@@ -156,6 +159,9 @@ pub fn resolve_for_language(settings: &Settings, language_id: &str) -> EditingRu
                 .map(|l| l.wrap_column_or_default()),
             global.wrap_column_or_default(),
         ),
+        soft_wrap: language
+            .and_then(|l| l.soft_wrap)
+            .unwrap_or_else(|| global.soft_wrap_or_default()),
         // The two the language does not get a say in — see the module docs.
         encoding: global.default_encoding_or_default().to_string(),
         line_endings: line_ending_for(global.line_endings_or_default()),
@@ -278,6 +284,7 @@ fn is_unset(overrides: &EditingSettings) -> bool {
         && overrides.trim_trailing_whitespace.is_none()
         && overrides.insert_final_newline.is_none()
         && overrides.wrap_column.is_none()
+        && overrides.soft_wrap.is_none()
         && overrides.default_encoding.is_empty()
         && overrides.line_endings.is_empty()
 }
@@ -349,6 +356,7 @@ mod tests {
         assert!(rules.trim_trailing_whitespace);
         assert!(rules.insert_final_newline);
         assert_eq!(rules.wrap_column, 0);
+        assert!(!rules.soft_wrap);
         assert_eq!(rules.encoding, "utf-8");
         // "preserve": a file the user only opened keeps its own terminators.
         assert_eq!(rules.line_endings, None);
@@ -420,6 +428,25 @@ mod tests {
                 use_spaces: true
             }
         );
+    }
+
+    #[test]
+    fn soft_wrap_is_off_unless_a_language_or_the_global_section_turns_it_on() {
+        let mut editing = EditingSettings {
+            soft_wrap: Some(true),
+            ..EditingSettings::default()
+        };
+        language(
+            &mut editing,
+            "markdown",
+            EditingSettings {
+                soft_wrap: Some(false),
+                ..EditingSettings::default()
+            },
+        );
+        let settings = settings(editing);
+        assert!(resolve_for_language(&settings, "rust").soft_wrap);
+        assert!(!resolve_for_language(&settings, "markdown").soft_wrap);
     }
 
     #[test]
@@ -596,6 +623,7 @@ mod tests {
             trim_trailing_whitespace: false,
             insert_final_newline: true,
             wrap_column: 80,
+            soft_wrap: true,
             encoding: "utf-8".into(),
             line_endings: Some(LineEnding::Crlf),
         };

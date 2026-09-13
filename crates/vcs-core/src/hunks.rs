@@ -136,6 +136,45 @@ impl Repository {
         })
     }
 
+    /// Hunks between `HEAD`'s copy of `path` and `working_text`, uncached —
+    /// what [`HunkCache::hunks`] computes on a miss, for a caller with no
+    /// live buffer revision to key a cache on: the Changes dock's per-hunk
+    /// rows (R6) read the working tree from disk for files that may not be
+    /// open at all.
+    pub fn hunks_against_head(
+        &self,
+        relative_path: &Path,
+        working_text: &str,
+    ) -> Result<WorkingHunks, VcsError> {
+        let (head_oid, before) = match self.head_blob(relative_path)? {
+            Some((oid, text)) => (oid, text),
+            None => (NO_HEAD_BLOB.to_string(), String::new()),
+        };
+        let hunks = diff::diff_lines(&before, working_text).map_err(|e| match e {
+            DiffError::TooLarge => VcsError::TooLargeToDiff,
+        })?;
+        Ok(WorkingHunks {
+            head_oid,
+            before_text: before,
+            hunks,
+        })
+    }
+
+    /// [`classify_hunk`] for every `HEAD`-vs-worktree hunk of one file,
+    /// against its current `HEAD`-vs-index hunks — one index read for the
+    /// whole gutter rather than one per hunk.
+    pub fn classify_hunks(
+        &self,
+        relative_path: &Path,
+        hunks: &[Hunk],
+    ) -> Result<Vec<HunkStageState>, VcsError> {
+        let staged = self.staged_hunks(relative_path)?;
+        Ok(hunks
+            .iter()
+            .map(|hunk| classify_hunk(hunk, &staged.hunks))
+            .collect())
+    }
+
     /// Hunks between `HEAD`'s copy of `path` and the index's copy — what is
     /// already staged, independent of any further, still-unstaged edit in
     /// the working tree. The unstage counterpart to
@@ -576,6 +615,40 @@ mod tests {
         let staged = diff::diff_lines("one\ntwo\nthree\n", "one\nTWO\nthree\n").unwrap();
         let state = classify_hunk(&gutter[0], &staged);
         assert_eq!(state, HunkStageState::Both);
+    }
+
+    #[test]
+    fn classify_hunks_marks_the_staged_one_and_leaves_the_other_unstaged() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(
+            dir.path().join("a.txt"),
+            "one\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+        )
+        .unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        std::fs::write(
+            dir.path().join("a.txt"),
+            "ONE\ntwo\nthree\nfour\nfive\nsix\nseven\n",
+        )
+        .unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        let working = "ONE\ntwo\nthree\nfour\nfive\nsix\nSEVEN\n";
+        std::fs::write(dir.path().join("a.txt"), working).unwrap();
+
+        let repo = open(dir.path());
+        let gutter = repo
+            .hunks_against_head(Path::new("a.txt"), working)
+            .unwrap();
+        assert_eq!(gutter.hunks.len(), 2);
+        let states = repo
+            .classify_hunks(Path::new("a.txt"), &gutter.hunks)
+            .unwrap();
+        assert_eq!(
+            states,
+            vec![HunkStageState::Staged, HunkStageState::Unstaged]
+        );
     }
 
     #[test]

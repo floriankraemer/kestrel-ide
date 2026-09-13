@@ -209,6 +209,31 @@ pub mod argv {
         args
     }
 
+    /// `git commit -m <message> [--amend] [--author=<author>] [--signoff]`
+    /// — the full shape behind [`crate::commit::CommitOptions`]. `author`
+    /// is passed through as `--author=Name <email>` untouched: `git` itself
+    /// validates the `Name <email>` form and rejects anything else with its
+    /// own message, which is what the user should see rather than a second
+    /// parser's opinion of what an email looks like.
+    pub fn commit_with<'a>(
+        message: &'a str,
+        amend: bool,
+        author: Option<&'a str>,
+        signoff: bool,
+    ) -> Vec<String> {
+        let mut args = vec!["commit".to_string(), "-m".to_string(), message.to_string()];
+        if amend {
+            args.push("--amend".to_string());
+        }
+        if let Some(author) = author {
+            args.push(format!("--author={author}"));
+        }
+        if signoff {
+            args.push("--signoff".to_string());
+        }
+        args
+    }
+
     /// `git branch <name> [<start-point>]`.
     pub fn branch_create<'a>(name: &'a str, start_point: Option<&'a str>) -> Vec<&'a str> {
         let mut args = vec!["branch", name];
@@ -309,6 +334,24 @@ mod tests {
         assert_eq!(
             argv::reset(&["a.txt", "b.txt"]),
             vec!["reset", "--", "a.txt", "b.txt"]
+        );
+    }
+
+    #[test]
+    fn commit_with_argv_carries_author_and_signoff() {
+        assert_eq!(
+            argv::commit_with("msg", false, Some("Ada <ada@example.com>"), true),
+            vec![
+                "commit",
+                "-m",
+                "msg",
+                "--author=Ada <ada@example.com>",
+                "--signoff"
+            ]
+        );
+        assert_eq!(
+            argv::commit_with("msg", true, None, false),
+            vec!["commit", "-m", "msg", "--amend"]
         );
     }
 

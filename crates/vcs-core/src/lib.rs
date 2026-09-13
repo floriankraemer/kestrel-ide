@@ -17,6 +17,7 @@ pub mod cli;
 pub mod commit;
 pub mod commit_diff;
 mod error;
+pub mod gitignore;
 pub mod history;
 pub mod hunks;
 pub mod repo;
@@ -25,8 +26,10 @@ pub mod staging;
 pub mod status;
 
 pub use blame::{BlameCache, BlameLine};
+pub use commit::CommitOptions;
 pub use commit_diff::{ChangedCommitFile, FileDiff};
 pub use error::VcsError;
+pub use gitignore::gitignore_pattern;
 pub use history::{CommitDetail, HistoryCache, LogEntry};
 pub use hunks::{classify_hunk, HunkCache, HunkStageState, StagedHunks, WorkingHunks};
 pub use repo::{ChangeKind, DiscoverResult, FileStatus, HeadInfo, RepoStatus, Repository};

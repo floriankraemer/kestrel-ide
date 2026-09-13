@@ -12,6 +12,7 @@
 #include "theme.h"
 #include "vcs_gutter.h"
 
+#include <QDateTime>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -19,6 +20,7 @@
 #include <QPolygon>
 #include <QScrollBar>
 #include <QTextBlock>
+#include <QToolTip>
 
 namespace ui_shell {
 
@@ -37,6 +39,24 @@ constexpr int kDiagnosticWidth = 12;
 // width for a file that has a run target, so a file without one keeps
 // exactly the gutter it had before.
 constexpr int kRunMarkerWidth = 14;
+
+// R7: a blame line's background tint fades from this alpha (freshly
+// committed) to none past a year old — the same "recent change stands out"
+// idea IntelliJ's own blame age heat map uses, reduced to one hue rather
+// than a full gradient.
+constexpr qint64 kBlameAgeHorizonSecs = 365LL * 24 * 60 * 60;
+constexpr float kBlameAgeMaxAlpha = 0.35f;
+
+QColor blameAgeColor(qint64 authorTimeSecs)
+{
+    const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
+    const qint64 ageSecs = qMax<qint64>(0, nowSecs - authorTimeSecs);
+    const double fraction =
+      1.0 - qMin(1.0, static_cast<double>(ageSecs) / static_cast<double>(kBlameAgeHorizonSecs));
+    QColor color(0xff, 0xb3, 0x00);
+    color.setAlphaF(static_cast<float>(fraction) * kBlameAgeMaxAlpha);
+    return color;
+}
 // D2-5: the breakpoint column, always present. Unlike the Run icon this one
 // does not come and go: a gutter whose width depends on whether a file has
 // breakpoints would reflow the text every time one is set.
@@ -192,11 +212,16 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
             if (blameEnabled_) {
                 const auto blameIt = blameAnnotations_.constFind(blockNumber);
                 if (blameIt != blameAnnotations_.constEnd()) {
+                    // R7: age-shaded background, behind the current-line
+                    // band so the caret's own row still reads as current.
+                    painter.fillRect(digitAreaWidth, top, kBlameWidth, fontMetrics().height(),
+                                      blameAgeColor(blameIt.value().authorTime));
                     painter.setPen(blameColor);
-                    painter.drawText(digitAreaWidth + 6, top, kBlameWidth - 10,
-                                      fontMetrics().height(), Qt::AlignLeft | Qt::TextSingleLine,
-                                      fontMetrics().elidedText(blameIt.value(), Qt::ElideRight,
-                                                                kBlameWidth - 10));
+                    painter.drawText(
+                      digitAreaWidth + 6, top, kBlameWidth - 10, fontMetrics().height(),
+                      Qt::AlignLeft | Qt::TextSingleLine,
+                      fontMetrics().elidedText(blameIt.value().text, Qt::ElideRight,
+                                                kBlameWidth - 10));
                 }
             }
 
@@ -297,6 +322,10 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
       clickX >= runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth
       && clickX
         < runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth + kDiagnosticWidth;
+    // R7: the blame column, when it is on at all — same bounds
+    // `lineNumberAreaPaintEvent` paints the tint and text into.
+    const int digitAreaWidth = lineNumberAreaWidth() - (blameEnabled_ ? kBlameWidth : 0);
+    const bool onBlameColumn = blameEnabled_ && clickX >= digitAreaWidth;
 
     QTextBlock block = firstVisibleBlock();
     int blockNumber = block.blockNumber();
@@ -332,7 +361,51 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
                 emit diagnosticMarkerClicked(blockNumber);
                 return;
             }
+
+            if (onBlameColumn) {
+                const auto blameIt = blameAnnotations_.constFind(blockNumber);
+                if (blameIt != blameAnnotations_.constEnd()) {
+                    emit blameLineClicked(blameIt.value().commitId);
+                }
+                return;
+            }
             toggleFold(blockNumber);
+            return;
+        }
+        block = block.next();
+        top = bottom;
+        bottom = top + qRound(blockBoundingRect(block).height());
+        ++blockNumber;
+    }
+}
+
+void CodeEditor::lineNumberAreaMouseMoveEvent(QMouseEvent *event)
+{
+    if (!blameEnabled_) {
+        return;
+    }
+    const int x = static_cast<int>(event->position().x());
+    const int y = static_cast<int>(event->position().y());
+    const int digitAreaWidth = lineNumberAreaWidth() - kBlameWidth;
+    if (x < digitAreaWidth) {
+        QToolTip::hideText();
+        return;
+    }
+
+    QTextBlock block = firstVisibleBlock();
+    int blockNumber = block.blockNumber();
+    int top = qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
+    int bottom = top + qRound(blockBoundingRect(block).height());
+
+    while (block.isValid() && top <= y) {
+        if (block.isVisible() && y >= top && y < bottom) {
+            const auto blameIt = blameAnnotations_.constFind(blockNumber);
+            if (blameIt != blameAnnotations_.constEnd() && !blameIt.value().tooltip.isEmpty()) {
+                QToolTip::showText(lineNumberArea_->mapToGlobal(event->pos()),
+                                    blameIt.value().tooltip, lineNumberArea_);
+            } else {
+                QToolTip::hideText();
+            }
             return;
         }
         block = block.next();

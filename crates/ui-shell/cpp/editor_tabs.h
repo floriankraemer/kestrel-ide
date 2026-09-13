@@ -608,6 +608,12 @@ public:
     void setAnnotateEnabledChangedCallback(std::function<void(bool)> callback);
     void restoreAnnotateForActiveTab();
 
+    // R7: a click on a blame line — opens that commit in the commit-detail
+    // dock, the same `openCommit` callback the Commit Log/File History
+    // panels already use, wired once from `main_window.cpp` rather than
+    // EditorTabs owning any dock itself.
+    void setBlameCommitClickedCallback(std::function<void(const QString &)> callback);
+
     // `VcsService::blameReady(path, lines)`: push blame text for `path`
     // into that file's gutter, if it is still open and annotation is on.
     void applyVcsBlame(const QString &path, const ::rust::Vec<FfiBlameLine> &lines);
@@ -953,6 +959,8 @@ private:
     // checkable action can follow a per-file restore it did not itself
     // trigger.
     std::function<void(bool)> annotateEnabledChanged_;
+    // R7: see `setBlameCommitClickedCallback`.
+    std::function<void(const QString &)> blameCommitClicked_;
 
     // F3-14: which tabs currently have their `CodeEditor` reparented
     // into an open diff tab in the Diff dock (see `openEditableDiffWindow`),

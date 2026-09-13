@@ -923,7 +923,7 @@ void CodeEditor::setBlameAnnotations(const QVector<BlameAnnotation> &annotations
 {
     blameAnnotations_.clear();
     for (const BlameAnnotation &annotation : annotations) {
-        blameAnnotations_.insert(annotation.block, annotation.text);
+        blameAnnotations_.insert(annotation.block, annotation);
     }
     lineNumberArea_->update();
 }

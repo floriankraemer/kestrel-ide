@@ -109,6 +109,7 @@ fn to_ffi_blame_line(line: &vcs_core::BlameLine) -> ffi::FfiBlameLine {
         commit: QString::from(line.commit.as_str()),
         author_name: QString::from(line.author_name.as_str()),
         author_email: QString::from(line.author_email.as_str()),
+        author_time: line.author_time,
         summary: QString::from(line.summary.as_str()),
         content: QString::from(line.content.as_str()),
     }

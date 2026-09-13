@@ -20,6 +20,9 @@ pub struct BlameLine {
     pub commit: String,
     pub author_name: String,
     pub author_email: String,
+    /// Seconds since the Unix epoch, author time — R7's age-shaded gutter
+    /// background.
+    pub author_time: i64,
     /// The commit's message summary (first line).
     pub summary: String,
     pub content: String,
@@ -56,7 +59,7 @@ impl Repository {
 /// the second and later lines from that commit carry only the header and
 /// the tab-content line.
 pub fn parse_porcelain(output: &str) -> Vec<BlameLine> {
-    let mut seen: HashMap<String, (String, String, String)> = HashMap::new();
+    let mut seen: HashMap<String, (String, String, i64, String)> = HashMap::new();
     let mut result = Vec::new();
     let mut lines = output.lines().peekable();
 
@@ -73,10 +76,12 @@ pub fn parse_porcelain(output: &str) -> Vec<BlameLine> {
 
         let mut author_name = String::new();
         let mut author_email = String::new();
+        let mut author_time: i64 = 0;
         let mut summary = String::new();
-        if let Some((name, email, sum)) = seen.get(oid) {
+        if let Some((name, email, time, sum)) = seen.get(oid) {
             author_name = name.clone();
             author_email = email.clone();
+            author_time = *time;
             summary = sum.clone();
         }
 
@@ -93,22 +98,30 @@ pub fn parse_porcelain(output: &str) -> Vec<BlameLine> {
                 author_name = rest.to_string();
             } else if let Some(rest) = next.strip_prefix("author-mail ") {
                 author_email = rest.trim_matches(['<', '>']).to_string();
+            } else if let Some(rest) = next.strip_prefix("author-time ") {
+                author_time = rest.trim().parse().unwrap_or(0);
             } else if let Some(rest) = next.strip_prefix("summary ") {
                 summary = rest.to_string();
             }
-            // committer*, *-time, *-tz, boundary, previous, filename: not
-            // needed by BlameLine today, deliberately ignored.
+            // committer*, *-tz, boundary, previous, filename: not needed by
+            // BlameLine today, deliberately ignored.
         };
 
         seen.insert(
             oid.to_string(),
-            (author_name.clone(), author_email.clone(), summary.clone()),
+            (
+                author_name.clone(),
+                author_email.clone(),
+                author_time,
+                summary.clone(),
+            ),
         );
         result.push(BlameLine {
             line: final_line,
             commit: oid.to_string(),
             author_name,
             author_email,
+            author_time,
             summary,
             content,
         });
@@ -223,6 +236,7 @@ filename f.txt
         assert_eq!(lines[0].content, "one");
         assert_eq!(lines[0].summary, "first");
         assert_eq!(lines[0].author_email, "a@b.com");
+        assert_eq!(lines[0].author_time, 1787660081);
         assert_eq!(lines[1].line, 2);
         assert_eq!(lines[1].content, "TWO");
         assert_eq!(lines[1].summary, "second");
@@ -258,6 +272,10 @@ filename f.txt
         for line in &lines {
             assert_eq!(line.author_email, "a@b.com");
             assert_eq!(line.summary, "first");
+            // Cached from the first line's header, not left at the zero
+            // default the second and third lines' own (missing) blocks
+            // would otherwise leave it at.
+            assert_eq!(line.author_time, 1787660081);
         }
         assert_eq!(
             lines.iter().map(|l| l.content.as_str()).collect::<Vec<_>>(),

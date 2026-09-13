@@ -323,7 +323,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
       },
       openCommit);
     buildCommitLogDock(dockManager, docks, bottomArea, vcsService, openCommit);
-
+    editorTabs->setBlameCommitClickedCallback(openCommit); // R7: blame click -> commit detail.
     auto *changesPanel = new ChangesPanel( // F3-17/18, after fileHistoryPanel (G8)
       vcsService, [editorTabs](const QString &p) { editorTabs->showDiffForPath(p); },
       [docks, fileHistoryPanel](const QString &p) {

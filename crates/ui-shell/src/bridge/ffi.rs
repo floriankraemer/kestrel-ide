@@ -1334,6 +1334,9 @@ mod ffi {
         commit: QString,
         author_name: QString,
         author_email: QString,
+        /// Seconds since the Unix epoch, author time (R7: the gutter's
+        /// hover tooltip and age-shaded background).
+        author_time: i64,
         summary: QString,
         content: QString,
     }

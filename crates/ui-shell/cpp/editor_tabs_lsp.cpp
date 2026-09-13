@@ -1101,6 +1101,13 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     // popup for that line.
     connect(editor, &CodeEditor::diagnosticMarkerClicked, this,
             [this](int blockNumber) { showIntentionsAtLine(blockNumber); });
+    // R7: a click on a blame line opens that commit in the commit-detail
+    // dock.
+    connect(editor, &CodeEditor::blameLineClicked, this, [this](const QString &commitId) {
+        if (blameCommitClicked_ && !commitId.isEmpty()) {
+            blameCommitClicked_(commitId);
+        }
+    });
     requestSemanticTokensFor(editor);
     requestCodeLensesFor(editor);
 }

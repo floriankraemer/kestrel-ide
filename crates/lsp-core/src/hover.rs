@@ -74,95 +74,23 @@ fn marked_string(item: &Value) -> Option<String> {
     }
 }
 
-/// Render hover text as the HTML subset Qt tooltips understand.
+/// Render non-Markdown hover text (a plain `MarkedString`, or `MarkupContent`
+/// explicitly marked `plaintext`) as the HTML subset Qt rich text
+/// understands.
 ///
-/// Deliberately not a Markdown engine: fenced and inline code, bold, thematic
-/// breaks and paragraph breaks are converted because losing them makes a
-/// signature unreadable; lists, links, tables and emphasis are left as their
-/// source text, which is legible on its own. Everything is escaped first, so
-/// nothing a server sends can inject markup.
+/// R3 dropped this function's other half — a hand-rolled Markdown mini-
+/// renderer that handled only code fences, bold and rules, and left lists,
+/// links and tables raw. Markdown hover text is now rendered by
+/// `markdown_preview::render` instead (`ui-shell`'s `render_hover_html`,
+/// `docs/architecture/layering.md`'s boundary: a rendering engine lives
+/// beside `markdown-preview`'s other consumers, not in `lsp-core`). This is
+/// still needed for the one shape that never was Markdown: a plaintext
+/// hover, and [`crate::manager::LspManager::hover_signature`]'s
+/// index-declaration fallback (`ui-shell`'s `SearchModel::hover_signature`),
+/// which is source code, not prose, and must not have its punctuation
+/// reinterpreted.
 pub fn to_tooltip_html(hover: &HoverText) -> String {
-    if !hover.markdown {
-        return format!("<pre>{}</pre>", escape(hover.value.trim_end()));
-    }
-    let mut out = String::new();
-    let mut code = String::new();
-    let mut in_code = false;
-    let mut gap = false;
-
-    for line in hover.value.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") {
-            if in_code {
-                push_code(&mut out, &code);
-                code.clear();
-            }
-            in_code = !in_code;
-            continue;
-        }
-        if in_code {
-            code.push_str(line);
-            code.push('\n');
-            continue;
-        }
-        if trimmed.is_empty() {
-            gap = !out.is_empty();
-            continue;
-        }
-        if trimmed == "---" || trimmed == "___" || trimmed == "***" {
-            out.push_str("<hr>");
-            gap = false;
-            continue;
-        }
-        if gap {
-            out.push_str("<br>");
-            gap = false;
-        }
-        out.push_str(&inline(line.trim_end()));
-        out.push_str("<br>");
-    }
-    // An unterminated fence is a server bug, not a reason to lose the text.
-    if in_code && !code.is_empty() {
-        push_code(&mut out, &code);
-    }
-    out.trim_end_matches("<br>").to_string()
-}
-
-fn push_code(out: &mut String, code: &str) {
-    out.push_str("<pre>");
-    out.push_str(&escape(code.trim_end_matches('\n')));
-    out.push_str("</pre>");
-}
-
-fn inline(text: &str) -> String {
-    let escaped = escape(text);
-    let coded = wrap_pairs(&escaped, "`", "<code>", "</code>");
-    wrap_pairs(&coded, "**", "<b>", "</b>")
-}
-
-/// Wrap text between paired `delim`s. An unpaired trailing delimiter is left
-/// as literal text rather than swallowing the rest of the line.
-fn wrap_pairs(text: &str, delim: &str, open: &str, close: &str) -> String {
-    let parts: Vec<&str> = text.split(delim).collect();
-    if parts.len() < 3 {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    for (i, part) in parts.iter().enumerate() {
-        if i % 2 == 1 {
-            if i + 1 < parts.len() {
-                out.push_str(open);
-                out.push_str(part);
-                out.push_str(close);
-            } else {
-                out.push_str(delim);
-                out.push_str(part);
-            }
-        } else {
-            out.push_str(part);
-        }
-    }
-    out
+    format!("<pre>{}</pre>", escape(hover.value.trim_end()))
 }
 
 fn escape(text: &str) -> String {
@@ -312,63 +240,12 @@ mod tests {
     }
 
     #[test]
-    fn fenced_code_becomes_a_pre_block() {
-        let hover = HoverText {
-            value: "```rust\nfn main() {}\n```\nThe entry point.".into(),
-            markdown: true,
-        };
-        assert_eq!(
-            to_tooltip_html(&hover),
-            "<pre>fn main() {}</pre>The entry point."
-        );
-    }
-
-    #[test]
-    fn inline_markup_is_converted_and_html_is_escaped() {
-        let hover = HoverText {
-            value: "**Vec**<T> holds `T` & more".into(),
-            markdown: true,
-        };
-        assert_eq!(
-            to_tooltip_html(&hover),
-            "<b>Vec</b>&lt;T&gt; holds <code>T</code> &amp; more"
-        );
-    }
-
-    #[test]
-    fn an_unpaired_delimiter_stays_literal() {
-        let hover = HoverText {
-            value: "a * b `unclosed".into(),
-            markdown: true,
-        };
-        assert_eq!(to_tooltip_html(&hover), "a * b `unclosed");
-    }
-
-    #[test]
     fn plaintext_hover_is_preformatted_and_never_reinterpreted() {
         let hover = HoverText {
             value: "a **b** <c>".into(),
             markdown: false,
         };
         assert_eq!(to_tooltip_html(&hover), "<pre>a **b** &lt;c&gt;</pre>");
-    }
-
-    #[test]
-    fn blank_lines_and_rules_become_breaks() {
-        let hover = HoverText {
-            value: "one\n\ntwo\n---\nthree".into(),
-            markdown: true,
-        };
-        assert_eq!(to_tooltip_html(&hover), "one<br><br>two<br><hr>three");
-    }
-
-    #[test]
-    fn an_unterminated_fence_still_renders_its_code() {
-        let hover = HoverText {
-            value: "```\nfn main() {}".into(),
-            markdown: true,
-        };
-        assert_eq!(to_tooltip_html(&hover), "<pre>fn main() {}</pre>");
     }
 
     #[test]

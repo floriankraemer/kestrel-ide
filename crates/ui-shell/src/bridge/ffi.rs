@@ -1238,12 +1238,13 @@ mod ffi {
 
     /// The overload the tip shows (F2-9), reduced from `lsp_core::
     /// SignatureHelp`'s full overload set to what `signature_tip.cpp` paints:
-    /// `resolved_signature()`'s label and doc, and `resolved_parameter()`'s
-    /// span within that label to embolden. `signature_index`/`signature_
-    /// count` are only for the "(1/3)" overload indicator; cycling overloads
-    /// is not F2's scope. `has_signature` false means nothing to show — the
-    /// default value, so a tip that never asked reads as empty rather than
-    /// as overload zero of nothing.
+    /// the shown signature's label and doc, and its active parameter's span
+    /// within that label to embolden, plus that parameter's own
+    /// documentation (R3). `signature_index`/`signature_count` back the
+    /// "(1/3)" overload indicator and R3's Up/Down cycling
+    /// (`cycleSignatureOverload`). `has_signature` false means nothing to
+    /// show — the default value, so a tip that never asked reads as empty
+    /// rather than as overload zero of nothing.
     #[derive(Default)]
     struct FfiSignatureHelp {
         has_signature: bool,
@@ -1252,6 +1253,7 @@ mod ffi {
         has_active_parameter: bool,
         parameter_start: u32,
         parameter_end: u32,
+        parameter_documentation: QString,
         signature_index: u32,
         signature_count: u32,
     }
@@ -4334,11 +4336,21 @@ mod ffi {
         #[cxx_name = "signatureHelpReady"]
         fn signature_help_ready(self: Pin<&mut LanguageService>);
 
-        /// The overload `requestSignatureHelp` last resolved, or the default
+        /// The overload `requestSignatureHelp` last resolved (or R3's
+        /// `cycleSignatureOverload` last stepped to), or the default
         /// (`has_signature: false`) when there is nothing to show.
         #[qinvokable]
         #[cxx_name = "signatureHelp"]
         fn signature_help(self: &LanguageService) -> FfiSignatureHelp;
+
+        /// R3: Up (`delta = -1`) / Down (`delta = 1`) on the signature
+        /// tip — steps `signatureHelp`'s next answer to another overload of
+        /// the same call, wrapping past either end. Read again with
+        /// `signatureHelp` and repaint; there is no signal of its own
+        /// because the caller already knows synchronously.
+        #[qinvokable]
+        #[cxx_name = "cycleSignatureOverload"]
+        fn cycle_signature_overload(self: Pin<&mut LanguageService>, delta: i32);
 
         /// F2-9 — every occurrence of the symbol under the caret in this
         /// file, for `signature_tip.cpp`'s occurrence painting. Answers on

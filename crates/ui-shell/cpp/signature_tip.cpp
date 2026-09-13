@@ -1,10 +1,10 @@
 #include "signature_tip.h"
 
-#include <QToolTip>
+#include "editor_popup.h"
 
 namespace ui_shell {
 
-void showSignatureTip(QWidget *editor, const QPoint &globalPos, const FfiSignatureHelp &help)
+void showSignatureTip(QWidget *, const QPoint &globalPos, const FfiSignatureHelp &help)
 {
     if (!help.has_signature) {
         hideSignatureTip();
@@ -36,12 +36,20 @@ void showSignatureTip(QWidget *editor, const QPoint &globalPos, const FfiSignatu
         html += QStringLiteral("<br/><span style=\"color:gray;\">")
           + documentation.toHtmlEscaped() + QStringLiteral("</span>");
     }
-    QToolTip::showText(globalPos, html, editor);
+    // R3: the active parameter's own documentation, distinct from the
+    // signature's — the reason `<b>...</b>` matters is knowing which
+    // parameter this describes.
+    const QString parameterDocumentation = QString(help.parameter_documentation);
+    if (!parameterDocumentation.isEmpty()) {
+        html += QStringLiteral("<br/><span style=\"color:gray;\">")
+          + parameterDocumentation.toHtmlEscaped() + QStringLiteral("</span>");
+    }
+    showEditorPopup(globalPos, html);
 }
 
 void hideSignatureTip()
 {
-    QToolTip::hideText();
+    hideEditorPopup();
 }
 
 } // namespace ui_shell

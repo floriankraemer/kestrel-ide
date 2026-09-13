@@ -79,8 +79,45 @@ impl SignatureHelp {
     /// is emboldened.
     pub fn resolved_parameter(&self) -> Option<usize> {
         let signature = self.resolved_signature()?;
-        let index = signature.active_parameter.or(self.active_parameter)?;
+        Self::parameter_of(signature, self.active_parameter)
+    }
+
+    /// Which parameter of `signature` to embolden, given the response-level
+    /// `fallback` — the arithmetic [`Self::resolved_parameter`] runs against
+    /// [`Self::resolved_signature`], factored out so R3's manually cycled
+    /// overload (which is not necessarily the resolved one) can reuse it
+    /// rather than re-deriving the same rule.
+    fn parameter_of(signature: &SignatureInfo, fallback: Option<usize>) -> Option<usize> {
+        let index = signature.active_parameter.or(fallback)?;
         (index < signature.parameters.len()).then_some(index)
+    }
+
+    /// The signature at `index` and its active parameter — what R3's
+    /// overload cycling (Up/Down on the signature tip) shows once the user
+    /// has stepped away from the server's own suggested overload.
+    /// `None` for an out-of-range index, the same as indexing the
+    /// `signatures` array directly.
+    pub fn signature_and_parameter_at(
+        &self,
+        index: usize,
+    ) -> Option<(&SignatureInfo, Option<usize>)> {
+        let signature = self.signatures.get(index)?;
+        Some((
+            signature,
+            Self::parameter_of(signature, self.active_parameter),
+        ))
+    }
+
+    /// `current + delta`, wrapped into a valid signature index — Up/Down
+    /// cycling wraps past either end rather than stopping there, the same
+    /// convention most editors' overload cycling already uses. A response
+    /// with no signatures at all cannot happen (`parse_signature_help`
+    /// refuses to build one), so `current`'s own arithmetic is always
+    /// against at least one entry.
+    pub fn cycle_signature(&self, current: usize, delta: i32) -> usize {
+        let len = self.signatures.len() as i32;
+        let current = (current as i32).rem_euclid(len);
+        (current + delta).rem_euclid(len) as usize
     }
 }
 
@@ -643,6 +680,54 @@ mod tests {
             "activeSignature": 7,
         }));
         assert_eq!(parsed.resolved_signature().unwrap().label, "f(a)");
+    }
+
+    #[test]
+    fn cycling_an_overload_wraps_at_both_ends() {
+        let parsed = help(json!({
+            "signatures": [
+                {"label": "f()"},
+                {"label": "f(a)"},
+                {"label": "f(a, b)"},
+            ],
+        }));
+        assert_eq!(
+            parsed.cycle_signature(0, -1),
+            2,
+            "Up from the first wraps to the last"
+        );
+        assert_eq!(
+            parsed.cycle_signature(2, 1),
+            0,
+            "Down from the last wraps to the first"
+        );
+        assert_eq!(parsed.cycle_signature(0, 1), 1);
+    }
+
+    #[test]
+    fn signature_and_parameter_at_reports_the_chosen_overloads_own_active_parameter() {
+        let parsed = help(json!({
+            "signatures": [
+                {"label": "f(a, b)", "parameters": [{"label": "a"}, {"label": "b"}]},
+                {"label": "f(a)", "parameters": [{"label": "a"}], "activeParameter": 0},
+            ],
+            "activeSignature": 0,
+            "activeParameter": 1,
+        }));
+        let (signature, parameter) = parsed.signature_and_parameter_at(1).unwrap();
+        assert_eq!(signature.label, "f(a)");
+        assert_eq!(
+            parameter,
+            Some(0),
+            "cycling to the second overload must use its own activeParameter, \
+             not the response-level one for the first",
+        );
+    }
+
+    #[test]
+    fn signature_and_parameter_at_is_none_out_of_range() {
+        let parsed = help(json!({"signatures": [{"label": "f()"}]}));
+        assert!(parsed.signature_and_parameter_at(1).is_none());
     }
 
     #[test]

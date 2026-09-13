@@ -167,6 +167,11 @@ pub struct LanguageServiceRust {
         RefCell<std::collections::HashMap<String, lsp_core::SignatureTriggers>>,
     pub(crate) signature_help: RefCell<Option<lsp_core::SignatureHelp>>,
     pub(crate) signature_tracker: RefCell<lsp_core::RequestTracker>,
+    /// R3: which overload Up/Down has manually cycled to, overriding the
+    /// server's own `activeSignature` until the next `signatureHelpReady` —
+    /// a fresh answer means a different call, so it resets this rather than
+    /// keeping a stale index from the call the caret just left.
+    pub(crate) signature_display_index: Cell<Option<usize>>,
     pub(crate) highlights: RefCell<Vec<lsp_core::DocumentHighlight>>,
     pub(crate) highlights_tracker: RefCell<lsp_core::RequestTracker>,
     pub(crate) inlay_hints: RefCell<Vec<lsp_core::InlayHint>>,
@@ -250,6 +255,7 @@ impl Default for LanguageServiceRust {
             signature_triggers: RefCell::default(),
             signature_help: RefCell::default(),
             signature_tracker: RefCell::default(),
+            signature_display_index: Cell::default(),
             highlights: RefCell::default(),
             highlights_tracker: RefCell::default(),
             inlay_hints: RefCell::default(),
@@ -375,6 +381,66 @@ fn render_doc_html(markdown: &str) -> String {
         return String::new();
     }
     markdown_preview::render(markdown, &markdown_preview::RenderOptions::default()).html
+}
+
+/// R3: a hover answer as HTML, replacing `lsp_core::to_tooltip_html`'s old
+/// mini Markdown renderer (bold, fences and rules only) with the real one
+/// this crate already has for completion documentation — lists, links and
+/// tables now render instead of showing as raw source. A plaintext hover
+/// still goes through `to_tooltip_html`, which is source code (or, for the
+/// index-declaration fallback, a bare signature) rather than prose and must
+/// not have its punctuation reinterpreted as Markdown.
+fn render_hover_html(hover: &lsp_core::HoverText) -> String {
+    if hover.markdown {
+        render_doc_html(&hover.value)
+    } else {
+        lsp_core::to_tooltip_html(hover)
+    }
+}
+
+/// R3: `hoverAt`'s composed popup — the hover HTML (if the server or the
+/// index answered) followed by every diagnostic covering the position, each
+/// as its severity and source. A tested, Qt-free function despite living in
+/// a bridge module (`convert.rs`'s tests already use this shape): it takes
+/// and returns plain types, so this is exercised without a Qt runtime.
+/// `None`/empty in both arguments never happens at the one call site —
+/// `hover_at` falls back to the index instead — but is handled here as
+/// "nothing to show" rather than asserted against, so a future caller with
+/// a genuinely empty answer degrades rather than panics.
+fn compose_hover_html(
+    hover_html: Option<&str>,
+    diagnostics: &[diagnostics_core::DiagnosticRow],
+) -> String {
+    let mut sections: Vec<String> = Vec::new();
+    if let Some(html) = hover_html {
+        if !html.is_empty() {
+            sections.push(html.to_string());
+        }
+    }
+    for diagnostic in diagnostics {
+        let severity = match diagnostic.severity {
+            diagnostics_core::Severity::Error => "Error",
+            diagnostics_core::Severity::Warning => "Warning",
+            diagnostics_core::Severity::Information => "Info",
+            diagnostics_core::Severity::Hint => "Hint",
+        };
+        let source = if diagnostic.source.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", html_escape(&diagnostic.source))
+        };
+        sections.push(format!(
+            "<b>{severity}{source}:</b> {}",
+            html_escape(&diagnostic.message)
+        ));
+    }
+    sections.join("<hr>")
+}
+
+fn html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// One candidate for [`LanguageServiceRust::fallback_completion`]: a bare
@@ -709,23 +775,38 @@ impl ffi::LanguageService {
         }
     }
 
+    /// R3: the LSP hover plus every diagnostic covering `(line, character)`,
+    /// composed into one popup. `hover_ready` fires whenever there is
+    /// *anything* to show — a server's answer, a diagnostic, or both — and
+    /// only a request with nothing at all still falls through to
+    /// `hover_fallback`'s index-declaration answer, exactly as before R3.
     pub fn hover_at(mut self: Pin<&mut Self>, path: &QString, line: u32, character: u32) {
         let path = path.to_string();
         let token = self.hover.borrow_mut().begin();
+        let uri = lsp_core::uri_from_path(&path);
         if !self.open_docs.borrow().contains_key(&path) {
-            // No server has this document, so there is nothing to ask — and
-            // that is exactly the case the index fallback exists for.
-            self.as_mut().hover_fallback();
+            // No server has this document, so there is nothing to ask the
+            // server for — but a build/analyzer diagnostic can still cover
+            // this position, and widening the hover trigger to a squiggle
+            // (R3) is pointless if that case still fell all the way back
+            // to the index.
+            let diagnostics = self.store.borrow().at(&uri, line, character);
+            if diagnostics.is_empty() {
+                self.as_mut().hover_fallback();
+            } else {
+                let html = compose_hover_html(None, &diagnostics);
+                self.as_mut().hover_ready(QString::from(html.as_str()));
+            }
             return;
         }
-        let uri = lsp_core::uri_from_path(&path);
         let qt_thread = self.as_mut().qt_thread();
         let queued = self.push_job(move |manager| {
             let outcome = lsp_core::hover_outcome(Some(manager.hover(&uri, line, character)));
-            let answer = match outcome {
-                lsp_core::HoverOutcome::Lsp(hover) => Some(lsp_core::to_tooltip_html(&hover)),
+            let hover_html = match outcome {
+                lsp_core::HoverOutcome::Lsp(hover) => Some(render_hover_html(&hover)),
                 lsp_core::HoverOutcome::Index => None,
             };
+            let uri = uri.clone();
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
                 // A dwell the pointer has already moved on from is dropped
                 // on both paths, so a late answer never appears under a
@@ -733,10 +814,13 @@ impl ffi::LanguageService {
                 if !service.hover.borrow().accept(token) {
                     return;
                 }
-                match answer {
-                    Some(html) => service.as_mut().hover_ready(QString::from(html.as_str())),
-                    None => service.as_mut().hover_fallback(),
+                let diagnostics = service.store.borrow().at(&uri, line, character);
+                if hover_html.is_none() && diagnostics.is_empty() {
+                    service.as_mut().hover_fallback();
+                    return;
                 }
+                let html = compose_hover_html(hover_html.as_deref(), &diagnostics);
+                service.as_mut().hover_ready(QString::from(html.as_str()));
             });
         });
         if !queued {
@@ -1364,5 +1448,87 @@ impl ffi::LanguageService {
             }
             lsp_core::LspEvent::Notification { .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod hover_popup_tests {
+    use super::{compose_hover_html, html_escape};
+    use diagnostics_core::{Diagnostic, DiagnosticStore, Position, Range, Severity};
+
+    fn diagnostic_at(line: u32, character: u32, severity: Severity, message: &str) -> Diagnostic {
+        Diagnostic {
+            range: Range {
+                start: Position { line, character },
+                end: None,
+            },
+            severity,
+            message: message.to_string(),
+            source: "rustc".to_string(),
+            raw: None,
+        }
+    }
+
+    #[test]
+    fn hover_alone_is_shown_with_no_diagnostics_section() {
+        assert_eq!(
+            compose_hover_html(Some("<b>fn main()</b>"), &[]),
+            "<b>fn main()</b>"
+        );
+    }
+
+    #[test]
+    fn diagnostics_are_appended_after_the_hover_separated_by_a_rule() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp:rust",
+            "file:///a.rs",
+            vec![diagnostic_at(0, 0, Severity::Error, "mismatched types")],
+        );
+        let rows = store.at("file:///a.rs", 0, 0);
+        assert_eq!(
+            compose_hover_html(Some("<b>fn main()</b>"), &rows),
+            "<b>fn main()</b><hr><b>Error (rustc):</b> mismatched types"
+        );
+    }
+
+    #[test]
+    fn no_hover_shows_only_the_diagnostics() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp:rust",
+            "file:///a.rs",
+            vec![diagnostic_at(0, 0, Severity::Warning, "unused import")],
+        );
+        let rows = store.at("file:///a.rs", 0, 0);
+        assert_eq!(
+            compose_hover_html(None, &rows),
+            "<b>Warning (rustc):</b> unused import"
+        );
+    }
+
+    #[test]
+    fn a_diagnostics_message_is_html_escaped() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp:rust",
+            "file:///a.rs",
+            vec![diagnostic_at(
+                0,
+                0,
+                Severity::Error,
+                "expected `T<U>` & got `V`",
+            )],
+        );
+        let rows = store.at("file:///a.rs", 0, 0);
+        assert_eq!(
+            compose_hover_html(None, &rows),
+            "<b>Error (rustc):</b> expected `T&lt;U&gt;` &amp; got `V`"
+        );
+    }
+
+    #[test]
+    fn escape_covers_the_three_reinterpretable_characters() {
+        assert_eq!(html_escape("<a & b>"), "&lt;a &amp; b&gt;");
     }
 }

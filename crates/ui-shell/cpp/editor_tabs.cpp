@@ -5,6 +5,7 @@
 #include "diff_view.h"
 #include "diff_view_page.h"
 #include "e2e_mark.h"
+#include "editor_popup.h"
 #include "find_bar.h"
 #include "hex_viewer.h"
 #include "icon_cache.h"
@@ -34,7 +35,6 @@
 #include <QTabWidget>
 #include <QTextBlock>
 #include <QTextCursor>
-#include <QToolTip>
 #include <QVariant>
 #include <QVector>
 #include <QtGui/QTextDocument>
@@ -158,13 +158,22 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
         }
     });
 
-    // L3: one tooltip for the whole window. The answer is asynchronous,
+    // L3/R3: one popup for the whole window. The answer is asynchronous,
     // so it is shown where the pointer is when it arrives — safe only
     // because `lsp_core::HoverTracker` has already dropped everything
     // the user has moved on from, so whatever reaches here is still
-    // about the word under the cursor.
-    connect(languageService_, &LanguageService::hoverReady, this, [](const QString &html) {
-        QToolTip::showText(QCursor::pos(), html);
+    // about the word under the cursor. `hoverAt`'s html already carries
+    // the LSP hover and every diagnostic at that position composed
+    // together (`compose_hover_html`), so this is the one place that
+    // paints either or both. Ctrl+Q's own request comes back on this same
+    // signal (`requestQuickDocumentation`'s doc comment), which is why
+    // pinning happens here rather than at the request site.
+    connect(languageService_, &LanguageService::hoverReady, this, [this](const QString &html) {
+        showEditorPopupPinnable(QCursor::pos(), html, takeQuickDocPending());
+        // R3 E2E: the only way a headless flow can see the popup's content
+        // — it is a separate toplevel with no model behind it, the same
+        // reason `e2eMarkMenuActions` exists for a QMenu.
+        e2eMark(QStringLiteral("{\"ev\":\"hover_popup_shown\",\"html\":%1}").arg(e2eJson(html)));
     });
 
     // L5: a completion answer landed. Only a still-current one is ever

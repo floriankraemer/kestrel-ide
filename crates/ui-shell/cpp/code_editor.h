@@ -335,6 +335,11 @@ public:
     void setInlayHintsEnabled(bool enabled);
     bool inlayHintsEnabled() const { return inlayHintsEnabled_; }
 
+    // R3: whether `EditorTabs` currently has the signature tip up for this
+    // editor — while true, Up/Down are `signatureOverloadCycleRequested`
+    // instead of caret movement.
+    void setSignatureTipActive(bool active) { signatureTipActive_ = active; }
+
     // C10-followup: the code lens strip for this document's whole visible
     // range. Always on, unlike inlay hints — a lens is a fetched fact
     // ("3 references", "Run Test"), not a guess the editor is inventing
@@ -484,6 +489,11 @@ signals:
     // The pointer moved on or left: an answer to the last hoverRequested
     // must not be shown any more.
     void hoverCanceled();
+
+    // F2-11/R3: Up (`delta = -1`) / Down (`delta = 1`) while
+    // `setSignatureTipActive(true)` — the tip is up, so these keys cycle
+    // its overload instead of moving the caret.
+    void signatureOverloadCycleRequested(int delta);
 
     // L5: something happened that might want completions — a keystroke, or
     // Ctrl+Space (`explicitRequest`). `position` is a document (UTF-16)
@@ -649,6 +659,12 @@ private:
     // not a resolution test: hovering must not cost an index query — see
     // ADR-0011.
     QPair<int, int> identifierAt(const QPoint &pos) const;
+    // R3: the diagnostic squiggle under `pos`, as its own [start, end) span,
+    // or {-1, -1} when `pos` sits on none — widens the hover trigger from
+    // "identifier word" to "identifier word or inside a diagnostic range",
+    // so hovering a squiggle shows the diagnostic even off an identifier
+    // (whitespace, punctuation, a trailing-comma warning).
+    QPair<int, int> diagnosticSpanAt(const QPoint &pos) const;
     void updateHoverSpan(const QPoint &pos, bool ctrlHeld);
     // Withdraws an outstanding hover request (pointer moved or left).
     void cancelHover();
@@ -743,6 +759,9 @@ private:
     // Whether a hover answer is still outstanding, so an idle mouse move
     // doesn't cross the FFI seam to cancel nothing.
     bool hoverPending_ = false;
+    // R3: set by `setSignatureTipActive` — while true, `keyPressEvent`
+    // reroutes Up/Down to `signatureOverloadCycleRequested`.
+    bool signatureTipActive_ = false;
     // L5: the popup. QCompleter is used in UnfilteredPopupCompletion mode —
     // its own prefix matching is deliberately bypassed, because filtering
     // and ordering belong to the server (`filterText`/`sortText`) and are

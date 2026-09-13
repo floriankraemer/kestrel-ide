@@ -246,6 +246,14 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Ctrl+P",
     },
     ActionDef {
+        id: "code.quickDocumentation",
+        label: "Quick Documentation",
+        category: "Code",
+        // IntelliJ's own default is Ctrl+Q, already bound to `file.exit`
+        // in this keymap.
+        default_shortcut: "Ctrl+Alt+Q",
+    },
+    ActionDef {
         id: "code.optimizeImports",
         label: "Optimize Imports",
         category: "Code",

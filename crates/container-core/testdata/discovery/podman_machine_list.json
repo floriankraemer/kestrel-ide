@@ -1,0 +1,18 @@
+[
+  {
+    "Name": "podman-machine-default",
+    "Default": true,
+    "Created": "2024-08-01T00:00:00Z",
+    "Running": true,
+    "LastUp": "Currently running",
+    "Stream": "default",
+    "VMType": "qemu",
+    "CPUs": 4,
+    "Memory": "2147483648",
+    "DiskSize": "107374182400",
+    "Port": 12345,
+    "RemoteUsername": "core",
+    "IdentityPath": "/home/user/.local/share/containers/podman/machine/machine",
+    "UserModeNetworking": true
+  }
+]

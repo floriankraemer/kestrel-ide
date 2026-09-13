@@ -37,6 +37,8 @@ run-core = { path = "../run-core" }
 build-core = { path = "../build-core" }
 # D3: the debugger.
 dap-core = { path = "../dap-core" }
+container-core = { path = "../container-core" }
+process-exec = { path = "../process-exec" }
 mcp-server = { path = "../mcp-server" }
 ai-chat-core = { path = "../ai-chat-core" }
 # The Plugins page: scanning for the page (which must see the plugins the

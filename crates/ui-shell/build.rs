@@ -552,6 +552,7 @@ fn main() {
         .cpp_file("cpp/mcp_page.cpp")
         .cpp_file("cpp/terminal_page.cpp")
         .cpp_file("cpp/tab_padding_page.cpp")
+        .cpp_file("cpp/containers_page.cpp")
         .cpp_file("cpp/problems_panel.cpp")
         // The PHP tooling plan's D5: the Tests dock. Q_OBJECT-free like
         // `build_panel.cpp` (plain QWidget, lambdas and pointer-to-member

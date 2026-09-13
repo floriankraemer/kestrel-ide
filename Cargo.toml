@@ -27,6 +27,7 @@ members = [
     "crates/build-core",
     "crates/stdio-framing",
     "crates/dap-core",
+    "crates/container-core",
     "crates/app-core",
     "crates/ui-shell",
     "crates/app",

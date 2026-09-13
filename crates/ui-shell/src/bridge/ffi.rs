@@ -1042,6 +1042,59 @@ mod ffi {
         font_size: u32,
     }
 
+    /// The `[containers]` section's own flat fields (ADR-0055), for the
+    /// Settings > Containers page — the connection list itself crosses
+    /// separately as `Vec<FfiContainerConnection>`
+    /// (`AppSettings::containerConnections`/`saveContainerConnections`),
+    /// the same split `FileAssociationsEditor` draws between its scalar
+    /// settings and its rule list.
+    #[derive(Default)]
+    struct FfiContainerSettings {
+        show_stopped_containers: bool,
+        show_untagged_images: bool,
+        selinux_relabel: bool,
+    }
+
+    /// One row of `ContainerConnectionSetting`, 1:1 with the app-config
+    /// struct: every kind-specific field is a plain (possibly empty)
+    /// string, same "persistence stays dumb" rule ADR-0017/ADR-0039 already
+    /// draw for run configurations — `container_core::connection` is what
+    /// gives `kind` and its fields meaning.
+    #[derive(Default)]
+    struct FfiContainerConnection {
+        id: QString,
+        name: QString,
+        /// `"docker"` or `"podman"`.
+        engine: QString,
+        /// `"auto"`, `"unix_socket"`, `"tcp"`, `"named_pipe"`, `"context"`,
+        /// `"ssh"`, `"wsl"`, `"podman_machine"`, or `"minikube"`.
+        kind: QString,
+        path: QString,
+        url: QString,
+        cert_dir: QString,
+        identity: QString,
+        distro: QString,
+        resource_name: QString,
+        executable: QString,
+        compose_executable: QString,
+    }
+
+    /// One candidate `discoverContainerConnections()` offers: a docker
+    /// context, a podman connection/machine, or a socket preset (Colima,
+    /// Rancher Desktop, the default rootless podman socket) — the source
+    /// for the Containers settings page's "Add from contexts..." menu.
+    /// Never saved on its own; the view turns a chosen entry into an
+    /// `FfiContainerConnection` it appends to the draft list itself.
+    struct FfiDiscoveredConnection {
+        label: QString,
+        engine: QString,
+        kind: QString,
+        path: QString,
+        url: QString,
+        distro: QString,
+        resource_name: QString,
+    }
+
     /// One local branch name. `cxx`'s `Vec<T>` needs `T: ImplVec`, which
     /// `QString` alone does not satisfy — this one-field wrapper is what
     /// lets `branches()` cross as a list at all, the same reason
@@ -2760,6 +2813,64 @@ mod ffi {
         #[cxx_name = "settingsSearchMatches"]
         fn settings_search_matches(self: &AppSettings, haystack: &QString, query: &QString)
             -> bool;
+
+        /// The `[containers]` section's own flat fields (ADR-0055), for the
+        /// layer `settingsScope()` names — not the connection list itself,
+        /// see `containerConnections`.
+        #[qinvokable]
+        #[cxx_name = "containerSettings"]
+        fn container_settings(self: &AppSettings) -> FfiContainerSettings;
+
+        /// Persist the `[containers]` scalar fields together, on OK.
+        #[qinvokable]
+        #[cxx_name = "saveContainerSettings"]
+        fn save_container_settings(
+            self: &AppSettings,
+            settings: &FfiContainerSettings,
+        ) -> FfiResult;
+
+        /// Every saved connection in the layer `settingsScope()` names, in
+        /// the order they were added.
+        #[qinvokable]
+        #[cxx_name = "containerConnections"]
+        fn container_connections(self: &AppSettings) -> Vec<FfiContainerConnection>;
+
+        /// Replace the whole connection list at once — the Containers
+        /// page's add/remove/edit all write through this on OK, the same
+        /// whole-list-replace shape `FileAssociationsEditor::setGlobalRules`
+        /// uses rather than a draft-and-commit editor: a connection row has
+        /// no live side effect (unlike a language server's process) for a
+        /// draft to protect against.
+        #[qinvokable]
+        #[cxx_name = "saveContainerConnections"]
+        fn save_container_connections(
+            self: &AppSettings,
+            connections: Vec<FfiContainerConnection>,
+        ) -> FfiResult;
+
+        /// Every connection this build can find on its own: the engine
+        /// CLIs' contexts/connections/machines, plus the Colima/Rancher
+        /// Desktop/rootless-podman socket presets — feeds "Add from
+        /// contexts...". Runs the discovery CLIs synchronously; unlike
+        /// `testContainerConnection` this has no daemon to hang on, only a
+        /// context/machine list, so it does not need a worker thread.
+        #[qinvokable]
+        #[cxx_name = "discoverContainerConnections"]
+        fn discover_container_connections(self: &AppSettings) -> Vec<FfiDiscoveredConnection>;
+
+        /// Probe `connection` ("Test connection"): runs `<cli> version
+        /// --format json` on a worker thread and reports through
+        /// `containerConnectionTested`, never blocking the UI thread on a
+        /// daemon that may be unreachable — the same worker-thread-plus-
+        /// `qt_thread().queue()` shape `TestService::run_all` uses for a
+        /// test process. `connection` need not be saved yet: the page tests
+        /// a row as it is being edited.
+        #[qinvokable]
+        #[cxx_name = "testContainerConnection"]
+        fn test_container_connection(
+            self: Pin<&mut AppSettings>,
+            connection: &FfiContainerConnection,
+        ) -> FfiResult;
     }
 
     unsafe extern "RustQt" {
@@ -2770,7 +2881,18 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "settingsScopeChanged"]
         fn settings_scope_changed(self: Pin<&mut AppSettings>);
+
+        /// `testContainerConnection`'s result: `ok`/`message` shaped like
+        /// `FfiResult` (a success carries the "Engine X.Y.Z" line in
+        /// `message`, a failure carries the JetBrains-troubleshooting-style
+        /// hint) rather than reusing `FfiResult` itself, since this crosses
+        /// as a signal argument rather than a return value.
+        #[qsignal]
+        #[cxx_name = "containerConnectionTested"]
+        fn container_connection_tested(self: Pin<&mut AppSettings>, ok: bool, message: QString);
     }
+
+    impl cxx_qt::Threading for AppSettings {}
 
     extern "RustQt" {
         /// Keymap settings page adapter: holds the *draft* keymap the dialog

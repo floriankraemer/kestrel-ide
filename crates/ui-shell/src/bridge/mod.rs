@@ -40,6 +40,11 @@ pub mod ai;
 pub mod analysis;
 pub mod app_info;
 pub mod build;
+/// Settings > Containers (C1, ADR-0055): `AppSettings` accessors over
+/// `container_core::{connection, discovery, probe}`, split out from
+/// `bridge::settings` for the same size-ceiling reason as
+/// `tab_padding`/`layouts`.
+pub mod containers;
 pub mod convert;
 pub mod debug;
 pub mod diagnostics;

@@ -250,7 +250,7 @@ Files: `crates/index-core/src/lib.rs`, new `crates/lsp-core/src/references.rs`, 
 
 | # | Item | Status | Commit |
 |---|---|---|---|
-| R1 | Indentation, Tab and bracket basics | open | |
+| R1 | Indentation, Tab and bracket basics | done | 3061c31 |
 | R2 | Completion popup depth | open | |
 | R3 | Quick documentation, signature help and hover as real popups | open | |
 | R4 | Diagnostics navigation and the error stripe | open | |

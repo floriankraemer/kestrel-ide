@@ -121,13 +121,18 @@ impl ffi::VcsService {
         };
         let qt_thread = self.as_mut().qt_thread();
         self.as_ref().push_job(move |worker: &VcsWorker| {
-            let relative = Path::new(&path);
+            // `path` (the cache key, and every path this bridge takes from
+            // the view) is absolute; every `vcs_core` call wants a
+            // repository-relative one, or `git apply --cached` rejects the
+            // patch outright ("invalid path") — the same conversion
+            // `stage_file`/`unstage_file`/`revert_file` above already make.
+            let relative = to_repo_relative(&worker.repo, Path::new(&path));
             let result = if reverse {
-                worker.repo.unstage_hunk_matching(relative, &hunk)
+                worker.repo.unstage_hunk_matching(&relative, &hunk)
             } else {
                 worker
                     .repo
-                    .stage_hunk_matching(relative, &cached.working_text, &hunk)
+                    .stage_hunk_matching(&relative, &cached.working_text, &hunk)
             };
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(_) => service.as_mut().refresh_status(),

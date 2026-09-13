@@ -406,6 +406,62 @@ fn checkbox_point(rect: &serde_json::Value) -> (i32, i32) {
     (rect[0] as i32 + 10, (rect[1] + rect[3] / 2) as i32)
 }
 
+/// Click a Changes-dock row's checkbox to stage it, retrying against a
+/// freshly re-read row if the click does not land.
+///
+/// Root cause of `e2e_stage_and_commit_through_the_changes_dock`'s ~1-in-6
+/// flakiness (alongside the stale-geometry issue `ChangesPanel::markShown`
+/// fixes): `refreshStatus` — and with it, `ChangesPanel::refresh`'s full
+/// tree rebuild — is watcher-driven, so something with nothing to do with
+/// this click (the search index writing another segment file into
+/// `.ide-index/`, still settling well after `wait_for_index` first reports
+/// ready) can rebuild the row this is about to click into a brand-new
+/// `QTreeWidgetItem` at any moment. An `xdotool`-level click's delivery
+/// through the X server has no ordering guarantee against that rebuild the
+/// way a click through Qt's own test framework would, so occasionally one
+/// lands in the gap and never reaches a live item — confirmed by an actual
+/// repro: `changes_row` kept reporting the same unstaged row, unchanged,
+/// for the full 60s timeout with no `changes_row` "staged" and no
+/// `vcs_failed` in between, meaning the click itself never registered.
+///
+/// Bounded and event-driven, not a blind sleep: a retry only happens if a
+/// short settle window after a click sees no "staged" row, and the whole
+/// loop still has a hard ceiling.
+///
+/// Returns the mark taken right before the click that worked, so a caller
+/// can `wait_for_event` a marker (`changes_panel_shown`, say) published by
+/// the same `refresh()` that produced the "staged" row.
+fn stage_via_checkbox(ide: &Ide, mark: Mark, path: &str) -> Mark {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let row = ide.wait_for_event(mark, "the row to stage", |e| {
+            e["ev"] == "changes_row" && e["path"] == path && e["group"] == "unstaged"
+        });
+        let (x, y) = checkbox_point(&row["rect"]);
+        let click_mark = ide.mark();
+        ide.click_at(x, y, 1);
+
+        let settle = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        loop {
+            let staged = ide
+                .events_since_of(click_mark, "changes_row")
+                .into_iter()
+                .any(|e| e["path"] == path && e["group"] == "staged");
+            if staged {
+                return click_mark;
+            }
+            if std::time::Instant::now() >= settle {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out staging {path} via its checkbox after retrying the click"
+        );
+    }
+}
+
 /// Run `git args` against `root`, panicking on a non-zero exit — the same
 /// shape `git_fixture`'s own closure uses, pulled out here because G9's
 /// three tests below all set up history beyond what `git_fixture` builds.
@@ -624,15 +680,7 @@ fn e2e_push_carries_the_ahead_count_after_a_local_commit() {
         "first draft, revised\n",
     )
     .expect("editing draft.txt");
-    let row = ide.wait_for_event(mark, "the edit to reach the dock", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "unstaged"
-    });
-    let (checkbox_x, checkbox_y) = checkbox_point(&row["rect"]);
-    ide.click_at(checkbox_x, checkbox_y, 1);
-    let staged_mark = ide.mark();
-    ide.wait_for_event(mark, "the file to move to Staged Changes", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "staged"
-    });
+    let staged_mark = stage_via_checkbox(&ide, mark, "draft.txt");
 
     // Read fresh from after staging, not from `Mark::start()`: the very
     // first `changes_panel_shown` in the stream can predate the window's
@@ -733,24 +781,12 @@ fn e2e_stage_and_commit_through_the_changes_dock() {
     );
 
     // The save above just made `EditorTabs::saveTab` ask `VcsService` to
-    // look again — this is the row that answer produced.
-    let row = ide.wait_for_event(mark, "the file to show up as an unstaged change", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "unstaged"
-    });
-
-    // Stage it: a real click on the checkbox glyph itself — `Space` on the
-    // row once merely current turned out not to toggle it (no default
+    // look again — `stage_via_checkbox` waits for the row that answer
+    // produced, then clicks its checkbox glyph itself (`Space` on the row
+    // once merely current turned out not to toggle it — no default
     // `QAbstractItemView` keyboard binding does that; only clicking the
-    // indicator does), confirmed against a real run under Xvfb rather than
-    // assumed. The glyph sits a fixed, style-drawn offset in from the row's
-    // own left edge, which the row's marked rect gives without this flow
-    // computing it from indentation or icon metrics.
-    let (checkbox_x, checkbox_y) = checkbox_point(&row["rect"]);
-    ide.click_at(checkbox_x, checkbox_y, 1);
-    let staged_mark = ide.mark();
-    ide.wait_for_event(mark, "the file to move to Staged Changes", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "staged"
-    });
+    // indicator does, confirmed against a real run under Xvfb).
+    let staged_mark = stage_via_checkbox(&ide, mark, "draft.txt");
 
     // `ChangesPanel::refresh` (which just produced the "staged" row above)
     // re-publishes `changes_panel_shown` right after its row markers, so
@@ -845,12 +881,15 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
     let tab = open_file(&ide, "draft.txt");
     let tab_id = tab["tab_id"].as_u64().expect("tab_id");
 
-    // First hunk: replace "one" on line 1.
+    // First hunk: replace "one" on line 1. Lowercase throughout this flow,
+    // for the same reason `e2e_hunk_revert_is_one_undo_never_touches_disk`'s
+    // edit is: `xdotool type`'s Shift for a capital letter can combine with
+    // a modifier a preceding `xdotool key` chord has not yet released.
     ide.key("ctrl+Home");
     ide.key("End");
     let mark = ide.mark();
     ide.key("shift+Home");
-    ide.type_text("ONE");
+    ide.type_text("uno");
     ide.wait_for_event(mark, "the tab to go dirty", |e| {
         e["ev"] == "tab_dirty" && e["tab_id"].as_u64() == Some(tab_id) && e["dirty"] == true
     });
@@ -858,14 +897,16 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
     // Second hunk: replace "ten" on the last content line — far enough from
     // the first that `diff_lines` reports two hunks, not one spanning both
     // (`CONTEXT_LINES` is 3 on each side; eight unchanged lines separate
-    // them). `ORIGINAL` ends in `\n`, so `Ctrl+End` lands one line past
-    // "ten" itself — `Up` first, then select that line the same way the
-    // first hunk's edit did.
-    ide.key("ctrl+End");
-    ide.key("Up");
+    // them). Nine `Down`s from line 1 rather than `Ctrl+End`/`Up`: `ORIGINAL`
+    // has exactly ten lines, and `Down`/`End`/`Home` are the same primitives
+    // the first hunk's edit already used successfully, rather than a second
+    // navigation idiom this suite has not exercised elsewhere.
+    for _ in 0..9 {
+        ide.key("Down");
+    }
     ide.key("End");
     ide.key("shift+Home");
-    ide.type_text("TEN");
+    ide.type_text("diez");
     ide.wait_for_event(mark, "the gutter to see both edits as two hunks", |e| {
         e["ev"] == "vcs_hunks_applied" && e["count"].as_u64() == Some(2)
     });
@@ -898,6 +939,16 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
         "the caret's own hunk (the first) should have been the one staged"
     );
 
+    // Staging writes straight into the index from the patch built out of the
+    // buffer (never the file on disk, which is still `ORIGINAL` at this
+    // point) — save now so the "still unstaged" assertion below compares
+    // the index against a working tree that actually carries both edits,
+    // the same shape a user would leave the file in.
+    ide.key("ctrl+s");
+    ide.wait_for_event(mark, "the tab to go clean after saving", |e| {
+        e["ev"] == "tab_dirty" && e["tab_id"].as_u64() == Some(tab_id) && e["dirty"] == false
+    });
+
     let root = ide.project_root().to_path_buf();
     e2e::wait_for("the first hunk to reach the index", || {
         let staged_diff = String::from_utf8(
@@ -909,7 +960,7 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
                 .stdout,
         )
         .expect("git diff --cached output is UTF-8");
-        (staged_diff.contains("+ONE") && !staged_diff.contains("+TEN")).then_some(())
+        (staged_diff.contains("+uno") && !staged_diff.contains("+diez")).then_some(())
     });
 
     // The second hunk must still be unstaged, nowhere near the index.
@@ -923,7 +974,7 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
     )
     .expect("git diff --cached output is UTF-8");
     assert!(
-        staged_diff.contains("+ONE") && !staged_diff.contains("+TEN"),
+        staged_diff.contains("+uno") && !staged_diff.contains("+diez"),
         "git diff --cached should carry only the staged hunk:\n{staged_diff}"
     );
     let unstaged_diff = String::from_utf8(
@@ -936,7 +987,7 @@ fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
     )
     .expect("git diff output is UTF-8");
     assert!(
-        unstaged_diff.contains("+TEN") && !unstaged_diff.contains("+ONE"),
+        unstaged_diff.contains("+diez") && !unstaged_diff.contains("+uno"),
         "the still-unstaged hunk should remain in the working tree, not the index:\n{unstaged_diff}"
     );
 

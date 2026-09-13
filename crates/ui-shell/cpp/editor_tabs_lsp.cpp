@@ -2,6 +2,7 @@
 
 #include "code_editor.h"
 #include "e2e_mark.h"
+#include "editor_popup.h"
 #include "find_bar.h"
 #include "intention_bulb.h"
 #include "problems_panel.h"
@@ -225,6 +226,36 @@ void EditorTabs::onDocumentHighlightsReady()
     intentionsEditor_->setOccurrenceSpans(spans);
 }
 
+void EditorTabs::requestHoverAt(CodeEditor *editor, int position)
+{
+    hoverPosition_ = position;
+    const QString path = editor->property("lspPath").toString();
+    // RF12: a file whose language has no server never got an lspPath, so
+    // there is nobody to ask — which is precisely when the index's
+    // declaration answers instead.
+    if (path.isEmpty()) {
+        hoverFallback();
+        return;
+    }
+    const QPair<quint32, quint32> at = lspPosition(editor, position);
+    languageService_->hoverAt(path, at.first, at.second);
+}
+
+void EditorTabs::requestQuickDocumentation()
+{
+    auto *editor = qobject_cast<CodeEditor *>(currentEditor());
+    if (!editor) {
+        return;
+    }
+    // R3 (Ctrl+Q): the same request a mouse dwell makes, at the caret
+    // instead of the pointer — `quickDocPending_` is read back on
+    // whichever signal answers it (`hoverReady` in `editor_tabs.cpp`,
+    // `hoverSignatureReady` in `main_window.cpp`) to pin the popup rather
+    // than let the next mouse move close it.
+    quickDocPending_ = true;
+    requestHoverAt(editor, editor->textCursor().position());
+}
+
 void EditorTabs::requestSignatureHelpFor(CodeEditor *editor, bool explicitRequest)
 {
     const QString path = editor->property("lspPath").toString();
@@ -264,6 +295,9 @@ void EditorTabs::onSignatureHelpReady()
     }
     const FfiSignatureHelp help = languageService_->signatureHelp();
     signatureTipVisible_ = help.has_signature;
+    // R3: only while the tip is up does the editor forward Up/Down to
+    // `cycleSignatureOverload` instead of moving the caret.
+    signatureHelpEditor_->setSignatureTipActive(help.has_signature);
     if (!help.has_signature) {
         hideSignatureTip();
         return;
@@ -272,6 +306,17 @@ void EditorTabs::onSignatureHelpReady()
     showSignatureTip(signatureHelpEditor_,
                      signatureHelpEditor_->viewport()->mapToGlobal(QPoint(rect.left(), rect.top())),
                      help);
+}
+
+void EditorTabs::cycleSignatureOverload(int delta)
+{
+    // R3: Up/Down on the tip. A no-op if it raced the tip's own dismissal
+    // (a keystroke closed the call just as this arrived).
+    if (!signatureHelpEditor_ || !signatureTipVisible_) {
+        return;
+    }
+    languageService_->cycleSignatureOverload(delta);
+    onSignatureHelpReady();
 }
 
 void EditorTabs::requestInlayHintsFor(CodeEditor *editor)
@@ -605,19 +650,8 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     // L3: the pointer dwelled over an identifier. Asking is free of the
     // UI thread (LanguageService answers from its worker), and a file
     // with no server never got an lspPath, so nothing is asked for it.
-    connect(editor, &CodeEditor::hoverRequested, this, [this, editor](int position) {
-        hoverPosition_ = position;
-        const QString path = editor->property("lspPath").toString();
-        // RF12: a file whose language has no server never got an
-        // lspPath, so there is nobody to ask — which is precisely when
-        // the index's declaration answers instead.
-        if (path.isEmpty()) {
-            hoverFallback();
-            return;
-        }
-        const QPair<quint32, quint32> at = lspPosition(editor, position);
-        languageService_->hoverAt(path, at.first, at.second);
-    });
+    connect(editor, &CodeEditor::hoverRequested, this,
+            [this, editor](int position) { requestHoverAt(editor, position); });
     // Right-click: the window decides what goes in beyond Qt's own
     // entries, so this only forwards the menu.
     connect(editor, &CodeEditor::contextMenuAboutToShow, this, [this](QMenu *menu) {
@@ -630,7 +664,15 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         // are separate round trips, and both must stop being wanted.
         languageService_->cancelHover();
         hoverCanceled();
+        // R3: the pointer left the hovered word — a soft hide, so a
+        // Ctrl+Q-pinned popup stays up until Escape or a click outside.
+        hideEditorPopup();
     });
+    // F2-11/R3: Up/Down while the signature tip is showing cycles the
+    // overload rather than moving the caret — `CodeEditor` only emits this
+    // while `setSignatureTipActive(true)` (`onSignatureHelpReady`).
+    connect(editor, &CodeEditor::signatureOverloadCycleRequested, this,
+            [this](int delta) { cycleSignatureOverload(delta); });
 
     // L5: completion. The editor reports keystrokes and the caret; every
     // decision about them — whether a request is worth making, which

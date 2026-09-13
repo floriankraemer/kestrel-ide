@@ -422,6 +422,14 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
     connect(parameterInfoAction, &QAction::triggered, this,
             [this]() { editorTabs_->requestSignatureHelpNow(); });
 
+    // R3: Ctrl+Alt+Q. Opens (or refreshes) the quick-documentation popup
+    // at the caret without moving the mouse, pinned once it arrives.
+    QAction *quickDocumentationAction = registerAction(
+      refactorMenu, QStringLiteral("code.quickDocumentation"), tr("Quick Documentation"),
+      appSettings, actions);
+    connect(quickDocumentationAction, &QAction::triggered, this,
+            [this]() { editorTabs_->requestQuickDocumentation(); });
+
     QAction *optimizeImportsAction = registerAction(
       refactorMenu, QStringLiteral("code.optimizeImports"), tr("Optimize Imports"), appSettings,
       actions);

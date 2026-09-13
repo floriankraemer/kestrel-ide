@@ -16,15 +16,18 @@ fn hover_is_parsed_from_every_response_shape() {
         .did_open(uri, LANG, "fn main() {}")
         .expect("didOpen");
 
-    // Line 0: MarkupContent markdown, rendered for a Qt tooltip.
+    // Line 0: MarkupContent markdown. R3 moved Markdown rendering to
+    // `ui-shell` (`markdown_preview::render`), so this crate's own
+    // `to_tooltip_html` is exercised only by the non-Markdown shapes below;
+    // here there is only the structured content itself to check.
     let markup = manager
         .hover(uri, 0, 0)
         .expect("hover")
         .expect("some hover");
     assert!(markup.markdown);
     assert_eq!(
-        lsp_core::to_tooltip_html(&markup),
-        "<pre>fn main()</pre>The <b>entry</b> point."
+        markup.value,
+        "```rust\nfn main()\n```\nThe **entry** point."
     );
 
     // Line 1: the deprecated {language, value} MarkedString.

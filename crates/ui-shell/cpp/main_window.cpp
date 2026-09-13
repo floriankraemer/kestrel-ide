@@ -17,6 +17,7 @@
 #include "e2e_mark.h"
 #include "i18n_startup.h"
 #include "editing_actions.h"
+#include "editor_popup.h"
 #include "editor_tabs.h"
 #include "commit_detail_panel.h"
 #include "commit_log_panel.h"
@@ -65,7 +66,6 @@
 #include <QByteArray>
 #include <QSet>
 #include <QTimer>
-#include <QToolTip>
 #include <QFileDialog>
 #include <QFont>
 #include <QHash>
@@ -932,8 +932,7 @@ void buildMainWindow(AppSettings *appSettings,
       [searchModel]() { searchModel->cancelHoverSignature(); });
     QObject::connect(languageService, &LanguageService::hoverFallback, window,
                       [editorTabs]() { editorTabs->hoverFallback(); });
-    QObject::connect(searchModel, &SearchModel::hoverSignatureReady, window,
-                      [](const QString &html) { QToolTip::showText(QCursor::pos(), html); });
+    QObject::connect(searchModel, &SearchModel::hoverSignatureReady, window, [editorTabs](const QString &html) { showEditorPopupPinnable(QCursor::pos(), html, editorTabs->takeQuickDocPending()); });
 
     // RF11: the Refactor menu. Every entry routes through the one
     // RefactorController, so there is a single place that turns a server's

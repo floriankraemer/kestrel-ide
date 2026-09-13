@@ -458,6 +458,10 @@ fn main() {
         // (no signals/slots of their own), so only the sources are listed.
         .cpp_file("cpp/completion_delegate.cpp")
         .cpp_file("cpp/completion_docs_panel.cpp")
+        // R3: the hover/signature-tip popup. No Q_OBJECT (new-style
+        // connect needs none for a plain lambda receiver), so only the
+        // source is listed, same as signature_tip.cpp below.
+        .cpp_file("cpp/editor_popup.cpp")
         // R1: `code_editor.cpp` reached the 1200-line ceiling again with the
         // wrap guide and live bracket-pair highlight; its whole paint
         // surface (paintEvent, highlightCurrentLine) moved here, the same

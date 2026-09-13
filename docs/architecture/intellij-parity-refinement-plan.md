@@ -252,7 +252,7 @@ Files: `crates/index-core/src/lib.rs`, new `crates/lsp-core/src/references.rs`, 
 |---|---|---|---|
 | R1 | Indentation, Tab and bracket basics | done | 3061c31 |
 | R2 | Completion popup depth | done | 88af3d4 |
-| R3 | Quick documentation, signature help and hover as real popups | open | |
+| R3 | Quick documentation, signature help and hover as real popups | done | d60dde6 |
 | R4 | Diagnostics navigation and the error stripe | open | |
 | R5 | Debugger UI: wire the core that already exists | open | |
 | R6 | Staging and commit workflow | open | |

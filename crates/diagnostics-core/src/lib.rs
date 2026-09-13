@@ -203,6 +203,25 @@ impl DiagnosticStore {
             .filter_map(|d| d.raw.clone())
             .collect()
     }
+
+    /// Every diagnostic covering `(line, character)` in `uri`, as the rows
+    /// the Problems dock already shows — what R3's hover popup composes
+    /// into its diagnostics section. Shares [`covers`] with
+    /// [`Self::diagnostics_at`], applied to [`row`] instead of the raw
+    /// payload: a hover reads a diagnostic's message and severity, never
+    /// its protocol-specific `data`.
+    pub fn at(&self, uri: &str, line: u32, character: u32) -> Vec<DiagnosticRow> {
+        let mut rows: Vec<DiagnosticRow> = self
+            .by_key
+            .iter()
+            .filter(|((_, key_uri), _)| key_uri == uri)
+            .flat_map(|(_, diags)| diags.iter())
+            .filter(|d| covers(&d.range, line, character))
+            .map(|d| row(uri, d))
+            .collect();
+        rows.sort_by_key(|r| r.severity);
+        rows
+    }
 }
 
 /// Whether a range covers a position, inclusive of both ends — a diagnostic
@@ -636,6 +655,39 @@ mod tests {
         assert!(store
             .diagnostics_at("file:///p/missing.rs", 2, 1)
             .is_empty());
+    }
+
+    #[test]
+    fn at_finds_every_source_covering_the_position_worst_severity_first() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp:rust",
+            "file:///p/a.rs",
+            vec![point_diagnostic(2, 1, Severity::Warning, "unused")],
+        );
+        store.replace(
+            "build:cargo",
+            "file:///p/a.rs",
+            vec![point_diagnostic(2, 2, Severity::Error, "mismatched types")],
+        );
+        let rows = store.at("file:///p/a.rs", 2, 2);
+        assert_eq!(rows.len(), 2, "both sources' rows cover this position");
+        assert_eq!(
+            rows[0].message, "mismatched types",
+            "the worse severity sorts first"
+        );
+    }
+
+    #[test]
+    fn at_is_empty_off_every_range() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp",
+            "file:///p/a.rs",
+            vec![point_diagnostic(2, 1, Severity::Error, "here")],
+        );
+        assert!(store.at("file:///p/a.rs", 5, 0).is_empty());
+        assert!(store.at("file:///p/missing.rs", 2, 1).is_empty());
     }
 
     #[test]

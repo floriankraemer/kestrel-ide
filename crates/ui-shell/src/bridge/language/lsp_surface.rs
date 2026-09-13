@@ -161,6 +161,9 @@ impl ffi::LanguageService {
                     return;
                 }
                 *service.signature_help.borrow_mut() = result.ok().flatten();
+                // R3: a fresh answer is a fresh call (or the same call
+                // re-asked), never the overload Up/Down last cycled to.
+                service.signature_display_index.set(None);
                 service.as_mut().signature_help_ready();
             });
         });
@@ -168,9 +171,28 @@ impl ffi::LanguageService {
 
     pub fn signature_help(&self) -> ffi::FfiSignatureHelp {
         match self.signature_help.borrow().as_ref() {
-            Some(help) => to_ffi_signature_help(help),
+            Some(help) => to_ffi_signature_help(help, self.signature_display_index.get()),
             None => ffi::FfiSignatureHelp::default(),
         }
+    }
+
+    /// R3: Up (`delta = -1`) / Down (`delta = 1`) on the signature tip —
+    /// steps to another overload of the same call, wrapping past either
+    /// end (`lsp_core::SignatureHelp::cycle_signature`). A no-op with
+    /// nothing showing, which is what a keystroke racing the tip's own
+    /// dismissal produces.
+    pub fn cycle_signature_overload(self: Pin<&mut Self>, delta: i32) {
+        let help = self.signature_help.borrow();
+        let Some(help) = help.as_ref() else {
+            return;
+        };
+        let current = self.signature_display_index.get().unwrap_or_else(|| {
+            help.active_signature
+                .unwrap_or(0)
+                .min(help.signatures.len().saturating_sub(1))
+        });
+        let next = help.cycle_signature(current, delta);
+        self.signature_display_index.set(Some(next));
     }
 
     /// F2-9 — every occurrence of the symbol under the caret, for
@@ -927,21 +949,36 @@ fn to_lsp_position(text: &str, byte_offset: usize) -> (u32, u32) {
     (line as u32, character as u32)
 }
 
-fn to_ffi_signature_help(help: &lsp_core::SignatureHelp) -> ffi::FfiSignatureHelp {
-    let Some(signature) = help.resolved_signature() else {
+/// R3: `override_index` is the overload Up/Down last cycled to
+/// (`LanguageServiceRust::signature_display_index`); `None` uses the
+/// server's own `activeSignature`, exactly what `resolved_signature` picked
+/// before cycling existed.
+fn to_ffi_signature_help(
+    help: &lsp_core::SignatureHelp,
+    override_index: Option<usize>,
+) -> ffi::FfiSignatureHelp {
+    let count = help.signatures.len();
+    if count == 0 {
+        return ffi::FfiSignatureHelp::default();
+    }
+    let index = override_index
+        .unwrap_or_else(|| help.active_signature.unwrap_or(0))
+        .min(count - 1);
+    let Some((signature, parameter_index)) = help.signature_and_parameter_at(index) else {
         return ffi::FfiSignatureHelp::default();
     };
-    let (has_active_parameter, parameter_start, parameter_end) = match help.resolved_parameter() {
-        Some(index) => match signature.parameters.get(index).and_then(|p| p.range) {
+    let parameter = parameter_index.and_then(|i| signature.parameters.get(i));
+    let (has_active_parameter, parameter_start, parameter_end) =
+        match parameter.and_then(|p| p.range) {
             Some((start, end)) => (true, start, end),
             None => (false, 0, 0),
-        },
-        None => (false, 0, 0),
-    };
-    let index = help
-        .active_signature
-        .unwrap_or(0)
-        .min(help.signatures.len().saturating_sub(1));
+        };
+    // R3: the active parameter's own documentation, shown in the tip below
+    // the signature's — plain text, the same reason `documentation` below
+    // is (`signature_help.rs`'s own doc comment on `documentation`).
+    let parameter_documentation = parameter
+        .and_then(|p| p.documentation.as_deref())
+        .unwrap_or_default();
     ffi::FfiSignatureHelp {
         has_signature: true,
         label: QString::from(signature.label.as_str()),
@@ -949,8 +986,9 @@ fn to_ffi_signature_help(help: &lsp_core::SignatureHelp) -> ffi::FfiSignatureHel
         has_active_parameter,
         parameter_start,
         parameter_end,
+        parameter_documentation: QString::from(parameter_documentation),
         signature_index: index as u32,
-        signature_count: help.signatures.len() as u32,
+        signature_count: count as u32,
     }
 }
 

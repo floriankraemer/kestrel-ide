@@ -113,6 +113,9 @@ public:
     std::function<void()> hoverCanceled_;
     std::function<void(QMenu *)> contextMenu_;
     int hoverPosition_ = 0;
+    // R3: set by `requestQuickDocumentation`, read (and cleared) by
+    // whichever signal answers that request, to pin the popup.
+    bool quickDocPending_ = false;
 
     // Opens `path`, or focuses its tab if already open (US-3). The session
     // decides what opens and as what kind of page (ADR-0020) — a binary file
@@ -193,6 +196,22 @@ public:
     // RF12: where the pointer last dwelled, so the index leg of hover can
     // be started from outside this class when the server declines.
     int hoverPosition() const { return hoverPosition_; }
+
+    // R3 (Ctrl+Q, `code.quickDocumentation`): the same hover request a
+    // mouse dwell makes, at the caret instead of the pointer, with the
+    // resulting popup pinned once it arrives.
+    void requestQuickDocumentation();
+
+    // Whichever of `hoverReady`/`hoverSignatureReady` answers the request
+    // `requestQuickDocumentation` just made reads this once, to pin the
+    // popup instead of leaving it as transient as a mouse dwell's. Clears
+    // itself on read, the same one-shot shape `takePendingEdits` uses.
+    bool takeQuickDocPending()
+    {
+        const bool pending = quickDocPending_;
+        quickDocPending_ = false;
+        return pending;
+    }
 
     // Called when no server answered a hover, and when there was no server
     // to ask. Set by the window, which owns the SearchModel.
@@ -759,6 +778,15 @@ private:
     void requestSignatureHelpFor(CodeEditor *editor, bool explicitRequest = false);
 
     void onSignatureHelpReady();
+
+    // R3: Up/Down on the signature tip — steps to another overload of the
+    // same call and repaints, or does nothing if the tip already closed.
+    void cycleSignatureOverload(int delta);
+
+    // L3/R3: `hoverRequested`'s body, factored out so
+    // `requestQuickDocumentation` (Ctrl+Q, at the caret) can share it with
+    // the mouse-dwell path (at the pointer) rather than duplicating it.
+    void requestHoverAt(CodeEditor *editor, int position);
 
     // F2-11: inlay hints for whatever `editor` currently has visible.
     // Called on scroll and after a document change settles; a no-op when

@@ -281,6 +281,15 @@ void CodeEditor::keyPressEvent(QKeyEvent *event)
         }
     }
 
+    // F2-11/R3: while the signature tip is up, Up/Down cycle its overload
+    // instead of moving the caret — checked ahead of everything below, the
+    // same precedence the completer popup's own keys get above.
+    if (signatureTipActive_ && (event->key() == Qt::Key_Up || event->key() == Qt::Key_Down)) {
+        event->accept();
+        emit signatureOverloadCycleRequested(event->key() == Qt::Key_Down ? 1 : -1);
+        return;
+    }
+
     // Ctrl+Space: ask regardless of what is typed, mid-word or not, and
     // regardless of the debounce window — an explicit gesture is never
     // deferred.
@@ -513,6 +522,17 @@ QPair<int, int> CodeEditor::identifierAt(const QPoint &pos) const
     return {cursor.selectionStart(), cursor.selectionEnd()};
 }
 
+QPair<int, int> CodeEditor::diagnosticSpanAt(const QPoint &pos) const
+{
+    const int position = cursorForPosition(pos).position();
+    for (const DiagnosticSpan &span : diagnosticSpans_) {
+        if (position >= span.start && position < span.end) {
+            return {span.start, span.end};
+        }
+    }
+    return {-1, -1};
+}
+
 void CodeEditor::updateHoverSpan(const QPoint &pos, bool ctrlHeld)
 {
     const QPair<int, int> span = ctrlHeld ? identifierAt(pos) : QPair<int, int>{-1, -1};
@@ -574,7 +594,15 @@ void CodeEditor::setSecondaryCarets(const QVector<SecondaryCaret> &carets)
 bool CodeEditor::viewportEvent(QEvent *event)
 {
     if (event->type() == QEvent::ToolTip) {
-        const QPair<int, int> span = identifierAt(static_cast<QHelpEvent *>(event)->pos());
+        const QPoint pos = static_cast<QHelpEvent *>(event)->pos();
+        // R3: an identifier wins when both apply (a squiggle under a
+        // hovered name shows the LSP hover with the diagnostic appended,
+        // `compose_hover_html`), but a squiggle on its own — whitespace, a
+        // trailing comma, an unused `;` — still triggers a hover.
+        QPair<int, int> span = identifierAt(pos);
+        if (span.first < 0) {
+            span = diagnosticSpanAt(pos);
+        }
         if (span.first >= 0) {
             hoverPending_ = true;
             emit hoverRequested(span.first);

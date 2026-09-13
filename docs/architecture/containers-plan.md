@@ -76,7 +76,7 @@ container-core
 └── bin/stub_engine.rs  fake `docker` for E2E (canned JSON, records argv) — precedent lsp-core/src/bin/stub_server.rs
 ```
 
-`connection.rs`, `discovery.rs` and `probe.rs` landed in C1; every other module lands with the task that needs it (see the task list below).
+`connection.rs`, `discovery.rs` and `probe.rs` landed in C1; `model.rs`, `snapshot.rs`, `watcher.rs` and `tree.rs` (the dock's flattened rows, kept in the Qt-free crate so their order and text are unit-tested) landed in C2; every other module lands with the task that needs it (see the task list below).
 
 Layering (`docs/architecture/layering.md` carries the rows; greps for qt and tokio must stay empty):
 
@@ -205,7 +205,7 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 | # | Task | Status | Commit |
 |---|------|--------|--------|
 | C1 | Foundation: crate, connections, settings, ADR | done | `2d50701` |
-| C2 | Snapshot, watcher, dock tree | not started | |
+| C2 | Snapshot, watcher, dock tree | done | `b0ee05f`, `cdf81cd` |
 | C3 | Container actions and tabs | not started | |
 | C4 | Images, networks, volumes | not started | |
 | C5 | Run configurations and Compose nodes | not started | |

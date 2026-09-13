@@ -598,6 +598,16 @@ public:
     void setAnnotateEnabled(bool enabled);
     bool annotateEnabled() const { return annotateEnabled_; }
 
+    // R7: the blame toggle is remembered per file (`VcsService::
+    // blameEnabledFor`/`setBlameEnabledFor`), not just per window — this
+    // restores it for whichever tab just became active, and persists the
+    // choice whenever `setAnnotateEnabled` is called with a real path
+    // behind it. `callback` lets `vcs_menu.cpp`'s checkable action follow
+    // the restored value without EditorTabs needing a signal (no
+    // Q_OBJECT/moc here, see the class doc comment).
+    void setAnnotateEnabledChangedCallback(std::function<void(bool)> callback);
+    void restoreAnnotateForActiveTab();
+
     // `VcsService::blameReady(path, lines)`: push blame text for `path`
     // into that file's gutter, if it is still open and annotation is on.
     void applyVcsBlame(const QString &path, const ::rust::Vec<FfiBlameLine> &lines);
@@ -939,6 +949,10 @@ private:
     DebugService *debugService_ = nullptr;
     // F3-18: vcs.annotate's state, applied to whichever editor is active.
     bool annotateEnabled_ = false;
+    // R7: notified whenever `annotateEnabled_` changes, so the VCS menu's
+    // checkable action can follow a per-file restore it did not itself
+    // trigger.
+    std::function<void(bool)> annotateEnabledChanged_;
 
     // F3-14: which tabs currently have their `CodeEditor` reparented
     // into an open diff tab in the Diff dock (see `openEditableDiffWindow`),

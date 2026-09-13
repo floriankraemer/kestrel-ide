@@ -198,20 +198,47 @@ void EditorTabs::applyVcsHunks(const QString &path)
 
 void EditorTabs::setAnnotateEnabled(bool enabled)
 {
+    const bool changed = annotateEnabled_ != enabled;
     annotateEnabled_ = enabled;
+    if (changed && annotateEnabledChanged_) {
+        annotateEnabledChanged_(enabled);
+    }
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
     if (!editor) {
         return;
     }
     editor->setBlameEnabled(enabled);
-    if (!enabled || !vcsService_) {
+    if (!vcsService_) {
         return;
     }
     const quint64 tabId = editor->property("tabId").toULongLong();
     const QString path = docManager_->tabPath(tabId);
-    if (!path.isEmpty()) {
+    if (path.isEmpty()) {
+        return;
+    }
+    // R7: remembered per file, per project — a toggle the user makes
+    // explicitly (as opposed to `restoreAnnotateForActiveTab` re-applying
+    // an already-saved value) writes it back.
+    vcsService_->setBlameEnabledFor(path, enabled);
+    if (enabled) {
         vcsService_->blame(path);
     }
+}
+
+void EditorTabs::setAnnotateEnabledChangedCallback(std::function<void(bool)> callback)
+{
+    annotateEnabledChanged_ = std::move(callback);
+}
+
+void EditorTabs::restoreAnnotateForActiveTab()
+{
+    if (!vcsService_) {
+        setAnnotateEnabled(annotateEnabled_);
+        return;
+    }
+    const QString path = currentPath();
+    const bool enabled = path.isEmpty() ? false : vcsService_->blameEnabledFor(path);
+    setAnnotateEnabled(enabled);
 }
 
 void EditorTabs::applyVcsBlame(const QString &path, const ::rust::Vec<FfiBlameLine> &lines)

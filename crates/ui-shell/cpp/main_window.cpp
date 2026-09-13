@@ -412,7 +412,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
           if (!previewDocks->isClosed(QStringLiteral("fileHistory"))) {
               fileHistoryPanel->setCurrentFile(editorTabs->currentPath());
           }
-          editorTabs->setAnnotateEnabled(editorTabs->annotateEnabled());
+          editorTabs->restoreAnnotateForActiveTab();
           // Locate-in-tree only makes sense while a tab is open.
           projectTreeLocateAction->setEnabled(!editorTabs->currentPath().isEmpty());
 

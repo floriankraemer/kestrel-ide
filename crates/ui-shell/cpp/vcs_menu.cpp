@@ -12,14 +12,19 @@
 #include <QAction>
 #include <QCursor>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMetaObject>
 #include <QPushButton>
 #include <QStatusBar>
 #include <QStringList>
 #include <QToolButton>
+#include <QVector>
+
+#include <memory>
 
 namespace ui_shell {
 
@@ -84,6 +89,21 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
         if (error.code == vcsErrorCode(FfiVcsErrorCode::UnmergedBranch)) {
             return;
         }
+        // R7: `pushTracking`'s only failure mode `push`/branch-popup Push
+        // do not already have their own handling for — offer the branch
+        // popup's explicit per-branch Push (a real remote picker) instead
+        // of leaving the plain "Push" action silently doing nothing.
+        if (error.code == vcsErrorCode(FfiVcsErrorCode::NoUpstream)) {
+            const auto choice = QMessageBox::information(
+              window, QObject::tr("Push"),
+              error.message + QStringLiteral("\n\n")
+                + QObject::tr("Open Branches... to push it to a chosen remote?"),
+              QMessageBox::Open | QMessageBox::Cancel, QMessageBox::Open);
+            if (choice == QMessageBox::Open) {
+                showBranchMenu(vcsService, window, QCursor::pos());
+            }
+            return;
+        }
         // Git refuses
         // to touch this project root because its ownership looks dubious to
         // it (common on WSL `//wsl.localhost/...` paths and networked
@@ -133,28 +153,34 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     QObject::connect(commitAction, &QAction::triggered, window,
                       [docks]() { docks->show(QStringLiteral("changes")); });
 
+    // R7: relies on the configured upstream (`pushTracking`) rather than a
+    // hard-coded "origin" — a branch with no upstream yet surfaces
+    // `NoUpstream` through the shared `vcsFailed` handler below, which
+    // offers the branch popup's explicit per-branch Push (a real remote
+    // picker) instead.
     QAction *pushAction = registerAction(vcsMenu, QStringLiteral("vcs.push"),
                                           QObject::tr("Push"), appSettings, actions);
-    QObject::connect(pushAction, &QAction::triggered, vcsService, [vcsService]() {
-        const QString branch = vcsService->currentBranch();
-        if (!branch.isEmpty()) {
-            vcsService->push(QStringLiteral("origin"), branch, /*setUpstream=*/false);
-        }
-    });
+    QObject::connect(pushAction, &QAction::triggered, vcsService,
+                      [vcsService]() { vcsService->pushTracking(); });
 
     QAction *pullAction = registerAction(vcsMenu, QStringLiteral("vcs.pull"),
                                           QObject::tr("Pull"), appSettings, actions);
-    QObject::connect(pullAction, &QAction::triggered, vcsService, [vcsService]() {
+    QObject::connect(pullAction, &QAction::triggered, vcsService, [vcsService, window]() {
         const QString branch = vcsService->currentBranch();
-        if (!branch.isEmpty()) {
-            vcsService->pull(QStringLiteral("origin"), branch);
+        const QString remote = pickRemote(window, vcsService);
+        if (!branch.isEmpty() && !remote.isEmpty()) {
+            vcsService->pull(remote, branch);
         }
     });
 
     QAction *fetchAction = registerAction(vcsMenu, QStringLiteral("vcs.fetch"),
                                            QObject::tr("Fetch"), appSettings, actions);
-    QObject::connect(fetchAction, &QAction::triggered, vcsService,
-                      [vcsService]() { vcsService->fetch(QStringLiteral("origin")); });
+    QObject::connect(fetchAction, &QAction::triggered, vcsService, [vcsService, window]() {
+        const QString remote = pickRemote(window, vcsService);
+        if (!remote.isEmpty()) {
+            vcsService->fetch(remote);
+        }
+    });
 
     QAction *branchesAction = registerAction(vcsMenu, QStringLiteral("vcs.branches"),
                                               QObject::tr("Branches..."), appSettings, actions);
@@ -163,6 +189,54 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     });
 
     vcsMenu->addSeparator();
+
+    // R7: stash — push/pop/drop each shell out and refresh the Changes
+    // dock's own `statusChanged`, the same shape every other write here
+    // follows; "Unstash..." offers a pick-list because more than one stash
+    // entry can exist at once, unlike the always-singular staged/unstaged
+    // split the rest of this menu works with.
+    QAction *stashAction = registerAction(vcsMenu, QStringLiteral("vcs.stash"),
+                                           QObject::tr("Stash Changes..."), appSettings, actions);
+    QObject::connect(stashAction, &QAction::triggered, vcsService, [vcsService, window]() {
+        bool ok = false;
+        const QString message = QInputDialog::getText(
+          window, QObject::tr("Stash Changes"), QObject::tr("Message (optional):"),
+          QLineEdit::Normal, QString(), &ok);
+        if (ok) {
+            vcsService->stashPush(message);
+        }
+    });
+
+    QAction *unstashAction = registerAction(vcsMenu, QStringLiteral("vcs.unstash"),
+                                             QObject::tr("Unstash..."), appSettings, actions);
+    QObject::connect(unstashAction, &QAction::triggered, vcsService, [vcsService, window]() {
+        auto connection = std::make_shared<QMetaObject::Connection>();
+        *connection = QObject::connect(
+          vcsService, &VcsService::stashListReady, vcsService,
+          [vcsService, window, connection](const ::rust::Vec<FfiStashEntry> &entries) {
+              QObject::disconnect(*connection);
+              if (entries.empty()) {
+                  QMessageBox::information(window, QObject::tr("Unstash"),
+                                            QObject::tr("There are no stashed changes."));
+                  return;
+              }
+              QStringList labels;
+              QVector<quint32> indices;
+              for (const FfiStashEntry &entry : entries) {
+                  labels.append(
+                    QStringLiteral("%1: %2").arg(entry.index).arg(QString(entry.message)));
+                  indices.append(entry.index);
+              }
+              bool ok = false;
+              const int row = labels.indexOf(QInputDialog::getItem(
+                window, QObject::tr("Unstash"), QObject::tr("Stash entry:"), labels, 0, false,
+                &ok));
+              if (ok && row >= 0) {
+                  vcsService->stashPop(indices[row]);
+              }
+          });
+        vcsService->requestStashList();
+    });
 
     QAction *showDiffAction = registerAction(vcsMenu, QStringLiteral("vcs.showDiff"),
                                               QObject::tr("Show Diff"), appSettings, actions);
@@ -196,6 +270,11 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     annotateAction->setCheckable(true);
     QObject::connect(annotateAction, &QAction::toggled, editorTabs,
                       [editorTabs](bool checked) { editorTabs->setAnnotateEnabled(checked); });
+    // R7: the toggle is per file — when switching tabs restores a
+    // different file's saved value, the checkbox has to follow along even
+    // though the user did not touch it.
+    editorTabs->setAnnotateEnabledChangedCallback(
+      [annotateAction](bool enabled) { annotateAction->setChecked(enabled); });
 
     QAction *viewChangesAction = registerAction(viewMenu, QStringLiteral("view.changes"),
                                                  QObject::tr("Changes"), appSettings, actions);

@@ -348,8 +348,35 @@ impl Invocation {
         self
     }
 
+    /// Run `args` through this invocation to completion, buffered, with
+    /// `process_exec::run` — the one call every query-shaped operation
+    /// (`probe`, `snapshot`) goes through.
+    pub fn run(
+        &self,
+        args: &[&str],
+        work_dir: &Path,
+        timeout: Duration,
+    ) -> Result<process_exec::Output, process_exec::Failure> {
+        let argv = self.argv(args);
+        let arg_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let env_refs: Vec<(&str, &str)> = self
+            .env
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        process_exec::run(&self.program, &arg_refs, work_dir, None, timeout, &env_refs)
+    }
+
     /// A ready-to-spawn [`std::process::Command`], for a caller that wants
     /// `Command` directly rather than going through `process_exec`.
+    ///
+    /// `program`/`prefix_args` already carry the whole command line — for
+    /// a [`ConnectionKind::Wsl`] connection that is the `wsl.exe -d
+    /// <distro> --` wrap itself — so this always launches as a *local*
+    /// process and never hands the argv to `ExecHost::Wsl::command`, which
+    /// would wrap it a second time. What a WSL host still needs from that
+    /// path is `WSLENV`, so the connection's own variables reach the
+    /// distro; that part is applied here.
     pub fn command(&self, cwd: &Path, args: &[&str]) -> std::process::Command {
         let argv = self.argv(args);
         let arg_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -358,7 +385,11 @@ impl Invocation {
             .iter()
             .map(|(key, value)| (key.as_str(), value.as_str()))
             .collect();
-        self.host.command(&self.program, &arg_refs, cwd, &env_refs)
+        let mut command = ExecHost::Local.command(&self.program, &arg_refs, cwd, &env_refs);
+        if self.host.is_remote() && !env_refs.is_empty() {
+            command.env("WSLENV", process_exec::host::wslenv_with(&env_refs));
+        }
+        command
     }
 }
 
@@ -669,6 +700,69 @@ mod tests {
             vec!["-d", "Ubuntu", "--", "docker", "ps", "-a"]
         );
         assert!(matches!(invocation.host, ExecHost::Wsl(_)));
+    }
+
+    #[test]
+    fn a_wsl_invocation_command_is_wrapped_exactly_once() {
+        let cfg = config(
+            Engine::Podman,
+            ConnectionKind::Wsl {
+                distro: "Ubuntu".to_string(),
+            },
+        )
+        .invocation()
+        .with_extra_env(vec![(
+            "CONTAINER_HOST".to_string(),
+            "unix:///x".to_string(),
+        )]);
+        let command = cfg.command(Path::new("."), &["ps", "-aq"]);
+        assert_eq!(command.get_program(), "wsl.exe");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["-d", "Ubuntu", "--", "podman", "ps", "-aq"]);
+        assert_eq!(
+            args.iter().filter(|arg| *arg == "-d").count(),
+            1,
+            "no second `wsl.exe -d` wrap around the first"
+        );
+        let env: Vec<(String, Option<String>)> = command
+            .get_envs()
+            .map(|(key, value)| {
+                (
+                    key.to_string_lossy().into_owned(),
+                    value.map(|value| value.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+        assert!(env.contains(&("CONTAINER_HOST".to_string(), Some("unix:///x".to_string()))));
+        assert!(
+            env.iter().any(|(key, value)| key == "WSLENV"
+                && value
+                    .as_deref()
+                    .is_some_and(|v| v.contains("CONTAINER_HOST/u"))),
+            "{env:?}"
+        );
+    }
+
+    #[test]
+    fn a_local_invocation_command_runs_the_program_directly() {
+        let cfg = config(
+            Engine::Docker,
+            ConnectionKind::Context {
+                name: "remote".to_string(),
+            },
+        )
+        .invocation();
+        let command = cfg.command(Path::new("."), &["ps"]);
+        assert_eq!(command.get_program(), "docker");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(args, vec!["--context", "remote", "ps"]);
+        assert!(command.get_envs().all(|(key, _)| key != "WSLENV"));
     }
 
     #[test]

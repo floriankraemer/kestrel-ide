@@ -76,6 +76,10 @@ struct SettingsContext
 //
 // Modal and blocking, so every lambda in the implementation capturing the
 // dialog only ever runs while the dialog is still alive on that stack frame.
-void showSettingsDialog(QWidget *parent, const SettingsContext &context);
+// `initialCategory`, when given, is the (translated) category label to
+// open on — e.g. `tr("Containers")` from the Containers dock's "Edit
+// configuration..."; unknown labels fall back to the first category.
+void showSettingsDialog(QWidget *parent, const SettingsContext &context,
+                        const QString &initialCategory = QString());
 
 } // namespace ui_shell

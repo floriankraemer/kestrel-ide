@@ -1,0 +1,28 @@
+[
+  {
+    "Name": "web-data",
+    "Driver": "local",
+    "Mountpoint": "/home/user/.local/share/containers/storage/volumes/web-data/_data",
+    "CreatedAt": "2026-09-12T08:14:50.000000000+02:00",
+    "Labels": {},
+    "Scope": "local",
+    "Options": {},
+    "MountCount": 1,
+    "NeedsCopyUp": true,
+    "NeedsChown": true,
+    "LockNumber": 3
+  },
+  {
+    "Name": "shop_pgdata",
+    "Driver": "local",
+    "Mountpoint": "/home/user/.local/share/containers/storage/volumes/shop_pgdata/_data",
+    "CreatedAt": "2026-09-10T20:00:59.000000000+02:00",
+    "Labels": {"io.podman.compose.project": "shop"},
+    "Scope": "local",
+    "Options": {},
+    "MountCount": 0,
+    "NeedsCopyUp": true,
+    "NeedsChown": true,
+    "LockNumber": 4
+  }
+]

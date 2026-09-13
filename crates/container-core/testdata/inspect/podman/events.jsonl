@@ -1,0 +1,4 @@
+{"Name":"docker.io/library/nginx:1.27","Status":"pull","Time":"2026-09-12T08:14:30.000000000+02:00","Type":"image","Attributes":{}}
+{"ID":"9f1c2e7a4b3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f","Image":"docker.io/library/nginx:1.27","Name":"web","Status":"create","Time":"2026-09-12T08:15:02.000000000+02:00","Type":"container","Attributes":{"maintainer":"NGINX Docker Maintainers <docker-maint@nginx.com>"}}
+{"ID":"9f1c2e7a4b3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f","Image":"docker.io/library/nginx:1.27","Name":"web","Status":"start","Time":"2026-09-12T08:15:03.000000000+02:00","Type":"container","Attributes":{}}
+{"ID":"9f1c2e7a4b3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f","Image":"docker.io/library/nginx:1.27","Name":"web","Status":"exec","Time":"2026-09-12T08:16:00.000000000+02:00","Type":"container","Attributes":{}}

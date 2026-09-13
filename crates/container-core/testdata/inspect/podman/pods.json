@@ -1,0 +1,17 @@
+[
+  {
+    "Cgroup": "user.slice",
+    "Containers": [
+      {"Id": "4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e", "Names": "5a5b5c5d5e5f-infra", "Status": "running"},
+      {"Id": "9f1c2e7a4b3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f", "Names": "web", "Status": "running"}
+    ],
+    "Created": "2026-09-12T08:14:40.000000000+02:00",
+    "Id": "5a5b5c5d5e5f6a6b6c6d6e6f7a7b7c7d7e7f8a8b8c8d8e8f9a9b9c9d9e9fa0a1",
+    "InfraId": "4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e",
+    "Labels": {},
+    "Name": "shop",
+    "Namespace": "",
+    "Networks": ["podman"],
+    "Status": "Running"
+  }
+]

@@ -50,7 +50,8 @@
 
 namespace ui_shell {
 
-void showSettingsDialog(QWidget *parent, const SettingsContext &context)
+void showSettingsDialog(QWidget *parent, const SettingsContext &context,
+                        const QString &initialCategory)
 {
     AppSettings *appSettings = context.appSettings;
     EditorTabs *editorTabs = context.editorTabs;
@@ -420,7 +421,13 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
                                         .arg(topLeft.y()));
                           });
                       });
-    categoryList->setCurrentRow(0);
+    int initialRow = 0;
+    for (int i = 0; i < categoryList->count(); ++i) {
+        if (!initialCategory.isEmpty() && categoryList->item(i)->text() == initialCategory) {
+            initialRow = i;
+        }
+    }
+    categoryList->setCurrentRow(initialRow);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     // OK runs every page that can refuse first — AI Providers and Editing

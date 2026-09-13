@@ -561,6 +561,9 @@ fn main() {
         // connects), so only the source is listed.
         .cpp_file("cpp/tests_panel.cpp")
         .cpp_file("cpp/tests_menu.cpp")
+        // Containers plan C2: the Containers dock, same Q_OBJECT-free shape.
+        .cpp_file("cpp/containers_panel.cpp")
+        .cpp_file("cpp/containers_menu.cpp")
         .cpp_file("cpp/icon_cache.cpp")
         // Declares Q_OBJECT (it overrides QIdentityProxyModel::data), so its
         // header is listed too — that is what runs moc on it.

@@ -137,9 +137,15 @@ baseline() {
 	# the other dock-manager config flags set here before `CDockManager` is
 	# constructed, plus the comment explaining why it is needed — ADS's
 	# default only gives the *active* tab in a dock area a close button.
-	# Ratcheted down to 1219: two ProjectTreeActions callbacks (R6) folded
-	# onto one line each.
-	crates/ui-shell/cpp/main_window.cpp) echo 1219 ;;
+	# 1219 after R6 folded two ProjectTreeActions callbacks onto one line
+	# each, then raised by 11 lines for the Containers dock (containers plan
+	# C2): one `buildContainersDock(...)` call plus its `#include`s, the
+	# per-window `ContainerService`, the `view.containers` menu call, and
+	# the four-line handler that opens Settings on the Containers page —
+	# the same per-dock footprint as the Git history docks above; the
+	# panel, its menu and its wiring live in containers_panel.cpp /
+	# containers_menu.cpp.
+	crates/ui-shell/cpp/main_window.cpp) echo 1230 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

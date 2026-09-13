@@ -9,9 +9,12 @@
 //! C1 — this one — is the foundation: [`connection`] turns a persisted
 //! [`app_config::ContainerConnectionSetting`] into a runnable [`Invocation`
 //! (crate::connection::Invocation)], [`discovery`] finds connections the
-//! user has not typed in yet, and [`probe`] is "Test connection". Snapshot,
-//! watching, operations, run configurations, registries, run targets and
-//! recreate/editing land in later tasks and are not implemented yet.
+//! user has not typed in yet, and [`probe`] is "Test connection". C2 adds
+//! [`model`]/[`snapshot`] (typed `inspect` output and one engine's whole
+//! state), [`watcher`] (the per-connection thread that follows `events`)
+//! and [`tree`] (the dock's flattened rows). Operations, run
+//! configurations, registries, run targets and recreate/editing land in
+//! later tasks and are not implemented yet.
 
 /// Connections: [`connection::Engine`], [`connection::ConnectionKind`], and
 /// [`connection::Invocation`] — a persisted connection turned into an
@@ -20,6 +23,17 @@ pub mod connection;
 /// Finding connections the user has not typed in by hand: CLI contexts,
 /// Podman connections/machines, and well-known socket presets.
 pub mod discovery;
+/// Typed, lenient views over `inspect` JSON: [`model::Container`],
+/// [`model::Image`], [`model::Volume`], [`model::Network`], [`model::Pod`].
+pub mod model;
 /// "Test connection": `<cli> version --format json`, parsed into
 /// [`probe::EngineInfo`] or a [`probe::ConnectionError`].
 pub mod probe;
+/// One engine's whole state ([`snapshot::EngineSnapshot`]), compose
+/// grouping, and the filter/search views over it.
+pub mod snapshot;
+/// The Containers dock's rows, flattened and ordered ([`tree::flatten`]).
+pub mod tree;
+/// Per-connection watcher thread: probe, snapshot, `events` → debounce →
+/// re-snapshot, reported as [`watcher::ContainerEvent`]s.
+pub mod watcher;

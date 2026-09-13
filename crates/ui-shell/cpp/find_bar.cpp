@@ -1,6 +1,7 @@
 #include "find_bar.h"
 
 #include "code_editor.h"
+#include "e2e_mark.h"
 #include "editor_tabs.h"
 #include "ui_tokens.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
@@ -77,13 +78,13 @@ FindBar::FindBar(CodeEditor *editor, DocumentManager *documents)
     replaceEdit_ = new QLineEdit(this);
     replaceEdit_->setPlaceholderText(tr("Replace"));
     auto *replaceButton = new QPushButton(tr("Replace"), this);
-    auto *replaceAllButton = new QPushButton(tr("Replace All"), this);
+    replaceAllButton_ = new QPushButton(tr("Replace All"), this);
     replaceRow_ = new QWidget(this);
     auto *replaceLayout = new QHBoxLayout(replaceRow_);
     replaceLayout->setContentsMargins(0, 0, 0, 0);
     replaceLayout->addWidget(replaceEdit_, 1);
     replaceLayout->addWidget(replaceButton);
-    replaceLayout->addWidget(replaceAllButton);
+    replaceLayout->addWidget(replaceAllButton_);
     replaceRow_->hide();
 
     auto *layout = new QVBoxLayout(this);
@@ -98,7 +99,7 @@ FindBar::FindBar(CodeEditor *editor, DocumentManager *documents)
     connect(nextButton, &QToolButton::clicked, this, &FindBar::findNext);
     connect(closeButton_, &QToolButton::clicked, this, &FindBar::closeBar);
     connect(replaceButton, &QPushButton::clicked, this, &FindBar::replaceCurrent);
-    connect(replaceAllButton, &QPushButton::clicked, this, &FindBar::replaceAll);
+    connect(replaceAllButton_, &QPushButton::clicked, this, &FindBar::replaceAll);
     connect(queryEdit_, &QLineEdit::returnPressed, this, &FindBar::findNext);
     connect(replaceEdit_, &QLineEdit::returnPressed, this, &FindBar::replaceCurrent);
 
@@ -145,6 +146,23 @@ void FindBar::open(bool withReplace)
     refresh();
     queryEdit_->setFocus();
     queryEdit_->selectAll();
+    // Same reasoning as `changes_panel_shown`: the bar floats wherever the
+    // editor's viewport puts it, so an E2E flow reads the replace field's
+    // and Replace All's on-screen rects here instead of guessing them.
+    const QRect replaceRect(replaceEdit_->mapToGlobal(QPoint(0, 0)), replaceEdit_->size());
+    const QRect allRect(replaceAllButton_->mapToGlobal(QPoint(0, 0)), replaceAllButton_->size());
+    e2eMark(QStringLiteral("{\"ev\":\"find_bar_shown\",\"replace\":%1,"
+                            "\"replace_rect\":[%2,%3,%4,%5],"
+                            "\"replace_all_rect\":[%6,%7,%8,%9]}")
+              .arg(withReplace ? QStringLiteral("true") : QStringLiteral("false"))
+              .arg(replaceRect.x())
+              .arg(replaceRect.y())
+              .arg(replaceRect.width())
+              .arg(replaceRect.height())
+              .arg(allRect.x())
+              .arg(allRect.y())
+              .arg(allRect.width())
+              .arg(allRect.height()));
 }
 
 void FindBar::closeBar()

@@ -150,6 +150,8 @@ No new write operation was added by this work: the "index-blob hunk staging" the
 
 `Repository::ignored_paths` (`status.rs`/`cli.rs`) is not part of this amendment: it reuses `status`'s own already-shelled-out path (`git status --porcelain=v2 --ignored=matching`) for the same reason §1's status note gives.
 Ignored-ness is exactly the kind of `.gitignore`/`core.excludesFile`/sparse-checkout-dependent classification ADR-0053 already established belongs to `git` itself, not a second in-process re-implementation of gitignore matching.
+`Repository::changed_paths_against` (`git diff --name-only <revision>`, behind "Compare Project with Branch, Tag or Revision…") shells out for the same reason: it is a worktree comparison, and the revision is whatever the user typed, which `git` resolves itself.
+`Repository::add_to_gitignore` writes the root `.gitignore` directly — a plain file append, not a `git` operation, so neither §1 nor §2 applies; `gitignore.rs` records why it does not reuse `app-config`'s sibling helper.
 
 ## Consequences
 

@@ -36,9 +36,33 @@ pub struct VcsLocalSettings {
     /// you.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commit_message_history: Vec<String>,
+    /// Repository-relative paths of every file this person last had the
+    /// gutter's "Annotate with Blame" toggle on for (R7) — a `HashSet`
+    /// would serialize as an unordered TOML array that reshuffles on every
+    /// save for no reason; a sorted `Vec` diffs cleanly and a lookup over
+    /// the handful of files anyone leaves blame on is not worth a second
+    /// data structure.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blame_enabled_paths: Vec<String>,
 }
 
 impl VcsLocalSettings {
+    /// Whether `path` (repository-relative) last had blame annotation on.
+    pub fn blame_enabled(&self, path: &str) -> bool {
+        self.blame_enabled_paths.iter().any(|p| p == path)
+    }
+
+    /// Record this machine's blame-toggle choice for `path`
+    /// (repository-relative), keeping the list sorted and deduplicated.
+    pub fn set_blame_enabled(&mut self, path: &str, enabled: bool) {
+        let already = self.blame_enabled(path);
+        if enabled && !already {
+            self.blame_enabled_paths.push(path.to_string());
+            self.blame_enabled_paths.sort();
+        } else if !enabled && already {
+            self.blame_enabled_paths.retain(|p| p != path);
+        }
+    }
     /// Record a just-made commit's message at the front of the history,
     /// removing any earlier occurrence of the exact same message first so
     /// re-using a recent message moves it to the top rather than
@@ -132,6 +156,42 @@ mod tests {
         }
         assert_eq!(settings.commit_message_history.len(), 25);
         assert_eq!(settings.commit_message_history[0], "message 29");
+    }
+
+    #[test]
+    fn blame_enabled_is_false_for_a_never_toggled_path() {
+        let settings = VcsLocalSettings::default();
+        assert!(!settings.blame_enabled("src/main.rs"));
+    }
+
+    #[test]
+    fn blame_toggle_round_trips_through_update_and_load() {
+        let root = tempfile::tempdir().unwrap();
+        update(root.path(), |s| {
+            s.set_blame_enabled("src/main.rs", true);
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        assert!(loaded.blame_enabled("src/main.rs"));
+        assert!(!loaded.blame_enabled("src/other.rs"));
+    }
+
+    #[test]
+    fn turning_blame_off_removes_the_path_rather_than_leaving_it_false() {
+        let mut settings = VcsLocalSettings::default();
+        settings.set_blame_enabled("a.rs", true);
+        settings.set_blame_enabled("b.rs", true);
+        settings.set_blame_enabled("a.rs", false);
+        assert_eq!(settings.blame_enabled_paths, vec!["b.rs".to_string()]);
+    }
+
+    #[test]
+    fn re_enabling_an_already_enabled_path_does_not_duplicate_it() {
+        let mut settings = VcsLocalSettings::default();
+        settings.set_blame_enabled("a.rs", true);
+        settings.set_blame_enabled("a.rs", true);
+        assert_eq!(settings.blame_enabled_paths, vec!["a.rs".to_string()]);
     }
 
     #[test]

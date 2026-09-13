@@ -1,5 +1,6 @@
 #include "search_results_panel.h"
 
+#include "e2e_mark.h"
 #include "editor_tabs.h"
 #include "highlight_delegate.h"
 #include "icon_cache.h"
@@ -13,6 +14,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPoint>
 #include <QPushButton>
 #include <QSplitter>
 #include <QTreeWidget>
@@ -132,6 +134,19 @@ SearchResultsPanel::SearchResultsPanel(SearchModel *searchModel, ui_shell::Edito
                                 ? counts
                                 : pendingReplaceStatus_ + QStringLiteral(" ") + counts);
         pendingReplaceStatus_.clear();
+        // R8 E2E: a mask/scope test needs to know the exact set of files
+        // the results tree ended up with — the only observable a
+        // background-thread search gives a driver with no widget
+        // introspection of its own.
+        QStringList fileNames;
+        for (int g = 0; g < results_->topLevelItemCount(); ++g) {
+            fileNames << e2eJson(results_->topLevelItem(g)->text(0));
+        }
+        e2eMark(QStringLiteral("{\"ev\":\"find_in_files_results\",\"matches\":%1,\"files\":[%2]}")
+                  .arg(matchCount_)
+                  .arg(fileNames.join(QStringLiteral(",")))
+                  .toUtf8()
+                  .constData());
     });
     connect(searchModel_,
             &SearchModel::searchFailed,
@@ -172,6 +187,17 @@ void SearchResultsPanel::focusQuery()
 {
     queryEdit_->setFocus();
     queryEdit_->selectAll();
+    // R8 E2E: the mask field's screen rect, so a driver can click straight
+    // into it instead of counting Tab presses through a toolbar whose
+    // widget order is an implementation detail.
+    const QPoint topLeft = maskEdit_->mapToGlobal(QPoint(0, 0));
+    e2eMark(QStringLiteral("{\"ev\":\"find_in_files_shown\",\"mask_rect\":[%1,%2,%3,%4]}")
+              .arg(topLeft.x())
+              .arg(topLeft.y())
+              .arg(maskEdit_->width())
+              .arg(maskEdit_->height())
+              .toUtf8()
+              .constData());
 }
 
 void SearchResultsPanel::searchFor(const QString &text)

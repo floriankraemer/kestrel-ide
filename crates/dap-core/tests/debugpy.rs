@@ -308,7 +308,10 @@ fn debugpy_changes_a_variable_through_set_variable() {
         .expect("setVariable");
 
     let result = session
-        .request("evaluate", json!({ "expression": "answer", "frameId": frames[0].id }))
+        .request(
+            "evaluate",
+            json!({ "expression": "answer", "frameId": frames[0].id }),
+        )
         .expect("evaluate");
     assert_eq!(
         result["result"], "99",

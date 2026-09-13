@@ -80,6 +80,14 @@ struct DiffColors
 
 DiffColors diffColorsForTheme(const QString &themeName);
 
+// One `FfiChangeKind`'s colour, from `diffColorsForTheme`/
+// `semanticColorsForTheme` rather than a colour hardcoded a second time —
+// shared by the Changes dock's status letter (`changes_panel.cpp`), the
+// project tree's row colouring and the editor tab's title colouring (R6),
+// so the three never drift apart on what "modified" looks like. Invalid
+// (`QColor()`) for `FfiChangeKind::None` — "no change" paints nothing.
+QColor changeKindColor(FfiChangeKind kind);
+
 // The same, for whatever theme is active.
 DiffColors diffColors();
 

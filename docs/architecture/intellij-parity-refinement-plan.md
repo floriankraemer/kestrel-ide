@@ -255,6 +255,6 @@ Files: `crates/index-core/src/lib.rs`, new `crates/lsp-core/src/references.rs`, 
 | R3 | Quick documentation, signature help and hover as real popups | done | d60dde6 |
 | R4 | Diagnostics navigation and the error stripe | done | 5ae6f31 |
 | R5 | Debugger UI: wire the core that already exists | done | c975635 |
-| R6 | Staging and commit workflow | open | |
+| R6 | Staging and commit workflow | done | cbeb1f8 |
 | R7 | Git log, blame and branch operations | open | |
 | R8 | Find in Files and Find Usages depth | open | |

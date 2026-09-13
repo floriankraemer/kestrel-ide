@@ -73,18 +73,35 @@ impl ffi::VcsService {
             // cheap `HEAD` read next to a ref listing.
             let names = worker.repo.branches();
             let current = worker.repo.current_branch();
-            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match (names, current) {
-                (Ok(names), Ok(current)) => {
-                    *service.branches.borrow_mut() = names;
-                    *service.current_branch.borrow_mut() = current.unwrap_or_default();
-                    service.as_mut().branch_changed();
-                }
-                (Err(err), _) | (_, Err(err)) => {
-                    let result = to_ffi_result(&err);
-                    service.as_mut().vcs_failed(result);
-                }
-            });
+            // Tags ride along for the revision picker (R6): a third cheap
+            // ref read on the same trip, never a round trip of its own.
+            let refs = worker.repo.ref_names();
+            let _ =
+                qt_thread.queue(
+                    move |mut service: Pin<&mut Self>| match (names, current, refs) {
+                        (Ok(names), Ok(current), Ok(refs)) => {
+                            *service.branches.borrow_mut() = names;
+                            *service.ref_names.borrow_mut() = refs;
+                            *service.current_branch.borrow_mut() = current.unwrap_or_default();
+                            service.as_mut().branch_changed();
+                        }
+                        (Err(err), _, _) | (_, Err(err), _) | (_, _, Err(err)) => {
+                            let result = to_ffi_result(&err);
+                            service.as_mut().vcs_failed(result);
+                        }
+                    },
+                );
         });
+    }
+
+    pub fn ref_names(&self) -> Vec<ffi::FfiBranch> {
+        self.ref_names
+            .borrow()
+            .iter()
+            .map(|name| ffi::FfiBranch {
+                name: QString::from(name.as_str()),
+            })
+            .collect()
     }
 
     pub fn branches(&self) -> Vec<ffi::FfiBranch> {

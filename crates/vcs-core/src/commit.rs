@@ -4,6 +4,17 @@ use crate::cli::{self, argv};
 use crate::error::VcsError;
 use crate::repo::Repository;
 
+/// What a commit is made with beyond its message (R6): `--amend`, an
+/// author override, and a `Signed-off-by:` trailer. `author` is the literal
+/// `Name <email>` `git --author` takes; an empty override is `None`, never
+/// `Some("")`, so `git` is never handed an `--author=` it would reject.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommitOptions {
+    pub amend: bool,
+    pub author: Option<String>,
+    pub signoff: bool,
+}
+
 impl Repository {
     /// `git commit -m <message> [--amend]`. Deliberately never `-a`: this
     /// commits exactly what staging (F3-6) put in the index, nothing the
@@ -15,9 +26,55 @@ impl Repository {
     /// distinguish "a hook said no" from `git commit`'s other failure
     /// modes.
     pub fn commit(&self, message: &str, amend: bool) -> Result<(), VcsError> {
+        self.commit_with(
+            message,
+            &CommitOptions {
+                amend,
+                ..CommitOptions::default()
+            },
+        )
+    }
+
+    /// [`Self::commit`] with the full option set: `--amend`, an
+    /// `--author=<Name <email>>` override, and `--signoff` (R6). Never
+    /// `-a`, for the same reason `commit` is not.
+    pub fn commit_with(&self, message: &str, options: &CommitOptions) -> Result<(), VcsError> {
         let work_dir = self.work_dir().ok_or(VcsError::OutsideWorkingTree)?;
-        cli::run(&work_dir, &argv::commit(message, amend))?;
+        let args = argv::commit_with(
+            message,
+            options.amend,
+            options.author.as_deref(),
+            options.signoff,
+        );
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        cli::run(&work_dir, &args)?;
         Ok(())
+    }
+
+    /// `HEAD`'s full commit message, for prefilling Amend — a pure object
+    /// read, so this goes through `gix` in-process (ADR-0031 §1) rather
+    /// than shelling out for something [`Self::commit`] itself already
+    /// needs no subprocess to answer.
+    ///
+    /// `None` for an unborn `HEAD` (no commits yet, so there is nothing to
+    /// amend) — every other read failure is a real [`VcsError::Read`].
+    pub fn head_message(&self) -> Result<Option<String>, VcsError> {
+        use gix::bstr::ByteSlice;
+        let commit = match self.inner.head_commit() {
+            Ok(commit) => commit,
+            Err(gix::reference::head_commit::Error::PeelToCommit(
+                gix::head::peel::to_commit::Error::PeelToObject(
+                    gix::head::peel::to_object::Error::Unborn { .. },
+                ),
+            )) => return Ok(None),
+            Err(e) => return Err(VcsError::Read(e.to_string())),
+        };
+        let message = commit
+            .message_raw_sloppy()
+            .to_str()
+            .map_err(|e| VcsError::Read(e.to_string()))?
+            .to_string();
+        Ok(Some(message))
     }
 }
 
@@ -106,6 +163,68 @@ mod tests {
         repo.commit("first, amended", true).unwrap();
 
         assert_eq!(log_subjects(dir.path()), vec!["first, amended"]);
+    }
+
+    #[test]
+    fn commit_with_author_and_signoff_reaches_the_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        git(dir.path(), &["config", "user.email", "test@example.com"]);
+        git(dir.path(), &["config", "user.name", "Test"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+
+        let repo = open(dir.path());
+        repo.commit_with(
+            "signed",
+            &CommitOptions {
+                amend: false,
+                author: Some("Ada Lovelace <ada@example.com>".to_string()),
+                signoff: true,
+            },
+        )
+        .unwrap();
+
+        let out = Command::new("git")
+            .args(["log", "-1", "--format=%an <%ae>%n%B"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        let shown = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            shown.starts_with("Ada Lovelace <ada@example.com>"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("Signed-off-by: Test <test@example.com>"),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn head_message_reads_the_full_commit_message() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        git(dir.path(), &["config", "user.email", "test@example.com"]);
+        git(dir.path(), &["config", "user.name", "Test"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "subject\n\nbody line"]);
+
+        let repo = open(dir.path());
+        assert_eq!(
+            repo.head_message().unwrap(),
+            Some("subject\n\nbody line\n".to_string())
+        );
+    }
+
+    #[test]
+    fn head_message_is_none_for_an_unborn_head() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+
+        let repo = open(dir.path());
+        assert_eq!(repo.head_message().unwrap(), None);
     }
 
     #[test]

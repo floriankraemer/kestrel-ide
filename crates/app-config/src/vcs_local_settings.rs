@@ -18,12 +18,38 @@ const LOCAL_DIR: &str = "local";
 const VCS_LOCAL_SETTINGS_FILE: &str = "vcs.toml";
 const TEMP_VCS_LOCAL_SETTINGS_FILE: &str = "vcs.toml.tmp";
 
+/// How many past commit messages [`VcsLocalSettings::commit_message_history`]
+/// keeps — R6's "last 25", per project.
+const COMMIT_MESSAGE_HISTORY_LIMIT: usize = 25;
+
 /// This machine's own VCS preferences for one project. `None` means never
 /// set, distinct from `Some(false)` (asked, and not declined).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct VcsLocalSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub declined_git_init: Option<bool>,
+    /// The commit messages this person has actually committed with in this
+    /// project, newest first, capped at
+    /// [`COMMIT_MESSAGE_HISTORY_LIMIT`] — the Changes dock's message combo.
+    /// Machine-local like the rest of this file: a colleague's commit
+    /// message wording is not something cloning this project should hand
+    /// you.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commit_message_history: Vec<String>,
+}
+
+impl VcsLocalSettings {
+    /// Record a just-made commit's message at the front of the history,
+    /// removing any earlier occurrence of the exact same message first so
+    /// re-using a recent message moves it to the top rather than
+    /// duplicating it, then truncating to
+    /// [`COMMIT_MESSAGE_HISTORY_LIMIT`].
+    pub fn push_commit_message(&mut self, message: String) {
+        self.commit_message_history.retain(|m| m != &message);
+        self.commit_message_history.insert(0, message);
+        self.commit_message_history
+            .truncate(COMMIT_MESSAGE_HISTORY_LIMIT);
+    }
 }
 
 fn local_dir(project_root: &Path) -> Result<std::path::PathBuf, ConfigError> {
@@ -74,6 +100,38 @@ mod tests {
 
         let loaded = load(root.path()).unwrap();
         assert_eq!(loaded.declined_git_init, Some(true));
+    }
+
+    #[test]
+    fn commit_message_history_round_trips_and_stays_newest_first() {
+        let root = tempfile::tempdir().unwrap();
+        update(root.path(), |s| {
+            s.push_commit_message("first".to_string());
+            s.push_commit_message("second".to_string());
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        assert_eq!(loaded.commit_message_history, vec!["second", "first"]);
+    }
+
+    #[test]
+    fn re_pushing_a_message_moves_it_to_the_front_without_duplicating() {
+        let mut settings = VcsLocalSettings::default();
+        settings.push_commit_message("a".to_string());
+        settings.push_commit_message("b".to_string());
+        settings.push_commit_message("a".to_string());
+        assert_eq!(settings.commit_message_history, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn commit_message_history_is_capped_at_25() {
+        let mut settings = VcsLocalSettings::default();
+        for i in 0..30 {
+            settings.push_commit_message(format!("message {i}"));
+        }
+        assert_eq!(settings.commit_message_history.len(), 25);
+        assert_eq!(settings.commit_message_history[0], "message 29");
     }
 
     #[test]

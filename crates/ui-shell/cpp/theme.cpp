@@ -908,6 +908,28 @@ DiffColors diffColors()
     return diffColorsForTheme(activeThemeName());
 }
 
+QColor changeKindColor(FfiChangeKind kind)
+{
+    const DiffColors diff = diffColorsForTheme(activeThemeName());
+    switch (kind) {
+    case FfiChangeKind::Added:
+    case FfiChangeKind::Untracked:
+        return diff.addedMarker;
+    case FfiChangeKind::Modified:
+    case FfiChangeKind::Renamed:
+    case FfiChangeKind::Copied:
+    case FfiChangeKind::TypeChanged:
+        return diff.modifiedMarker;
+    case FfiChangeKind::Deleted:
+        return diff.deletedMarker;
+    case FfiChangeKind::Conflicted:
+        return semanticColorsForTheme(activeThemeName()).error;
+    case FfiChangeKind::None:
+        break;
+    }
+    return QColor();
+}
+
 QString styleSheetForTheme(const QString &themeName)
 {
     return chromeStyleSheet(chromePaletteForTheme(themeName));

@@ -7,7 +7,10 @@
 #include <QWidget>
 #include <functional>
 
+class QCheckBox;
+class QComboBox;
 class QLabel;
+class QLineEdit;
 class QPlainTextEdit;
 class QPushButton;
 class QShowEvent;
@@ -30,13 +33,12 @@ class ChangesToolbar;
 // from `changedFiles()`/`branchStatus()` and turns a checkbox toggle or a
 // context-menu entry into the matching `VcsService` call.
 //
-// Deliberately per-file only, not per-hunk: `VcsService::stageHunk`/
-// `unstageHunk`'s own doc comment already flags that they diff against
-// `HEAD`, not the index, and are "increasingly wrong the more of the file is
-// already staged" — correct per-hunk staging needs an index-blob read this
-// dock does not have. The gutter's hunk popup (F3-16) already covers the
-// per-hunk case for an open file; this dock covers the whole-file case for
-// every changed file, open or not.
+// Deliberately per-file only, not per-hunk, here: the gutter's hunk popup
+// (F3-16/R6, now correctly staging/unstaging against the index — see
+// `vcs_core::Repository::stage_hunk_matching`) already covers the per-hunk
+// case for an open file; this dock covers the whole-file case for every
+// changed file, open or not, which is the more common Changes-dock action
+// and does not need a live buffer the way a hunk diff does.
 class ChangesPanel : public QWidget
 {
 public:
@@ -63,7 +65,20 @@ protected:
 
 private:
     void refresh();
+    // Publishes `changes_panel_shown` with the message box's and Commit
+    // button's current on-screen rects — called from `showEvent` and again
+    // at the end of every `refresh()`, since only the latter is guaranteed
+    // to run after this panel's containing window has settled its layout.
+    // See the .cpp definition for why a single showEvent-only marker used
+    // to make an E2E flow flaky.
+    void markShown();
     void onItemChanged(QTreeWidgetItem *item, int column);
+    // R6: `fileHunksReady(absolutePath)` — add one checkable child row per
+    // hunk under that file's row (the unstaged group's row when the file is
+    // in both), collapsed, checked per `fileHunkStates`: checked = in the
+    // index, partially = partly, unchecked = not yet. Checking stages that
+    // hunk alone; unchecking unstages it.
+    void addHunkRows(const QString &absolutePath);
     void doCommit(bool amend, bool push);
     void refreshEmptyState();
     void showContextMenu(const QPoint &pos);
@@ -73,7 +88,19 @@ private:
     std::function<void(const QString &)> showFileHistory_;
     ChangesToolbar *toolbar_ = nullptr;
     QTreeWidget *tree_ = nullptr;
+    // Commit-message history (R6): last 25 messages for this project,
+    // newest first, refreshed from `commitHistory()` every time the dock
+    // becomes visible. Picking a row fills `messageEdit_`; it never commits
+    // by itself.
+    QComboBox *messageHistory_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
+    // R6: the collapsible "Author / Sign-off" row under the message box.
+    // `authorEdit_` is the literal `Name <email>` `git --author` takes,
+    // empty for the configured identity; the view forwards it verbatim and
+    // lets `git` validate it — see `VcsService::commit`.
+    QWidget *commitOptions_ = nullptr;
+    QLineEdit *authorEdit_ = nullptr;
+    QCheckBox *signoffCheck_ = nullptr;
     QPushButton *commitButton_ = nullptr;
     QPushButton *commitAndPushButton_ = nullptr;
     QPushButton *amendButton_ = nullptr;

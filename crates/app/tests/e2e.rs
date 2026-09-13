@@ -112,21 +112,6 @@ fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
     )
 }
 
-/// A point on a `changes_row` marker's checkbox glyph — measured against a
-/// real screenshot under Xvfb (10px in from the row's own left edge, at its
-/// vertical centre), not the row's text label: `QAbstractItemView` toggles a
-/// checkable item's check state only on a genuine click on the indicator
-/// itself, no keyboard binding does it.
-fn checkbox_point(rect: &serde_json::Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (rect[0] as i32 + 10, (rect[1] + rect[3] / 2) as i32)
-}
-
 /// A fresh temp directory holding `files`, committed to a brand-new Git
 /// repository.
 ///
@@ -166,23 +151,6 @@ fn git_fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
     git(&["add", "."]);
     git(&["commit", "--quiet", "-m", "initial"]);
     dir
-}
-
-/// The subject of the repository's current `HEAD` commit, read with a plain
-/// `git` subprocess from the *test* — never through the app — so a pass
-/// proves the whole seam (Changes dock -> bridge -> `vcs-core` -> a real
-/// `git` process) actually produced a commit, not that each layer's own
-/// unit tests agree with each other.
-fn head_commit_subject(repo: &Path) -> String {
-    let output = std::process::Command::new("git")
-        .args(["log", "-1", "--format=%s"])
-        .current_dir(repo)
-        .output()
-        .expect("git log");
-    String::from_utf8(output.stdout)
-        .expect("git log output is UTF-8")
-        .trim()
-        .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -1000,115 +968,6 @@ fn e2e_hunk_revert_is_one_undo_never_touches_disk() {
         buffer(&mcp, tab_id),
         EDITED,
         "one Ctrl+Z did not undo the hunk revert"
-    );
-
-    assert_eq!(ide.quit(), 0);
-}
-
-/// F3-17: staging a file and committing through the Changes dock's own
-/// checkboxes and button produces a real commit — the one property no unit
-/// test can prove, since it is specifically about the dock's widgets driving
-/// the real seam (dock -> bridge -> `vcs-core` -> a `git` subprocess) rather
-/// than each layer agreeing with itself. Verified with a `git log`/`git show`
-/// run by the *test*, independent of anything the app itself would report.
-#[test]
-#[ignore = "E2E: needs an X server; run via `make e2e`"]
-fn e2e_stage_and_commit_through_the_changes_dock() {
-    const ORIGINAL: &str = "first draft\n";
-    const EDITED: &str = "first draft, revised\n";
-    // Lowercase, for the same reason `e2e_hunk_revert_is_one_undo_never_
-    // touches_disk`'s edit is: no Shift for `xdotool type` to combine with a
-    // modifier a preceding key chord left down.
-    const MESSAGE: &str = "revise the draft";
-    let name = "e2e_stage_and_commit_through_the_changes_dock";
-
-    let repo = git_fixture(&[("draft.txt", ORIGINAL)]);
-    let mut ide = Ide::launch(name, APP, repo.path());
-    drop(repo);
-
-    let mcp = ide.mcp();
-    ide.wait_for_ev(Mark::start(), "project_opened");
-    wait_for_index(&mcp);
-
-    let tab = open_file(&ide, "draft.txt");
-    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
-
-    // Show the Changes dock before editing, so the refresh a save triggers
-    // (`EditorTabs::saveTab`) runs while the panel is already visible and
-    // its rows lay out to real, clickable geometry. `vcs_menu.cpp` also
-    // raises this dock on its own the moment the repository is discovered
-    // (before this line ever runs, since the fixture's `.git` is already on
-    // disk at launch) — so its geometry marker is read from the start of
-    // the stream, not from a mark taken here, in case Alt+9 finds it
-    // already the visible tab and toggles nothing.
-    let mark = ide.mark();
-    ide.key("alt+9"); // vcs.view.changes' default shortcut (keymap.rs).
-    let shown = ide.wait_for_event(
-        Mark::start(),
-        "the Changes dock to report its geometry",
-        |e| e["ev"] == "changes_panel_shown",
-    );
-
-    ide.key("ctrl+Home");
-    ide.key("End");
-    ide.type_text(", revised");
-    ide.key("ctrl+s");
-    ide.wait_for_event(mark, "the tab to go clean after saving", |e| {
-        e["ev"] == "tab_dirty" && e["tab_id"].as_u64() == Some(tab_id) && e["dirty"] == false
-    });
-    ide.sync(&mcp);
-    assert_eq!(
-        ide.read_project_file("draft.txt"),
-        EDITED,
-        "the fixture's shape changed"
-    );
-
-    // The save above just made `EditorTabs::saveTab` ask `VcsService` to
-    // look again — this is the row that answer produced.
-    let row = ide.wait_for_event(mark, "the file to show up as an unstaged change", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "unstaged"
-    });
-
-    // Stage it: a real click on the checkbox glyph itself — `Space` on the
-    // row once merely current turned out not to toggle it (no default
-    // `QAbstractItemView` keyboard binding does that; only clicking the
-    // indicator does), confirmed against a real run under Xvfb rather than
-    // assumed. The glyph sits a fixed, style-drawn offset in from the row's
-    // own left edge, which the row's marked rect gives without this flow
-    // computing it from indentation or icon metrics.
-    let (checkbox_x, checkbox_y) = checkbox_point(&row["rect"]);
-    ide.click_at(checkbox_x, checkbox_y, 1);
-    ide.wait_for_event(mark, "the file to move to Staged Changes", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "staged"
-    });
-
-    // Type the commit message and click Commit — both rects came from the
-    // same `changes_panel_shown` marker taken when the dock was first shown.
-    let (message_x, message_y) = rect_centre(&shown["message_rect"]);
-    ide.click_at(message_x, message_y, 1);
-    ide.type_text(MESSAGE);
-    let (commit_x, commit_y) = rect_centre(&shown["commit_rect"]);
-    ide.click_at(commit_x, commit_y, 1);
-
-    // The dock's own click is fire-and-forget (`ChangesPanel::doCommit`
-    // queues the commit on `VcsService`'s worker thread and returns), so
-    // this polls the filesystem — the one channel this harness trusts as
-    // much as the marker stream (`crates/e2e/src/lib.rs`) — rather than
-    // inventing a fixed delay.
-    let repo_root = ide.project_root().to_path_buf();
-    e2e::wait_for("the commit to land", || {
-        (head_commit_subject(&repo_root) == MESSAGE).then_some(())
-    });
-
-    let output = std::process::Command::new("git")
-        .args(["show", "HEAD:draft.txt"])
-        .current_dir(&repo_root)
-        .output()
-        .expect("git show");
-    assert_eq!(
-        String::from_utf8(output.stdout).expect("git show output is UTF-8"),
-        EDITED,
-        "the commit did not carry the edited content"
     );
 
     assert_eq!(ide.quit(), 0);

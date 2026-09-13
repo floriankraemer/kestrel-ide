@@ -261,7 +261,8 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
             ChangeMarker marker;
             if (changeMarkerAt(blockNumber, &marker)) {
                 painter.fillRect(runMarkerWidth() + kBreakpointWidth, top, kChangeMarkerWidth,
-                                  fontMetrics().height(), changeMarkerColor(marker.kind));
+                                  fontMetrics().height(),
+                                  changeMarkerColor(marker.kind, marker.state));
             }
 
             const auto diagnosticIt = diagnosticMarks_.constFind(blockNumber);

@@ -406,6 +406,62 @@ fn checkbox_point(rect: &serde_json::Value) -> (i32, i32) {
     (rect[0] as i32 + 10, (rect[1] + rect[3] / 2) as i32)
 }
 
+/// Click a Changes-dock row's checkbox to stage it, retrying against a
+/// freshly re-read row if the click does not land.
+///
+/// Root cause of `e2e_stage_and_commit_through_the_changes_dock`'s ~1-in-6
+/// flakiness (alongside the stale-geometry issue `ChangesPanel::markShown`
+/// fixes): `refreshStatus` — and with it, `ChangesPanel::refresh`'s full
+/// tree rebuild — is watcher-driven, so something with nothing to do with
+/// this click (the search index writing another segment file into
+/// `.ide-index/`, still settling well after `wait_for_index` first reports
+/// ready) can rebuild the row this is about to click into a brand-new
+/// `QTreeWidgetItem` at any moment. An `xdotool`-level click's delivery
+/// through the X server has no ordering guarantee against that rebuild the
+/// way a click through Qt's own test framework would, so occasionally one
+/// lands in the gap and never reaches a live item — confirmed by an actual
+/// repro: `changes_row` kept reporting the same unstaged row, unchanged,
+/// for the full 60s timeout with no `changes_row` "staged" and no
+/// `vcs_failed` in between, meaning the click itself never registered.
+///
+/// Bounded and event-driven, not a blind sleep: a retry only happens if a
+/// short settle window after a click sees no "staged" row, and the whole
+/// loop still has a hard ceiling.
+///
+/// Returns the mark taken right before the click that worked, so a caller
+/// can `wait_for_event` a marker (`changes_panel_shown`, say) published by
+/// the same `refresh()` that produced the "staged" row.
+fn stage_via_checkbox(ide: &Ide, mark: Mark, path: &str) -> Mark {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let row = ide.wait_for_event(mark, "the row to stage", |e| {
+            e["ev"] == "changes_row" && e["path"] == path && e["group"] == "unstaged"
+        });
+        let (x, y) = checkbox_point(&row["rect"]);
+        let click_mark = ide.mark();
+        ide.click_at(x, y, 1);
+
+        let settle = std::time::Instant::now() + std::time::Duration::from_millis(1500);
+        loop {
+            let staged = ide
+                .events_since_of(click_mark, "changes_row")
+                .into_iter()
+                .any(|e| e["path"] == path && e["group"] == "staged");
+            if staged {
+                return click_mark;
+            }
+            if std::time::Instant::now() >= settle {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out staging {path} via its checkbox after retrying the click"
+        );
+    }
+}
+
 /// Run `git args` against `root`, panicking on a non-zero exit — the same
 /// shape `git_fixture`'s own closure uses, pulled out here because G9's
 /// three tests below all set up history beyond what `git_fixture` builds.
@@ -616,12 +672,6 @@ fn e2e_push_carries_the_ahead_count_after_a_local_commit() {
         Some(0),
         "a branch just pushed should not already show ahead"
     );
-    let shown = ide.wait_for_event(
-        Mark::start(),
-        "the Changes dock to report its geometry",
-        |e| e["ev"] == "changes_panel_shown",
-    );
-
     // Edit, stage, commit — written straight to disk, the same reach
     // `e2e_the_project_trees_git_submenu_stages_a_file` uses, since the
     // flow under test is the toolbar's ahead count, not the editor.
@@ -630,14 +680,19 @@ fn e2e_push_carries_the_ahead_count_after_a_local_commit() {
         "first draft, revised\n",
     )
     .expect("editing draft.txt");
-    let row = ide.wait_for_event(mark, "the edit to reach the dock", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "unstaged"
-    });
-    let (checkbox_x, checkbox_y) = checkbox_point(&row["rect"]);
-    ide.click_at(checkbox_x, checkbox_y, 1);
-    ide.wait_for_event(mark, "the file to move to Staged Changes", |e| {
-        e["ev"] == "changes_row" && e["path"] == "draft.txt" && e["group"] == "staged"
-    });
+    let staged_mark = stage_via_checkbox(&ide, mark, "draft.txt");
+
+    // Read fresh from after staging, not from `Mark::start()`: the very
+    // first `changes_panel_shown` in the stream can predate the window's
+    // own initial layout settling (`ChangesPanel::markShown`'s doc comment
+    // has the full reasoning — this was the root cause of
+    // `e2e_stage_and_commit_through_the_changes_dock`'s flakiness, and the
+    // same stale-rect risk applied here).
+    let shown = ide.wait_for_event(
+        staged_mark,
+        "the Changes dock to report its geometry",
+        |e| e["ev"] == "changes_panel_shown",
+    );
 
     let (message_x, message_y) = rect_centre(&shown["message_rect"]);
     ide.click_at(message_x, message_y, 1);
@@ -648,6 +703,293 @@ fn e2e_push_carries_the_ahead_count_after_a_local_commit() {
     ide.wait_for_event(mark, "the ahead count to move after the commit", |e| {
         e["ev"] == "changes_toolbar_shown" && e["ahead"].as_i64() == Some(1)
     });
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// The subject of the repository's current `HEAD` commit, read with a plain
+/// `git` subprocess from the *test* — never through the app — so a pass
+/// proves the whole seam (Changes dock -> bridge -> `vcs-core` -> a real
+/// `git` process) actually produced a commit, not that each layer's own
+/// unit tests agree with each other. Duplicated from `e2e.rs`, moved here
+/// with the test that uses it (R6: this file grew past its ceiling with the
+/// three-hunk staging flow, and `e2e.rs` was already at its own
+/// grandfathered baseline).
+fn head_commit_subject(repo: &std::path::Path) -> String {
+    let output = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%s"])
+        .current_dir(repo)
+        .output()
+        .expect("git log");
+    String::from_utf8(output.stdout)
+        .expect("git log output is UTF-8")
+        .trim()
+        .to_string()
+}
+
+/// F3-17: staging a file and committing through the Changes dock's own
+/// checkboxes and button produces a real commit — the one property no unit
+/// test can prove, since it is specifically about the dock's widgets driving
+/// the real seam (dock -> bridge -> `vcs-core` -> a `git` subprocess) rather
+/// than each layer agreeing with itself. Verified with a `git log`/`git show`
+/// run by the *test*, independent of anything the app itself would report.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_stage_and_commit_through_the_changes_dock() {
+    const ORIGINAL: &str = "first draft\n";
+    const EDITED: &str = "first draft, revised\n";
+    // Lowercase, for the same reason `e2e_hunk_revert_is_one_undo_never_
+    // touches_disk`'s edit is: no Shift for `xdotool type` to combine with a
+    // modifier a preceding key chord left down.
+    const MESSAGE: &str = "revise the draft";
+    let name = "e2e_stage_and_commit_through_the_changes_dock";
+
+    let repo = git_fixture(&[("draft.txt", ORIGINAL)]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    let tab = open_file(&ide, "draft.txt");
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+
+    // Show the Changes dock before editing, so the refresh a save triggers
+    // (`EditorTabs::saveTab`) runs while the panel is already visible and
+    // its rows lay out to real, clickable geometry. `vcs_menu.cpp` also
+    // raises this dock on its own the moment the repository is discovered
+    // (before this line ever runs, since the fixture's `.git` is already on
+    // disk at launch), so Alt+9 below may find it already the visible tab
+    // and toggle nothing — this flow never depends on that keystroke having
+    // produced a marker of its own.
+    let mark = ide.mark();
+    ide.key("alt+9"); // vcs.view.changes' default shortcut (keymap.rs).
+
+    ide.key("ctrl+Home");
+    ide.key("End");
+    ide.type_text(", revised");
+    ide.key("ctrl+s");
+    ide.wait_for_event(mark, "the tab to go clean after saving", |e| {
+        e["ev"] == "tab_dirty" && e["tab_id"].as_u64() == Some(tab_id) && e["dirty"] == false
+    });
+    ide.sync(&mcp);
+    assert_eq!(
+        ide.read_project_file("draft.txt"),
+        EDITED,
+        "the fixture's shape changed"
+    );
+
+    // The save above just made `EditorTabs::saveTab` ask `VcsService` to
+    // look again — `stage_via_checkbox` waits for the row that answer
+    // produced, then clicks its checkbox glyph itself (`Space` on the row
+    // once merely current turned out not to toggle it — no default
+    // `QAbstractItemView` keyboard binding does that; only clicking the
+    // indicator does, confirmed against a real run under Xvfb).
+    let staged_mark = stage_via_checkbox(&ide, mark, "draft.txt");
+
+    // `ChangesPanel::refresh` (which just produced the "staged" row above)
+    // re-publishes `changes_panel_shown` right after its row markers, so
+    // this is read fresh from after `staged_mark` rather than from
+    // whichever `changes_panel_shown` happened to be first in the whole
+    // stream — the earliest one can predate the window's own initial
+    // layout settling (the dock auto-raises on repository discovery, which
+    // can run before the main window has finished laying itself out), and
+    // a rect read from it is not reliably where the widgets ended up. See
+    // `ChangesPanel::markShown`'s doc comment for the full reasoning; this
+    // was the root cause of this flow's flakiness.
+    let shown = ide.wait_for_event(
+        staged_mark,
+        "the Changes dock to report its geometry",
+        |e| e["ev"] == "changes_panel_shown",
+    );
+
+    // Type the commit message and click Commit.
+    let (message_x, message_y) = rect_centre(&shown["message_rect"]);
+    ide.click_at(message_x, message_y, 1);
+    ide.type_text(MESSAGE);
+    let (commit_x, commit_y) = rect_centre(&shown["commit_rect"]);
+    ide.click_at(commit_x, commit_y, 1);
+
+    // The dock's own click is fire-and-forget (`ChangesPanel::doCommit`
+    // queues the commit on `VcsService`'s worker thread and returns), so
+    // this polls the filesystem — the one channel this harness trusts as
+    // much as the marker stream (`crates/e2e/src/lib.rs`) — rather than
+    // inventing a fixed delay.
+    let repo_root = ide.project_root().to_path_buf();
+    e2e::wait_for("the commit to land", || {
+        (head_commit_subject(&repo_root) == MESSAGE).then_some(())
+    });
+
+    let output = std::process::Command::new("git")
+        .args(["show", "HEAD:draft.txt"])
+        .current_dir(&repo_root)
+        .output()
+        .expect("git show");
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("git show output is UTF-8"),
+        EDITED,
+        "the commit did not carry the edited content"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// The step a naive harness would spell `sleep`. Duplicated from `e2e.rs`
+/// for the same reason `git_fixture` above is: a twenty-line helper is not
+/// worth a third crate between the two test binaries.
+fn wait_for_index(mcp: &e2e::mcp::Mcp) {
+    e2e::wait_for("the project index to finish building", || {
+        (mcp.call("index_status", serde_json::json!({}))["ready"] == true).then_some(())
+    });
+}
+
+/// Open one file through Go to File — `open_search_popup`/`accept_top_hit`
+/// above already exist in this file for
+/// `e2e_commit_log_expand_and_open_commit_detail`'s own Find Action reach;
+/// this is the same two calls `e2e.rs`'s own `open_file` makes.
+fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
+    let mark = open_search_popup(ide, "ctrl+shift+n");
+    accept_top_hit(ide, mark, name);
+    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
+        e["ev"] == "tab_added" && e["title"] == name
+    })
+}
+
+/// R6: staging one hunk through `vcs.stageHunk` (the gutter popup's
+/// keyboard equivalent, `vcs_menu.cpp`) must touch the index for that hunk
+/// alone — the regression `stage_hunk_matching` (`vcs-core`) exists to fix.
+/// Two edits far enough apart to diff as two separate hunks, caret parked
+/// in the first one, staged, then `git diff --cached` on the *test's* own
+/// `git` (never the app's own reporting) is asserted to carry only that
+/// hunk's line, with the second edit's line still only in the unstaged
+/// diff.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_stage_hunk_touches_only_that_hunks_index_entry() {
+    const ORIGINAL: &str = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
+    let name = "e2e_stage_hunk_touches_only_that_hunks_index_entry";
+
+    let repo = git_fixture(&[("draft.txt", ORIGINAL)]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    let tab = open_file(&ide, "draft.txt");
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+
+    // First hunk: replace "one" on line 1. Lowercase throughout this flow,
+    // for the same reason `e2e_hunk_revert_is_one_undo_never_touches_disk`'s
+    // edit is: `xdotool type`'s Shift for a capital letter can combine with
+    // a modifier a preceding `xdotool key` chord has not yet released.
+    ide.key("ctrl+Home");
+    ide.key("End");
+    let mark = ide.mark();
+    ide.key("shift+Home");
+    ide.type_text("uno");
+    ide.wait_for_event(mark, "the tab to go dirty", |e| {
+        e["ev"] == "tab_dirty" && e["tab_id"].as_u64() == Some(tab_id) && e["dirty"] == true
+    });
+
+    // Second hunk: replace "ten" on the last content line — far enough from
+    // the first that `diff_lines` reports two hunks, not one spanning both
+    // (`CONTEXT_LINES` is 3 on each side; eight unchanged lines separate
+    // them). Nine `Down`s from line 1 rather than `Ctrl+End`/`Up`: `ORIGINAL`
+    // has exactly ten lines, and `Down`/`End`/`Home` are the same primitives
+    // the first hunk's edit already used successfully, rather than a second
+    // navigation idiom this suite has not exercised elsewhere.
+    for _ in 0..9 {
+        ide.key("Down");
+    }
+    ide.key("End");
+    ide.key("shift+Home");
+    ide.type_text("diez");
+    ide.wait_for_event(mark, "the gutter to see both edits as two hunks", |e| {
+        e["ev"] == "vcs_hunks_applied" && e["count"].as_u64() == Some(2)
+    });
+
+    // Caret back on the first hunk's line before staging — `stageHunkAtCaret`
+    // (like `rollbackHunkAtCaret`) finds whichever cached hunk contains it.
+    ide.key("ctrl+Home");
+
+    // Drive `vcs.stageHunk` through the VCS menu, the same keyboard-only
+    // reach `e2e_hunk_revert_is_one_undo_never_touches_disk` uses for
+    // `vcs.rollbackHunk` — no coordinate computed for a 1px gutter marker.
+    // Commit, Push, Pull, Fetch, Branches, (separator), Show Diff, Rollback
+    // Hunk, Stage Hunk: one more Down than that test's 6, since Stage Hunk
+    // sits right after Rollback Hunk (`vcs_menu.cpp`).
+    ide.key("alt+c");
+    ide.wait_for_event(mark, "the VCS menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "vcs_menu"
+    });
+    for _ in 0..7 {
+        ide.key("Down");
+    }
+    ide.key("Return");
+    ide.wait_for_event(mark, "the VCS menu to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "vcs_menu"
+    });
+    let staged = ide.wait_for_event(mark, "vcs_hunk_staged", |e| e["ev"] == "vcs_hunk_staged");
+    assert_eq!(
+        staged["hunk_index"].as_u64(),
+        Some(0),
+        "the caret's own hunk (the first) should have been the one staged"
+    );
+
+    // Staging writes straight into the index from the patch built out of the
+    // buffer (never the file on disk, which is still `ORIGINAL` at this
+    // point) — save now so the "still unstaged" assertion below compares
+    // the index against a working tree that actually carries both edits,
+    // the same shape a user would leave the file in.
+    ide.key("ctrl+s");
+    ide.wait_for_event(mark, "the tab to go clean after saving", |e| {
+        e["ev"] == "tab_dirty" && e["tab_id"].as_u64() == Some(tab_id) && e["dirty"] == false
+    });
+
+    let root = ide.project_root().to_path_buf();
+    e2e::wait_for("the first hunk to reach the index", || {
+        let staged_diff = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["diff", "--cached"])
+                .current_dir(&root)
+                .output()
+                .expect("git diff --cached")
+                .stdout,
+        )
+        .expect("git diff --cached output is UTF-8");
+        (staged_diff.contains("+uno") && !staged_diff.contains("+diez")).then_some(())
+    });
+
+    // The second hunk must still be unstaged, nowhere near the index.
+    let staged_diff = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["diff", "--cached"])
+            .current_dir(&root)
+            .output()
+            .expect("git diff --cached")
+            .stdout,
+    )
+    .expect("git diff --cached output is UTF-8");
+    assert!(
+        staged_diff.contains("+uno") && !staged_diff.contains("+diez"),
+        "git diff --cached should carry only the staged hunk:\n{staged_diff}"
+    );
+    let unstaged_diff = String::from_utf8(
+        std::process::Command::new("git")
+            .args(["diff"])
+            .current_dir(&root)
+            .output()
+            .expect("git diff")
+            .stdout,
+    )
+    .expect("git diff output is UTF-8");
+    assert!(
+        unstaged_diff.contains("+diez") && !unstaged_diff.contains("+uno"),
+        "the still-unstaged hunk should remain in the working tree, not the index:\n{unstaged_diff}"
+    );
 
     assert_eq!(ide.quit(), 0);
 }

@@ -20,4 +20,11 @@ struct ProjectTreeActions;
 void appendGitSubmenu(QMenu &menu, const QString &absolutePath,
                        const ProjectTreeActions &actions);
 
+// The project root's own "Git" submenu (R6): "Compare Project with Branch,
+// Tag or Revision…", which lists the files `git diff --name-only
+// <revision>` reports and opens the picked one in the diff tab. Appended
+// when the context menu is opened on the tree's empty area, i.e. the
+// project itself. Same no-op-outside-a-repository rule as above.
+void appendProjectGitSubmenu(QMenu &menu, const ProjectTreeActions &actions);
+
 } // namespace ui_shell

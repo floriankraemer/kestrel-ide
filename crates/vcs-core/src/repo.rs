@@ -127,6 +127,32 @@ impl Repository {
         let output = crate::cli::run(&work_dir, &crate::cli::argv::status())?;
         Ok(crate::status::parse_porcelain_v2(&output))
     }
+
+    /// The repository-relative paths that differ between `revision`'s tree
+    /// and the working tree — `git diff --name-only <revision>`, the
+    /// file list "Compare Project with Branch, Tag or Revision…" (R6)
+    /// offers. Shells out for the reason [`Self::status`] does: a
+    /// worktree comparison honours the same `.gitattributes`/`autocrlf`
+    /// configuration `status` does (ADR-0053), and the revision is
+    /// whatever the user typed, which `git` resolves itself.
+    pub fn changed_paths_against(&self, revision: &str) -> Result<Vec<PathBuf>, VcsError> {
+        let work_dir = self.work_dir_or_err()?;
+        let output = crate::cli::run(&work_dir, &["diff", "--name-only", "-z", revision, "--"])?;
+        Ok(output
+            .split('\0')
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from)
+            .collect())
+    }
+
+    /// Every path `git` currently ignores, repository-relative — behind
+    /// "Add to .gitignore" (which needs to know whether a path is already
+    /// covered) and the project tree's dimmed "ignored" colouring.
+    pub fn ignored_paths(&self) -> Result<Vec<PathBuf>, VcsError> {
+        let work_dir = self.work_dir_or_err()?;
+        let output = crate::cli::run(&work_dir, &crate::cli::argv::status_ignored())?;
+        Ok(crate::status::parse_ignored_paths(&output))
+    }
 }
 
 /// What `HEAD` points at.
@@ -326,6 +352,47 @@ mod tests {
         let repo = open(dir.path());
         let status = repo.status().unwrap();
         assert!(status.files.is_empty());
+    }
+
+    #[test]
+    fn changed_paths_against_a_revision_lists_worktree_differences() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "two\n").unwrap();
+        git(dir.path(), &["add", "."]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        git(dir.path(), &["tag", "v1"]);
+        std::fs::write(dir.path().join("b.txt"), "TWO\n").unwrap();
+        git(dir.path(), &["commit", "-am", "second"]);
+        std::fs::write(dir.path().join("a.txt"), "ONE\n").unwrap();
+
+        let repo = open(dir.path());
+        let mut paths = repo.changed_paths_against("v1").unwrap();
+        paths.sort();
+        assert_eq!(
+            paths,
+            vec![
+                std::path::PathBuf::from("a.txt"),
+                std::path::PathBuf::from("b.txt")
+            ]
+        );
+        assert_eq!(
+            repo.changed_paths_against("HEAD").unwrap(),
+            vec![std::path::PathBuf::from("a.txt")]
+        );
+    }
+
+    #[test]
+    fn ignored_paths_reports_a_gitignored_file() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join(".gitignore"), "ignored.log\n").unwrap();
+        std::fs::write(dir.path().join("ignored.log"), "noise\n").unwrap();
+        std::fs::write(dir.path().join("tracked.txt"), "one\n").unwrap();
+        let repo = open(dir.path());
+        let ignored = repo.ignored_paths().unwrap();
+        assert_eq!(ignored, vec![std::path::PathBuf::from("ignored.log")]);
     }
 
     #[test]

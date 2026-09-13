@@ -4,6 +4,7 @@
 
 Accepted.
 Amended by [§7, what measurement changed](#7-what-measurement-changed-amendment), added after the first time anyone timed this crate rather than reasoning about it.
+Amended by [§8, index reads join §1](#8-index-reads-join-1-amendment), added when R6 needed the git index's own blob content, not just `HEAD`'s.
 §1's status read is superseded by [ADR-0053](0053-git-status-via-porcelain-v2.md): `Repository::status` now shells out to `git status --porcelain=v2` rather than calling `gix::Repository::status(progress)`, to represent merge conflicts, renames and ahead/behind, and to close the WSL host asymmetry ADR-0052 left open for this one read.
 
 ## Context
@@ -133,6 +134,24 @@ Scoping the walk itself was measured and *not* done. `gix::status::Platform::int
 
 **Still open, deliberately.** `file_history` at 650 ms on a 50 000-commit repository is better but not fast, and `status` is still an unscoped walk — the two places left where this crate's cost is visible.
 
+### 8. Index reads join §1 (amendment)
+
+R6 (`docs/architecture/intellij-parity-refinement-plan.md`) needed to fix a real bug.
+Per-hunk staging diffed the working tree against `HEAD`, so `git apply --cached` re-staged everything between `HEAD` and the worktree once any part of a file was already staged — "Stage Hunk" effectively staged the whole file the moment a second hunk in it was touched.
+The fix needs the git **index's** own blob content for a path, not just `HEAD`'s — something this crate had never read before.
+
+`Repository::index_blob` reads it the same way `head_blob` reads a `HEAD` blob: `gix::Repository::index_or_empty()` for the index, `entry_by_path` for the one entry, `find_object` for its blob — all in-process, no subprocess.
+This is §1's own reasoning applied to one more object kind rather than a new decision.
+An index read is exactly as pure as a `HEAD` tree read: both are content-addressed object lookups against data `gix` already parses, the index file is only ever written by this crate's own `cli::run` calls (`add`, `reset`, `commit`, `apply --cached`) or the user's own `git`, and nothing about an index blob's *content* is config-dependent the way `status`'s classification of a path is (ADR-0053) — line-ending or filter config affects what gets *written* into the index, not what is already stored there, so there is no WSL-host-asymmetry argument for shelling out the way there was for `status`.
+
+`Repository::stage_hunk_matching`/`unstage_hunk_matching` (`staging.rs`) use this read to find which index-vs-worktree (respectively `HEAD`-vs-index) hunk actually corresponds to the `HEAD`-vs-worktree hunk the gutter shows, then hand it to the existing `stage_hunk`/`unstage_hunk`.
+§2's write path (`git apply --cached`) is unchanged; only what gets diffed to build the patch is now read from the right place.
+No new write operation was added by this work: the "index-blob hunk staging" the task that produced this amendment was framed around is a correction to an existing write's *input*, not a new subprocess call or a new write surface.
+
+`Repository::ignored_paths` (`status.rs`/`cli.rs`) is not part of this amendment: it reuses `status`'s own already-shelled-out path (`git status --porcelain=v2 --ignored=matching`) for the same reason §1's status note gives.
+Ignored-ness is exactly the kind of `.gitignore`/`core.excludesFile`/sparse-checkout-dependent classification ADR-0053 already established belongs to `git` itself, not a second in-process re-implementation of gitignore matching.
+`Repository::changed_paths_against` (`git diff --name-only <revision>`, behind "Compare Project with Branch, Tag or Revision…") shells out for the same reason: it is a worktree comparison, and the revision is whatever the user typed, which `git` resolves itself.
+`Repository::add_to_gitignore` writes the root `.gitignore` directly — a plain file append, not a `git` operation, so neither §1 nor §2 applies; `gitignore.rs` records why it does not reuse `app-config`'s sibling helper.
 
 ## Consequences
 

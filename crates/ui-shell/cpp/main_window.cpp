@@ -371,7 +371,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                         bottomArea);
     auto *runConsolePanel = buildRunConsoleDock(dockManager, docks, bottomArea, runToolbar, openAt);
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
-    auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService);
+    auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
 
     // Structure tracks whatever tab is current: refresh on open, on

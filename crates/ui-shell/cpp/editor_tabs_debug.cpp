@@ -10,9 +10,12 @@
 
 #include "editor_tabs.h"
 
+#include "breakpoint_dialog.h"
 #include "code_editor.h"
 #include "e2e_mark.h"
 
+#include <QAction>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QTextBlock>
 #include <QTextDocument>
@@ -110,6 +113,64 @@ void EditorTabs::toggleBreakpointAt(CodeEditor *editor, int blockNumber)
     // 1-based on the wire: `dap-core` counts lines the way DAP and the user
     // do, and the conversion belongs at this edge rather than in the store.
     debugService_->toggleBreakpoint(path, static_cast<quint32>(blockNumber + 1));
+}
+
+void EditorTabs::setTemporaryBreakpointAt(CodeEditor *editor, int blockNumber)
+{
+    if (!debugService_ || !editor) {
+        return;
+    }
+    const quint64 tabId = editor->property("tabId").toULongLong();
+    const QString path = docManager_->tabPath(tabId);
+    if (path.isEmpty()) {
+        return;
+    }
+    // A fresh, unconditional, enabled, temporary breakpoint — replacing
+    // whatever configuration was already on that line, which is what
+    // Alt+click means in IntelliJ too.
+    FfiBreakpoint breakpoint{};
+    breakpoint.path = path;
+    breakpoint.line = static_cast<quint32>(blockNumber + 1);
+    breakpoint.enabled = true;
+    breakpoint.temporary = true;
+    debugService_->configureBreakpoint(breakpoint);
+}
+
+void EditorTabs::showBreakpointContextMenu(CodeEditor *editor, int blockNumber,
+                                            const QPoint &globalPos)
+{
+    if (!debugService_ || !editor) {
+        return;
+    }
+    const quint64 tabId = editor->property("tabId").toULongLong();
+    const QString path = docManager_->tabPath(tabId);
+    if (path.isEmpty()) {
+        return;
+    }
+    const quint32 line = static_cast<quint32>(blockNumber + 1);
+    const bool hasBreakpoint =
+      blocksFromLines(debugService_->breakpointLines(path)).contains(blockNumber);
+
+    QMenu menu(editor);
+    QAction *edit = menu.addAction(hasBreakpoint ? tr("Edit Breakpoint...")
+                                                  : tr("Add Breakpoint"));
+    QAction *remove = hasBreakpoint ? menu.addAction(tr("Remove Breakpoint")) : nullptr;
+    menu.addSeparator();
+    const quint64 sessionId = debugService_->currentSessionId();
+    QAction *runToCursor = menu.addAction(tr("Run to Cursor"));
+    runToCursor->setEnabled(sessionId != 0);
+
+    QAction *chosen = menu.exec(globalPos);
+    if (chosen == edit) {
+        if (!hasBreakpoint) {
+            debugService_->toggleBreakpoint(path, line);
+        }
+        showBreakpointDialog(editor, debugService_, path, line);
+    } else if (chosen == remove) {
+        debugService_->toggleBreakpoint(path, line);
+    } else if (chosen == runToCursor && sessionId != 0) {
+        debugService_->runToCursor(sessionId, path, line);
+    }
 }
 
 void EditorTabs::watchLineCountFor(CodeEditor *editor)

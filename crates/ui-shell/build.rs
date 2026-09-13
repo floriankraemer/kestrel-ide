@@ -508,6 +508,8 @@ fn main() {
         .cpp_file("cpp/debug_panel.h")
         .cpp_file("cpp/debug_panel.cpp")
         .cpp_file("cpp/debug_menu.cpp")
+        .cpp_file("cpp/breakpoint_dialog.cpp")
+        .cpp_file("cpp/breakpoints_window.cpp")
         .cpp_file("cpp/build_panel.h")
         .cpp_file("cpp/build_panel.cpp")
         .cpp_file("cpp/build_menu.cpp")

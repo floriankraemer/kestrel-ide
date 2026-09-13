@@ -8,6 +8,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QLocale>
 #include <QMenu>
 #include <QPoint>
 #include <QTabBar>
@@ -142,11 +143,32 @@ ContainerDetailArea::ContainerDetailArea(ContainerService *containerService,
                 // nothing further to show, but stays subscribed so a
                 // future per-tab status line has somewhere to hook in.
             });
+
+    connect(containerService_, &ContainerService::layersReady, this,
+            [this](const QString &nodeId, const ::rust::Vec<FfiLayer> &layers) {
+                if (nodeId != nodeId_ || layersTable_ == nullptr) {
+                    return;
+                }
+                layersTable_->setRowCount(static_cast<int>(layers.size()));
+                int row = 0;
+                for (const FfiLayer &layer : layers) {
+                    layersTable_->setItem(row, 0, new QTableWidgetItem(QString(layer.id)));
+                    layersTable_->setItem(
+                      row, 1, new QTableWidgetItem(QLocale().formattedDataSize(layer.sizeBytes)));
+                    layersTable_->setItem(row, 2, new QTableWidgetItem(QString(layer.created)));
+                    auto *createdBy = new QTableWidgetItem(QString(layer.createdBy));
+                    createdBy->setToolTip(QString(layer.createdBy));
+                    layersTable_->setItem(row, 3, createdBy);
+                    ++row;
+                }
+                layersTable_->resizeColumnsToContents();
+            });
 }
 
 void ContainerDetailArea::onSelectionChanged(const QString &nodeId, const QString &kind)
 {
     nodeId_ = nodeId;
+    kind_ = kind;
     isContainer_ = kind == QStringLiteral("container");
     if (isContainer_) {
         openOrReplaceLogTab();
@@ -164,6 +186,18 @@ void ContainerDetailArea::onSelectionChanged(const QString &nodeId, const QStrin
         filesPage_->deleteLater();
         filesPage_ = nullptr;
         filesTree_ = nullptr;
+    }
+    if (layersPage_ != nullptr) {
+        tabs_->removeTab(tabs_->indexOf(layersPage_));
+        layersPage_->deleteLater();
+        layersPage_ = nullptr;
+        layersTable_ = nullptr;
+    }
+    if (labelsPage_ != nullptr) {
+        tabs_->removeTab(tabs_->indexOf(labelsPage_));
+        labelsPage_->deleteLater();
+        labelsPage_ = nullptr;
+        labelsTable_ = nullptr;
     }
 }
 
@@ -391,6 +425,90 @@ void ContainerDetailArea::downloadPrompt(const QString &path, QWidget *dialogPar
         return;
     }
     containerService_->downloadFile(nodeId_, path, hostDest);
+}
+
+void ContainerDetailArea::showLayers()
+{
+    if (nodeId_.isEmpty() || kind_ != QStringLiteral("image")) {
+        return;
+    }
+    if (layersPage_ == nullptr) {
+        layersPage_ = new QWidget(tabs_);
+        auto *layout = new QVBoxLayout(layersPage_);
+        layout->setContentsMargins(0, 0, 0, 0);
+        layersTable_ = new QTableWidget(layersPage_);
+        layersTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        layersTable_->verticalHeader()->setVisible(false);
+        layersTable_->setColumnCount(4);
+        layersTable_->setHorizontalHeaderLabels(
+          {tr("Layer ID"), tr("Size"), tr("Created"), tr("Created By")});
+        layout->addWidget(layersTable_);
+        const int layersIndex = tabs_->addTab(layersPage_, tr("Layers"));
+        tabs_->tabBar()->setTabButton(layersIndex, QTabBar::RightSide, nullptr);
+    }
+    tabs_->setCurrentWidget(layersPage_);
+    containerService_->imageLayers(nodeId_);
+}
+
+void ContainerDetailArea::showLabels()
+{
+    if (nodeId_.isEmpty()) {
+        return;
+    }
+    if (labelsPage_ == nullptr) {
+        labelsPage_ = new QWidget(tabs_);
+        auto *layout = new QVBoxLayout(labelsPage_);
+        layout->setContentsMargins(0, 0, 0, 0);
+        labelsTable_ = new QTableWidget(labelsPage_);
+        labelsTable_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        labelsTable_->verticalHeader()->setVisible(false);
+        labelsTable_->setColumnCount(2);
+        labelsTable_->setHorizontalHeaderLabels({tr("Key"), tr("Value")});
+        layout->addWidget(labelsTable_);
+        const int labelsIndex = tabs_->addTab(labelsPage_, tr("Labels"));
+        tabs_->tabBar()->setTabButton(labelsIndex, QTabBar::RightSide, nullptr);
+    }
+    tabs_->setCurrentWidget(labelsPage_);
+
+    ::rust::Vec<FfiKeyValue> labels;
+    if (kind_ == QStringLiteral("image")) {
+        labels = containerService_->imageLabels(nodeId_);
+    } else if (kind_ == QStringLiteral("network")) {
+        const FfiNetworkDashboard dashboard = containerService_->networkDashboard(nodeId_);
+        for (const QString &line :
+             QString(dashboard.labels).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+            const int at = line.indexOf(QLatin1Char('='));
+            if (at >= 0) {
+                labels.push_back(FfiKeyValue{QString(line.left(at)), QString(line.mid(at + 1))});
+            }
+        }
+    } else if (kind_ == QStringLiteral("volume")) {
+        const FfiVolumeDashboard dashboard = containerService_->volumeDashboard(nodeId_);
+        for (const QString &line :
+             QString(dashboard.labels).split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+            const int at = line.indexOf(QLatin1Char('='));
+            if (at >= 0) {
+                labels.push_back(FfiKeyValue{QString(line.left(at)), QString(line.mid(at + 1))});
+            }
+        }
+    }
+    labelsTable_->setRowCount(static_cast<int>(labels.size()));
+    int row = 0;
+    for (const FfiKeyValue &entry : labels) {
+        labelsTable_->setItem(row, 0, new QTableWidgetItem(QString(entry.key)));
+        labelsTable_->setItem(row, 1, new QTableWidgetItem(QString(entry.value)));
+        ++row;
+    }
+    labelsTable_->resizeColumnsToContents();
+}
+
+void ContainerDetailArea::openPullTab(const QString &connectionId, const QString &reference)
+{
+    const FfiCommand command = containerService_->pullSessionCommand(connectionId, reference);
+    if (QString(command.program).isEmpty()) {
+        return;
+    }
+    addTerminalTab(command, tr("Pull: %1").arg(reference));
 }
 
 } // namespace ui_shell

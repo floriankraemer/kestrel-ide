@@ -568,6 +568,10 @@ fn main() {
         // containers_panel.cpp under the file-size ratchet — same
         // Q_OBJECT-free shape as the panel itself.
         .cpp_file("cpp/containers_actions.cpp")
+        // C4: image/network/volume context menus, dialogs, and the Pull
+        // Image toolbar action — split out under the same file-size
+        // ratchet reasoning as containers_actions.cpp above.
+        .cpp_file("cpp/containers_resources.cpp")
         // C3: the per-container detail tab area (Log/Terminal/Exec/Attach/
         // Processes/Files). Declares Q_OBJECT (it connects to
         // `ContainerService`'s signals), so its header runs through moc too.

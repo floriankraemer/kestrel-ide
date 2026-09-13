@@ -54,6 +54,16 @@ public:
     void showProcesses();
     void showFiles();
 
+    // C4: an image's Layers (`history`) and any image/network/volume's
+    // Labels — opened on request, same lazy-tab shape as Processes/Files.
+    void showLayers();
+    void showLabels();
+
+    // C4: the Images console's Pull button and the Pull toolbar action —
+    // a closable "Pull: <reference>" `TerminalWidget` tab, not tied to
+    // whatever node happens to be selected.
+    void openPullTab(const QString &connectionId, const QString &reference);
+
 private:
     void openOrReplaceLogTab();
     void closeLogTab();
@@ -73,6 +83,7 @@ private:
     QTabWidget *tabs_;
 
     QString nodeId_;
+    QString kind_;
     bool isContainer_ = false;
 
     QWidget *logPage_ = nullptr;
@@ -83,6 +94,12 @@ private:
 
     QWidget *filesPage_ = nullptr;
     QTreeWidget *filesTree_ = nullptr;
+
+    QWidget *layersPage_ = nullptr;
+    QTableWidget *layersTable_ = nullptr;
+
+    QWidget *labelsPage_ = nullptr;
+    QTableWidget *labelsTable_ = nullptr;
 };
 
 } // namespace ui_shell

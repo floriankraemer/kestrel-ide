@@ -12,6 +12,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
+#include <QCompleter>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -19,8 +20,11 @@
 #include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPoint>
+#include <QPushButton>
 #include <QSplitter>
+#include <QStringListModel>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -245,14 +249,47 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
         }
     });
 
-    // Placeholders until C4 (Pull Image) and C3/C4 (Clean Up) give them
-    // behaviour; disabled so the toolbar already has its final shape.
     pullButton_ = iconButton(":/ui/icons/containers/registry.a8", tr("Pull Image..."), this);
-    pullButton_->setEnabled(false);
-    // C3: prunes stopped containers on the selected connection. Images/
-    // networks/volumes/build-cache pruning is C4's.
+    connect(pullButton_, &QToolButton::clicked, this, &ContainersPanel::triggerPullImage);
+
+    // C4: every "Clean Up" kind on the selected connection, gated per
+    // engine by `nodeActions`'s answer for whichever group is selected —
+    // unavailable kinds (build cache on Podman) just aren't offered.
     cleanUpButton_ = iconButton(":/ui/icons/containers/cleanup.a8", tr("Clean Up..."), this);
-    connect(cleanUpButton_, &QToolButton::clicked, this, &ContainersPanel::triggerCleanUp);
+    cleanUpButton_->setPopupMode(QToolButton::InstantPopup);
+    auto *cleanUpMenu = new QMenu(cleanUpButton_);
+    const auto cleanUp = [this](const QString &kind, const QString &confirmText) {
+        const QString connectionId = selectedConnectionId();
+        if (connectionId.isEmpty()) {
+            return;
+        }
+        if (QMessageBox::question(this, tr("Clean Up"), confirmText, QMessageBox::Yes | QMessageBox::Cancel,
+                                  QMessageBox::Cancel)
+            != QMessageBox::Yes) {
+            return;
+        }
+        report(containerService_->cleanUp(connectionId, kind));
+    };
+    connect(cleanUpMenu->addAction(tr("All (stopped containers, unused networks/volumes, dangling images)")),
+            &QAction::triggered, this,
+            [cleanUp]() { cleanUp(QStringLiteral("all"), tr("Clean up everything unused on this connection?")); });
+    connect(cleanUpMenu->addAction(tr("Stopped Containers")), &QAction::triggered, this,
+            [cleanUp]() {
+                cleanUp(QStringLiteral("stopped-containers"), tr("Remove every stopped container?"));
+            });
+    connect(cleanUpMenu->addAction(tr("Unused Networks")), &QAction::triggered, this, [cleanUp]() {
+        cleanUp(QStringLiteral("unused-networks"), tr("Remove every unused network?"));
+    });
+    connect(cleanUpMenu->addAction(tr("Unused Volumes")), &QAction::triggered, this, [cleanUp]() {
+        cleanUp(QStringLiteral("unused-volumes"), tr("Remove every unused volume?"));
+    });
+    connect(cleanUpMenu->addAction(tr("Dangling Images")), &QAction::triggered, this, [cleanUp]() {
+        cleanUp(QStringLiteral("dangling-images"), tr("Remove every dangling image?"));
+    });
+    connect(cleanUpMenu->addAction(tr("Build Cache")), &QAction::triggered, this, [cleanUp]() {
+        cleanUp(QStringLiteral("build-cache"), tr("Remove the build cache?"));
+    });
+    cleanUpButton_->setMenu(cleanUpMenu);
 
     filterButton_ = iconButton(":/ui/icons/containers/filter.a8", tr("Filter"), this);
     filterButton_->setPopupMode(QToolButton::InstantPopup);
@@ -322,9 +359,46 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     form->addRow(tr("Details"), dashboardDetail_);
     detailTabs_->addTab(dashboard, tr("Dashboard"));
 
+    // C4: the Images console row lives above the detail tabs, visible only
+    // when the Images group is selected (`onSelectionChanged`).
+    imagesConsole_ = new QWidget(this);
+    auto *consoleLayout = new QHBoxLayout(imagesConsole_);
+    consoleLayout->setContentsMargins(0, 0, 0, 0);
+    consoleLayout->addWidget(new QLabel(tr("Image to pull:"), imagesConsole_));
+    pullEdit_ = new QLineEdit(imagesConsole_);
+    pullCompleter_ = new QCompleter(imagesConsole_);
+    pullCompleter_->setCaseSensitivity(Qt::CaseInsensitive);
+    pullEdit_->setCompleter(pullCompleter_);
+    connect(pullEdit_, &QLineEdit::textEdited, this, [this](const QString &text) {
+        const QStringList items = containerService_->imageCompletions(selectedConnectionId(), text)
+                                     .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        pullCompleter_->setModel(new QStringListModel(items, pullCompleter_));
+    });
+    consoleLayout->addWidget(pullEdit_, 1);
+    auto *pullGoButton = new QPushButton(tr("Pull"), imagesConsole_);
+    consoleLayout->addWidget(pullGoButton);
+    const auto pullFromConsole = [this]() {
+        const QString reference = pullEdit_->text().trimmed();
+        const QString connectionId = selectedConnectionId();
+        if (reference.isEmpty() || connectionId.isEmpty()) {
+            return;
+        }
+        detail_->openPullTab(connectionId, reference);
+        pullEdit_->clear();
+    };
+    connect(pullGoButton, &QPushButton::clicked, this, pullFromConsole);
+    connect(pullEdit_, &QLineEdit::returnPressed, this, pullFromConsole);
+    imagesConsole_->setVisible(false);
+
+    auto *detailContainer = new QWidget(this);
+    auto *detailLayout = new QVBoxLayout(detailContainer);
+    detailLayout->setContentsMargins(0, 0, 0, 0);
+    detailLayout->addWidget(imagesConsole_);
+    detailLayout->addWidget(detailTabs_, 1);
+
     auto *splitter = new QSplitter(Qt::Horizontal, this);
     splitter->addWidget(tree_);
-    splitter->addWidget(detailTabs_);
+    splitter->addWidget(detailContainer);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 2);
 
@@ -465,9 +539,39 @@ void ContainersPanel::onSelectionChanged()
         dashboardName_->setText(item->text(0));
         dashboardId_->setText(item->data(0, kResourceIdRole).toString());
         dashboardStatus_->setText(item->data(0, kStatusRole).toString());
-        dashboardDetail_->setText(item->data(0, kDetailRole).toString());
-        detail_->onSelectionChanged(selectedNodeId_, item->data(0, kKindRole).toString());
+        const QString kind = item->data(0, kKindRole).toString();
+        QString detailText = item->data(0, kDetailRole).toString();
+        // C4: the richer per-kind Dashboard fields (tags, subnets,
+        // mountpoint, containers using it) fold into this same Details
+        // line rather than a bespoke per-kind layout — Layers/Labels/
+        // Inspect cover the rest.
+        if (kind == QStringLiteral("image")) {
+            const FfiImageDashboard dashboard = containerService_->imageDashboard(selectedNodeId_);
+            const QStringList tags =
+              QString(dashboard.tags).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+            const int usedByCount =
+              QString(dashboard.containers).split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
+            detailText = tr("%1 | tags: %2 | used by %3 container(s)")
+                           .arg(detailText, tags.join(QStringLiteral(", ")))
+                           .arg(usedByCount);
+        } else if (kind == QStringLiteral("network")) {
+            const FfiNetworkDashboard dashboard =
+              containerService_->networkDashboard(selectedNodeId_);
+            detailText = tr("%1 | subnets: %2")
+                           .arg(detailText,
+                                QString(dashboard.subnets).split(QLatin1Char('\n'), Qt::SkipEmptyParts)
+                                  .join(QStringLiteral(", ")));
+        } else if (kind == QStringLiteral("volume")) {
+            const FfiVolumeDashboard dashboard =
+              containerService_->volumeDashboard(selectedNodeId_);
+            detailText = tr("%1 | mountpoint: %2").arg(detailText, QString(dashboard.mountpoint));
+        }
+        dashboardDetail_->setText(detailText);
+        detail_->onSelectionChanged(selectedNodeId_, kind);
     }
+    imagesConsole_->setVisible(item != nullptr
+                               && item->data(0, kKindRole).toString()
+                                    == QStringLiteral("images-group"));
     updateToolbarEnablement();
 }
 
@@ -531,8 +635,32 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         showContainersGroupContextMenu(item, tree_->viewport()->mapToGlobal(pos));
         return;
     }
+    if (kind == QStringLiteral("image")) {
+        showImageContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("network")) {
+        showNetworkContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("volume")) {
+        showVolumeContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("images-group")) {
+        showImagesGroupContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("networks-group")) {
+        showNetworksGroupContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("volumes-group")) {
+        showVolumesGroupContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
 
-    // Every other row (image/network/volume/compose/pod): C4's.
+    // Every other row (compose/pod): a later task's.
     QAction *copyId = menu.addAction(tr("Copy ID"));
     copyId->setEnabled(!item->data(0, kResourceIdRole).toString().isEmpty());
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));

@@ -125,6 +125,24 @@ pub(crate) fn connection_invocation(
     Ok(invocation)
 }
 
+/// A configured connection's [`container_core::connection::Engine`], by
+/// id (C4: `cleanUp`/`imageLayers`/history need to know which engine's
+/// `history --format` to use). Cheap: no CLI call, just the setting.
+pub(crate) fn connection_engine(
+    connection_id: &str,
+) -> Result<container_core::connection::Engine, FfiResult> {
+    configured_connections()
+        .into_iter()
+        .find(|setting| setting.id == connection_id)
+        .map(|setting| ConnectionConfig::from_setting(&setting).engine)
+        .ok_or_else(|| {
+            errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("no container connection with id '{connection_id}' is configured"),
+            )
+        })
+}
+
 fn to_ffi_status(status: tree::NodeStatus) -> ffi::FfiContainerNodeStatus {
     use ffi::FfiContainerNodeStatus as Ffi;
     use tree::NodeStatus;

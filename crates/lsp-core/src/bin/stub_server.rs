@@ -363,7 +363,8 @@ fn main() {
             // L5: both response shapes, chosen by the requested line —
             // line 0 -> a bare CompletionItem[], line 1 -> a CompletionList
             // that is incomplete and carries a snippet item and a textEdit
-            // item, anything else -> null (nothing to complete).
+            // item, line 6 -> R2's CamelHumps fixture, anything else ->
+            // null (nothing to complete).
             ("textDocument/completion", Some(id)) => {
                 let line = params
                     .pointer("/position/line")
@@ -387,6 +388,14 @@ fn main() {
                                       "end": {"line": 1, "character": 4}},
                         }},
                     ]}),
+                    // R2: "fooBar" has a hump starting with 'f' ("Bar") for
+                    // "fBr" to CamelHumps-match; "objBarrel" has none (its
+                    // only hump is "Barrel", and 'f' does not appear in it
+                    // at all), so it fails every tier.
+                    6 => json!([
+                        {"label": "fooBar", "kind": 6},
+                        {"label": "objBarrel", "kind": 6},
+                    ]),
                     _ => Value::Null,
                 };
                 send(&out, json!({"jsonrpc": "2.0", "id": id, "result": result}));

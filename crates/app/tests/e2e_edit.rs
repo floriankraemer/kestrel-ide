@@ -300,6 +300,82 @@ fn e2e_indent_tab_and_enter_between_braces() {
     assert_eq!(ide.quit(), 0);
 }
 
+/// R2: CamelHumps ranking (typing `fBr` finds `fooBar`, which has a hump
+/// starting with `f`, but not `objBarrel`, which has none) and a snippet's
+/// tab stops (accepting lands the caret on `$1`, and Tab moves it to `$0`) —
+/// both through the same stub server the completion half of
+/// `e2e_replace_all_and_completion_are_one_undo_each` already routes.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_completion_ranks_camel_humps_and_walks_snippet_tab_stops() {
+    let name = "e2e_completion_ranks_camel_humps_and_walks_snippet_tab_stops";
+    let mut ide = Ide::launch(name, APP, fixture("tiny"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    route_rust_at_stub(&mut ide);
+
+    let mcp = ide.mcp();
+    wait_for_index(&mcp);
+    let tab = open_file(&ide, "main.rs");
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+
+    // Line 1 (the blank line right after "mod greeting;"): the stub's own
+    // snippet item, `map(${1:f})$0`. "map" sorts before "max" (neither has
+    // a sortText, so the label breaks the tie), so it is the default row.
+    ide.key("ctrl+Home");
+    ide.key("Down");
+    let mark = ide.mark();
+    ide.key("ctrl+space");
+    let shown = ide.wait_for_ev(mark, "completion_shown");
+    assert_eq!(shown["count"].as_u64(), Some(2), "the stub's line-1 items");
+    ide.key("Return");
+    ide.wait_for_ev(mark, "edits_applied");
+    ide.sync(&mcp);
+
+    // "map(f)" was spliced in at column 0; the caret should now sit on the
+    // "f" default text of `$1`, columns 4..5.
+    let after_accept = mcp.call("get_cursor_position", json!({"tab_id": tab_id}));
+    assert_eq!(
+        (
+            after_accept["line"].as_u64(),
+            after_accept["column"].as_u64()
+        ),
+        (Some(1), Some(5)),
+        "the caret did not land on the snippet's first tab stop"
+    );
+
+    ide.key("Tab");
+    ide.sync(&mcp);
+    let after_tab = mcp.call("get_cursor_position", json!({"tab_id": tab_id}));
+    assert_eq!(
+        (after_tab["line"].as_u64(), after_tab["column"].as_u64()),
+        (Some(1), Some(6)),
+        "Tab did not move the caret from $1 to $0"
+    );
+
+    // The blank line between the two functions (real line 6): the stub's
+    // CamelHumps fixture. Typing "fBr" and asking explicitly must find only
+    // "fooBar" — "objBarrel" has no hump `f` can start.
+    ide.key("ctrl+End");
+    ide.key("Up");
+    ide.key("Up");
+    let mark = ide.mark();
+    ide.type_text("fBr");
+    ide.key("ctrl+space");
+    let shown = ide.wait_for_ev(mark, "completion_shown");
+    assert_eq!(
+        shown["count"].as_u64(),
+        Some(1),
+        "only fooBar CamelHumps-matches \"fBr\""
+    );
+    ide.key("Escape");
+
+    // Save before quitting: an unsaved tab prompts on Ctrl+Q, and this flow
+    // deliberately left one dirty (the snippet accept and the typed "fBr"),
+    // same as every other flow in this file that reaches a quit.
+    save_and_sync(&ide, &mcp, tab_id);
+    assert_eq!(ide.quit(), 0);
+}
+
 /// Ctrl+S, then wait for the tab to go clean — what every buffer assertion
 /// needs first, since `read_buffer` answers from the rope and that is one
 /// save behind the live widget.

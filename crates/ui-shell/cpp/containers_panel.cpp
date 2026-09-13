@@ -1,5 +1,6 @@
 #include "containers_panel.h"
 
+#include "containers_detail.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "theme.h"
@@ -199,7 +200,9 @@ QLabel *readOnlyValue(QWidget *parent)
 
 } // namespace
 
-ContainersPanel::ContainersPanel(ContainerService *containerService, QWidget *parent)
+ContainersPanel::ContainersPanel(ContainerService *containerService,
+                                 TerminalSupervisor *terminalSupervisor, AppSettings *appSettings,
+                                 OpenAt openAt, QWidget *parent)
   : QWidget(parent)
   , containerService_(containerService)
 {
@@ -246,8 +249,10 @@ ContainersPanel::ContainersPanel(ContainerService *containerService, QWidget *pa
     // behaviour; disabled so the toolbar already has its final shape.
     pullButton_ = iconButton(":/ui/icons/containers/registry.a8", tr("Pull Image..."), this);
     pullButton_->setEnabled(false);
-    cleanUpButton_ = iconButton(":/ui/icons/containers/cleanup.a8", tr("Clean Up"), this);
-    cleanUpButton_->setEnabled(false);
+    // C3: prunes stopped containers on the selected connection. Images/
+    // networks/volumes/build-cache pruning is C4's.
+    cleanUpButton_ = iconButton(":/ui/icons/containers/cleanup.a8", tr("Clean Up..."), this);
+    connect(cleanUpButton_, &QToolButton::clicked, this, &ContainersPanel::triggerCleanUp);
 
     filterButton_ = iconButton(":/ui/icons/containers/filter.a8", tr("Filter"), this);
     filterButton_->setPopupMode(QToolButton::InstantPopup);
@@ -277,10 +282,17 @@ ContainersPanel::ContainersPanel(ContainerService *containerService, QWidget *pa
     statusLabel_ = new QLabel(this);
 
     auto *toolbar = new QHBoxLayout();
+    buildLifecycleToolbar(); // C3: fills start/stop/restart/pause/removeButton_.
+
     toolbar->addWidget(addButton_);
     toolbar->addWidget(refreshButton_);
     toolbar->addWidget(connectButton_);
     toolbar->addWidget(disconnectButton_);
+    toolbar->addWidget(startButton_);
+    toolbar->addWidget(stopButton_);
+    toolbar->addWidget(restartButton_);
+    toolbar->addWidget(pauseButton_);
+    toolbar->addWidget(removeButton_);
     toolbar->addWidget(pullButton_);
     toolbar->addWidget(cleanUpButton_);
     toolbar->addWidget(filterButton_);
@@ -334,6 +346,15 @@ ContainersPanel::ContainersPanel(ContainerService *containerService, QWidget *pa
             &ContainersPanel::onTreeChanged);
     connect(containerService_, &ContainerService::connectionStateChanged, this,
             [this](const QString &) { updateToolbarEnablement(); });
+    connect(containerService_, &ContainerService::actionFinished, this,
+            [this](const QString &, bool ok, const QString &message) {
+                if (!ok) {
+                    statusLabel_->setText(message);
+                }
+            });
+
+    detail_ = new ContainerDetailArea(containerService_, terminalSupervisor, appSettings,
+                                      std::move(openAt), detailTabs_, this);
 
     onTreeChanged();
 }
@@ -439,27 +460,32 @@ void ContainersPanel::onSelectionChanged()
         dashboardId_->clear();
         dashboardStatus_->clear();
         dashboardDetail_->clear();
+        detail_->clearSelection();
     } else {
         dashboardName_->setText(item->text(0));
         dashboardId_->setText(item->data(0, kResourceIdRole).toString());
         dashboardStatus_->setText(item->data(0, kStatusRole).toString());
         dashboardDetail_->setText(item->data(0, kDetailRole).toString());
+        detail_->onSelectionChanged(selectedNodeId_, item->data(0, kKindRole).toString());
     }
     updateToolbarEnablement();
 }
 
 void ContainersPanel::updateToolbarEnablement()
 {
+    updateLifecycleButtons();
     const QString id = selectedConnectionId();
     if (id.isEmpty()) {
         connectButton_->setEnabled(false);
         disconnectButton_->setEnabled(false);
+        cleanUpButton_->setEnabled(false);
         return;
     }
     const FfiConnectionState state = containerService_->connectionState(id);
     const bool disconnected = QString(state.state) == QStringLiteral("disconnected");
     connectButton_->setEnabled(disconnected);
     disconnectButton_->setEnabled(!disconnected);
+    cleanUpButton_->setEnabled(!disconnected);
 }
 
 void ContainersPanel::showContextMenu(const QPoint &pos)
@@ -497,7 +523,16 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         return;
     }
 
-    // Every other row: the skeleton later tasks (C3/C4) fill in.
+    if (kind == QStringLiteral("container")) {
+        showContainerContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("containers-group")) {
+        showContainersGroupContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+
+    // Every other row (image/network/volume/compose/pod): C4's.
     QAction *copyId = menu.addAction(tr("Copy ID"));
     copyId->setEnabled(!item->data(0, kResourceIdRole).toString().isEmpty());
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
@@ -508,9 +543,13 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
 
 ContainersPanel *buildContainersDock(ads::CDockManager *dockManager, DockRegistry *docks,
                                      ads::CDockAreaWidget *relativeTo,
-                                     ContainerService *containerService)
+                                     ContainerService *containerService,
+                                     TerminalSupervisor *terminalSupervisor,
+                                     AppSettings *appSettings,
+                                     ContainersPanel::OpenAt openAt)
 {
-    auto *panel = new ContainersPanel(containerService, dockManager);
+    auto *panel = new ContainersPanel(containerService, terminalSupervisor, appSettings,
+                                      std::move(openAt), dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Containers"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("containers"), dock, ads::CenterDockWidgetArea,

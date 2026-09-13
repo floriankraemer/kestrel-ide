@@ -23,12 +23,22 @@ pub mod connection;
 /// Finding connections the user has not typed in by hand: CLI contexts,
 /// Podman connections/machines, and well-known socket presets.
 pub mod discovery;
+/// The Files tab (C3): `ls -la` (GNU and busybox) parsing and a minimal
+/// single-entry tar reader for `cp <id>:<path> -`.
+pub mod files;
 /// Typed, lenient views over `inspect` JSON: [`model::Container`],
 /// [`model::Image`], [`model::Volume`], [`model::Network`], [`model::Pod`].
 pub mod model;
+/// Container lifecycle operations (C3): start/stop/restart/remove/pause/
+/// unpause/prune argv builders, the [`ops::run_op`] executor and its typed
+/// [`ops::OpError`], and the `top` process-table parser.
+pub mod ops;
 /// "Test connection": `<cli> version --format json`, parsed into
 /// [`probe::EngineInfo`] or a [`probe::ConnectionError`].
 pub mod probe;
+/// Streaming sessions (C3): `pty_core::ShellSpec` builders for Log/
+/// Terminal/Exec/Attach, and `inspect` pretty-printing for the Inspect tab.
+pub mod session;
 /// One engine's whole state ([`snapshot::EngineSnapshot`]), compose
 /// grouping, and the filter/search views over it.
 pub mod snapshot;

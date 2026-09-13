@@ -564,6 +564,15 @@ fn main() {
         // Containers plan C2: the Containers dock, same Q_OBJECT-free shape.
         .cpp_file("cpp/containers_panel.cpp")
         .cpp_file("cpp/containers_menu.cpp")
+        // C3: lifecycle toolbar/context-menu actions, split out of
+        // containers_panel.cpp under the file-size ratchet — same
+        // Q_OBJECT-free shape as the panel itself.
+        .cpp_file("cpp/containers_actions.cpp")
+        // C3: the per-container detail tab area (Log/Terminal/Exec/Attach/
+        // Processes/Files). Declares Q_OBJECT (it connects to
+        // `ContainerService`'s signals), so its header runs through moc too.
+        .cpp_file("cpp/containers_detail.h")
+        .cpp_file("cpp/containers_detail.cpp")
         .cpp_file("cpp/icon_cache.cpp")
         // Declares Q_OBJECT (it overrides QIdentityProxyModel::data), so its
         // header is listed too — that is what runs moc on it.

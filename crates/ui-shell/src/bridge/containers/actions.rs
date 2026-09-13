@@ -1,0 +1,299 @@
+//! Container lifecycle actions (C3): start/stop/restart/remove/pause/
+//! unpause/prune, Inspect, and Processes. A second `impl
+//! ffi::ContainerService` block — see `mod.rs`'s doc comment for why this
+//! is split from `service.rs`.
+//!
+//! Every action here runs the actual `docker`/`podman` call on a worker
+//! thread and reports back through `qt_thread().queue`, exactly the
+//! `test_container_connection` (C1)/`connect_engine` (C2) shape: never
+//! block the Qt thread on a process that may hang talking to an
+//! unreachable daemon.
+
+use std::pin::Pin;
+
+use cxx_qt::Threading;
+use cxx_qt_lib::QString;
+
+use container_core::ops::{self, OpError};
+use container_core::tree::{self, NodeActions, NodeKind, NodeStatus};
+
+use crate::bridge::errors;
+use crate::bridge::ffi::{self, FfiNodeActions, FfiResult};
+
+use super::service;
+
+/// Parse a tree node id (`container_core::tree::flatten`'s
+/// `"<conn>/<kind>/<resource-id>"`) into `(connection_id, resource_id)`,
+/// for a node of kind `container`. Container ids are hex and never contain
+/// `/`, so this is exact, not heuristic.
+pub(super) fn parse_container_node_id(node_id: &str) -> Option<(String, String)> {
+    let (connection_id, rest) = node_id.split_once('/')?;
+    let (kind, resource_id) = rest.split_once('/')?;
+    if kind != NodeKind::Container.id() {
+        return None;
+    }
+    if connection_id.is_empty() || resource_id.is_empty() {
+        return None;
+    }
+    Some((connection_id.to_string(), resource_id.to_string()))
+}
+
+fn to_ffi_node_actions(actions: NodeActions) -> FfiNodeActions {
+    FfiNodeActions {
+        can_start: actions.can_start,
+        can_stop: actions.can_stop,
+        can_restart: actions.can_restart,
+        can_pause: actions.can_pause,
+        can_unpause: actions.can_unpause,
+        can_remove: actions.can_remove,
+    }
+}
+
+/// The reverse of `service::to_ffi_status` — recovering a `NodeStatus`
+/// from the row `nodes()` already flattened is cheaper here than adding a
+/// second, container-only path back into `container_core::snapshot` just
+/// to answer "what are this node's actions".
+fn node_status_from_ffi(status: ffi::FfiContainerNodeStatus) -> NodeStatus {
+    use ffi::FfiContainerNodeStatus as Ffi;
+    match status {
+        Ffi::None => NodeStatus::None,
+        Ffi::Disconnected => NodeStatus::Disconnected,
+        Ffi::Connecting => NodeStatus::Connecting,
+        Ffi::Connected => NodeStatus::Connected,
+        Ffi::Error => NodeStatus::Error,
+        Ffi::Running => NodeStatus::Running,
+        Ffi::Paused => NodeStatus::Paused,
+        Ffi::Restarting => NodeStatus::Restarting,
+        Ffi::Exited => NodeStatus::Exited,
+        Ffi::Created => NodeStatus::Created,
+        Ffi::Dead => NodeStatus::Dead,
+        _ => NodeStatus::Other,
+    }
+}
+
+impl ffi::ContainerService {
+    pub fn node_actions(&self, node_id: &QString) -> FfiNodeActions {
+        let node_id = node_id.to_string();
+        let status = self
+            .nodes()
+            .into_iter()
+            .find(|node| node.id.to_string() == node_id)
+            .map(|node| node_status_from_ffi(node.status))
+            .unwrap_or(NodeStatus::None);
+        to_ffi_node_actions(tree::actions_for(status))
+    }
+
+    pub fn start_container(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_lifecycle_op(self, node_id, ops::start_args)
+    }
+
+    pub fn stop_container(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_lifecycle_op(self, node_id, ops::stop_args)
+    }
+
+    pub fn restart_container(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_lifecycle_op(self, node_id, ops::restart_args)
+    }
+
+    pub fn pause_container(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_lifecycle_op(self, node_id, ops::pause_args)
+    }
+
+    pub fn unpause_container(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_lifecycle_op(self, node_id, ops::unpause_args)
+    }
+
+    pub fn remove_container(self: Pin<&mut Self>, node_id: &QString, force: bool) -> FfiResult {
+        run_lifecycle_op(self, node_id, move |id| ops::remove_args(id, force))
+    }
+
+    /// The Containers group's "Clean Up": `container prune -f` on
+    /// `connection_id`. Not per-container, so it does not go through
+    /// [`run_lifecycle_op`]'s node-id parsing; `actionFinished`'s
+    /// `node_id` is empty, which the panel reads as "this connection",
+    /// not any one row.
+    pub fn prune_containers(mut self: Pin<&mut Self>, connection_id: &QString) -> FfiResult {
+        let connection_id = connection_id.to_string();
+        let invocation = match service::connection_invocation(&connection_id) {
+            Ok(invocation) => invocation,
+            Err(result) => return result,
+        };
+        let work_dir = service::work_dir();
+        let qt_thread = self.as_mut().qt_thread();
+        let for_thread = connection_id.clone();
+        std::thread::spawn(move || {
+            let result = ops::run_op(&invocation, &ops::prune_args(), &work_dir).map(|_| ());
+            report(qt_thread, QString::from(""), result, for_thread);
+        });
+        FfiResult::default()
+    }
+
+    /// Open `node_id`'s `inspect` JSON as a read-only virtual document —
+    /// synchronous (the round trip is a single small `inspect` call, same
+    /// order of magnitude as `probe`), mirroring `LanguageService`'s own
+    /// `virtualDocumentOpened` split: build the tab, then focus it.
+    pub fn open_inspect(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let node_id_str = node_id.to_string();
+        let Some((connection_id, resource_id)) = parse_container_node_id(&node_id_str) else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("'{node_id_str}' is not a container node"),
+            );
+        };
+        let invocation = match service::connection_invocation(&connection_id) {
+            Ok(invocation) => invocation,
+            Err(result) => return result,
+        };
+        let work_dir = service::work_dir();
+        let json = match container_core::session::inspect_json(
+            &invocation,
+            "container",
+            &resource_id,
+            &work_dir,
+        ) {
+            Ok(json) => json,
+            Err(err) => return errors::failure(errors::CODE_REFUSED, err.message),
+        };
+        let key = format!("{connection_id}/container/{resource_id}/inspect.json");
+        let opened = self
+            .session
+            .borrow_mut()
+            .open_virtual_document("container", &key, &json);
+        self.as_mut().virtual_document_opened(
+            opened.id.raw(),
+            QString::from(opened.title.as_str()),
+            opened.newly_opened,
+        );
+        FfiResult::default()
+    }
+
+    pub fn processes(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let node_id_str = node_id.to_string();
+        let Some((connection_id, resource_id)) = parse_container_node_id(&node_id_str) else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("'{node_id_str}' is not a container node"),
+            );
+        };
+        let invocation = match service::connection_invocation(&connection_id) {
+            Ok(invocation) => invocation,
+            Err(result) => return result,
+        };
+        let work_dir = service::work_dir();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let result = ops::run_op(&invocation, &ops::top_args(&resource_id), &work_dir);
+            let queued =
+                qt_thread.queue(
+                    move |mut service: Pin<&mut ffi::ContainerService>| match result {
+                        Ok(output) => {
+                            let table = ops::parse_top(&String::from_utf8_lossy(&output.stdout));
+                            service.as_mut().processes_ready(
+                                QString::from(node_id_str.as_str()),
+                                QString::from(table.titles.join("\t").as_str()),
+                                table
+                                    .rows
+                                    .iter()
+                                    .map(|row| ffi::FfiProcessRow {
+                                        cells: QString::from(row.join("\t").as_str()),
+                                    })
+                                    .collect(),
+                            );
+                        }
+                        Err(err) => {
+                            service.as_mut().action_finished(
+                                QString::from(node_id_str.as_str()),
+                                false,
+                                QString::from(err.message.as_str()),
+                            );
+                        }
+                    },
+                );
+            let _ = queued;
+        });
+        FfiResult::default()
+    }
+}
+
+/// Shared shape for the six single-container lifecycle actions: parse the
+/// node id, resolve its connection's `Invocation`, run `build_args`'s argv
+/// on a worker thread, then report through `actionFinished` and
+/// re-snapshot the connection (so the tree reflects the new state without
+/// waiting for the next `events` line).
+fn run_lifecycle_op(
+    mut service: Pin<&mut ffi::ContainerService>,
+    node_id: &QString,
+    build_args: impl FnOnce(&str) -> Vec<String> + Send + 'static,
+) -> FfiResult {
+    let node_id_str = node_id.to_string();
+    let Some((connection_id, resource_id)) = parse_container_node_id(&node_id_str) else {
+        return errors::failure(
+            errors::CODE_INVALID_ARGUMENT,
+            format!("'{node_id_str}' is not a container node"),
+        );
+    };
+    let invocation = match service::connection_invocation(&connection_id) {
+        Ok(invocation) => invocation,
+        Err(result) => return result,
+    };
+    let work_dir = service::work_dir();
+    let qt_thread = service.as_mut().qt_thread();
+    std::thread::spawn(move || {
+        let args = build_args(&resource_id);
+        let result: Result<(), OpError> = ops::run_op(&invocation, &args, &work_dir).map(|_| ());
+        report(
+            qt_thread,
+            QString::from(node_id_str.as_str()),
+            result,
+            connection_id,
+        );
+    });
+    FfiResult::default()
+}
+
+/// Emit `actionFinished` on the Qt thread and, on success, re-snapshot the
+/// connection the action touched. `report`'s two call sites (a
+/// per-container op and "Clean Up") differ only in whether there is a
+/// connection id to refresh; the prune call passes it explicitly below.
+fn report(
+    qt_thread: cxx_qt::CxxQtThread<ffi::ContainerService>,
+    node_id: QString,
+    result: Result<(), OpError>,
+    connection_id: String,
+) {
+    let (ok, message) = match result {
+        Ok(()) => (true, String::new()),
+        Err(err) => (false, err.message),
+    };
+    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ContainerService>| {
+        service
+            .as_mut()
+            .action_finished(node_id, ok, QString::from(message.as_str()));
+        let _ = service
+            .as_mut()
+            .refresh(&QString::from(connection_id.as_str()));
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_container_node_id() {
+        assert_eq!(
+            parse_container_node_id("d/container/3f2a9b"),
+            Some(("d".to_string(), "3f2a9b".to_string()))
+        );
+    }
+
+    #[test]
+    fn rejects_a_non_container_node_id() {
+        assert_eq!(parse_container_node_id("d/containers-group"), None);
+        assert_eq!(parse_container_node_id("d/image/abc"), None);
+        assert_eq!(parse_container_node_id("d"), None);
+        assert_eq!(parse_container_node_id(""), None);
+        assert_eq!(parse_container_node_id("d/container/"), None);
+        assert_eq!(parse_container_node_id("/container/abc"), None);
+    }
+}

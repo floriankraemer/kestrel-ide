@@ -24,6 +24,7 @@ class CDockManager;
 namespace ui_shell {
 
 class DockRegistry;
+class ContainerDetailArea;
 
 // The Containers dock (containers plan C2): every configured Docker/Podman
 // connection as a tree of Containers / Images / Networks / Volumes /
@@ -42,8 +43,10 @@ public:
     // configuration...". Wired by the main window once the settings context
     // exists.
     using OpenSettings = std::function<void()>;
+    using OpenAt = std::function<void(const QString &, int, int)>;
 
-    ContainersPanel(ContainerService *containerService, QWidget *parent);
+    ContainersPanel(ContainerService *containerService, TerminalSupervisor *terminalSupervisor,
+                    AppSettings *appSettings, OpenAt openAt, QWidget *parent);
 
     void setOpenSettingsHandler(OpenSettings handler);
 
@@ -55,6 +58,19 @@ private:
     void report(const FfiResult &result);
     QString selectedConnectionId() const;
     QTreeWidgetItem *selectedItem() const;
+
+    // containers_actions.cpp: lifecycle toolbar buttons + the container/
+    // containers-group context menus (C3).
+    void buildLifecycleToolbar();
+    void updateLifecycleButtons();
+    void triggerStart();
+    void triggerStop();
+    void triggerRestart();
+    void triggerPauseOrUnpause();
+    void triggerRemove();
+    void triggerCleanUp();
+    void showContainerContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showContainersGroupContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
 
     ContainerService *containerService_;
     OpenSettings openSettings_;
@@ -77,6 +93,17 @@ private:
     QLabel *dashboardStatus_ = nullptr;
     QLabel *dashboardDetail_ = nullptr;
 
+    // C3: Start/Stop/Restart/Pause-Unpause/Remove, enabled per
+    // `ContainerService::nodeActions` — the rule lives in Rust, these five
+    // buttons only read its flags.
+    QToolButton *startButton_ = nullptr;
+    QToolButton *stopButton_ = nullptr;
+    QToolButton *restartButton_ = nullptr;
+    QToolButton *pauseButton_ = nullptr;
+    QToolButton *removeButton_ = nullptr;
+
+    ContainerDetailArea *detail_ = nullptr;
+
     // Rebuilt wholesale on every `treeChanged`, like `TestsPanel`; the
     // expansion and selection are carried across by row id.
     QHash<QString, QTreeWidgetItem *> itemsById_;
@@ -87,6 +114,9 @@ private:
 // under id `"containers"` — the same one-call pattern `buildTestsDock` uses.
 ContainersPanel *buildContainersDock(ads::CDockManager *dockManager, DockRegistry *docks,
                                      ads::CDockAreaWidget *relativeTo,
-                                     ContainerService *containerService);
+                                     ContainerService *containerService,
+                                     TerminalSupervisor *terminalSupervisor,
+                                     AppSettings *appSettings,
+                                     ContainersPanel::OpenAt openAt);
 
 } // namespace ui_shell

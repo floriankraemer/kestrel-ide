@@ -66,28 +66,54 @@ impl RunConfigExt for RunConfig {
     }
 
     fn to_launch_spec_in(&self, context: &MacroContext) -> LaunchSpec {
-        LaunchSpec {
-            program: self.program.clone(),
-            args: self
-                .args
-                .iter()
-                .map(|arg| macros::expand(arg, context))
-                .collect(),
-            cwd: self
-                .cwd
-                .as_deref()
-                .map(|cwd| PathBuf::from(macros::expand(cwd, context))),
-            env: self
-                .env
-                .iter()
-                .map(|(k, v)| (k.clone(), macros::expand(v, context)))
-                .collect(),
-            console: ConsoleKind::Pty,
+        // A container-kind configuration compiles to an entirely different
+        // shape (`docker`/`podman`/`compose` argv through
+        // `container_core::run_config`, not this configuration's own
+        // `program`/`args`) — see `crate::container_run`. An unrecognised
+        // or absent `kind` is a plain process, exactly what this method
+        // always did before C5 (ADR-0056's "unknown reads as the default"
+        // rule, same as `toolchain`).
+        let containers = context.containers.clone().unwrap_or_default();
+        match self.kind.as_deref() {
+            Some("container-image") => {
+                crate::container_run::image_launch_spec(self, context, &containers)
+            }
+            Some("containerfile") => {
+                crate::container_run::containerfile_launch_spec(self, context, &containers)
+            }
+            Some("compose") => {
+                crate::container_run::compose_launch_spec(self, context, &containers)
+            }
+            _ => None,
         }
+        .unwrap_or_else(|| process_launch_spec(self, context))
     }
 
     fn toolchain(&self) -> Option<ToolchainId> {
         self.toolchain.as_deref().and_then(ToolchainId::from_id)
+    }
+}
+
+/// The plain process launch every configuration compiled to before C5, and
+/// what one with no (or an unrecognised) `kind` still compiles to.
+fn process_launch_spec(config: &RunConfig, context: &MacroContext) -> LaunchSpec {
+    LaunchSpec {
+        program: config.program.clone(),
+        args: config
+            .args
+            .iter()
+            .map(|arg| macros::expand(arg, context))
+            .collect(),
+        cwd: config
+            .cwd
+            .as_deref()
+            .map(|cwd| PathBuf::from(macros::expand(cwd, context))),
+        env: config
+            .env
+            .iter()
+            .map(|(k, v)| (k.clone(), macros::expand(v, context)))
+            .collect(),
+        console: ConsoleKind::Pty,
     }
 }
 

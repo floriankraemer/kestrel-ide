@@ -206,6 +206,51 @@ fn tasks_from_string(text: &str) -> Vec<app_config::BeforeLaunchSetting> {
         .collect()
 }
 
+/// The container-kind sub-table `config.kind` names, as JSON — the seam
+/// `FfiRunConfig::container_json` doc comment describes. Empty for a plain
+/// process, or a kind this build no longer has a matching field for.
+pub(super) fn container_json_of(config: &run_core::RunConfig) -> String {
+    let json = match config.kind.as_deref() {
+        Some("container-image") => config
+            .container_image
+            .as_ref()
+            .and_then(|s| serde_json::to_string(s).ok()),
+        Some("containerfile") => config
+            .containerfile
+            .as_ref()
+            .and_then(|s| serde_json::to_string(s).ok()),
+        Some("compose") => config
+            .compose
+            .as_ref()
+            .and_then(|s| serde_json::to_string(s).ok()),
+        _ => None,
+    };
+    json.unwrap_or_default()
+}
+
+/// The inverse: parse `json` into whichever of `container_image`/
+/// `containerfile`/`compose` `kind` names, clearing the other two — a
+/// configuration is exactly one kind at a time. `json` that fails to parse
+/// (or `kind` naming nothing this build knows) leaves every sub-table
+/// `None`, the same "unknown reads as the least surprising default" rule
+/// `ToolchainId::from_id` follows.
+pub(super) fn apply_container_json(config: &mut run_core::RunConfig, kind: &str, json: &str) {
+    config.container_image = None;
+    config.containerfile = None;
+    config.compose = None;
+    config.kind = if kind.is_empty() {
+        None
+    } else {
+        Some(kind.to_string())
+    };
+    match kind {
+        "container-image" => config.container_image = serde_json::from_str(json).ok(),
+        "containerfile" => config.containerfile = serde_json::from_str(json).ok(),
+        "compose" => config.compose = serde_json::from_str(json).ok(),
+        _ => {}
+    }
+}
+
 fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
     ffi::FfiRunConfig {
         id: QString::from(config.id.as_str()),
@@ -219,7 +264,19 @@ fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
         temporary: config.temporary,
         allow_parallel: config.allow_parallel,
         before_launch: QString::from(tasks_to_string(config).as_str()),
+        kind: QString::from(config.kind.clone().unwrap_or_default().as_str()),
+        container_json: QString::from(container_json_of(config).as_str()),
     }
+}
+
+/// The `[containers]` section actually in force — the global layer with the
+/// open project's override applied (ADR-0022), the same rule every other
+/// project-scoped setting resolves through
+/// (`crate::bridge::convert::load_resolved_settings`). Used wherever a
+/// container-kind configuration's `connection_id` needs resolving: launching
+/// it, previewing its command, and its Services picker.
+pub(super) fn effective_container_settings() -> app_config::ContainerSettings {
+    crate::bridge::convert::load_resolved_settings().containers
 }
 
 /// Trim `output` down to `max_bytes` from the front, on a UTF-8 char
@@ -770,7 +827,9 @@ impl ffi::RunService {
         }
 
         let root = root.to_path_buf();
-        let mut spec = config.to_launch_spec_in(context);
+        let containers = effective_container_settings();
+        let context = context.clone().with_containers(containers.clone());
+        let mut spec = config.to_launch_spec_in(&context);
         let cwd = spec.cwd.clone().unwrap_or_else(|| root.clone());
         // `to_launch_spec` leaves `cwd` as `None` for a configuration with
         // no explicit working directory (`run_core::config::to_launch_spec`
@@ -796,7 +855,7 @@ impl ffi::RunService {
                 message: QString::from(err.to_string().as_str()),
             };
         }
-        let tasks = run_core::before_launch::tasks_of(&config);
+        let tasks = run_core::before_launch::tasks_of_with_containers(&config, &containers);
 
         let tx = self.as_mut().ensure_worker();
         let qt_thread = self.qt_thread();
@@ -924,6 +983,48 @@ impl ffi::RunService {
         };
         self.as_mut().stop(console_id);
         self.as_mut().run(&QString::from(config_id.as_str()))
+    }
+
+    fn config_for_console(&self, console_id: u64) -> Option<run_core::RunConfig> {
+        let config_id = self.consoles.borrow().get(&console_id)?.config_id.clone();
+        let root = current_project_root()?;
+        app_config::project_settings::load(&root)
+            .ok()?
+            .run_configs
+            .unwrap_or_default()
+            .into_iter()
+            .find(|c| c.id == config_id)
+    }
+
+    /// Whether `console_id`'s configuration is a compose configuration
+    /// (C5, ADR-0056) — the console's "Down" button is shown only then.
+    pub fn is_compose_console(&self, console_id: u64) -> bool {
+        self.config_for_console(console_id)
+            .is_some_and(|config| config.kind.as_deref() == Some("compose"))
+    }
+
+    /// `compose down`, with the configuration's own remove flags — the
+    /// console's "Down" action for a compose configuration.
+    pub fn compose_down(&self, console_id: u64) -> ffi::FfiResult {
+        let Some(config) = self.config_for_console(console_id) else {
+            return unknown_run_config("unknown console");
+        };
+        let containers = effective_container_settings();
+        let Some(command) = run_core::down_command(&config, &containers) else {
+            return unknown_run_config("not a compose configuration");
+        };
+        let root = current_project_root().unwrap_or_default();
+        match std::process::Command::new(&command.program)
+            .args(&command.args)
+            .current_dir(&root)
+            .spawn()
+        {
+            Ok(_) => ffi::FfiResult::default(),
+            Err(err) => ffi::FfiResult {
+                code: errors::CODE_BEFORE_LAUNCH,
+                message: QString::from(err.to_string().as_str()),
+            },
+        }
     }
 
     /// Every match of `pattern` in this console's text, in document order

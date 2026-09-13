@@ -1226,6 +1226,21 @@ mod ffi {
         /// A `\n`-separated string for the same reason `env` is one — a
         /// `Vec` field on a shared struct is not a shape cxx supports.
         before_launch: QString,
+        /// What kind of thing this configuration launches (C5, ADR-0056):
+        /// empty for a plain process, or `"container-image"` /
+        /// `"containerfile"` / `"compose"`.
+        kind: QString,
+        /// The container-kind sub-table (`ContainerImageRunSetting`/
+        /// `ContainerfileRunSetting`/`ComposeRunSetting`, whichever `kind`
+        /// names) as JSON — one opaque blob rather than dozens more shared
+        /// fields (ports, mounts, build args, compose files…), none of
+        /// which cxx's shared-struct shape supports as a `Vec` anyway (see
+        /// this struct's own doc comment on `env`). The dialog's C++ side
+        /// edits it through `QJsonDocument`; it never has to interpret what
+        /// any of the fields mean, only display and collect them, so this
+        /// stays translation rather than a business decision made in C++.
+        /// Empty for a plain process (`kind` empty).
+        container_json: QString,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -7930,6 +7945,24 @@ mod ffi {
         #[qinvokable]
         fn rerun(self: Pin<&mut RunService>, console_id: u64) -> FfiResult;
 
+        /// Whether `console_id`'s configuration is a compose configuration —
+        /// the console's "Down" button is shown only then (C5, ADR-0056).
+        #[qinvokable]
+        #[cxx_name = "isComposeConsole"]
+        fn is_compose_console(self: &RunService, console_id: u64) -> bool;
+
+        /// `compose down`, with the configuration's remove flags, for a
+        /// compose console — Ctrl-C-ing `compose up` alone leaves the
+        /// containers running, which this is the console's way to actually
+        /// tear down (JetBrains parity). Fire-and-forget on a short-lived
+        /// thread: no console tracks its output in this v1 (a known gap —
+        /// the upgrade path is a `Supervisor::launch` of it like any other
+        /// before-launch task, once compose actions get their own console
+        /// kind).
+        #[qinvokable]
+        #[cxx_name = "composeDown"]
+        fn compose_down(self: &RunService, console_id: u64) -> FfiResult;
+
         /// The `file:line[:col]` (or Python `File "...", line N`) location
         /// covering `byte_offset` in `console_id`'s accumulated output, for
         /// hover feedback and Ctrl+Click — the same
@@ -8520,6 +8553,31 @@ mod ffi {
         /// Discard the draft, restoring what was last loaded or committed.
         #[qinvokable]
         fn revert(self: &RunConfigEditor);
+
+        /// The shell-quoted command `form` would run (C5, ADR-0056): the
+        /// container-kind dialog pages' live "Command preview". Built from
+        /// `form` directly (not `configurations()[index]`), so it updates as
+        /// the user types, before Apply/OK commits anything.
+        #[qinvokable]
+        #[cxx_name = "commandPreview"]
+        fn command_preview(self: &RunConfigEditor, form: &FfiRunConfig) -> QString;
+
+        /// `compose -f <files>… config --services` against `connection_id`,
+        /// for the Compose page's Services picker. `files` is `\n`-separated,
+        /// project-relative; the answer is `\n`-separated too (no bare
+        /// `Vec<QString>` on the seam — see `FfiBranch`'s doc comment).
+        /// Runs synchronously on the calling (Qt) thread — a known v1
+        /// simplification (this is a single, normally sub-second CLI call):
+        /// a worker-thread version, matching `ContainerService`'s own
+        /// threading, is the upgrade if a slow or unreachable connection
+        /// ever makes this noticeably block the dialog.
+        #[qinvokable]
+        #[cxx_name = "composeServices"]
+        fn compose_services(
+            self: &RunConfigEditor,
+            connection_id: &QString,
+            files: &QString,
+        ) -> QString;
     }
 
     extern "RustQt" {

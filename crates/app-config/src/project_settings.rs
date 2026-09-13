@@ -542,6 +542,60 @@ mod tests {
     }
 
     #[test]
+    fn a_container_image_run_config_round_trips_with_its_sub_table() {
+        let root = project();
+        update(root.path(), |s| {
+            s.run_configs = Some(vec![RunConfigSetting {
+                id: "run-image".into(),
+                name: "nginx".into(),
+                kind: Some("container-image".into()),
+                container_image: Some(crate::container_run::ContainerImageRunSetting {
+                    connection_id: "local-docker".into(),
+                    image: "nginx:1.27".into(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]);
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        let configs = loaded.run_configs.expect("run configs");
+        assert_eq!(configs[0].kind.as_deref(), Some("container-image"));
+        let image = configs[0]
+            .container_image
+            .as_ref()
+            .expect("container_image");
+        assert_eq!(image.image, "nginx:1.27");
+        assert!(configs[0].containerfile.is_none());
+        assert!(configs[0].compose.is_none());
+    }
+
+    #[test]
+    fn a_plain_process_run_config_still_writes_no_kind_or_container_tables() {
+        // A file written before C5 (or a config nobody ever touched the
+        // container fields of) must round-trip byte-for-byte: no stray
+        // `kind = "process"` or empty sub-tables appear.
+        let root = project();
+        update(root.path(), |s| {
+            s.run_configs = Some(vec![RunConfigSetting {
+                id: "run-1".into(),
+                name: "cargo run".into(),
+                program: "cargo".into(),
+                args: vec!["run".into()],
+                ..Default::default()
+            }]);
+        })
+        .unwrap();
+
+        let text = fs::read_to_string(root.path().join(".ide/settings.toml")).unwrap();
+        assert!(!text.contains("kind"), "{text}");
+        assert!(!text.contains("container_image"), "{text}");
+        assert!(!text.contains("containerfile"), "{text}");
+        assert!(!text.contains("compose"), "{text}");
+    }
+
+    #[test]
     fn terminal_settings_round_trip() {
         let root = project();
         update(root.path(), |s| {

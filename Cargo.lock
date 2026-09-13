@@ -5118,6 +5118,7 @@ name = "run-core"
 version = "0.1.0"
 dependencies = [
  "app-config",
+ "container-core",
  "process-exec",
  "pty-core",
  "regex",

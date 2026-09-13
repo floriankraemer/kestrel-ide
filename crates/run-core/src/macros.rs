@@ -23,6 +23,15 @@ pub struct MacroContext {
     /// The file the launch was started from — set by run-from-context, empty
     /// for a configuration launched from the toolbar.
     pub file: Option<PathBuf>,
+    /// The `[containers]` section (C5, ADR-0056), needed only by a
+    /// container-kind configuration's `connection_id` lookup
+    /// (`crate::container_run::invocation_for`). `None` for every caller
+    /// that has not opted in — a plain process configuration never reads
+    /// this field, so every existing `MacroContext::for_project`/`for_file`
+    /// call site is unaffected. The smallest honest way to get container
+    /// settings to `RunConfigExt::to_launch_spec_in` without a second
+    /// method or a parameter added to every caller (see ADR-0056).
+    pub containers: Option<app_config::ContainerSettings>,
 }
 
 impl MacroContext {
@@ -31,6 +40,7 @@ impl MacroContext {
         Self {
             project_root: Some(project_root.into()),
             file: None,
+            containers: None,
         }
     }
 
@@ -39,7 +49,21 @@ impl MacroContext {
         Self {
             project_root: Some(project_root.into()),
             file: Some(file.into()),
+            containers: None,
         }
+    }
+
+    /// Attach the `[containers]` section a container-kind configuration's
+    /// connection is resolved against. Every launch entry point that can
+    /// reach a project's settings (`RunService::run`/`run_context`) calls
+    /// this before `to_launch_spec_in`; one that cannot (a `RunConfiguration`
+    /// before-launch task resolved via the plain `to_launch_spec`) leaves it
+    /// `None`, which reads as "no connection configured" — a documented gap,
+    /// not a silent one (see ADR-0056).
+    #[must_use]
+    pub fn with_containers(mut self, containers: app_config::ContainerSettings) -> Self {
+        self.containers = Some(containers);
+        self
     }
 
     fn value_of(&self, token: Token) -> Option<String> {

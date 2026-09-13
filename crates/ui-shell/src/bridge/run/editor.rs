@@ -10,7 +10,10 @@ use cxx_qt_lib::QString;
 use crate::bridge::errors;
 use crate::bridge::ffi::{self, FfiResult};
 
-use super::{current_project_root, env_from_string, to_ffi_run_config};
+use super::{
+    apply_container_json, current_project_root, effective_container_settings, env_from_string,
+    to_ffi_run_config,
+};
 
 /// Rust side of the `RunConfigEditor` QObject.
 #[derive(Default)]
@@ -87,10 +90,82 @@ impl ffi::RunConfigEditor {
         config.env = env_from_string(&form.env.to_string());
         config.allow_parallel = form.allow_parallel;
         config.before_launch = super::tasks_from_string(&form.before_launch.to_string());
+        apply_container_json(
+            config,
+            &form.kind.to_string(),
+            &form.container_json.to_string(),
+        );
         // Editing a temporary configuration is how IntelliJ's "Save
         // configuration" works: once it has been through the dialog it is
         // one the user meant to keep, so it stops being eviction fodder.
         config.temporary = false;
+    }
+
+    /// The shell-quoted command `form` would run — the container-kind
+    /// pages' live "Command preview" (C5, ADR-0056). Built from a scratch
+    /// configuration rather than the draft entry at `index`, so it reflects
+    /// the form as the user is still editing it, before Apply/OK commits
+    /// anything.
+    pub fn command_preview(&self, form: &ffi::FfiRunConfig) -> QString {
+        let mut scratch = run_core::RunConfig {
+            name: form.name.to_string(),
+            program: form.program.to_string(),
+            args: form
+                .args
+                .to_string()
+                .split_whitespace()
+                .map(str::to_string)
+                .collect(),
+            ..run_core::RunConfig::default()
+        };
+        apply_container_json(
+            &mut scratch,
+            &form.kind.to_string(),
+            &form.container_json.to_string(),
+        );
+
+        let root = current_project_root().unwrap_or_default();
+        let context = run_core::MacroContext::for_project(&root)
+            .with_containers(effective_container_settings());
+        let spec = {
+            use run_core::RunConfigExt as _;
+            scratch.to_launch_spec_in(&context)
+        };
+        let mut argv = vec![spec.program];
+        argv.extend(spec.args);
+        QString::from(container_core::run_config::preview(&argv).as_str())
+    }
+
+    /// `compose config --services` against `connection_id`, for the
+    /// Compose page's Services picker. `files` is `\n`-separated,
+    /// project-relative paths.
+    pub fn compose_services(&self, connection_id: &QString, files: &QString) -> QString {
+        let Some(root) = current_project_root() else {
+            return QString::default();
+        };
+        let containers = effective_container_settings();
+        let Some(row) = containers
+            .connections
+            .iter()
+            .find(|c| c.id == connection_id.to_string())
+        else {
+            return QString::default();
+        };
+        let connection = container_core::connection::ConnectionConfig::from_setting(row);
+        let invocation = container_core::connection::Invocation {
+            program: connection.compose_program(),
+            ..connection.invocation()
+        };
+        let files: Vec<String> = files
+            .to_string()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        let services = container_core::run_config::compose_services(&invocation, &files, &root)
+            .unwrap_or_default();
+        QString::from(services.join("\n").as_str())
     }
 
     /// The first problem that would stop the dialog closing — an empty

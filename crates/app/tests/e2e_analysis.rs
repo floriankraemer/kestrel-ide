@@ -280,9 +280,10 @@ fn e2e_analyzer_findings_appear_inline_and_in_problems() {
         (cursor(&mcp, tab_id).0 == 19).then_some(())
     });
     ide.key("F2");
-    e2e::wait_for("a second F2 to wrap back to the first diagnostic (line 10)", || {
-        (cursor(&mcp, tab_id).0 == 9).then_some(())
-    });
+    e2e::wait_for(
+        "a second F2 to wrap back to the first diagnostic (line 10)",
+        || (cursor(&mcp, tab_id).0 == 9).then_some(()),
+    );
 
     assert_eq!(ide.quit(), 0);
 }

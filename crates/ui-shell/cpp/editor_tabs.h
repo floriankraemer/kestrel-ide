@@ -15,6 +15,7 @@
 #include <QStringList>
 #include <functional>
 
+class QColor;
 class QLabel;
 class QMenu;
 class QPlainTextEdit;
@@ -482,6 +483,11 @@ public:
     // The icon theme changed under tabs that already hold their art: a tab
     // keeps the QIcon it opened with, unlike the tree and the result lists,
     // which rebuild their rows and pick the new art up on their own.
+    //
+    // Also re-renders every tab's VCS status colour (R6), so this same
+    // "re-render every open tab from scratch" loop is what `wireVcsService`
+    // calls on `statusChanged` too — a stage/unstage/commit changes each
+    // tab's colour exactly the way a theme switch changes its icon.
     void refreshTabIcons();
 
     void refreshHighlighting();
@@ -707,6 +713,11 @@ private:
     // view's own unsaved-changes dot — and the icon the tab's filename
     // resolves to, which is why a rename or a Save As repaints it here.
     void renderTabText(QTabWidget *group, int index, const QString &title, bool modified);
+    // A tab's title colour from `vcsService_->fileStatus(path)` (R6) —
+    // split out of `renderTabText` into editor_tabs_vcs.cpp, next to the
+    // rest of this file's VCS wiring, rather than growing editor_tabs.cpp
+    // itself past its size ceiling.
+    QColor vcsTabColor(const QString &path) const;
 
     // Writes the tab's content to disk. Shows an error dialog and leaves the
     // dirty state set on failure (US-4: no silent data loss). Returns

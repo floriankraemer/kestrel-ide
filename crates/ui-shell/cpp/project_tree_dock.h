@@ -71,12 +71,17 @@ struct ProjectTreeDock
 };
 
 // Builds the Project dock: the toolbar (sort, locate), the tree view, the
-// icon-decoration proxy between it and the model, and the dock widget
-// itself, docked left of `editorArea`.
+// icon-decoration and VCS-status-colour proxies between it and the model,
+// and the dock widget itself, docked left of `editorArea`.
+//
+// `vcsService` may be null (no VCS service at all, same as
+// `ProjectTreeActions::vcsService`); the colour proxy then always answers
+// the identity model's own colour.
 ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
                                       ads::CDockAreaWidget *editorArea,
                                       ProjectTreeModel *treeModel,
-                                      DockRegistry *docks);
+                                      DockRegistry *docks,
+                                      VcsService *vcsService);
 
 // Wires the tree's gestures: click to open, right-click for the
 // create/rename/delete/attach menu (US-2b), and the locate action's reveal-

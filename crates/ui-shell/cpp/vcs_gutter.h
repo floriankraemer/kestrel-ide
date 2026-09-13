@@ -41,16 +41,26 @@ struct ChangeMarker
 // consumer (a minimap, a changes-panel row) without a second table.
 QColor changeMarkerColor(ChangeMarkerKind kind);
 
-// The hunk popup (F3-16): Revert / Show Diff / Stage, shown synchronously at
-// `globalPos`. Each callback runs when its entry is chosen; a null callback
-// omits that entry rather than showing it disabled, since none of the three
-// actions is ever conditionally unavailable at the point this is called —
-// the caller only builds the ones it can perform for `path`.
+// The hunk popup (F3-16/R6): Revert / Show Diff / Stage Hunk / Unstage Hunk
+// / Stage File, shown synchronously at `globalPos`. Each callback runs when
+// its entry is chosen; a null callback omits that entry rather than showing
+// it disabled — the caller only builds the ones it can perform for `path`.
+//
+// `stageHunk`/`unstageHunk` both being offered regardless of whether the
+// hunk is already (partially) staged is a deliberate simplification:
+// `VcsService::stageHunk`/`unstageHunk` are no-ops when there is nothing on
+// their side left to change (`vcs_core::Repository::stage_hunk_matching`/
+// `unstage_hunk_matching` return `Ok(false)`), so offering both costs
+// nothing beyond a menu entry that does nothing on a given click — cheaper
+// than a bridge round trip to classify the hunk before deciding which of
+// the two to grey out.
 struct HunkPopupActions
 {
     std::function<void()> revert;
     std::function<void()> showDiff;
-    std::function<void()> stage;
+    std::function<void()> stageHunk;
+    std::function<void()> unstageHunk;
+    std::function<void()> stageFile;
 };
 
 void showHunkPopup(QWidget *parent, const QPoint &globalPos, const HunkPopupActions &actions);

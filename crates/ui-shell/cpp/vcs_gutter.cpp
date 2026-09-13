@@ -30,9 +30,17 @@ void showHunkPopup(QWidget *parent, const QPoint &globalPos, const HunkPopupActi
         QObject::connect(menu.addAction(QObject::tr("Show Diff")), &QAction::triggered, &menu,
                           [&actions]() { actions.showDiff(); });
     }
-    if (actions.stage) {
+    if (actions.stageHunk) {
+        QObject::connect(menu.addAction(QObject::tr("Stage Hunk")), &QAction::triggered, &menu,
+                          [&actions]() { actions.stageHunk(); });
+    }
+    if (actions.unstageHunk) {
+        QObject::connect(menu.addAction(QObject::tr("Unstage Hunk")), &QAction::triggered, &menu,
+                          [&actions]() { actions.unstageHunk(); });
+    }
+    if (actions.stageFile) {
         QObject::connect(menu.addAction(QObject::tr("Stage File")), &QAction::triggered, &menu,
-                          [&actions]() { actions.stage(); });
+                          [&actions]() { actions.stageFile(); });
     }
     if (actions.revert) {
         QObject::connect(menu.addAction(QObject::tr("Revert Hunk")), &QAction::triggered, &menu,

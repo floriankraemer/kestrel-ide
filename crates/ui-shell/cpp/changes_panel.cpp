@@ -6,6 +6,7 @@
 #include "theme.h"
 
 #include <QAction>
+#include <QComboBox>
 #include <QFileInfo>
 #include <QFont>
 #include <QGuiApplication>
@@ -108,30 +109,6 @@ QString changeKindLetter(FfiChangeKind kind)
         break;
     }
     return QString();
-}
-
-// The plan's colour table, read from the theme rather than hardcoded so a
-// colour picked here and one picked in QSS never drift apart.
-QColor changeKindColor(FfiChangeKind kind)
-{
-    const DiffColors diff = diffColorsForTheme(activeThemeName());
-    switch (kind) {
-    case FfiChangeKind::Added:
-    case FfiChangeKind::Untracked:
-        return diff.addedMarker;
-    case FfiChangeKind::Modified:
-    case FfiChangeKind::Renamed:
-    case FfiChangeKind::Copied:
-    case FfiChangeKind::TypeChanged:
-        return diff.modifiedMarker;
-    case FfiChangeKind::Deleted:
-        return diff.deletedMarker;
-    case FfiChangeKind::Conflicted:
-        return semanticColorsForTheme(activeThemeName()).error;
-    case FfiChangeKind::None:
-        break;
-    }
-    return QColor();
 }
 
 QTreeWidgetItem *makeGroup(QTreeWidget *tree, const QString &title)
@@ -289,6 +266,22 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     });
     connect(tree_, &QTreeWidget::customContextMenuRequested, this, &ChangesPanel::showContextMenu);
 
+    messageHistory_ = new QComboBox(this);
+    messageHistory_->setEditable(false);
+    messageHistory_->setPlaceholderText(tr("Recent commit messages…"));
+    // -1 (nothing selected) until a row is chosen; picking one never
+    // commits by itself, only fills the message box below, so the index is
+    // reset afterwards rather than staying on the chosen row — otherwise
+    // re-choosing the same, still-selected entry a second time would not
+    // fire `currentIndexChanged` at all.
+    connect(messageHistory_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        if (index < 0) {
+            return;
+        }
+        messageEdit_->setPlainText(messageHistory_->itemText(index));
+        messageHistory_->setCurrentIndex(-1);
+    });
+
     messageEdit_ = new QPlainTextEdit(this);
     messageEdit_->setPlaceholderText(tr("Commit message"));
     messageEdit_->setMaximumHeight(80);
@@ -308,6 +301,7 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     repoLayout->setContentsMargins(0, 0, 0, 0);
     repoLayout->addWidget(toolbar_);
     repoLayout->addWidget(tree_, 1);
+    repoLayout->addWidget(messageHistory_);
     repoLayout->addWidget(messageEdit_);
     repoLayout->addLayout(buttonRow);
 
@@ -350,8 +344,21 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
             [this]() { doCommit(/*amend=*/false, /*push=*/false); });
     connect(commitAndPushButton_, &QPushButton::clicked, this,
             [this]() { doCommit(/*amend=*/false, /*push=*/true); });
-    connect(amendButton_, &QPushButton::clicked, this,
-            [this]() { doCommit(/*amend=*/true, /*push=*/false); });
+    connect(amendButton_, &QPushButton::clicked, this, [this]() {
+        // Prefill from HEAD's own message rather than demand a fresh one
+        // every time (R6) — only when the box is still empty, so a message
+        // already typed (or picked from history) is never clobbered.
+        // Reviewing the prefilled text before it commits needs one more
+        // click, same as every other Commit/Amend button here.
+        if (messageEdit_->toPlainText().trimmed().isEmpty()) {
+            const QString headMessage = vcsService_->headMessage().trimmed();
+            if (!headMessage.isEmpty()) {
+                messageEdit_->setPlainText(headMessage);
+                return;
+            }
+        }
+        doCommit(/*amend=*/true, /*push=*/false);
+    });
     connect(initButton_, &QPushButton::clicked, vcsService_,
             [this]() { vcsService_->initRepository(); });
     connect(notNowButton_, &QPushButton::clicked, vcsService_, [this]() {
@@ -393,6 +400,13 @@ void ChangesPanel::refresh()
     if (!vcsService_->isRepository()) {
         return;
     }
+
+    messageHistory_->clear();
+    const ::rust::Vec<FfiCommitMessage> history = vcsService_->commitHistory();
+    for (const auto &entry : history) {
+        messageHistory_->addItem(entry.message);
+    }
+    messageHistory_->setCurrentIndex(-1);
 
     populating_ = true;
     tree_->clear();

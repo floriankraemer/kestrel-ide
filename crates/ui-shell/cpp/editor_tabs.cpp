@@ -876,9 +876,11 @@ void EditorTabs::handleExternalChange(quint64 tabId, const QString &path)
 void EditorTabs::renderTabText(QTabWidget *group, int index, const QString &title, bool modified)
 {
     group->setTabText(index, modified ? title + QStringLiteral(" •") : title);
-    group->setTabIcon(index,
-                      fileIcon(docManager_->tabPath(tabIdAt(group, index)),
-                               group->iconSize().width()));
+    const QString path = docManager_->tabPath(tabIdAt(group, index));
+    group->setTabIcon(index, fileIcon(path, group->iconSize().width()));
+    // R6: an invalid QColor (no VCS service, no path, or no pending
+    // change) resets the tab to its default text colour.
+    group->tabBar()->setTabTextColor(index, vcsTabColor(path));
 }
 
 bool EditorTabs::saveTab(QTabWidget *group, int index)

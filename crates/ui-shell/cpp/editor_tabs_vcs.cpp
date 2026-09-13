@@ -5,6 +5,7 @@
 #include "diff_view.h"
 #include "diff_view_page.h"
 #include "e2e_mark.h"
+#include "theme.h"
 #include "vcs_gutter.h"
 
 #include <QFile>
@@ -78,11 +79,35 @@ void wireVcsService(VcsService *vcsService, ProjectTreeModel *treeModel, EditorT
                       [editorTabs](const QString &path, const ::rust::Vec<FfiBlameLine> &lines) {
                           editorTabs->applyVcsBlame(path, lines);
                       });
+    // Tab titles are coloured by VCS status (R6); `refreshTabIcons` already
+    // re-renders every open tab's title/icon from scratch, which is exactly
+    // what a stage/unstage/commit needs too — reused rather than a second,
+    // near-identical loop.
+    QObject::connect(vcsService, &VcsService::statusChanged, editorTabs,
+                      [editorTabs]() { editorTabs->refreshTabIcons(); });
 }
 
 void EditorTabs::setVcsService(VcsService *vcsService)
 {
     vcsService_ = vcsService;
+}
+
+QColor EditorTabs::vcsTabColor(const QString &path) const
+{
+    // Coloured by VCS status (R6) — the same `changeKindColor` table the
+    // project tree and the Changes dock's status letter read from, so a
+    // modified/added/untracked tab reads apart from a clean one without
+    // opening the Changes dock.
+    if (vcsService_ == nullptr || path.isEmpty()) {
+        return QColor();
+    }
+    const FfiChangedFile status = vcsService_->fileStatus(path);
+    if (status.path.isEmpty()) {
+        return QColor();
+    }
+    const FfiChangeKind kind =
+      status.unstaged != FfiChangeKind::None ? status.unstaged : status.staged;
+    return changeKindColor(kind);
 }
 
 void EditorTabs::setDiffPanel(DiffPanel *diffPanel, std::function<void()> revealDiffDock)
@@ -540,14 +565,9 @@ void EditorTabs::onChangeMarkerClicked(CodeEditor *editor, int hunkIndex, const 
             applyEditsTo(editor, edits);
         }
     };
-    actions.stage = [this, path]() {
-        // Whole-file staging: precise per-hunk staging needs the hunk
-        // between the index and the worktree, and this gutter only ever
-        // has the hunk between HEAD and the worktree (see
-        // VcsService::stageHunk's own doc comment). Correct per-hunk
-        // staging belongs to F3-17's Changes dock.
-        vcsService_->stageFile(path);
-    };
+    actions.stageHunk = [this, path, hunkIndex]() { vcsService_->stageHunk(path, hunkIndex); };
+    actions.unstageHunk = [this, path, hunkIndex]() { vcsService_->unstageHunk(path, hunkIndex); };
+    actions.stageFile = [this, path]() { vcsService_->stageFile(path); };
     actions.showDiff = [this, editor, tabId, path]() { openEditableDiffWindow(tabId, editor, path); };
 
     showHunkPopup(window_, globalPos, actions);

@@ -7,6 +7,7 @@
 #include <QWidget>
 #include <functional>
 
+class QComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
@@ -30,13 +31,12 @@ class ChangesToolbar;
 // from `changedFiles()`/`branchStatus()` and turns a checkbox toggle or a
 // context-menu entry into the matching `VcsService` call.
 //
-// Deliberately per-file only, not per-hunk: `VcsService::stageHunk`/
-// `unstageHunk`'s own doc comment already flags that they diff against
-// `HEAD`, not the index, and are "increasingly wrong the more of the file is
-// already staged" — correct per-hunk staging needs an index-blob read this
-// dock does not have. The gutter's hunk popup (F3-16) already covers the
-// per-hunk case for an open file; this dock covers the whole-file case for
-// every changed file, open or not.
+// Deliberately per-file only, not per-hunk, here: the gutter's hunk popup
+// (F3-16/R6, now correctly staging/unstaging against the index — see
+// `vcs_core::Repository::stage_hunk_matching`) already covers the per-hunk
+// case for an open file; this dock covers the whole-file case for every
+// changed file, open or not, which is the more common Changes-dock action
+// and does not need a live buffer the way a hunk diff does.
 class ChangesPanel : public QWidget
 {
 public:
@@ -73,6 +73,11 @@ private:
     std::function<void(const QString &)> showFileHistory_;
     ChangesToolbar *toolbar_ = nullptr;
     QTreeWidget *tree_ = nullptr;
+    // Commit-message history (R6): last 25 messages for this project,
+    // newest first, refreshed from `commitHistory()` every time the dock
+    // becomes visible. Picking a row fills `messageEdit_`; it never commits
+    // by itself.
+    QComboBox *messageHistory_ = nullptr;
     QPlainTextEdit *messageEdit_ = nullptr;
     QPushButton *commitButton_ = nullptr;
     QPushButton *commitAndPushButton_ = nullptr;

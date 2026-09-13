@@ -78,6 +78,12 @@ pub struct EditingSettings {
     /// not a zero-sentinel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wrap_column: Option<u32>,
+    /// Whether the editor actually reflows text at `wrap_column` (soft
+    /// wrap), rather than only painting the guide line there. `None` means
+    /// "never chosen" — a bare `bool` would make the derived `Default` say
+    /// "on" and start reflowing every existing user's files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soft_wrap: Option<bool>,
     /// Encoding name used when a file gives no clue about its own, e.g.
     /// `"utf-8"`. Opaque to this crate. Empty means "never chosen".
     #[serde(default)]
@@ -131,6 +137,14 @@ impl EditingSettings {
             None | Some(0) => 0,
             Some(column) => column.clamp(MIN_WRAP_COLUMN, MAX_WRAP_COLUMN),
         }
+    }
+
+    /// Whether to soft-wrap at `wrap_column`. Off by default: the guide
+    /// line alone is the IntelliJ-style default, and turning reflow on
+    /// underneath a user who never asked for it would move every line on
+    /// screen.
+    pub fn soft_wrap_or_default(&self) -> bool {
+        self.soft_wrap.unwrap_or(false)
     }
 
     /// The assumed encoding name, defaulted when unset.

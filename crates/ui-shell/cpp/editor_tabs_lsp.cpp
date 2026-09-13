@@ -578,6 +578,10 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         return spans;
     });
     editor->setEditorTabWidth(static_cast<int>(editorOps_->tabWidthForTab(tabId)));
+    // R1: the wrap guide and soft-wrap mode, both resolved for this tab's
+    // language the same way the tab width above is.
+    editor->setWrapColumn(static_cast<int>(editorOps_->wrapColumnForTab(tabId)));
+    editor->setSoftWrapEnabled(editorOps_->softWrapForTab(tabId));
     // Y2: self-parents to editor->document(), no manual lifetime
     // management needed. Plain text (a file no language claims) yields
     // no spans from the incremental highlighter, so this is a
@@ -732,6 +736,19 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         applyEditsTo(editor, editorOps_->newline(tabId, editor->toPlainText()));
         refreshCarets(editor);
     });
+    // R1: Tab/Shift+Tab.
+    connect(editor, &CodeEditor::multiCaretIndent, this, [this, editor, tabId](bool outdent) {
+        applyEditsTo(editor, editorOps_->indentSelection(tabId, editor->toPlainText(), outdent));
+        refreshCarets(editor);
+    });
+    // R1: an arrow/Home/End/word-move key with more than one caret active —
+    // no text changes, just where the carets are, so this only refreshes
+    // them rather than going through applyEditsTo.
+    connect(editor, &CodeEditor::multiCaretMove, this,
+            [this, editor, tabId](quint8 motion, bool extend) {
+        editorOps_->moveCarets(tabId, editor->toPlainText(), motion, extend);
+        refreshCarets(editor);
+    });
     connect(editor, &CodeEditor::caretAddRequested, this, [this, editor, tabId](int position) {
         editorOps_->addCaretAt(tabId, editor->toPlainText(), static_cast<quint32>(position));
         refreshCarets(editor);
@@ -788,6 +805,22 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
                                       static_cast<quint32>(cursor.position()), true});
             editorOps_->setCarets(tabId, editor->toPlainText(), carets);
         }
+        // R1: the live bracket-pair highlight, refreshed on every caret
+        // settle like the intentions bulb below it.
+        const FfiBracketPair pair =
+          editorOps_->bracketPairAt(tabId, editor->toPlainText(),
+                                    static_cast<quint32>(cursor.position()));
+        QVector<BracketPairSpan> pairSpans;
+        if (pair.has_bracket) {
+            pairSpans.append(BracketPairSpan{static_cast<int>(pair.bracket_start),
+                                             static_cast<int>(pair.bracket_end),
+                                             pair.has_partner});
+            if (pair.has_partner) {
+                pairSpans.append(BracketPairSpan{static_cast<int>(pair.partner_start),
+                                                 static_cast<int>(pair.partner_end), true});
+            }
+        }
+        editor->setBracketPairSpans(pairSpans);
         docManager_->setCursorPosition(tabId, static_cast<quint32>(cursor.blockNumber()),
                                         static_cast<quint32>(cursor.columnNumber()));
         if (activeGroup_ && activeGroup_->currentWidget() == editor) {

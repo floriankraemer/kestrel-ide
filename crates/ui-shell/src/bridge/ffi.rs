@@ -231,6 +231,22 @@ mod ffi {
         category: u8,
     }
 
+    /// The bracket at a document position and its partner, from
+    /// `EditorOps::bracketPairAt` — the live pair highlight (R1). Positions
+    /// are flat document UTF-16 offsets, same as `FfiCaret`. `has_bracket`
+    /// false means the position is not on a bracket at all; `has_partner`
+    /// false with `has_bracket` true is an unmatched bracket, painted in the
+    /// error colour rather than not painted at all.
+    #[derive(Default)]
+    struct FfiBracketPair {
+        has_bracket: bool,
+        bracket_start: u32,
+        bracket_end: u32,
+        has_partner: bool,
+        partner_start: u32,
+        partner_end: u32,
+    }
+
     /// One in-editor find match, as a half-open `[start, end)` range of
     /// UTF-16 code units — the unit `QTextCursor::setPosition` takes, so
     /// the view can use these directly without an offset table (unlike
@@ -3716,6 +3732,55 @@ mod ffi {
         #[cxx_name = "matchingBracket"]
         fn matching_bracket(self: &EditorOps, tab_id: u64, text: &QString, position: u32) -> i64;
 
+        /// The bracket at `position` and its partner, for the live pair
+        /// highlight — unlike `matchingBracket`, names an unmatched bracket
+        /// too rather than answering nothing.
+        #[qinvokable]
+        #[cxx_name = "bracketPairAt"]
+        fn bracket_pair_at(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            position: u32,
+        ) -> FfiBracketPair;
+
+        /// Left/Right/Up/Down/Home/End/word-move with more than one caret
+        /// active: every caret moves, not just the primary (ADR-0023
+        /// follow-up). `motion` is `CodeEditor`'s own constant; `extend` is
+        /// Shift held.
+        #[qinvokable]
+        #[cxx_name = "moveCarets"]
+        fn move_carets(
+            self: Pin<&mut EditorOps>,
+            tab_id: u64,
+            text: &QString,
+            motion: u8,
+            extend: bool,
+        );
+
+        /// The column this tab's language wants the wrap guide at, `0` for
+        /// never.
+        #[qinvokable]
+        #[cxx_name = "wrapColumnForTab"]
+        fn wrap_column_for_tab(self: &EditorOps, tab_id: u64) -> u32;
+
+        /// Whether this tab's language wants text reflowed at that column.
+        #[qinvokable]
+        #[cxx_name = "softWrapForTab"]
+        fn soft_wrap_for_tab(self: &EditorOps, tab_id: u64) -> bool;
+
+        /// The cached global soft-wrap setting, for the View menu's toggle
+        /// to show its current state when built.
+        #[qinvokable]
+        #[cxx_name = "softWrapEnabled"]
+        fn soft_wrap_enabled(self: &EditorOps) -> bool;
+
+        /// View > Soft Wrap: flips and persists the global soft-wrap
+        /// setting, returning the new state.
+        #[qinvokable]
+        #[cxx_name = "toggleSoftWrap"]
+        fn toggle_soft_wrap(self: Pin<&mut EditorOps>) -> bool;
+
         /// The edits a save would make before it writes the file (F1-11):
         /// trim, final newline, line-ending normalisation. Splice these
         /// into the buffer first so the tidying is one undo entry, then
@@ -5389,6 +5454,8 @@ mod ffi {
         insert_final_newline: bool,
         has_wrap_column: bool,
         wrap_column: u32,
+        has_soft_wrap: bool,
+        soft_wrap: bool,
         default_encoding: QString,
         line_endings: QString,
     }

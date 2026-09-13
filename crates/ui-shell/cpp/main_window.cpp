@@ -1021,6 +1021,7 @@ void buildMainWindow(AppSettings *appSettings,
     QObject::connect(previewViewAction, &QAction::triggered, window,
                       [central]() { central.docks->show(QStringLiteral("preview")); });
     wirePreviewModeAction(viewMenu, central.editorTabs, appSettings, *actions);
+    wireSoftWrapToggle(viewMenu, appSettings, *actions, central.editorTabs);
     QAction *problemsAction = registerAction(viewMenu, QStringLiteral("view.problems"),
                                              QObject::tr("Problems"), appSettings, *actions);
     QObject::connect(problemsAction, &QAction::triggered, window, [central]() {
@@ -1066,8 +1067,7 @@ void buildMainWindow(AppSettings *appSettings,
     buildVcsMenu(window, vcsService, appSettings, *actions, editorTabs, central.docks,
                  central.fileHistoryPanel, viewMenu);
     buildRunMenu(window, runService, runConfigEditor, appSettings, *actions, central.docks,
-                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel,
-                 viewMenu);
+                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);

@@ -55,8 +55,9 @@ They do not blink — one timer driving two blink phases is how a secondary care
 ### 7. A ceiling, stated rather than discovered
 
 `SelectionSet` refuses past `MAX_CARETS`, returning a typed refusal (ADR-0003) rather than silently truncating or degrading.
-Likewise, only printable keys, backspace, delete and newline route through the multi-caret path; arrows, Home, End and other navigation drop the secondary carets and do exactly what they always did.
-Moving N carets together is its own rule and belongs in `editor_core::selection` when it is built, not improvised in the view.
+Originally, only printable keys, backspace, delete and newline routed through the multi-caret path; arrows, Home, End and other navigation dropped the secondary carets and did exactly what they always did — moving N carets together was left as its own rule, to be built in `editor_core::selection` rather than improvised in the view.
+R1 (`docs/architecture/intellij-parity-refinement-plan.md`) built that rule: `SelectionSet::move_carets` takes a `CaretMotion` and moves every caret at once, and `CodeEditor::keyPressEvent` routes Left/Right/Up/Down/Home/End and the Ctrl+word-move combos through it whenever more than one caret is active.
+Every *other* key still drops the secondary carets and falls through to the single-cursor default — Tab/Shift+Tab go through `edit_ops::indent` instead (their own per-caret transaction, not a caret motion), and a shortcut, a fold toggle or anything not in `CaretMotion` still collapses to the primary caret, which remains the stated ceiling for everything this ADR did not name above.
 
 ## Consequences
 

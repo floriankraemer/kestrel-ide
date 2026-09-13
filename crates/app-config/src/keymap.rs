@@ -207,6 +207,26 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Edit",
         default_shortcut: "Ctrl+]",
     },
+    // R1: `code_editor.cpp` binds Tab/Shift+Tab directly in
+    // `keyPressEvent` rather than through a `QAction` — Tab is a widget
+    // navigation key, and giving it a real shortcut here would fight
+    // focus-order handling everywhere else in the app. These two entries
+    // exist so the Keymap settings page can show and document them, and so
+    // a conflict check against another action's shortcut still catches a
+    // user trying to bind something else to Tab; they are not independently
+    // rebindable the way every other entry in this catalog is.
+    ActionDef {
+        id: "edit.indent",
+        label: "Indent Line or Selection",
+        category: "Edit",
+        default_shortcut: "Tab",
+    },
+    ActionDef {
+        id: "edit.unindent",
+        label: "Unindent Line or Selection",
+        category: "Edit",
+        default_shortcut: "Shift+Tab",
+    },
     ActionDef {
         id: "code.reformat",
         label: "Reformat Code",
@@ -361,6 +381,14 @@ pub const ACTIONS: &[ActionDef] = &[
         // is free; Ctrl+Shift+V, the shortcut the same gesture carries in
         // some other editors, is already Terminal's Paste.
         default_shortcut: "Ctrl+Shift+M",
+    },
+    ActionDef {
+        id: "view.toggleSoftWrap",
+        label: "Soft Wrap",
+        category: "View",
+        // No default in IntelliJ either — a user who wants it reaches for
+        // the menu, not muscle memory.
+        default_shortcut: "",
     },
     ActionDef {
         id: "view.findAction",

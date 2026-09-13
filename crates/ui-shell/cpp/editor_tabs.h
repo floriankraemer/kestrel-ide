@@ -259,6 +259,15 @@ public:
     void setInlayHintsEnabled(bool enabled);
     bool inlayHintsEnabled() const { return inlayHintsEnabled_; }
 
+    // R1: view.toggleSoftWrap. Flips and persists the global setting
+    // through `EditorOps::toggleSoftWrap`, then re-resolves every open
+    // editor's wrap mode (so a per-language override, if one is set, keeps
+    // winning over the global flip) — the same live-apply convention
+    // setInlayHintsEnabled above uses. Returns the new global state, for
+    // the menu action to show.
+    bool toggleSoftWrap();
+    bool softWrapEnabled() const;
+
     // code.collapseAll / code.expandAll: the current tab only, unlike
     // setInlayHintsEnabled above — folding is per-editor view state, not a
     // setting that should retroactively apply to every open tab.

@@ -27,4 +27,12 @@ class EditorTabs;
 void buildEditingActions(QMenu *editMenu, QWidget *window, AppSettings *appSettings,
                          QHash<QString, QAction *> &actions, EditorTabs *editorTabs);
 
+// R1: View > Soft Wrap. A checkable toggle rather than a plain
+// `registerAction`/`triggered` pair like `wirePreviewModeAction` — its
+// checked state has to track the persisted setting, which a hand-edited
+// settings file or the Editing settings page can also change, not just this
+// action.
+void wireSoftWrapToggle(QMenu *viewMenu, AppSettings *appSettings,
+                        QHash<QString, QAction *> &actions, EditorTabs *editorTabs);
+
 } // namespace ui_shell

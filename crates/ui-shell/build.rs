@@ -453,6 +453,11 @@ fn main() {
         .cpp_file("cpp/code_editor.h")
         .cpp_file("cpp/code_editor.cpp")
         .cpp_file("cpp/code_editor_gutter.cpp")
+        // R1: `code_editor.cpp` reached the 1200-line ceiling again with the
+        // wrap guide and live bracket-pair highlight; its whole paint
+        // surface (paintEvent, highlightCurrentLine) moved here, the same
+        // split code_editor_gutter.cpp already made for the gutter.
+        .cpp_file("cpp/code_editor_paint.cpp")
         // Editor minimap (issue #199): no Q_OBJECT, so only the source is
         // listed, same as vcs_gutter.cpp below.
         .cpp_file("cpp/minimap.cpp")

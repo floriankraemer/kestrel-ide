@@ -147,6 +147,18 @@ struct InlineValueSpan
     }
 };
 
+// R1: the bracket pair under the caret, view-local like every other span
+// here — converted from `FfiBracketPair` by whoever owns the mapping
+// (EditorTabs). `matched` false paints in the error colour rather than the
+// ordinary pair-highlight colour; a caret not on any bracket produces an
+// empty vector, not an entry.
+struct BracketPairSpan
+{
+    int start;
+    int end;
+    bool matched;
+};
+
 // One classified space/tab character (show-whitespace-characters task),
 // view-local for the same reason FoldRange and DiagnosticSpan are:
 // converted from FfiWhitespaceSpan by whoever owns the mapping (EditorTabs),
@@ -420,6 +432,20 @@ public:
     void setBlameEnabled(bool enabled);
     bool blameEnabled() const { return blameEnabled_; }
 
+    // R1: the wrap guide's column, `0` for none — painted as a vertical
+    // line, the same IntelliJ-style default as a right margin marker.
+    void setWrapColumn(int column);
+
+    // R1: whether this editor reflows text at `wrapColumn` (soft wrap)
+    // rather than only guiding it. Independent of the guide line itself —
+    // a project may want the marker without the reflow.
+    void setSoftWrapEnabled(bool enabled);
+    bool softWrapEnabled() const { return softWrapEnabled_; }
+
+    // R1: the bracket pair under the caret, refreshed on every caret move.
+    // Empty means the caret is not on a bracket at all.
+    void setBracketPairSpans(const QVector<BracketPairSpan> &spans);
+
 signals:
     // N7: Ctrl+Click landed on an identifier-shaped word. `position` is a
     // document (UTF-16) position inside that word; converting it to the
@@ -484,6 +510,16 @@ signals:
     void multiCaretBackspace();
     void multiCaretDelete();
     void multiCaretNewline();
+
+    // R1: Tab/Shift+Tab. `outdent` is Shift+Tab (Qt's Key_Backtab).
+    void multiCaretIndent(bool outdent);
+
+    // R1: an arrow/Home/End/word-move key with more than one caret active —
+    // every caret moves instead of collapsing to the primary one
+    // (ADR-0023's ceiling, lifted for these keys). `motion` is one of the
+    // constants `EditorOpsRust::move_carets` declares; `extend` is Shift
+    // held.
+    void multiCaretMove(quint8 motion, bool extend);
 
     // F1-8: Ctrl+V (or a middle-click paste). `insertFromMimeData` is the
     // one correct override point regardless of how many carets there are —
@@ -689,6 +725,11 @@ private:
     // Where an Alt+Shift drag started, and whether one is in progress.
     int columnAnchor_ = -1;
     bool columnDragging_ = false;
+    // R1: the wrap guide's column (0 = none) and whether text actually
+    // reflows there.
+    int wrapColumn_ = 0;
+    bool softWrapEnabled_ = false;
+    QVector<BracketPairSpan> bracketPairSpans_;
 };
 
 // No Q_OBJECT: forwards paint events to CodeEditor, uses no signals/slots.

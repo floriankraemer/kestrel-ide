@@ -1271,6 +1271,8 @@ fn to_ffi_editing_row(
         insert_final_newline: settings.insert_final_newline.unwrap_or(false),
         has_wrap_column: settings.wrap_column.is_some(),
         wrap_column: settings.wrap_column.unwrap_or(0),
+        has_soft_wrap: settings.soft_wrap.is_some(),
+        soft_wrap: settings.soft_wrap.unwrap_or(false),
         default_encoding: QString::from(settings.default_encoding.as_str()),
         line_endings: QString::from(settings.line_endings.as_str()),
     }
@@ -1287,6 +1289,7 @@ fn from_ffi_editing_row(row: &FfiEditingRow) -> app_config::editing::EditingSett
             .has_insert_final_newline
             .then_some(row.insert_final_newline),
         wrap_column: row.has_wrap_column.then_some(row.wrap_column),
+        soft_wrap: row.has_soft_wrap.then_some(row.soft_wrap),
         default_encoding: row.default_encoding.to_string(),
         line_endings: row.line_endings.to_string(),
         languages: HashMap::new(),

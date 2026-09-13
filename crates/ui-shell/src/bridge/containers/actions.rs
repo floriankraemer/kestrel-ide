@@ -24,18 +24,42 @@ use super::service;
 
 /// Parse a tree node id (`container_core::tree::flatten`'s
 /// `"<conn>/<kind>/<resource-id>"`) into `(connection_id, resource_id)`,
-/// for a node of kind `container`. Container ids are hex and never contain
-/// `/`, so this is exact, not heuristic.
-pub(super) fn parse_container_node_id(node_id: &str) -> Option<(String, String)> {
+/// for a node of `kind`. Every resource id (container/image/network id,
+/// volume name) is either hex or a name the engine itself rejects `/` in,
+/// so this is exact, not heuristic.
+pub(super) fn parse_node_id(node_id: &str, kind: NodeKind) -> Option<(String, String)> {
     let (connection_id, rest) = node_id.split_once('/')?;
-    let (kind, resource_id) = rest.split_once('/')?;
-    if kind != NodeKind::Container.id() {
+    let (found_kind, resource_id) = rest.split_once('/')?;
+    if found_kind != kind.id() {
         return None;
     }
     if connection_id.is_empty() || resource_id.is_empty() {
         return None;
     }
     Some((connection_id.to_string(), resource_id.to_string()))
+}
+
+/// [`parse_node_id`] specialised to `container` — C3's original entry
+/// point, kept so its many call sites in this file and `sessions.rs` read
+/// the same as before C4 generalised the parser.
+pub(super) fn parse_container_node_id(node_id: &str) -> Option<(String, String)> {
+    parse_node_id(node_id, NodeKind::Container)
+}
+
+/// `cleanUp`'s `kind` string into a [`container_core::prune::CleanUpKind`]
+/// — the words a cpp `QAction`'s `data()` carries, kept stable since the
+/// view stores them (`containers_menu.cpp`'s Clean Up ▾ menu).
+fn parse_clean_up_kind(kind: &str) -> Option<container_core::prune::CleanUpKind> {
+    use container_core::prune::CleanUpKind;
+    Some(match kind {
+        "all" => CleanUpKind::All,
+        "stopped-containers" => CleanUpKind::StoppedContainers,
+        "unused-networks" => CleanUpKind::UnusedNetworks,
+        "unused-volumes" => CleanUpKind::UnusedVolumes,
+        "dangling-images" => CleanUpKind::DanglingImages,
+        "build-cache" => CleanUpKind::BuildCache,
+        _ => return None,
+    })
 }
 
 fn to_ffi_node_actions(actions: NodeActions) -> FfiNodeActions {
@@ -46,6 +70,12 @@ fn to_ffi_node_actions(actions: NodeActions) -> FfiNodeActions {
         can_pause: actions.can_pause,
         can_unpause: actions.can_unpause,
         can_remove: actions.can_remove,
+        can_pull: actions.can_pull,
+        can_tag: actions.can_tag,
+        can_create_container: actions.can_create_container,
+        can_copy: actions.can_copy,
+        can_clean_up: actions.can_clean_up,
+        can_create: actions.can_create,
     }
 }
 
@@ -74,13 +104,16 @@ fn node_status_from_ffi(status: ffi::FfiContainerNodeStatus) -> NodeStatus {
 impl ffi::ContainerService {
     pub fn node_actions(&self, node_id: &QString) -> FfiNodeActions {
         let node_id = node_id.to_string();
-        let status = self
+        let Some(node) = self
             .nodes()
             .into_iter()
             .find(|node| node.id.to_string() == node_id)
-            .map(|node| node_status_from_ffi(node.status))
-            .unwrap_or(NodeStatus::None);
-        to_ffi_node_actions(tree::actions_for(status))
+        else {
+            return FfiNodeActions::default();
+        };
+        let kind = NodeKind::from_id(&node.kind.to_string()).unwrap_or(NodeKind::Connection);
+        let status = node_status_from_ffi(node.status);
+        to_ffi_node_actions(tree::actions_for(kind, status))
     }
 
     pub fn start_container(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
@@ -164,6 +197,49 @@ impl ffi::ContainerService {
             QString::from(opened.title.as_str()),
             opened.newly_opened,
         );
+        FfiResult::default()
+    }
+
+    /// One "Clean Up" menu entry (C4): `kind` is one of
+    /// [`container_core::prune::CleanUpKind`]'s own ids
+    /// (`"all"`/`"stopped-containers"`/`"unused-networks"`/
+    /// `"unused-volumes"`/`"dangling-images"`/`"build-cache"`). Runs every
+    /// command the kind needs, in order, stopping at the first failure.
+    pub fn clean_up(
+        mut self: Pin<&mut Self>,
+        connection_id: &QString,
+        kind: &QString,
+    ) -> FfiResult {
+        let connection_id = connection_id.to_string();
+        let Some(kind) = parse_clean_up_kind(&kind.to_string()) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "unknown Clean Up kind");
+        };
+        let invocation = match service::connection_invocation(&connection_id) {
+            Ok(invocation) => invocation,
+            Err(result) => return result,
+        };
+        let engine = match service::connection_engine(&connection_id) {
+            Ok(engine) => engine,
+            Err(result) => return result,
+        };
+        if !container_core::prune::available(kind, engine) {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                "this Clean Up option is not available on this connection's engine",
+            );
+        }
+        let work_dir = service::work_dir();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let mut result: Result<(), OpError> = Ok(());
+            for command in container_core::prune::commands(kind, engine) {
+                if let Err(err) = ops::run_op(&invocation, &command, &work_dir) {
+                    result = Err(err);
+                    break;
+                }
+            }
+            report(qt_thread, QString::from(""), result, connection_id);
+        });
         FfiResult::default()
     }
 
@@ -285,6 +361,33 @@ mod tests {
             parse_container_node_id("d/container/3f2a9b"),
             Some(("d".to_string(), "3f2a9b".to_string()))
         );
+    }
+
+    #[test]
+    fn parses_every_clean_up_kind_and_rejects_unknown_words() {
+        use container_core::prune::CleanUpKind;
+        assert_eq!(parse_clean_up_kind("all"), Some(CleanUpKind::All));
+        assert_eq!(
+            parse_clean_up_kind("stopped-containers"),
+            Some(CleanUpKind::StoppedContainers)
+        );
+        assert_eq!(
+            parse_clean_up_kind("unused-networks"),
+            Some(CleanUpKind::UnusedNetworks)
+        );
+        assert_eq!(
+            parse_clean_up_kind("unused-volumes"),
+            Some(CleanUpKind::UnusedVolumes)
+        );
+        assert_eq!(
+            parse_clean_up_kind("dangling-images"),
+            Some(CleanUpKind::DanglingImages)
+        );
+        assert_eq!(
+            parse_clean_up_kind("build-cache"),
+            Some(CleanUpKind::BuildCache)
+        );
+        assert_eq!(parse_clean_up_kind("nonsense"), None);
     }
 
     #[test]

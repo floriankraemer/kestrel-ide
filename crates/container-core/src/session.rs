@@ -80,6 +80,13 @@ pub fn attach_session(invocation: &Invocation, id: &str) -> ShellSpec {
     )
 }
 
+/// `pull <reference>` — the Images console's Pull button (C4), shown as a
+/// "Pull: <reference>" `TerminalWidget` tab so progress lines reach the
+/// user exactly like every other streamed command in this crate.
+pub fn pull_session(invocation: &Invocation, reference: &str) -> ShellSpec {
+    shell_spec(invocation, vec!["pull".to_string(), reference.to_string()])
+}
+
 /// `inspect <id>`, pretty-printed — the Inspect tab's virtual document
 /// text. `kind` only chooses the message on failure (a container's vs. an
 /// image's vs. a network's `inspect`), the subcommand argv is identical.
@@ -120,6 +127,13 @@ mod tests {
             env: Vec::new(),
             host: process_exec::host::ExecHost::Local,
         }
+    }
+
+    #[test]
+    fn pull_session_argv() {
+        let spec = pull_session(&invocation(Engine::Docker), "nginx:1.27");
+        assert_eq!(spec.program, "docker");
+        assert_eq!(spec.args, vec!["pull", "nginx:1.27"]);
     }
 
     #[test]

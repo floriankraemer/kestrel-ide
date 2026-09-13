@@ -9,6 +9,7 @@
 #include <functional>
 
 class QAction;
+class QCompleter;
 class QLabel;
 class QLineEdit;
 class QTabWidget;
@@ -72,6 +73,23 @@ private:
     void showContainerContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
     void showContainersGroupContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
 
+    // containers_resources.cpp: image/network/volume context menus, the
+    // live Pull Image/Clean Up ▾ toolbar buttons, and the Create Network/
+    // Create Volume/Tag/Copy Image/Create Container dialogs (C4).
+    void buildResourceToolbar();
+    void showImageContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showNetworkContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showVolumeContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showImagesGroupContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showNetworksGroupContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showVolumesGroupContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void triggerPullImage();
+    void openCreateNetworkDialog(const QString &connectionId);
+    void openCreateVolumeDialog(const QString &connectionId);
+    void openTagDialog(const QString &nodeId);
+    void openCopyImageDialog(const QString &nodeId);
+    void openCreateContainerQuickDialog(const QString &nodeId);
+
     ContainerService *containerService_;
     OpenSettings openSettings_;
 
@@ -103,6 +121,12 @@ private:
     QToolButton *removeButton_ = nullptr;
 
     ContainerDetailArea *detail_ = nullptr;
+
+    // C4: the Images console row, shown at the top of the detail area only
+    // when the Images group is selected.
+    QWidget *imagesConsole_ = nullptr;
+    QLineEdit *pullEdit_ = nullptr;
+    QCompleter *pullCompleter_ = nullptr;
 
     // Rebuilt wholesale on every `treeChanged`, like `TestsPanel`; the
     // expansion and selection are carried across by row id.

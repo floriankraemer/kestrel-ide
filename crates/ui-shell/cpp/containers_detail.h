@@ -7,6 +7,9 @@
 
 #include <functional>
 
+class QLabel;
+class QListWidget;
+class QListWidgetItem;
 class QTableWidget;
 class QTabWidget;
 class QTreeWidget;
@@ -39,6 +42,11 @@ public:
                         AppSettings *appSettings, OpenAt openAt, QTabWidget *tabs,
                         QObject *parent = nullptr);
 
+    // The panel's own generic Name/ID/Status/Details page (tab 0) — this
+    // class swaps it out for a per-kind Dashboard when an image/network/
+    // volume is selected, and restores it otherwise.
+    void setGenericDashboardPage(QWidget *page);
+
     // Called on every tree selection change. Opens/replaces the Log tab
     // when `kind` is `"container"`; otherwise closes whatever this class
     // still has open for the previous one (Log/Processes/Files — Terminal/
@@ -54,6 +62,21 @@ public:
     void showProcesses();
     void showFiles();
 
+    // C4: an image's Layers (`history`) and any image/network/volume's
+    // Labels — opened on request, same lazy-tab shape as Processes/Files.
+    void showLayers();
+    void showLabels();
+
+    // C4: the Images console's Pull button and the Pull toolbar action —
+    // a closable "Pull: <reference>" `TerminalWidget` tab, not tied to
+    // whatever node happens to be selected.
+    void openPullTab(const QString &connectionId, const QString &reference);
+
+signals:
+    // A "containers using it" row was clicked on an image/network/volume
+    // Dashboard — the panel selects that container node in the tree.
+    void containerNodeRequested(const QString &nodeId);
+
 private:
     void openOrReplaceLogTab();
     void closeLogTab();
@@ -66,6 +89,19 @@ private:
     void requestChildren(QTreeWidgetItem *dirItem, const QString &dir);
     void downloadPrompt(const QString &path, QWidget *dialogParent);
 
+    // C4: per-kind Dashboard (tab 0), swapped in place of the generic page
+    // for image/network/volume nodes.
+    void updateDashboardTab();
+    QWidget *ensureImageDashboardPage();
+    QWidget *ensureNetworkDashboardPage();
+    QWidget *ensureVolumeDashboardPage();
+    void populateImageDashboard();
+    void populateNetworkDashboard();
+    void populateVolumeDashboard();
+    // `containers` is `\n`-joined `"<name>\t<node id>"` pairs
+    // (`FfiImageDashboard::containers`'s own convention).
+    void fillContainersList(QListWidget *list, const QString &containers);
+
     ContainerService *containerService_;
     TerminalSupervisor *terminalSupervisor_;
     AppSettings *appSettings_;
@@ -73,6 +109,7 @@ private:
     QTabWidget *tabs_;
 
     QString nodeId_;
+    QString kind_;
     bool isContainer_ = false;
 
     QWidget *logPage_ = nullptr;
@@ -83,6 +120,42 @@ private:
 
     QWidget *filesPage_ = nullptr;
     QTreeWidget *filesTree_ = nullptr;
+
+    QWidget *layersPage_ = nullptr;
+    QTableWidget *layersTable_ = nullptr;
+
+    QWidget *labelsPage_ = nullptr;
+    QTableWidget *labelsTable_ = nullptr;
+
+    // C4: the generic page (owned by `ContainersPanel`) plus the three
+    // lazily-built, per-kind ones. At most one of the four sits in tab 0
+    // at a time; the other three stay parented to `tabs_` but hidden.
+    QWidget *genericDashboardPage_ = nullptr;
+
+    QWidget *imageDashboardPage_ = nullptr;
+    QLabel *imageDashName_ = nullptr;
+    QLabel *imageDashId_ = nullptr;
+    QLabel *imageDashSize_ = nullptr;
+    QLabel *imageDashCreated_ = nullptr;
+    QListWidget *imageDashTags_ = nullptr;
+    QListWidget *imageDashDigests_ = nullptr;
+    QListWidget *imageDashContainers_ = nullptr;
+
+    QWidget *networkDashboardPage_ = nullptr;
+    QLabel *networkDashName_ = nullptr;
+    QLabel *networkDashId_ = nullptr;
+    QLabel *networkDashDriver_ = nullptr;
+    QLabel *networkDashScope_ = nullptr;
+    QListWidget *networkDashSubnets_ = nullptr;
+    QListWidget *networkDashContainers_ = nullptr;
+    QTableWidget *networkDashLabels_ = nullptr;
+
+    QWidget *volumeDashboardPage_ = nullptr;
+    QLabel *volumeDashName_ = nullptr;
+    QLabel *volumeDashDriver_ = nullptr;
+    QLabel *volumeDashMountpoint_ = nullptr;
+    QListWidget *volumeDashContainers_ = nullptr;
+    QTableWidget *volumeDashLabels_ = nullptr;
 };
 
 } // namespace ui_shell

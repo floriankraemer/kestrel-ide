@@ -52,6 +52,31 @@ impl NodeKind {
             NodeKind::Pod => "pod",
         }
     }
+
+    /// The reverse of [`Self::id`] — recovering a kind from a tree node id's
+    /// middle segment (`"<conn>/<kind>/<resource-id>"`), so the bridge can
+    /// parse an image/network/volume node id the same way `actions.rs`'s
+    /// `parse_container_node_id` already does for containers, one parser
+    /// generalised by kind rather than one per kind.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Some(match id {
+            "connection" => NodeKind::Connection,
+            "containers-group" => NodeKind::ContainersGroup,
+            "images-group" => NodeKind::ImagesGroup,
+            "networks-group" => NodeKind::NetworksGroup,
+            "volumes-group" => NodeKind::VolumesGroup,
+            "compose-group" => NodeKind::ComposeGroup,
+            "pods-group" => NodeKind::PodsGroup,
+            "container" => NodeKind::Container,
+            "image" => NodeKind::Image,
+            "network" => NodeKind::Network,
+            "volume" => NodeKind::Volume,
+            "compose-project" => NodeKind::ComposeProject,
+            "compose-service" => NodeKind::ComposeService,
+            "pod" => NodeKind::Pod,
+            _ => return None,
+        })
+    }
 }
 
 /// Where a connection stands.
@@ -229,8 +254,8 @@ pub fn flatten(connections: &[ConnectionRow<'_>], now: SystemTime) -> Vec<TreeNo
     nodes
 }
 
-/// Which actions apply to a container node in `status` — the *rule* lives
-/// here (Rust), never in `cpp/`: a view only reads the flags this returns.
+/// Which actions apply to a node — the *rule* lives here (Rust), never in
+/// `cpp/`: a view only reads the flags this returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct NodeActions {
     pub can_start: bool,
@@ -239,14 +264,68 @@ pub struct NodeActions {
     pub can_pause: bool,
     pub can_unpause: bool,
     pub can_remove: bool,
+    /// Image (C4): re-pull this tag.
+    pub can_pull: bool,
+    /// Image: `tag <id> <new-ref>`.
+    pub can_tag: bool,
+    /// Image: `docker run -d <image>` via the quick Create Container dialog
+    /// (C5 replaces it with the run-config editor).
+    pub can_create_container: bool,
+    /// Image: `save`\|`load` to another connection.
+    pub can_copy: bool,
+    /// A group row (Images/Networks/Volumes/Containers): its "Clean Up".
+    pub can_clean_up: bool,
+    /// A group row: its "Create..." (Create Network/Volume; Images uses
+    /// the console's Pull button instead, so this stays `false` there).
+    pub can_create: bool,
 }
 
-/// The actions matrix for a container node's current [`NodeStatus`].
-/// `Running` is the only state that can be paused; `Paused` is the only
-/// one that can be unpaused; `Restarting` allows nothing (an operation is
-/// already in flight) except Remove, which is always available — even a
-/// stuck container can be force-removed.
-pub fn actions_for(status: NodeStatus) -> NodeActions {
+/// The actions matrix for a node of `kind` in `status`. Container status
+/// drives its own five-flag matrix ([`container_actions_for`]); every other
+/// kind's flags depend only on `kind` — an image/network/volume can always
+/// be removed once it exists, and a group can always accept its own Clean
+/// Up/Create, connected or not (the toolbar/menu enablement for "is this
+/// connection even connected" is `ContainersPanel::updateToolbarEnablement`'s
+/// job, not this rule's).
+pub fn actions_for(kind: NodeKind, status: NodeStatus) -> NodeActions {
+    match kind {
+        NodeKind::Container => container_actions_for(status),
+        NodeKind::Image => NodeActions {
+            can_remove: true,
+            can_pull: true,
+            can_tag: true,
+            can_create_container: true,
+            can_copy: true,
+            ..NodeActions::default()
+        },
+        NodeKind::Network | NodeKind::Volume => NodeActions {
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeKind::ImagesGroup | NodeKind::NetworksGroup | NodeKind::VolumesGroup => NodeActions {
+            can_clean_up: true,
+            can_create: true,
+            ..NodeActions::default()
+        },
+        NodeKind::ContainersGroup => NodeActions {
+            can_clean_up: true,
+            ..NodeActions::default()
+        },
+        NodeKind::Connection
+        | NodeKind::ComposeGroup
+        | NodeKind::PodsGroup
+        | NodeKind::ComposeProject
+        | NodeKind::ComposeService
+        | NodeKind::Pod => NodeActions::default(),
+    }
+}
+
+/// The lifecycle-actions matrix for a container node's current
+/// [`NodeStatus`]. `Running` is the only state that can be paused;
+/// `Paused` is the only one that can be unpaused; `Restarting` allows
+/// nothing (an operation is already in flight) except Remove, which is
+/// always available — even a stuck container can be force-removed.
+fn container_actions_for(status: NodeStatus) -> NodeActions {
     match status {
         NodeStatus::Running => NodeActions {
             can_stop: true,
@@ -955,21 +1034,21 @@ mod tests {
 
     #[test]
     fn node_actions_matrix_per_status() {
-        let running = actions_for(NodeStatus::Running);
+        let running = actions_for(NodeKind::Container, NodeStatus::Running);
         assert!(running.can_stop && running.can_restart && running.can_pause && running.can_remove);
         assert!(!running.can_start && !running.can_unpause);
 
-        let paused = actions_for(NodeStatus::Paused);
+        let paused = actions_for(NodeKind::Container, NodeStatus::Paused);
         assert!(paused.can_unpause && paused.can_stop && paused.can_remove);
         assert!(!paused.can_start && !paused.can_restart && !paused.can_pause);
 
         for stopped in [NodeStatus::Exited, NodeStatus::Created, NodeStatus::Dead] {
-            let actions = actions_for(stopped);
+            let actions = actions_for(NodeKind::Container, stopped);
             assert!(actions.can_start && actions.can_remove);
             assert!(!actions.can_stop && !actions.can_restart && !actions.can_pause);
         }
 
-        let restarting = actions_for(NodeStatus::Restarting);
+        let restarting = actions_for(NodeKind::Container, NodeStatus::Restarting);
         assert!(restarting.can_remove);
         assert!(!restarting.can_start && !restarting.can_stop && !restarting.can_pause);
 
@@ -980,7 +1059,64 @@ mod tests {
             NodeStatus::Connected,
             NodeStatus::Error,
         ] {
-            assert_eq!(actions_for(inert), NodeActions::default());
+            assert_eq!(
+                actions_for(NodeKind::Container, inert),
+                NodeActions::default()
+            );
+        }
+    }
+
+    #[test]
+    fn image_node_can_remove_pull_tag_copy_and_create_container() {
+        let actions = actions_for(NodeKind::Image, NodeStatus::None);
+        assert!(actions.can_remove && actions.can_pull && actions.can_tag);
+        assert!(actions.can_create_container && actions.can_copy);
+        assert!(!actions.can_start && !actions.can_stop && !actions.can_clean_up);
+    }
+
+    #[test]
+    fn network_and_volume_nodes_can_only_remove() {
+        for kind in [NodeKind::Network, NodeKind::Volume] {
+            let actions = actions_for(kind, NodeStatus::None);
+            assert_eq!(
+                actions,
+                NodeActions {
+                    can_remove: true,
+                    ..NodeActions::default()
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn images_networks_and_volumes_groups_can_clean_up_and_create() {
+        for kind in [
+            NodeKind::ImagesGroup,
+            NodeKind::NetworksGroup,
+            NodeKind::VolumesGroup,
+        ] {
+            let actions = actions_for(kind, NodeStatus::None);
+            assert!(actions.can_clean_up && actions.can_create);
+        }
+    }
+
+    #[test]
+    fn containers_group_can_clean_up_but_not_create() {
+        let actions = actions_for(NodeKind::ContainersGroup, NodeStatus::None);
+        assert!(actions.can_clean_up && !actions.can_create);
+    }
+
+    #[test]
+    fn kinds_with_no_actions_yet_are_all_false() {
+        for kind in [
+            NodeKind::Connection,
+            NodeKind::ComposeGroup,
+            NodeKind::PodsGroup,
+            NodeKind::ComposeProject,
+            NodeKind::ComposeService,
+            NodeKind::Pod,
+        ] {
+            assert_eq!(actions_for(kind, NodeStatus::None), NodeActions::default());
         }
     }
 
@@ -1006,5 +1142,15 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), all.len());
+
+        for kind in all {
+            assert_eq!(
+                NodeKind::from_id(kind.id()),
+                Some(kind),
+                "{} round-trips",
+                kind.id()
+            );
+        }
+        assert_eq!(NodeKind::from_id("not-a-kind"), None);
     }
 }

@@ -125,6 +125,24 @@ pub(crate) fn connection_invocation(
     Ok(invocation)
 }
 
+/// A configured connection's [`container_core::connection::Engine`], by
+/// id (C4: `cleanUp`/`imageLayers`/history need to know which engine's
+/// `history --format` to use). Cheap: no CLI call, just the setting.
+pub(crate) fn connection_engine(
+    connection_id: &str,
+) -> Result<container_core::connection::Engine, FfiResult> {
+    configured_connections()
+        .into_iter()
+        .find(|setting| setting.id == connection_id)
+        .map(|setting| ConnectionConfig::from_setting(&setting).engine)
+        .ok_or_else(|| {
+            errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("no container connection with id '{connection_id}' is configured"),
+            )
+        })
+}
+
 fn to_ffi_status(status: tree::NodeStatus) -> ffi::FfiContainerNodeStatus {
     use ffi::FfiContainerNodeStatus as Ffi;
     use tree::NodeStatus;
@@ -241,6 +259,28 @@ impl ffi::ContainerService {
         tree::flatten(&rows, SystemTime::now())
             .iter()
             .map(to_ffi_node)
+            .collect()
+    }
+
+    /// Every configured connection (C4's Copy Image to... picker): id,
+    /// name, engine, and whether it is currently connected — cheap, no
+    /// snapshot needed.
+    pub fn connections(&self) -> Vec<ffi::FfiConnectionSummary> {
+        let connections = self.connections.borrow();
+        configured_connections()
+            .into_iter()
+            .map(|setting| {
+                let connected = connections
+                    .get(&setting.id)
+                    .map(|connection| !matches!(connection.state, ConnectionState::Disconnected))
+                    .unwrap_or(false);
+                ffi::FfiConnectionSummary {
+                    id: QString::from(setting.id.as_str()),
+                    name: QString::from(setting.name.as_str()),
+                    engine: QString::from(ConnectionConfig::from_setting(&setting).engine.id()),
+                    connected,
+                }
+            })
             .collect()
     }
 

@@ -5474,6 +5474,16 @@ mod ffi {
         tooltip: QString,
     }
 
+    /// One configured connection, for a picker (C4's Copy Image to...
+    /// dialog) that needs more than just an id/name pair.
+    struct FfiConnectionSummary {
+        id: QString,
+        name: QString,
+        /// `"docker"` or `"podman"` (`Engine::id()`).
+        engine: QString,
+        connected: bool,
+    }
+
     /// Where one connection stands: `state` is one of `disconnected`,
     /// `connecting`, `connected`, `error`; `message` the engine banner or
     /// the error text.
@@ -5490,9 +5500,10 @@ mod ffi {
         show_untagged: bool,
     }
 
-    /// Which actions apply to a container node right now (C3) —
+    /// Which actions apply to a node right now (C3/C4) —
     /// `container_core::tree::actions_for`'s answer, crossed as flags. The
     /// view only reads these; the rule that produced them lives in Rust.
+    #[derive(Default)]
     struct FfiNodeActions {
         #[cxx_name = "canStart"]
         can_start: bool,
@@ -5506,6 +5517,105 @@ mod ffi {
         can_unpause: bool,
         #[cxx_name = "canRemove"]
         can_remove: bool,
+        /// C4: an image node's re-pull.
+        #[cxx_name = "canPull"]
+        can_pull: bool,
+        /// C4: an image node's Tag...
+        #[cxx_name = "canTag"]
+        can_tag: bool,
+        /// C4: an image node's Create Container...
+        #[cxx_name = "canCreateContainer"]
+        can_create_container: bool,
+        /// C4: an image node's Copy Image to...
+        #[cxx_name = "canCopy"]
+        can_copy: bool,
+        /// C4: a group node's Clean Up.
+        #[cxx_name = "canCleanUp"]
+        can_clean_up: bool,
+        /// C4: a group node's Create Network.../Create Volume...
+        #[cxx_name = "canCreate"]
+        can_create: bool,
+    }
+
+    /// One `history` layer (C4) — `container_core::images::Layer` crossed
+    /// the seam.
+    struct FfiLayer {
+        id: QString,
+        created: QString,
+        #[cxx_name = "createdBy"]
+        created_by: QString,
+        #[cxx_name = "sizeBytes"]
+        size_bytes: u64,
+        comment: QString,
+    }
+
+    /// One label, or any other key/value row (C4): image/network/volume
+    /// Labels tabs all use this same shape.
+    struct FfiKeyValue {
+        key: QString,
+        value: QString,
+    }
+
+    /// The Create Network... dialog's fields (C4). `labels` is `\n`-joined
+    /// `key=value` pairs, the same convention `FfiCommand::env` uses.
+    #[derive(Default)]
+    struct FfiNetworkSpec {
+        name: QString,
+        driver: QString,
+        subnet: QString,
+        gateway: QString,
+        internal: bool,
+        attachable: bool,
+        labels: QString,
+    }
+
+    /// The Create Volume... dialog's fields (C4). `labels`/`options` are
+    /// `\n`-joined `key=value` pairs.
+    #[derive(Default)]
+    struct FfiVolumeSpec {
+        name: QString,
+        driver: QString,
+        labels: QString,
+        options: QString,
+    }
+
+    /// An image node's Dashboard tab (C4). `tags`/`digests` are `\n`-joined;
+    /// `containers` is `\n`-joined `"<name>\t<node id>"` pairs so a click
+    /// selects that container node without a second lookup.
+    #[derive(Default)]
+    struct FfiImageDashboard {
+        name: QString,
+        id: QString,
+        #[cxx_name = "sizeBytes"]
+        size_bytes: i64,
+        created: QString,
+        tags: QString,
+        digests: QString,
+        containers: QString,
+    }
+
+    /// A network node's Dashboard tab (C4). `subnets`/`containers` are
+    /// `\n`-joined (`containers` as `"<name>\t<node id>"`); `labels` is
+    /// `\n`-joined `key=value`.
+    #[derive(Default)]
+    struct FfiNetworkDashboard {
+        name: QString,
+        id: QString,
+        driver: QString,
+        scope: QString,
+        subnets: QString,
+        containers: QString,
+        labels: QString,
+    }
+
+    /// A volume node's Dashboard tab (C4).
+    #[derive(Default)]
+    struct FfiVolumeDashboard {
+        name: QString,
+        driver: QString,
+        mountpoint: QString,
+        containers: QString,
+        labels: QString,
     }
 
     /// One row of `top`'s output (C3): `cells` is `\t`-joined (no bare
@@ -5556,6 +5666,11 @@ mod ffi {
         /// `treeChanged`.
         #[qinvokable]
         fn nodes(self: &ContainerService) -> Vec<FfiContainerNode>;
+
+        /// Every configured connection, for a picker (C4's Copy Image to...
+        /// dialog) that needs more than a tree row.
+        #[qinvokable]
+        fn connections(self: &ContainerService) -> Vec<FfiConnectionSummary>;
 
         #[qinvokable]
         #[cxx_name = "connectionState"]
@@ -5797,6 +5912,154 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "attachSessionCommand"]
         fn attach_session_command(self: &ContainerService, node_id: &QString) -> FfiCommand;
+
+        // --- C4: images, networks, volumes -----------------------------
+
+        /// The Images console's Pull button: `pull <reference>` on
+        /// `connection_id`, ready for `TerminalSupervisor::setCommand` — a
+        /// closable "Pull: <reference>" tab, the same shape Log/Terminal/
+        /// Exec/Attach already use.
+        #[qinvokable]
+        #[cxx_name = "pullSessionCommand"]
+        fn pull_session_command(
+            self: &ContainerService,
+            connection_id: &QString,
+            reference: &QString,
+        ) -> FfiCommand;
+
+        #[qinvokable]
+        #[cxx_name = "removeImage"]
+        fn remove_image(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            force: bool,
+        ) -> FfiResult;
+
+        /// The Images group's "Clean Up": `image prune -f [-a]`.
+        #[qinvokable]
+        #[cxx_name = "pruneImages"]
+        fn prune_images(
+            self: Pin<&mut ContainerService>,
+            connection_id: &QString,
+            all: bool,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "tagImage"]
+        fn tag_image(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            new_reference: &QString,
+        ) -> FfiResult;
+
+        /// `history` on a worker thread; `layersReady` carries the answer.
+        #[qinvokable]
+        #[cxx_name = "imageLayers"]
+        fn image_layers(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "layersReady"]
+        fn layers_ready(self: Pin<&mut ContainerService>, node_id: QString, layers: Vec<FfiLayer>);
+
+        /// An image's labels, straight off the current snapshot — no CLI
+        /// call, `container_core::model::Image` already carries them.
+        #[qinvokable]
+        #[cxx_name = "imageLabels"]
+        fn image_labels(self: &ContainerService, node_id: &QString) -> Vec<FfiKeyValue>;
+
+        /// `save`\|`load` through a temp file, on a worker thread —
+        /// "Copy Image to...". `actionFinished`'s message carries a
+        /// progress-ish summary ("Copied to <connection>" / the failure).
+        #[qinvokable]
+        #[cxx_name = "copyImageTo"]
+        fn copy_image_to(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            target_connection_id: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "createNetwork"]
+        fn create_network(
+            self: Pin<&mut ContainerService>,
+            connection_id: &QString,
+            spec: &FfiNetworkSpec,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "removeNetwork"]
+        fn remove_network(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "pruneNetworks"]
+        fn prune_networks(self: Pin<&mut ContainerService>, connection_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "createVolume"]
+        fn create_volume(
+            self: Pin<&mut ContainerService>,
+            connection_id: &QString,
+            spec: &FfiVolumeSpec,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "removeVolume"]
+        fn remove_volume(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            force: bool,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "pruneVolumes"]
+        fn prune_volumes(self: Pin<&mut ContainerService>, connection_id: &QString) -> FfiResult;
+
+        /// One "Clean Up" menu entry: `kind` is one of `all`,
+        /// `stopped-containers`, `unused-networks`, `unused-volumes`,
+        /// `dangling-images`, `build-cache` (`container_core::prune::
+        /// CleanUpKind`'s own ids).
+        #[qinvokable]
+        #[cxx_name = "cleanUp"]
+        fn clean_up(
+            self: Pin<&mut ContainerService>,
+            connection_id: &QString,
+            kind: &QString,
+        ) -> FfiResult;
+
+        /// Local image-name completion for the Images console's
+        /// `QCompleter` — ranked, off the current snapshot only (Hub search
+        /// is C6/C7's). `\n`-joined (no bare `Vec<QString>` on the seam,
+        /// see `FfiBranch`'s doc comment), most-relevant first.
+        #[qinvokable]
+        #[cxx_name = "imageCompletions"]
+        fn image_completions(
+            self: &ContainerService,
+            connection_id: &QString,
+            prefix: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "imageDashboard"]
+        fn image_dashboard(self: &ContainerService, node_id: &QString) -> FfiImageDashboard;
+
+        #[qinvokable]
+        #[cxx_name = "networkDashboard"]
+        fn network_dashboard(self: &ContainerService, node_id: &QString) -> FfiNetworkDashboard;
+
+        #[qinvokable]
+        #[cxx_name = "volumeDashboard"]
+        fn volume_dashboard(self: &ContainerService, node_id: &QString) -> FfiVolumeDashboard;
+
+        /// "Create Container..." from an image, until C5's run-config
+        /// editor lands: `docker run -d [--name name] [-P] <image>`.
+        #[qinvokable]
+        #[cxx_name = "createContainerQuick"]
+        fn create_container_quick(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            name: &QString,
+            publish_all: bool,
+        ) -> FfiResult;
     }
 
     impl cxx_qt::Threading for ContainerService {}

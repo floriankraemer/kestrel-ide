@@ -143,7 +143,10 @@ fn item(value: &Value) -> Option<CompletionItem> {
     // comment for why this is no longer flattened here.
     let insert = raw.to_string();
 
-    let deprecated = value.get("deprecated").and_then(Value::as_bool).unwrap_or(false)
+    let deprecated = value
+        .get("deprecated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
         || value
             .get("tags")
             .and_then(Value::as_array)
@@ -304,7 +307,11 @@ fn prefix_match(text: &str, needle: &str) -> Option<(MatchKind, Vec<usize>)> {
 /// every letter right after a `_`/`-` separator (`foo_bar` -> the second
 /// `b`) — what a human calls a new word inside an identifier.
 fn hump_starts(chars: &[char]) -> Vec<usize> {
-    let mut starts: Vec<usize> = if chars.is_empty() { Vec::new() } else { vec![0] };
+    let mut starts: Vec<usize> = if chars.is_empty() {
+        Vec::new()
+    } else {
+        vec![0]
+    };
     for i in 1..chars.len() {
         let (prev, cur) = (chars[i - 1], chars[i]);
         if (cur.is_uppercase() && !prev.is_uppercase())
@@ -391,7 +398,8 @@ fn subsequence(text: &str, needle: &str) -> Option<(MatchKind, Vec<usize>)> {
     let mut positions = Vec::with_capacity(needle.chars().count());
     let mut at = 0usize;
     for needle_char in needle.chars() {
-        let found = (at..text_chars.len()).find(|&i| text_chars[i].eq_ignore_ascii_case(&needle_char))?;
+        let found =
+            (at..text_chars.len()).find(|&i| text_chars[i].eq_ignore_ascii_case(&needle_char))?;
         positions.push(found);
         at = found + 1;
     }
@@ -1025,7 +1033,10 @@ mod tests {
     #[test]
     fn filtering_is_case_insensitive_and_an_empty_prefix_keeps_everything() {
         let list = parse_completion(&json!([{"label": "Vec"}, {"label": "vec_deque"}]));
-        assert_eq!(matched_labels(&filter(&list.items, "VE")), ["Vec", "vec_deque"]);
+        assert_eq!(
+            matched_labels(&filter(&list.items, "VE")),
+            ["Vec", "vec_deque"]
+        );
         assert_eq!(filter(&list.items, "").len(), 2);
         assert!(filter(&list.items, "x").is_empty());
     }

@@ -28,11 +28,13 @@ class QStandardItemModel;
 class QMenu;
 class QPaintEvent;
 class QResizeEvent;
+class QTimer;
 class QWheelEvent;
 
 namespace ui_shell {
 
 class LineNumberArea;
+class CompletionDocsPanel;
 
 // A foldable region (Task C), view-local: [startBlock, endBlock] are
 // 0-based QTextBlock numbers (inclusive), converted by SyntaxHighlighter
@@ -220,6 +222,8 @@ struct CompletionEntry
     QString label;
     QString kind;
     QString detail;
+    // R2: already-rendered HTML (`markdown_preview::render`), shown in the
+    // docs side panel — never raw Markdown.
     QString documentation;
     QString insert;
     // When true, the server named the span to replace, in protocol units:
@@ -238,6 +242,16 @@ struct CompletionEntry
     // be handed back for `completionItem/resolve` on accept or on preview.
     // This widget never reads it.
     QString resolveData;
+    // R2: the server marked this item deprecated — painted struck through.
+    bool deprecated = false;
+    // R2: `insert` is snippet source (`edit_ops::snippet::parse` still has
+    // to run on it), not plain text — decided in `lsp_core::completion`,
+    // this widget only reports the choice on `completionChosen()`.
+    bool isSnippet = false;
+    // R2: char indices into `label` the typed prefix matched
+    // (`lsp_core::completion::CompletionMatch::positions`), for the
+    // delegate to bold.
+    QVector<int> matchPositions;
 };
 
 // Line-number gutter (Qt's classic Code Editor Example pattern). Q_OBJECT is
@@ -446,6 +460,13 @@ public:
     // Empty means the caret is not on a bracket at all.
     void setBracketPairSpans(const QVector<BracketPairSpan> &spans);
 
+    // R2: whether a snippet session owns Tab/Shift+Tab right now. Pushed in
+    // by whoever drives `EditorOps::beginSnippet`/`stepSnippet`
+    // (`EditorTabs`) — this widget decides nothing about when a session
+    // starts or ends, only which key handler runs while one is active.
+    void setSnippetActive(bool active);
+    bool snippetActive() const { return snippetActive_; }
+
 signals:
     // N7: Ctrl+Click landed on an identifier-shaped word. `position` is a
     // document (UTF-16) position inside that word; converting it to the
@@ -558,6 +579,17 @@ signals:
     // running it, and what its answer means, is EditorTabs's job via
     // `LanguageService::runCodeLens`.
     void codeLensClicked(int index);
+
+    // R2: Tab (`backward == false`) or Shift+Tab while `snippetActive()` is
+    // true — asks `EditorOps::stepSnippet` to move the session and select
+    // the stop it lands on, or fall through to whatever the key ordinarily
+    // does when there is nowhere left to go.
+    void snippetStepRequested(bool backward);
+
+    // R2: Escape while a snippet session is active — ends it
+    // unconditionally, per the target's own "Escape or `$0` ends the
+    // session".
+    void snippetCanceled();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
@@ -718,6 +750,20 @@ private:
     QCompleter *completer_;
     QStandardItemModel *completionModel_;
     QVector<CompletionEntry> completionEntries_;
+    // R2: the docs side panel, shown/moved alongside the popup.
+    CompletionDocsPanel *completionDocsPanel_;
+    // R2: auto-popup is debounced by `kCompletionDebounceMs` — one timer
+    // per keystroke burst rather than one request per keystroke, so typing
+    // fast never sends (or filters) a request for every intermediate word.
+    // Ctrl+Space bypasses this: an explicit gesture always asks now.
+    QTimer *completionDebounce_;
+    int pendingCompletionPosition_ = 0;
+    QString pendingCompletionText_;
+    // R2: whether a snippet session (accepted via the popup) currently owns
+    // Tab/Shift+Tab. Pure view state pushed in by `setSnippetActive` —
+    // deciding when a session starts, advances or ends is
+    // `EditorOps`/`editor_core::SnippetSession`'s job.
+    bool snippetActive_ = false;
     // F1-15: every caret except this widget's own. Empty is the ordinary
     // single-caret editor, and every multi-caret code path below is guarded
     // on it, so nothing changes for a user who never presses Ctrl+D.

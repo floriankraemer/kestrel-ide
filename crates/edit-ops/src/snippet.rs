@@ -101,7 +101,11 @@ fn parse_into(chars: &mut Peekable<Chars>, out: &mut String, placeholders: &mut 
 
 /// `${` already consumed. Reads the number, then either a `:default`, a
 /// `|choice,list|`, or nothing (a bare `${1}`).
-fn parse_placeholder(chars: &mut Peekable<Chars>, out: &mut String, placeholders: &mut Vec<Placeholder>) {
+fn parse_placeholder(
+    chars: &mut Peekable<Chars>,
+    out: &mut String,
+    placeholders: &mut Vec<Placeholder>,
+) {
     let mut digits = String::new();
     while chars.peek().is_some_and(char::is_ascii_digit) {
         digits.push(chars.next().expect("peeked"));
@@ -194,8 +198,14 @@ mod tests {
         assert_eq!(
             parsed.placeholders,
             [
-                Placeholder { number: 1, range: 3..3 },
-                Placeholder { number: 0, range: 9..9 },
+                Placeholder {
+                    number: 1,
+                    range: 3..3
+                },
+                Placeholder {
+                    number: 0,
+                    range: 9..9
+                },
             ]
         );
     }
@@ -207,8 +217,14 @@ mod tests {
         assert_eq!(
             parsed.placeholders,
             [
-                Placeholder { number: 1, range: 0..4 },
-                Placeholder { number: 2, range: 6..10 },
+                Placeholder {
+                    number: 1,
+                    range: 0..4
+                },
+                Placeholder {
+                    number: 2,
+                    range: 6..10
+                },
             ]
         );
     }
@@ -217,7 +233,13 @@ mod tests {
     fn a_choice_placeholder_takes_its_first_option() {
         let parsed = parse("${1|Ok,Err|}");
         assert_eq!(parsed.text, "Ok");
-        assert_eq!(parsed.placeholders, [Placeholder { number: 1, range: 0..2 }]);
+        assert_eq!(
+            parsed.placeholders,
+            [Placeholder {
+                number: 1,
+                range: 0..2
+            }]
+        );
     }
 
     #[test]
@@ -227,8 +249,14 @@ mod tests {
         assert_eq!(
             parsed.placeholders,
             [
-                Placeholder { number: 2, range: 7..13 },
-                Placeholder { number: 1, range: 7..13 },
+                Placeholder {
+                    number: 2,
+                    range: 7..13
+                },
+                Placeholder {
+                    number: 1,
+                    range: 7..13
+                },
             ],
             "the inner placeholder is recorded first, both spanning the same text \
              the outer one wraps"
@@ -238,7 +266,11 @@ mod tests {
     #[test]
     fn escapes_are_preserved_as_plain_text() {
         assert_eq!(parse("cost $ 5").text, "cost $ 5", "a lone $ is text");
-        assert_eq!(parse("100\\% done").text, "100\\% done", "not a snippet escape");
+        assert_eq!(
+            parse("100\\% done").text,
+            "100\\% done",
+            "not a snippet escape"
+        );
     }
 
     #[test]

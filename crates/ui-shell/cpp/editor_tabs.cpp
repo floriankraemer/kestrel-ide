@@ -193,6 +193,41 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
                 }
             });
 
+    // R2: a snippet item was just accepted and its flattened text spliced
+    // in (on `completionEditReady`, just above — both signals fire from
+    // the same `acceptCompletion` call). `stops` are char offsets into
+    // that flattened text; adding the insertion point's own flat position
+    // turns them into the absolute document positions
+    // `EditorOps::beginSnippet` (and the session it stores) works in.
+    connect(languageService_,
+            &LanguageService::snippetReady,
+            this,
+            [this](quint32 startLine, quint32 startCharacter,
+                   const ::rust::Vec<FfiSnippetStop> &stops) {
+                auto *editor = qobject_cast<CodeEditor *>(
+                    activeGroup_ ? activeGroup_->currentWidget() : nullptr);
+                if (!editor || stops.empty()) {
+                    return;
+                }
+                const int base = positionAt(editor->document(), startLine, startCharacter);
+                ::rust::Vec<FfiSnippetStop> absolute;
+                for (const FfiSnippetStop &stop : stops) {
+                    absolute.push_back(
+                      FfiSnippetStop{true, static_cast<quint32>(base) + stop.start,
+                                     static_cast<quint32>(base) + stop.end, false});
+                }
+                const quint64 tabId = editor->property("tabId").toULongLong();
+                const FfiSnippetStop first = editorOps_->beginSnippet(tabId, absolute);
+                if (!first.has_stop) {
+                    return;
+                }
+                QTextCursor cursor = editor->textCursor();
+                cursor.setPosition(static_cast<int>(first.start));
+                cursor.setPosition(static_cast<int>(first.end), QTextCursor::KeepAnchor);
+                editor->setTextCursor(cursor);
+                editor->setSnippetActive(first.more);
+            });
+
     // C7: a completion-item preview resolution landed for the popup's
     // currently highlighted row.
     connect(languageService_,

@@ -89,6 +89,9 @@ struct TabOps {
     /// stale tracked offset would type over a character somebody else put
     /// there.
     pairs: PairTracker,
+    /// R2: the snippet just-accepted-completion left this tab in, if any.
+    /// `None` outside of one, which is every tab most of the time.
+    snippet: Option<editor_core::SnippetSession>,
 }
 
 impl Default for TabOps {
@@ -100,7 +103,26 @@ impl Default for TabOps {
             selection: SelectionSet::single(Caret::at(0)),
             history: SelectionHistory::new(),
             pairs: PairTracker::new(),
+            snippet: None,
         }
+    }
+}
+
+/// [`ffi::FfiSnippetStop`] for "no stop" — no active session, or a move
+/// that had nowhere to go.
+fn no_snippet_stop() -> ffi::FfiSnippetStop {
+    ffi::FfiSnippetStop::default()
+}
+
+/// The snippet's own doc comment on [`ffi::FfiSnippetStop`] says what
+/// `start`/`end` are here: absolute document positions, already computed by
+/// the caller.
+fn snippet_stop(range: std::ops::Range<usize>, more: bool) -> ffi::FfiSnippetStop {
+    ffi::FfiSnippetStop {
+        has_stop: true,
+        start: range.start as u32,
+        end: range.end as u32,
+        more,
     }
 }
 
@@ -970,6 +992,67 @@ impl ffi::EditorOps {
         let _ = app_config::save(&config_dir, &settings);
         *self.settings.borrow_mut() = settings;
         enabled
+    }
+
+    /// R2: begin a snippet session for `tab_id` from the tab stops the
+    /// caller already resolved to absolute document positions, replacing
+    /// any session the tab already had. Returns the first stop, or "no
+    /// stop" when there was nothing to begin (an empty `stops`, which
+    /// `begin_snippet`'s own caller never sends, but is cheap to allow).
+    pub fn begin_snippet(
+        self: Pin<&mut Self>,
+        tab_id: u64,
+        stops: Vec<ffi::FfiSnippetStop>,
+    ) -> ffi::FfiSnippetStop {
+        let ranges: Vec<std::ops::Range<usize>> = stops
+            .iter()
+            .map(|stop| stop.start as usize..stop.end as usize)
+            .collect();
+        let Some(session) = editor_core::SnippetSession::new(ranges) else {
+            return no_snippet_stop();
+        };
+        let current = session.current();
+        let more = !session.is_last();
+        // Nothing left to keep once the first stop is already the last one
+        // — no session outlives its own only stop.
+        self.tabs.borrow_mut().entry(tab_id).or_default().snippet = more.then_some(session);
+        snippet_stop(current, more)
+    }
+
+    /// R2: Tab/Shift+Tab while a snippet session may be active. "No stop"
+    /// covers both "this tab has no session" and "the move had nowhere to
+    /// go" — either way the caller falls through to what the key ordinarily
+    /// does. Landing on the last stop clears the session immediately (R2's
+    /// "`$0` ends the session").
+    pub fn step_snippet(self: Pin<&mut Self>, tab_id: u64, backward: bool) -> ffi::FfiSnippetStop {
+        let mut tabs = self.tabs.borrow_mut();
+        let Some(ops) = tabs.get_mut(&tab_id) else {
+            return no_snippet_stop();
+        };
+        let Some(session) = ops.snippet.as_mut() else {
+            return no_snippet_stop();
+        };
+        let moved = if backward {
+            session.retreat()
+        } else {
+            session.advance()
+        };
+        let Some(current) = moved else {
+            return no_snippet_stop();
+        };
+        let more = !session.is_last();
+        if !more {
+            ops.snippet = None;
+        }
+        snippet_stop(current, more)
+    }
+
+    /// Escape, or the caret left the snippet another way: drop this tab's
+    /// session, if it has one.
+    pub fn end_snippet(self: Pin<&mut Self>, tab_id: u64) {
+        if let Some(ops) = self.tabs.borrow_mut().get_mut(&tab_id) {
+            ops.snippet = None;
+        }
     }
 
     /// Classifies every space/tab character in `text` into leading, inner,

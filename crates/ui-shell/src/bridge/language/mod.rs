@@ -12,6 +12,9 @@ use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 /// F2-8/F2-9: intentions, organize imports, signature help, document
 /// highlights and inlay hints — split out once this file crossed the
 /// file-size ceiling, the way `ai/agent.rs` splits out of `ai/chat.rs`.
+/// C6: image-name completion and the "Pull image" intention, injected
+/// before the language-server gate.
+mod containers;
 mod lsp_surface;
 
 /// RF8: code actions, rename, formatting, and the pending-edit preview
@@ -146,6 +149,13 @@ pub struct LanguageServiceRust {
     /// preview resolution — neither of which is handed a path — knows which
     /// server to ask. Set alongside `completion`/`completions`.
     completion_language: RefCell<Option<String>>,
+    /// C6: Docker Hub cache/worker/pending request behind image-name
+    /// completion, the `(line, start, end)` UTF-16 span the current image
+    /// items replace, and the connected engines' image names the view
+    /// pushes in (`setLocalImages`).
+    hub: RefCell<containers::HubState>,
+    container_completion_span: RefCell<(u32, u32, u32)>,
+    local_images: RefCell<Vec<String>>,
     /// C7: which completion-item preview resolution (documentation/detail as
     /// the popup's selection moves) is still the current one.
     completion_resolve: RefCell<lsp_core::CompletionResolveTracker>,
@@ -246,6 +256,9 @@ impl Default for LanguageServiceRust {
             triggers: RefCell::default(),
             completion_resolve_supported: RefCell::default(),
             completion_language: RefCell::default(),
+            hub: RefCell::default(),
+            container_completion_span: RefCell::default(),
+            local_images: RefCell::default(),
             completion_resolve: RefCell::default(),
             actions: RefCell::default(),
             actions_language: RefCell::default(),
@@ -943,6 +956,16 @@ impl ffi::LanguageService {
         explicit_request: bool,
     ) {
         let path = path.to_string();
+        // C6: an image reference in a Dockerfile/compose file is answered
+        // locally (+ Docker Hub), whether or not a YAML server is running.
+        if self.as_mut().container_completion(
+            &path,
+            line,
+            character,
+            &text_before_cursor.to_string(),
+        ) {
+            return;
+        }
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
             // R2: no server for this file's language (or none at all) —
             // keyword and document-word completion fill in, so Ctrl+Space

@@ -173,22 +173,63 @@ pub fn containerfile_config(project_root: &Path, file: &Path) -> Option<RunConfi
 /// The temporary `kind = "compose"` configuration a compose file's gutter
 /// click would run — the whole file, every service (`services` left empty,
 /// [`crate::container_run::compose_launch_spec`]'s "empty means every
-/// service" rule). `None` only when `file` is outside `project_root`.
-pub fn compose_config(project_root: &Path, connection_id: &str, file: &Path) -> Option<RunConfig> {
+/// service" rule), or, from a service line's own marker (C6), just
+/// `service`. The two get different ids so "run web" and "run everything"
+/// stay two entries. `None` only when `file` is outside `project_root`.
+pub fn compose_config(
+    project_root: &Path,
+    connection_id: &str,
+    file: &Path,
+    service: Option<&str>,
+) -> Option<RunConfig> {
     let relative = file.strip_prefix(project_root).ok()?;
-    let name = relative.display().to_string();
+    let file_name = relative.display().to_string();
+    let (id, name) = match service {
+        Some(service) => (
+            format!("{}-{service}", id_for_path("compose", project_root, file)),
+            format!("{file_name}: {service}"),
+        ),
+        None => (
+            id_for_path("compose", project_root, file),
+            file_name.clone(),
+        ),
+    };
     Some(RunConfig {
-        id: id_for_path("compose", project_root, file),
-        name: name.clone(),
+        id,
+        name,
         kind: Some("compose".to_string()),
         compose: Some(app_config::container_run::ComposeRunSetting {
             connection_id: connection_id.to_string(),
-            compose_files: vec![name],
+            compose_files: vec![file_name],
+            services: service.map(|s| vec![s.to_string()]).unwrap_or_default(),
             ..app_config::container_run::ComposeRunSetting::default()
         }),
         temporary: true,
         ..RunConfig::default()
     })
+}
+
+/// The gutter lines of a compose file (C6): the `services:` key and one
+/// per service, each a run marker — the whole project from the first, one
+/// service from the others. Empty when the file declares no services.
+pub fn compose_run_lines(text: &str) -> Vec<u32> {
+    let Some((services_line, services)) = container_core::compose_file::services_with_lines(text)
+    else {
+        return Vec::new();
+    };
+    std::iter::once(services_line)
+        .chain(services.iter().map(|service| service.line))
+        .collect()
+}
+
+/// The service declared at `line` of a compose file (C6), or `None` on
+/// the `services:` line itself and anywhere else.
+pub fn compose_service_at(text: &str, line: u32) -> Option<String> {
+    container_core::compose_file::services_with_lines(text)?
+        .1
+        .into_iter()
+        .find(|service| service.line == line)
+        .map(|service| service.name)
 }
 
 /// Add `config` to `configs`, replacing an entry with the same id, and drop
@@ -313,7 +354,7 @@ mod tests {
     fn compose_config_names_the_whole_file_with_no_services_selected() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("docker-compose.yml");
-        let config = compose_config(dir.path(), "local-docker", &file).unwrap();
+        let config = compose_config(dir.path(), "local-docker", &file, None).unwrap();
         assert_eq!(config.kind.as_deref(), Some("compose"));
         assert!(config.temporary);
         let setting = config.compose.unwrap();
@@ -326,9 +367,33 @@ mod tests {
     }
 
     #[test]
+    fn compose_config_for_one_service_selects_it_under_its_own_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("compose.yaml");
+        let whole = compose_config(dir.path(), "c", &file, None).unwrap();
+        let web = compose_config(dir.path(), "c", &file, Some("web")).unwrap();
+        assert_ne!(whole.id, web.id);
+        assert_eq!(web.name, "compose.yaml: web");
+        assert_eq!(web.compose.unwrap().services, vec!["web".to_string()]);
+    }
+
+    #[test]
     fn compose_config_outside_the_project_is_none() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(compose_config(dir.path(), "", Path::new("/elsewhere/compose.yml")).is_none());
+        assert!(
+            compose_config(dir.path(), "", Path::new("/elsewhere/compose.yml"), None).is_none()
+        );
+    }
+
+    #[test]
+    fn compose_run_lines_and_service_at() {
+        let text =
+            "version: '3'\nservices:\n  web:\n    image: nginx\n  db:\n    image: postgres\n";
+        assert_eq!(compose_run_lines(text), vec![1, 2, 4]);
+        assert_eq!(compose_service_at(text, 2).as_deref(), Some("web"));
+        assert_eq!(compose_service_at(text, 1), None);
+        assert_eq!(compose_service_at(text, 3), None);
+        assert!(compose_run_lines("volumes: {}\n").is_empty());
     }
 
     #[test]

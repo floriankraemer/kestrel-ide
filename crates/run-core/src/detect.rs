@@ -329,12 +329,10 @@ fn detect_jvm(project_root: &Path) -> Vec<RunConfig> {
     configs
 }
 
-/// Compose file names this IDE recognises without invoking anything (C5):
-/// the conventional names both Compose v2 and `podman-compose` look for
-/// first, in the order they are tried. A file-name rule rather than
-/// `container_core::is_compose_file`'s full pattern (C6, not yet landed
-/// when this was written): good enough for "suggest a run configuration",
-/// which only needs the common cases, not every possible rename.
+/// Compose file names detection probes for at the project root (C5): the
+/// conventional names both Compose v2 and `podman-compose` look for first,
+/// in the order they are tried. Whether an arbitrary open file *is* a
+/// compose file is [`is_compose_file_name`]'s wider rule.
 const COMPOSE_FILE_NAMES: &[&str] = &[
     "docker-compose.yml",
     "docker-compose.yaml",
@@ -344,14 +342,12 @@ const COMPOSE_FILE_NAMES: &[&str] = &[
     "podman-compose.yaml",
 ];
 
-/// Whether `path`'s file name is one of [`COMPOSE_FILE_NAMES`] — the
-/// Dockerfile/compose gutter's own file-type check (C5, ADR-0056), reused
-/// by [`detect_compose`] above. A file-name rule, same scope note as
-/// [`COMPOSE_FILE_NAMES`]'s own doc comment.
+/// Whether `path` is a compose file — the gutter's own file-type check
+/// (C5, ADR-0056). One rule, `container_core::compose_file::is_compose_file`
+/// (C6), so the gutter, the lenses and the completion never disagree about
+/// which files count.
 pub fn is_compose_file_name(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| COMPOSE_FILE_NAMES.contains(&name))
+    container_core::compose_file::is_compose_file(path)
 }
 
 /// A `kind = "containerfile"` suggestion when the project root has a
@@ -641,6 +637,7 @@ mod tests {
     fn is_compose_file_name_matches_the_conventional_names_only() {
         assert!(is_compose_file_name(Path::new("docker-compose.yml")));
         assert!(is_compose_file_name(Path::new("/a/b/compose.yaml")));
+        assert!(is_compose_file_name(Path::new("compose.override.yml")));
         assert!(!is_compose_file_name(Path::new("Dockerfile")));
         assert!(!is_compose_file_name(Path::new("random.yml")));
     }

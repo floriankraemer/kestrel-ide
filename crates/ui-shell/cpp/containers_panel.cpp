@@ -442,6 +442,23 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     onTreeChanged();
 }
 
+void ContainersPanel::revealContainerLog(const QString &nodeId)
+{
+    QTreeWidgetItem *item = itemsById_.value(nodeId);
+    if (item == nullptr) {
+        return;
+    }
+    tree_->setCurrentItem(item);
+    // The Log tab sits right after the Dashboard for a container node
+    // (`ContainerDetailArea::openOrReplaceLogTab` inserts it at 1).
+    detailTabs_->setCurrentIndex(1);
+}
+
+void ContainersPanel::openPullTab(const QString &connectionId, const QString &reference)
+{
+    detail_->openPullTab(connectionId, reference);
+}
+
 void ContainersPanel::setOpenSettingsHandler(OpenSettings handler)
 {
     openSettings_ = std::move(handler);
@@ -698,6 +715,17 @@ ContainersPanel *buildContainersDock(ads::CDockManager *dockManager, DockRegistr
     docks->registerDock(QStringLiteral("containers"), dock, ads::CenterDockWidgetArea,
                         relativeTo);
     docks->hide(QStringLiteral("containers"));
+    // C6: the editor's compose lenses and "Pull image" land in this dock.
+    QObject::connect(containerService, &ContainerService::containerLogRequested, panel,
+                     [panel, docks](const QString &nodeId) {
+                         docks->show(QStringLiteral("containers"));
+                         panel->revealContainerLog(nodeId);
+                     });
+    QObject::connect(containerService, &ContainerService::pullRequested, panel,
+                     [panel, docks](const QString &connectionId, const QString &reference) {
+                         docks->show(QStringLiteral("containers"));
+                         panel->openPullTab(connectionId, reference);
+                     });
     return panel;
 }
 

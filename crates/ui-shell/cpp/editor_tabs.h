@@ -589,13 +589,19 @@ public:
     void refreshInlineValues();
     void showExecutionPoint(const QString &path, int line);
 
-    // R1-7: ask `RunService::canRunFile` whether an editor's file has a run
-    // target, and show or hide the gutter's Run icon accordingly.
+    // R1-7/C6: ask `RunService::runLines` which lines of an editor's file
+    // carry a Run icon, and push them into the gutter.
     void refreshRunMarker(CodeEditor *editor);
     void refreshRunMarkers();
-    // The gutter Run icon (or `run.runContext`) fired: launch this editor's
-    // file through `RunService::runContext`.
-    void requestRunFor(CodeEditor *editor);
+    // The gutter Run icon on `line` (or `run.runContext`, line 0) fired:
+    // launch this editor's file through `RunService::runContext`, or show
+    // the Dockerfile/compose popup (C5/C6) scoped to that line.
+    void requestRunFor(CodeEditor *editor, int line = 0);
+
+    // C6: `ContainerService::composeLenses` for a compose file, pushed into
+    // the editor the same way `onCodeLensesReady` pushes a server's.
+    void refreshComposeLensesFor(CodeEditor *editor);
+    void refreshComposeLenses();
 
     // `VcsService::hunksChanged(path)`: push the hunks it now has for
     // `path` into that file's gutter, if it is open.

@@ -16,9 +16,14 @@
 //! configurations, registries, run targets and recreate/editing land in
 //! later tasks and are not implemented yet.
 
+/// Image-name completion ranking (C6) over local images + Docker Hub.
+pub mod completion;
 /// Connections: [`connection::Engine`], [`connection::ConnectionKind`], and
 /// [`connection::Invocation`] — a persisted connection turned into an
 /// actual command line.
+/// Compose files (C6): the file-name rule and the services/lines walk
+/// over tree-sitter-yaml.
+pub mod compose_file;
 pub mod connection;
 /// Finding connections the user has not typed in by hand: CLI contexts,
 /// Podman connections/machines, and well-known socket presets.
@@ -29,7 +34,15 @@ pub mod files;
 /// Image operations (C4): `rmi`/`image prune`/`tag`/`history`/`save`/`load`
 /// argv builders, the `history` parser (Docker NDJSON and Podman array),
 /// `containers_using` and local image-name completion.
+/// Docker Hub search/tags (C6) behind image-name completion.
+pub mod hub;
+/// Image references in editor text (C6): parsing, the one under the
+/// caret in a `FROM`/`image:` line, and the completion trigger.
+pub mod image_ref;
 pub mod images;
+/// Compose code lenses (C6): service status and published ports for an
+/// open compose file, from the snapshots.
+pub mod lenses;
 /// Typed, lenient views over `inspect` JSON: [`model::Container`],
 /// [`model::Image`], [`model::Volume`], [`model::Network`], [`model::Pod`].
 pub mod model;

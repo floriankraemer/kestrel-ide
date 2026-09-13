@@ -365,6 +365,12 @@ void EditorTabs::requestCodeLensesFor(CodeEditor *editor)
     if (path.isEmpty()) {
         return;
     }
+    // C6: a compose file's lenses are the Containers service's, not a
+    // language server's — `ownsLenses` is the Rust-side rule.
+    if (containerService_ != nullptr && containerService_->ownsLenses(path)) {
+        refreshComposeLensesFor(editor);
+        return;
+    }
     languageService_->requestCodeLenses(path);
 }
 
@@ -1030,6 +1036,8 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         // C10-followup: same reasoning — a lens's line/label can be stale
         // the moment the buffer changes.
         requestCodeLensesFor(editor);
+        // C6: a compose service's marker line moves with the edit above it.
+        refreshRunMarker(editor);
     });
 
     // F3-16: a click on a change marker. `window_` (not `editor`) owns the
@@ -1046,7 +1054,12 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     // gated-refactor path (`LanguageService::runCodeLens`'s own doc).
     connect(editor, &CodeEditor::codeLensClicked, this, [this, editor](int index) {
         const QString path = editor->property("lspPath").toString();
-        if (!path.isEmpty()) {
+        if (path.isEmpty()) {
+            return;
+        }
+        if (containerService_ != nullptr && containerService_->ownsLenses(path)) {
+            containerService_->runLens(path, static_cast<quint32>(index)); // C6
+        } else {
             languageService_->runCodeLens(path, static_cast<quint32>(index));
         }
     });
@@ -1088,7 +1101,8 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     refreshRunMarker(editor);
     refreshBreakpointsFor(editor);
     watchLineCountFor(editor);
-    connect(editor, &CodeEditor::runRequested, this, [this, editor]() { requestRunFor(editor); });
+    connect(editor, &CodeEditor::runRequested, this,
+            [this, editor](int line) { requestRunFor(editor, line); });
     connect(editor, &CodeEditor::breakpointToggled, this,
             [this, editor](int blockNumber) { toggleBreakpointAt(editor, blockNumber); });
     connect(editor, &CodeEditor::temporaryBreakpointRequested, this,

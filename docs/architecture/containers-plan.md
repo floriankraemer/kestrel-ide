@@ -160,6 +160,7 @@ Tests: table-driven argv for every option × both engines, preview string quotin
 **C6 — Editor assistance.**
 `compose_file.rs` `is_compose_file(path)` (file-name rule, called from `ui-shell` — not a new language) + `services_with_lines(text)` over tree-sitter-yaml; per-service gutter run markers (`runnable_` → `runLines_` + `runRequested(int line)`); compose code lenses "● running · Open localhost:8080" via `setCodeLenses` from `ContainerService::composeLensesReady(path)` (status from the snapshot, Open → `QDesktopServices`); image-reference completion (local images + Hub search API + configured registries) injected in `completion_at` before the `open_docs` gate for Dockerfile `FROM` / compose `image:`; "Pull image" intention (`kind = "container.pull"`) with the same pre-gate injection; Dockerfile/Containerfile/compose icons already come from the Material pack.
 Tests: detection table, service/line extraction on tree-sitter-yaml, image-ref parsing, lens text derivation, completion ranking (official first).
+As landed: lenses are a synchronous `ContainerService::composeLenses(path, text)` the view re-reads on open, on the edit debounce and on `treeChanged` (no `composeLensesReady` signal — the derivation is in-memory, so a signal would only add a round trip); `configured registries` completion is deferred to C7, which introduces registries at all; the `LanguageService` → `ContainerService` link is the view-wired `containerActionRequested(kind, payload)` signal, not a Rust-side reference.
 
 **C7 — Registries.**
 `registry.rs` (V2 token dance, catalog, tags; Hub API repos/tags/search; GitLab as V2 + project registry listing; Generic = push-only), `keyring` secret store (`service = "ide.containers"`, `user = <registry-id>`; graceful "no keychain available — use `docker login`" fallback); Settings page Registries (+ Test connection); tree Registry nodes (repositories → tags → Pull Image…); Push Image dialog (registry, repository, tag → `tag` + `login --password-stdin` + `push`); Add-service menu entry.
@@ -197,7 +198,7 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 ## Verification
 
 - Unit: `cargo test -p container-core` with captured docker+podman fixture JSON; `cargo test -p run-core` argv tables; `make test` + `make lint` before every commit.
-- Layering: `cargo tree -p container-core -e normal | grep -iE 'qt|tokio'` empty; same for `run-core` (the edge C5 added).
+- Layering: `cargo tree -p container-core -e normal | grep -i qt` empty and `cargo tree -p container-core -e normal --depth 1 | grep -i tokio` empty (since C6, `reqwest`'s blocking client carries its own private tokio runtime deeper in the tree, exactly as `ai-chat-core`'s does; no crate code touches tokio); same for `run-core` (the edge C5 added).
 - E2E: `make e2e` with `stub_engine` (Xvfb + xdotool); markers `containers_tree_changed`, `containers_action`, `run_config_preview` (from C10).
 - Manual (recorded in the Progress table below, W8-2 style): real Docker on Linux, rootless Podman on Linux, Docker Desktop + `podman machine` on Windows via WSL interop, a WSL-distro connection, one private registry (ghcr.io) pull + push.
 

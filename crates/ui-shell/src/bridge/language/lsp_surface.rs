@@ -25,6 +25,10 @@ impl ffi::LanguageService {
     /// asks for.
     pub fn request_intentions(mut self: Pin<&mut Self>, path: &QString, line: u32, character: u32) {
         let path = path.to_string();
+        // C6: "Pull image" on a `FROM`/`image:` reference needs no server.
+        if self.as_mut().container_intentions(&path, line, character) {
+            return;
+        }
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
             return;
         };
@@ -72,6 +76,9 @@ impl ffi::LanguageService {
         let Some(intention) = self.intentions.borrow().get(index as usize).cloned() else {
             return;
         };
+        if self.as_mut().apply_container_intention(&intention.item) {
+            return;
+        }
         let language_id = self.intentions_language.borrow().clone();
         self.as_mut()
             .run_action(intention.item, language_id, buffer_revision);

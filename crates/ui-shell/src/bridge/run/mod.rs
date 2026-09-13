@@ -47,6 +47,7 @@ use crate::bridge::ffi;
 /// ADR-0056): structured, no JSON.
 mod container_form;
 mod editor;
+mod gutter;
 pub use editor::RunConfigEditorRust;
 
 /// One unit of work for the worker thread that owns the `Supervisor`.
@@ -114,7 +115,7 @@ pub struct RunServiceRust {
 /// open), so the root is read fresh from the one shared session on every
 /// call that needs it — the same handle `ProjectTreeModel`/`DocumentManager`
 /// already share (`crate::bridge::registry`).
-fn current_project_root() -> Option<PathBuf> {
+pub(super) fn current_project_root() -> Option<PathBuf> {
     crate::bridge::convert::current_project_root()
 }
 
@@ -162,14 +163,14 @@ fn lines_of(text: &QString) -> Vec<String> {
         .collect()
 }
 
-fn no_project() -> ffi::FfiResult {
+pub(super) fn no_project() -> ffi::FfiResult {
     ffi::FfiResult {
         code: errors::CODE_NO_PROJECT,
         message: QString::from("no project is open"),
     }
 }
 
-fn unknown_run_config(message: &str) -> ffi::FfiResult {
+pub(super) fn unknown_run_config(message: &str) -> ffi::FfiResult {
     ffi::FfiResult {
         code: errors::CODE_UNKNOWN_RUN_CONFIG,
         message: QString::from(message),
@@ -824,120 +825,11 @@ impl ffi::RunService {
         self.as_mut().launch(config, &root, &context)
     }
 
-    /// Whether `path`'s gutter should show the Dockerfile/Containerfile
-    /// popup (C5, ADR-0056) — `syntax_core`'s own `dockerfile` language
-    /// entry already covers `Dockerfile`, `Containerfile`, `*.dockerfile`,
-    /// `*.containerfile` and `Dockerfile.<stage>` (ADR-0018: one detection
-    /// table), so this reuses it rather than a second file-name rule.
-    pub fn can_run_containerfile(&self, path: &QString) -> bool {
-        syntax_core::language_for_path(Path::new(&path.to_string())).id() == "dockerfile"
-    }
-
-    /// Whether `path`'s gutter should show the compose popup — a file-name
-    /// rule (compose is a YAML *flavor*, not a language, ADR-0018), the
-    /// same one [`crate::bridge::run::detect_compose`] would suggest it
-    /// from.
-    pub fn can_run_compose_file(&self, path: &QString) -> bool {
-        run_core::is_compose_file_name(Path::new(&path.to_string()))
-    }
-
-    /// The Dockerfile gutter's "Build image": `docker build` only, as a
-    /// tracked console — no run configuration created or remembered, since
-    /// this is a one-off build, not something to reappear in the run
-    /// toolbar's picker.
-    pub fn build_containerfile(mut self: Pin<&mut Self>, path: &QString) -> ffi::FfiResult {
-        let Some(root) = current_project_root() else {
-            return no_project();
-        };
-        let file = PathBuf::from(path.to_string());
-        let Some(mut config) = run_core::containerfile_config(&root, &file) else {
-            return unknown_run_config("this file is outside the project");
-        };
-        if let Some(setting) = config.containerfile.as_mut() {
-            setting.run_built_image = false; // build only — see `to_launch_spec_in`'s dispatch.
-        }
-        let containers = effective_container_settings();
-        let context = run_core::MacroContext::for_file(&root, &file).with_containers(containers);
-        let spec = {
-            use run_core::RunConfigExt as _;
-            config.to_launch_spec_in(&context)
-        };
-        self.as_mut()
-            .spawn_ad_hoc_console(format!("{}-build", config.id), spec);
-        ffi::FfiResult::default()
-    }
-
-    /// The Dockerfile gutter's "Run container": build then run, remembered
-    /// as a temporary configuration (so it also appears in the run
-    /// toolbar's picker and can be rerun), same as [`Self::run_context`].
-    pub fn run_containerfile(mut self: Pin<&mut Self>, path: &QString) -> ffi::FfiResult {
-        let Some(root) = current_project_root() else {
-            return no_project();
-        };
-        let file = PathBuf::from(path.to_string());
-        let Some(config) = run_core::containerfile_config(&root, &file) else {
-            return unknown_run_config("this file is outside the project");
-        };
-        self.as_mut().remember_and_launch(config, &root, &file)
-    }
-
-    /// The Dockerfile gutter's "New configuration...": remembers the
-    /// temporary configuration without launching it, returning its id so
-    /// the caller (`containers_panel.cpp`/the gutter popup) can open the
-    /// run-config dialog already pointed at it.
-    pub fn new_containerfile_configuration(mut self: Pin<&mut Self>, path: &QString) -> QString {
-        let Some(root) = current_project_root() else {
-            return QString::default();
-        };
-        let file = PathBuf::from(path.to_string());
-        let Some(config) = run_core::containerfile_config(&root, &file) else {
-            return QString::default();
-        };
-        self.as_mut().remember_only(config)
-    }
-
-    /// The compose file gutter's "Run": the whole file, every service,
-    /// remembered as a temporary configuration and launched.
-    pub fn run_compose_file(mut self: Pin<&mut Self>, path: &QString) -> ffi::FfiResult {
-        let Some(root) = current_project_root() else {
-            return no_project();
-        };
-        let file = PathBuf::from(path.to_string());
-        let containers = effective_container_settings();
-        let connection_id = containers
-            .connections
-            .first()
-            .map(|c| c.id.as_str())
-            .unwrap_or("");
-        let Some(config) = run_core::compose_config(&root, connection_id, &file) else {
-            return unknown_run_config("this file is outside the project");
-        };
-        self.as_mut().remember_and_launch(config, &root, &file)
-    }
-
-    /// The compose file gutter's "New configuration...".
-    pub fn new_compose_file_configuration(mut self: Pin<&mut Self>, path: &QString) -> QString {
-        let Some(root) = current_project_root() else {
-            return QString::default();
-        };
-        let file = PathBuf::from(path.to_string());
-        let containers = effective_container_settings();
-        let connection_id = containers
-            .connections
-            .first()
-            .map(|c| c.id.as_str())
-            .unwrap_or("");
-        let Some(config) = run_core::compose_config(&root, connection_id, &file) else {
-            return QString::default();
-        };
-        self.as_mut().remember_only(config)
-    }
-
     /// Remember `config` as a temporary configuration (persisting it) and
     /// launch it from `file`'s context — the shared tail of
     /// [`Self::run_containerfile`]/[`Self::run_compose_file`], mirroring
     /// [`Self::run_context`]'s own remember-then-launch shape.
-    fn remember_and_launch(
+    pub(super) fn remember_and_launch(
         mut self: Pin<&mut Self>,
         config: run_core::RunConfig,
         root: &Path,
@@ -951,7 +843,7 @@ impl ffi::RunService {
 
     /// Remember `config` as a temporary configuration without launching it,
     /// returning its id.
-    fn remember_only(mut self: Pin<&mut Self>, config: run_core::RunConfig) -> QString {
+    pub(super) fn remember_only(mut self: Pin<&mut Self>, config: run_core::RunConfig) -> QString {
         let Some(root) = current_project_root() else {
             return QString::default();
         };
@@ -1046,7 +938,7 @@ impl ffi::RunService {
     /// All/Stop/Down/Scale, and the console's own "Down") so every one of
     /// them shows up as a real console with real output, exactly like any
     /// other launch, rather than a fire-and-forget process.
-    fn spawn_ad_hoc_console(
+    pub(super) fn spawn_ad_hoc_console(
         mut self: Pin<&mut Self>,
         config_id: String,
         spec: run_core::LaunchSpec,

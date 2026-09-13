@@ -706,9 +706,12 @@ dependencies = [
  "app-config",
  "process-exec",
  "pty-core",
+ "reqwest",
  "serde",
  "serde_json",
+ "syntax-core",
  "tempfile",
+ "tree-sitter",
 ]
 
 [[package]]

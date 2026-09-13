@@ -278,6 +278,23 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Ctrl+Shift+=",
     },
     ActionDef {
+        // `id` keeps the "code." prefix of the other diagnostic-facing
+        // actions above; `category` is "Navigate" because that is the menu
+        // these two live in (`navigate_menu.cpp`), the same
+        // category-follows-menu convention `vcs.nextChange`'s "Git" and
+        // `navigate.back`'s "Navigate" both already follow.
+        id: "code.nextDiagnostic",
+        label: "Next Highlighted Error",
+        category: "Navigate",
+        default_shortcut: "F2",
+    },
+    ActionDef {
+        id: "code.previousDiagnostic",
+        label: "Previous Highlighted Error",
+        category: "Navigate",
+        default_shortcut: "Shift+F2",
+    },
+    ActionDef {
         // `id` stays "view.classView": it's the stable key a user's
         // persisted keymap override is stored under, unrelated to the
         // "Structure" display label below.

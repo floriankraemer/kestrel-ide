@@ -1,6 +1,7 @@
 #pragma once
 
 #include "diff_selections.h"
+#include "error_stripe.h"
 #include "minimap.h"
 #include "vcs_gutter.h"
 
@@ -88,6 +89,35 @@ struct DiagnosticSpan
     int start;
     int end;
     QColor color;
+};
+
+// R4: one line's worst diagnostic, view-local like DiagnosticSpan is —
+// keyed by block number in `diagnosticMarks_` the same way `blameAnnotations_`
+// is, so the gutter icon and the error stripe can both ask "does this line
+// have one?" without a scan. `DiagnosticSpan` carries document offsets for
+// the underline; this carries what those two want instead: a colour and the
+// message to show, at line granularity. Built alongside `DiagnosticSpan` in
+// the same loop (`EditorTabs::applyDiagnostics`), so a line with several
+// diagnostics keeps only the worst one's colour and message here — the same
+// "worst wins" rule `at()`/`rows_for_uri` already sort by.
+struct DiagnosticMark
+{
+    QColor color;
+    QString message;
+};
+
+// R4: how many of each severity the *current file alone* has — the error
+// stripe's corner summary, `diagnostics_core::DiagnosticStore::summary`'s
+// answer already reduced to what the view paints with: counts, plus the
+// colour of the worst severity present (an invalid `QColor` when there is
+// nothing to show).
+struct DiagnosticSummary
+{
+    int errors = 0;
+    int warnings = 0;
+    int infos = 0;
+    int hints = 0;
+    QColor worstColor;
 };
 
 // One occurrence of the symbol under the caret (F2-11), view-local for the
@@ -374,6 +404,18 @@ public:
     const QVector<QPair<int, int>> &matchSelections() const { return matchSelections_; }
     const QSet<int> &breakpointLines() const { return breakpointLines_; }
 
+    // R4: pushed from the same loop that builds `diagnosticSpans_`
+    // (`EditorTabs::applyDiagnostics`) — read by the gutter's diagnostic
+    // icon column and by `ErrorStripe`, which both need line/colour/message
+    // rather than `DiagnosticSpan`'s document offsets.
+    void setDiagnosticMarks(const QHash<int, DiagnosticMark> &marks);
+    const QHash<int, DiagnosticMark> &diagnosticMarks() const { return diagnosticMarks_; }
+
+    // R4: the current file's diagnostic counts, for the error stripe's
+    // corner summary.
+    void setDiagnosticSummary(const DiagnosticSummary &summary);
+    const DiagnosticSummary &diagnosticSummary() const { return diagnosticSummary_; }
+
     // Classifies one multi-line slice of text (the widget's own currently
     // visible blocks, joined with '\n') into leading/inner/trailing
     // space-and-tab spans. Set once, at tab-open time, by whoever owns the
@@ -581,6 +623,11 @@ signals:
     // Whether that adds or removes one is `DebugService`'s answer.
     void breakpointToggled(int blockNumber);
 
+    // R4: the gutter's diagnostic icon was clicked on this line (0-based
+    // block). What that opens (the intentions popup, via `showIntentions`'s
+    // own caret-position request) is `EditorTabs`'s job.
+    void diagnosticMarkerClicked(int blockNumber);
+
     // R1-7: the gutter's Run icon was clicked. What that runs is
     // EditorTabs's business, via `RunService::runContext`.
     void runRequested();
@@ -700,6 +747,9 @@ private:
 
     LineNumberArea *lineNumberArea_;
     Minimap *minimap_;
+    // R4: always laid out, unlike `minimap_` — the error stripe works with
+    // the minimap off (ADR-0044's overlays do not).
+    ErrorStripe *errorStripe_;
     // R1-7: set from RunService::canRunFile; widens the gutter by one icon
     // column and puts the Run triangle on the first line.
     bool runnable_ = false;
@@ -726,6 +776,8 @@ private:
     // foldStarts_ is — repainted on every scroll step.
     QHash<int, ChangeMarker> changeMarkers_;
     QVector<DiagnosticSpan> diagnosticSpans_;
+    QHash<int, DiagnosticMark> diagnosticMarks_;
+    DiagnosticSummary diagnosticSummary_;
     QVector<OccurrenceSpan> occurrenceSpans_;
     QVector<DiffLineBackground> diffBackgrounds_;
     QVector<DiffInlineSpan> diffSpans_;

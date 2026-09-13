@@ -65,6 +65,7 @@ CodeEditor::CodeEditor(QWidget *parent)
   : QPlainTextEdit(parent)
   , lineNumberArea_(new LineNumberArea(this))
   , minimap_(new Minimap(this))
+  , errorStripe_(new ErrorStripe(this))
 {
     connect(this, &CodeEditor::blockCountChanged, this, &CodeEditor::updateLineNumberAreaWidth);
     connect(this, &CodeEditor::updateRequest, this, &CodeEditor::updateLineNumberArea);
@@ -86,6 +87,10 @@ CodeEditor::CodeEditor(QWidget *parent)
     connect(verticalScrollBar(), &QScrollBar::valueChanged, minimap_,
             qOverload<>(&QWidget::repaint));
     connect(this, &CodeEditor::cursorPositionChanged, minimap_, qOverload<>(&QWidget::repaint));
+    // R4: the error stripe's ticks are mapped through the same scrollbar
+    // (ADR-0044's convention), so a scroll needs the same repaint.
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, errorStripe_,
+            qOverload<>(&QWidget::repaint));
 
     // Code is read on a horizontal scrollbar, not reflowed — the same
     // default VS Code and IntelliJ ship. It is also what keeps a
@@ -721,6 +726,19 @@ void CodeEditor::setDiagnosticSpans(const QVector<DiagnosticSpan> &spans)
     diagnosticSpans_ = spans;
     // Same one place every other extra selection is (re)applied from.
     highlightCurrentLine();
+}
+
+void CodeEditor::setDiagnosticMarks(const QHash<int, DiagnosticMark> &marks)
+{
+    diagnosticMarks_ = marks;
+    lineNumberArea_->update();
+    errorStripe_->update();
+}
+
+void CodeEditor::setDiagnosticSummary(const DiagnosticSummary &summary)
+{
+    diagnosticSummary_ = summary;
+    errorStripe_->update();
 }
 
 void CodeEditor::setOccurrenceSpans(const QVector<OccurrenceSpan> &spans)

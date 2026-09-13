@@ -348,6 +348,18 @@ public:
     // mine" exists here.
     void applyDiagnostics();
 
+    // R4/F2 and Shift+F2: move the caret to the next (`forward`) or
+    // previous diagnostic in the current file, wrapping — `diagnostics-
+    // core`'s `next_after`/`prev_before` decide which one and whether to
+    // wrap; this only turns the answer into a caret move.
+    void goToDiagnostic(bool forward);
+
+    // R4: a click on the gutter's diagnostic icon. Moves the caret to
+    // `blockNumber` first, then asks for intentions exactly the way
+    // `showIntentionsNow` does — the same popup, opened from a gutter click
+    // instead of Alt+Return.
+    void showIntentionsAtLine(int blockNumber);
+
     // The current editor's find bar, or nothing when no tab is open.
     void withFindBar(const std::function<void(FindBar *)> &action);
 

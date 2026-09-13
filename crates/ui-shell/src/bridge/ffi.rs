@@ -656,6 +656,19 @@ mod ffi {
         source: QString,
     }
 
+    /// `DiagnosticsService::nextDiagnostic`/`previousDiagnostic`'s answer
+    /// (R4): `found == false` means "no diagnostics in this file" and the
+    /// other fields are meaningless — the same typed-flag shape as
+    /// `FfiLocation` (ADR-0003), rather than a sentinel line number. Same
+    /// units as `FfiDiagnostic`: `line` 1-based, `column` 0-based.
+    struct FfiDiagnosticJump {
+        found: bool,
+        line: u32,
+        column: u32,
+        severity: FfiSeverity,
+        message: QString,
+    }
+
     /// One place a language server says a symbol is defined (L4), 1:1 with
     /// `lsp_core::DefinitionTarget`. Same units as `FfiDiagnostic`: `line`
     /// 1-based, `column` 0-based, both UTF-16 code units.
@@ -4777,6 +4790,34 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "diagnosticCounts"]
         fn diagnostic_counts(self: &DiagnosticsService) -> FfiDiagnosticCounts;
+
+        /// R4/F2: the next diagnostic in `path` strictly after
+        /// `(line, character)`, wrapping to the file's first.
+        #[qinvokable]
+        #[cxx_name = "nextDiagnostic"]
+        fn next_diagnostic(
+            self: &DiagnosticsService,
+            path: &QString,
+            line: u32,
+            character: u32,
+        ) -> FfiDiagnosticJump;
+
+        /// R4/Shift+F2: the previous diagnostic in `path` strictly before
+        /// `(line, character)`, wrapping to the file's last.
+        #[qinvokable]
+        #[cxx_name = "previousDiagnostic"]
+        fn previous_diagnostic(
+            self: &DiagnosticsService,
+            path: &QString,
+            line: u32,
+            character: u32,
+        ) -> FfiDiagnosticJump;
+
+        /// R4: how many of each severity `path` alone has — the error
+        /// stripe's corner summary.
+        #[qinvokable]
+        #[cxx_name = "diagnosticSummary"]
+        fn diagnostic_summary(self: &DiagnosticsService, path: &QString) -> FfiDiagnosticCounts;
     }
 
     /// `analysis_core::AnalyzerStatus`'s discriminant, crossed separately

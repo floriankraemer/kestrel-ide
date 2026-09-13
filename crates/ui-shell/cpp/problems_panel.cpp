@@ -1,6 +1,7 @@
 #include "problems_panel.h"
 
 #include "e2e_mark.h"
+#include "editor_tabs.h"
 
 #include "icon_cache.h"
 #include "theme.h"
@@ -11,6 +12,7 @@
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPushButton>
 #include <QShortcut>
 #include <QTreeWidget>
@@ -66,12 +68,13 @@ QColor severityColor(FfiSeverity severity)
 ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *buildService,
                              AnalysisService *analysisService,
                              DiagnosticsService *diagnosticsService, OpenAt openAt,
-                             QWidget *parent)
+                             OpenAt showQuickFixesAt, QWidget *parent)
   : QWidget(parent)
   , languageService_(languageService)
   , buildService_(buildService)
   , diagnosticsService_(diagnosticsService)
   , openAt_(std::move(openAt))
+  , showQuickFixesAt_(std::move(showQuickFixesAt))
 {
     filterEdit_ = new QLineEdit(this);
     filterEdit_->setPlaceholderText(tr("Filter"));
@@ -91,7 +94,14 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
     // Info off by default: a chatty server would otherwise bury the errors.
     infosButton_->setChecked(false);
 
+    // R4: "Current file" scope, off by default — see the header's own
+    // reasoning.
+    currentFileOnlyButton_ = new QPushButton(tr("Current File"), this);
+    currentFileOnlyButton_->setCheckable(true);
+    currentFileOnlyButton_->setFlat(true);
+
     tree_ = new QTreeWidget(this);
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
     tree_->setColumnCount(4);
     tree_->setHeaderLabels({tr("Severity"), tr("Line:Column"), tr("Message"), tr("Source")});
     tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
@@ -108,6 +118,7 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
     topRow->addWidget(errorsButton_);
     topRow->addWidget(warningsButton_);
     topRow->addWidget(infosButton_);
+    topRow->addWidget(currentFileOnlyButton_);
 
     auto *layout = new QVBoxLayout(this);
     layout->addLayout(topRow);
@@ -121,12 +132,15 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
     setTabOrder(infosButton_, tree_);
 
     connect(filterEdit_, &QLineEdit::textChanged, this, [this]() { applyFilter(); });
-    for (QPushButton *button : {errorsButton_, warningsButton_, infosButton_}) {
+    for (QPushButton *button : {errorsButton_, warningsButton_, infosButton_,
+                                currentFileOnlyButton_}) {
         connect(button, &QPushButton::toggled, this, [this]() { applyFilter(); });
     }
     // itemActivated covers both the double-click and Enter, so there is one
     // path into the editor rather than two that can drift apart.
     connect(tree_, &QTreeWidget::itemActivated, this, &ProblemsPanel::openRow);
+    connect(tree_, &QTreeWidget::customContextMenuRequested, this,
+            &ProblemsPanel::showRowContextMenu);
 
     auto *copyShortcut = new QShortcut(QKeySequence::Copy, tree_);
     copyShortcut->setContext(Qt::WidgetShortcut);
@@ -289,11 +303,22 @@ void ProblemsPanel::applyFilter()
     int warnings = 0;
     int infos = 0;
 
+    // R4: "Current file" scope — a group whose path is not the file the
+    // editor is showing is out of scope entirely, the same all-or-nothing
+    // the severity toggles apply per row.
+    const bool scopeCurrentFile = currentFileOnlyButton_->isChecked();
+
     for (int g = 0; g < tree_->topLevelItemCount(); ++g) {
         QTreeWidgetItem *group = tree_->topLevelItem(g);
+        const bool inScope =
+          !scopeCurrentFile || group->data(0, kPathRole).toString() == currentFile_;
         int visibleChildren = 0;
         for (int i = 0; i < group->childCount(); ++i) {
             QTreeWidgetItem *item = group->child(i);
+            if (!inScope) {
+                item->setHidden(true);
+                continue;
+            }
             const auto severity = static_cast<FfiSeverity>(item->data(0, kSeverityRole).toInt());
             switch (severity) {
             case FfiSeverity::Error:
@@ -394,6 +419,25 @@ void ProblemsPanel::openRow(QTreeWidgetItem *item, int)
     }
 }
 
+void ProblemsPanel::showRowContextMenu(const QPoint &pos)
+{
+    QTreeWidgetItem *item = tree_->itemAt(pos);
+    if (!item || item->childCount() > 0 || !item->parent()) {
+        return;
+    }
+
+    QMenu menu(this);
+    QAction *quickFixAction = menu.addAction(tr("Quick Fixes..."));
+    connect(quickFixAction, &QAction::triggered, this, [this, item]() {
+        if (showQuickFixesAt_) {
+            showQuickFixesAt_(item->data(0, kPathRole).toString(),
+                               item->data(0, kLineRole).toInt(),
+                               item->data(0, kColumnRole).toInt());
+        }
+    });
+    menu.exec(tree_->viewport()->mapToGlobal(pos));
+}
+
 void ProblemsPanel::copySelection()
 {
     QTreeWidgetItem *item = tree_->currentItem();
@@ -406,6 +450,19 @@ void ProblemsPanel::copySelection()
                                           .arg(item->data(0, kLineRole).toInt())
                                           .arg(item->data(0, kColumnRole).toInt() + 1)
                                           .arg(item->text(0).toLower(), item->text(2)));
+}
+
+ProblemsPanel *createProblemsPanel(LanguageService *languageService, BuildService *buildService,
+                                    AnalysisService *analysisService,
+                                    DiagnosticsService *diagnosticsService, EditorTabs *editorTabs,
+                                    ProblemsPanel::OpenAt openAt, QWidget *parent)
+{
+    auto showQuickFixesAt = [editorTabs](const QString &path, int line, int column) {
+        editorTabs->openFileAtLine(path, line, column);
+        editorTabs->showIntentionsNow();
+    };
+    return new ProblemsPanel(languageService, buildService, analysisService, diagnosticsService,
+                              std::move(openAt), std::move(showQuickFixesAt), parent);
 }
 
 } // namespace ui_shell

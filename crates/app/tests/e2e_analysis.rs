@@ -1,6 +1,8 @@
 //! End-to-end flow for the PHP tooling plan's analyzer surface (E2): a
 //! `phpstan`-shaped analyzer's findings reach the editor's squiggles and the
-//! Problems dock, and double-clicking a row navigates to it.
+//! Problems dock, double-clicking a row navigates to it, and (R4, the
+//! IntelliJ-parity refinement plan) F2 walks the caret between the two
+//! findings this fixture now reports.
 //!
 //! Its own test binary for the reason `e2e_vcs.rs` gives — `e2e.rs` sits at
 //! its ratcheted size ceiling — and `make e2e` runs it with the others.
@@ -59,20 +61,37 @@ fn stub_analyzer_bin() -> PathBuf {
 
 /// A Composer project declaring `phpstan/phpstan` in `require-dev`, with
 /// `vendor/bin/phpstan` seeded to `stub_analyzer`'s binary and a
-/// `src/Greeter.php` long enough for the stub's canned line-10 finding to
-/// land on a real line. `$name` on line 10 is genuinely unbound in this
-/// file, so a reader who goes looking sees the same bug PHPStan reports —
-/// nothing here is asserting against a lie.
+/// `src/Greeter.php` long enough for both of the stub's canned findings
+/// (line 10 and line 20, `checkstyle_one_file.xml`'s own two rows — R4's
+/// F2 flow needs two diagnostics to navigate between) to land on real
+/// lines. `$name` on line 10 is genuinely unbound and `$x` on line 20 is
+/// genuinely unused in this file, so a reader who goes looking sees the
+/// same two bugs PHPStan reports — nothing here is asserting against a lie.
 fn php_analyzer_fixture() -> tempfile::TempDir {
-    const GREETER_PHP: &str = "<?php\n\
-                                \n\
-                                class Greeter\n\
-                                {\n    public function greet(): string\n    {\n\
-                                \x20\x20\x20\x20\x20\x20\x20\x20// step one\n\
-                                \x20\x20\x20\x20\x20\x20\x20\x20// step two\n\
-                                \x20\x20\x20\x20\x20\x20\x20\x20// step three\n\
-                                \x20\x20\x20\x20\x20\x20\x20\x20$greeting = $name;\n\
-                                \x20\x20\x20\x20\x20\x20\x20\x20return $greeting;\n    }\n}\n";
+    const GREETER_LINES: &[&str] = &[
+        "<?php",
+        "",
+        "class Greeter",
+        "{",
+        "    public function greet(): string",
+        "    {",
+        "        // step one",
+        "        // step two",
+        "        // step three",
+        "        $greeting = $name;", // line 10: PHPStan's undefined-variable error
+        "        return $greeting;",
+        "    }",
+        "",
+        "    public function unused(): void",
+        "    {",
+        "        // step four",
+        "        // step five",
+        "        // step six",
+        "        // step seven",
+        "        $x = 1;", // line 20: PHPStan's unused-variable warning
+        "    }",
+        "}",
+    ];
 
     let dir = tempfile::TempDir::new().expect("temp analyzer fixture dir");
     std::fs::write(
@@ -81,7 +100,8 @@ fn php_analyzer_fixture() -> tempfile::TempDir {
     )
     .expect("composer.json");
     std::fs::create_dir_all(dir.path().join("src")).expect("src dir");
-    std::fs::write(dir.path().join("src/Greeter.php"), GREETER_PHP).expect("Greeter.php");
+    let greeter_php = GREETER_LINES.join("\n") + "\n";
+    std::fs::write(dir.path().join("src/Greeter.php"), greeter_php).expect("Greeter.php");
 
     let vendor_bin = dir.path().join("vendor/bin");
     std::fs::create_dir_all(&vendor_bin).expect("vendor/bin");
@@ -245,6 +265,23 @@ fn e2e_analyzer_findings_appear_inline_and_in_problems() {
     e2e::wait_for("the caret to land on the finding's line", || {
         let after = cursor(&mcp, tab_id);
         (after != before && after.0 == 9).then_some(())
+    });
+
+    // R4: F2 (`code.nextDiagnostic`) walks to this file's other finding
+    // (line 20's warning) from wherever the double-click above just left
+    // the caret, and a second F2 wraps back to line 10's — the fixture's
+    // only two diagnostics — `diagnostics_core::DiagnosticStore::
+    // next_after`'s wrap-around contract, driven the same way `EditorTabs::
+    // goToDiagnostic` reads the caret's own position. Kept inside this same
+    // flow (ADR-0046's E2E budget) rather than as a second test.
+    ide.focus_main();
+    ide.key("F2");
+    e2e::wait_for("F2 to land on the second diagnostic (line 20)", || {
+        (cursor(&mcp, tab_id).0 == 19).then_some(())
+    });
+    ide.key("F2");
+    e2e::wait_for("a second F2 to wrap back to the first diagnostic (line 10)", || {
+        (cursor(&mcp, tab_id).0 == 9).then_some(())
     });
 
     assert_eq!(ide.quit(), 0);

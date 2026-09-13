@@ -500,6 +500,18 @@ void EditorTabs::applyDiagnostics()
             return;
         }
         QVector<DiagnosticSpan> spans;
+        // R4: one mark per line, kept alongside `spans` from the same rows
+        // — the gutter icon and the error stripe both want line/colour/
+        // message rather than `DiagnosticSpan`'s document offsets. A line
+        // with several diagnostics keeps only the worst one's colour and
+        // message, the same "worse severity wins" rule `at()` sorts by.
+        QHash<int, DiagnosticMark> marks;
+        // Tracks each line's best (worst-severity) rank seen so far, so a
+        // second, milder diagnostic on an already-marked line never
+        // overwrites the mark a worse one already put there. `FfiSeverity`
+        // is declared worst-first (`Error` = 0), the same order
+        // `diagnostics_core::Severity` sorts rows by.
+        QHash<int, int> markRank;
         if (!path.isEmpty()) {
             const QTextDocument *document = editor->document();
             for (const FfiDiagnostic &row : diagnosticsService_->diagnosticsForFile(path)) {
@@ -526,10 +538,37 @@ void EditorTabs::applyDiagnostics()
                     // A zero-width range still has to be visible.
                     end = qMin(start + 1, startBlock.position() + startBlock.length() - 1);
                 }
-                spans.append(DiagnosticSpan{start, end, severityColor(row.severity)});
+                const QColor color = severityColor(row.severity);
+                spans.append(DiagnosticSpan{start, end, color});
+
+                const int line = startBlock.blockNumber();
+                const int rank = static_cast<int>(row.severity);
+                if (!markRank.contains(line) || rank < markRank.value(line)) {
+                    markRank.insert(line, rank);
+                    marks.insert(line, DiagnosticMark{color, QString(row.message)});
+                }
             }
         }
         codeEditor->setDiagnosticSpans(spans);
+        codeEditor->setDiagnosticMarks(marks);
+
+        DiagnosticSummary summary;
+        if (!path.isEmpty()) {
+            const FfiDiagnosticCounts counts = diagnosticsService_->diagnosticSummary(path);
+            summary.errors = static_cast<int>(counts.errors);
+            summary.warnings = static_cast<int>(counts.warnings);
+            summary.infos = static_cast<int>(counts.infos);
+            summary.hints = static_cast<int>(counts.hints);
+            if (counts.errors > 0) {
+                summary.worstColor = severityColor(FfiSeverity::Error);
+            } else if (counts.warnings > 0) {
+                summary.worstColor = severityColor(FfiSeverity::Warning);
+            } else if (counts.infos > 0 || counts.hints > 0) {
+                summary.worstColor = severityColor(FfiSeverity::Information);
+            }
+        }
+        codeEditor->setDiagnosticSummary(summary);
+
         if (!path.isEmpty()) {
             // The only way anything outside the process can know this
             // file's squiggles caught up with whichever source just
@@ -545,6 +584,43 @@ void EditorTabs::applyDiagnostics()
 void EditorTabs::setDiagnosticsService(DiagnosticsService *diagnosticsService)
 {
     diagnosticsService_ = diagnosticsService;
+}
+
+void EditorTabs::goToDiagnostic(bool forward)
+{
+    auto *editor = qobject_cast<CodeEditor *>(currentEditor());
+    if (!editor || !diagnosticsService_) {
+        return;
+    }
+    const QString path = editor->property("lspPath").toString();
+    if (path.isEmpty()) {
+        return;
+    }
+    const QPair<quint32, quint32> at = lspPosition(editor, editor->textCursor().position());
+    const FfiDiagnosticJump jump = forward
+      ? diagnosticsService_->nextDiagnostic(path, at.first, at.second)
+      : diagnosticsService_->previousDiagnostic(path, at.first, at.second);
+    if (!jump.found) {
+        return;
+    }
+    QTextCursor cursor = editor->textCursor();
+    cursor.setPosition(positionAt(editor->document(), jump.line - 1, jump.column));
+    editor->setTextCursor(cursor);
+    editor->centerCursor();
+}
+
+void EditorTabs::showIntentionsAtLine(int blockNumber)
+{
+    auto *editor = qobject_cast<CodeEditor *>(currentEditor());
+    if (!editor) {
+        return;
+    }
+    // R4: the gutter's diagnostic icon opens the same intentions popup
+    // Alt+Return does — `requestIntentionsFor` reads the caret's own
+    // position, so moving it here first is the whole difference.
+    QTextCursor cursor(editor->document()->findBlockByNumber(blockNumber));
+    editor->setTextCursor(cursor);
+    requestIntentionsFor(editor, true);
 }
 
 DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *languageService,
@@ -1015,6 +1091,10 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     connect(editor, &CodeEditor::runRequested, this, [this, editor]() { requestRunFor(editor); });
     connect(editor, &CodeEditor::breakpointToggled, this,
             [this, editor](int blockNumber) { toggleBreakpointAt(editor, blockNumber); });
+    // R4: a click on the gutter's diagnostic icon opens the intentions
+    // popup for that line.
+    connect(editor, &CodeEditor::diagnosticMarkerClicked, this,
+            [this](int blockNumber) { showIntentionsAtLine(blockNumber); });
     requestSemanticTokensFor(editor);
     requestCodeLensesFor(editor);
 }

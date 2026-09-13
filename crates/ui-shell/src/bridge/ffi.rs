@@ -570,6 +570,18 @@ mod ffi {
     /// plain occurrence has no `tags.scm` entry of its own — a typed flag
     /// rather than an overloaded kind value (ADR-0003). `container` is
     /// empty when the symbol has none.
+    /// R8: `search`'s three toggles, bundled into one struct rather than
+    /// three positional `bool`s — `search` was already at the clippy
+    /// `too_many_arguments` ceiling before R8 added `whole_word`, and a
+    /// fourth positional bool would only make the call site harder to
+    /// read correctly.
+    #[derive(Default)]
+    struct FfiSearchOptions {
+        is_regex: bool,
+        case_sensitive: bool,
+        whole_word: bool,
+    }
+
     #[derive(Default)]
     struct FfiSymbolMatch {
         path: QString,
@@ -3174,13 +3186,23 @@ mod ffi {
         /// it does for `searchEverywhere` — a newer search cancels the
         /// running one — but the two use separate counters so typing in the
         /// popup never cancels the results panel's search.
+        ///
+        /// R8: `mask` is a comma-separated glob list (`*.rs, !*_test.rs`,
+        /// `index_core::FileMask` syntax) — empty means no mask.
+        /// `scope_paths` restricts the search to those files/directories —
+        /// empty means the whole project, which is how the view expresses
+        /// the Project/Directory/Open Files/Current File scope combo
+        /// without a dedicated enum crossing the seam: it already has to
+        /// resolve "Open Files" to a path list to show it, so the bridge
+        /// just takes the resolved list either way.
         #[qinvokable]
         #[cxx_name = "search"]
         fn search(
             self: Pin<&mut SearchModel>,
             pattern: &QString,
-            is_regex: bool,
-            case_sensitive: bool,
+            options: FfiSearchOptions,
+            mask: &QString,
+            scope_paths: &QStringList,
             generation: u64,
         );
 
@@ -3415,10 +3437,14 @@ mod ffi {
         fn search_batch(self: Pin<&mut SearchModel>, generation: u64, hits: Vec<FfiSearchHit>);
 
         /// Emitted once after the last `searchBatch` of a `search` call
-        /// (including when there were zero matches).
+        /// (including when there were zero matches). `total_hint` is R8's
+        /// "N of M": equal to the number of matches actually sent when the
+        /// result wasn't capped, and larger than it when the 10,000-match
+        /// ceiling cut the scan short — the view shows "showing N of M,
+        /// refine your search" exactly when the two differ.
         #[qsignal]
         #[cxx_name = "searchFinished"]
-        fn search_finished(self: Pin<&mut SearchModel>, generation: u64);
+        fn search_finished(self: Pin<&mut SearchModel>, generation: u64, total_hint: u32);
 
         /// Emitted instead of `searchFinished` when `search` couldn't run
         /// at all (no index built yet, or an invalid regex pattern).
@@ -3467,6 +3493,25 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "findUsages"]
         fn find_usages(self: Pin<&mut SearchModel>, name: &QString);
+
+        /// R8: like `findUsages`, but tries a running language server's
+        /// `textDocument/references` first (`path`/`line`/`character` are
+        /// the caret's LSP position, the same convention
+        /// `requestIntentions`/`signatureHelpAt` use) and only falls back
+        /// to the name-based index when the server has nothing — no server
+        /// for the language, none running, an error, or an empty answer
+        /// (`lsp_core::prefer_lsp_references`). Answers on the same
+        /// `usagesFound`/`usagesFinished`/`usagesFailed` trio as
+        /// `findUsages`.
+        #[qinvokable]
+        #[cxx_name = "usagesAt"]
+        fn usages_at(
+            self: Pin<&mut SearchModel>,
+            name: &QString,
+            path: &QString,
+            line: u32,
+            character: u32,
+        );
 
         /// One usage — or, from `findImplementations`/`findSupertypes`,
         /// one hierarchy row. `is_definition` distinguishes the defining

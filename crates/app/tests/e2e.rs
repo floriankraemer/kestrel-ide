@@ -1254,3 +1254,56 @@ fn e2e_ui_locale_setting_takes_effect_on_relaunch() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// R8: a file mask (`*.rs, !*_test.rs`) applied to Find in Files narrows the
+/// results tree to exactly the files that pass it — the plan's step 6.
+///
+/// `needle` sits in three files across three extensions/name shapes so the
+/// mask has something real to exclude on both axes: `main.rs` (kept),
+/// `main_test.rs` (excluded by the `!*_test.rs` negation), `notes.py`
+/// (excluded by `*.rs` never matching it).
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_find_in_files_mask_narrows_to_matching_files() {
+    let name = "e2e_find_in_files_mask_narrows_to_matching_files";
+    let repo = git_fixture(&[
+        ("src/main.rs", "fn main() { needle(); }\n"),
+        ("src/main_test.rs", "fn needle_is_tested() { needle(); }\n"),
+        ("notes.py", "# needle\n"),
+    ]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    let mark = ide.mark();
+    ide.key("ctrl+shift+f");
+    let shown = ide.wait_for_event(mark, "the Find in Files panel to open", |e| {
+        e["ev"] == "find_in_files_shown"
+    });
+    ide.type_text("needle");
+
+    let (x, y) = rect_centre(&shown["mask_rect"]);
+    ide.click_at(x, y, 1);
+    ide.type_text("*.rs, !*_test.rs");
+    ide.key("Return");
+
+    let results = ide.wait_for_event(mark, "the masked search to finish", |e| {
+        e["ev"] == "find_in_files_results"
+    });
+    let files: Vec<String> = results["files"]
+        .as_array()
+        .expect("the mark carries a files array")
+        .iter()
+        .map(|f| f.as_str().expect("a file name").to_string())
+        .collect();
+    assert_eq!(
+        files,
+        vec!["main.rs".to_string()],
+        "the mask must keep main.rs and drop main_test.rs (negated) and notes.py (extension)"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}

@@ -242,7 +242,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto openAt = [editorTabs](const QString &path, int line, int column) {
         editorTabs->openFileAtLine(path, line, column);
     };
-    auto *searchResultsPanel = new SearchResultsPanel(searchModel, openAt, dockManager);
+    auto *searchResultsPanel = new SearchResultsPanel(searchModel, editorTabs, openAt, dockManager);
     auto *searchResultsDock = new ads::CDockWidget(dockManager, QObject::tr("Search Results"));
     searchResultsDock->setWidget(searchResultsPanel);
     // First bottom panel: it creates the bottom dock area; every panel after

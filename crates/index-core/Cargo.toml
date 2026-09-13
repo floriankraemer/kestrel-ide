@@ -15,6 +15,14 @@ rayon = "1"
 editor-core = { path = "../editor-core" }
 syntax-core = { path = "../syntax-core" }
 nucleo-matcher = "0.3.1"
+# R8: literal-prefix extraction from a Find in Files regex, for ngram
+# narrowing — already a transitive dependency via `grep-regex`, promoted to
+# direct now that `index-core` parses a `Hir` itself (see ADR-0008's
+# amendment on this).
+regex-syntax = "0.8"
+# R8: Find in Files' file-mask scope (`*.rs, !*_test.rs`) — already used by
+# `lsp-core` for the same globbing job.
+globset = "0.4"
 # The same advisory-lock crate tantivy itself uses, so the probe in
 # `index_dir_for` tests exactly the mechanism tantivy will rely on.
 fs4 = "0.8"

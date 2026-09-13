@@ -27,6 +27,7 @@ pub mod intentions;
 pub mod manager;
 pub mod navigation;
 pub mod progress;
+pub mod references;
 pub mod registration;
 pub mod rename;
 pub mod semantic_tokens;
@@ -85,6 +86,7 @@ pub use navigation::{
 /// dependency on `process-exec`.
 pub use process_exec::host::{set_remote_wsl_enabled, ExecHost};
 pub use progress::{ProgressTracker, ServerActivity};
+pub use references::{group_by_uri, parse_references, prefer_lsp_references, ReferenceLocation};
 pub use registration::{Registration, Registrations, Watcher};
 pub use rename::{
     parse_prepare_rename, prepare_outcome, rename_outcome, PrepareOutcome, PrepareRename,

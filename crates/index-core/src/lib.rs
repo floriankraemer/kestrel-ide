@@ -75,6 +75,8 @@ pub mod excludes;
 pub mod lifecycle;
 mod replace_preview;
 pub use replace_preview::FileDiffPreview;
+mod search_scope;
+pub use search_scope::{literal_prefix, FileMask, ScopedSearchResult, SearchScope};
 use tantivy::{doc, Index, IndexReader, IndexWriter, Term};
 
 use syntax_core::{analyze_file, language_for_path, SymbolKind, SymbolNode};

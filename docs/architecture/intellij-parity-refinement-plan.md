@@ -257,4 +257,4 @@ Files: `crates/index-core/src/lib.rs`, new `crates/lsp-core/src/references.rs`, 
 | R5 | Debugger UI: wire the core that already exists | done | c975635 |
 | R6 | Staging and commit workflow | done | cbeb1f8 |
 | R7 | Git log, blame and branch operations | done | 850e974 |
-| R8 | Find in Files and Find Usages depth | open | |
+| R8 | Find in Files and Find Usages depth | done | ccd5cd6 |

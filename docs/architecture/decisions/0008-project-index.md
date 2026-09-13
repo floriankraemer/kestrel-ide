@@ -42,6 +42,26 @@ Two projects at the same path collide there and the index no longer travels with
 
 The error text no longer claims a cause it cannot know. It names the lock file and gives both possibilities, because the one thing the user can do — check whether another instance is running — needs the path.
 
+## Amendment: R8 — scoped Find in Files, and a real regex literal-prefix narrowing
+
+`docs/architecture/intellij-parity-refinement-plan.md`'s R8 closes the two scope boundaries the base decision above named as accepted, not fixed: regex candidate narrowing falling back to "every indexed file", and there being no file mask or path scope at all.
+
+**Regex literal-prefix narrowing.**
+`regex-syntax` (already a transitive dependency via `grep-regex`, now promoted to direct) parses the pattern into an `Hir` and `regex_syntax::hir::literal::Extractor` (`ExtractKind::Prefix`) extracts what a match is *required* to start with.
+Only the single-alternative case narrows: `Seq::literals()` for an alternation like `(abc|xyz)` holds every alternative a match may start with, not one prefix shared by all of them, so narrowing on just one of them would wrongly drop a file that only contains the other.
+A prefix under three characters produces no ngram terms either, so it is treated the same as "no prefix" — still correct, just not narrowed.
+This is additive: `TextIndex::search` (the pre-R8 entry point) is untouched, and `search_scoped` (the new one, in `crates/index-core/src/search_scope.rs`) is what the bridge now calls.
+
+**`SearchScope`: a file mask and a path allow-list.**
+`globset` (already used by `lsp-core`, now also a direct `index-core` dependency) backs `FileMask::parse`, an IntelliJ-style comma/semicolon-separated glob list with `!pattern` negation (`*.rs, !*_test.rs`).
+The path allow-list is how the view expresses Project/Directory/Open Files/Current File scope crossing the FFI seam: rather than a scope-kind enum reaching into `index-core`, the bridge resolves "Open Files" or "Current File" to an actual path list itself (it already has to, to show the choice), and an empty list means "the whole project" — `index-core` only ever sees paths, never a scope *kind*.
+Both the mask and the path allow-list are applied as a post-filter on the ngram-narrowed candidate set, in `TextIndex::candidate_files_scoped` — narrowing first, then filtering, keeps a scoped search no slower than an unscoped one on the files it was always going to skip.
+
+**`total_hint`.**
+`search_scoped`'s result carries a match count that keeps incrementing past the 10,000-match cap instead of stopping the scan the instant the cap is hit, so the view can show "showing N of M — refine your search" rather than a bare, possibly-misleading count.
+
+See `crates/index-core/src/search_scope.rs` for the implementation and its unit tests.
+
 ## Context
 
 The language-folding/Class-View/terminal/search plan (task G, tracks G1→H and E1→J) calls for

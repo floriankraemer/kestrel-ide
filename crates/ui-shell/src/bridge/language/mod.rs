@@ -7,7 +7,7 @@ use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
 use crate::bridge::ffi::{self};
-use crate::bridge::registry::SharedDiagnostics;
+use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 
 /// F2-8/F2-9: intentions, organize imports, signature help, document
 /// highlights and inlay hints — split out once this file crossed the
@@ -50,15 +50,15 @@ pub(crate) fn plugin_servers() -> Vec<lsp_core::PluginServer> {
 // Language servers (Task L2)
 // ---------------------------------------------------------------------------
 
-/// One unit of work for the LSP worker thread.
-///
-/// The worker exists because `LspManager::start` blocks until the server has
-/// answered `initialize` — a real server can take a second or two — and the
-/// UI thread must not wait for that. Running *every* call through the same
-/// queue (not just `start`) is what keeps ordering honest: a `didChange`
-/// queued while the server is still starting is still delivered after the
-/// `didOpen` that preceded it.
-type LspJob = Box<dyn FnOnce(&lsp_core::LspManager) + Send>;
+// `LspJob` (one unit of work for the LSP worker thread) now lives in
+// `bridge::registry`, alongside `set_lsp_jobs`/`push_lsp_job` (R8): the
+// worker exists because `LspManager::start` blocks until the server has
+// answered `initialize` — a real server can take a second or two — and the
+// UI thread must not wait for that. Running *every* call through the same
+// queue (not just `start`) is what keeps ordering honest: a `didChange`
+// queued while the server is still starting is still delivered after the
+// `didOpen` that preceded it. `registry` needs the type too, to give
+// `SearchModel` a second sender onto the same channel for Find Usages.
 
 /// C5: how long a burst of filesystem-watcher events is allowed to run
 /// before it is flushed as one batched `workspace/didChangeWatchedFiles`.
@@ -509,6 +509,7 @@ impl ffi::LanguageService {
         // Dropping the previous sender ends that worker's loop, which shuts
         // its servers down — no separate stop path to keep in sync.
         self.jobs.borrow_mut().take();
+        registry::set_lsp_jobs(None);
         self.started.borrow_mut().clear();
         self.open_docs.borrow_mut().clear();
         self.triggers.borrow_mut().clear();
@@ -555,6 +556,11 @@ impl ffi::LanguageService {
             }
         });
 
+        // R8: `SearchModel` gets its own sender onto the same channel, so
+        // Find Usages can queue a `references` request beside this
+        // project's `didOpen`/`didChange` traffic instead of needing its
+        // own `LspManager`.
+        registry::set_lsp_jobs(Some(jobs.clone()));
         *self.jobs.borrow_mut() = Some(jobs);
         self.as_mut().diagnostics_changed();
     }

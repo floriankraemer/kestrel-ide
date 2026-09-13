@@ -1,6 +1,7 @@
 #include "run_config_dialog.h"
 
 #include "e2e_mark.h"
+#include "run_config_container_pages.h"
 
 #include <QAction>
 #include <QCheckBox>
@@ -43,26 +44,33 @@ FfiRunConfig configAt(RunConfigEditor *editor, int index)
     return FfiRunConfig{};
 }
 
-// C5 (ADR-0056): the starter JSON a freshly added container-kind
-// configuration gets — just enough for `container_core::run_config` to
-// compile *something* (an empty image reference still previews as
-// `docker run -d --pull missing`), with the rest left to the user to fill
-// in through the JSON editor below.
-QString defaultContainerJson(const QString &kind)
+int indexOfId(RunConfigEditor *editor, const QString &id)
 {
-    if (kind == QLatin1String("container-image")) {
-        return QStringLiteral("{\n  \"image\": \"\"\n}\n");
+    int i = 0;
+    for (const FfiRunConfig &config : editor->configurations()) {
+        if (QString(config.id) == id) {
+            return i;
+        }
+        ++i;
     }
+    return -1;
+}
+
+// The starter options a freshly added container-kind configuration gets —
+// just enough for `container_core::run_config` to compile something
+// sensible; the rest is left to the user to fill in through the page's own
+// fields (C5, ADR-0056).
+FfiContainerOptions defaultContainerOptions(const QString &kind)
+{
+    FfiContainerOptions options;
     if (kind == QLatin1String("containerfile")) {
-        return QStringLiteral("{\n  \"dockerfile\": \"Dockerfile\",\n"
-                               "  \"context_dir\": \"$PROJECT_DIR$\",\n"
-                               "  \"image_tag\": \"\",\n"
-                               "  \"run_built_image\": true\n}\n");
+        options.dockerfile = QStringLiteral("Dockerfile");
+        options.context_dir = QStringLiteral("$PROJECT_DIR$");
+        options.run_built_image = true;
+    } else if (kind == QLatin1String("compose")) {
+        options.compose_files = QStringLiteral("docker-compose.yml");
     }
-    if (kind == QLatin1String("compose")) {
-        return QStringLiteral("{\n  \"compose_files\": [\"docker-compose.yml\"]\n}\n");
-    }
-    return QString();
+    return options;
 }
 
 void repaintList(QListWidget *list, RunConfigEditor *editor, int keepIndex)
@@ -79,13 +87,14 @@ void repaintList(QListWidget *list, RunConfigEditor *editor, int keepIndex)
 
 } // namespace
 
-void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
+void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
+                         ContainerService *containerService, const QString &selectConfigId)
 {
     editor->beginEdit();
 
     QDialog dialog(parent);
     dialog.setWindowTitle(QObject::tr("Run Configurations"));
-    dialog.resize(640, 420);
+    dialog.resize(760, 520);
 
     auto *list = new QListWidget(&dialog);
     list->setMaximumWidth(200);
@@ -125,18 +134,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
     parallelCheck->setToolTip(
       QObject::tr("Run this configuration again without stopping the running one"));
 
-    // C5 (ADR-0056): a container-kind configuration's options are a JSON
-    // blob (`FfiRunConfig::container_json`'s own doc comment explains why —
-    // no per-field port/mount/env table widgets in this pass, a documented
-    // scope cut) rather than dozens more line edits; `kindLabel` shows which
-    // kind is selected (read-only — set only by the Add menu, since
-    // changing kind on an existing configuration would strand whatever the
-    // JSON already holds).
-    auto *kindLabel = new QLabel(&dialog);
-    auto *containerJsonEdit = new QPlainTextEdit(&dialog);
-    containerJsonEdit->setPlaceholderText(
-      QObject::tr("Container options as JSON — field names match the option tables "
-                   "(image, connection_id, port_bindings, compose_files, ...)"));
+    auto *containerPage = new ContainerOptionsPage(containerService, editor, &dialog);
+
     auto *commandPreviewEdit = new QPlainTextEdit(&dialog);
     commandPreviewEdit->setReadOnly(true);
     commandPreviewEdit->setMaximumHeight(50);
@@ -159,8 +158,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
     form->addWidget(parallelCheck);
     form->addWidget(new QLabel(QObject::tr("Environment:"), &dialog));
     form->addWidget(envEdit, 1);
-    form->addWidget(kindLabel);
-    form->addWidget(containerJsonEdit, 1);
+    form->addWidget(containerPage, 1);
     form->addWidget(new QLabel(QObject::tr("Command preview:"), &dialog));
     form->addWidget(commandPreviewEdit);
 
@@ -183,8 +181,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
 
     // What kind the currently-loaded row is — set only by `loadForm`/the Add
     // menu, read by `commitForm` so it never has to re-derive it from a
-    // combo box that does not exist (kind is fixed at creation, see
-    // `kindLabel`'s doc comment above).
+    // combo box that does not exist (kind is fixed at creation).
     auto currentKind = std::make_shared<QString>();
 
     const auto commitForm = [=]() {
@@ -201,7 +198,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         form.allow_parallel = parallelCheck->isChecked();
         form.before_launch = beforeLaunchEdit->toPlainText();
         form.kind = *currentKind;
-        form.container_json = containerJsonEdit->toPlainText();
+        form.container = containerPage->options();
         editor->updateConfiguration(static_cast<quint32>(index), form);
     };
 
@@ -211,15 +208,13 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         form.program = programEdit->text();
         form.args = argsEdit->text();
         form.kind = *currentKind;
-        form.container_json = containerJsonEdit->toPlainText();
+        form.container = containerPage->options();
         commandPreviewEdit->setPlainText(editor->commandPreview(form));
     };
 
     const auto loadForm = [=](int index) {
         const bool has = index >= 0;
         nameEdit->setEnabled(has);
-        programEdit->setEnabled(has);
-        argsEdit->setEnabled(has);
         cwdEdit->setEnabled(has);
         envEdit->setEnabled(has);
         beforeLaunchEdit->setEnabled(has);
@@ -236,20 +231,18 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         *currentKind = config.kind;
         const bool isContainer = has && !config.kind.isEmpty();
         // Program/Arguments/Working dir are meaningless for a container-kind
-        // configuration (its argv is compiled from the JSON, not these
-        // fields) — hidden rather than left showing stale, unused values.
+        // configuration (its argv is compiled from the container page's own
+        // fields, not these) — disabled rather than left editable and
+        // ignored.
         programEdit->setEnabled(has && !isContainer);
         argsEdit->setEnabled(has && !isContainer);
         cwdEdit->setEnabled(has && !isContainer);
-        kindLabel->setVisible(isContainer);
-        kindLabel->setText(QObject::tr("Kind: %1").arg(config.kind));
-        containerJsonEdit->setVisible(isContainer);
-        containerJsonEdit->setEnabled(has);
-        containerJsonEdit->setPlainText(config.container_json);
+        containerPage->setKind(config.kind);
+        containerPage->setOptions(config.container);
         refreshPreview();
     };
 
-    QObject::connect(containerJsonEdit, &QPlainTextEdit::textChanged, &dialog, refreshPreview);
+    QObject::connect(containerPage, &ContainerOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(programEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
     QObject::connect(argsEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
 
@@ -261,7 +254,12 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
 
     const auto addWithKind = [=](const QString &kind) {
         commitForm();
-        editor->addConfiguration();
+        if (kind.isEmpty()) {
+            editor->addConfiguration();
+        } else {
+            editor->addContainerConfiguration(QObject::tr("New Configuration"), kind,
+                                              defaultContainerOptions(kind));
+        }
         const int index = configCount(editor) - 1;
         repaintList(list, editor, index);
         // `repaintList`'s `QSignalBlocker` means its own `setCurrentRow`
@@ -273,13 +271,6 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         // dialog's first Add), which is what an E2E flow driving Add then
         // typing into Program actually caught.
         *previousIndex = list->currentRow();
-        if (!kind.isEmpty()) {
-            FfiRunConfig form{};
-            form.name = nameEdit->text();
-            form.kind = kind;
-            form.container_json = defaultContainerJson(kind);
-            editor->updateConfiguration(static_cast<quint32>(index), form);
-        }
         loadForm(list->currentRow());
         e2eMark(QStringLiteral("{\"ev\":\"run_config_added\",\"count\":%1}")
                   .arg(configCount(editor)));
@@ -331,7 +322,10 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         dialog.reject();
     });
 
-    repaintList(list, editor, configCount(editor) > 0 ? 0 : -1);
+    const int initialIndex = selectConfigId.isEmpty()
+      ? (configCount(editor) > 0 ? 0 : -1)
+      : indexOfId(editor, selectConfigId);
+    repaintList(list, editor, initialIndex);
     *previousIndex = list->currentRow();
     loadForm(list->currentRow());
 

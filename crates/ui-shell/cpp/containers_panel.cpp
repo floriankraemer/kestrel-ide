@@ -447,6 +447,14 @@ void ContainersPanel::setOpenSettingsHandler(OpenSettings handler)
     openSettings_ = std::move(handler);
 }
 
+void ContainersPanel::setRunContext(RunService *runService, RunConfigEditor *runConfigEditor,
+                                    EditorTabs *editorTabs)
+{
+    runService_ = runService;
+    runConfigEditor_ = runConfigEditor;
+    editorTabs_ = editorTabs;
+}
+
 void ContainersPanel::report(const FfiResult &result)
 {
     if (result.code == 0) {
@@ -549,6 +557,20 @@ void ContainersPanel::onSelectionChanged()
         dashboardId_->setText(item->data(0, kResourceIdRole).toString());
         dashboardStatus_->setText(item->data(0, kStatusRole).toString());
         dashboardDetail_->setText(item->data(0, kDetailRole).toString());
+        // A compose project's Dashboard is its services and their
+        // container counts (C5, ADR-0056) — already sitting right there as
+        // this item's own children in the tree (each one's own status
+        // column already reads "running/total"), so this is display, not a
+        // new query: no counts are computed here that `ContainerService`
+        // did not already put on the child rows.
+        if (item->data(0, kKindRole).toString() == QStringLiteral("compose-project")) {
+            QStringList lines;
+            for (int i = 0; i < item->childCount(); ++i) {
+                QTreeWidgetItem *service = item->child(i);
+                lines << QStringLiteral("%1: %2").arg(service->text(0), service->text(1));
+            }
+            dashboardDetail_->setText(lines.join(QLatin1Char('\n')));
+        }
         // Image/network/volume nodes get their own Dashboard tab, built and
         // populated by `ContainerDetailArea::onSelectionChanged` below; the
         // generic labels above are only shown for every other kind.
@@ -644,8 +666,16 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         showVolumesGroupContextMenu(item, tree_->viewport()->mapToGlobal(pos));
         return;
     }
+    if (kind == QStringLiteral("compose-project")) {
+        showComposeProjectContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("compose-service")) {
+        showComposeServiceContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
 
-    // Every other row (compose/pod): a later task's.
+    // Every other row (pod, ...): a later task's.
     QAction *copyId = menu.addAction(tr("Copy ID"));
     copyId->setEnabled(!item->data(0, kResourceIdRole).toString().isEmpty());
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));

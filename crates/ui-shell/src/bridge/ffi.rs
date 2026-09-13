@@ -1192,13 +1192,127 @@ mod ffi {
         state: FfiHunkStageState,
     }
 
+    /// One `-p`/`--publish` port binding row (C5, ADR-0056), 1:1 with
+    /// `app_config::container_run::PortBinding`.
+    #[derive(Default)]
+    struct FfiPortBinding {
+        host_ip: QString,
+        host_port: QString,
+        container_port: QString,
+        /// `"tcp"` or `"udp"`; empty reads as `tcp`.
+        protocol: QString,
+    }
+
+    /// One `-v`/`--mount` bind-mount row, 1:1 with
+    /// `app_config::container_run::BindMount`.
+    #[derive(Default)]
+    struct FfiBindMount {
+        host_path: QString,
+        container_path: QString,
+        read_only: bool,
+    }
+
+    /// One `--scale service=n` row, 1:1 with a `ComposeRunSetting::scale`
+    /// entry.
+    #[derive(Default)]
+    struct FfiScaleEntry {
+        service: QString,
+        count: u32,
+    }
+
+    /// A container-kind run configuration's options (C5, ADR-0056) — every
+    /// field `app_config::container_run::{ContainerImageRunSetting,
+    /// ContainerfileRunSetting, ComposeRunSetting}` have between them,
+    /// flattened onto one struct the same way `FfiContainerConnection`
+    /// flattens every connection kind's fields (its own doc comment gives
+    /// the reason: a tagged union has no clean `toml`/shared-struct
+    /// representation, and this is read/written wholesale, never
+    /// interpreted, by the dialog). Which fields apply is `FfiRunConfig::kind`
+    /// — a container-image configuration ignores `dockerfile`/`context_dir`/
+    /// `build_args`/the compose-only fields entirely, for instance.
+    ///
+    /// `run_attach`/`compose_attach` and `recreate`/`build` are separately
+    /// named from what `app_config::container_run` calls them
+    /// (`attach`/`recreate`/`build` on two different structs, `attach` on
+    /// three) only because this one flat struct cannot have two fields
+    /// named `attach`; the bridge's translation (`bridge/run/mod.rs`) maps
+    /// each back to its own sub-table's field of the JetBrains-matching
+    /// name.
+    #[derive(Default)]
+    struct FfiContainerOptions {
+        /// Which `[containers.connection]` row runs this — the Server
+        /// combo, populated from `ContainerService::connections()`.
+        connection_id: QString,
+        /// Image reference (container-image only; a containerfile
+        /// configuration runs `image_tag` instead, once built).
+        image: QString,
+        container_name: QString,
+        publish_all_ports: bool,
+        port_bindings: Vec<FfiPortBinding>,
+        entrypoint: QString,
+        /// Space-joined, like `FfiRunConfig::args`.
+        command: QString,
+        bind_mounts: Vec<FfiBindMount>,
+        env: Vec<FfiKeyValue>,
+        /// Free-form extra `run` arguments, shell-word-split and appended
+        /// verbatim.
+        run_options: QString,
+        /// Attach (`-a`) vs. detach (`-d`) — image/containerfile only.
+        run_attach: bool,
+        /// `"missing"` (default), `"always"`, or `"never"`.
+        pull_policy: QString,
+
+        // Containerfile-only:
+        dockerfile: QString,
+        context_dir: QString,
+        image_tag: QString,
+        build_args: Vec<FfiKeyValue>,
+        build_options: QString,
+        run_built_image: bool,
+
+        // Compose-only:
+        /// `\n`-separated, ordered — the compose files list's Up/Down
+        /// reordering is reflected here on commit.
+        compose_files: QString,
+        /// `\n`-separated; empty means every service the files define.
+        services: QString,
+        project_name: QString,
+        profiles: QString,
+        env_files: QString,
+        compatibility: bool,
+        remove_orphans_on_down: bool,
+        remove_volumes_on_down: bool,
+        /// `"none"` (default), `"all"`, or `"local"`.
+        remove_images_on_down: QString,
+        /// Empty means unset.
+        sigkill_timeout: QString,
+        /// Empty means unset.
+        exit_code_from: QString,
+        scale: Vec<FfiScaleEntry>,
+        always_recreate_deps: bool,
+        renew_anon_volumes: bool,
+        remove_orphans: bool,
+        no_log_prefix: bool,
+        /// `"selected_and_deps"` (default), `"none"`, or `"selected_only"`.
+        start: QString,
+        /// `"selected"` (default), `"none"`, or `"selected_and_deps"`.
+        compose_attach: QString,
+        /// `"changed"` (default), `"all"`, or `"none"`.
+        recreate: QString,
+        /// `"missing"` (default), `"never"`, or `"always"`.
+        build: QString,
+        abort_on_container_exit: bool,
+    }
+
     /// One run configuration, 1:1 with `run_core::RunConfig`
     /// (`app_config::RunConfigSetting`). `args` crosses space-joined — the
     /// same convention `FfiLanguageServerRow::args` already uses (shell-style
     /// quoting is the upgrade if a literal space in an argument ever
     /// matters, not a list editor) — and `env` as `KEY=VALUE` lines
-    /// separated by `\n`, since a `Vec` field on a shared struct is not a
-    /// shape cxx supports (see `FfiFileDiff`'s doc comment).
+    /// separated by `\n`, since a bare `Vec<QString>` is not a shape cxx
+    /// supports (see `FfiFileDiff`'s doc comment) — `FfiContainerOptions`'s
+    /// own list fields sidestep this by wrapping each row in a named
+    /// struct instead.
     #[derive(Default)]
     struct FfiRunConfig {
         id: QString,
@@ -1230,17 +1344,9 @@ mod ffi {
         /// empty for a plain process, or `"container-image"` /
         /// `"containerfile"` / `"compose"`.
         kind: QString,
-        /// The container-kind sub-table (`ContainerImageRunSetting`/
-        /// `ContainerfileRunSetting`/`ComposeRunSetting`, whichever `kind`
-        /// names) as JSON — one opaque blob rather than dozens more shared
-        /// fields (ports, mounts, build args, compose files…), none of
-        /// which cxx's shared-struct shape supports as a `Vec` anyway (see
-        /// this struct's own doc comment on `env`). The dialog's C++ side
-        /// edits it through `QJsonDocument`; it never has to interpret what
-        /// any of the fields mean, only display and collect them, so this
-        /// stays translation rather than a business decision made in C++.
-        /// Empty for a plain process (`kind` empty).
-        container_json: QString,
+        /// The container-kind sub-table's fields — meaningless (and left at
+        /// its default) for a plain process (`kind` empty).
+        container: FfiContainerOptions,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -6057,6 +6163,16 @@ mod ffi {
         #[cxx_name = "imageDashboard"]
         fn image_dashboard(self: &ContainerService, node_id: &QString) -> FfiImageDashboard;
 
+        /// A container-image run configuration's options, prefilled with
+        /// this image node's own connection and reference — "Create
+        /// Container..." (C5, ADR-0056 §6, replacing C4's
+        /// `createContainerQuick`): the caller adds a configuration with
+        /// these through `RunConfigEditor::addContainerConfiguration` and
+        /// opens the run-config dialog on it.
+        #[qinvokable]
+        #[cxx_name = "imageRunDefaults"]
+        fn image_run_defaults(self: &ContainerService, node_id: &QString) -> FfiContainerOptions;
+
         #[qinvokable]
         #[cxx_name = "networkDashboard"]
         fn network_dashboard(self: &ContainerService, node_id: &QString) -> FfiNetworkDashboard;
@@ -6065,16 +6181,6 @@ mod ffi {
         #[cxx_name = "volumeDashboard"]
         fn volume_dashboard(self: &ContainerService, node_id: &QString) -> FfiVolumeDashboard;
 
-        /// "Create Container..." from an image, until C5's run-config
-        /// editor lands: `docker run -d [--name name] [-P] <image>`.
-        #[qinvokable]
-        #[cxx_name = "createContainerQuick"]
-        fn create_container_quick(
-            self: Pin<&mut ContainerService>,
-            node_id: &QString,
-            name: &QString,
-            publish_all: bool,
-        ) -> FfiResult;
     }
 
     impl cxx_qt::Threading for ContainerService {}
@@ -7926,6 +8032,47 @@ mod ffi {
         #[cxx_name = "runContext"]
         fn run_context(self: Pin<&mut RunService>, path: &QString) -> FfiResult;
 
+        /// Whether `path`'s gutter should show the Dockerfile/Containerfile
+        /// popup (C5, ADR-0056) — `syntax_core`'s own `dockerfile` language
+        /// entry, so the view asks rather than reimplementing the rule.
+        #[qinvokable]
+        #[cxx_name = "canRunContainerfile"]
+        fn can_run_containerfile(self: &RunService, path: &QString) -> bool;
+
+        /// Whether `path`'s gutter should show the compose popup.
+        #[qinvokable]
+        #[cxx_name = "canRunComposeFile"]
+        fn can_run_compose_file(self: &RunService, path: &QString) -> bool;
+
+        /// The Dockerfile gutter's "Build image": `docker build` only, as a
+        /// tracked console.
+        #[qinvokable]
+        #[cxx_name = "buildContainerfile"]
+        fn build_containerfile(self: Pin<&mut RunService>, path: &QString) -> FfiResult;
+
+        /// The Dockerfile gutter's "Run container": build then run,
+        /// remembered as a temporary configuration and launched.
+        #[qinvokable]
+        #[cxx_name = "runContainerfile"]
+        fn run_containerfile(self: Pin<&mut RunService>, path: &QString) -> FfiResult;
+
+        /// The Dockerfile gutter's "New configuration...": remembers the
+        /// temporary configuration without launching it, returning its id
+        /// so the caller can open the run-config dialog pointed at it.
+        #[qinvokable]
+        #[cxx_name = "newContainerfileConfiguration"]
+        fn new_containerfile_configuration(self: Pin<&mut RunService>, path: &QString) -> QString;
+
+        /// The compose file gutter's "Run": the whole file, every service.
+        #[qinvokable]
+        #[cxx_name = "runComposeFile"]
+        fn run_compose_file(self: Pin<&mut RunService>, path: &QString) -> FfiResult;
+
+        /// The compose file gutter's "New configuration...".
+        #[qinvokable]
+        #[cxx_name = "newComposeFileConfiguration"]
+        fn new_compose_file_configuration(self: Pin<&mut RunService>, path: &QString) -> QString;
+
         /// Stop `console_id`: `kill_tree()`s its process on the worker
         /// thread, flushes whatever output was still pending, and answers
         /// via `consoleFinished` with `escaped = true` if
@@ -7954,14 +8101,56 @@ mod ffi {
         /// `compose down`, with the configuration's remove flags, for a
         /// compose console — Ctrl-C-ing `compose up` alone leaves the
         /// containers running, which this is the console's way to actually
-        /// tear down (JetBrains parity). Fire-and-forget on a short-lived
-        /// thread: no console tracks its output in this v1 (a known gap —
-        /// the upgrade path is a `Supervisor::launch` of it like any other
-        /// before-launch task, once compose actions get their own console
-        /// kind).
+        /// tear down (JetBrains parity). Runs as a tracked console like any
+        /// other launch (C5, ADR-0056 §6), so its output shows up in the run
+        /// dock rather than disappearing.
         #[qinvokable]
         #[cxx_name = "composeDown"]
-        fn compose_down(self: &RunService, console_id: u64) -> FfiResult;
+        fn compose_down(self: Pin<&mut RunService>, console_id: u64) -> FfiResult;
+
+        /// The Containers dock compose project node's "Start All": finds or
+        /// launches `compose up -d` for `files` as a tracked console (C5,
+        /// ADR-0056).
+        #[qinvokable]
+        #[cxx_name = "runComposeProject"]
+        fn run_compose_project(
+            self: Pin<&mut RunService>,
+            connection_id: &QString,
+            files: &QString,
+            project_name: &QString,
+        ) -> FfiResult;
+
+        /// The compose project node's "Stop": `compose stop`, tracked.
+        #[qinvokable]
+        #[cxx_name = "stopComposeProject"]
+        fn stop_compose_project(
+            self: Pin<&mut RunService>,
+            connection_id: &QString,
+            files: &QString,
+            project_name: &QString,
+        ) -> FfiResult;
+
+        /// The compose project node's "Down": `compose down`, tracked.
+        #[qinvokable]
+        #[cxx_name = "downComposeProject"]
+        fn down_compose_project(
+            self: Pin<&mut RunService>,
+            connection_id: &QString,
+            files: &QString,
+            project_name: &QString,
+        ) -> FfiResult;
+
+        /// The compose service node's "Scale...": `compose up -d --scale
+        /// service=n --no-recreate`, tracked.
+        #[qinvokable]
+        #[cxx_name = "scaleComposeService"]
+        fn scale_compose_service(
+            self: Pin<&mut RunService>,
+            connection_id: &QString,
+            files: &QString,
+            service: &QString,
+            count: u32,
+        ) -> FfiResult;
 
         /// The `file:line[:col]` (or Python `File "...", line N`) location
         /// covering `byte_offset` in `console_id`'s accumulated output, for
@@ -8538,6 +8727,19 @@ mod ffi {
         #[cxx_name = "updateConfiguration"]
         fn update_configuration(self: &RunConfigEditor, index: u32, form: &FfiRunConfig);
 
+        /// Add a container-kind configuration prefilled with `options`,
+        /// returning its index — the Add ▸ Containers submenu and "Create
+        /// Container..." (C5, ADR-0056 §6, replacing C4's
+        /// `createContainerQuick`).
+        #[qinvokable]
+        #[cxx_name = "addContainerConfiguration"]
+        fn add_container_configuration(
+            self: &RunConfigEditor,
+            name: &QString,
+            kind: &QString,
+            options: &FfiContainerOptions,
+        ) -> u32;
+
         /// The first problem that would stop the dialog closing — an empty
         /// `program` (`run_core::RunError::InvalidConfig`'s own rule,
         /// mirrored here since validation this shallow does not warrant a
@@ -8563,22 +8765,30 @@ mod ffi {
         fn command_preview(self: &RunConfigEditor, form: &FfiRunConfig) -> QString;
 
         /// `compose -f <files>… config --services` against `connection_id`,
-        /// for the Compose page's Services picker. `files` is `\n`-separated,
-        /// project-relative; the answer is `\n`-separated too (no bare
-        /// `Vec<QString>` on the seam — see `FfiBranch`'s doc comment).
-        /// Runs synchronously on the calling (Qt) thread — a known v1
-        /// simplification (this is a single, normally sub-second CLI call):
-        /// a worker-thread version, matching `ContainerService`'s own
-        /// threading, is the upgrade if a slow or unreachable connection
-        /// ever makes this noticeably block the dialog.
+        /// for the Compose page's Services picker: runs on a worker thread
+        /// (the same shape `ContainerService::testConnection` uses — this is
+        /// a CLI call against a possibly slow or unreachable daemon, never
+        /// blocking the Qt thread) and reports through
+        /// `composeServicesReady`. `files` is `\n`-separated, project-
+        /// relative.
         #[qinvokable]
-        #[cxx_name = "composeServices"]
-        fn compose_services(
-            self: &RunConfigEditor,
+        #[cxx_name = "requestComposeServices"]
+        fn request_compose_services(
+            self: Pin<&mut RunConfigEditor>,
             connection_id: &QString,
             files: &QString,
-        ) -> QString;
+        );
+
+        /// `requestComposeServices`'s answer: every service name, `\n`-
+        /// separated (no bare `Vec<QString>` on the seam — see `FfiBranch`'s
+        /// doc comment), empty on any failure (connection unreachable, no
+        /// compose file, ...).
+        #[qsignal]
+        #[cxx_name = "composeServicesReady"]
+        fn compose_services_ready(self: Pin<&mut RunConfigEditor>, services: QString);
     }
+
+    impl cxx_qt::Threading for RunConfigEditor {}
 
     extern "RustQt" {
         /// What this build is, for the About dialog: the product name, the

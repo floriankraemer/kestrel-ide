@@ -26,6 +26,7 @@ namespace ui_shell {
 
 class DockRegistry;
 class ContainerDetailArea;
+class EditorTabs;
 
 // The Containers dock (containers plan C2): every configured Docker/Podman
 // connection as a tree of Containers / Images / Networks / Volumes /
@@ -50,6 +51,18 @@ public:
                     AppSettings *appSettings, OpenAt openAt, QWidget *parent);
 
     void setOpenSettingsHandler(OpenSettings handler);
+
+    // C5 (ADR-0056): the compose tree's Start All/Stop/Down/Scale and
+    // "Create Container..." (replacing C4's `createContainerQuick`) all
+    // need the run-config machinery, which is constructed after this panel
+    // (`main_window.cpp`'s `runConfigEditor`) — set once, right after both
+    // exist, the same "setter after construction" shape
+    // `setOpenSettingsHandler` already uses.
+    // `editorTabs` is Compose "Jump to Source" (C5, ADR-0056)'s: the one
+    // Containers-dock action that opens an editor tab rather than calling a
+    // container/run service.
+    void setRunContext(RunService *runService, RunConfigEditor *runConfigEditor,
+                       EditorTabs *editorTabs);
 
 private:
     void onTreeChanged();
@@ -88,9 +101,24 @@ private:
     void openCreateVolumeDialog(const QString &connectionId);
     void openTagDialog(const QString &nodeId);
     void openCopyImageDialog(const QString &nodeId);
-    void openCreateContainerQuickDialog(const QString &nodeId);
+    void openCreateContainerDialog(const QString &nodeId);
+
+    // containers_compose.cpp: the Compose group/project/service context
+    // menus (Start All/Stop/Down/Scale/Jump to Source) and the project
+    // node's services-and-counts Dashboard (C5, ADR-0056).
+    void showComposeProjectContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showComposeServiceContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void triggerComposeStartAll(const QString &nodeId);
+    void triggerComposeStop(const QString &nodeId);
+    void triggerComposeDown(const QString &nodeId);
+    void triggerComposeScale(const QString &serviceNodeId);
+    void triggerComposeJumpToSource(const QString &nodeId);
+    void showComposeProjectDashboard(const QString &nodeId);
 
     ContainerService *containerService_;
+    RunService *runService_ = nullptr;
+    RunConfigEditor *runConfigEditor_ = nullptr;
+    EditorTabs *editorTabs_ = nullptr;
     OpenSettings openSettings_;
 
     QToolButton *addButton_ = nullptr;

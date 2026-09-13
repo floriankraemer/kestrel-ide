@@ -276,6 +276,90 @@ pub fn down_command(config: &RunConfig, containers: &ContainerSettings) -> Optio
     })
 }
 
+/// An ad-hoc `ComposeRunSetting` for acting directly on a Containers dock
+/// compose project node — Start All/Stop/Down/Scale — rather than a saved
+/// run configuration: it always targets every service the project's own
+/// `docker-compose.yml`(s) define (`services` empty, `run_config`'s own
+/// "empty means everything" rule) and is never persisted.
+fn project_setting(connection_id: &str, files: &[String], project_name: &str) -> ComposeRunSetting {
+    ComposeRunSetting {
+        connection_id: connection_id.to_string(),
+        compose_files: files.to_vec(),
+        project_name: project_name.to_string(),
+        ..ComposeRunSetting::default()
+    }
+}
+
+fn to_tool_command(invocation: &Invocation, argv: &[String]) -> ToolCommand {
+    ToolCommand {
+        program: invocation.program.clone(),
+        args: invocation.argv(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
+    }
+}
+
+/// `compose -f <files>… -p <project_name> up -d` — a Containers dock
+/// compose project's "Start All".
+pub fn compose_project_up_spec(
+    containers: &ContainerSettings,
+    connection_id: &str,
+    files: &[String],
+    project_name: &str,
+    project_root: &std::path::Path,
+) -> LaunchSpec {
+    let setting = project_setting(connection_id, files, project_name);
+    let invocation = compose_invocation(containers, connection_id);
+    let argv = run_config::compose_up_argv(&setting, project_root);
+    LaunchSpec {
+        program: invocation.program.clone(),
+        args: invocation.argv(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
+        cwd: Some(project_root.to_path_buf()),
+        env: invocation.env.clone(),
+        console: ConsoleKind::Pty,
+    }
+}
+
+/// `compose -f <files>… -p <project_name> stop` — a compose project node's
+/// "Stop".
+pub fn compose_project_stop_command(
+    containers: &ContainerSettings,
+    connection_id: &str,
+    files: &[String],
+    project_name: &str,
+) -> ToolCommand {
+    let setting = project_setting(connection_id, files, project_name);
+    let invocation = compose_invocation(containers, connection_id);
+    to_tool_command(&invocation, &run_config::compose_stop_argv(&setting))
+}
+
+/// `compose -f <files>… -p <project_name> down` — a compose project node's
+/// "Down".
+pub fn compose_project_down_command(
+    containers: &ContainerSettings,
+    connection_id: &str,
+    files: &[String],
+    project_name: &str,
+) -> ToolCommand {
+    let setting = project_setting(connection_id, files, project_name);
+    let invocation = compose_invocation(containers, connection_id);
+    to_tool_command(&invocation, &run_config::compose_down_argv(&setting))
+}
+
+/// `compose -f <files>… up -d --no-recreate --scale <service>=<n>` — a
+/// compose service node's "Scale...".
+pub fn compose_project_scale_command(
+    containers: &ContainerSettings,
+    connection_id: &str,
+    files: &[String],
+    service: &str,
+    count: u32,
+) -> ToolCommand {
+    let invocation = compose_invocation(containers, connection_id);
+    to_tool_command(
+        &invocation,
+        &run_config::compose_scale_argv(files, service, count),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +523,54 @@ mod tests {
         let context = MacroContext::for_project("/project");
         let spec = compose_launch_spec(&cfg, &context, &containers).unwrap();
         assert_eq!(spec.program, "docker-compose");
+    }
+
+    #[test]
+    fn a_compose_project_node_compiles_start_all_stop_down_and_scale() {
+        let containers = ContainerSettings::default();
+        let files = vec!["docker-compose.yml".to_string()];
+
+        let up =
+            compose_project_up_spec(&containers, "", &files, "shop", std::path::Path::new("/p"));
+        assert_eq!(up.program, "docker");
+        assert_eq!(
+            up.args,
+            vec![
+                "compose",
+                "-f",
+                "docker-compose.yml",
+                "-p",
+                "shop",
+                "up",
+                "-d"
+            ]
+        );
+
+        let stop = compose_project_stop_command(&containers, "", &files, "shop");
+        assert_eq!(
+            stop.args,
+            vec!["compose", "-f", "docker-compose.yml", "-p", "shop", "stop"]
+        );
+
+        let down = compose_project_down_command(&containers, "", &files, "shop");
+        assert_eq!(
+            down.args,
+            vec!["compose", "-f", "docker-compose.yml", "-p", "shop", "down"]
+        );
+
+        let scale = compose_project_scale_command(&containers, "", &files, "web", 3);
+        assert_eq!(
+            scale.args,
+            vec![
+                "compose",
+                "-f",
+                "docker-compose.yml",
+                "up",
+                "-d",
+                "--no-recreate",
+                "--scale",
+                "web=3",
+            ]
+        );
     }
 }

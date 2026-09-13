@@ -43,6 +43,9 @@ use run_core::{AnsiResolver, RunConfigExt};
 use crate::bridge::errors;
 use crate::bridge::ffi;
 
+/// `FfiContainerOptions` <-> `RunConfig`'s container-kind sub-tables (C5,
+/// ADR-0056): structured, no JSON.
+mod container_form;
 mod editor;
 pub use editor::RunConfigEditorRust;
 
@@ -148,6 +151,17 @@ fn env_from_string(text: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// `\n`-separated text into a trimmed, non-empty-lines `Vec<String>` — the
+/// same convention `before_launch`/compose-files fields already use.
+fn lines_of(text: &QString) -> Vec<String> {
+    text.to_string()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 fn no_project() -> ffi::FfiResult {
     ffi::FfiResult {
         code: errors::CODE_NO_PROJECT,
@@ -206,51 +220,6 @@ fn tasks_from_string(text: &str) -> Vec<app_config::BeforeLaunchSetting> {
         .collect()
 }
 
-/// The container-kind sub-table `config.kind` names, as JSON — the seam
-/// `FfiRunConfig::container_json` doc comment describes. Empty for a plain
-/// process, or a kind this build no longer has a matching field for.
-pub(super) fn container_json_of(config: &run_core::RunConfig) -> String {
-    let json = match config.kind.as_deref() {
-        Some("container-image") => config
-            .container_image
-            .as_ref()
-            .and_then(|s| serde_json::to_string(s).ok()),
-        Some("containerfile") => config
-            .containerfile
-            .as_ref()
-            .and_then(|s| serde_json::to_string(s).ok()),
-        Some("compose") => config
-            .compose
-            .as_ref()
-            .and_then(|s| serde_json::to_string(s).ok()),
-        _ => None,
-    };
-    json.unwrap_or_default()
-}
-
-/// The inverse: parse `json` into whichever of `container_image`/
-/// `containerfile`/`compose` `kind` names, clearing the other two — a
-/// configuration is exactly one kind at a time. `json` that fails to parse
-/// (or `kind` naming nothing this build knows) leaves every sub-table
-/// `None`, the same "unknown reads as the least surprising default" rule
-/// `ToolchainId::from_id` follows.
-pub(super) fn apply_container_json(config: &mut run_core::RunConfig, kind: &str, json: &str) {
-    config.container_image = None;
-    config.containerfile = None;
-    config.compose = None;
-    config.kind = if kind.is_empty() {
-        None
-    } else {
-        Some(kind.to_string())
-    };
-    match kind {
-        "container-image" => config.container_image = serde_json::from_str(json).ok(),
-        "containerfile" => config.containerfile = serde_json::from_str(json).ok(),
-        "compose" => config.compose = serde_json::from_str(json).ok(),
-        _ => {}
-    }
-}
-
 fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
     ffi::FfiRunConfig {
         id: QString::from(config.id.as_str()),
@@ -265,7 +234,7 @@ fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
         allow_parallel: config.allow_parallel,
         before_launch: QString::from(tasks_to_string(config).as_str()),
         kind: QString::from(config.kind.clone().unwrap_or_default().as_str()),
-        container_json: QString::from(container_json_of(config).as_str()),
+        container: container_form::to_ffi_options(config),
     }
 }
 
@@ -564,6 +533,60 @@ impl build_core::BuildSink for BeforeLaunchSink {
     fn diagnostics(&mut self, _diagnostics: Vec<build_core::BuildDiagnostic>) {}
 }
 
+/// Actually launch `spec` on the worker thread and start tracking it as a
+/// console, under `config_id` — the common tail of a full `launch()` (after
+/// its before-launch tasks pass) and [`ffi::RunService::spawn_ad_hoc_console`]
+/// (which has none to run).
+fn spawn_console_on_worker(
+    worker: &mut RunWorker,
+    config_id: String,
+    spec: run_core::LaunchSpec,
+    qt_thread: &CxxQtThread<ffi::RunService>,
+) {
+    let cwd = spec.cwd.clone().unwrap_or_default();
+    match worker.supervisor.launch(config_id.clone(), &spec) {
+        Ok(id) => {
+            let reader = worker.supervisor.take_reader(id);
+            let console_id = id.0;
+            let started_config_id = config_id.clone();
+            let qt_thread_for_started = qt_thread.clone();
+            let _ = qt_thread_for_started.queue(move |mut service: Pin<&mut ffi::RunService>| {
+                service.consoles.borrow_mut().insert(
+                    console_id,
+                    ConsoleState {
+                        config_id: started_config_id.clone(),
+                        cwd,
+                        output: String::new(),
+                        ansi: AnsiResolver::default(),
+                        last_runs: Vec::new(),
+                        finished: false,
+                    },
+                );
+                service
+                    .as_mut()
+                    .console_started(console_id, QString::from(started_config_id.as_str()));
+            });
+            if let Ok(reader) = reader {
+                spawn_reader_thread(
+                    console_id,
+                    reader,
+                    worker.jobs_tx.clone(),
+                    qt_thread.clone(),
+                );
+            }
+        }
+        Err(err) => {
+            let result = to_ffi_result(&err);
+            let qt_thread = qt_thread.clone();
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::RunService>| {
+                service
+                    .as_mut()
+                    .run_failed(QString::from(config_id.as_str()), result);
+            });
+        }
+    }
+}
+
 fn spawn_reader_thread(
     console_id: u64,
     mut reader: Box<dyn std::io::Read + Send>,
@@ -801,6 +824,149 @@ impl ffi::RunService {
         self.as_mut().launch(config, &root, &context)
     }
 
+    /// Whether `path`'s gutter should show the Dockerfile/Containerfile
+    /// popup (C5, ADR-0056) — `syntax_core`'s own `dockerfile` language
+    /// entry already covers `Dockerfile`, `Containerfile`, `*.dockerfile`,
+    /// `*.containerfile` and `Dockerfile.<stage>` (ADR-0018: one detection
+    /// table), so this reuses it rather than a second file-name rule.
+    pub fn can_run_containerfile(&self, path: &QString) -> bool {
+        syntax_core::language_for_path(Path::new(&path.to_string())).id() == "dockerfile"
+    }
+
+    /// Whether `path`'s gutter should show the compose popup — a file-name
+    /// rule (compose is a YAML *flavor*, not a language, ADR-0018), the
+    /// same one [`crate::bridge::run::detect_compose`] would suggest it
+    /// from.
+    pub fn can_run_compose_file(&self, path: &QString) -> bool {
+        run_core::is_compose_file_name(Path::new(&path.to_string()))
+    }
+
+    /// The Dockerfile gutter's "Build image": `docker build` only, as a
+    /// tracked console — no run configuration created or remembered, since
+    /// this is a one-off build, not something to reappear in the run
+    /// toolbar's picker.
+    pub fn build_containerfile(mut self: Pin<&mut Self>, path: &QString) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let file = PathBuf::from(path.to_string());
+        let Some(mut config) = run_core::containerfile_config(&root, &file) else {
+            return unknown_run_config("this file is outside the project");
+        };
+        if let Some(setting) = config.containerfile.as_mut() {
+            setting.run_built_image = false; // build only — see `to_launch_spec_in`'s dispatch.
+        }
+        let containers = effective_container_settings();
+        let context = run_core::MacroContext::for_file(&root, &file).with_containers(containers);
+        let spec = {
+            use run_core::RunConfigExt as _;
+            config.to_launch_spec_in(&context)
+        };
+        self.as_mut()
+            .spawn_ad_hoc_console(format!("{}-build", config.id), spec);
+        ffi::FfiResult::default()
+    }
+
+    /// The Dockerfile gutter's "Run container": build then run, remembered
+    /// as a temporary configuration (so it also appears in the run
+    /// toolbar's picker and can be rerun), same as [`Self::run_context`].
+    pub fn run_containerfile(mut self: Pin<&mut Self>, path: &QString) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let file = PathBuf::from(path.to_string());
+        let Some(config) = run_core::containerfile_config(&root, &file) else {
+            return unknown_run_config("this file is outside the project");
+        };
+        self.as_mut().remember_and_launch(config, &root, &file)
+    }
+
+    /// The Dockerfile gutter's "New configuration...": remembers the
+    /// temporary configuration without launching it, returning its id so
+    /// the caller (`containers_panel.cpp`/the gutter popup) can open the
+    /// run-config dialog already pointed at it.
+    pub fn new_containerfile_configuration(mut self: Pin<&mut Self>, path: &QString) -> QString {
+        let Some(root) = current_project_root() else {
+            return QString::default();
+        };
+        let file = PathBuf::from(path.to_string());
+        let Some(config) = run_core::containerfile_config(&root, &file) else {
+            return QString::default();
+        };
+        self.as_mut().remember_only(config)
+    }
+
+    /// The compose file gutter's "Run": the whole file, every service,
+    /// remembered as a temporary configuration and launched.
+    pub fn run_compose_file(mut self: Pin<&mut Self>, path: &QString) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let file = PathBuf::from(path.to_string());
+        let containers = effective_container_settings();
+        let connection_id = containers
+            .connections
+            .first()
+            .map(|c| c.id.as_str())
+            .unwrap_or("");
+        let Some(config) = run_core::compose_config(&root, connection_id, &file) else {
+            return unknown_run_config("this file is outside the project");
+        };
+        self.as_mut().remember_and_launch(config, &root, &file)
+    }
+
+    /// The compose file gutter's "New configuration...".
+    pub fn new_compose_file_configuration(mut self: Pin<&mut Self>, path: &QString) -> QString {
+        let Some(root) = current_project_root() else {
+            return QString::default();
+        };
+        let file = PathBuf::from(path.to_string());
+        let containers = effective_container_settings();
+        let connection_id = containers
+            .connections
+            .first()
+            .map(|c| c.id.as_str())
+            .unwrap_or("");
+        let Some(config) = run_core::compose_config(&root, connection_id, &file) else {
+            return QString::default();
+        };
+        self.as_mut().remember_only(config)
+    }
+
+    /// Remember `config` as a temporary configuration (persisting it) and
+    /// launch it from `file`'s context — the shared tail of
+    /// [`Self::run_containerfile`]/[`Self::run_compose_file`], mirroring
+    /// [`Self::run_context`]'s own remember-then-launch shape.
+    fn remember_and_launch(
+        mut self: Pin<&mut Self>,
+        config: run_core::RunConfig,
+        root: &Path,
+        file: &Path,
+    ) -> ffi::FfiResult {
+        let id = self.as_mut().remember_only(config.clone());
+        let _ = id; // configurations_changed already emitted by remember_only.
+        let context = run_core::MacroContext::for_file(root, file);
+        self.as_mut().launch(config, root, &context)
+    }
+
+    /// Remember `config` as a temporary configuration without launching it,
+    /// returning its id.
+    fn remember_only(mut self: Pin<&mut Self>, config: run_core::RunConfig) -> QString {
+        let Some(root) = current_project_root() else {
+            return QString::default();
+        };
+        let id = config.id.clone();
+        let result = app_config::project_settings::update(&root, move |settings| {
+            let mut configs = settings.run_configs.clone().unwrap_or_default();
+            run_core::remember_temporary(&mut configs, config.clone());
+            settings.run_configs = Some(configs);
+        });
+        if result.is_ok() {
+            self.as_mut().configurations_changed();
+        }
+        QString::from(id.as_str())
+    }
+
     /// Launch `config`, honouring its parallel-run policy: unless the
     /// configuration allows parallel runs, its still-running consoles are
     /// stopped first, which is IntelliJ's default ("Allow multiple
@@ -869,47 +1035,27 @@ impl ffi::RunService {
             if !run_before_launch(&tasks, &launch_config_id, &task_root, &configs, &qt_thread) {
                 return;
             }
-            match worker.supervisor.launch(launch_config_id.clone(), &spec) {
-                Ok(id) => {
-                    let reader = worker.supervisor.take_reader(id);
-                    let console_id = id.0;
-                    let started_config_id = launch_config_id.clone();
-                    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::RunService>| {
-                        service.consoles.borrow_mut().insert(
-                            console_id,
-                            ConsoleState {
-                                config_id: started_config_id.clone(),
-                                cwd,
-                                output: String::new(),
-                                ansi: AnsiResolver::default(),
-                                last_runs: Vec::new(),
-                                finished: false,
-                            },
-                        );
-                        service
-                            .as_mut()
-                            .console_started(console_id, QString::from(started_config_id.as_str()));
-                    });
-                    if let Ok(reader) = reader {
-                        spawn_reader_thread(
-                            console_id,
-                            reader,
-                            worker.jobs_tx.clone(),
-                            qt_thread.clone(),
-                        );
-                    }
-                }
-                Err(err) => {
-                    let result = to_ffi_result(&err);
-                    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::RunService>| {
-                        service
-                            .as_mut()
-                            .run_failed(QString::from(launch_config_id.as_str()), result);
-                    });
-                }
-            }
+            spawn_console_on_worker(worker, launch_config_id, spec, &qt_thread);
         }));
         ffi::FfiResult::default()
+    }
+
+    /// Launch `spec` as a tracked console with no before-launch tasks and no
+    /// parallel-run policy — the tail of [`RunService::launch`], reused by
+    /// the Containers dock's compose project actions (C5, ADR-0056: Start
+    /// All/Stop/Down/Scale, and the console's own "Down") so every one of
+    /// them shows up as a real console with real output, exactly like any
+    /// other launch, rather than a fire-and-forget process.
+    fn spawn_ad_hoc_console(
+        mut self: Pin<&mut Self>,
+        config_id: String,
+        spec: run_core::LaunchSpec,
+    ) {
+        let tx = self.as_mut().ensure_worker();
+        let qt_thread = self.qt_thread();
+        let _ = tx.send(Box::new(move |worker: &mut RunWorker| {
+            spawn_console_on_worker(worker, config_id, spec, &qt_thread);
+        }));
     }
 
     /// Stop a console the way IntelliJ's Stop does: ask first, insist
@@ -1005,7 +1151,12 @@ impl ffi::RunService {
 
     /// `compose down`, with the configuration's own remove flags — the
     /// console's "Down" action for a compose configuration.
-    pub fn compose_down(&self, console_id: u64) -> ffi::FfiResult {
+    /// `compose down` as a tracked console — a real console the run dock
+    /// shows output in, not a fire-and-forget process (C5, ADR-0056 §6):
+    /// `Supervisor` tracks consoles by an arbitrary label, so a second
+    /// command against the same configuration is exactly the same
+    /// mechanism as any other launch, via [`Self::spawn_ad_hoc_console`].
+    pub fn compose_down(mut self: Pin<&mut Self>, console_id: u64) -> ffi::FfiResult {
         let Some(config) = self.config_for_console(console_id) else {
             return unknown_run_config("unknown console");
         };
@@ -1014,17 +1165,134 @@ impl ffi::RunService {
             return unknown_run_config("not a compose configuration");
         };
         let root = current_project_root().unwrap_or_default();
-        match std::process::Command::new(&command.program)
-            .args(&command.args)
-            .current_dir(&root)
-            .spawn()
-        {
-            Ok(_) => ffi::FfiResult::default(),
-            Err(err) => ffi::FfiResult {
-                code: errors::CODE_BEFORE_LAUNCH,
-                message: QString::from(err.to_string().as_str()),
-            },
-        }
+        let spec = run_core::LaunchSpec {
+            program: command.program,
+            args: command.args,
+            cwd: Some(root),
+            env: Vec::new(),
+            console: run_core::ConsoleKind::Pty,
+        };
+        self.as_mut()
+            .spawn_ad_hoc_console(format!("{}:down", config.id), spec);
+        ffi::FfiResult::default()
+    }
+
+    /// The Containers dock compose project node's "Start All": `compose up
+    /// -d`, tracked as a console like any other launch.
+    pub fn run_compose_project(
+        mut self: Pin<&mut Self>,
+        connection_id: &QString,
+        files: &QString,
+        project_name: &QString,
+    ) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let containers = effective_container_settings();
+        let files = lines_of(files);
+        let spec = run_core::compose_project_up_spec(
+            &containers,
+            &connection_id.to_string(),
+            &files,
+            &project_name.to_string(),
+            &root,
+        );
+        self.as_mut()
+            .spawn_ad_hoc_console(format!("compose:{project_name}:up"), spec);
+        ffi::FfiResult::default()
+    }
+
+    /// The compose project node's "Stop": `compose stop`, tracked.
+    pub fn stop_compose_project(
+        mut self: Pin<&mut Self>,
+        connection_id: &QString,
+        files: &QString,
+        project_name: &QString,
+    ) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let containers = effective_container_settings();
+        let files = lines_of(files);
+        let command = run_core::compose_project_stop_command(
+            &containers,
+            &connection_id.to_string(),
+            &files,
+            &project_name.to_string(),
+        );
+        let spec = run_core::LaunchSpec {
+            program: command.program,
+            args: command.args,
+            cwd: Some(root),
+            env: Vec::new(),
+            console: run_core::ConsoleKind::Pty,
+        };
+        self.as_mut()
+            .spawn_ad_hoc_console(format!("compose:{project_name}:stop"), spec);
+        ffi::FfiResult::default()
+    }
+
+    /// The compose project node's "Down": `compose down`, tracked.
+    pub fn down_compose_project(
+        mut self: Pin<&mut Self>,
+        connection_id: &QString,
+        files: &QString,
+        project_name: &QString,
+    ) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let containers = effective_container_settings();
+        let files = lines_of(files);
+        let command = run_core::compose_project_down_command(
+            &containers,
+            &connection_id.to_string(),
+            &files,
+            &project_name.to_string(),
+        );
+        let spec = run_core::LaunchSpec {
+            program: command.program,
+            args: command.args,
+            cwd: Some(root),
+            env: Vec::new(),
+            console: run_core::ConsoleKind::Pty,
+        };
+        self.as_mut()
+            .spawn_ad_hoc_console(format!("compose:{project_name}:down"), spec);
+        ffi::FfiResult::default()
+    }
+
+    /// The compose service node's "Scale...": `compose up -d --scale
+    /// service=n --no-recreate`, tracked.
+    pub fn scale_compose_service(
+        mut self: Pin<&mut Self>,
+        connection_id: &QString,
+        files: &QString,
+        service: &QString,
+        count: u32,
+    ) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let containers = effective_container_settings();
+        let files = lines_of(files);
+        let command = run_core::compose_project_scale_command(
+            &containers,
+            &connection_id.to_string(),
+            &files,
+            &service.to_string(),
+            count,
+        );
+        let spec = run_core::LaunchSpec {
+            program: command.program,
+            args: command.args,
+            cwd: Some(root),
+            env: Vec::new(),
+            console: run_core::ConsoleKind::Pty,
+        };
+        let label = format!("compose:{service}:scale");
+        self.as_mut().spawn_ad_hoc_console(label, spec);
+        ffi::FfiResult::default()
     }
 
     /// Every match of `pattern` in this console's text, in document order

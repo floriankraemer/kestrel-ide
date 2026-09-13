@@ -32,9 +32,14 @@ pub use ansi::{AnsiResolver, AnsiStripper, StyledRun, StyledText, TextStyle};
 pub use batching::{BatchedOutput, OutputBatcher};
 pub use before_launch::{BeforeLaunchError, BeforeLaunchTask};
 pub use config::{ConsoleKind, LaunchSpec, RunConfig, RunConfigExt};
-pub use container_run::{down_command, stop_command};
-pub use context::{config_for_file, remember_temporary, TEMPORARY_CAP};
-pub use detect::{detect, merge_detected};
+pub use container_run::{
+    compose_project_down_command, compose_project_scale_command, compose_project_stop_command,
+    compose_project_up_spec, down_command, stop_command,
+};
+pub use context::{
+    compose_config, config_for_file, containerfile_config, remember_temporary, TEMPORARY_CAP,
+};
+pub use detect::{detect, is_compose_file_name, merge_detected};
 pub use error::RunError;
 pub use links::{resolve_link, ResolvedLink};
 pub use macros::{expand as expand_macros, MacroContext};

@@ -344,6 +344,16 @@ const COMPOSE_FILE_NAMES: &[&str] = &[
     "podman-compose.yaml",
 ];
 
+/// Whether `path`'s file name is one of [`COMPOSE_FILE_NAMES`] — the
+/// Dockerfile/compose gutter's own file-type check (C5, ADR-0056), reused
+/// by [`detect_compose`] above. A file-name rule, same scope note as
+/// [`COMPOSE_FILE_NAMES`]'s own doc comment.
+pub fn is_compose_file_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| COMPOSE_FILE_NAMES.contains(&name))
+}
+
 /// A `kind = "containerfile"` suggestion when the project root has a
 /// `Dockerfile` or `Containerfile` — `RunConfigExt::toolchain` stays `None`
 /// for it (a container flavor is not a build tool, ADR-0056), so the
@@ -625,6 +635,14 @@ mod tests {
                 vec![name.to_string()]
             );
         }
+    }
+
+    #[test]
+    fn is_compose_file_name_matches_the_conventional_names_only() {
+        assert!(is_compose_file_name(Path::new("docker-compose.yml")));
+        assert!(is_compose_file_name(Path::new("/a/b/compose.yaml")));
+        assert!(!is_compose_file_name(Path::new("Dockerfile")));
+        assert!(!is_compose_file_name(Path::new("random.yml")));
     }
 
     #[test]

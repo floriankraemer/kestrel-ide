@@ -452,6 +452,50 @@ pub fn compose_scale_argv(files: &[String], service: &str, count: u32) -> Vec<St
     args
 }
 
+/// The first problem with `bindings` that would stop `-p` compiling to
+/// something the CLI accepts: a row with either port left blank.
+fn validate_ports(bindings: &[app_config::container_run::PortBinding]) -> Option<String> {
+    bindings
+        .iter()
+        .any(|p| p.host_port.trim().is_empty() || p.container_port.trim().is_empty())
+        .then(|| "Each port binding needs a host port and a container port".to_string())
+}
+
+/// The first problem with `mounts` that would stop `-v` compiling: a row
+/// with either path left blank.
+fn validate_mounts(mounts: &[app_config::container_run::BindMount]) -> Option<String> {
+    mounts
+        .iter()
+        .any(|m| m.host_path.trim().is_empty() || m.container_path.trim().is_empty())
+        .then(|| "Each bind mount needs a host path and a container path".to_string())
+}
+
+/// The first problem with an Image configuration that would stop it
+/// launching — the run-config dialog's validation (C5, ADR-0056). `None`
+/// means it is savable.
+pub fn validate_image(setting: &ContainerImageRunSetting) -> Option<String> {
+    if setting.image.trim().is_empty() {
+        return Some("Image reference must not be empty".to_string());
+    }
+    validate_ports(&setting.port_bindings).or_else(|| validate_mounts(&setting.bind_mounts))
+}
+
+/// The first problem with a Containerfile configuration, or `None`.
+pub fn validate_containerfile(setting: &ContainerfileRunSetting) -> Option<String> {
+    if setting.run_built_image && setting.image_tag.trim().is_empty() {
+        return Some("Image tag must not be empty to run the built image".to_string());
+    }
+    validate_ports(&setting.port_bindings).or_else(|| validate_mounts(&setting.bind_mounts))
+}
+
+/// The first problem with a Compose configuration, or `None`.
+pub fn validate_compose(setting: &ComposeRunSetting) -> Option<String> {
+    if setting.compose_files.iter().all(|f| f.trim().is_empty()) {
+        return Some("At least one compose file is required".to_string());
+    }
+    None
+}
+
 /// `compose -f <files>… config --services` — the ground-truth service list
 /// for the dialog's Services picker and `composeStartAll`'s temporary
 /// configuration.
@@ -812,5 +856,56 @@ mod tests {
         };
         let result = compose_services(&broken, &["docker-compose.yml".to_string()], Path::new("."));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_image_requires_a_reference_and_complete_ports_and_mounts() {
+        assert!(validate_image(&ContainerImageRunSetting::default()).is_some());
+
+        let mut setting = image(|_| {});
+        assert!(validate_image(&setting).is_none());
+
+        setting.port_bindings = vec![PortBinding {
+            host_port: "8080".to_string(),
+            ..Default::default()
+        }];
+        assert!(validate_image(&setting).is_some(), "container_port missing");
+
+        setting.port_bindings.clear();
+        setting.bind_mounts = vec![BindMount {
+            host_path: "/data".to_string(),
+            ..Default::default()
+        }];
+        assert!(validate_image(&setting).is_some(), "container_path missing");
+    }
+
+    #[test]
+    fn validate_containerfile_requires_an_image_tag_only_when_running_the_built_image() {
+        let mut setting = ContainerfileRunSetting::default();
+        assert!(
+            validate_containerfile(&setting).is_none(),
+            "build-only is fine with no tag"
+        );
+
+        setting.run_built_image = true;
+        assert!(validate_containerfile(&setting).is_some());
+
+        setting.image_tag = "myapp:dev".to_string();
+        assert!(validate_containerfile(&setting).is_none());
+    }
+
+    #[test]
+    fn validate_compose_requires_at_least_one_compose_file() {
+        assert!(validate_compose(&ComposeRunSetting::default()).is_some());
+        assert!(validate_compose(&ComposeRunSetting {
+            compose_files: vec!["".to_string()],
+            ..Default::default()
+        })
+        .is_some());
+        assert!(validate_compose(&ComposeRunSetting {
+            compose_files: vec!["docker-compose.yml".to_string()],
+            ..Default::default()
+        })
+        .is_none());
     }
 }

@@ -43,7 +43,8 @@ class EditorTabs;
 void wireVcsService(VcsService *vcsService, ProjectTreeModel *treeModel, EditorTabs *editorTabs);
 // R1-7: gives EditorTabs the RunService its gutter Run icon asks and acts
 // through (editor_tabs_run.cpp).
-void wireRunService(RunService *runService, EditorTabs *editorTabs);
+void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEditor *runConfigEditor,
+                    ContainerService *containerService);
 // D2-5/D3: gives EditorTabs the DebugService whose breakpoints its gutter
 // shows and toggles (editor_tabs_debug.cpp).
 void wireDebugService(DebugService *debugService, EditorTabs *editorTabs);
@@ -560,6 +561,9 @@ public:
     // the same "no service, no feature" shape as the three below.
     void setPreviewProvider(PreviewProvider *previewProvider);
     void setRunService(RunService *runService);
+    // C5 (ADR-0056): the Dockerfile/compose gutter popup's "New
+    // configuration..." opens the run-config dialog, which needs both.
+    void setContainerRunContext(RunConfigEditor *runConfigEditor, ContainerService *containerService);
     void setDebugService(DebugService *debugService);
     // ADR-0046: only `applyDiagnostics` (fired off `wireDiagnosticsService`'s
     // signals, never from the constructor) reads this, so retrofitting it
@@ -957,6 +961,8 @@ private:
     VcsService *vcsService_ = nullptr;
     PreviewProvider *previewProvider_ = nullptr;
     RunService *runService_ = nullptr;
+    RunConfigEditor *runConfigEditor_ = nullptr;
+    ContainerService *containerService_ = nullptr;
     DebugService *debugService_ = nullptr;
     // F3-18: vcs.annotate's state, applied to whichever editor is active.
     bool annotateEnabled_ = false;

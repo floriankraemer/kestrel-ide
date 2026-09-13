@@ -911,23 +911,23 @@ fn e2e_hunk_revert_is_one_undo_never_touches_disk() {
 
     // Revert through the VCS menu — no default keyboard shortcut is bound to
     // `vcs.rollbackHunk` (`app-config/src/keymap.rs`), so this drives the
-    // same QAction through the menu bar instead. Keyboard-only throughout:
-    // no coordinate is computed for a 1px gutter marker.
+    // same QAction through the menu bar instead. Opened with the keyboard,
+    // then clicked by its own `vcs_menu_action` label/rect rather than a
+    // fixed arrow-key count: R7 inserted "Stash Changes..."/"Unstash..."
+    // ahead of "Rollback Hunk", which is exactly the "counting arrow
+    // presses would break the moment the menu gains an entry" trap
+    // `e2e_diff_window_jetbrains_controls`'s own "Show Diff" click already
+    // avoids for this same menu.
     let mark = ide.mark();
     ide.key("alt+c"); // "V&CS" — see vcs_menu.cpp for why not Alt+V.
     ide.wait_for_event(mark, "the VCS menu to open", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "vcs_menu"
     });
-    // Commit, Push, Pull, Fetch, Branches, (separator), Show Diff, Rollback
-    // Hunk: unlike a bare `exec()` popup (the tab context menu's own
-    // Down-count in `e2e_split_editor_persistence` relies on nothing being
-    // highlighted yet), a menu-bar-triggered QMenu pre-highlights its first
-    // item the moment it opens — confirmed against a real run under Xvfb,
-    // not assumed — so reaching the 7th item takes 6 more Downs, not 7.
-    for _ in 0..6 {
-        ide.key("Down");
-    }
-    ide.key("Return");
+    let rollback = ide.wait_for_event(mark, "Rollback Hunk in the VCS menu", |e| {
+        e["ev"] == "vcs_menu_action" && e["label"] == "Rollback Hunk"
+    });
+    let (rollback_x, rollback_y) = rect_centre(&rollback["rect"]);
+    ide.click_at(rollback_x, rollback_y, 1);
     ide.wait_for_event(mark, "the VCS menu to close", |e| {
         e["ev"] == "dialog_closed" && e["name"] == "vcs_menu"
     });

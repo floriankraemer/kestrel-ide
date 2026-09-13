@@ -262,6 +262,28 @@ impl ffi::ContainerService {
             .collect()
     }
 
+    /// Every configured connection (C4's Copy Image to... picker): id,
+    /// name, engine, and whether it is currently connected — cheap, no
+    /// snapshot needed.
+    pub fn connections(&self) -> Vec<ffi::FfiConnectionSummary> {
+        let connections = self.connections.borrow();
+        configured_connections()
+            .into_iter()
+            .map(|setting| {
+                let connected = connections
+                    .get(&setting.id)
+                    .map(|connection| !matches!(connection.state, ConnectionState::Disconnected))
+                    .unwrap_or(false);
+                ffi::FfiConnectionSummary {
+                    id: QString::from(setting.id.as_str()),
+                    name: QString::from(setting.name.as_str()),
+                    engine: QString::from(ConnectionConfig::from_setting(&setting).engine.id()),
+                    connected,
+                }
+            })
+            .collect()
+    }
+
     pub fn connection_state(&self, connection_id: &QString) -> ffi::FfiConnectionState {
         let connections = self.connections.borrow();
         let state = connections

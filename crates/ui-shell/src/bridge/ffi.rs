@@ -5429,6 +5429,16 @@ mod ffi {
         tooltip: QString,
     }
 
+    /// One configured connection, for a picker (C4's Copy Image to...
+    /// dialog) that needs more than just an id/name pair.
+    struct FfiConnectionSummary {
+        id: QString,
+        name: QString,
+        /// `"docker"` or `"podman"` (`Engine::id()`).
+        engine: QString,
+        connected: bool,
+    }
+
     /// Where one connection stands: `state` is one of `disconnected`,
     /// `connecting`, `connected`, `error`; `message` the engine banner or
     /// the error text.
@@ -5611,6 +5621,11 @@ mod ffi {
         /// `treeChanged`.
         #[qinvokable]
         fn nodes(self: &ContainerService) -> Vec<FfiContainerNode>;
+
+        /// Every configured connection, for a picker (C4's Copy Image to...
+        /// dialog) that needs more than a tree row.
+        #[qinvokable]
+        fn connections(self: &ContainerService) -> Vec<FfiConnectionSummary>;
 
         #[qinvokable]
         #[cxx_name = "connectionState"]

@@ -332,17 +332,31 @@ void ContainersPanel::openTagDialog(const QString &nodeId)
 
 void ContainersPanel::openCopyImageDialog(const QString &nodeId)
 {
-    // A combo box pre-filled from every other configured connection would
-    // be friendlier, but the connection id is already visible in Settings >
-    // Containers and typing it here keeps this dialog to one field until
-    // that list is worth the extra plumbing.
-    bool ok = false;
-    const QString targetConnectionId = QInputDialog::getText(
-      this, tr("Copy Image To"), tr("Target connection ID"), QLineEdit::Normal, QString(), &ok);
-    if (!ok || targetConnectionId.trimmed().isEmpty()) {
+    const QString ownConnectionId = nodeId.section(QLatin1Char('/'), 0, 0);
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Copy Image To"));
+    auto *form = new QFormLayout(&dialog);
+    auto *target = new QComboBox(&dialog);
+    for (const FfiConnectionSummary &connection : containerService_->connections()) {
+        if (QString(connection.id) == ownConnectionId) {
+            continue;
+        }
+        target->addItem(tr("%1 (%2)").arg(QString(connection.name), QString(connection.engine)),
+                        QString(connection.id));
+    }
+    form->addRow(tr("Target connection"), target);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    form->addRow(buttons);
+    if (target->count() == 0) {
+        statusLabel_->setText(tr("No other connection is configured to copy this image to."));
         return;
     }
-    report(containerService_->copyImageTo(nodeId, targetConnectionId.trimmed()));
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    report(containerService_->copyImageTo(nodeId, target->currentData().toString()));
 }
 
 void ContainersPanel::openCreateContainerQuickDialog(const QString &nodeId)

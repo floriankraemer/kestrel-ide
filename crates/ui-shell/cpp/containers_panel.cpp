@@ -429,6 +429,15 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
 
     detail_ = new ContainerDetailArea(containerService_, terminalSupervisor, appSettings,
                                       std::move(openAt), detailTabs_, this);
+    detail_->setGenericDashboardPage(dashboard);
+    // C4: a clicked "containers using it" row on an image/network/volume
+    // Dashboard selects that container node in the tree.
+    connect(detail_, &ContainerDetailArea::containerNodeRequested, this,
+            [this](const QString &nodeId) {
+                if (QTreeWidgetItem *item = itemsById_.value(nodeId)) {
+                    tree_->setCurrentItem(item);
+                }
+            });
 
     onTreeChanged();
 }
@@ -539,35 +548,11 @@ void ContainersPanel::onSelectionChanged()
         dashboardName_->setText(item->text(0));
         dashboardId_->setText(item->data(0, kResourceIdRole).toString());
         dashboardStatus_->setText(item->data(0, kStatusRole).toString());
-        const QString kind = item->data(0, kKindRole).toString();
-        QString detailText = item->data(0, kDetailRole).toString();
-        // C4: the richer per-kind Dashboard fields (tags, subnets,
-        // mountpoint, containers using it) fold into this same Details
-        // line rather than a bespoke per-kind layout — Layers/Labels/
-        // Inspect cover the rest.
-        if (kind == QStringLiteral("image")) {
-            const FfiImageDashboard dashboard = containerService_->imageDashboard(selectedNodeId_);
-            const QStringList tags =
-              QString(dashboard.tags).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
-            const int usedByCount =
-              QString(dashboard.containers).split(QLatin1Char('\n'), Qt::SkipEmptyParts).size();
-            detailText = tr("%1 | tags: %2 | used by %3 container(s)")
-                           .arg(detailText, tags.join(QStringLiteral(", ")))
-                           .arg(usedByCount);
-        } else if (kind == QStringLiteral("network")) {
-            const FfiNetworkDashboard dashboard =
-              containerService_->networkDashboard(selectedNodeId_);
-            detailText = tr("%1 | subnets: %2")
-                           .arg(detailText,
-                                QString(dashboard.subnets).split(QLatin1Char('\n'), Qt::SkipEmptyParts)
-                                  .join(QStringLiteral(", ")));
-        } else if (kind == QStringLiteral("volume")) {
-            const FfiVolumeDashboard dashboard =
-              containerService_->volumeDashboard(selectedNodeId_);
-            detailText = tr("%1 | mountpoint: %2").arg(detailText, QString(dashboard.mountpoint));
-        }
-        dashboardDetail_->setText(detailText);
-        detail_->onSelectionChanged(selectedNodeId_, kind);
+        dashboardDetail_->setText(item->data(0, kDetailRole).toString());
+        // Image/network/volume nodes get their own Dashboard tab, built and
+        // populated by `ContainerDetailArea::onSelectionChanged` below; the
+        // generic labels above are only shown for every other kind.
+        detail_->onSelectionChanged(selectedNodeId_, item->data(0, kKindRole).toString());
     }
     imagesConsole_->setVisible(item != nullptr
                                && item->data(0, kKindRole).toString()

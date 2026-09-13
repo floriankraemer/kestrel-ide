@@ -139,7 +139,14 @@ impl ffi::ContainerService {
             id: QString::from(network.id.as_str()),
             driver: QString::from(network.driver.as_str()),
             scope: QString::from(network.scope.as_str()),
-            subnets: QString::from(networks::subnets(&network.raw).join("\n").as_str()),
+            subnets: QString::from(
+                networks::subnets_and_gateways(&network.raw)
+                    .iter()
+                    .map(|(subnet, gateway)| format!("{subnet}\t{gateway}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .as_str(),
+            ),
             containers: QString::from(containers_to_ffi(&connection_id, &using).as_str()),
             labels: QString::from(labels.as_str()),
         }

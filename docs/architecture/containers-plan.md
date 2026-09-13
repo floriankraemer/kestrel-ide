@@ -207,7 +207,7 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 | C1 | Foundation: crate, connections, settings, ADR | done | `2d50701` |
 | C2 | Snapshot, watcher, dock tree | done | `b0ee05f`, `cdf81cd`, `08fcd1f` |
 | C3 | Container actions and tabs | done | `a268df3` |
-| C4 | Images, networks, volumes | done | `<pending>` |
+| C4 | Images, networks, volumes | done | `83f77fd` |
 | C5 | Run configurations and Compose nodes | not started | |
 | C6 | Editor assistance | not started | |
 | C7 | Registries | not started | |

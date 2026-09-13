@@ -748,6 +748,13 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // Containers plan C2: the Containers dock. Unbound like `view.build`.
+    ActionDef {
+        id: "view.containers",
+        label: "Containers",
+        category: "View",
+        default_shortcut: "",
+    },
     // The PHP tooling plan's B9: runs every enabled, installed analyzer
     // against the whole open project via `AnalysisService::inspectProject`.
     ActionDef {

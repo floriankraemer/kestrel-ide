@@ -17,6 +17,7 @@ use crate::bridge::ai::chat::AiChatRust;
 use crate::bridge::analysis::{AnalysisEditorRust, AnalysisServiceRust};
 use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
+use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::debug::DebugServiceRust;
 use crate::bridge::diagnostics::DiagnosticsServiceRust;
@@ -5250,6 +5251,126 @@ mod ffi {
     }
 
     impl cxx_qt::Threading for TestService {}
+
+    /// One row of the Containers dock's tree (containers plan C2): a
+    /// flattened `container_core::tree::TreeNode`, parent-qualified like
+    /// `FfiTestNode`. `kind` is the node kind's stable id (`connection`,
+    /// `containers-group`, `container`, `image`, ...), `icon` the icon key
+    /// the view looks up — both decided in Rust so the view never branches
+    /// on a status string.
+    struct FfiContainerNode {
+        id: QString,
+        #[cxx_name = "parentId"]
+        parent_id: QString,
+        kind: QString,
+        name: QString,
+        status: QString,
+        detail: QString,
+        #[cxx_name = "connectionId"]
+        connection_id: QString,
+        /// The engine's own id for the row (container/image/network/pod
+        /// id, volume name, compose project/service name, connection id);
+        /// empty for groups. What "Copy ID" copies.
+        #[cxx_name = "resourceId"]
+        resource_id: QString,
+        tooltip: QString,
+        icon: QString,
+    }
+
+    /// Where one connection stands: `state` is one of `disconnected`,
+    /// `connecting`, `connected`, `error`; `message` the engine banner or
+    /// the error text.
+    struct FfiConnectionState {
+        state: QString,
+        message: QString,
+    }
+
+    /// The two dock filters, as currently in force.
+    struct FfiContainerFilter {
+        #[cxx_name = "showStopped"]
+        show_stopped: bool,
+        #[cxx_name = "showUntagged"]
+        show_untagged: bool,
+    }
+
+    extern "RustQt" {
+        /// The Containers dock's adapter (containers plan C2, ADR-0055):
+        /// starts and stops one `container_core::watcher` per connection,
+        /// forwards its events onto the Qt thread, and flattens the
+        /// snapshots into rows. Owns no rule: filters, search, grouping and
+        /// status text are all `container-core`'s.
+        #[qobject]
+        type ContainerService = super::ContainerServiceRust;
+
+        /// Every row of the tree, parents before children. Re-read after
+        /// `treeChanged`.
+        #[qinvokable]
+        fn nodes(self: &ContainerService) -> Vec<FfiContainerNode>;
+
+        #[qinvokable]
+        #[cxx_name = "connectionState"]
+        fn connection_state(self: &ContainerService, connection_id: &QString)
+            -> FfiConnectionState;
+
+        /// The filters in force — the Filter menu's initial check state.
+        #[qinvokable]
+        fn filter(self: &ContainerService) -> FfiContainerFilter;
+
+        /// Start watching a configured connection. Named `connectEngine`
+        /// rather than `connect` so it cannot shadow `QObject::connect` on
+        /// the generated class.
+        #[qinvokable]
+        #[cxx_name = "connectEngine"]
+        fn connect_engine(self: Pin<&mut ContainerService>, connection_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "disconnectEngine"]
+        fn disconnect_engine(
+            self: Pin<&mut ContainerService>,
+            connection_id: &QString,
+        ) -> FfiResult;
+
+        /// Re-snapshot one connected connection now.
+        #[qinvokable]
+        fn refresh(self: Pin<&mut ContainerService>, connection_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "connectAll"]
+        fn connect_all(self: Pin<&mut ContainerService>);
+
+        /// Re-snapshot every connected connection and re-read the
+        /// configured list.
+        #[qinvokable]
+        #[cxx_name = "refreshAll"]
+        fn refresh_all(self: Pin<&mut ContainerService>);
+
+        /// Persists into the `[containers]` layer in force and re-emits
+        /// `treeChanged`.
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(
+            self: Pin<&mut ContainerService>,
+            show_stopped: bool,
+            show_untagged: bool,
+        ) -> FfiResult;
+
+        /// Type-to-filter text; empty clears.
+        #[qinvokable]
+        #[cxx_name = "setSearch"]
+        fn set_search(self: Pin<&mut ContainerService>, text: &QString);
+
+        /// The rows changed — a snapshot, a state, a filter or a search.
+        /// The view re-reads `nodes()`.
+        #[qsignal]
+        #[cxx_name = "treeChanged"]
+        fn tree_changed(self: Pin<&mut ContainerService>);
+
+        #[qsignal]
+        #[cxx_name = "connectionStateChanged"]
+        fn connection_state_changed(self: Pin<&mut ContainerService>, connection_id: QString);
+    }
+
+    impl cxx_qt::Threading for ContainerService {}
 
     /// One row of the Syntax Colors tree (T4).
     ///

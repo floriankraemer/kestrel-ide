@@ -37,5 +37,20 @@
         <file>icons/symbols/category_methods.a8</file>
         <file>icons/symbols/category_nested_types.a8</file>
         <file>icons/symbols/category_other.a8</file>
+        <file>icons/containers/docker.a8</file>
+        <file>icons/containers/podman.a8</file>
+        <file>icons/containers/container-running.a8</file>
+        <file>icons/containers/container-stopped.a8</file>
+        <file>icons/containers/image.a8</file>
+        <file>icons/containers/network.a8</file>
+        <file>icons/containers/volume.a8</file>
+        <file>icons/containers/compose.a8</file>
+        <file>icons/containers/pod.a8</file>
+        <file>icons/containers/registry.a8</file>
+        <file>icons/containers/add.a8</file>
+        <file>icons/containers/connect.a8</file>
+        <file>icons/containers/disconnect.a8</file>
+        <file>icons/containers/cleanup.a8</file>
+        <file>icons/containers/filter.a8</file>
     </qresource>
 </RCC>

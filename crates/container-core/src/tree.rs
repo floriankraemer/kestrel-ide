@@ -78,7 +78,19 @@ impl ConnectionState {
             ConnectionState::Disconnected => "disconnected".to_string(),
             ConnectionState::Connecting => "connecting...".to_string(),
             ConnectionState::Connected(info) => info.to_string(),
+            ConnectionState::Error(message) => {
+                // One row, one line: the hint lines behind the first one
+                // stay in the tooltip and the Dashboard.
+                format!("error: {}", message.lines().next().unwrap_or_default())
+            }
+        }
+    }
+
+    /// The full text for a tooltip: the whole error, hint lines included.
+    pub fn tooltip(&self) -> String {
+        match self {
             ConnectionState::Error(message) => format!("error: {message}"),
+            other => other.label(),
         }
     }
 }
@@ -98,6 +110,11 @@ pub struct TreeNode {
     /// Third column: image, driver, size, working directory, ...
     pub detail: String,
     pub connection_id: String,
+    /// What the engine calls this row: a container/image/network/pod id,
+    /// a volume name, a compose project or service name, or the
+    /// connection id. Empty for group rows. What "Copy ID" copies and what
+    /// later tasks' operations address.
+    pub resource_id: String,
     pub tooltip: String,
     /// The icon key the view looks up: `docker`, `podman`,
     /// `container-running`, `container-stopped`, `image`, `network`,
@@ -129,7 +146,8 @@ pub fn flatten(connections: &[ConnectionRow<'_>], now: SystemTime) -> Vec<TreeNo
             status: connection.state.label(),
             detail: String::new(),
             connection_id: root_id.clone(),
-            tooltip: connection.state.label(),
+            resource_id: root_id.clone(),
+            tooltip: connection.state.tooltip(),
             icon: match connection.engine {
                 Engine::Docker => "docker",
                 Engine::Podman => "podman",
@@ -164,6 +182,7 @@ fn push_groups(
             status: count_label(count),
             detail: String::new(),
             connection_id: conn.to_string(),
+            resource_id: String::new(),
             tooltip: String::new(),
             icon,
         });
@@ -203,6 +222,7 @@ fn push_groups(
             status: model::human_age(&image.created, now),
             detail: model::human_size(image.size),
             connection_id: conn.to_string(),
+            resource_id: image.id.clone(),
             tooltip: format!("{}\n{}", image.repo_tags.join("\n"), image.id),
             icon: "image",
         });
@@ -225,6 +245,7 @@ fn push_groups(
             status: count_containers(network.containers.len()),
             detail: network.driver.clone(),
             connection_id: conn.to_string(),
+            resource_id: network.id.clone(),
             tooltip: network.id.clone(),
             icon: "network",
         });
@@ -247,6 +268,7 @@ fn push_groups(
             status: model::human_age(&volume.created_at, now),
             detail: volume.driver.clone(),
             connection_id: conn.to_string(),
+            resource_id: volume.name.clone(),
             tooltip: volume.mountpoint.clone(),
             icon: "volume",
         });
@@ -282,6 +304,7 @@ fn push_groups(
                 status: format!("{running}/{total} running"),
                 detail: project.working_dir.clone(),
                 connection_id: conn.to_string(),
+                resource_id: project.name.clone(),
                 tooltip: project.config_files.join("\n"),
                 icon: "compose",
             });
@@ -307,6 +330,7 @@ fn push_groups(
                     status: format!("{service_running}/{}", service_view.containers.len()),
                     detail: image,
                     connection_id: conn.to_string(),
+                    resource_id: service.name.clone(),
                     tooltip: String::new(),
                     icon: if service_running > 0 {
                         "container-running"
@@ -330,6 +354,7 @@ fn push_groups(
                 status: pod.status.to_lowercase(),
                 detail: count_containers(pod.containers.len()),
                 connection_id: conn.to_string(),
+                resource_id: pod.id.clone(),
                 tooltip: pod.id.clone(),
                 icon: "pod",
             });
@@ -375,6 +400,7 @@ fn container_node(
         status: status_text,
         detail: container.image.clone(),
         connection_id: conn.to_string(),
+        resource_id: container.id.clone(),
         tooltip: container.id.clone(),
         icon: if status.is_live() {
             "container-running"
@@ -427,6 +453,7 @@ mod tests {
         assert_eq!(nodes[0].parent_id, "");
         assert_eq!(nodes[0].status, "disconnected");
         assert_eq!(nodes[0].icon, "docker");
+        assert_eq!(nodes[0].resource_id, "local");
     }
 
     #[test]
@@ -436,6 +463,12 @@ mod tests {
         assert_eq!(
             ConnectionState::Error("boom".to_string()).label(),
             "error: boom"
+        );
+        let with_hint = ConnectionState::Error("denied\nAdd your user to the group".to_string());
+        assert_eq!(with_hint.label(), "error: denied");
+        assert_eq!(
+            with_hint.tooltip(),
+            "error: denied\nAdd your user to the group"
         );
         assert_eq!(ConnectionState::Error(String::new()).id(), "error");
         assert_eq!(
@@ -490,6 +523,11 @@ mod tests {
             format!("local/container/{}", snapshot.containers[5].id)
         );
         assert_eq!(redis.parent_id, "local/containers-group");
+        assert_eq!(redis.resource_id, snapshot.containers[5].id);
+        assert!(
+            nodes[1].resource_id.is_empty(),
+            "groups have no resource id"
+        );
         assert_eq!(redis.status, "running (1 d)");
         assert_eq!(redis.detail, "redis:7.2-alpine");
         assert_eq!(redis.icon, "container-running");

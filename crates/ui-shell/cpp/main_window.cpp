@@ -48,6 +48,8 @@
 #include "settings_dialog.h"
 #include "splash_screen.h"
 #include "status_bar.h"
+#include "containers_menu.h"
+#include "containers_panel.h"
 #include "tests_menu.h"
 #include "tests_panel.h"
 #include "syntax_highlighter.h"
@@ -131,6 +133,7 @@ struct CentralWidgets
     BuildPanel *buildPanel;
     DebugPanel *debugPanel;
     MarkdownPreviewPanel *previewPanel;
+    ContainersPanel *containersPanel;
 };
 
 CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeModel,
@@ -140,7 +143,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    VcsService *vcsService, RunService *runService,
                                    BuildService *buildService, DebugService *debugService,
                                    TestService *testService, PreviewProvider *previewProvider,
-                                   AnalysisService *analysisService)
+                                   AnalysisService *analysisService,
+                                   ContainerService *containerService)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -373,6 +377,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
+    auto *containersPanel = buildContainersDock(dockManager, docks, bottomArea, containerService);
 
     // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -616,7 +621,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                            searchEverywhereDialog,
                            problemsPanel,    aiChatPanel,      changesPanel,
                            fileHistoryPanel, runConsolePanel,  buildPanel,
-                           debugPanel,       previewPanel};
+                           debugPanel,       previewPanel,     containersPanel};
 }
 
 // Menu structure per US-5 acceptance criteria. "Open Folder..." and the
@@ -696,6 +701,7 @@ void buildMainWindow(AppSettings *appSettings,
     auto *analysisService = new AnalysisService(window);
     // The PHP tooling plan's D4: one test-run adapter per window, same rule.
     auto *testService = new TestService(window);
+    auto *containerService = new ContainerService(window); // C2: connects nothing until asked.
     // D3-1: one debug adapter per window. It owns the breakpoints, which
     // exist with no session at all, so it is built before any project opens
     // and told to load them when one does.
@@ -723,7 +729,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
                           buildService, debugService, testService, previewProvider,
-                          analysisService);
+                          analysisService, containerService);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs);             // R1-7
@@ -867,6 +873,10 @@ void buildMainWindow(AppSettings *appSettings,
                           appSettings->setSettingsScope(QStringLiteral("global"));
                           showSettingsDialog(window, settingsContext);
                       });
+    central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings]() {
+        appSettings->setSettingsScope(QStringLiteral("global"));
+        showSettingsDialog(window, settingsContext, QObject::tr("Containers"));
+    });
     // The same dialog, opened on the project's own layer (ADR-0022). Two
     // entry points rather than one because "configure this project" and
     // "configure my editor" are different intentions, and the scope selector
@@ -1070,6 +1080,7 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
+    buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);
     // Last of the View entries, under everything it can rearrange.
     buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,

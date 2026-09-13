@@ -1,0 +1,30 @@
+[
+  {
+    "name": "podman",
+    "id": "2f259bab93aaaaa2542ba43ef33eb990d0999ee1b9924b557b7be53c0b7a1bb9",
+    "driver": "bridge",
+    "network_interface": "podman0",
+    "created": "2026-09-01T08:00:00.000000000+02:00",
+    "subnets": [{"subnet": "10.88.0.0/16", "gateway": "10.88.0.1"}],
+    "ipv6_enabled": false,
+    "internal": false,
+    "dns_enabled": false,
+    "ipam_options": {"driver": "host-local"},
+    "containers": {
+      "9f1c2e7a4b3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f": {"name": "web", "interfaces": {"eth0": {"subnets": [{"ipnet": "10.88.0.5/16", "gateway": "10.88.0.1"}], "mac_address": "d6:1f:3a:00:00:05"}}}
+    }
+  },
+  {
+    "name": "shop_default",
+    "id": "8f1c2e7a4b3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f",
+    "driver": "bridge",
+    "network_interface": "podman1",
+    "created": "2026-09-10T20:00:58.000000000+02:00",
+    "subnets": [{"subnet": "10.89.1.0/24", "gateway": "10.89.1.1"}],
+    "ipv6_enabled": false,
+    "internal": false,
+    "dns_enabled": true,
+    "labels": {"io.podman.compose.project": "shop"},
+    "ipam_options": {"driver": "host-local"}
+  }
+]

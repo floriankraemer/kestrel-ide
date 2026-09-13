@@ -1,0 +1,1705 @@
+[
+  {
+    "Id": "a8ce980ef0eb7765162b706d51bae7eb20353bd3811dd0b04b4229fbe53d812b",
+    "Created": "2026-08-20T15:15:00.032609245Z",
+    "Path": "docker-entrypoint.sh",
+    "Args": [
+      "redis-server"
+    ],
+    "State": {
+      "Status": "running",
+      "Running": true,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 517,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-11T06:55:35.295366787Z",
+      "FinishedAt": "2026-09-11T06:55:34.284709165Z"
+    },
+    "Image": "sha256:305eb88302bd3271bb2cb79f16c334da746511fb308bf5cdc36bced178d215d8",
+    "ResolvConfPath": "/var/lib/docker/containers/a8ce980ef0eb7765162b706d51bae7eb20353bd3811dd0b04b4229fbe53d812b/resolv.conf",
+    "HostnamePath": "/var/lib/docker/containers/a8ce980ef0eb7765162b706d51bae7eb20353bd3811dd0b04b4229fbe53d812b/hostname",
+    "HostsPath": "/var/lib/docker/containers/a8ce980ef0eb7765162b706d51bae7eb20353bd3811dd0b04b4229fbe53d812b/hosts",
+    "LogPath": "/var/lib/docker/containers/a8ce980ef0eb7765162b706d51bae7eb20353bd3811dd0b04b4229fbe53d812b/a8ce980ef0eb7765162b706d51bae7eb20353bd3811dd0b04b4229fbe53d812b-json.log",
+    "Name": "/redis",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": [
+        "/home/user/projects/event-sourcing-chess-example/data:/data:rw"
+      ],
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {}
+      },
+      "NetworkMode": "event-sourcing-chess-example_default",
+      "PortBindings": {
+        "6379/tcp": [
+          {
+            "HostIp": "",
+            "HostPort": "6379"
+          }
+        ]
+      },
+      "RestartPolicy": {
+        "Name": "always",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": [],
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": false,
+      "SecurityOpt": null,
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 0,
+      "NanoCpus": 0,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteIOps": null,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": null,
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 0,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": null,
+      "Ulimits": null,
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "a8ce980ef0eb7765162b706d51bae7eb20353bd3811dd0b04b4229fbe53d812b",
+        "LowerDir": "/var/lib/docker/overlay2/0be150f2dcd51838be158380081c6b7b496b1772c07074b2446106ffbf412816-init/diff:/var/lib/docker/overlay2/9d43a8b5f4a4c8a248c115796ac2ed0d86ac0f2cf4d030991fbd2b3573124d28/diff:/var/lib/docker/overlay2/7f702f3686a7026ea083ddac835af7db0f0c2ab5ed28012f2d7308fc474012b5/diff:/var/lib/docker/overlay2/48ec4645bd7715eb140f8e9fc24748131a75df5bf2894ff8a47a2da03f01e44c/diff:/var/lib/docker/overlay2/328580793c61d213bc7471b9de24056da39979da35e130a271393b190d6e2439/diff:/var/lib/docker/overlay2/afc2df7477ba19d489b53cf3aa88637e2f57fb6ad639f31a7497ec8abe04e93d/diff:/var/lib/docker/overlay2/272a4a32b88a9365f9d66661a80b4e0fae03b1cec65a6d58504d7fcbab375897/diff:/var/lib/docker/overlay2/6bad444dafa329d578dc938159e3fb4ccc62e0a05b21b478acc7fdffcd2d8ad2/diff",
+        "MergedDir": "/var/lib/docker/overlay2/0be150f2dcd51838be158380081c6b7b496b1772c07074b2446106ffbf412816/merged",
+        "UpperDir": "/var/lib/docker/overlay2/0be150f2dcd51838be158380081c6b7b496b1772c07074b2446106ffbf412816/diff",
+        "WorkDir": "/var/lib/docker/overlay2/0be150f2dcd51838be158380081c6b7b496b1772c07074b2446106ffbf412816/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [
+      {
+        "Type": "bind",
+        "Source": "/home/user/projects/event-sourcing-chess-example/data",
+        "Destination": "/data",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": "rprivate"
+      }
+    ],
+    "Config": {
+      "Hostname": "a8ce980ef0eb",
+      "Domainname": "",
+      "User": "",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "ExposedPorts": {
+        "6379/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "REDIS_VERSION=7.2.15"
+      ],
+      "Cmd": [
+        "redis-server"
+      ],
+      "Image": "redis:7.2-alpine",
+      "Volumes": {
+        "/data": {}
+      },
+      "WorkingDir": "/data",
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Labels": {
+        "com.docker.compose.config-hash": "e202e8ff3ddfa38c7071b28fb77e119aa0ca269b6cc639fc700416b88c0e7295",
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "",
+        "com.docker.compose.image": "sha256:305eb88302bd3271bb2cb79f16c334da746511fb308bf5cdc36bced178d215d8",
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "event-sourcing-chess-example",
+        "com.docker.compose.project.config_files": "/home/user/projects/event-sourcing-chess-example/compose.yaml,/home/user/projects/event-sourcing-chess-example/compose.override.yaml",
+        "com.docker.compose.project.working_dir": "/home/user/projects/event-sourcing-chess-example",
+        "com.docker.compose.service": "redis",
+        "com.docker.compose.version": "5.3.1",
+        "desktop.docker.io/wsl-distro": "Ubuntu"
+      }
+    },
+    "NetworkSettings": {
+      "SandboxID": "f05689ed2a7651ac508b0cb12064727f4c5f1cdcbb8ae014572714a1883bf0a0",
+      "SandboxKey": "/var/run/docker/netns/f05689ed2a76",
+      "Ports": {
+        "6379/tcp": [
+          {
+            "HostIp": "0.0.0.0",
+            "HostPort": "6379"
+          },
+          {
+            "HostIp": "::",
+            "HostPort": "6379"
+          }
+        ]
+      },
+      "Networks": {
+        "event-sourcing-chess-example_default": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "redis",
+            "redis"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "f35bc7f7867140bb15894d30986d0659b21856bca7f302a14e0a669bb4b266da",
+          "EndpointID": "7b88ff02f47eba60dbabf8c45e2a484c542dd1d62c21c82290c57f4bb46a0c05",
+          "Gateway": "172.24.0.1",
+          "IPAddress": "172.24.0.2",
+          "MacAddress": "b2:3c:b3:21:9f:dd",
+          "IPPrefixLen": 16,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "redis",
+            "a8ce980ef0eb"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "Id": "55b6fd4017d6251586eb5966a69d916b92d2241c7e5a7d75aa16891a39096969",
+    "Created": "2026-09-09T23:27:08.169503702Z",
+    "Path": "docker-entrypoint.sh",
+    "Args": [
+      "sh",
+      "-c",
+      "pnpm install --frozen-lockfile --filter @jagdonline/web... --filter @jagdonline/shared && pnpm --filter @jagdonline/shared build && pnpm dev --host"
+    ],
+    "State": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 255,
+      "Error": "",
+      "StartedAt": "2026-09-09T23:42:10.588120148Z",
+      "FinishedAt": "2026-09-11T06:48:28.7640475Z",
+      "Health": {
+        "Status": "starting",
+        "FailingStreak": 0,
+        "Log": [
+          {
+            "Start": "2026-09-09T23:28:29.513350528Z",
+            "End": "2026-09-09T23:28:29.617235848Z",
+            "ExitCode": 1,
+            "Output": ""
+          },
+          {
+            "Start": "2026-09-09T23:28:34.618355492Z",
+            "End": "2026-09-09T23:28:34.752557522Z",
+            "ExitCode": 1,
+            "Output": ""
+          },
+          {
+            "Start": "2026-09-09T23:28:39.754125043Z",
+            "End": "2026-09-09T23:28:39.845966516Z",
+            "ExitCode": 1,
+            "Output": ""
+          },
+          {
+            "Start": "2026-09-09T23:28:44.868841693Z",
+            "End": "2026-09-09T23:28:44.979324647Z",
+            "ExitCode": 1,
+            "Output": ""
+          },
+          {
+            "Start": "2026-09-09T23:28:49.980665615Z",
+            "End": "2026-09-09T23:28:50.090052723Z",
+            "ExitCode": 1,
+            "Output": ""
+          }
+        ]
+      }
+    },
+    "Image": "sha256:5e324144585bd7689e952c3b6b435d2dabf535c386ecf1cba9b9ec3e2908eca1",
+    "ResolvConfPath": "/var/lib/docker/containers/55b6fd4017d6251586eb5966a69d916b92d2241c7e5a7d75aa16891a39096969/resolv.conf",
+    "HostnamePath": "/var/lib/docker/containers/55b6fd4017d6251586eb5966a69d916b92d2241c7e5a7d75aa16891a39096969/hostname",
+    "HostsPath": "/var/lib/docker/containers/55b6fd4017d6251586eb5966a69d916b92d2241c7e5a7d75aa16891a39096969/hosts",
+    "LogPath": "/var/lib/docker/containers/55b6fd4017d6251586eb5966a69d916b92d2241c7e5a7d75aa16891a39096969/55b6fd4017d6251586eb5966a69d916b92d2241c7e5a7d75aa16891a39096969-json.log",
+    "Name": "/jagdonline-2d80272f-web-1",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": [
+        "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring:/app:rw",
+        "jagdonline-2d80272f_web_node_modules:/app/apps/web/node_modules:rw",
+        "jagdonline-2d80272f_web_shared_node_modules:/app/packages/shared/node_modules:rw",
+        "jagdonline-2d80272f_web_root_node_modules:/app/node_modules:rw"
+      ],
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {}
+      },
+      "NetworkMode": "jagdonline-2d80272f_default",
+      "PortBindings": {
+        "5173/tcp": [
+          {
+            "HostIp": "",
+            "HostPort": "6532"
+          }
+        ]
+      },
+      "RestartPolicy": {
+        "Name": "no",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": [],
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": false,
+      "SecurityOpt": null,
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 0,
+      "NanoCpus": 0,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteIOps": null,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": null,
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 0,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": null,
+      "Ulimits": null,
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "55b6fd4017d6251586eb5966a69d916b92d2241c7e5a7d75aa16891a39096969",
+        "LowerDir": "/var/lib/docker/overlay2/b18d469ce5b0228cb0cd07c7cec4203ce9268e084bf9116b200d7a05e4930d45-init/diff:/var/lib/docker/overlay2/uu5r7ovgbxo7hapjnf2j8qpfk/diff:/var/lib/docker/overlay2/vbhue9nc98x858zlnd3521l8w/diff:/var/lib/docker/overlay2/y9bpcg6b19bznu0kfn3ouwlee/diff:/var/lib/docker/overlay2/3qwf4lq5jfrxwbklux1rk51x6/diff:/var/lib/docker/overlay2/0uv9pwgwck93ouk6ylqn7dul3/diff:/var/lib/docker/overlay2/0pm2xbijn3cem7tj3uump2pt9/diff:/var/lib/docker/overlay2/ny41wovpxqp9u3plwh58kaz3e/diff:/var/lib/docker/overlay2/ta5f655bhfwqmuqxbam5u7sao/diff:/var/lib/docker/overlay2/8upt58szbheaxqnagzowo8r84/diff:/var/lib/docker/overlay2/sphaffq9egpe6qlu41jwfussk/diff:/var/lib/docker/overlay2/y1wnh04ya0uk0gl16gof04ybm/diff:/var/lib/docker/overlay2/ivaip87iducwdhphz7zz6k44y/diff:/var/lib/docker/overlay2/hx1hnzyiexh1mxn4qazb5l1l7/diff:/var/lib/docker/overlay2/tivaz1r13vf98o7mjub7b73ev/diff:/var/lib/docker/overlay2/qurqukm6i6kv1u69u0l5tg5db/diff:/var/lib/docker/overlay2/d6e5ca9c64235f4ef3349adc79bdb86b1e1d343d129f651b1ffb0fc470779e90/diff:/var/lib/docker/overlay2/777145d5bc36d670bd8d4f3a800e5a5be2f2bee44f29ed0e085326d84d2c6f7e/diff:/var/lib/docker/overlay2/3facad255ab72d3b966bfaacc7d745413ccb3b9f19b958f6972885a4b34b0a51/diff:/var/lib/docker/overlay2/dd6f84ab2be2c04878e8c386036fdb9ed11e19e3b17a7a7da2717984c1838669/diff",
+        "MergedDir": "/var/lib/docker/overlay2/b18d469ce5b0228cb0cd07c7cec4203ce9268e084bf9116b200d7a05e4930d45/merged",
+        "UpperDir": "/var/lib/docker/overlay2/b18d469ce5b0228cb0cd07c7cec4203ce9268e084bf9116b200d7a05e4930d45/diff",
+        "WorkDir": "/var/lib/docker/overlay2/b18d469ce5b0228cb0cd07c7cec4203ce9268e084bf9116b200d7a05e4930d45/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_web_shared_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_web_shared_node_modules/_data",
+        "Destination": "/app/packages/shared/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      },
+      {
+        "Type": "bind",
+        "Source": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring",
+        "Destination": "/app",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": "rprivate"
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_web_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_web_node_modules/_data",
+        "Destination": "/app/apps/web/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_web_root_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_web_root_node_modules/_data",
+        "Destination": "/app/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      }
+    ],
+    "Config": {
+      "Hostname": "55b6fd4017d6",
+      "Domainname": "",
+      "User": "node",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "ExposedPorts": {
+        "5173/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "WEB_PORT=6532",
+        "CI=true",
+        "NODE_ENV=development",
+        "E2E_API_ORIGIN=http://api:3000",
+        "E2E_MAILPIT_ORIGIN=http://mailpit:8025",
+        "E2E_DATABASE_URL=postgresql://jagdonline:<redacted>@db:5432/jagdonline",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "NODE_VERSION=26.8.1",
+        "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright"
+      ],
+      "Cmd": [
+        "sh",
+        "-c",
+        "pnpm install --frozen-lockfile --filter @jagdonline/web... --filter @jagdonline/shared && pnpm --filter @jagdonline/shared build && pnpm dev --host"
+      ],
+      "Healthcheck": {
+        "Test": [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:5173/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))"
+        ],
+        "Interval": 5000000000,
+        "Timeout": 5000000000,
+        "StartPeriod": 20000000000,
+        "Retries": 10
+      },
+      "Image": "jagdonline-2d80272f-web",
+      "Volumes": null,
+      "WorkingDir": "/app/apps/web",
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Labels": {
+        "com.docker.compose.config-hash": "d2e5d01082f0843ed115bcb103e8fd9c7278b3c1c193459bd3fb705d76dd3257",
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "api:service_started:false,mailpit:service_started:false",
+        "com.docker.compose.image": "sha256:5e324144585bd7689e952c3b6b435d2dabf535c386ecf1cba9b9ec3e2908eca1",
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "jagdonline-2d80272f",
+        "com.docker.compose.project.config_files": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring/docker-compose.yml",
+        "com.docker.compose.project.working_dir": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring",
+        "com.docker.compose.service": "web",
+        "com.docker.compose.version": "5.3.1",
+        "desktop.docker.io/wsl-distro": "Ubuntu"
+      }
+    },
+    "NetworkSettings": {
+      "SandboxID": "",
+      "SandboxKey": "",
+      "Ports": {},
+      "Networks": {
+        "jagdonline-2d80272f_default": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "jagdonline-2d80272f-web-1",
+            "web"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "965d3c94131582ddd518ef77e6ed915fdbd26bc4852a64278753cd108f4e0ec3",
+          "EndpointID": "",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "jagdonline-2d80272f-web-1",
+            "web",
+            "55b6fd4017d6"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "Id": "28245e9af542b7402546208627d8329ebd3e0f29e15a7e8770ae18c059e101eb",
+    "Created": "2026-09-09T23:27:08.168721451Z",
+    "Path": "docker-entrypoint.sh",
+    "Args": [
+      "sh",
+      "-c",
+      "pnpm install --frozen-lockfile --filter @jagdonline/admin... --filter @jagdonline/shared && pnpm --filter @jagdonline/shared build && pnpm dev --host"
+    ],
+    "State": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 1,
+      "Error": "",
+      "StartedAt": "2026-09-09T23:28:59.076361767Z",
+      "FinishedAt": "2026-09-09T23:29:04.546861937Z",
+      "Health": {
+        "Status": "unhealthy",
+        "FailingStreak": 0,
+        "Log": [
+          {
+            "Start": "2026-09-09T23:28:33.974931624Z",
+            "End": "2026-09-09T23:28:34.047539301Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:28:39.04922154Z",
+            "End": "2026-09-09T23:28:39.102521264Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:28:44.125877001Z",
+            "End": "2026-09-09T23:28:44.179689199Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:28:49.180353147Z",
+            "End": "2026-09-09T23:28:49.259304117Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:29:04.283865364Z",
+            "End": "2026-09-09T23:29:04.349287331Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          }
+        ]
+      }
+    },
+    "Image": "sha256:cb4b13234417d0e73d13eccb014893c4f0c57627d26c88cc40e51463d6ec7dd1",
+    "ResolvConfPath": "/var/lib/docker/containers/28245e9af542b7402546208627d8329ebd3e0f29e15a7e8770ae18c059e101eb/resolv.conf",
+    "HostnamePath": "/var/lib/docker/containers/28245e9af542b7402546208627d8329ebd3e0f29e15a7e8770ae18c059e101eb/hostname",
+    "HostsPath": "/var/lib/docker/containers/28245e9af542b7402546208627d8329ebd3e0f29e15a7e8770ae18c059e101eb/hosts",
+    "LogPath": "/var/lib/docker/containers/28245e9af542b7402546208627d8329ebd3e0f29e15a7e8770ae18c059e101eb/28245e9af542b7402546208627d8329ebd3e0f29e15a7e8770ae18c059e101eb-json.log",
+    "Name": "/jagdonline-2d80272f-admin-1",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": [
+        "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring:/app:rw",
+        "jagdonline-2d80272f_admin_node_modules:/app/apps/admin/node_modules:rw",
+        "jagdonline-2d80272f_admin_shared_node_modules:/app/packages/shared/node_modules:rw",
+        "jagdonline-2d80272f_admin_root_node_modules:/app/node_modules:rw"
+      ],
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {}
+      },
+      "NetworkMode": "jagdonline-2d80272f_default",
+      "PortBindings": {
+        "5174/tcp": [
+          {
+            "HostIp": "",
+            "HostPort": "6533"
+          }
+        ]
+      },
+      "RestartPolicy": {
+        "Name": "no",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": [],
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": false,
+      "SecurityOpt": null,
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 0,
+      "NanoCpus": 0,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteIOps": null,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": null,
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 0,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": null,
+      "Ulimits": null,
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "28245e9af542b7402546208627d8329ebd3e0f29e15a7e8770ae18c059e101eb",
+        "LowerDir": "/var/lib/docker/overlay2/05b21fe7bdbc2d47c4c1b8c42696e45287cdb0c63b0618adada4fdc451240abd-init/diff:/var/lib/docker/overlay2/tegjv8kvfm0rmmxi9qceg85dw/diff:/var/lib/docker/overlay2/okcil4ka41sogwoosco2eivwi/diff:/var/lib/docker/overlay2/v9x9jvx64c7fedeez18n9lrwb/diff:/var/lib/docker/overlay2/1ezj914yc87o043wkwpjvyizv/diff:/var/lib/docker/overlay2/fxhgk6yrtal2tdw0kvmzbcrv4/diff:/var/lib/docker/overlay2/s6pzsuomlbexjocdheyc6izdu/diff:/var/lib/docker/overlay2/6g3373f6bp3eqbxmc5c0hpb0j/diff:/var/lib/docker/overlay2/px7dk0swobfvtsw9znh3k0a2w/diff:/var/lib/docker/overlay2/o7xdgb7difndeyktmij0en6ut/diff:/var/lib/docker/overlay2/ysbur1ns3bs12i5f34toi401u/diff:/var/lib/docker/overlay2/snvmoa9lyc00d4232ozxm3ld7/diff:/var/lib/docker/overlay2/aluaaauan8kpdpwfb83bg04il/diff:/var/lib/docker/overlay2/7363b50ee76aecee686e51a7634bbfa23acec9f07d46724d46c7d6e3702dd090/diff:/var/lib/docker/overlay2/8805f84def5ec8de6f577a5204b886d72eab8d26885aad762ec52769d4a815e9/diff:/var/lib/docker/overlay2/5f7e22c30ac36ce8ba2e74cac7b62ba0d8ef6f9091b8a06cac35b6b929faebb1/diff",
+        "MergedDir": "/var/lib/docker/overlay2/05b21fe7bdbc2d47c4c1b8c42696e45287cdb0c63b0618adada4fdc451240abd/merged",
+        "UpperDir": "/var/lib/docker/overlay2/05b21fe7bdbc2d47c4c1b8c42696e45287cdb0c63b0618adada4fdc451240abd/diff",
+        "WorkDir": "/var/lib/docker/overlay2/05b21fe7bdbc2d47c4c1b8c42696e45287cdb0c63b0618adada4fdc451240abd/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [
+      {
+        "Type": "bind",
+        "Source": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring",
+        "Destination": "/app",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": "rprivate"
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_admin_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_admin_node_modules/_data",
+        "Destination": "/app/apps/admin/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_admin_root_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_admin_root_node_modules/_data",
+        "Destination": "/app/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_admin_shared_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_admin_shared_node_modules/_data",
+        "Destination": "/app/packages/shared/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      }
+    ],
+    "Config": {
+      "Hostname": "28245e9af542",
+      "Domainname": "",
+      "User": "node",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "ExposedPorts": {
+        "5174/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "NODE_ENV=development",
+        "VITE_ADMIN_API_BASE_URL=http://localhost:4359",
+        "CI=true",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "NODE_VERSION=26.8.1"
+      ],
+      "Cmd": [
+        "sh",
+        "-c",
+        "pnpm install --frozen-lockfile --filter @jagdonline/admin... --filter @jagdonline/shared && pnpm --filter @jagdonline/shared build && pnpm dev --host"
+      ],
+      "Healthcheck": {
+        "Test": [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://localhost:5174/"
+        ],
+        "Interval": 5000000000,
+        "Timeout": 5000000000,
+        "StartPeriod": 20000000000,
+        "Retries": 10
+      },
+      "Image": "jagdonline-2d80272f-admin",
+      "Volumes": null,
+      "WorkingDir": "/app/apps/admin",
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Labels": {
+        "com.docker.compose.config-hash": "a17771c5e448a96275e7bfa719ebcc465db8adb88c2148e8875d015d2d6fe426",
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "api:service_started:false",
+        "com.docker.compose.image": "sha256:cb4b13234417d0e73d13eccb014893c4f0c57627d26c88cc40e51463d6ec7dd1",
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "jagdonline-2d80272f",
+        "com.docker.compose.project.config_files": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring/docker-compose.yml",
+        "com.docker.compose.project.working_dir": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring",
+        "com.docker.compose.service": "admin",
+        "com.docker.compose.version": "5.3.1",
+        "desktop.docker.io/wsl-distro": "Ubuntu"
+      }
+    },
+    "NetworkSettings": {
+      "SandboxID": "",
+      "SandboxKey": "",
+      "Ports": {},
+      "Networks": {
+        "jagdonline-2d80272f_default": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "jagdonline-2d80272f-admin-1",
+            "admin"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "965d3c94131582ddd518ef77e6ed915fdbd26bc4852a64278753cd108f4e0ec3",
+          "EndpointID": "",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "jagdonline-2d80272f-admin-1",
+            "admin",
+            "28245e9af542"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "Id": "07cb869cfcc4eab450bfeba81c013443503bca41c76108e5e7529adae61ac608",
+    "Created": "2026-09-09T23:26:49.245866929Z",
+    "Path": "docker-entrypoint.sh",
+    "Args": [
+      "sh",
+      "-c",
+      "pnpm install --frozen-lockfile --filter @jagdonline/api... --filter @jagdonline/shared && pnpm --filter @jagdonline/shared build && pnpm exec prisma generate --schema=prisma/schema.prisma && pnpm dev"
+    ],
+    "State": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 255,
+      "Error": "",
+      "StartedAt": "2026-09-09T23:29:32.762137158Z",
+      "FinishedAt": "2026-09-11T06:48:28.764587848Z",
+      "Health": {
+        "Status": "starting",
+        "FailingStreak": 0,
+        "Log": [
+          {
+            "Start": "2026-09-09T23:28:33.601216636Z",
+            "End": "2026-09-09T23:28:33.663719012Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:28:38.665225861Z",
+            "End": "2026-09-09T23:28:38.720992553Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:28:43.74365741Z",
+            "End": "2026-09-09T23:28:43.802442261Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:28:48.803047534Z",
+            "End": "2026-09-09T23:28:48.859289553Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          },
+          {
+            "Start": "2026-09-09T23:28:53.860397861Z",
+            "End": "2026-09-09T23:28:53.911079104Z",
+            "ExitCode": 1,
+            "Output": "wget: can't connect to remote host: Connection refused\n"
+          }
+        ]
+      }
+    },
+    "Image": "sha256:a87804ad4d0fcbb1386b73ca36765e4ebd745a392748fd7b08ab80344c209b0e",
+    "ResolvConfPath": "/var/lib/docker/containers/07cb869cfcc4eab450bfeba81c013443503bca41c76108e5e7529adae61ac608/resolv.conf",
+    "HostnamePath": "/var/lib/docker/containers/07cb869cfcc4eab450bfeba81c013443503bca41c76108e5e7529adae61ac608/hostname",
+    "HostsPath": "/var/lib/docker/containers/07cb869cfcc4eab450bfeba81c013443503bca41c76108e5e7529adae61ac608/hosts",
+    "LogPath": "/var/lib/docker/containers/07cb869cfcc4eab450bfeba81c013443503bca41c76108e5e7529adae61ac608/07cb869cfcc4eab450bfeba81c013443503bca41c76108e5e7529adae61ac608-json.log",
+    "Name": "/jagdonline-2d80272f-api-1",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": [
+        "jagdonline-2d80272f_api_shared_node_modules:/app/packages/shared/node_modules:rw",
+        "jagdonline-2d80272f_api_root_node_modules:/app/node_modules:rw",
+        "/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/a63827aad08aaa917411cb5b53dd958bef61dcbda005f98fc9053d9c3d0c6507:/app:rw",
+        "jagdonline-2d80272f_api_node_modules:/app/apps/api/node_modules:rw"
+      ],
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {}
+      },
+      "NetworkMode": "jagdonline-2d80272f_default",
+      "PortBindings": {
+        "3000/tcp": [
+          {
+            "HostIp": "",
+            "HostPort": "4359"
+          }
+        ]
+      },
+      "RestartPolicy": {
+        "Name": "no",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": [],
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": false,
+      "SecurityOpt": null,
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 0,
+      "NanoCpus": 0,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteIOps": null,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": null,
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 0,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": null,
+      "Ulimits": null,
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "07cb869cfcc4eab450bfeba81c013443503bca41c76108e5e7529adae61ac608",
+        "LowerDir": "/var/lib/docker/overlay2/2aab930e6be3bc27897da1fcbe0cb5e654cc4d21cd64c3464319e7d3b8c375df-init/diff:/var/lib/docker/overlay2/jscakwhdfwu5xn3wtyu4gld6o/diff:/var/lib/docker/overlay2/zmrnkoj8lgie7jt67i90sbi3u/diff:/var/lib/docker/overlay2/b3nd1ys3hnckml3gzcdt3zglu/diff:/var/lib/docker/overlay2/mk2ec4kiiihn6nc30b9ywguzv/diff:/var/lib/docker/overlay2/9jw8wea871frkum735igk6g18/diff:/var/lib/docker/overlay2/wjnbsy3i47dgon23xo80ia9o4/diff:/var/lib/docker/overlay2/l97ge39mypiie3prl3eorgvgl/diff:/var/lib/docker/overlay2/i18s8nmz2oo656vnc9w8czv6u/diff:/var/lib/docker/overlay2/k9icaaqffxhyc69c7vq7hzakz/diff:/var/lib/docker/overlay2/q3lhm9f2vocfcujvai17fz83e/diff:/var/lib/docker/overlay2/mtu8jyyungpoh0rel1t6yu4x6/diff:/var/lib/docker/overlay2/ajre0gx0ut5jk6ztr147tw5xs/diff:/var/lib/docker/overlay2/745e3588470a3728f503c09b7047ec7d0c381821a238378fd4a6b9d7b47064cd/diff:/var/lib/docker/overlay2/b874f783886207552c5fc2088c1055a7f523be1de01233ba9996c2333e31d651/diff:/var/lib/docker/overlay2/4112f3bbf1794e3ebc7fd87f02b725dec356addf346f57608fb52e754bd5f1da/diff:/var/lib/docker/overlay2/5f7e22c30ac36ce8ba2e74cac7b62ba0d8ef6f9091b8a06cac35b6b929faebb1/diff",
+        "MergedDir": "/var/lib/docker/overlay2/2aab930e6be3bc27897da1fcbe0cb5e654cc4d21cd64c3464319e7d3b8c375df/merged",
+        "UpperDir": "/var/lib/docker/overlay2/2aab930e6be3bc27897da1fcbe0cb5e654cc4d21cd64c3464319e7d3b8c375df/diff",
+        "WorkDir": "/var/lib/docker/overlay2/2aab930e6be3bc27897da1fcbe0cb5e654cc4d21cd64c3464319e7d3b8c375df/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [
+      {
+        "Type": "bind",
+        "Source": "/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/Ubuntu/a63827aad08aaa917411cb5b53dd958bef61dcbda005f98fc9053d9c3d0c6507",
+        "Destination": "/app",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": "rprivate"
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_api_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_api_node_modules/_data",
+        "Destination": "/app/apps/api/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_api_root_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_api_root_node_modules/_data",
+        "Destination": "/app/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      },
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_api_shared_node_modules",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_api_shared_node_modules/_data",
+        "Destination": "/app/packages/shared/node_modules",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      }
+    ],
+    "Config": {
+      "Hostname": "07cb869cfcc4",
+      "Domainname": "",
+      "User": "node",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "ExposedPorts": {
+        "3000/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "JWT_ACCESS_SECRET=<redacted>",
+        "MAILPIT_PORT=8025",
+        "VAPID_SUBJECT=mailto:noreply@waidmann.app",
+        "SMTP_HOST=mailpit",
+        "VAPID_PRIVATE_KEY=<redacted>",
+        "MAIL_FROM=noreply@jagdonline.local",
+        "CORS_ORIGIN=http://localhost:6532,http://localhost:6533",
+        "LIVE_TRACKING_ENABLED=true",
+        "VAPID_PUBLIC_KEY=<redacted>",
+        "DATABASE_URL=postgresql://jagdonline:<redacted>@db:5432/jagdonline",
+        "CI=true",
+        "AUTH_RATE_LIMIT_DISABLED=<redacted>",
+        "ADMIN_JWT_SECRET=<redacted>",
+        "PORT=3000",
+        "PUBLIC_SELLERS_RATE_LIMIT_CAPACITY=1000",
+        "FRONTEND_URL=http://localhost:6532",
+        "ADMIN_JWT_AUDIENCE=jagdonline-admin",
+        "NODE_ENV=development",
+        "MAILPIT_HOST=mailpit",
+        "BILLING_ENABLED=false",
+        "APP_URL=http://localhost:6532",
+        "JWT_REFRESH_SECRET=<redacted>",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "NODE_VERSION=22.23.2",
+        "YARN_VERSION=1.22.22"
+      ],
+      "Cmd": [
+        "sh",
+        "-c",
+        "pnpm install --frozen-lockfile --filter @jagdonline/api... --filter @jagdonline/shared && pnpm --filter @jagdonline/shared build && pnpm exec prisma generate --schema=prisma/schema.prisma && pnpm dev"
+      ],
+      "Healthcheck": {
+        "Test": [
+          "CMD",
+          "wget",
+          "-qO-",
+          "http://localhost:3000/api/health"
+        ],
+        "Interval": 5000000000,
+        "Timeout": 5000000000,
+        "StartPeriod": 20000000000,
+        "Retries": 10
+      },
+      "Image": "jagdonline-2d80272f-api",
+      "Volumes": null,
+      "WorkingDir": "/app/apps/api",
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Labels": {
+        "com.docker.compose.config-hash": "fdff7645b93d7aee51d23326ed4d55e22599977639293870ae05231e74232a60",
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "mailpit:service_started:false,db:service_healthy:false",
+        "com.docker.compose.image": "sha256:a87804ad4d0fcbb1386b73ca36765e4ebd745a392748fd7b08ab80344c209b0e",
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "jagdonline-2d80272f",
+        "com.docker.compose.project.config_files": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring/docker-compose.yml",
+        "com.docker.compose.project.working_dir": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring",
+        "com.docker.compose.service": "api",
+        "com.docker.compose.version": "5.3.1",
+        "desktop.docker.io/wsl-distro": "Ubuntu"
+      }
+    },
+    "NetworkSettings": {
+      "SandboxID": "",
+      "SandboxKey": "",
+      "Ports": {},
+      "Networks": {
+        "jagdonline-2d80272f_default": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "jagdonline-2d80272f-api-1",
+            "api"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "965d3c94131582ddd518ef77e6ed915fdbd26bc4852a64278753cd108f4e0ec3",
+          "EndpointID": "",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "jagdonline-2d80272f-api-1",
+            "api",
+            "07cb869cfcc4"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "Id": "10f5a469726b360719fcf412fc43bf02fa9ad46e4ad9778cdacef396b3f887f8",
+    "Created": "2026-09-09T23:26:49.12215275Z",
+    "Path": "docker-entrypoint.sh",
+    "Args": [
+      "postgres"
+    ],
+    "State": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 255,
+      "Error": "",
+      "StartedAt": "2026-09-09T23:27:26.80186767Z",
+      "FinishedAt": "2026-09-11T06:48:28.763798246Z",
+      "Health": {
+        "Status": "starting",
+        "FailingStreak": 0,
+        "Log": []
+      }
+    },
+    "Image": "sha256:83a1b4068e0f983d6084c4a6cdc88e8f426d39c72668ddc096e7f7bbd08fc2b3",
+    "ResolvConfPath": "/var/lib/docker/containers/10f5a469726b360719fcf412fc43bf02fa9ad46e4ad9778cdacef396b3f887f8/resolv.conf",
+    "HostnamePath": "/var/lib/docker/containers/10f5a469726b360719fcf412fc43bf02fa9ad46e4ad9778cdacef396b3f887f8/hostname",
+    "HostsPath": "/var/lib/docker/containers/10f5a469726b360719fcf412fc43bf02fa9ad46e4ad9778cdacef396b3f887f8/hosts",
+    "LogPath": "/var/lib/docker/containers/10f5a469726b360719fcf412fc43bf02fa9ad46e4ad9778cdacef396b3f887f8/10f5a469726b360719fcf412fc43bf02fa9ad46e4ad9778cdacef396b3f887f8-json.log",
+    "Name": "/jagdonline-2d80272f-db-1",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": [
+        "jagdonline-2d80272f_db_data:/var/lib/postgresql/data:rw"
+      ],
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {}
+      },
+      "NetworkMode": "jagdonline-2d80272f_default",
+      "PortBindings": {
+        "5432/tcp": [
+          {
+            "HostIp": "",
+            "HostPort": "6791"
+          }
+        ]
+      },
+      "RestartPolicy": {
+        "Name": "no",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": [],
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": false,
+      "SecurityOpt": null,
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 0,
+      "NanoCpus": 0,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteIOps": null,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": null,
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 0,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": null,
+      "Ulimits": null,
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "10f5a469726b360719fcf412fc43bf02fa9ad46e4ad9778cdacef396b3f887f8",
+        "LowerDir": "/var/lib/docker/overlay2/64f6ea2f140fcab0f0d676499f5b1db2527b567a446373a0817a37d5bcb2a973-init/diff:/var/lib/docker/overlay2/26c06eb831a4937ddd0196aef885ce38aff1a19545485838891a837cdb32928f/diff:/var/lib/docker/overlay2/fd4cd9d4486908f11c3504f16f0da6087b37d03e2cd78411357583092b262137/diff:/var/lib/docker/overlay2/3f801f8e93893d059df2a7e8dcf2d510544cec1229779c3c31366d4a218ce7b7/diff:/var/lib/docker/overlay2/a775adcf39a893c7d6dd1973d3973ef2bd183f580922bde5a076854622a3fd13/diff:/var/lib/docker/overlay2/468015b54a13f4b9b1a268b45d269c138c7a5e6d63c8c39ca91a878fbe13410e/diff:/var/lib/docker/overlay2/bd93eb61217438f81bc1ae5ea6cc2bcac20763ad817ccc7bcf2721e1d3ac8329/diff:/var/lib/docker/overlay2/24547fb212da5dfb8f6214932454820c0a493b03d575bb0f29ea78c939cbe08a/diff:/var/lib/docker/overlay2/fc196600fe65f8a5affc407b90b7c00f2162012f6246b2d4c02cfec35a98ced7/diff:/var/lib/docker/overlay2/af3ae6e53a2c0346668c460ddf173c51d64e4c04491fdaa7fa0c0f2fb8a673e1/diff:/var/lib/docker/overlay2/99ad9678e49272b1727c834b5321b4a9791f8378275bbcb00eac7babbf2c37cb/diff:/var/lib/docker/overlay2/51bfa8533523fb34804ecda2be88d04352c4cc8712bc46235351087b8868e81f/diff",
+        "MergedDir": "/var/lib/docker/overlay2/64f6ea2f140fcab0f0d676499f5b1db2527b567a446373a0817a37d5bcb2a973/merged",
+        "UpperDir": "/var/lib/docker/overlay2/64f6ea2f140fcab0f0d676499f5b1db2527b567a446373a0817a37d5bcb2a973/diff",
+        "WorkDir": "/var/lib/docker/overlay2/64f6ea2f140fcab0f0d676499f5b1db2527b567a446373a0817a37d5bcb2a973/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Name": "jagdonline-2d80272f_db_data",
+        "Source": "/var/lib/docker/volumes/jagdonline-2d80272f_db_data/_data",
+        "Destination": "/var/lib/postgresql/data",
+        "Driver": "local",
+        "Mode": "rw",
+        "RW": true,
+        "Propagation": ""
+      }
+    ],
+    "Config": {
+      "Hostname": "10f5a469726b",
+      "Domainname": "",
+      "User": "",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "ExposedPorts": {
+        "5432/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "POSTGRES_PASSWORD=<redacted>",
+        "POSTGRES_DB=jagdonline",
+        "POSTGRES_USER=jagdonline",
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "GOSU_VERSION=1.17",
+        "LANG=en_US.utf8",
+        "PG_MAJOR=16",
+        "PG_VERSION=16.6",
+        "PG_SHA256=23369cdaccd45270ac5dcc30fa9da205d5be33fa505e1f17a0418d2caeca477b",
+        "DOCKER_PG_LLVM_DEPS=llvm19-dev \t\tclang19",
+        "PGDATA=/var/lib/postgresql/data"
+      ],
+      "Cmd": [
+        "postgres"
+      ],
+      "Healthcheck": {
+        "Test": [
+          "CMD-SHELL",
+          "pg_isready -U jagdonline -d jagdonline"
+        ],
+        "Interval": 5000000000,
+        "Timeout": 5000000000,
+        "Retries": 5
+      },
+      "Image": "postgres:16-alpine",
+      "Volumes": {
+        "/var/lib/postgresql/data": {}
+      },
+      "WorkingDir": "/",
+      "Entrypoint": [
+        "docker-entrypoint.sh"
+      ],
+      "Labels": {
+        "com.docker.compose.config-hash": "b129bca4a8b207ed3723893112aa54a5ee5f010ffa041caf2608cbd3b1c4676b",
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "",
+        "com.docker.compose.image": "sha256:83a1b4068e0f983d6084c4a6cdc88e8f426d39c72668ddc096e7f7bbd08fc2b3",
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "jagdonline-2d80272f",
+        "com.docker.compose.project.config_files": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring/docker-compose.yml",
+        "com.docker.compose.project.working_dir": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring",
+        "com.docker.compose.service": "db",
+        "com.docker.compose.version": "5.3.1",
+        "desktop.docker.io/wsl-distro": "Ubuntu"
+      },
+      "StopSignal": "SIGINT"
+    },
+    "NetworkSettings": {
+      "SandboxID": "",
+      "SandboxKey": "",
+      "Ports": {},
+      "Networks": {
+        "jagdonline-2d80272f_default": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "jagdonline-2d80272f-db-1",
+            "db"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "965d3c94131582ddd518ef77e6ed915fdbd26bc4852a64278753cd108f4e0ec3",
+          "EndpointID": "",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "jagdonline-2d80272f-db-1",
+            "db",
+            "10f5a469726b"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "Id": "9428dfccd64ee8e80a1efc125f92db755a67eb33932a9793a0b2a1b2bbb171ea",
+    "Created": "2026-09-09T23:26:49.120958379Z",
+    "Path": "/mailpit",
+    "Args": [],
+    "State": {
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 255,
+      "Error": "",
+      "StartedAt": "2026-09-09T23:27:26.80862556Z",
+      "FinishedAt": "2026-09-11T06:48:28.764254116Z",
+      "Health": {
+        "Status": "starting",
+        "FailingStreak": 0,
+        "Log": []
+      }
+    },
+    "Image": "sha256:cdb09a322d77e0b233727104beaafb4b7b503fd3badce6a6d9e58fd9993025f6",
+    "ResolvConfPath": "/var/lib/docker/containers/9428dfccd64ee8e80a1efc125f92db755a67eb33932a9793a0b2a1b2bbb171ea/resolv.conf",
+    "HostnamePath": "/var/lib/docker/containers/9428dfccd64ee8e80a1efc125f92db755a67eb33932a9793a0b2a1b2bbb171ea/hostname",
+    "HostsPath": "/var/lib/docker/containers/9428dfccd64ee8e80a1efc125f92db755a67eb33932a9793a0b2a1b2bbb171ea/hosts",
+    "LogPath": "/var/lib/docker/containers/9428dfccd64ee8e80a1efc125f92db755a67eb33932a9793a0b2a1b2bbb171ea/9428dfccd64ee8e80a1efc125f92db755a67eb33932a9793a0b2a1b2bbb171ea-json.log",
+    "Name": "/jagdonline-2d80272f-mailpit-1",
+    "RestartCount": 0,
+    "Driver": "overlay2",
+    "Platform": "linux",
+    "MountLabel": "",
+    "ProcessLabel": "",
+    "AppArmorProfile": "",
+    "ExecIDs": null,
+    "HostConfig": {
+      "Binds": null,
+      "ContainerIDFile": "",
+      "LogConfig": {
+        "Type": "json-file",
+        "Config": {}
+      },
+      "NetworkMode": "jagdonline-2d80272f_default",
+      "PortBindings": {
+        "1025/tcp": [
+          {
+            "HostIp": "",
+            "HostPort": "2384"
+          }
+        ],
+        "8025/tcp": [
+          {
+            "HostIp": "",
+            "HostPort": "9384"
+          }
+        ]
+      },
+      "RestartPolicy": {
+        "Name": "no",
+        "MaximumRetryCount": 0
+      },
+      "AutoRemove": false,
+      "VolumeDriver": "",
+      "VolumesFrom": null,
+      "ConsoleSize": [
+        0,
+        0
+      ],
+      "CapAdd": null,
+      "CapDrop": null,
+      "CgroupnsMode": "private",
+      "Dns": [],
+      "DnsOptions": [],
+      "DnsSearch": [],
+      "ExtraHosts": [],
+      "GroupAdd": null,
+      "IpcMode": "private",
+      "Cgroup": "",
+      "Links": null,
+      "OomScoreAdj": 0,
+      "PidMode": "",
+      "Privileged": false,
+      "PublishAllPorts": false,
+      "ReadonlyRootfs": false,
+      "SecurityOpt": null,
+      "UTSMode": "",
+      "UsernsMode": "",
+      "ShmSize": 67108864,
+      "Runtime": "runc",
+      "Isolation": "",
+      "CpuShares": 0,
+      "Memory": 0,
+      "NanoCpus": 0,
+      "CgroupParent": "",
+      "BlkioWeight": 0,
+      "BlkioWeightDevice": null,
+      "BlkioDeviceReadBps": null,
+      "BlkioDeviceWriteBps": null,
+      "BlkioDeviceReadIOps": null,
+      "BlkioDeviceWriteIOps": null,
+      "CpuPeriod": 0,
+      "CpuQuota": 0,
+      "CpuRealtimePeriod": 0,
+      "CpuRealtimeRuntime": 0,
+      "CpusetCpus": "",
+      "CpusetMems": "",
+      "Devices": null,
+      "DeviceCgroupRules": null,
+      "DeviceRequests": null,
+      "MemoryReservation": 0,
+      "MemorySwap": 0,
+      "MemorySwappiness": null,
+      "OomKillDisable": null,
+      "PidsLimit": null,
+      "Ulimits": null,
+      "CpuCount": 0,
+      "CpuPercent": 0,
+      "IOMaximumIOps": 0,
+      "IOMaximumBandwidth": 0,
+      "MaskedPaths": [
+        "/proc/acpi",
+        "/proc/asound",
+        "/proc/interrupts",
+        "/proc/kcore",
+        "/proc/keys",
+        "/proc/latency_stats",
+        "/proc/sched_debug",
+        "/proc/scsi",
+        "/proc/timer_list",
+        "/proc/timer_stats",
+        "/sys/devices/virtual/powercap",
+        "/sys/firmware"
+      ],
+      "ReadonlyPaths": [
+        "/proc/bus",
+        "/proc/fs",
+        "/proc/irq",
+        "/proc/sys",
+        "/proc/sysrq-trigger"
+      ]
+    },
+    "GraphDriver": {
+      "Data": {
+        "ID": "9428dfccd64ee8e80a1efc125f92db755a67eb33932a9793a0b2a1b2bbb171ea",
+        "LowerDir": "/var/lib/docker/overlay2/6a48c5880506f48d575df902f25ab4308f86bb05ea5fedeee0aebfec26b580a5-init/diff:/var/lib/docker/overlay2/a77c43eca6a9f8f38bb23c7ad961d65db6bc24cf2db85e879bcc03aa5c5165c6/diff:/var/lib/docker/overlay2/2b2367b4e9b197e10db8ae1d3f7da77a70f73160dedcddf7e95a952f1daba592/diff:/var/lib/docker/overlay2/5f7e22c30ac36ce8ba2e74cac7b62ba0d8ef6f9091b8a06cac35b6b929faebb1/diff",
+        "MergedDir": "/var/lib/docker/overlay2/6a48c5880506f48d575df902f25ab4308f86bb05ea5fedeee0aebfec26b580a5/merged",
+        "UpperDir": "/var/lib/docker/overlay2/6a48c5880506f48d575df902f25ab4308f86bb05ea5fedeee0aebfec26b580a5/diff",
+        "WorkDir": "/var/lib/docker/overlay2/6a48c5880506f48d575df902f25ab4308f86bb05ea5fedeee0aebfec26b580a5/work"
+      },
+      "Name": "overlay2"
+    },
+    "Mounts": [],
+    "Config": {
+      "Hostname": "9428dfccd64e",
+      "Domainname": "",
+      "User": "",
+      "AttachStdin": false,
+      "AttachStdout": true,
+      "AttachStderr": true,
+      "ExposedPorts": {
+        "1025/tcp": {},
+        "1110/tcp": {},
+        "8025/tcp": {}
+      },
+      "Tty": false,
+      "OpenStdin": false,
+      "StdinOnce": false,
+      "Env": [
+        "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      ],
+      "Cmd": null,
+      "Healthcheck": {
+        "Test": [
+          "CMD",
+          "/mailpit",
+          "readyz"
+        ],
+        "Interval": 15000000000,
+        "StartPeriod": 10000000000,
+        "StartInterval": 1000000000
+      },
+      "Image": "axllent/mailpit",
+      "Volumes": null,
+      "WorkingDir": "/",
+      "Entrypoint": [
+        "/mailpit"
+      ],
+      "Labels": {
+        "com.docker.compose.config-hash": "446da6d339d35ffe5d93c7ea7e724aaa66387f5e6ecd17e170f85f1be8c48b95",
+        "com.docker.compose.container-number": "1",
+        "com.docker.compose.depends_on": "",
+        "com.docker.compose.image": "sha256:cdb09a322d77e0b233727104beaafb4b7b503fd3badce6a6d9e58fd9993025f6",
+        "com.docker.compose.oneoff": "False",
+        "com.docker.compose.project": "jagdonline-2d80272f",
+        "com.docker.compose.project.config_files": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring/docker-compose.yml",
+        "com.docker.compose.project.working_dir": "/home/user/projects/jagdonline/.claude/worktrees/trophy-scoring",
+        "com.docker.compose.service": "mailpit",
+        "com.docker.compose.version": "5.3.1",
+        "desktop.docker.io/wsl-distro": "Ubuntu",
+        "org.opencontainers.image.description": "An email and SMTP testing tool with API for developers",
+        "org.opencontainers.image.documentation": "https://mailpit.axllent.org/docs/",
+        "org.opencontainers.image.licenses": "MIT",
+        "org.opencontainers.image.source": "https://github.com/axllent/mailpit",
+        "org.opencontainers.image.title": "Mailpit",
+        "org.opencontainers.image.url": "https://mailpit.axllent.org"
+      }
+    },
+    "NetworkSettings": {
+      "SandboxID": "",
+      "SandboxKey": "",
+      "Ports": {},
+      "Networks": {
+        "jagdonline-2d80272f_default": {
+          "IPAMConfig": null,
+          "Links": null,
+          "Aliases": [
+            "jagdonline-2d80272f-mailpit-1",
+            "mailpit"
+          ],
+          "DriverOpts": null,
+          "GwPriority": 0,
+          "NetworkID": "965d3c94131582ddd518ef77e6ed915fdbd26bc4852a64278753cd108f4e0ec3",
+          "EndpointID": "",
+          "Gateway": "",
+          "IPAddress": "",
+          "MacAddress": "",
+          "IPPrefixLen": 0,
+          "IPv6Gateway": "",
+          "GlobalIPv6Address": "",
+          "GlobalIPv6PrefixLen": 0,
+          "DNSNames": [
+            "jagdonline-2d80272f-mailpit-1",
+            "mailpit",
+            "9428dfccd64e"
+          ]
+        }
+      }
+    }
+  }
+]

@@ -1,0 +1,35 @@
+[
+  {
+    "CreatedAt": "2026-08-28T12:45:26Z",
+    "Driver": "local",
+    "Labels": {
+      "com.docker.volume.anonymous": ""
+    },
+    "Mountpoint": "/var/lib/docker/volumes/1cca80ca3c3ffb6d956779768adab976772db4acc05080b2459ce535493aeb8a/_data",
+    "Name": "1cca80ca3c3ffb6d956779768adab976772db4acc05080b2459ce535493aeb8a",
+    "Options": null,
+    "Scope": "local"
+  },
+  {
+    "CreatedAt": "2026-08-28T16:36:56Z",
+    "Driver": "local",
+    "Labels": {
+      "com.docker.volume.anonymous": ""
+    },
+    "Mountpoint": "/var/lib/docker/volumes/01ea54fbcd69c33028ca04847a50c2751118bf1ca4e430b7dbcafe00323fc64d/_data",
+    "Name": "01ea54fbcd69c33028ca04847a50c2751118bf1ca4e430b7dbcafe00323fc64d",
+    "Options": null,
+    "Scope": "local"
+  },
+  {
+    "CreatedAt": "2026-08-28T12:36:36Z",
+    "Driver": "local",
+    "Labels": {
+      "com.docker.volume.anonymous": ""
+    },
+    "Mountpoint": "/var/lib/docker/volumes/2c19ce5c3592978811d699db2c4cf58d01144075f5af9ec7ed20ae9f7cfef051/_data",
+    "Name": "2c19ce5c3592978811d699db2c4cf58d01144075f5af9ec7ed20ae9f7cfef051",
+    "Options": null,
+    "Scope": "local"
+  }
+]

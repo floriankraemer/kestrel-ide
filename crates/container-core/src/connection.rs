@@ -348,6 +348,25 @@ impl Invocation {
         self
     }
 
+    /// Run `args` through this invocation to completion, buffered, with
+    /// `process_exec::run` — the one call every query-shaped operation
+    /// (`probe`, `snapshot`) goes through.
+    pub fn run(
+        &self,
+        args: &[&str],
+        work_dir: &Path,
+        timeout: Duration,
+    ) -> Result<process_exec::Output, process_exec::Failure> {
+        let argv = self.argv(args);
+        let arg_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
+        let env_refs: Vec<(&str, &str)> = self
+            .env
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        process_exec::run(&self.program, &arg_refs, work_dir, None, timeout, &env_refs)
+    }
+
     /// A ready-to-spawn [`std::process::Command`], for a caller that wants
     /// `Command` directly rather than going through `process_exec`.
     pub fn command(&self, cwd: &Path, args: &[&str]) -> std::process::Command {

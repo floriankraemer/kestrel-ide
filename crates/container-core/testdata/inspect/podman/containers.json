@@ -1,0 +1,221 @@
+[
+  {
+    "Id": "9f1c2e7a4b3d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f",
+    "Created": "2026-09-12T08:15:02.123456789+02:00",
+    "Path": "nginx",
+    "Args": ["-g", "daemon off;"],
+    "State": {
+      "OciVersion": "1.1.0",
+      "Status": "running",
+      "Running": true,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 4242,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-12T08:15:03.000000000+02:00",
+      "FinishedAt": "0001-01-01T00:00:00Z",
+      "Health": {"Status": "", "FailingStreak": 0, "Log": null}
+    },
+    "Image": "sha256:aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66",
+    "ImageDigest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "ImageName": "docker.io/library/nginx:1.27",
+    "Rootfs": "",
+    "Pod": "5a5b5c5d5e5f6a6b6c6d6e6f7a7b7c7d7e7f8a8b8c8d8e8f9a9b9c9d9e9fa0a1",
+    "Name": "web",
+    "RestartCount": 0,
+    "Driver": "overlay",
+    "MountLabel": "system_u:object_r:container_file_t:s0:c123,c456",
+    "ProcessLabel": "system_u:system_r:container_t:s0:c123,c456",
+    "AppArmorProfile": "",
+    "IsInfra": false,
+    "IsService": false,
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Name": "web-data",
+        "Source": "/home/user/.local/share/containers/storage/volumes/web-data/_data",
+        "Destination": "/usr/share/nginx/html",
+        "Driver": "local",
+        "Mode": "z",
+        "Options": ["nosuid", "nodev", "rbind"],
+        "RW": true,
+        "Propagation": "rprivate"
+      }
+    ],
+    "Config": {
+      "Hostname": "web",
+      "User": "",
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "NGINX_VERSION=1.27.0"],
+      "Cmd": ["nginx", "-g", "daemon off;"],
+      "Image": "docker.io/library/nginx:1.27",
+      "WorkingDir": "/",
+      "Entrypoint": ["/docker-entrypoint.sh"],
+      "Labels": {
+        "maintainer": "NGINX Docker Maintainers <docker-maint@nginx.com>"
+      },
+      "Annotations": {"io.container.manager": "libpod"},
+      "StopSignal": "SIGQUIT",
+      "CreateCommand": ["podman", "run", "-d", "--pod", "shop", "--name", "web", "nginx:1.27"]
+    },
+    "HostConfig": {
+      "PortBindings": {},
+      "RestartPolicy": {"Name": "", "MaximumRetryCount": 0}
+    },
+    "NetworkSettings": {
+      "Ports": {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]},
+      "SandboxKey": "/run/user/1000/netns/netns-1234",
+      "Networks": {"podman": {"NetworkID": "podman", "IPAddress": "10.88.0.5"}}
+    }
+  },
+  {
+    "Id": "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b",
+    "Created": "2026-09-10T20:01:00.000000000+02:00",
+    "Path": "docker-entrypoint.sh",
+    "Args": ["postgres"],
+    "State": {
+      "OciVersion": "1.1.0",
+      "Status": "paused",
+      "Running": true,
+      "Paused": true,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 4300,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "2026-09-10T20:01:01.000000000+02:00",
+      "FinishedAt": "0001-01-01T00:00:00Z"
+    },
+    "Image": "sha256:bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66ee77",
+    "ImageName": "docker.io/library/postgres:16-alpine",
+    "Pod": "",
+    "Name": "shop_db_1",
+    "RestartCount": 0,
+    "Driver": "overlay",
+    "IsInfra": false,
+    "Mounts": [
+      {
+        "Type": "volume",
+        "Name": "shop_pgdata",
+        "Source": "/home/user/.local/share/containers/storage/volumes/shop_pgdata/_data",
+        "Destination": "/var/lib/postgresql/data",
+        "Driver": "local",
+        "Mode": "",
+        "Options": ["nosuid", "nodev", "rbind"],
+        "RW": true,
+        "Propagation": "rprivate"
+      }
+    ],
+    "Config": {
+      "Hostname": "1a2b3c4d5e6f",
+      "Env": ["POSTGRES_USER=app", "POSTGRES_PASSWORD=<redacted>", "POSTGRES_DB=shop"],
+      "Cmd": ["postgres"],
+      "Image": "docker.io/library/postgres:16-alpine",
+      "WorkingDir": "",
+      "Entrypoint": ["docker-entrypoint.sh"],
+      "Labels": {
+        "io.podman.compose.config-hash": "6d0e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6",
+        "io.podman.compose.project": "shop",
+        "io.podman.compose.version": "1.2.0",
+        "io.podman.compose.service": "db",
+        "io.podman.compose.project.working_dir": "/home/user/projects/shop",
+        "io.podman.compose.project.config_files": "/home/user/projects/shop/compose.yaml",
+        "io.podman.compose.container-number": "1"
+      }
+    },
+    "HostConfig": {"PortBindings": {"5432/tcp": [{"HostIp": "", "HostPort": "5432"}]}},
+    "NetworkSettings": {
+      "Ports": {"5432/tcp": [{"HostIp": "", "HostPort": "5432"}]},
+      "Networks": {"shop_default": {"NetworkID": "shop_default", "IPAddress": "10.89.1.2"}}
+    }
+  },
+  {
+    "Id": "2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c",
+    "Created": "2026-09-10T20:01:05.000000000+02:00",
+    "Path": "php-fpm",
+    "Args": [],
+    "State": {
+      "OciVersion": "1.1.0",
+      "Status": "created",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 0,
+      "Error": "",
+      "StartedAt": "0001-01-01T00:00:00Z",
+      "FinishedAt": "0001-01-01T00:00:00Z"
+    },
+    "Image": "sha256:cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66ee77ff88",
+    "ImageName": "localhost/shop_app:latest",
+    "Pod": "",
+    "Name": "shop_app_1",
+    "RestartCount": 0,
+    "Driver": "overlay",
+    "IsInfra": false,
+    "Mounts": [],
+    "Config": {
+      "Hostname": "2b3c4d5e6f7a",
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+      "Cmd": ["php-fpm"],
+      "Image": "localhost/shop_app:latest",
+      "WorkingDir": "/var/www",
+      "Entrypoint": null,
+      "Labels": {
+        "io.podman.compose.config-hash": "7e1f2a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7",
+        "io.podman.compose.project": "shop",
+        "io.podman.compose.version": "1.2.0",
+        "io.podman.compose.service": "app",
+        "io.podman.compose.project.working_dir": "/home/user/projects/shop",
+        "io.podman.compose.project.config_files": "/home/user/projects/shop/compose.yaml",
+        "io.podman.compose.container-number": "1"
+      }
+    },
+    "HostConfig": {"PortBindings": {}},
+    "NetworkSettings": {"Ports": {}, "Networks": {}}
+  },
+  {
+    "Id": "3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d",
+    "Created": "2026-09-01T09:00:00.000000000+02:00",
+    "Path": "/bin/sh",
+    "Args": ["-c", "exit 3"],
+    "State": {
+      "OciVersion": "1.1.0",
+      "Status": "exited",
+      "Running": false,
+      "Paused": false,
+      "Restarting": false,
+      "OOMKilled": false,
+      "Dead": false,
+      "Pid": 0,
+      "ExitCode": 3,
+      "Error": "",
+      "StartedAt": "2026-09-01T09:00:01.000000000+02:00",
+      "FinishedAt": "2026-09-01T09:00:02.000000000+02:00"
+    },
+    "Image": "sha256:dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66ee77ff8899aa",
+    "ImageName": "docker.io/library/alpine:latest",
+    "Pod": "",
+    "Name": "scratch",
+    "RestartCount": 0,
+    "Driver": "overlay",
+    "IsInfra": false,
+    "Mounts": [],
+    "Config": {
+      "Hostname": "3c4d5e6f7a8b",
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+      "Cmd": ["/bin/sh", "-c", "exit 3"],
+      "Image": "docker.io/library/alpine:latest",
+      "WorkingDir": "/",
+      "Entrypoint": null,
+      "Labels": null
+    },
+    "HostConfig": {"PortBindings": {}},
+    "NetworkSettings": {"Ports": {}, "Networks": {}}
+  }
+]

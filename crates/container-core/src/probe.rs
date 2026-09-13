@@ -61,7 +61,7 @@ pub enum ConnectionError {
 }
 
 impl ConnectionError {
-    fn from_process_failure(program: &str, failure: process_exec::Failure) -> Self {
+    pub(crate) fn from_process_failure(program: &str, failure: process_exec::Failure) -> Self {
         match failure {
             process_exec::Failure::NotFound => ConnectionError::CliNotFound {
                 program: program.to_string(),
@@ -82,7 +82,7 @@ impl ConnectionError {
     /// matching on the CLI's own English messages is a known ceiling —
     /// upgrade path is matching on a specific, documented exit code per
     /// engine if one ever proves unreliable.
-    fn from_stderr(engine: Engine, stderr: &str) -> Self {
+    pub(crate) fn from_stderr(engine: Engine, stderr: &str) -> Self {
         let lower = stderr.to_lowercase();
         if lower.contains("permission denied") {
             ConnectionError::PermissionDenied {
@@ -173,23 +173,13 @@ pub fn probe(
     engine: Engine,
     work_dir: &Path,
 ) -> Result<EngineInfo, ConnectionError> {
-    let argv = invocation.argv(&["version", "--format", "json"]);
-    let arg_refs: Vec<&str> = argv.iter().map(String::as_str).collect();
-    let env_refs: Vec<(&str, &str)> = invocation
-        .env
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-
-    let output = process_exec::run(
-        &invocation.program,
-        &arg_refs,
-        work_dir,
-        None,
-        Duration::from_secs(10),
-        &env_refs,
-    )
-    .map_err(|failure| ConnectionError::from_process_failure(&invocation.program, failure))?;
+    let output = invocation
+        .run(
+            &["version", "--format", "json"],
+            work_dir,
+            Duration::from_secs(10),
+        )
+        .map_err(|failure| ConnectionError::from_process_failure(&invocation.program, failure))?;
 
     if !output.status.success() {
         return Err(ConnectionError::from_stderr(

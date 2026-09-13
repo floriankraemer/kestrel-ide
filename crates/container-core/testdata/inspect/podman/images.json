@@ -1,0 +1,72 @@
+[
+  {
+    "Id": "aa11bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66",
+    "Digest": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "RepoTags": ["docker.io/library/nginx:1.27"],
+    "RepoDigests": ["docker.io/library/nginx@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"],
+    "Parent": "",
+    "Comment": "",
+    "Created": "2026-06-01T00:00:00Z",
+    "Config": {
+      "ExposedPorts": {"80/tcp": {}},
+      "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "NGINX_VERSION=1.27.0"],
+      "Entrypoint": ["/docker-entrypoint.sh"],
+      "Cmd": ["nginx", "-g", "daemon off;"],
+      "Labels": {"maintainer": "NGINX Docker Maintainers <docker-maint@nginx.com>"},
+      "StopSignal": "SIGQUIT"
+    },
+    "Version": "",
+    "Author": "",
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Size": 192000000,
+    "VirtualSize": 192000000,
+    "GraphDriver": {"Name": "overlay", "Data": {"UpperDir": "/home/user/.local/share/containers/storage/overlay/abc/diff", "WorkDir": "/home/user/.local/share/containers/storage/overlay/abc/work"}},
+    "RootFS": {"Type": "layers", "Layers": ["sha256:1111111111111111111111111111111111111111111111111111111111111111"]},
+    "Labels": {"maintainer": "NGINX Docker Maintainers <docker-maint@nginx.com>"},
+    "Annotations": {},
+    "ManifestType": "application/vnd.oci.image.manifest.v1+json",
+    "User": "",
+    "History": [],
+    "NamesHistory": ["docker.io/library/nginx:1.27"]
+  },
+  {
+    "Id": "bb22cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66ee77",
+    "Digest": "sha256:91e75546b4f229fa92cec21a2bf831ba03a1c101fc197daafff657f153e93a39",
+    "RepoTags": ["docker.io/library/postgres:16-alpine"],
+    "RepoDigests": ["docker.io/library/postgres@sha256:91e75546b4f229fa92cec21a2bf831ba03a1c101fc197daafff657f153e93a39"],
+    "Created": "2024-12-06T00:14:30Z",
+    "Config": {"Env": [], "Cmd": ["postgres"], "Entrypoint": ["docker-entrypoint.sh"], "Labels": null},
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Size": 274852063,
+    "Labels": null,
+    "NamesHistory": ["docker.io/library/postgres:16-alpine"]
+  },
+  {
+    "Id": "cc33dd44ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66ee77ff88",
+    "Digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "RepoTags": ["localhost/shop_app:latest"],
+    "RepoDigests": [],
+    "Created": "2026-09-10T19:59:00+02:00",
+    "Config": {"Env": [], "Cmd": ["php-fpm"], "Labels": {"io.podman.compose.project": "shop"}},
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Size": 512000000,
+    "Labels": {"io.podman.compose.project": "shop"},
+    "NamesHistory": ["localhost/shop_app:latest"]
+  },
+  {
+    "Id": "ee55ff66aa77bb88cc99dd00ee11ff22aa33bb44cc55dd66ee77ff8899aabbcc",
+    "Digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "RepoTags": [],
+    "RepoDigests": [],
+    "Created": "2026-09-09T12:00:00Z",
+    "Config": {"Env": [], "Cmd": null, "Labels": null},
+    "Architecture": "amd64",
+    "Os": "linux",
+    "Size": 7340032,
+    "Labels": null,
+    "NamesHistory": []
+  }
+]

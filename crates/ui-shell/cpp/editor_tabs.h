@@ -560,6 +560,12 @@ public:
     void refreshBreakpointsFor(CodeEditor *editor);
     void refreshBreakpoints();
     void toggleBreakpointAt(CodeEditor *editor, int blockNumber);
+    // R5: Alt+click — a temporary breakpoint, replacing whatever was on
+    // that line.
+    void setTemporaryBreakpointAt(CodeEditor *editor, int blockNumber);
+    // R5: a right-click on the breakpoint column — Edit Breakpoint...,
+    // Remove/Add, and Run to Cursor when a session is running.
+    void showBreakpointContextMenu(CodeEditor *editor, int blockNumber, const QPoint &globalPos);
     // D2-3: follow this editor's edits so its breakpoints move with them.
     void watchLineCountFor(CodeEditor *editor);
     // D3: show (or clear, with an empty path) the suspended line.

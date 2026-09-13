@@ -242,7 +242,7 @@ Run this before a release, and after any change to `dap-core`'s session, launch 
 
 | Toolchain | Adapter | How to get it | Last walked | Result |
 |---|---|---|---|---|
-| Python (`debugpy`) | debugpy | `python3-debugpy`, already in `linux-builder` | automated | `cargo test -p dap-core --test debugpy` and `e2e_debug_stops_at_a_breakpoint` on every CI run |
+| Python (`debugpy`) | debugpy | `python3-debugpy`, already in `linux-builder` | automated | `cargo test -p dap-core --test debugpy` and `e2e_debug_stops_at_a_breakpoint` on every CI run, which since R5 also opens Edit Breakpoint on the breakpoint's line, gives it a condition, confirms the session only suspends once that condition is true rather than on the first hit, then edits a local's value through the Variables tree and confirms the debuggee's own output reflects the new value after Resume |
 | Cargo | codelldb | [vadimcn/codelldb releases](https://github.com/vadimcn/codelldb/releases), then a `[[debug_adapter]]` override pointing at it | not yet | — |
 | CMake / C++ | codelldb | the same install; the toolchain table already maps both to it | not yet | — |
 | Maven / Gradle | java-debug | a JDK plus [microsoft/java-debug](https://github.com/microsoft/java-debug), launched as a `[[debug_adapter]]` command | not yet | — |

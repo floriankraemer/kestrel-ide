@@ -51,6 +51,11 @@ int CodeEditor::runMarkerWidth() const
     return runnable_ ? kRunMarkerWidth : 0;
 }
 
+bool CodeEditor::onBreakpointColumn(int x) const
+{
+    return x >= runMarkerWidth() && x < runMarkerWidth() + kBreakpointWidth;
+}
+
 void CodeEditor::setBreakpointLines(const QSet<int> &lines)
 {
     if (breakpointLines_ == lines) {
@@ -283,8 +288,7 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
     const int clickX = static_cast<int>(event->position().x());
     const int clickY = static_cast<int>(event->position().y());
     const bool onRunMarker = runnable_ && clickX < runMarkerWidth();
-    const bool onBreakpointColumn =
-      clickX >= runMarkerWidth() && clickX < runMarkerWidth() + kBreakpointWidth;
+    const bool isOnBreakpointColumn = onBreakpointColumn(clickX);
     const bool onChangeMarkerStrip =
       clickX >= runMarkerWidth() + kBreakpointWidth
       && clickX < runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth;
@@ -307,8 +311,12 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
                 return;
             }
 
-            if (onBreakpointColumn) {
-                emit breakpointToggled(blockNumber);
+            if (isOnBreakpointColumn) {
+                if (event->modifiers().testFlag(Qt::AltModifier)) {
+                    emit temporaryBreakpointRequested(blockNumber);
+                } else {
+                    emit breakpointToggled(blockNumber);
+                }
                 return;
             }
 

@@ -1091,6 +1091,12 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     connect(editor, &CodeEditor::runRequested, this, [this, editor]() { requestRunFor(editor); });
     connect(editor, &CodeEditor::breakpointToggled, this,
             [this, editor](int blockNumber) { toggleBreakpointAt(editor, blockNumber); });
+    connect(editor, &CodeEditor::temporaryBreakpointRequested, this,
+            [this, editor](int blockNumber) { setTemporaryBreakpointAt(editor, blockNumber); });
+    connect(editor, &CodeEditor::breakpointContextMenuRequested, this,
+            [this, editor](int blockNumber, const QPoint &globalPos) {
+                showBreakpointContextMenu(editor, blockNumber, globalPos);
+            });
     // R4: a click on the gutter's diagnostic icon opens the intentions
     // popup for that line.
     connect(editor, &CodeEditor::diagnosticMarkerClicked, this,

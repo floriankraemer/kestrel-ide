@@ -869,6 +869,15 @@ void CodeEditor::changeEvent(QEvent *event)
 
 void CodeEditor::lineNumberAreaContextMenuEvent(QContextMenuEvent *event)
 {
+    // R5: a right-click on the breakpoint column asks for its own menu
+    // (Edit Breakpoint..., Remove, Run to Cursor) instead of the fold one —
+    // which line it landed on is layout, not a decision this widget makes.
+    if (onBreakpointColumn(event->x())) {
+        const int blockNumber = cursorForPosition(QPoint(event->x(), event->y())).blockNumber();
+        emit breakpointContextMenuRequested(blockNumber, lineNumberArea_->mapToGlobal(event->pos()));
+        return;
+    }
+
     QMenu menu(this);
     QAction *collapse = menu.addAction(tr("Collapse All"));
     QAction *expand = menu.addAction(tr("Expand All"));

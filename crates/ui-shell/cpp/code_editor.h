@@ -305,6 +305,12 @@ public:
     // R1-7: the Run-icon column's width — `kRunMarkerWidth` when this file
     // is runnable, otherwise zero.
     int runMarkerWidth() const;
+    // R5: whether gutter x-coordinate `x` falls in the breakpoint column —
+    // the fact `lineNumberAreaMousePressEvent`'s own hit test already knows,
+    // exposed so `lineNumberAreaContextMenuEvent` (a different translation
+    // unit) can ask the same question rather than repeating the column's
+    // width.
+    bool onBreakpointColumn(int x) const;
 
     // Task C: called by SyntaxHighlighter whenever its incremental tree
     // updates (the same revision-change hook that already drives
@@ -622,6 +628,15 @@ signals:
     // D2-5: the breakpoint column was clicked on this line (0-based block).
     // Whether that adds or removes one is `DebugService`'s answer.
     void breakpointToggled(int blockNumber);
+
+    // R5: Alt+click on the breakpoint column — a temporary breakpoint,
+    // regardless of whether one was already there.
+    void temporaryBreakpointRequested(int blockNumber);
+
+    // R5: a right-click landed on the breakpoint column. What the menu
+    // offers (Edit Breakpoint..., Remove, Run to Cursor) is EditorTabs's
+    // job, the same split `changeMarkerClicked` has.
+    void breakpointContextMenuRequested(int blockNumber, const QPoint &globalPos);
 
     // R4: the gutter's diagnostic icon was clicked on this line (0-based
     // block). What that opens (the intentions popup, via `showIntentions`'s

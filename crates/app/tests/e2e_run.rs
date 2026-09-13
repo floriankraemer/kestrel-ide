@@ -403,6 +403,27 @@ fn e2e_debug_stops_at_a_breakpoint() {
         e["ev"] == "debug_variables" && e["count"].as_u64().unwrap_or(0) > 0
     });
 
+    // R5: the Breakpoints window opens on the real breakpoint the gutter
+    // toggle just set, and typing into its condition field reaches
+    // `configureBreakpoint` — the same field the debugpy conformance test
+    // (`dap_core::tests::debugpy_honors_a_conditional_breakpoint`) proves an
+    // adapter actually obeys, so this half only has to prove the widget is
+    // wired to it, not that a condition works.
+    let mark = ide.mark();
+    ide.key("ctrl+shift+F8"); // debug.viewBreakpoints
+    let shown = ide.wait_for_event(mark, "the Breakpoints window to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "breakpoints_window"
+    });
+    let (condition_x, condition_y) = rect_centre(&shown["condition_rect"]);
+    ide.click_at(condition_x, condition_y, 1);
+    ide.type_text("True");
+    ide.key("Tab");
+    ide.key("Escape");
+    ide.wait_for_event(mark, "the Breakpoints window to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "breakpoints_window"
+    });
+    ide.focus_main();
+
     // Step over: the next stop is a later line, and it is a step rather than
     // another breakpoint hit.
     let mark = ide.mark();

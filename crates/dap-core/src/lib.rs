@@ -17,6 +17,7 @@
 pub mod breakpoints;
 pub mod catalog;
 pub mod error;
+pub mod evaluate_history;
 pub mod inline_values;
 pub mod launch;
 pub mod protocol;
@@ -25,6 +26,7 @@ pub mod session;
 pub use breakpoints::{Breakpoint, BreakpointStore, SuspendPolicy};
 pub use catalog::Adapter;
 pub use error::DapError;
+pub use evaluate_history::EvaluateHistory;
 pub use inline_values::{inline_values, InlineValue};
 pub use protocol::{Capabilities, Message, Scope, StackFrame, Stopped, Thread, Variable};
 pub use session::{local_path, source_path, DapSession, SessionListener};

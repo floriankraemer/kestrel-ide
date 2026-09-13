@@ -69,6 +69,20 @@ fn script() -> (tempfile::TempDir, PathBuf) {
     (dir, path)
 }
 
+/// A script whose one line runs five times — what a conditional breakpoint
+/// (R5) needs to prove it skips the hits where the condition is false
+/// rather than just the first one.
+fn loop_script() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("main.py");
+    std::fs::write(
+        &path,
+        "total = 0\nfor i in range(5):\n    total = total + i\nprint(total)\n",
+    )
+    .expect("write script");
+    (dir, path)
+}
+
 #[test]
 fn debugpy_stops_at_a_breakpoint_and_reports_the_variable() {
     if !debugpy_installed() {
@@ -143,6 +157,165 @@ fn debugpy_stops_at_a_breakpoint_and_reports_the_variable() {
             .iter()
             .any(|v| v.name == "answer" && v.value == "42"),
         "the local we set is not in the first scope: {variables:?}"
+    );
+
+    session.shutdown();
+}
+
+/// R5: a conditional breakpoint sends its condition to a real adapter and
+/// the adapter actually honors it — `source_breakpoints` is `dap-core`'s
+/// own rule, but whether debugpy stops on the 4th iteration rather than the
+/// 1st is debugpy's, and only a real adapter can answer that.
+#[test]
+fn debugpy_honors_a_conditional_breakpoint() {
+    if !debugpy_installed() {
+        eprintln!("skipping: debugpy is not installed");
+        return;
+    }
+
+    let (dir, path) = loop_script();
+    let (sender, events) = channel();
+    let session = DapSession::start(&adapter(), Some(dir.path()), Box::new(Events { sender }))
+        .expect("debugpy starts");
+    session.initialize().expect("initialize");
+
+    let spec = run_core::LaunchSpec {
+        program: "python3".into(),
+        args: vec![path.display().to_string()],
+        cwd: Some(dir.path().to_path_buf()),
+        env: Vec::new(),
+        console: run_core::ConsoleKind::Pipes,
+    };
+    session
+        .launch(dap_core::launch::arguments("debugpy", &spec))
+        .expect("launch");
+    session
+        .wait_for_initialized(Duration::from_secs(10))
+        .expect("initialized");
+
+    // The exact rule the bridge sends every breakpoint through: only a
+    // real adapter can say whether it actually honors what it produces.
+    let mut breakpoints = dap_core::breakpoints::BreakpointStore::default();
+    breakpoints.set(
+        &path,
+        dap_core::breakpoints::Breakpoint {
+            line: 3,
+            condition: "i == 3".into(),
+            ..dap_core::breakpoints::Breakpoint::default()
+        },
+    );
+    session
+        .request(
+            "setBreakpoints",
+            json!({
+                "source": { "path": path.display().to_string() },
+                "breakpoints": breakpoints.source_breakpoints(&path),
+            }),
+        )
+        .expect("setBreakpoints");
+    session.configuration_done().expect("configurationDone");
+
+    let stopped = wait_for(&events, "stopped");
+    let thread_id = stopped["threadId"].as_i64().expect("threadId");
+    let frames = session
+        .request("stackTrace", json!({ "threadId": thread_id }))
+        .map(|body| dap_core::protocol::stack_frames(&body))
+        .expect("stackTrace");
+    let scopes = session
+        .request("scopes", json!({ "frameId": frames[0].id }))
+        .map(|body| dap_core::protocol::scopes(&body))
+        .expect("scopes");
+    let variables = session
+        .request(
+            "variables",
+            json!({ "variablesReference": scopes[0].variables_reference }),
+        )
+        .map(|body| dap_core::protocol::variables(&body))
+        .expect("variables");
+    assert!(
+        variables.iter().any(|v| v.name == "i" && v.value == "3"),
+        "the condition let an earlier iteration through: {variables:?}"
+    );
+
+    session.shutdown();
+}
+
+/// R5: `setVariable` changes a live local through a real adapter, and the
+/// program's own subsequent behavior — not just the next `variables`
+/// response — reflects it.
+#[test]
+fn debugpy_changes_a_variable_through_set_variable() {
+    if !debugpy_installed() {
+        eprintln!("skipping: debugpy is not installed");
+        return;
+    }
+
+    let (dir, path) = script();
+    let (sender, events) = channel();
+    let session = DapSession::start(&adapter(), Some(dir.path()), Box::new(Events { sender }))
+        .expect("debugpy starts");
+    let capabilities = session.initialize().expect("initialize");
+    assert!(
+        capabilities.supports_set_variable,
+        "debugpy has always supported setVariable; if this fails the \
+         capability parsing is wrong, not debugpy"
+    );
+
+    let spec = run_core::LaunchSpec {
+        program: "python3".into(),
+        args: vec![path.display().to_string()],
+        cwd: Some(dir.path().to_path_buf()),
+        env: Vec::new(),
+        console: run_core::ConsoleKind::Pipes,
+    };
+    session
+        .launch(dap_core::launch::arguments("debugpy", &spec))
+        .expect("launch");
+    session
+        .wait_for_initialized(Duration::from_secs(10))
+        .expect("initialized");
+    session
+        .request(
+            "setBreakpoints",
+            json!({
+                "source": { "path": path.display().to_string() },
+                "breakpoints": [{ "line": 2 }],
+            }),
+        )
+        .expect("setBreakpoints");
+    session.configuration_done().expect("configurationDone");
+
+    let stopped = wait_for(&events, "stopped");
+    let thread_id = stopped["threadId"].as_i64().expect("threadId");
+    let frames = session
+        .request("stackTrace", json!({ "threadId": thread_id }))
+        .map(|body| dap_core::protocol::stack_frames(&body))
+        .expect("stackTrace");
+    let scopes = session
+        .request("scopes", json!({ "frameId": frames[0].id }))
+        .map(|body| dap_core::protocol::scopes(&body))
+        .expect("scopes");
+
+    session
+        .request(
+            "setVariable",
+            json!({
+                "variablesReference": scopes[0].variables_reference,
+                "name": "answer",
+                "value": "99",
+            }),
+        )
+        .expect("setVariable");
+
+    let result = session
+        .request(
+            "evaluate",
+            json!({ "expression": "answer", "frameId": frames[0].id }),
+        )
+        .expect("evaluate");
+    assert_eq!(
+        result["result"], "99",
+        "setVariable did not actually change the live value"
     );
 
     session.shutdown();

@@ -1124,6 +1124,31 @@ mod ffi {
         variables_reference: i64,
     }
 
+    /// One breakpoint's full detail (R5): what the Edit Breakpoint dialog
+    /// and the Breakpoints window show, 1:1 with `dap_core::Breakpoint`
+    /// minus `suspend_policy` and `depends_on`, which have no view yet.
+    #[derive(Default)]
+    struct FfiBreakpoint {
+        path: QString,
+        line: u32,
+        enabled: bool,
+        condition: QString,
+        hit_condition: QString,
+        log_message: QString,
+        temporary: bool,
+    }
+
+    /// One watch expression as the Watches tree shows it (R5): 1:1 with
+    /// `FfiVariable` except its name is what the user typed rather than
+    /// what the adapter called it, so it stays what the user typed even
+    /// while there is no session to evaluate it against.
+    struct FfiWatch {
+        expression: QString,
+        value: QString,
+        type_name: QString,
+        variables_reference: i64,
+    }
+
     /// One row of the Show Running List popup (R2-5): a console this
     /// session started, and whether its process is still alive.
     #[derive(Clone, Default)]
@@ -6991,6 +7016,13 @@ mod ffi {
         #[qinvokable]
         fn sessions(self: &DebugService) -> QString;
 
+        /// The session the views default to with none explicitly chosen —
+        /// the lowest running id, 0 for none (R5). What the gutter's Run to
+        /// Cursor acts on.
+        #[qinvokable]
+        #[cxx_name = "currentSessionId"]
+        fn current_session_id(self: &DebugService) -> u64;
+
         /// End the session: the adapter is asked to stop the debuggee, then
         /// killed if it does not.
         #[qinvokable]
@@ -7029,6 +7061,12 @@ mod ffi {
         #[qinvokable]
         fn threads(self: &DebugService) -> Vec<FfiDebugThread>;
 
+        /// Show this thread's own stack instead of the one that stopped
+        /// (R5) — the threads combo. Answers via `framesChanged`.
+        #[qinvokable]
+        #[cxx_name = "selectThread"]
+        fn select_thread(self: Pin<&mut DebugService>, session_id: u64, thread_id: i64);
+
         /// Variables already fetched for `reference`; empty means "not
         /// fetched yet", which `expand` answers.
         #[qinvokable]
@@ -7061,11 +7099,26 @@ mod ffi {
         #[cxx_name = "selectFrame"]
         fn select_frame(self: Pin<&mut DebugService>, session_id: u64, frame_id: i64);
 
-        /// Evaluate an expression in the selected frame; answers via
-        /// `evaluated`. A failed evaluation answers with its own message
-        /// rather than nothing.
+        /// Evaluate an expression in the selected frame and render it as a
+        /// tree row (R5); answers via `evaluatedToTree`. A failed evaluation
+        /// answers with its own message rather than nothing.
         #[qinvokable]
-        fn evaluate(self: Pin<&mut DebugService>, session_id: u64, expression: &QString);
+        #[cxx_name = "evaluateToTree"]
+        fn evaluate_to_tree(self: Pin<&mut DebugService>, session_id: u64, expression: &QString);
+
+        /// Every expression the Evaluate box has run, newline-separated,
+        /// most recent first — its history dropdown (R5).
+        #[qinvokable]
+        #[cxx_name = "evaluateHistory"]
+        fn evaluate_history(self: &DebugService) -> QString;
+
+        /// Children of a Watches or Evaluate tree row (R5); answers via
+        /// `watchChildrenChanged`, then `variables(reference)` reads them —
+        /// the same cache `expand` fills, since a `variablesReference` means
+        /// the same thing regardless of which tree asked for it.
+        #[qinvokable]
+        #[cxx_name = "watchChildren"]
+        fn watch_children(self: Pin<&mut DebugService>, session_id: u64, reference: i64);
 
         /// Change a variable's value. Refused locally when the adapter said
         /// it cannot, rather than sent and failed.
@@ -7099,18 +7152,20 @@ mod ffi {
         #[cxx_name = "reloadClasses"]
         fn reload_classes(self: Pin<&mut DebugService>, session_id: u64);
 
-        /// The watch expressions, newline-separated, and their last values
-        /// in the same order.
+        /// Every watch as one tree row each (R5): expression, last value,
+        /// type and — non-zero — the reference `watchChildren` expands.
         #[qinvokable]
-        fn watches(self: &DebugService) -> QString;
-
-        #[qinvokable]
-        #[cxx_name = "watchValues"]
-        fn watch_values(self: &DebugService) -> QString;
+        #[cxx_name = "watchesDetailed"]
+        fn watches_detailed(self: &DebugService) -> Vec<FfiWatch>;
 
         #[qinvokable]
         #[cxx_name = "addWatch"]
         fn add_watch(self: Pin<&mut DebugService>, expression: &QString);
+
+        /// Change what a watch evaluates — the Watches tree's inline rename.
+        #[qinvokable]
+        #[cxx_name = "editWatch"]
+        fn edit_watch(self: Pin<&mut DebugService>, index: u32, expression: &QString);
 
         #[qinvokable]
         #[cxx_name = "removeWatch"]
@@ -7129,18 +7184,26 @@ mod ffi {
         #[cxx_name = "breakpointLines"]
         fn breakpoint_lines(self: &DebugService, path: &QString) -> QString;
 
-        /// Give a breakpoint a condition or a log message, or enable and
-        /// disable it — the breakpoints dialog's whole job.
+        /// One breakpoint's full detail (R5) — what the Edit Breakpoint
+        /// dialog prefills from. A line with no breakpoint yet answers with
+        /// the defaults a new one would have.
+        #[qinvokable]
+        #[cxx_name = "breakpointAt"]
+        fn breakpoint_at(self: &DebugService, path: &QString, line: u32) -> FfiBreakpoint;
+
+        /// Every breakpoint in the project (R5) — the Breakpoints window.
+        #[qinvokable]
+        #[cxx_name = "allBreakpoints"]
+        fn all_breakpoints(self: &DebugService) -> Vec<FfiBreakpoint>;
+
+        /// Give a breakpoint a condition, a hit condition or a log message,
+        /// make it temporary, or enable and disable it — the Edit Breakpoint
+        /// dialog's whole job. `breakpoint.path`/`.line` say which one;
+        /// one struct rather than seven scalars, symmetric with what
+        /// `breakpointAt` hands back to prefill the same dialog from.
         #[qinvokable]
         #[cxx_name = "configureBreakpoint"]
-        fn configure_breakpoint(
-            self: Pin<&mut DebugService>,
-            path: &QString,
-            line: u32,
-            enabled: bool,
-            condition: &QString,
-            log_message: &QString,
-        );
+        fn configure_breakpoint(self: Pin<&mut DebugService>, breakpoint: FfiBreakpoint);
 
         /// Mute Breakpoints: the adapter is told there are none, and
         /// unmuting brings back exactly what was there.
@@ -7210,20 +7273,27 @@ mod ffi {
         #[cxx_name = "variablesChanged"]
         fn variables_changed(self: Pin<&mut DebugService>, session_id: u64, reference: i64);
 
+        /// `selectThread` fetched a different thread's frames.
+        #[qsignal]
+        #[cxx_name = "framesChanged"]
+        fn frames_changed(self: Pin<&mut DebugService>, session_id: u64);
+
         /// The selected frame's scopes, newline-separated by name, in the
         /// order the adapter reported them.
         #[qsignal]
         #[cxx_name = "scopesChanged"]
         fn scopes_changed(self: Pin<&mut DebugService>, session_id: u64, names: QString);
 
-        /// `evaluate` answered.
+        /// `evaluateToTree` answered.
         #[qsignal]
-        fn evaluated(
-            self: Pin<&mut DebugService>,
-            session_id: u64,
-            expression: QString,
-            value: QString,
-        );
+        #[cxx_name = "evaluatedToTree"]
+        fn evaluated_to_tree(self: Pin<&mut DebugService>, session_id: u64, row: FfiVariable);
+
+        /// `watchChildren(reference)` has a fresh answer; read it back with
+        /// `variables(reference)`.
+        #[qsignal]
+        #[cxx_name = "watchChildrenChanged"]
+        fn watch_children_changed(self: Pin<&mut DebugService>, session_id: u64, reference: i64);
 
         /// The watch list or its values changed.
         #[qsignal]

@@ -1,5 +1,7 @@
 #include "debug_menu.h"
 
+#include "breakpoint_dialog.h"
+#include "breakpoints_window.h"
 #include "code_editor.h"
 #include "debug_panel.h"
 #include "dock_layout.h"
@@ -120,6 +122,57 @@ void buildDebugMenu(QMainWindow *window, DebugService *debugService, DebugPanel 
             return;
         }
         editorTabs->toggleBreakpointAt(editor, editor->textCursor().blockNumber());
+    });
+
+    // R5: run the current session to the caret's line without a permanent
+    // breakpoint there.
+    QAction *runToCursor = registerAction(debugMenu, QStringLiteral("debug.runToCursor"),
+                                           QObject::tr("Run to Cursor"), appSettings, actions);
+    QObject::connect(runToCursor, &QAction::triggered, editorTabs,
+                      [debugService, debugPanel, editorTabs]() {
+                          const quint64 sessionId = debugPanel->currentSession();
+                          auto *editor = qobject_cast<CodeEditor *>(editorTabs->currentEditor());
+                          const QString path = editorTabs->currentPath();
+                          if (sessionId == 0 || !editor || path.isEmpty()) {
+                              return;
+                          }
+                          debugService->runToCursor(
+                            sessionId, path,
+                            static_cast<quint32>(editor->textCursor().blockNumber() + 1));
+                      });
+
+    // R5: the Edit Breakpoint dialog for whatever is on the caret's line —
+    // adding one there if there is none yet, the same as the gutter menu.
+    QAction *editBreakpoint = registerAction(debugMenu, QStringLiteral("debug.editBreakpoint"),
+                                              QObject::tr("Edit Breakpoint..."), appSettings,
+                                              actions);
+    QObject::connect(editBreakpoint, &QAction::triggered, editorTabs,
+                      [debugService, editorTabs, window]() {
+                          auto *editor = qobject_cast<CodeEditor *>(editorTabs->currentEditor());
+                          const QString path = editorTabs->currentPath();
+                          if (!editor || path.isEmpty()) {
+                              return;
+                          }
+                          const quint32 line =
+                            static_cast<quint32>(editor->textCursor().blockNumber() + 1);
+                          if (!debugService->breakpointLines(path)
+                                 .split(QLatin1Char('\n'), Qt::SkipEmptyParts)
+                                 .contains(QString::number(line))) {
+                              debugService->toggleBreakpoint(path, line);
+                          }
+                          showBreakpointDialog(window, debugService, path, line);
+                      });
+
+    // R5: every breakpoint in the project, editable in place.
+    QAction *viewBreakpoints = registerAction(debugMenu, QStringLiteral("debug.viewBreakpoints"),
+                                               QObject::tr("View Breakpoints..."), appSettings,
+                                               actions);
+    QObject::connect(viewBreakpoints, &QAction::triggered, window, [debugService, editorTabs,
+                                                                      window]() {
+        showBreakpointsWindow(window, debugService, [editorTabs](const QString &path, int line,
+                                                                   int column) {
+            editorTabs->openFileAtLine(path, line, column);
+        });
     });
 
     QAction *muteBreakpoints = registerAction(debugMenu, QStringLiteral("debug.muteBreakpoints"),

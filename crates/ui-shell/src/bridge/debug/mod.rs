@@ -29,7 +29,8 @@ use std::sync::Arc;
 use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 use dap_core::breakpoints::{Breakpoint, BreakpointStore};
-use dap_core::{DapError, DapSession, SessionListener};
+use dap_core::protocol::Variable;
+use dap_core::{DapError, DapSession, EvaluateHistory, SessionListener};
 use serde_json::{json, Value};
 
 use crate::bridge::errors;
@@ -106,6 +107,13 @@ pub struct DebugServiceRust {
     watches: RefCell<Vec<String>>,
     /// The last watch results, in the same order as `watches`.
     watch_values: RefCell<Vec<String>>,
+    /// Each watch's `type` and `variablesReference`, in the same order as
+    /// `watches` (R5) — what lets a watch row expand through the same
+    /// `watch_children` request an evaluated expression does.
+    watch_types: RefCell<Vec<String>>,
+    watch_references: RefCell<Vec<i64>>,
+    /// Expressions the Evaluate box has run, most recent first (R5).
+    evaluate_history: RefCell<EvaluateHistory>,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -123,6 +131,31 @@ fn to_ffi_result(err: &DapError) -> ffi::FfiResult {
     ffi::FfiResult {
         code: err.code(),
         message: QString::from(err.to_string().as_str()),
+    }
+}
+
+/// One `Breakpoint` as the view sees it — shared by the Edit Breakpoint
+/// dialog and the Breakpoints window.
+fn to_ffi_breakpoint(breakpoint: &Breakpoint, path: &Path) -> ffi::FfiBreakpoint {
+    ffi::FfiBreakpoint {
+        path: QString::from(path.display().to_string().as_str()),
+        line: breakpoint.line,
+        enabled: breakpoint.enabled,
+        condition: QString::from(breakpoint.condition.as_str()),
+        hit_condition: QString::from(breakpoint.hit_condition.as_str()),
+        log_message: QString::from(breakpoint.log_message.as_str()),
+        temporary: breakpoint.temporary,
+    }
+}
+
+/// One `Variable` as the view sees it — shared by the Variables, Watches and
+/// Evaluate trees, since a row is a row regardless of what asked for it.
+fn to_ffi_variable(variable: &Variable) -> ffi::FfiVariable {
+    ffi::FfiVariable {
+        name: QString::from(variable.name.as_str()),
+        value: QString::from(variable.value.as_str()),
+        type_name: QString::from(variable.type_name.as_str()),
+        variables_reference: variable.variables_reference,
     }
 }
 
@@ -698,20 +731,43 @@ impl ffi::DebugService {
             state
                 .variables
                 .get(&reference)
-                .map(|variables| {
-                    variables
-                        .iter()
-                        .map(|variable| ffi::FfiVariable {
-                            name: QString::from(variable.name.as_str()),
-                            value: QString::from(variable.value.as_str()),
-                            type_name: QString::from(variable.type_name.as_str()),
-                            variables_reference: variable.variables_reference,
-                        })
-                        .collect()
-                })
+                .map(|variables| variables.iter().map(to_ffi_variable).collect())
                 .unwrap_or_default()
         })
         .unwrap_or_default()
+    }
+
+    /// Show a thread's own stack instead of the one that actually stopped
+    /// (R5) — the threads combo above the frames list. Stepping afterwards
+    /// acts on whichever thread is now selected, the same as clicking a
+    /// frame changes which one Evaluate and the Variables view use.
+    pub fn select_thread(mut self: Pin<&mut Self>, session_id: u64, thread_id: i64) {
+        if let Some(state) = self.as_mut().sessions.borrow_mut().get_mut(&session_id) {
+            state.stopped_thread = thread_id;
+        }
+        let Some(session) = self.as_mut().session_handle(session_id) else {
+            return;
+        };
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let Ok(body) = session.request("stackTrace", json!({ "threadId": thread_id })) else {
+                return;
+            };
+            let mut frames = dap_core::protocol::stack_frames(&body);
+            for frame in &mut frames {
+                frame.path = dap_core::local_path(session.host(), &frame.path);
+            }
+            let top_id = frames.first().map(|frame| frame.id).unwrap_or(0);
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
+                if let Some(state) = service.sessions.borrow_mut().get_mut(&session_id) {
+                    state.frames = frames;
+                }
+                service.as_mut().frames_changed(session_id);
+                if top_id != 0 {
+                    service.as_mut().select_frame(session_id, top_id);
+                }
+            });
+        });
     }
 
     /// The values to paint at the end of the lines of `path`, given the
@@ -814,10 +870,14 @@ impl ffi::DebugService {
         });
     }
 
-    /// Evaluate an expression in the selected frame — the Evaluate dialog,
-    /// and the debugger console's input line.
-    pub fn evaluate(mut self: Pin<&mut Self>, session_id: u64, expression: &QString) {
+    /// Evaluate an expression in the selected frame and render it as a tree
+    /// row rather than a flat string (R5): a non-zero `variablesReference`
+    /// expands through `watch_children` exactly like a Watches row, because
+    /// both are the same `evaluate_result` shape. Recorded in the history
+    /// the Evaluate box offers back.
+    pub fn evaluate_to_tree(mut self: Pin<&mut Self>, session_id: u64, expression: &QString) {
         let expression = expression.to_string();
+        self.evaluate_history.borrow_mut().record(&expression);
         let Some(session) = self.as_mut().session_handle(session_id) else {
             return;
         };
@@ -829,13 +889,50 @@ impl ffi::DebugService {
             .unwrap_or(0);
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
-            let answer = evaluate_expression(&session, &expression, frame_id);
+            let row = evaluate_row(&session, &expression, frame_id, "repl");
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
-                service.as_mut().evaluated(
-                    session_id,
-                    QString::from(expression.as_str()),
-                    QString::from(answer.as_str()),
-                );
+                service
+                    .as_mut()
+                    .evaluated_to_tree(session_id, to_ffi_variable(&row));
+            });
+        });
+    }
+
+    /// Every expression the Evaluate box has run, most recent first — its
+    /// history dropdown.
+    pub fn evaluate_history(&self) -> QString {
+        QString::from(
+            self.evaluate_history
+                .borrow()
+                .entries()
+                .collect::<Vec<_>>()
+                .join("\n")
+                .as_str(),
+        )
+    }
+
+    /// Children of a Watches or Evaluate tree row (R5) — `expand`'s twin,
+    /// on a signal of its own so a fetch triggered from either tree cannot
+    /// be mistaken by the Variables view for its own scope population (see
+    /// `expand`'s fallback in `DebugPanel::onVariablesChanged`).
+    pub fn watch_children(mut self: Pin<&mut Self>, session_id: u64, reference: i64) {
+        let Some(session) = self.as_mut().session_handle(session_id) else {
+            return;
+        };
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let Ok(body) = session.request("variables", json!({ "variablesReference": reference }))
+            else {
+                return;
+            };
+            let variables = dap_core::protocol::variables(&body);
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
+                if let Some(state) = service.sessions.borrow_mut().get_mut(&session_id) {
+                    state.variables.insert(reference, variables);
+                }
+                service
+                    .as_mut()
+                    .watch_children_changed(session_id, reference);
             });
         });
     }
@@ -879,12 +976,21 @@ impl ffi::DebugService {
             .unwrap_or(false)
     }
 
-    pub fn watches(&self) -> QString {
-        QString::from(self.watches.borrow().join("\n").as_str())
-    }
-
-    pub fn watch_values(&self) -> QString {
-        QString::from(self.watch_values.borrow().join("\n").as_str())
+    /// Every watch as one tree row each (R5): its expression, last value,
+    /// type and — non-zero — the reference `watch_children` expands.
+    pub fn watches_detailed(&self) -> Vec<ffi::FfiWatch> {
+        let expressions = self.watches.borrow();
+        let values = self.watch_values.borrow();
+        let types = self.watch_types.borrow();
+        let references = self.watch_references.borrow();
+        (0..expressions.len())
+            .map(|i| ffi::FfiWatch {
+                expression: QString::from(expressions[i].as_str()),
+                value: QString::from(values.get(i).map(String::as_str).unwrap_or_default()),
+                type_name: QString::from(types.get(i).map(String::as_str).unwrap_or_default()),
+                variables_reference: references.get(i).copied().unwrap_or(0),
+            })
+            .collect()
     }
 
     pub fn add_watch(mut self: Pin<&mut Self>, expression: &QString) {
@@ -894,6 +1000,23 @@ impl ffi::DebugService {
         }
         self.watches.borrow_mut().push(expression);
         self.watch_values.borrow_mut().push(String::new());
+        self.watch_types.borrow_mut().push(String::new());
+        self.watch_references.borrow_mut().push(0);
+        self.as_mut().watches_changed();
+        let session_id = self.current_session_id();
+        if session_id != 0 {
+            self.refresh_watches(session_id);
+        }
+    }
+
+    /// Change what a watch evaluates — the watches tree's inline rename.
+    pub fn edit_watch(mut self: Pin<&mut Self>, index: u32, expression: &QString) {
+        let index = index as usize;
+        let expression = expression.to_string();
+        if expression.trim().is_empty() || index >= self.watches.borrow().len() {
+            return;
+        }
+        self.watches.borrow_mut()[index] = expression;
         self.as_mut().watches_changed();
         let session_id = self.current_session_id();
         if session_id != 0 {
@@ -906,6 +1029,8 @@ impl ffi::DebugService {
         if index < self.watches.borrow().len() {
             self.watches.borrow_mut().remove(index);
             self.watch_values.borrow_mut().remove(index);
+            self.watch_types.borrow_mut().remove(index);
+            self.watch_references.borrow_mut().remove(index);
             self.as_mut().watches_changed();
         }
     }
@@ -939,17 +1064,43 @@ impl ffi::DebugService {
         QString::from(lines.join("\n").as_str())
     }
 
-    /// Give a breakpoint a condition, a hit condition or a log message, or
-    /// enable/disable it — the breakpoints dialog's whole job.
-    pub fn configure_breakpoint(
-        mut self: Pin<&mut Self>,
-        path: &QString,
-        line: u32,
-        enabled: bool,
-        condition: &QString,
-        log_message: &QString,
-    ) {
+    /// One breakpoint's full detail — what the Edit Breakpoint dialog
+    /// prefills its fields from. A line with no breakpoint yet reads back
+    /// as `Breakpoint::at(line)`'s defaults, so opening the dialog from a
+    /// bare gutter click (Alt+click aside) has something sane to show.
+    pub fn breakpoint_at(&self, path: &QString, line: u32) -> ffi::FfiBreakpoint {
         let path = PathBuf::from(path.to_string());
+        let breakpoint = self
+            .breakpoints
+            .borrow()
+            .get(&path, line)
+            .cloned()
+            .unwrap_or_else(|| Breakpoint::at(line));
+        to_ffi_breakpoint(&breakpoint, &path)
+    }
+
+    /// Every breakpoint in the project, file then line — the Breakpoints
+    /// window's whole model.
+    pub fn all_breakpoints(&self) -> Vec<ffi::FfiBreakpoint> {
+        let breakpoints = self.breakpoints.borrow();
+        breakpoints
+            .files()
+            .into_iter()
+            .flat_map(|path| {
+                breakpoints
+                    .in_file(path)
+                    .iter()
+                    .map(move |breakpoint| to_ffi_breakpoint(breakpoint, path))
+            })
+            .collect()
+    }
+
+    /// Give a breakpoint a condition, a hit condition or a log message, or
+    /// enable/disable it — the Edit Breakpoint dialog's whole job. One
+    /// struct in rather than seven scalars, symmetric with `breakpoint_at`.
+    pub fn configure_breakpoint(mut self: Pin<&mut Self>, breakpoint: ffi::FfiBreakpoint) {
+        let path = PathBuf::from(breakpoint.path.to_string());
+        let line = breakpoint.line;
         {
             let mut breakpoints = self.breakpoints.borrow_mut();
             let existing = breakpoints.get(&path, line).cloned();
@@ -957,9 +1108,11 @@ impl ffi::DebugService {
                 &path,
                 Breakpoint {
                     line,
-                    enabled,
-                    condition: condition.to_string(),
-                    log_message: log_message.to_string(),
+                    enabled: breakpoint.enabled,
+                    condition: breakpoint.condition.to_string(),
+                    hit_condition: breakpoint.hit_condition.to_string(),
+                    log_message: breakpoint.log_message.to_string(),
+                    temporary: breakpoint.temporary,
                     ..existing.unwrap_or_default()
                 },
             );
@@ -1044,7 +1197,10 @@ impl ffi::DebugService {
     /// The session whose views are on screen. With one session it is that
     /// one; with several, the lowest id — a deterministic answer until D4
     /// gives the view session tabs to choose with.
-    fn current_session_id(&self) -> u64 {
+    /// Public because the gutter's Run to Cursor needs the same answer the
+    /// Debug dock's own views are keyed on — one session picked the same
+    /// way everywhere, not a second "which session" rule for the gutter.
+    pub fn current_session_id(&self) -> u64 {
         self.sessions.borrow().keys().min().copied().unwrap_or(0)
     }
 
@@ -1081,12 +1237,17 @@ impl ffi::DebugService {
             .unwrap_or(0);
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
-            let values: Vec<String> = expressions
+            let rows: Vec<Variable> = expressions
                 .iter()
-                .map(|expression| evaluate_expression(&session, expression, frame_id))
+                .map(|expression| evaluate_row(&session, expression, frame_id, "watch"))
                 .collect();
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
-                *service.watch_values.borrow_mut() = values;
+                *service.watch_values.borrow_mut() =
+                    rows.iter().map(|row| row.value.clone()).collect();
+                *service.watch_types.borrow_mut() =
+                    rows.iter().map(|row| row.type_name.clone()).collect();
+                *service.watch_references.borrow_mut() =
+                    rows.iter().map(|row| row.variables_reference).collect();
                 service.as_mut().watches_changed();
             });
         });
@@ -1230,20 +1391,29 @@ fn send_configuration(session: &Arc<DapSession>, breakpoints: &BreakpointStore) 
     }
 }
 
-/// One evaluation, reduced to the string the view shows. A failed
-/// evaluation shows its own message rather than nothing: "no such variable"
-/// is the answer to the question that was asked.
-fn evaluate_expression(session: &Arc<DapSession>, expression: &str, frame_id: i64) -> String {
-    let mut arguments = json!({ "expression": expression, "context": "watch" });
+/// One evaluation, as a variable-tree row (R5): a watch, and an expression
+/// typed into the Evaluate box, are both this — the only difference is
+/// DAP's `context` hint, which only changes how some adapters format or
+/// side-effect the expression. A failed evaluation reads as a row with its
+/// own message for a value and no children: "no such variable" is the
+/// answer to the question that was asked, not nothing.
+fn evaluate_row(
+    session: &Arc<DapSession>,
+    expression: &str,
+    frame_id: i64,
+    context: &str,
+) -> Variable {
+    let mut arguments = json!({ "expression": expression, "context": context });
     if frame_id != 0 {
         arguments["frameId"] = json!(frame_id);
     }
     match session.request("evaluate", arguments) {
-        Ok(body) => body
-            .get("result")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        Err(err) => err.to_string(),
+        Ok(body) => dap_core::protocol::evaluate_result(expression, &body),
+        Err(err) => Variable {
+            name: expression.to_string(),
+            value: err.to_string(),
+            type_name: String::new(),
+            variables_reference: 0,
+        },
     }
 }

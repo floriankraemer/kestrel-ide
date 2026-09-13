@@ -701,6 +701,24 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "",
     },
     ActionDef {
+        id: "debug.runToCursor",
+        label: "Run to Cursor",
+        category: "Debug",
+        default_shortcut: "Alt+F9",
+    },
+    ActionDef {
+        id: "debug.viewBreakpoints",
+        label: "View Breakpoints",
+        category: "Debug",
+        default_shortcut: "Ctrl+Shift+F8",
+    },
+    ActionDef {
+        id: "debug.editBreakpoint",
+        label: "Edit Breakpoint...",
+        category: "Debug",
+        default_shortcut: "",
+    },
+    ActionDef {
         id: "view.debug",
         label: "Debug",
         category: "View",

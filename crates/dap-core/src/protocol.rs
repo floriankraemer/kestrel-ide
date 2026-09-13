@@ -296,6 +296,23 @@ pub fn stopped(body: &Value) -> Stopped {
     }
 }
 
+/// Read an `evaluate` response body as the same shape a `variables` row is
+/// (R5): `result`/`type`/`variablesReference` line up one-to-one with
+/// `value`/`typeName`/`variablesReference`, so an evaluated expression or a
+/// watch expands through the identical `variables` request the Variables
+/// view already uses — one tree, not two.
+pub fn evaluate_result(expression: &str, body: &Value) -> Variable {
+    Variable {
+        name: expression.to_string(),
+        value: string_at(body, "result"),
+        type_name: string_at(body, "type"),
+        variables_reference: body
+            .get("variablesReference")
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+    }
+}
+
 fn array<'a>(body: &'a Value, key: &str) -> &'a [Value] {
     body.get(key)
         .and_then(Value::as_array)
@@ -445,5 +462,23 @@ mod tests {
         assert_eq!(event.reason, "breakpoint");
         assert_eq!(event.thread_id, 1);
         assert!(event.all_threads_stopped);
+    }
+
+    #[test]
+    fn an_evaluate_result_reads_as_a_variable_row() {
+        let variable = evaluate_result(
+            "items",
+            &json!({"result": "[1, 2, 3]", "type": "list", "variablesReference": 7}),
+        );
+        assert_eq!(variable.name, "items");
+        assert_eq!(variable.value, "[1, 2, 3]");
+        assert_eq!(variable.type_name, "list");
+        assert_eq!(variable.variables_reference, 7);
+    }
+
+    #[test]
+    fn an_evaluate_result_with_no_children_carries_a_zero_reference() {
+        let variable = evaluate_result("1 + 1", &json!({"result": "2", "type": "int"}));
+        assert_eq!(variable.variables_reference, 0);
     }
 }

@@ -11,11 +11,45 @@
 //! push failure worth a typed distinction is a non-fast-forward rejection —
 //! see [`crate::error::VcsError::PushRejected`].
 
+use gix::bstr::ByteSlice;
+
 use crate::cli::{self, argv};
 use crate::error::VcsError;
 use crate::repo::Repository;
 
+/// One configured remote (R7's remote picker, replacing the hard-coded
+/// `origin` every push/pull/fetch call used before).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteInfo {
+    pub name: String,
+    pub url: String,
+}
+
 impl Repository {
+    /// Every configured remote, name and fetch URL, sorted by name — a
+    /// config read, so this goes through `gix` in-process (ADR-0031 §1)
+    /// rather than shelling out for something no credential, hook or
+    /// network call is involved in.
+    pub fn remotes(&self) -> Result<Vec<RemoteInfo>, VcsError> {
+        let mut names: Vec<_> = self.inner.remote_names().into_iter().collect();
+        names.sort();
+        let mut remotes = Vec::with_capacity(names.len());
+        for name in names {
+            let Ok(remote) = self.inner.find_remote(name.as_bstr()) else {
+                continue;
+            };
+            let url = remote
+                .url(gix::remote::Direction::Fetch)
+                .map(|u| u.to_string())
+                .unwrap_or_default();
+            remotes.push(RemoteInfo {
+                name: name.to_string(),
+                url,
+            });
+        }
+        Ok(remotes)
+    }
+
     /// `git fetch <remote>`.
     pub fn fetch(&self, remote: &str) -> Result<(), VcsError> {
         let work_dir = self.work_dir().ok_or(VcsError::OutsideWorkingTree)?;
@@ -43,6 +77,36 @@ impl Repository {
             Err(e) => Err(e),
         }
     }
+}
+
+impl Repository {
+    /// A bare `git push`, relying entirely on the configured upstream (or
+    /// `remote.pushDefault`) rather than naming a remote and branch — the
+    /// VCS menu's plain "Push" action (R7), which has no branch-popup
+    /// selection to read a remote from. Unlike [`Self::push`], this *can*
+    /// hit `git`'s own "no upstream branch" refusal, translated to
+    /// [`VcsError::NoUpstream`] so the caller can fall back to the
+    /// branch-popup's explicit remote picker instead of failing silently.
+    pub fn push_tracking(&self) -> Result<(), VcsError> {
+        let work_dir = self.work_dir().ok_or(VcsError::OutsideWorkingTree)?;
+        match cli::run(&work_dir, &["push"]) {
+            Ok(_) => Ok(()),
+            Err(VcsError::GitFailed { stderr, .. }) if is_no_upstream(&stderr) => {
+                let branch = self.current_branch()?.unwrap_or_default();
+                Err(VcsError::NoUpstream { branch })
+            }
+            Err(VcsError::GitFailed { stderr, .. }) if is_non_fast_forward(&stderr) => {
+                Err(VcsError::PushRejected { stderr })
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// `git push` with no upstream configured and none named refuses with
+/// "fatal: The current branch <name> has no upstream branch." on stderr.
+fn is_no_upstream(stderr: &str) -> bool {
+    stderr.contains("has no upstream branch")
 }
 
 /// A rejected push names the reason in a `[rejected]` line and/or the
@@ -118,6 +182,45 @@ mod tests {
         git(local_dir.path(), &["config", "user.name", "Test"]);
 
         (remote_dir, local_dir)
+    }
+
+    #[test]
+    fn remotes_lists_the_configured_origin_with_its_url() {
+        let (remote_dir, local_dir) = remote_and_clone();
+        let repo = open(local_dir.path());
+        let remotes = repo.remotes().unwrap();
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].name, "origin");
+        assert!(remotes[0].url.contains(remote_dir.path().to_str().unwrap()));
+    }
+
+    #[test]
+    fn push_tracking_on_a_branch_with_no_upstream_is_a_typed_error() {
+        let (_remote_dir, local_dir) = remote_and_clone();
+        git(local_dir.path(), &["checkout", "--quiet", "-b", "feature"]);
+        std::fs::write(local_dir.path().join("c.txt"), "three\n").unwrap();
+        git(local_dir.path(), &["add", "c.txt"]);
+        git(local_dir.path(), &["commit", "-m", "feature work"]);
+
+        let repo = open(local_dir.path());
+        let err = repo.push_tracking().unwrap_err();
+        match err {
+            VcsError::NoUpstream { branch } => assert_eq!(branch, "feature"),
+            other => panic!("expected NoUpstream, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn push_tracking_succeeds_once_an_upstream_is_set() {
+        let (_remote_dir, local_dir) = remote_and_clone();
+        git(local_dir.path(), &["checkout", "--quiet", "-b", "feature"]);
+        std::fs::write(local_dir.path().join("c.txt"), "three\n").unwrap();
+        git(local_dir.path(), &["add", "c.txt"]);
+        git(local_dir.path(), &["commit", "-m", "feature work"]);
+
+        let repo = open(local_dir.path());
+        repo.push("origin", "feature", true).unwrap();
+        repo.push_tracking().unwrap();
     }
 
     #[test]

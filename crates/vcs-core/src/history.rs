@@ -24,6 +24,41 @@ pub struct LogEntry {
     /// Seconds since the Unix epoch, author time (not committer time — the
     /// one a "when was this written" view wants).
     pub author_time: i64,
+    /// Full hex parent ids, root-commit-empty — R7's `graph::lanes` needs
+    /// these to lay commits into columns; nothing before R7 read this
+    /// field, so it rides along on every entry rather than a second,
+    /// parent-only query.
+    pub parent_ids: Vec<String>,
+}
+
+/// `Repository::log`/`log_filtered`'s filter (R7): every field is an
+/// intersection — `author` narrows what `path`/`text` already narrowed, not
+/// an alternative to them, matching `git log`'s own combined-filter
+/// semantics.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LogFilter {
+    /// Matched against the commit's author name or email,
+    /// case-insensitively — `git log --author`'s own matching.
+    pub author: Option<String>,
+    /// Only commits that touched this repository-relative path — `git log
+    /// --follow -- <path>`'s own rename-tracking applies.
+    pub path: Option<PathBuf>,
+    /// Matched against the commit message (summary and body),
+    /// case-insensitively — `git log --grep -i`.
+    pub text: Option<String>,
+    /// Seconds since the Unix epoch; `git log --since=<n>`.
+    pub since: Option<i64>,
+    /// Seconds since the Unix epoch; `git log --until=<n>`.
+    pub until: Option<i64>,
+}
+
+impl LogFilter {
+    /// Whether every field is unset — a caller uses this to skip the CLI
+    /// round trip [`Repository::log_filtered`] otherwise always takes, and
+    /// call [`Repository::log`] (the cached, in-process path) instead.
+    pub fn is_empty(&self) -> bool {
+        self == &LogFilter::default()
+    }
 }
 
 /// One commit in full, for the commit-detail dock — everything [`LogEntry`]
@@ -167,11 +202,78 @@ impl Repository {
         let output = crate::cli::run(&work_dir, &args)?;
         Ok(output.lines().filter_map(parse_log_line).collect())
     }
+
+    /// The commit history reachable from `HEAD`, newest first, filtered by
+    /// `filter` and capped at `max` (R7). Always shells out to `git log`
+    /// (ADR-0031 §4, the same call [`Self::file_history`] already makes for
+    /// its path filter): combining author, path, date-range and message
+    /// filters is exactly the pathspec/date-range/grep intersection `gix`'s
+    /// revwalk still has no equivalent for, and `git log` answers all four
+    /// together in one process rather than this crate re-implementing any
+    /// of them as a post-filter over a full walk.
+    ///
+    /// An unborn `HEAD` is "no history", not an error, matching
+    /// [`Self::log`].
+    pub fn log_filtered(
+        &self,
+        filter: &LogFilter,
+        max: Option<usize>,
+    ) -> Result<Vec<LogEntry>, VcsError> {
+        if self.inner.head_id().is_err() {
+            return Ok(Vec::new());
+        }
+        let work_dir = self.work_dir().ok_or(VcsError::OutsideWorkingTree)?;
+
+        let author_arg = filter.author.as_ref().map(|a| format!("--author={a}"));
+        let grep_arg = filter.text.as_ref().map(|t| format!("--grep={t}"));
+        let since_arg = filter.since.map(|s| format!("--since=@{s}"));
+        let until_arg = filter.until.map(|u| format!("--until=@{u}"));
+        let max_arg = max.map(|m| m.to_string());
+        let path = filter
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
+
+        let mut args = vec!["log", LOG_FORMAT_WITH_PARENTS, "-i"];
+        if let Some(a) = author_arg.as_deref() {
+            args.push(a);
+        }
+        if let Some(g) = grep_arg.as_deref() {
+            args.push(g);
+        }
+        if let Some(s) = since_arg.as_deref() {
+            args.push(s);
+        }
+        if let Some(u) = until_arg.as_deref() {
+            args.push(u);
+        }
+        if let Some(m) = max_arg.as_deref() {
+            args.push("-n");
+            args.push(m);
+        }
+        if path.is_some() {
+            args.push("--follow");
+        }
+        if let Some(p) = path.as_deref() {
+            args.push("--");
+            args.push(p);
+        }
+
+        let output = crate::cli::run(&work_dir, &args)?;
+        Ok(output
+            .lines()
+            .filter_map(parse_log_line_with_parents)
+            .collect())
+    }
 }
 
 /// NUL between fields so no field can contain the separator, one commit per
 /// line so the subject (which cannot contain a newline) ends the record.
 const LOG_FORMAT: &str = "--format=%H%x00%an%x00%ae%x00%at%x00%s";
+/// [`LOG_FORMAT`] plus parent ids (space-separated, empty for a root
+/// commit) — R7's [`Repository::log_filtered`] and `graph::lanes` need
+/// them, [`Repository::file_history`] does not.
+const LOG_FORMAT_WITH_PARENTS: &str = "--format=%H%x00%an%x00%ae%x00%at%x00%P%x00%s";
 
 /// One `LOG_FORMAT` line. A line that does not have the five fields is
 /// skipped rather than failing the whole history: the panel showing the
@@ -189,6 +291,31 @@ fn parse_log_line(line: &str) -> Option<LogEntry> {
         author_name,
         author_email,
         author_time,
+        parent_ids: Vec::new(),
+    })
+}
+
+/// [`parse_log_line`] for [`LOG_FORMAT_WITH_PARENTS`]'s extra parent-ids
+/// field.
+fn parse_log_line_with_parents(line: &str) -> Option<LogEntry> {
+    let mut fields = line.split('\0');
+    let id = fields.next()?.to_string();
+    let author_name = fields.next()?.to_string();
+    let author_email = fields.next()?.to_string();
+    let author_time = fields.next()?.parse().ok()?;
+    let parent_ids = fields
+        .next()?
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    let summary = fields.next()?.to_string();
+    Some(LogEntry {
+        id,
+        summary,
+        author_name,
+        author_email,
+        author_time,
+        parent_ids,
     })
 }
 
@@ -204,6 +331,10 @@ fn log_entry(commit: &gix::Commit<'_>) -> Result<LogEntry, VcsError> {
         author_name: author.name.to_string(),
         author_email: author.email.to_string(),
         author_time: time.seconds,
+        parent_ids: commit
+            .parent_ids()
+            .map(|id| id.to_hex().to_string())
+            .collect(),
     })
 }
 
@@ -396,6 +527,110 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn log_reports_parent_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+        let first = repo_head(dir.path());
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        git(dir.path(), &["commit", "-am", "second"]);
+
+        let repo = open(dir.path());
+        let log = repo.log(None).unwrap();
+        assert_eq!(log[0].parent_ids, vec![first]);
+        assert!(log[1].parent_ids.is_empty());
+    }
+
+    #[test]
+    fn log_filtered_by_author_only_returns_matching_commits() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "by test author"]);
+
+        let status = Command::new("git")
+            .args(["commit", "--allow-empty", "-m", "by someone else"])
+            .env("GIT_AUTHOR_NAME", "Someone Else")
+            .env("GIT_AUTHOR_EMAIL", "someone@example.com")
+            .env("GIT_COMMITTER_NAME", "Someone Else")
+            .env("GIT_COMMITTER_EMAIL", "someone@example.com")
+            .current_dir(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let repo = open(dir.path());
+        let filter = LogFilter {
+            author: Some("Test".to_string()),
+            ..LogFilter::default()
+        };
+        let log = repo.log_filtered(&filter, None).unwrap();
+        assert_eq!(
+            log.iter().map(|e| e.summary.as_str()).collect::<Vec<_>>(),
+            vec!["by test author"]
+        );
+    }
+
+    #[test]
+    fn log_filtered_by_text_matches_the_message() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "fix the bug"]);
+        std::fs::write(dir.path().join("a.txt"), "two\n").unwrap();
+        git(dir.path(), &["commit", "-am", "add a feature"]);
+
+        let repo = open(dir.path());
+        let filter = LogFilter {
+            text: Some("bug".to_string()),
+            ..LogFilter::default()
+        };
+        let log = repo.log_filtered(&filter, None).unwrap();
+        assert_eq!(
+            log.iter().map(|e| e.summary.as_str()).collect::<Vec<_>>(),
+            vec!["fix the bug"]
+        );
+    }
+
+    #[test]
+    fn log_filtered_by_path_matches_file_history_ordering() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "add a"]);
+        std::fs::write(dir.path().join("b.txt"), "unrelated\n").unwrap();
+        git(dir.path(), &["add", "b.txt"]);
+        git(dir.path(), &["commit", "-m", "add b"]);
+
+        let repo = open(dir.path());
+        let filter = LogFilter {
+            path: Some(PathBuf::from("a.txt")),
+            ..LogFilter::default()
+        };
+        let log = repo.log_filtered(&filter, None).unwrap();
+        assert_eq!(
+            log.iter().map(|e| e.summary.as_str()).collect::<Vec<_>>(),
+            vec!["add a"]
+        );
+    }
+
+    #[test]
+    fn log_filtered_is_empty_on_an_unborn_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        let repo = open(dir.path());
+        assert!(repo
+            .log_filtered(&LogFilter::default(), None)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

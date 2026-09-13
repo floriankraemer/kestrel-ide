@@ -37,8 +37,18 @@ void refreshTreeIcons(QWidget *projectTree)
     if (tree == nullptr) {
         return;
     }
-    if (auto *proxy = qobject_cast<IconDecorationProxy *>(tree->model())) {
-        proxy->clearIcons();
+    // The project tree chains a second proxy (VcsStatusColorProxy, R6) on
+    // top of this one, so `tree->model()` is not always the
+    // `IconDecorationProxy` itself any more — walk down through
+    // `sourceModel()` until one is found or the chain ends.
+    QAbstractItemModel *model = tree->model();
+    while (model != nullptr) {
+        if (auto *proxy = qobject_cast<IconDecorationProxy *>(model)) {
+            proxy->clearIcons();
+            break;
+        }
+        auto *identity = qobject_cast<QIdentityProxyModel *>(model);
+        model = identity != nullptr ? identity->sourceModel() : nullptr;
     }
     tree->viewport()->update();
 }

@@ -90,6 +90,20 @@ pub fn parse_porcelain_v2(output: &str) -> RepoStatus {
     }
 }
 
+/// Parse `git status --porcelain=v2 -z --ignored=matching`'s stdout into
+/// the ignored paths alone — the "Add to .gitignore" context-menu entry's
+/// read, kept separate from [`parse_porcelain_v2`] (which already skips `!`
+/// records) rather than teaching the main status parse to also collect a
+/// list nothing else needs.
+pub fn parse_ignored_paths(output: &str) -> Vec<PathBuf> {
+    output
+        .split('\0')
+        .filter(|t| !t.is_empty())
+        .filter_map(|token| token.strip_prefix("! "))
+        .map(PathBuf::from)
+        .collect()
+}
+
 fn parse_branch_header(
     header: &str,
     branch: &mut Option<String>,
@@ -376,5 +390,23 @@ mod tests {
     fn empty_input_parses_to_an_empty_status() {
         let status = parse_porcelain_v2("");
         assert_eq!(status, RepoStatus::default());
+    }
+
+    #[test]
+    fn parse_ignored_paths_reads_only_bang_records() {
+        let ignored = parse_ignored_paths(&fixture(&[
+            "1 .M N... 100644 100644 100644 hH hI a.txt",
+            "! target/debug",
+            "! .env",
+        ]));
+        assert_eq!(
+            ignored,
+            vec![PathBuf::from("target/debug"), PathBuf::from(".env")]
+        );
+    }
+
+    #[test]
+    fn parse_ignored_paths_is_empty_for_a_clean_status() {
+        assert!(parse_ignored_paths(&fixture(&["# branch.head main"])).is_empty());
     }
 }

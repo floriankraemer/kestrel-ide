@@ -590,6 +590,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "",
     },
     ActionDef {
+        id: "vcs.stageHunk",
+        label: "Stage Hunk",
+        category: "Git",
+        default_shortcut: "",
+    },
+    ActionDef {
         // Was F7/Shift+F7, which is IntelliJ's Step Into and its inverse.
         // The debugger has the stronger claim on those (D3-8), and these two
         // move to the keys IntelliJ actually gives them.

@@ -7,6 +7,7 @@
 #include "e2e_mark.h"
 #include "icon_cache.h"
 #include "icon_decoration_proxy.h"
+#include "vcs_status_color_proxy.h"
 #include "keymap_page.h"
 #include "ui_tokens.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
@@ -232,7 +233,8 @@ void revealPathInTree(QTreeView *treeView, const QString &path)
 ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
                                        ads::CDockAreaWidget *editorArea,
                                        ProjectTreeModel *treeModel,
-                                       DockRegistry *docks)
+                                       DockRegistry *docks,
+                                       VcsService *vcsService)
 {
     auto *treeView = new QTreeView();
     // The style's small-icon metric rather than a literal 16: it already
@@ -243,12 +245,27 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
     // Between model and view, never inside the model: the icon key is the
     // Rust side's answer, and turning it into a decoration is the only part
     // that needs a QIcon. See icon_decoration_proxy.h.
-    auto *proxy =
+    auto *iconProxy =
       new IconDecorationProxy(treeRole(ProjectTreeModel::Roles::IconKey), iconPx, treeView);
-    proxy->setSourceModel(treeModel);
+    iconProxy->setSourceModel(treeModel);
 
-    treeView->setModel(proxy);
+    // Chained on top of the icon proxy for the same reason that one sits on
+    // top of the Rust model: a colour is a Qt view concern, not something
+    // `ProjectTreeModel::data()` should ever answer (R6). See
+    // vcs_status_color_proxy.h.
+    auto *colorProxy =
+      new VcsStatusColorProxy(vcsService, treeRole(ProjectTreeModel::Roles::Path), treeView);
+    colorProxy->setSourceModel(iconProxy);
+
+    treeView->setModel(colorProxy);
     treeView->setHeaderHidden(true);
+    if (vcsService != nullptr) {
+        // A stage/unstage/commit/pull changes what every row's colour
+        // should be; the proxy re-reads `fileStatus` on demand, so a
+        // repaint is all that is needed to pick it up.
+        QObject::connect(vcsService, &VcsService::statusChanged, treeView,
+                          [treeView]() { treeView->viewport()->update(); });
+    }
 
     // Toolbar above the tree: the sort toggle (moved off the dock's title
     // bar) and the locate-in-tree button, so both stay visible even when
@@ -379,6 +396,9 @@ void wireProjectTree(QTreeView *treeView,
               menu.addSeparator();
               addToChatAction = menu.addAction(QObject::tr("Add to AI Chat"));
               addToNewChatAction = menu.addAction(QObject::tr("Add to New AI Chat"));
+          } else {
+              // The empty area is the project itself (R6).
+              appendProjectGitSubmenu(menu, actions);
           }
 
           // The context menu is the only way into the Git submenu, and an

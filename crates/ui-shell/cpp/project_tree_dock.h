@@ -60,6 +60,11 @@ struct ProjectTreeActions
     // path. A callback for the same reason `openFile` is: it is EditorTabs'
     // job, and the tree does not depend on editor_tabs.h to say so.
     std::function<void(const QString &)> showDiffAgainstHead;
+    // R6: "Compare with Branch, Tag or Revision…" — `revision`'s blob on
+    // the left, the live working text on the right, in the existing diff
+    // tab (`EditorTabs::openCompareRevisions`). Same callback reason as
+    // `showDiffAgainstHead`.
+    std::function<void(const QString &, const QString &)> compareWithRevision;
 };
 
 // The tree view plus the toolbar's locate action, which the active-tab-
@@ -71,12 +76,17 @@ struct ProjectTreeDock
 };
 
 // Builds the Project dock: the toolbar (sort, locate), the tree view, the
-// icon-decoration proxy between it and the model, and the dock widget
-// itself, docked left of `editorArea`.
+// icon-decoration and VCS-status-colour proxies between it and the model,
+// and the dock widget itself, docked left of `editorArea`.
+//
+// `vcsService` may be null (no VCS service at all, same as
+// `ProjectTreeActions::vcsService`); the colour proxy then always answers
+// the identity model's own colour.
 ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
                                       ads::CDockAreaWidget *editorArea,
                                       ProjectTreeModel *treeModel,
-                                      DockRegistry *docks);
+                                      DockRegistry *docks,
+                                      VcsService *vcsService);
 
 // Wires the tree's gestures: click to open, right-click for the
 // create/rename/delete/attach menu (US-2b), and the locate action's reveal-

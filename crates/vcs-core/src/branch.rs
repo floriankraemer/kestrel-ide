@@ -25,6 +25,34 @@ impl Repository {
         Ok(names)
     }
 
+    /// Every tag name, sorted — `gix`'s `references().tags()`, the same
+    /// in-process read [`Self::branches`] is (ADR-0031 §1).
+    pub fn tags(&self) -> Result<Vec<String>, VcsError> {
+        let platform = self
+            .inner
+            .references()
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        let iter = platform.tags().map_err(|e| VcsError::Read(e.to_string()))?;
+        let mut names: Vec<String> = iter
+            .map(|r| {
+                r.map(|reference| reference.name().shorten().to_string())
+                    .map_err(|e| VcsError::Read(e.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
+        names.sort();
+        Ok(names)
+    }
+
+    /// What "Compare with Branch, Tag or Revision…" offers (R6): local
+    /// branches first, then tags, each group sorted. A raw revision is
+    /// typed rather than picked, so it is not listed here — every name
+    /// here is one `git rev-parse` resolves as-is.
+    pub fn ref_names(&self) -> Result<Vec<String>, VcsError> {
+        let mut names = self.branches()?;
+        names.extend(self.tags()?);
+        Ok(names)
+    }
+
     /// The current branch's name, or `None` for a detached or unborn `HEAD`
     /// (a caller wanting to distinguish those calls [`Repository::head`]
     /// directly).
@@ -123,6 +151,22 @@ mod tests {
 
         let repo = open(dir.path());
         assert_eq!(repo.branches().unwrap(), vec!["aaa", "main", "zzz"]);
+    }
+
+    #[test]
+    fn ref_names_lists_branches_then_tags() {
+        let dir = tempfile::tempdir().unwrap();
+        init_with_first_commit(dir.path());
+        git(dir.path(), &["branch", "feature"]);
+        git(dir.path(), &["tag", "v1"]);
+        git(dir.path(), &["tag", "v0"]);
+
+        let repo = open(dir.path());
+        assert_eq!(repo.tags().unwrap(), vec!["v0", "v1"]);
+        assert_eq!(
+            repo.ref_names().unwrap(),
+            vec!["feature", "main", "v0", "v1"]
+        );
     }
 
     #[test]

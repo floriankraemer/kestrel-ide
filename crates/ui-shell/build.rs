@@ -566,6 +566,10 @@ fn main() {
         // header is listed too — that is what runs moc on it.
         .cpp_file("cpp/icon_decoration_proxy.h")
         .cpp_file("cpp/icon_decoration_proxy.cpp")
+        // Same reason as icon_decoration_proxy.h just above: it declares
+        // Q_OBJECT, so its header needs moc too.
+        .cpp_file("cpp/vcs_status_color_proxy.h")
+        .cpp_file("cpp/vcs_status_color_proxy.cpp")
         .cpp_file("cpp/recent_projects_menu.cpp")
         .cpp_file("cpp/project_tree_dock.cpp")
         .cpp_file("cpp/search_results_panel.cpp")

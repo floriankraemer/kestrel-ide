@@ -137,7 +137,9 @@ baseline() {
 	# the other dock-manager config flags set here before `CDockManager` is
 	# constructed, plus the comment explaining why it is needed — ADS's
 	# default only gives the *active* tab in a dock area a close button.
-	crates/ui-shell/cpp/main_window.cpp) echo 1220 ;;
+	# Ratcheted down to 1219: two ProjectTreeActions callbacks (R6) folded
+	# onto one line each.
+	crates/ui-shell/cpp/main_window.cpp) echo 1219 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

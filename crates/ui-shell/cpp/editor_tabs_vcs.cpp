@@ -5,6 +5,7 @@
 #include "diff_view.h"
 #include "diff_view_page.h"
 #include "e2e_mark.h"
+#include "theme.h"
 #include "vcs_gutter.h"
 
 #include <QFile>
@@ -27,6 +28,19 @@ namespace {
 // a pure deletion (no line of its own on the new side, so it marks the line
 // the deletion happened in front of). Shared so rollback-at-caret and
 // next/previous-change agree with what the gutter actually shows.
+ChangeMarkerState toMarkerState(FfiHunkStageState state)
+{
+    switch (state) {
+    case FfiHunkStageState::Staged:
+        return ChangeMarkerState::Staged;
+    case FfiHunkStageState::Both:
+        return ChangeMarkerState::Both;
+    case FfiHunkStageState::Unstaged:
+        break;
+    }
+    return ChangeMarkerState::Unstaged;
+}
+
 quint32 hunkMarkerLine(const FfiHunk &hunk)
 {
     if (hunk.kind == FfiHunkKind::Removed) {
@@ -78,11 +92,35 @@ void wireVcsService(VcsService *vcsService, ProjectTreeModel *treeModel, EditorT
                       [editorTabs](const QString &path, const ::rust::Vec<FfiBlameLine> &lines) {
                           editorTabs->applyVcsBlame(path, lines);
                       });
+    // Tab titles are coloured by VCS status (R6); `refreshTabIcons` already
+    // re-renders every open tab's title/icon from scratch, which is exactly
+    // what a stage/unstage/commit needs too — reused rather than a second,
+    // near-identical loop.
+    QObject::connect(vcsService, &VcsService::statusChanged, editorTabs,
+                      [editorTabs]() { editorTabs->refreshTabIcons(); });
 }
 
 void EditorTabs::setVcsService(VcsService *vcsService)
 {
     vcsService_ = vcsService;
+}
+
+QColor EditorTabs::vcsTabColor(const QString &path) const
+{
+    // Coloured by VCS status (R6) — the same `changeKindColor` table the
+    // project tree and the Changes dock's status letter read from, so a
+    // modified/added/untracked tab reads apart from a clean one without
+    // opening the Changes dock.
+    if (vcsService_ == nullptr || path.isEmpty()) {
+        return QColor();
+    }
+    const FfiChangedFile status = vcsService_->fileStatus(path);
+    if (status.path.isEmpty()) {
+        return QColor();
+    }
+    const FfiChangeKind kind =
+      status.unstaged != FfiChangeKind::None ? status.unstaged : status.staged;
+    return changeKindColor(kind);
 }
 
 void EditorTabs::setDiffPanel(DiffPanel *diffPanel, std::function<void()> revealDiffDock)
@@ -126,22 +164,25 @@ void EditorTabs::applyVcsHunks(const QString &path)
 
     QVector<ChangeMarker> markers;
     const ::rust::Vec<FfiHunk> hunks = vcsService_->hunks(path);
+    const ::rust::Vec<FfiHunkState> states = vcsService_->hunkStates(path);
     for (std::size_t i = 0; i < hunks.size(); ++i) {
         const FfiHunk &hunk = hunks[i];
         const int hunkIndex = static_cast<int>(i);
         ChangeMarkerKind kind = hunk.kind == FfiHunkKind::Added   ? ChangeMarkerKind::Added
                                  : hunk.kind == FfiHunkKind::Removed ? ChangeMarkerKind::Removed
                                                                       : ChangeMarkerKind::Modified;
+        const ChangeMarkerState state =
+          i < states.size() ? toMarkerState(states[i].state) : ChangeMarkerState::Unstaged;
         if (hunk.kind == FfiHunkKind::Removed) {
             // An empty new-side range has no line of its own to sit on;
             // mark the line the deletion happened in front of (or the
             // first line, for a deletion at the very top of the file).
             const int block = hunk.new_start > 0 ? static_cast<int>(hunk.new_start) - 1 : 0;
-            markers.append(ChangeMarker{block, kind, hunkIndex});
+            markers.append(ChangeMarker{block, kind, hunkIndex, state});
             continue;
         }
         for (quint32 line = hunk.new_start; line < hunk.new_start + hunk.new_len; ++line) {
-            markers.append(ChangeMarker{static_cast<int>(line), kind, hunkIndex});
+            markers.append(ChangeMarker{static_cast<int>(line), kind, hunkIndex, state});
         }
     }
     editor->setChangeMarkers(markers);
@@ -475,6 +516,38 @@ void EditorTabs::rollbackHunkAtCaret()
     }
 }
 
+void EditorTabs::stageHunkAtCaret()
+{
+    auto *editor = qobject_cast<CodeEditor *>(currentEditor());
+    if (!editor || !vcsService_) {
+        return;
+    }
+    const QString path = currentPath();
+    if (path.isEmpty()) {
+        return;
+    }
+    const int caretLine = editor->textCursor().blockNumber();
+    const ::rust::Vec<FfiHunk> hunks = vcsService_->hunks(path);
+    for (std::size_t i = 0; i < hunks.size(); ++i) {
+        const FfiHunk &hunk = hunks[i];
+        const quint32 start = hunkMarkerLine(hunk);
+        const quint32 end =
+          hunk.kind == FfiHunkKind::Removed ? start + 1 : hunk.new_start + hunk.new_len;
+        if (static_cast<quint32>(caretLine) >= start && static_cast<quint32>(caretLine) < end) {
+            vcsService_->stageHunk(path, static_cast<quint32>(i));
+            // Nothing else marks the moment `vcs.stageHunk` actually found
+            // and staged a hunk — `statusChanged` alone would not say
+            // *which* hunk, and an E2E flow needs that to assert about a
+            // specific one rather than "staging happened somewhere".
+            e2eMark(QStringLiteral("{\"ev\":\"vcs_hunk_staged\",\"path\":%1,"
+                                    "\"hunk_index\":%2}")
+                      .arg(e2eJson(path))
+                      .arg(i));
+            return;
+        }
+    }
+}
+
 void EditorTabs::jumpToChange(bool forward)
 {
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
@@ -534,20 +607,20 @@ void EditorTabs::onChangeMarkerClicked(CodeEditor *editor, int hunkIndex, const 
     }
 
     HunkPopupActions actions;
+    actions.removedText = vcsService_->hunkRemovedText(path, static_cast<quint32>(hunkIndex));
+    const ::rust::Vec<FfiHunkState> states = vcsService_->hunkStates(path);
+    if (hunkIndex >= 0 && static_cast<std::size_t>(hunkIndex) < states.size()) {
+        actions.state = toMarkerState(states[static_cast<std::size_t>(hunkIndex)].state);
+    }
     actions.revert = [this, editor, path, hunkIndex]() {
         const ::rust::Vec<FfiTextEdit> edits = vcsService_->revertHunk(path, hunkIndex);
         if (!edits.empty()) {
             applyEditsTo(editor, edits);
         }
     };
-    actions.stage = [this, path]() {
-        // Whole-file staging: precise per-hunk staging needs the hunk
-        // between the index and the worktree, and this gutter only ever
-        // has the hunk between HEAD and the worktree (see
-        // VcsService::stageHunk's own doc comment). Correct per-hunk
-        // staging belongs to F3-17's Changes dock.
-        vcsService_->stageFile(path);
-    };
+    actions.stageHunk = [this, path, hunkIndex]() { vcsService_->stageHunk(path, hunkIndex); };
+    actions.unstageHunk = [this, path, hunkIndex]() { vcsService_->unstageHunk(path, hunkIndex); };
+    actions.stageFile = [this, path]() { vcsService_->stageFile(path); };
     actions.showDiff = [this, editor, tabId, path]() { openEditableDiffWindow(tabId, editor, path); };
 
     showHunkPopup(window_, globalPos, actions);

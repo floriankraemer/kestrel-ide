@@ -1104,6 +1104,36 @@ mod ffi {
         name: QString,
     }
 
+    /// One past commit message. Same one-field-wrapper reason as
+    /// [`FfiBranch`]: `cxx`'s `Vec<T>` needs `T: ImplVec`, which `QString`
+    /// alone does not satisfy.
+    struct FfiCommitMessage {
+        message: QString,
+    }
+
+    /// One repository-relative path, the same one-field-wrapper reason as
+    /// [`FfiBranch`]. Carried by `changedPathsReady` (R6's project-root
+    /// "Compare with Branch, Tag or Revision…").
+    struct FfiRepoPath {
+        path: QString,
+    }
+
+    /// Whether a `HEAD`-vs-worktree hunk is not yet in the index, wholly in
+    /// it, or partly — `vcs_core::HunkStageState`, IDEA's three-state
+    /// gutter colouring (R6).
+    enum FfiHunkStageState {
+        Unstaged,
+        Staged,
+        Both,
+    }
+
+    /// One hunk's [`FfiHunkStageState`], parallel to `hunks(path)` by
+    /// index. A one-field struct rather than a bare `Vec<FfiHunkStageState>`,
+    /// for the same `cxx` `Vec<T>` reason [`FfiBranch`] gives.
+    struct FfiHunkState {
+        state: FfiHunkStageState,
+    }
+
     /// One run configuration, 1:1 with `run_core::RunConfig`
     /// (`app_config::RunConfigSetting`). `args` crosses space-joined — the
     /// same convention `FfiLanguageServerRow::args` already uses (shell-style
@@ -6604,9 +6634,95 @@ mod ffi {
         #[cxx_name = "unstageHunk"]
         fn unstage_hunk(self: Pin<&mut VcsService>, path: &QString, hunk_index: u32);
 
-        /// `git commit -m <message> [--amend]`, exactly what is staged.
+        /// `git commit -m <message> [--amend]`, exactly what is staged. On
+        /// success, `message` is recorded into this project's
+        /// commit-message history (`commitHistory`).
+        /// `author` is the literal `Name <email>` for `--author`, empty for
+        /// the configured identity; `signoff` adds `--signoff`.
         #[qinvokable]
-        fn commit(self: Pin<&mut VcsService>, message: &QString, amend: bool);
+        fn commit(
+            self: Pin<&mut VcsService>,
+            message: &QString,
+            amend: bool,
+            author: &QString,
+            signoff: bool,
+        );
+
+        /// Append `path` (absolute; resolved against the repository root
+        /// here) to the root `.gitignore`, creating it if missing —
+        /// idempotent. Answers via `statusChanged` once `git` stops
+        /// reporting the path; failure via `vcsFailed`.
+        #[qinvokable]
+        #[cxx_name = "addToGitignore"]
+        fn add_to_gitignore(self: Pin<&mut VcsService>, path: &QString);
+
+        /// Local branches then tags, as `refreshBranches` last found them —
+        /// what "Compare with Branch, Tag or Revision…" lists (a raw
+        /// revision is typed into the same, editable picker).
+        #[qinvokable]
+        #[cxx_name = "refNames"]
+        fn ref_names(self: &VcsService) -> Vec<FfiBranch>;
+
+        /// `git diff --name-only <revision>` on the worker; answers via
+        /// `changedPathsReady(revision, paths)`.
+        #[qinvokable]
+        #[cxx_name = "requestChangedPathsAgainst"]
+        fn request_changed_paths_against(self: Pin<&mut VcsService>, revision: &QString);
+
+        /// The three-state colouring of `hunks(path)`, index for index —
+        /// which of the gutter's `HEAD`-vs-worktree hunks are already
+        /// (partly) in the index. Empty before `requestHunks` has answered.
+        #[qinvokable]
+        #[cxx_name = "hunkStates"]
+        fn hunk_states(self: &VcsService, path: &QString) -> Vec<FfiHunkState>;
+
+        /// The `HEAD`-side lines `hunks(path)[hunk_index]` removed, joined
+        /// with `\n` — what the gutter popup shows inline. Empty for a pure
+        /// addition, or when nothing is cached for `path`.
+        #[qinvokable]
+        #[cxx_name = "hunkRemovedText"]
+        fn hunk_removed_text(self: &VcsService, path: &QString, hunk_index: u32) -> QString;
+
+        /// The Changes dock's per-hunk rows (R6): `HEAD`-vs-worktree hunks
+        /// of `path` (absolute) read from the file on disk — the dock
+        /// covers files that are not open — classified against the index.
+        /// Answers via `fileHunksReady(path)`; read with `fileHunks`/
+        /// `fileHunkStates`. Kept apart from `requestHunks`'s buffer-based
+        /// cache so a disk read never overwrites what an open editor's
+        /// gutter is showing.
+        #[qinvokable]
+        #[cxx_name = "requestFileHunks"]
+        fn request_file_hunks(self: Pin<&mut VcsService>, path: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "fileHunks"]
+        fn file_hunks(self: &VcsService, path: &QString) -> Vec<FfiHunk>;
+
+        #[qinvokable]
+        #[cxx_name = "fileHunkStates"]
+        fn file_hunk_states(self: &VcsService, path: &QString) -> Vec<FfiHunkState>;
+
+        /// `stageHunk`/`unstageHunk` over `fileHunks(path)` rather than
+        /// `hunks(path)` — the dock's rows.
+        #[qinvokable]
+        #[cxx_name = "stageFileHunk"]
+        fn stage_file_hunk(self: Pin<&mut VcsService>, path: &QString, hunk_index: u32);
+
+        #[qinvokable]
+        #[cxx_name = "unstageFileHunk"]
+        fn unstage_file_hunk(self: Pin<&mut VcsService>, path: &QString, hunk_index: u32);
+
+        /// `HEAD`'s own commit message, last refreshed alongside
+        /// `refreshStatus` — Amend's prefill. Empty for an unborn `HEAD`.
+        #[qinvokable]
+        #[cxx_name = "headMessage"]
+        fn head_message(self: &VcsService) -> QString;
+
+        /// This project's past commit messages, newest first, capped at 25
+        /// — the Changes dock's commit-message combo.
+        #[qinvokable]
+        #[cxx_name = "commitHistory"]
+        fn commit_history(self: &VcsService) -> Vec<FfiCommitMessage>;
 
         /// Re-list local branches on the worker thread (`gix`, no
         /// subprocess); answers via `branchChanged`.
@@ -6751,6 +6867,21 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "hunksChanged"]
         fn hunks_changed(self: Pin<&mut VcsService>, path: QString);
+
+        /// `fileHunks(path)`/`fileHunkStates(path)` have a fresh answer.
+        #[qsignal]
+        #[cxx_name = "fileHunksReady"]
+        fn file_hunks_ready(self: Pin<&mut VcsService>, path: QString);
+
+        /// `requestChangedPathsAgainst(revision)`'s answer, tagged with
+        /// the revision it was asked for.
+        #[qsignal]
+        #[cxx_name = "changedPathsReady"]
+        fn changed_paths_ready(
+            self: Pin<&mut VcsService>,
+            revision: QString,
+            paths: Vec<FfiRepoPath>,
+        );
 
         /// `branches()` has a fresh answer, or the checked-out branch
         /// changed.

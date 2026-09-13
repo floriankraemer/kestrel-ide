@@ -101,16 +101,16 @@ impl ffi::VcsService {
         self.apply_hunk_op(path, hunk_index, true);
     }
 
-    /// Stage or reverse-stage `hunks(path)[hunk_index]`, against the same
-    /// `HEAD`/working text `requestHunks` last cached for `path`.
+    /// Stage or unstage `hunks(path)[hunk_index]` — a `HEAD`-vs-worktree
+    /// hunk, the gutter's own view — against the index, not `HEAD`.
     ///
-    /// `vcs_core::Repository::stage_hunk`'s own doc comment flags the real
-    /// limitation this inherits: `HunkCache` diffs against `HEAD`, not the
-    /// index, so this is exactly right on a clean index and increasingly
-    /// wrong the more of the file is already staged. Correct per-hunk
-    /// staging against the index belongs to F3-17's Changes dock, which has
-    /// a reason to read the index's own blob; this bridge exposes what
-    /// `vcs-core` already has rather than growing that read early.
+    /// `vcs_core::Repository::stage_hunk_matching`/`unstage_hunk_matching`
+    /// carry the real work (finding the index-vs-worktree, respectively
+    /// `HEAD`-vs-index, hunk that actually corresponds to the one clicked):
+    /// this is translation only, matching R6's fix for "stages the whole
+    /// file" — staging used to always diff against `HEAD`, so it staged
+    /// everything between `HEAD` and the worktree once part of the file was
+    /// already staged.
     fn apply_hunk_op(mut self: Pin<&mut Self>, path: &QString, hunk_index: u32, reverse: bool) {
         let path = path.to_string();
         let Some(cached): Option<CachedHunks> = self.hunks.borrow().get(&path).cloned() else {
@@ -123,16 +123,14 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let relative = Path::new(&path);
             let result = if reverse {
-                worker
-                    .repo
-                    .unstage_hunk(relative, &cached.before_text, &cached.working_text, &hunk)
+                worker.repo.unstage_hunk_matching(relative, &hunk)
             } else {
                 worker
                     .repo
-                    .stage_hunk(relative, &cached.before_text, &cached.working_text, &hunk)
+                    .stage_hunk_matching(relative, &cached.working_text, &hunk)
             };
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
-                Ok(()) => service.as_mut().refresh_status(),
+                Ok(_) => service.as_mut().refresh_status(),
                 Err(err) => {
                     let result = to_ffi_result(&err);
                     service.as_mut().vcs_failed(result);
@@ -148,6 +146,7 @@ impl ffi::VcsService {
             let result = worker.repo.commit(&message, amend);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => {
+                    service.as_mut().record_commit_message(&message);
                     service.as_mut().refresh_status();
                     service.as_mut().branch_changed();
                 }
@@ -157,5 +156,37 @@ impl ffi::VcsService {
                 }
             });
         });
+    }
+
+    /// Append `message` to this project's commit-message history
+    /// (`.ide/local/vcs.toml`, ADR-0022) after a successful commit.
+    fn record_commit_message(&self, message: &str) {
+        let root = self.project_root.borrow();
+        if root.is_empty() {
+            return;
+        }
+        let _ = app_config::vcs_local_settings::update(Path::new(root.as_str()), |settings| {
+            settings.push_commit_message(message.to_string());
+        });
+    }
+
+    /// This project's commit-message history, newest first — the Changes
+    /// dock's message combo.
+    pub fn commit_history(&self) -> Vec<ffi::FfiCommitMessage> {
+        let root = self.project_root.borrow();
+        if root.is_empty() {
+            return Vec::new();
+        }
+        app_config::vcs_local_settings::load(Path::new(root.as_str()))
+            .map(|settings| {
+                settings
+                    .commit_message_history
+                    .into_iter()
+                    .map(|message| ffi::FfiCommitMessage {
+                        message: QString::from(message.as_str()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 }

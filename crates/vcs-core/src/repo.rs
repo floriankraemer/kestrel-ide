@@ -127,6 +127,15 @@ impl Repository {
         let output = crate::cli::run(&work_dir, &crate::cli::argv::status())?;
         Ok(crate::status::parse_porcelain_v2(&output))
     }
+
+    /// Every path `git` currently ignores, repository-relative — behind
+    /// "Add to .gitignore" (which needs to know whether a path is already
+    /// covered) and the project tree's dimmed "ignored" colouring.
+    pub fn ignored_paths(&self) -> Result<Vec<PathBuf>, VcsError> {
+        let work_dir = self.work_dir_or_err()?;
+        let output = crate::cli::run(&work_dir, &crate::cli::argv::status_ignored())?;
+        Ok(crate::status::parse_ignored_paths(&output))
+    }
 }
 
 /// What `HEAD` points at.
@@ -326,6 +335,18 @@ mod tests {
         let repo = open(dir.path());
         let status = repo.status().unwrap();
         assert!(status.files.is_empty());
+    }
+
+    #[test]
+    fn ignored_paths_reports_a_gitignored_file() {
+        let dir = tempfile::tempdir().unwrap();
+        init_repo(dir.path());
+        std::fs::write(dir.path().join(".gitignore"), "ignored.log\n").unwrap();
+        std::fs::write(dir.path().join("ignored.log"), "noise\n").unwrap();
+        std::fs::write(dir.path().join("tracked.txt"), "one\n").unwrap();
+        let repo = open(dir.path());
+        let ignored = repo.ignored_paths().unwrap();
+        assert_eq!(ignored, vec![std::path::PathBuf::from("ignored.log")]);
     }
 
     #[test]

@@ -1051,6 +1051,13 @@ mod ffi {
         name: QString,
     }
 
+    /// One past commit message. Same one-field-wrapper reason as
+    /// [`FfiBranch`]: `cxx`'s `Vec<T>` needs `T: ImplVec`, which `QString`
+    /// alone does not satisfy.
+    struct FfiCommitMessage {
+        message: QString,
+    }
+
     /// One run configuration, 1:1 with `run_core::RunConfig`
     /// (`app_config::RunConfigSetting`). `args` crosses space-joined — the
     /// same convention `FfiLanguageServerRow::args` already uses (shell-style
@@ -6482,9 +6489,23 @@ mod ffi {
         #[cxx_name = "unstageHunk"]
         fn unstage_hunk(self: Pin<&mut VcsService>, path: &QString, hunk_index: u32);
 
-        /// `git commit -m <message> [--amend]`, exactly what is staged.
+        /// `git commit -m <message> [--amend]`, exactly what is staged. On
+        /// success, `message` is recorded into this project's
+        /// commit-message history (`commitHistory`).
         #[qinvokable]
         fn commit(self: Pin<&mut VcsService>, message: &QString, amend: bool);
+
+        /// `HEAD`'s own commit message, last refreshed alongside
+        /// `refreshStatus` — Amend's prefill. Empty for an unborn `HEAD`.
+        #[qinvokable]
+        #[cxx_name = "headMessage"]
+        fn head_message(self: &VcsService) -> QString;
+
+        /// This project's past commit messages, newest first, capped at 25
+        /// — the Changes dock's commit-message combo.
+        #[qinvokable]
+        #[cxx_name = "commitHistory"]
+        fn commit_history(self: &VcsService) -> Vec<FfiCommitMessage>;
 
         /// Re-list local branches on the worker thread (`gix`, no
         /// subprocess); answers via `branchChanged`.

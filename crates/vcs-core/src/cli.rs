@@ -148,6 +148,24 @@ pub mod argv {
         ]
     }
 
+    /// [`status`]'s ignored-files counterpart: `git --no-optional-locks
+    /// status --porcelain=v2 -z --ignored=matching` — no `--branch` or
+    /// `--renames` since [`crate::status::parse_ignored_paths`] only reads
+    /// `!` (ignored) records, and `--ignored=matching` reports every
+    /// ignored path rather than only the top of an ignored directory (the
+    /// bare `--ignored` default), matching what "Add to .gitignore" needs
+    /// to check a single file against.
+    pub fn status_ignored() -> Vec<&'static str> {
+        vec![
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+            "--ignored=matching",
+        ]
+    }
+
     /// `git add -- <paths>`.
     pub fn add<'a>(paths: &'a [&str]) -> Vec<&'a str> {
         let mut args = vec!["add", "--"];

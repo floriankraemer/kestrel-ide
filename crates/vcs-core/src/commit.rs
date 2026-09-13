@@ -19,6 +19,32 @@ impl Repository {
         cli::run(&work_dir, &argv::commit(message, amend))?;
         Ok(())
     }
+
+    /// `HEAD`'s full commit message, for prefilling Amend — a pure object
+    /// read, so this goes through `gix` in-process (ADR-0031 §1) rather
+    /// than shelling out for something [`Self::commit`] itself already
+    /// needs no subprocess to answer.
+    ///
+    /// `None` for an unborn `HEAD` (no commits yet, so there is nothing to
+    /// amend) — every other read failure is a real [`VcsError::Read`].
+    pub fn head_message(&self) -> Result<Option<String>, VcsError> {
+        use gix::bstr::ByteSlice;
+        let commit = match self.inner.head_commit() {
+            Ok(commit) => commit,
+            Err(gix::reference::head_commit::Error::PeelToCommit(
+                gix::head::peel::to_commit::Error::PeelToObject(
+                    gix::head::peel::to_object::Error::Unborn { .. },
+                ),
+            )) => return Ok(None),
+            Err(e) => return Err(VcsError::Read(e.to_string())),
+        };
+        let message = commit
+            .message_raw_sloppy()
+            .to_str()
+            .map_err(|e| VcsError::Read(e.to_string()))?
+            .to_string();
+        Ok(Some(message))
+    }
 }
 
 #[cfg(test)]
@@ -106,6 +132,32 @@ mod tests {
         repo.commit("first, amended", true).unwrap();
 
         assert_eq!(log_subjects(dir.path()), vec!["first, amended"]);
+    }
+
+    #[test]
+    fn head_message_reads_the_full_commit_message() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        git(dir.path(), &["config", "user.email", "test@example.com"]);
+        git(dir.path(), &["config", "user.name", "Test"]);
+        std::fs::write(dir.path().join("a.txt"), "one\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "subject\n\nbody line"]);
+
+        let repo = open(dir.path());
+        assert_eq!(
+            repo.head_message().unwrap(),
+            Some("subject\n\nbody line\n".to_string())
+        );
+    }
+
+    #[test]
+    fn head_message_is_none_for_an_unborn_head() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+
+        let repo = open(dir.path());
+        assert_eq!(repo.head_message().unwrap(), None);
     }
 
     #[test]

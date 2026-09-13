@@ -74,6 +74,160 @@ impl Repository {
         })?;
         Ok(Some((oid, text)))
     }
+
+    /// The git index's blob for a repository-relative path, decoded as
+    /// UTF-8, and its object id — or `None` when the index has no entry for
+    /// it (untracked, or removed from the index without a commit).
+    ///
+    /// This is the staging counterpart to [`head_blob`](Self::head_blob):
+    /// per-hunk staging (§ [`hunks_against_index`](Self::hunks_against_index))
+    /// must diff against what is *already staged*, not `HEAD`, or a second
+    /// hunk staged in the same file re-stages the first one's lines too
+    /// (the bug `docs/architecture/intellij-parity-refinement-plan.md`'s R6
+    /// names: "stages the whole file" once part of it is already staged).
+    pub fn index_blob(&self, relative_path: &Path) -> Result<Option<(String, String)>, VcsError> {
+        use gix::bstr::ByteSlice;
+        let index = self
+            .inner
+            .index_or_empty()
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        let path = crate::staging::path_str(relative_path)?;
+        let Some(entry) = index.entry_by_path(path.as_bytes().as_bstr()) else {
+            return Ok(None);
+        };
+        let oid = entry.id;
+        let mut object = self
+            .inner
+            .find_object(oid)
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        let text = String::from_utf8(std::mem::take(&mut object.data)).map_err(|_| {
+            VcsError::Read(format!("{} is not valid UTF-8", relative_path.display()))
+        })?;
+        Ok(Some((oid.to_hex().to_string(), text)))
+    }
+
+    /// Hunks between the git index's copy of `path` and `working_text` —
+    /// the diff per-hunk staging must act against, as opposed to
+    /// [`HunkCache::hunks`]'s `HEAD`-vs-worktree diff, which is what the
+    /// gutter paints (IDEA's three-state colouring: a hunk can be
+    /// unstaged-only, staged-only, or both, and only the `HEAD`-vs-worktree
+    /// diff shows the whole picture).
+    ///
+    /// Not cached like [`HunkCache`]: staging is a user-initiated action,
+    /// not a per-keystroke read, so there is no settle-tick cost to avoid
+    /// here the way there is for the gutter.
+    pub fn hunks_against_index(
+        &self,
+        relative_path: &Path,
+        working_text: &str,
+    ) -> Result<WorkingHunks, VcsError> {
+        let index = self.index_blob(relative_path)?;
+        let (index_oid, before) = match index {
+            Some((oid, text)) => (oid, text),
+            None => (NO_INDEX_BLOB.to_string(), String::new()),
+        };
+        let hunks = diff::diff_lines(&before, working_text).map_err(|e| match e {
+            DiffError::TooLarge => VcsError::TooLargeToDiff,
+        })?;
+        Ok(WorkingHunks {
+            head_oid: index_oid,
+            before_text: before,
+            hunks,
+        })
+    }
+
+    /// Hunks between `HEAD`'s copy of `path` and the index's copy — what is
+    /// already staged, independent of any further, still-unstaged edit in
+    /// the working tree. The unstage counterpart to
+    /// [`hunks_against_index`](Self::hunks_against_index): unstaging a hunk
+    /// removes it from the index back toward `HEAD`, so the patch it needs
+    /// is built from this pair, not from the working tree at all.
+    pub fn staged_hunks(&self, relative_path: &Path) -> Result<StagedHunks, VcsError> {
+        let head_text = self
+            .head_blob(relative_path)?
+            .map_or_else(String::new, |(_, t)| t);
+        let index_text = self
+            .index_blob(relative_path)?
+            .map_or_else(String::new, |(_, t)| t);
+        let hunks = diff::diff_lines(&head_text, &index_text).map_err(|e| match e {
+            DiffError::TooLarge => VcsError::TooLargeToDiff,
+        })?;
+        Ok(StagedHunks {
+            head_text,
+            index_text,
+            hunks,
+        })
+    }
+}
+
+/// The blob id used as the cache key (and returned to the caller) when the
+/// index has no entry for the file at all — the staging counterpart to
+/// [`NO_HEAD_BLOB`], same sentinel value since both mean "diff against
+/// nothing".
+pub const NO_INDEX_BLOB: &str = NO_HEAD_BLOB;
+
+/// `HEAD`-vs-index hunks for one file, with both texts they were computed
+/// from — [`Repository::unstage_hunk`] needs both ends of the patch, unlike
+/// [`WorkingHunks`], which only ever needs the `HEAD`/index side since the
+/// working text is already the caller's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagedHunks {
+    pub head_text: String,
+    pub index_text: String,
+    pub hunks: Vec<Hunk>,
+}
+
+/// Whether a `HEAD`-vs-worktree hunk (the gutter's own diff) is not staged
+/// at all, fully staged, or partially staged — IDEA's three-state hunk
+/// colouring, and what "Stage Hunk"/"Unstage Hunk" must reconcile against
+/// the index rather than assume from the gutter's own `HEAD`-vs-worktree
+/// view alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HunkStageState {
+    /// No overlap with any `HEAD`-vs-index hunk: none of this change is in
+    /// the index yet.
+    Unstaged,
+    /// An exact match with a `HEAD`-vs-index hunk: this whole change is
+    /// already staged.
+    Staged,
+    /// Overlaps a `HEAD`-vs-index hunk without matching it exactly: the
+    /// file was edited again after a partial `git add`, so part of what the
+    /// gutter shows is staged and part is not.
+    Both,
+}
+
+/// Classify one gutter hunk against the file's `HEAD`-vs-index hunks (see
+/// [`Repository::staged_hunks`]), comparing `HEAD`-side line ranges — the
+/// one coordinate system a `HEAD`-vs-worktree hunk and a `HEAD`-vs-index
+/// hunk share.
+///
+/// Ceiling: two hunks that touch the same `HEAD`-side lines but were staged
+/// and re-edited into different line *counts* can still read as an exact
+/// range match here even though their content no longer agrees line for
+/// line — a full three-way reconciliation would need to diff `HEAD`, the
+/// index and the working tree against each other, not just compare ranges.
+/// ponytail: acceptable for the common case (one hunk edited then either
+/// staged in full or not at all); revisit if partial-restage on an
+/// already-partially-staged hunk is reported as showing the wrong state.
+pub fn classify_hunk(gutter_hunk: &Hunk, staged_hunks: &[Hunk]) -> HunkStageState {
+    let exact = staged_hunks
+        .iter()
+        .any(|h| h.old == gutter_hunk.old && h.new.len() == gutter_hunk.new.len());
+    if exact {
+        return HunkStageState::Staged;
+    }
+    if staged_hunks
+        .iter()
+        .any(|h| ranges_overlap(&h.old, &gutter_hunk.old))
+    {
+        HunkStageState::Both
+    } else {
+        HunkStageState::Unstaged
+    }
+}
+
+pub(crate) fn ranges_overlap(a: &std::ops::Range<usize>, b: &std::ops::Range<usize>) -> bool {
+    a.start <= b.end && b.start <= a.end
 }
 
 /// Working-tree hunks for one file: `HEAD`'s blob id (`"none"` for a file
@@ -359,5 +513,87 @@ mod tests {
             .hunks(&repo, Path::new("huge.txt"), &huge, 0)
             .unwrap_err();
         assert!(matches!(err, VcsError::TooLargeToDiff));
+    }
+
+    #[test]
+    fn hunks_against_index_diffs_the_staged_copy_not_head() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        // Stage a first edit, then make a second, still-unstaged edit.
+        std::fs::write(dir.path().join("a.txt"), "ONE\ntwo\nthree\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        let working = "ONE\ntwo\nTHREE\n";
+        std::fs::write(dir.path().join("a.txt"), working).unwrap();
+
+        let repo = open(dir.path());
+        let result = repo
+            .hunks_against_index(Path::new("a.txt"), working)
+            .unwrap();
+
+        // Against HEAD there would be two hunks (line 1 and line 3);
+        // against the index there is exactly the one still-unstaged edit.
+        assert_eq!(result.hunks.len(), 1);
+        assert_eq!(result.hunks[0].new, 2..3);
+    }
+
+    #[test]
+    fn index_blob_is_none_for_an_untracked_file() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        let repo = open(dir.path());
+        assert_eq!(repo.index_blob(Path::new("new.txt")).unwrap(), None);
+    }
+
+    // -----------------------------------------------------------------
+    // Three-state hunk colouring: classify_hunk.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_gutter_hunk_with_no_staged_overlap_is_unstaged() {
+        let gutter = diff::diff_lines("one\ntwo\nthree\n", "one\nTWO\nthree\n").unwrap();
+        let state = classify_hunk(&gutter[0], &[]);
+        assert_eq!(state, HunkStageState::Unstaged);
+    }
+
+    #[test]
+    fn a_gutter_hunk_matching_a_staged_hunk_exactly_is_staged() {
+        let gutter = diff::diff_lines("one\ntwo\nthree\n", "one\nTWO\nthree\n").unwrap();
+        let staged = diff::diff_lines("one\ntwo\nthree\n", "one\nTWO\nthree\n").unwrap();
+        let state = classify_hunk(&gutter[0], &staged);
+        assert_eq!(state, HunkStageState::Staged);
+    }
+
+    #[test]
+    fn a_gutter_hunk_overlapping_but_not_matching_a_staged_hunk_is_both() {
+        // Staged: line 2 became "TWO". Working tree since then: line 2 is
+        // now "TWO-EDITED" and line 3 changed too — one gutter hunk spans
+        // both, only part of which is reflected in the index.
+        let gutter = diff::diff_lines("one\ntwo\nthree\n", "one\nTWO-EDITED\nTHREE\n").unwrap();
+        let staged = diff::diff_lines("one\ntwo\nthree\n", "one\nTWO\nthree\n").unwrap();
+        let state = classify_hunk(&gutter[0], &staged);
+        assert_eq!(state, HunkStageState::Both);
+    }
+
+    #[test]
+    fn staged_hunks_reads_head_and_index_not_the_working_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        git(dir.path(), &["init", "--quiet"]);
+        std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        git(dir.path(), &["commit", "-m", "first"]);
+
+        std::fs::write(dir.path().join("a.txt"), "ONE\ntwo\n").unwrap();
+        git(dir.path(), &["add", "a.txt"]);
+        // A further, unstaged edit — staged_hunks must ignore it.
+        std::fs::write(dir.path().join("a.txt"), "ONE\nTWO\n").unwrap();
+
+        let repo = open(dir.path());
+        let result = repo.staged_hunks(Path::new("a.txt")).unwrap();
+        assert_eq!(result.hunks.len(), 1);
+        assert_eq!(result.index_text, "ONE\ntwo\n");
     }
 }

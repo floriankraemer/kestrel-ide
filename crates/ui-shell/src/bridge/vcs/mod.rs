@@ -67,6 +67,12 @@ pub struct VcsServiceRust {
     status_pending: Arc<AtomicBool>,
     is_repository: Cell<bool>,
     status: RefCell<vcs_core::RepoStatus>,
+    /// `HEAD`'s own commit message, cached alongside every `refreshStatus`
+    /// (a cheap in-process `gix` read, ADR-0031 §7) so Amend can prefill it
+    /// synchronously rather than round-tripping the worker when the dialog
+    /// opens. Empty when there is no commit yet (an unborn `HEAD`) or the
+    /// read failed.
+    head_message: RefCell<String>,
     hunks: RefCell<HashMap<String, CachedHunks>>,
     /// `requestBlobAt`'s answers, keyed by `(path, revision)` — a diff tab
     /// comparing two revisions asks for both sides of the same path, so a
@@ -113,6 +119,7 @@ impl Default for VcsServiceRust {
             status_pending: Arc::new(AtomicBool::new(false)),
             is_repository: Cell::new(false),
             status: RefCell::default(),
+            head_message: RefCell::default(),
             project_root: RefCell::default(),
             hunks: RefCell::default(),
             blobs: RefCell::default(),
@@ -231,6 +238,7 @@ impl ffi::VcsService {
         self.blobs.borrow_mut().clear();
         self.branches.borrow_mut().clear();
         self.current_branch.borrow_mut().clear();
+        self.head_message.borrow_mut().clear();
         *self.status.borrow_mut() = vcs_core::RepoStatus::default();
         self.is_repository.set(false);
         *self.project_root.borrow_mut() = root.clone();
@@ -301,9 +309,15 @@ impl ffi::VcsService {
             // this one is running has to be able to ask again.
             pending.store(false, Ordering::SeqCst);
             let result = worker.repo.status();
+            // Piggy-backed on the same job as the status walk: a cheap
+            // in-process `gix` read (ADR-0031 §7), not worth a second
+            // worker round trip of its own, and Amend needs a fresh answer
+            // whenever the Changes dock does.
+            let head_message = worker.repo.head_message().ok().flatten();
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(status) => {
                     *service.status.borrow_mut() = status;
+                    *service.head_message.borrow_mut() = head_message.unwrap_or_default();
                     service.as_mut().status_changed();
                 }
                 Err(err) => {
@@ -608,6 +622,13 @@ impl ffi::VcsService {
             }
             Err(err) => to_ffi_result(&err),
         }
+    }
+
+    /// `HEAD`'s own commit message, last refreshed alongside
+    /// `refreshStatus` — Amend's prefill. Empty for an unborn `HEAD` (no
+    /// commits yet) or before the first status refresh has landed.
+    pub fn head_message(&self) -> QString {
+        QString::from(self.head_message.borrow().as_str())
     }
 
     /// Whether this machine already said "not now" to initializing a Git

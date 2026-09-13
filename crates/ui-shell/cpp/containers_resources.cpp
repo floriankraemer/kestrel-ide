@@ -8,6 +8,7 @@
 #include "containers_panel.h"
 
 #include "containers_detail.h"
+#include "run_config_dialog.h"
 
 #include <QAction>
 #include <QApplication>
@@ -90,7 +91,7 @@ void ContainersPanel::showImageContextMenu(QTreeWidgetItem *item, const QPoint &
 
     QAction *chosen = menu.exec(globalPos);
     if (chosen == createContainer) {
-        openCreateContainerQuickDialog(id);
+        openCreateContainerDialog(id);
     } else if (chosen == pull) {
         const QString connectionId = item->data(0, kConnectionRole).toString();
         const QString reference = item->text(0);
@@ -359,24 +360,29 @@ void ContainersPanel::openCopyImageDialog(const QString &nodeId)
     report(containerService_->copyImageTo(nodeId, target->currentData().toString()));
 }
 
-void ContainersPanel::openCreateContainerQuickDialog(const QString &nodeId)
+void ContainersPanel::openCreateContainerDialog(const QString &nodeId)
 {
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Create Container"));
-    auto *form = new QFormLayout(&dialog);
-    auto *name = new QLineEdit(&dialog);
-    auto *publishAll = new QCheckBox(tr("Publish all exposed ports"), &dialog);
-    form->addRow(tr("Name"), name);
-    form->addRow(QString(), publishAll);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    form->addRow(buttons);
-    if (dialog.exec() != QDialog::Accepted) {
-        return;
+    // C5 (ADR-0056 §6): a new container-image run configuration, prefilled
+    // with this image's own connection and reference, opened in the real
+    // run-config dialog rather than a quick one-off form — the same place
+    // every other container-image configuration is edited, replacing C4's
+    // `createContainerQuick`.
+    if (runConfigEditor_ == nullptr) {
+        return; // Not wired yet — see `setRunContext`'s own doc comment.
     }
-    report(containerService_->createContainerQuick(nodeId, name->text().trimmed(),
-                                                    publishAll->isChecked()));
+    const FfiContainerOptions defaults = containerService_->imageRunDefaults(nodeId);
+    const quint32 index = runConfigEditor_->addContainerConfiguration(
+      tr("Create Container"), QStringLiteral("container-image"), defaults);
+    const FfiRunConfig config = [this, index]() {
+        int i = 0;
+        for (const FfiRunConfig &candidate : runConfigEditor_->configurations()) {
+            if (i++ == static_cast<int>(index)) {
+                return candidate;
+            }
+        }
+        return FfiRunConfig{};
+    }();
+    showRunConfigDialog(this, runConfigEditor_, containerService_, config.id);
 }
 
 } // namespace ui_shell

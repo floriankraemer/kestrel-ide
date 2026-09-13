@@ -329,6 +329,82 @@ fn detect_jvm(project_root: &Path) -> Vec<RunConfig> {
     configs
 }
 
+/// Compose file names this IDE recognises without invoking anything (C5):
+/// the conventional names both Compose v2 and `podman-compose` look for
+/// first, in the order they are tried. A file-name rule rather than
+/// `container_core::is_compose_file`'s full pattern (C6, not yet landed
+/// when this was written): good enough for "suggest a run configuration",
+/// which only needs the common cases, not every possible rename.
+const COMPOSE_FILE_NAMES: &[&str] = &[
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+    "podman-compose.yml",
+    "podman-compose.yaml",
+];
+
+/// Whether `path`'s file name is one of [`COMPOSE_FILE_NAMES`] — the
+/// Dockerfile/compose gutter's own file-type check (C5, ADR-0056), reused
+/// by [`detect_compose`] above. A file-name rule, same scope note as
+/// [`COMPOSE_FILE_NAMES`]'s own doc comment.
+pub fn is_compose_file_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| COMPOSE_FILE_NAMES.contains(&name))
+}
+
+/// A `kind = "containerfile"` suggestion when the project root has a
+/// `Dockerfile` or `Containerfile` — `RunConfigExt::toolchain` stays `None`
+/// for it (a container flavor is not a build tool, ADR-0056), so the
+/// before-launch build/run split lives entirely in
+/// `before_launch::tasks_of_with_containers`, not in this function's
+/// `needs_build` loop below.
+fn detect_containerfile(project_root: &Path) -> Vec<RunConfig> {
+    let Some(dockerfile) = ["Dockerfile", "Containerfile"]
+        .into_iter()
+        .find(|name| project_root.join(name).is_file())
+    else {
+        return Vec::new();
+    };
+    let tag = project_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("app");
+    vec![RunConfig {
+        id: format!("containerfile-{dockerfile}"),
+        name: dockerfile.to_string(),
+        kind: Some("containerfile".to_string()),
+        containerfile: Some(app_config::container_run::ContainerfileRunSetting {
+            dockerfile: dockerfile.to_string(),
+            context_dir: "$PROJECT_DIR$".to_string(),
+            image_tag: format!("{tag}:latest"),
+            run_built_image: true,
+            ..app_config::container_run::ContainerfileRunSetting::default()
+        }),
+        ..RunConfig::default()
+    }]
+}
+
+/// A `kind = "compose"` suggestion per conventional compose file name found
+/// at the project root.
+fn detect_compose(project_root: &Path) -> Vec<RunConfig> {
+    COMPOSE_FILE_NAMES
+        .iter()
+        .filter(|name| project_root.join(name).is_file())
+        .map(|name| RunConfig {
+            id: format!("compose-{name}"),
+            name: (*name).to_string(),
+            kind: Some("compose".to_string()),
+            compose: Some(app_config::container_run::ComposeRunSetting {
+                compose_files: vec![(*name).to_string()],
+                ..app_config::container_run::ComposeRunSetting::default()
+            }),
+            ..RunConfig::default()
+        })
+        .collect()
+}
+
 /// Every launchable target this project's build files name. Order follows
 /// [`ToolchainId::ALL`] — Cargo bins and examples, CMake executables, Python
 /// entry points, JVM run tasks, npm/yarn/pnpm scripts, Makefile targets —
@@ -340,6 +416,8 @@ pub fn detect(project_root: &Path) -> Vec<RunConfig> {
     configs.extend(detect_jvm(project_root));
     configs.extend(detect_package_json(project_root));
     configs.extend(detect_makefile(project_root));
+    configs.extend(detect_containerfile(project_root));
+    configs.extend(detect_compose(project_root));
 
     // A detected configuration whose run command does not compile first
     // gets a Build before-launch task, which is what makes Run on a CMake
@@ -508,6 +586,63 @@ mod tests {
             cargo[0].before_launch.is_empty(),
             "`cargo run` already compiles; a Build task would compile twice"
         );
+    }
+
+    #[test]
+    fn a_dockerfile_is_suggested_as_a_containerfile_configuration() {
+        let dir = project_with(&[("Dockerfile", "FROM scratch\n")]);
+        let configs = detect_containerfile(dir.path());
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].kind.as_deref(), Some("containerfile"));
+        let setting = configs[0].containerfile.as_ref().unwrap();
+        assert_eq!(setting.dockerfile, "Dockerfile");
+        assert!(setting.run_built_image);
+        assert!(configs[0].toolchain.is_none(), "not a build tool");
+    }
+
+    #[test]
+    fn a_containerfile_is_preferred_when_no_dockerfile_exists() {
+        let dir = project_with(&[("Containerfile", "FROM scratch\n")]);
+        let configs = detect_containerfile(dir.path());
+        assert_eq!(
+            configs[0].containerfile.as_ref().unwrap().dockerfile,
+            "Containerfile"
+        );
+    }
+
+    #[test]
+    fn a_project_with_neither_file_suggests_no_containerfile_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(detect_containerfile(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn every_conventional_compose_name_is_suggested_as_a_compose_configuration() {
+        for name in [
+            "docker-compose.yml",
+            "docker-compose.yaml",
+            "compose.yml",
+            "compose.yaml",
+            "podman-compose.yml",
+            "podman-compose.yaml",
+        ] {
+            let dir = project_with(&[(name, "services: {}\n")]);
+            let configs = detect_compose(dir.path());
+            assert_eq!(configs.len(), 1, "{name}");
+            assert_eq!(configs[0].kind.as_deref(), Some("compose"));
+            assert_eq!(
+                configs[0].compose.as_ref().unwrap().compose_files,
+                vec![name.to_string()]
+            );
+        }
+    }
+
+    #[test]
+    fn is_compose_file_name_matches_the_conventional_names_only() {
+        assert!(is_compose_file_name(Path::new("docker-compose.yml")));
+        assert!(is_compose_file_name(Path::new("/a/b/compose.yaml")));
+        assert!(!is_compose_file_name(Path::new("Dockerfile")));
+        assert!(!is_compose_file_name(Path::new("random.yml")));
     }
 
     #[test]

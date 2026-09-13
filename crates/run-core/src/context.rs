@@ -120,6 +120,77 @@ fn temporary(
     }
 }
 
+/// A stable, human-legible id for a temporary config keyed by a project-
+/// relative path — the same "clicking the same gutter icon twice reuses one
+/// entry" property [`temporary`]'s callers already get for a target name.
+fn id_for_path(prefix: &str, project_root: &Path, path: &Path) -> String {
+    let relative = path
+        .strip_prefix(project_root)
+        .unwrap_or(path)
+        .display()
+        .to_string();
+    format!("{prefix}-{relative}")
+}
+
+/// The temporary `kind = "containerfile"` configuration a Dockerfile/
+/// Containerfile gutter click (C5, ADR-0056) would run: build then run,
+/// same as a detected one (`detect::detect_containerfile`), but for this
+/// exact file rather than only a project-root `Dockerfile`/`Containerfile` —
+/// its build context is the file's own directory, project-relative, not
+/// necessarily the project root.
+///
+/// `None` only when `file` is outside `project_root`, the same refusal
+/// [`config_for_file`] makes for the identical reason.
+pub fn containerfile_config(project_root: &Path, file: &Path) -> Option<RunConfig> {
+    let relative = file.strip_prefix(project_root).ok()?;
+    let context_dir = relative
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| ".".to_string());
+    let dockerfile_name = relative.file_name()?.to_string_lossy().into_owned();
+    let tag = project_root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("app");
+
+    Some(RunConfig {
+        id: id_for_path("containerfile", project_root, file),
+        name: dockerfile_name.clone(),
+        kind: Some("containerfile".to_string()),
+        containerfile: Some(app_config::container_run::ContainerfileRunSetting {
+            dockerfile: dockerfile_name,
+            context_dir,
+            image_tag: format!("{tag}:latest"),
+            run_built_image: true,
+            ..app_config::container_run::ContainerfileRunSetting::default()
+        }),
+        temporary: true,
+        ..RunConfig::default()
+    })
+}
+
+/// The temporary `kind = "compose"` configuration a compose file's gutter
+/// click would run — the whole file, every service (`services` left empty,
+/// [`crate::container_run::compose_launch_spec`]'s "empty means every
+/// service" rule). `None` only when `file` is outside `project_root`.
+pub fn compose_config(project_root: &Path, connection_id: &str, file: &Path) -> Option<RunConfig> {
+    let relative = file.strip_prefix(project_root).ok()?;
+    let name = relative.display().to_string();
+    Some(RunConfig {
+        id: id_for_path("compose", project_root, file),
+        name: name.clone(),
+        kind: Some("compose".to_string()),
+        compose: Some(app_config::container_run::ComposeRunSetting {
+            connection_id: connection_id.to_string(),
+            compose_files: vec![name],
+            ..app_config::container_run::ComposeRunSetting::default()
+        }),
+        temporary: true,
+        ..RunConfig::default()
+    })
+}
+
 /// Add `config` to `configs`, replacing an entry with the same id, and drop
 /// the oldest temporary entries beyond [`TEMPORARY_CAP`].
 ///
@@ -199,6 +270,65 @@ mod tests {
     fn a_file_outside_the_project_has_no_run_target() {
         let dir = cargo_project();
         assert!(config_for_file(dir.path(), &PathBuf::from("/elsewhere/main.rs")).is_none());
+    }
+
+    #[test]
+    fn containerfile_config_derives_context_dir_from_the_files_own_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("docker")).unwrap();
+        let file = dir.path().join("docker/Dockerfile");
+        let config = containerfile_config(dir.path(), &file).unwrap();
+        assert_eq!(config.kind.as_deref(), Some("containerfile"));
+        assert!(config.temporary);
+        let setting = config.containerfile.unwrap();
+        assert_eq!(setting.dockerfile, "Dockerfile");
+        assert_eq!(setting.context_dir, "docker");
+        assert!(setting.run_built_image);
+    }
+
+    #[test]
+    fn containerfile_config_at_the_project_root_uses_a_dot_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Dockerfile");
+        let config = containerfile_config(dir.path(), &file).unwrap();
+        assert_eq!(config.containerfile.unwrap().context_dir, ".");
+    }
+
+    #[test]
+    fn containerfile_config_outside_the_project_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(containerfile_config(dir.path(), Path::new("/elsewhere/Dockerfile")).is_none());
+    }
+
+    #[test]
+    fn clicking_the_same_dockerfile_twice_reuses_one_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Dockerfile");
+        let a = containerfile_config(dir.path(), &file).unwrap();
+        let b = containerfile_config(dir.path(), &file).unwrap();
+        assert_eq!(a.id, b.id);
+    }
+
+    #[test]
+    fn compose_config_names_the_whole_file_with_no_services_selected() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("docker-compose.yml");
+        let config = compose_config(dir.path(), "local-docker", &file).unwrap();
+        assert_eq!(config.kind.as_deref(), Some("compose"));
+        assert!(config.temporary);
+        let setting = config.compose.unwrap();
+        assert_eq!(setting.connection_id, "local-docker");
+        assert_eq!(
+            setting.compose_files,
+            vec!["docker-compose.yml".to_string()]
+        );
+        assert!(setting.services.is_empty(), "empty means every service");
+    }
+
+    #[test]
+    fn compose_config_outside_the_project_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(compose_config(dir.path(), "", Path::new("/elsewhere/compose.yml")).is_none());
     }
 
     #[test]

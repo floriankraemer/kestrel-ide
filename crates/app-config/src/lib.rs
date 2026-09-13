@@ -8,17 +8,15 @@
 //! [`Settings`] via [`load`]/[`save`] and drives a settings dialog around it.
 
 use std::collections::{BTreeMap, HashMap};
-use std::fmt;
-use std::fs;
-use std::io;
-use std::io::Write;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::{fmt, fs};
 
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// The `[analysis]` section: per-analyzer trigger/enabled overrides.
 pub mod analysis;
+pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0056).
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
 pub mod containers;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.

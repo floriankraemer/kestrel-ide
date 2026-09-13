@@ -45,6 +45,10 @@ pub mod probe;
 /// Clean Up (C4): the group "Clean Up" menus' matrix — which prune kind
 /// runs which command(s), and whether it is offered per engine.
 pub mod prune;
+/// Run-configuration argv compilers (C5, ADR-0056): Image/Containerfile/
+/// Compose option structs -> exact CLI argv, plus `preview()` and the
+/// compose services picker.
+pub mod run_config;
 /// Streaming sessions (C3): `pty_core::ShellSpec` builders for Log/
 /// Terminal/Exec/Attach, and `inspect` pretty-printing for the Inspect tab.
 pub mod session;

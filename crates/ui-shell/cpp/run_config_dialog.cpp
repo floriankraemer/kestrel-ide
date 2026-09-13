@@ -1,7 +1,9 @@
 #include "run_config_dialog.h"
 
 #include "e2e_mark.h"
+#include "run_config_container_pages.h"
 
+#include <QAction>
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -9,6 +11,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPoint>
@@ -16,6 +19,7 @@
 #include <QRect>
 #include <QSignalBlocker>
 #include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include <memory>
@@ -40,6 +44,35 @@ FfiRunConfig configAt(RunConfigEditor *editor, int index)
     return FfiRunConfig{};
 }
 
+int indexOfId(RunConfigEditor *editor, const QString &id)
+{
+    int i = 0;
+    for (const FfiRunConfig &config : editor->configurations()) {
+        if (QString(config.id) == id) {
+            return i;
+        }
+        ++i;
+    }
+    return -1;
+}
+
+// The starter options a freshly added container-kind configuration gets —
+// just enough for `container_core::run_config` to compile something
+// sensible; the rest is left to the user to fill in through the page's own
+// fields (C5, ADR-0056).
+FfiContainerOptions defaultContainerOptions(const QString &kind)
+{
+    FfiContainerOptions options;
+    if (kind == QLatin1String("containerfile")) {
+        options.dockerfile = QStringLiteral("Dockerfile");
+        options.context_dir = QStringLiteral("$PROJECT_DIR$");
+        options.run_built_image = true;
+    } else if (kind == QLatin1String("compose")) {
+        options.compose_files = QStringLiteral("docker-compose.yml");
+    }
+    return options;
+}
+
 void repaintList(QListWidget *list, RunConfigEditor *editor, int keepIndex)
 {
     const QSignalBlocker blocker(list);
@@ -54,17 +87,30 @@ void repaintList(QListWidget *list, RunConfigEditor *editor, int keepIndex)
 
 } // namespace
 
-void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
+void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
+                         ContainerService *containerService, const QString &selectConfigId)
 {
     editor->beginEdit();
 
     QDialog dialog(parent);
     dialog.setWindowTitle(QObject::tr("Run Configurations"));
-    dialog.resize(640, 420);
+    dialog.resize(760, 520);
 
     auto *list = new QListWidget(&dialog);
     list->setMaximumWidth(200);
-    auto *addButton = new QPushButton(QObject::tr("Add"), &dialog);
+    // A plain "Add" button plus a Containers submenu (C5, ADR-0056): the
+    // default action still adds a plain process configuration with one
+    // click, exactly as before.
+    auto *addButton = new QToolButton(&dialog);
+    addButton->setText(QObject::tr("Add"));
+    addButton->setPopupMode(QToolButton::MenuButtonPopup);
+    auto *addMenu = new QMenu(addButton);
+    QAction *addProcessAction = addMenu->addAction(QObject::tr("Process"));
+    QMenu *containersMenu = addMenu->addMenu(QObject::tr("Containers"));
+    QAction *addImageAction = containersMenu->addAction(QObject::tr("Container Image"));
+    QAction *addContainerfileAction = containersMenu->addAction(QObject::tr("Containerfile"));
+    QAction *addComposeAction = containersMenu->addAction(QObject::tr("Compose"));
+    addButton->setMenu(addMenu);
     auto *removeButton = new QPushButton(QObject::tr("Remove"), &dialog);
     auto *listButtons = new QHBoxLayout();
     listButtons->addWidget(addButton);
@@ -88,6 +134,12 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
     parallelCheck->setToolTip(
       QObject::tr("Run this configuration again without stopping the running one"));
 
+    auto *containerPage = new ContainerOptionsPage(containerService, editor, &dialog);
+
+    auto *commandPreviewEdit = new QPlainTextEdit(&dialog);
+    commandPreviewEdit->setReadOnly(true);
+    commandPreviewEdit->setMaximumHeight(50);
+
     auto *form = new QVBoxLayout();
     const auto addRow = [form, &dialog](const QString &label, QWidget *field) {
         auto *row = new QHBoxLayout();
@@ -106,6 +158,9 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
     form->addWidget(parallelCheck);
     form->addWidget(new QLabel(QObject::tr("Environment:"), &dialog));
     form->addWidget(envEdit, 1);
+    form->addWidget(containerPage, 1);
+    form->addWidget(new QLabel(QObject::tr("Command preview:"), &dialog));
+    form->addWidget(commandPreviewEdit);
 
     auto *columns = new QHBoxLayout();
     columns->addLayout(listColumn);
@@ -124,6 +179,11 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
     // `commitForm`/`loadForm` pair uses.
     auto previousIndex = std::make_shared<int>(-1);
 
+    // What kind the currently-loaded row is — set only by `loadForm`/the Add
+    // menu, read by `commitForm` so it never has to re-derive it from a
+    // combo box that does not exist (kind is fixed at creation).
+    auto currentKind = std::make_shared<QString>();
+
     const auto commitForm = [=]() {
         const int index = *previousIndex;
         if (index < 0) {
@@ -137,14 +197,24 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         form.env = envEdit->toPlainText();
         form.allow_parallel = parallelCheck->isChecked();
         form.before_launch = beforeLaunchEdit->toPlainText();
+        form.kind = *currentKind;
+        form.container = containerPage->options();
         editor->updateConfiguration(static_cast<quint32>(index), form);
+    };
+
+    const auto refreshPreview = [=]() {
+        FfiRunConfig form{};
+        form.name = nameEdit->text();
+        form.program = programEdit->text();
+        form.args = argsEdit->text();
+        form.kind = *currentKind;
+        form.container = containerPage->options();
+        commandPreviewEdit->setPlainText(editor->commandPreview(form));
     };
 
     const auto loadForm = [=](int index) {
         const bool has = index >= 0;
         nameEdit->setEnabled(has);
-        programEdit->setEnabled(has);
-        argsEdit->setEnabled(has);
         cwdEdit->setEnabled(has);
         envEdit->setEnabled(has);
         beforeLaunchEdit->setEnabled(has);
@@ -158,7 +228,23 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         envEdit->setPlainText(config.env);
         beforeLaunchEdit->setPlainText(config.before_launch);
         parallelCheck->setChecked(config.allow_parallel);
+        *currentKind = config.kind;
+        const bool isContainer = has && !config.kind.isEmpty();
+        // Program/Arguments/Working dir are meaningless for a container-kind
+        // configuration (its argv is compiled from the container page's own
+        // fields, not these) — disabled rather than left editable and
+        // ignored.
+        programEdit->setEnabled(has && !isContainer);
+        argsEdit->setEnabled(has && !isContainer);
+        cwdEdit->setEnabled(has && !isContainer);
+        containerPage->setKind(config.kind);
+        containerPage->setOptions(config.container);
+        refreshPreview();
     };
+
+    QObject::connect(containerPage, &ContainerOptionsPage::changed, &dialog, refreshPreview);
+    QObject::connect(programEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
+    QObject::connect(argsEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
 
     QObject::connect(list, &QListWidget::currentRowChanged, &dialog, [=](int row) {
         commitForm();
@@ -166,10 +252,16 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         loadForm(row);
     });
 
-    QObject::connect(addButton, &QPushButton::clicked, &dialog, [=]() {
+    const auto addWithKind = [=](const QString &kind) {
         commitForm();
-        editor->addConfiguration();
-        repaintList(list, editor, configCount(editor) - 1);
+        if (kind.isEmpty()) {
+            editor->addConfiguration();
+        } else {
+            editor->addContainerConfiguration(QObject::tr("New Configuration"), kind,
+                                              defaultContainerOptions(kind));
+        }
+        const int index = configCount(editor) - 1;
+        repaintList(list, editor, index);
         // `repaintList`'s `QSignalBlocker` means its own `setCurrentRow`
         // above never fires `currentRowChanged` — so, unlike a row the user
         // clicks themselves, the form has to be pointed at the new row
@@ -182,7 +274,17 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         loadForm(list->currentRow());
         e2eMark(QStringLiteral("{\"ev\":\"run_config_added\",\"count\":%1}")
                   .arg(configCount(editor)));
-    });
+    };
+    QObject::connect(addButton, &QToolButton::clicked, &dialog,
+                      [=]() { addWithKind(QString()); });
+    QObject::connect(addProcessAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QString()); });
+    QObject::connect(addImageAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QStringLiteral("container-image")); });
+    QObject::connect(addContainerfileAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QStringLiteral("containerfile")); });
+    QObject::connect(addComposeAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QStringLiteral("compose")); });
 
     QObject::connect(removeButton, &QPushButton::clicked, &dialog, [=]() {
         const int index = list->currentRow();
@@ -220,7 +322,10 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor)
         dialog.reject();
     });
 
-    repaintList(list, editor, configCount(editor) > 0 ? 0 : -1);
+    const int initialIndex = selectConfigId.isEmpty()
+      ? (configCount(editor) > 0 ? 0 : -1)
+      : indexOfId(editor, selectConfigId);
+    repaintList(list, editor, initialIndex);
     *previousIndex = list->currentRow();
     loadForm(list->currentRow());
 

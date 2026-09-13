@@ -115,6 +115,32 @@ pub fn tasks_of(config: &RunConfig) -> Vec<BeforeLaunchTask> {
         .collect()
 }
 
+/// [`tasks_of`], with a containerfile configuration's auto build task
+/// prepended (C5, ADR-0056): a `kind = "containerfile"` configuration whose
+/// [`app_config::ContainerfileRunSetting::run_built_image`] is set always
+/// builds before it runs, exactly the way a Cargo/Gradle project's detected
+/// configuration always gets a [`BeforeLaunchTask::Build`] — except the
+/// build command here is `docker build …`, resolved per-connection, so it
+/// cannot be a plain persisted [`BeforeLaunchSetting`] the way `Build` is; it
+/// is computed fresh from `config`/`containers` on every call instead of
+/// being stored, so editing the connection or the Dockerfile path never
+/// leaves a stale build command behind.
+///
+/// A separate function rather than changing [`tasks_of`] itself: cycle
+/// validation ([`validate`]) and every other pre-C5 caller only care about
+/// `RunConfiguration` references, so they keep working against configs with
+/// no `[containers]` section to hand this one.
+pub fn tasks_of_with_containers(
+    config: &RunConfig,
+    containers: &app_config::ContainerSettings,
+) -> Vec<BeforeLaunchTask> {
+    let mut tasks = tasks_of(config);
+    if let Some(build) = crate::container_run::build_task(config, containers) {
+        tasks.insert(0, build);
+    }
+    tasks
+}
+
 /// Check that launching `config_id` will terminate: no configuration in the
 /// before-launch graph reachable from it runs it again, and every
 /// configuration named still exists.

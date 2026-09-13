@@ -15,6 +15,11 @@ pub mod ansi;
 pub mod batching;
 pub mod before_launch;
 pub mod config;
+/// Container-kind run configurations (C5, ADR-0056): `to_launch_spec_in`'s
+/// dispatch for "container-image"/"containerfile"/"compose", the
+/// containerfile auto-build before-launch task, and the compose console's
+/// Stop/Down commands.
+pub mod container_run;
 pub mod context;
 pub mod detect;
 pub mod error;
@@ -27,8 +32,14 @@ pub use ansi::{AnsiResolver, AnsiStripper, StyledRun, StyledText, TextStyle};
 pub use batching::{BatchedOutput, OutputBatcher};
 pub use before_launch::{BeforeLaunchError, BeforeLaunchTask};
 pub use config::{ConsoleKind, LaunchSpec, RunConfig, RunConfigExt};
-pub use context::{config_for_file, remember_temporary, TEMPORARY_CAP};
-pub use detect::{detect, merge_detected};
+pub use container_run::{
+    compose_project_down_command, compose_project_scale_command, compose_project_stop_command,
+    compose_project_up_spec, down_command, stop_command,
+};
+pub use context::{
+    compose_config, config_for_file, containerfile_config, remember_temporary, TEMPORARY_CAP,
+};
+pub use detect::{detect, is_compose_file_name, merge_detected};
 pub use error::RunError;
 pub use links::{resolve_link, ResolvedLink};
 pub use macros::{expand as expand_macros, MacroContext};

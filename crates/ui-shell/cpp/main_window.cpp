@@ -731,7 +731,7 @@ void buildMainWindow(AppSettings *appSettings,
                           analysisService, containerService);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
-    wireRunService(runService, editorTabs);             // R1-7
+    wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5
     wireDebugService(debugService, editorTabs);         // D2-5
     // Breakpoints live under the project's `.ide/local/`, so they can only
     // be read once a project is open — the same lifecycle hook run
@@ -876,10 +876,10 @@ void buildMainWindow(AppSettings *appSettings,
         appSettings->setSettingsScope(QStringLiteral("global"));
         showSettingsDialog(window, settingsContext, QObject::tr("Containers"));
     });
-    // The same dialog, opened on the project's own layer (ADR-0022). Two
-    // entry points rather than one because "configure this project" and
-    // "configure my editor" are different intentions, and the scope selector
-    // inside the dialog is how you get from one to the other afterwards.
+    central.containersPanel->setRunContext(runService, runConfigEditor, editorTabs); // C5
+    // The same dialog, opened on the project's own layer (ADR-0022): "configure
+    // this project" and "configure my editor" are different intentions, and the
+    // dialog's own scope selector is how you get from one to the other after.
     QObject::connect(projectSettingsAction, &QAction::triggered, window,
                       [window, settingsContext, appSettings]() {
                           appSettings->setSettingsScope(QStringLiteral("project"));
@@ -1076,7 +1076,7 @@ void buildMainWindow(AppSettings *appSettings,
     buildVcsMenu(window, vcsService, appSettings, *actions, editorTabs, central.docks,
                  central.fileHistoryPanel, viewMenu);
     buildRunMenu(window, runService, runConfigEditor, appSettings, *actions, central.docks,
-                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu);
+                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
     buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu);

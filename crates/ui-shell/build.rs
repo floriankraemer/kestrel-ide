@@ -572,6 +572,10 @@ fn main() {
         // Image toolbar action — split out under the same file-size
         // ratchet reasoning as containers_actions.cpp above.
         .cpp_file("cpp/containers_resources.cpp")
+        // C5 (ADR-0056): the Compose tree's own actions (Start All/Stop/
+        // Down/Scale/Jump to Source), split out under the same file-size
+        // ratchet as the two files above.
+        .cpp_file("cpp/containers_compose.cpp")
         // C3: the per-container detail tab area (Log/Terminal/Exec/Attach/
         // Processes/Files). Declares Q_OBJECT (it connects to
         // `ContainerService`'s signals), so its header runs through moc too.
@@ -670,6 +674,12 @@ fn main() {
         .cpp_file("cpp/run_toolbar.cpp")
         .cpp_file("cpp/run_console_panel.cpp")
         .cpp_file("cpp/run_config_dialog.cpp")
+        // C5 (ADR-0056): the container-kind run-config pages (Image/
+        // Containerfile/Compose), split out of run_config_dialog.cpp under
+        // the file-size ratchet. Declares Q_OBJECT (a `changed()` signal),
+        // so its header is listed too — that is what runs moc on it.
+        .cpp_file("cpp/run_config_container_pages.h")
+        .cpp_file("cpp/run_config_container_pages.cpp")
         .cpp_file("cpp/run_menu.cpp")
         // Split out of main_window.cpp to keep it under its 1200-line
         // ceiling (ADR-0025): the status bar's permanent widgets, the

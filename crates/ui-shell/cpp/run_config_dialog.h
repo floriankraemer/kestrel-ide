@@ -2,6 +2,8 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QString>
+
 class QWidget;
 
 namespace ui_shell {
@@ -17,6 +19,16 @@ namespace ui_shell {
 // than closing on invalid data), Cancel calls `revert()`. Modal and
 // standalone rather than a Settings page, since editing run configurations
 // is an action reached from the Run menu, not a persistent preference.
-void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor);
+//
+// `containerService` feeds the container-kind pages' Server combo
+// (`ContainerService::connections()`) and Services picker (C5, ADR-0056).
+// `selectConfigId`, when non-empty, selects that configuration on open
+// instead of the first row — the Dockerfile/compose gutter's "New
+// configuration..." and "Create Container..." (replacing C4's
+// `createContainerQuick`) both add an entry first and then open the dialog
+// already pointed at it.
+void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
+                         ContainerService *containerService,
+                         const QString &selectConfigId = QString());
 
 } // namespace ui_shell

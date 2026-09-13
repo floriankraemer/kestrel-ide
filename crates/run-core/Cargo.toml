@@ -22,6 +22,11 @@ app-config = { path = "../app-config" }
 # parser. Not in the plan doc's original F4 dependency list — added
 # deliberately, see `docs/architecture/layering.md`'s `run-core` row.
 terminal-core = { path = "../terminal-core" }
+# Container-kind run configurations (C5, ADR-0056): `to_launch_spec_in`
+# compiles an Image/Containerfile/Compose configuration's argv through
+# `container_core::run_config`, and resolves its `connection_id` through
+# `container_core::connection`.
+container-core = { path = "../container-core" }
 serde = { version = "1", features = ["derive"] }
 # Detection reads Cargo.toml (F4-5) and terminal-core's Cargo.lock already
 # pulls the same `toml` version app-config uses.

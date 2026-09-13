@@ -23,7 +23,9 @@ use container_core::ops::{self, OpError};
 use container_core::tree::NodeKind;
 
 use crate::bridge::errors;
-use crate::bridge::ffi::{self, FfiCommand, FfiImageDashboard, FfiKeyValue, FfiLayer, FfiResult};
+use crate::bridge::ffi::{
+    self, FfiCommand, FfiContainerOptions, FfiImageDashboard, FfiKeyValue, FfiLayer, FfiResult,
+};
 
 use super::actions::parse_node_id;
 use super::service;
@@ -301,44 +303,32 @@ impl ffi::ContainerService {
         }
     }
 
-    /// Until C5's run-config editor lands: `run -d [--name <name>] [-P]
-    /// <image>`.
-    pub fn create_container_quick(
-        mut self: Pin<&mut Self>,
-        node_id: &QString,
-        name: &QString,
-        publish_all: bool,
-    ) -> FfiResult {
-        let node_id_str = node_id.to_string();
-        let Some((connection_id, resource_id)) = parse_node_id(&node_id_str, NodeKind::Image)
+    /// "Create Container..." from an image node's own reference — the
+    /// run-config dialog's prefill (C5, ADR-0056 §6, replacing C4's
+    /// `createContainerQuick`): a container-image configuration with
+    /// `connection_id`/`image` already set, everything else left at its
+    /// default for the user to fill in.
+    pub fn image_run_defaults(&self, node_id: &QString) -> FfiContainerOptions {
+        let Some((connection_id, resource_id)) =
+            parse_node_id(&node_id.to_string(), NodeKind::Image)
         else {
-            return errors::failure(
-                errors::CODE_INVALID_ARGUMENT,
-                format!("'{node_id_str}' is not an image node"),
-            );
+            return FfiContainerOptions::default();
         };
-        let invocation = match service::connection_invocation(&connection_id) {
-            Ok(invocation) => invocation,
-            Err(result) => return result,
+        let connections = self.connections.borrow();
+        let Some(connection) = connections.get(&connection_id) else {
+            return FfiContainerOptions::default();
         };
-        let name = name.to_string();
-        let work_dir = service::work_dir();
-        let qt_thread = self.as_mut().qt_thread();
-        std::thread::spawn(move || {
-            let mut args = vec!["run".to_string(), "-d".to_string()];
-            if !name.is_empty() {
-                args.push("--name".to_string());
-                args.push(name);
-            }
-            if publish_all {
-                args.push("-P".to_string());
-            }
-            args.push(resource_id);
-            let result: Result<(), OpError> =
-                ops::run_op(&invocation, &args, &work_dir).map(|_| ());
-            report_action(qt_thread, String::new(), result, connection_id);
-        });
-        FfiResult::default()
+        let Some(snapshot) = connection.snapshot.as_ref() else {
+            return FfiContainerOptions::default();
+        };
+        let Some(image) = snapshot.images.iter().find(|image| image.id == resource_id) else {
+            return FfiContainerOptions::default();
+        };
+        FfiContainerOptions {
+            connection_id: QString::from(connection_id.as_str()),
+            image: QString::from(image.display_name().as_str()),
+            ..Default::default()
+        }
     }
 }
 

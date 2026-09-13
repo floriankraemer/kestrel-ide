@@ -8,6 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::container_run::{ComposeRunSetting, ContainerImageRunSetting, ContainerfileRunSetting};
 use crate::is_false;
 
 /// One entry in a run configuration's `before_launch` list (B2-1).
@@ -83,6 +84,24 @@ pub struct RunConfigSetting {
     /// (B2-1), in order. Empty for a configuration with nothing to prepare.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub before_launch: Vec<BeforeLaunchSetting>,
+    /// What kind of thing this configuration launches (C5, ADR-0056):
+    /// `None`/`"process"` for today's plain program+args (the only kind
+    /// before this field existed), or `"container-image"` /
+    /// `"containerfile"` / `"compose"` — each paired with exactly one of
+    /// [`RunConfigSetting::container_image`], [`RunConfigSetting::containerfile`]
+    /// or [`RunConfigSetting::compose`]. A string rather than an enum for
+    /// the same reason as [`RunConfigSetting::toolchain`] (ADR-0039):
+    /// persistence stays dumb, and `run_core::RunConfigExt` maps the string
+    /// back, so an unrecognised kind loads as a plain process rather than
+    /// failing the whole settings file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_image: Option<ContainerImageRunSetting>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub containerfile: Option<ContainerfileRunSetting>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compose: Option<ComposeRunSetting>,
 }
 
 /// One `[[debug_adapter]]` entry: what the user says about the debug adapter

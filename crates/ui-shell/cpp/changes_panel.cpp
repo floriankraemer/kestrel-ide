@@ -375,6 +375,28 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
 void ChangesPanel::showEvent(QShowEvent *event)
 {
     QWidget::showEvent(event);
+    markShown();
+}
+
+// Root cause of a flaky E2E stage-and-commit flow: `showEvent` fires once,
+// the first time this panel becomes visible — which, since `vcs_menu.cpp`
+// auto-raises this dock the moment `repositoryChanged` fires, can be well
+// before the main window has finished its own initial layout pass (still
+// restoring a saved dock layout, still settling its first resize under a
+// window manager). A rect read at that moment is not reliably this panel's
+// *final* on-screen position, so a later click built from it can miss.
+//
+// The fix is to mark again, not to mark differently: every `refresh()` —
+// which a stage/unstage/commit always triggers, always well after startup
+// — re-emits the same marker once this layout pass has actually settled,
+// so the *last* `changes_panel_shown` in the stream (not necessarily the
+// first) is the one an E2E flow should trust once it knows a refresh just
+// ran (e.g. right after the `changes_row` event that refresh produced).
+void ChangesPanel::markShown()
+{
+    if (!isVisible()) {
+        return;
+    }
     // Same reasoning as `markChangesRow`: the commit message box and the
     // Commit button move with the dock's own layout, so an E2E flow reads
     // their on-screen rects here instead of guessing them from the main
@@ -474,6 +496,12 @@ void ChangesPanel::refresh()
     }
 
     populating_ = false;
+    // After the row markers above, not before: an E2E flow that already
+    // waited for a `changes_row` event from this same refresh can then
+    // trust this to be the freshest `changes_panel_shown` in the stream —
+    // see `markShown`'s own doc comment for why the very first one is not
+    // reliable enough to click from.
+    markShown();
 }
 
 void ChangesPanel::refreshEmptyState()

@@ -1,5 +1,6 @@
 #include "vcs_gutter.h"
 
+#include "e2e_mark.h"
 #include "theme.h"
 
 #include <QMenu>
@@ -26,6 +27,10 @@ QColor changeMarkerColor(ChangeMarkerKind kind)
 void showHunkPopup(QWidget *parent, const QPoint &globalPos, const HunkPopupActions &actions)
 {
     QMenu menu(parent);
+    // Same helper `project_tree_git_menu.cpp`'s submenu uses — an E2E flow
+    // needs a real on-screen rect to click "Stage Hunk" by, the same way it
+    // already clicks that submenu's "Stage File".
+    e2eMarkMenuActions(&menu, "vcs_hunk_menu_action");
     if (actions.showDiff) {
         QObject::connect(menu.addAction(QObject::tr("Show Diff")), &QAction::triggered, &menu,
                           [&actions]() { actions.showDiff(); });

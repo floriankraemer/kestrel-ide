@@ -634,6 +634,12 @@ public:
     // caret's line, the keyboard equivalent of the gutter popup's Revert.
     void rollbackHunkAtCaret();
 
+    // R6: vcs.stageHunk — stages whichever cached (HEAD-vs-worktree) hunk
+    // contains the caret's line, the keyboard equivalent of the gutter
+    // popup's "Stage Hunk" and the same caret-to-hunk lookup
+    // `rollbackHunkAtCaret` already does.
+    void stageHunkAtCaret();
+
     // F3-19: vcs.nextChange/vcs.previousChange (F7/Shift+F7 outside a diff
     // dialog) — moves the caret to the next/previous cached hunk in the
     // current file, wrapping at either end.

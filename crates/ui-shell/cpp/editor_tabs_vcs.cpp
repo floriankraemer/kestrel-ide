@@ -500,6 +500,38 @@ void EditorTabs::rollbackHunkAtCaret()
     }
 }
 
+void EditorTabs::stageHunkAtCaret()
+{
+    auto *editor = qobject_cast<CodeEditor *>(currentEditor());
+    if (!editor || !vcsService_) {
+        return;
+    }
+    const QString path = currentPath();
+    if (path.isEmpty()) {
+        return;
+    }
+    const int caretLine = editor->textCursor().blockNumber();
+    const ::rust::Vec<FfiHunk> hunks = vcsService_->hunks(path);
+    for (std::size_t i = 0; i < hunks.size(); ++i) {
+        const FfiHunk &hunk = hunks[i];
+        const quint32 start = hunkMarkerLine(hunk);
+        const quint32 end =
+          hunk.kind == FfiHunkKind::Removed ? start + 1 : hunk.new_start + hunk.new_len;
+        if (static_cast<quint32>(caretLine) >= start && static_cast<quint32>(caretLine) < end) {
+            vcsService_->stageHunk(path, static_cast<quint32>(i));
+            // Nothing else marks the moment `vcs.stageHunk` actually found
+            // and staged a hunk — `statusChanged` alone would not say
+            // *which* hunk, and an E2E flow needs that to assert about a
+            // specific one rather than "staging happened somewhere".
+            e2eMark(QStringLiteral("{\"ev\":\"vcs_hunk_staged\",\"path\":%1,"
+                                    "\"hunk_index\":%2}")
+                      .arg(e2eJson(path))
+                      .arg(i));
+            return;
+        }
+    }
+}
+
 void EditorTabs::jumpToChange(bool forward)
 {
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());

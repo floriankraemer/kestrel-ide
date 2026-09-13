@@ -246,6 +246,11 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     QObject::connect(rollbackAction, &QAction::triggered, editorTabs,
                       [editorTabs]() { editorTabs->rollbackHunkAtCaret(); });
 
+    QAction *stageHunkAction = registerAction(vcsMenu, QStringLiteral("vcs.stageHunk"),
+                                               QObject::tr("Stage Hunk"), appSettings, actions);
+    QObject::connect(stageHunkAction, &QAction::triggered, editorTabs,
+                      [editorTabs]() { editorTabs->stageHunkAtCaret(); });
+
     QAction *nextChangeAction = registerAction(vcsMenu, QStringLiteral("vcs.nextChange"),
                                                 QObject::tr("Next Change"), appSettings, actions);
     QObject::connect(nextChangeAction, &QAction::triggered, editorTabs,

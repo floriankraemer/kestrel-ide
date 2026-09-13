@@ -63,6 +63,13 @@ protected:
 
 private:
     void refresh();
+    // Publishes `changes_panel_shown` with the message box's and Commit
+    // button's current on-screen rects — called from `showEvent` and again
+    // at the end of every `refresh()`, since only the latter is guaranteed
+    // to run after this panel's containing window has settled its layout.
+    // See the .cpp definition for why a single showEvent-only marker used
+    // to make an E2E flow flaky.
+    void markShown();
     void onItemChanged(QTreeWidgetItem *item, int column);
     void doCommit(bool amend, bool push);
     void refreshEmptyState();

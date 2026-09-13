@@ -32,9 +32,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    load_toml, save_toml, update_toml, ConfigError, DebugAdapterSetting, EditingSettings,
-    FileAssociationSettings, LanguageServerSetting, Layout, RunConfigSetting, TabPaddingSettings,
-    TerminalSettings,
+    load_toml, save_toml, update_toml, ConfigError, ContainerSettings, DebugAdapterSetting,
+    EditingSettings, FileAssociationSettings, LanguageServerSetting, Layout, RunConfigSetting,
+    TabPaddingSettings, TerminalSettings,
 };
 
 /// Directory holding a project's IDE files, inside the project root.
@@ -192,6 +192,15 @@ pub struct ProjectSettings {
     /// default".
     #[serde(default, rename = "analyzer", skip_serializing_if = "Option::is_none")]
     pub analysis: Option<Vec<crate::AnalyzerSetting>>,
+
+    /// The project's `[containers]` override — its own connections,
+    /// registries and dock filters, replacing the global layer's wholesale
+    /// (ADR-0055), same rule as `[editing]`/`[terminal]`.
+    ///
+    /// Sparse like the rest: `None` is "the project says nothing about
+    /// containers".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub containers: Option<ContainerSettings>,
 
     /// Named workspace arrangements the project ships, as a `[layouts]`
     /// table keyed by name.

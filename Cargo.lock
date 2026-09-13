@@ -700,6 +700,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "container-core"
+version = "0.1.0"
+dependencies = [
+ "app-config",
+ "process-exec",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6838,6 +6849,7 @@ dependencies = [
  "app-core",
  "build-core",
  "color-theme",
+ "container-core",
  "cxx",
  "cxx-qt",
  "cxx-qt-build",
@@ -6852,6 +6864,7 @@ dependencies = [
  "mcp-server",
  "plugin-api",
  "plugin-host",
+ "process-exec",
  "project-model",
  "pty-core",
  "run-core",

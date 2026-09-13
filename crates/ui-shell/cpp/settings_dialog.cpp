@@ -3,6 +3,7 @@
 #include "ai_providers_page.h"
 #include "analysis_settings_page.h"
 #include "appearance_page.h"
+#include "containers_page.h"
 #include "language_page.h"
 #include "e2e_mark.h"
 #include "editor_page.h"
@@ -88,6 +89,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
+    categoryList->addItem(QObject::tr("Containers"));
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
     // nav width: the interface font scale below can make "Language Servers"
@@ -296,6 +298,17 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
                              buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService));
       });
 
+    // Containers is project-scoped for the same reason Terminal/Tabs are:
+    // which daemon a checkout talks to is a property of the project at
+    // least as often as of the person. Held by shared_ptr like Terminal:
+    // the scope rebuild below replaces the page (and the `commit` closure
+    // bound to its widgets), and the OK branch has already been written to
+    // call one.
+    auto containersPage =
+      std::make_shared<ContainersPage>(buildContainersPage(&dialog, appSettings));
+    const int containersIndex =
+      pages->addWidget(scopedPage(QStringLiteral("containers"), containersPage->widget));
+
     const McpPage mcp =
       buildMcpPage(&dialog, appSettings, context.docManager, *context.mcpStatus);
     pages->addWidget(mcp.widget);
@@ -475,7 +488,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
        languageServerEditor = context.languageServerEditor,
        languageService = context.languageService, terminalPage, terminalIndex,
        tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
-       analysisService = context.analysisService, analysisIndex, &lazyBuilders]() {
+       analysisService = context.analysisService, analysisIndex, containersPage,
+       containersIndex, &lazyBuilders]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -526,6 +540,14 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
             scopedPage(QStringLiteral("tabPadding"), tabPaddingPage->widget));
           pages->removeWidget(staleTabPadding);
           staleTabPadding->deleteLater();
+
+          QWidget *staleContainers = pages->widget(containersIndex);
+          *containersPage = buildContainersPage(&dialog, appSettings);
+          pages->insertWidget(
+            containersIndex,
+            scopedPage(QStringLiteral("containers"), containersPage->widget));
+          pages->removeWidget(staleContainers);
+          staleContainers->deleteLater();
 
           analysisEditor->beginEdit(scope);
           if (!lazyBuilders.contains(analysisIndex)) {
@@ -656,6 +678,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context)
         // `terminalFont()`/`terminalPaletteForTheme()` resolve to, so this
         // runs after both commits, unconditionally.
         context.terminalPanel->reapplyAppearance();
+        containersPage->commit();
         mcp.commit();
         // The AI draft was already committed by the OK handler above; this
         // is the chat session re-reading the provider, the mode and the

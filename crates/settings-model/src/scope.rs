@@ -87,11 +87,14 @@ pub enum ScopedField {
     /// The `[tab_padding]` section: air around an editor tab's label, per
     /// side.
     TabPadding,
+    /// The `[containers]` section: Docker/Podman connections, registries
+    /// and the dock filters (ADR-0055).
+    Containers,
 }
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 7] = [
+    pub const ALL: [ScopedField; 8] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
@@ -99,6 +102,7 @@ impl ScopedField {
         ScopedField::Terminal,
         ScopedField::Analysis,
         ScopedField::TabPadding,
+        ScopedField::Containers,
     ];
 
     /// The stable id the view names this field by — the same string the
@@ -113,6 +117,7 @@ impl ScopedField {
             ScopedField::Terminal => "terminal",
             ScopedField::Analysis => "analysis",
             ScopedField::TabPadding => "tabPadding",
+            ScopedField::Containers => "containers",
         }
     }
 
@@ -154,6 +159,9 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     if let Some(tab_padding) = &project.tab_padding {
         resolved.tab_padding = *tab_padding;
     }
+    if let Some(containers) = &project.containers {
+        resolved.containers = containers.clone();
+    }
     // Run configurations are deliberately *not* folded in: they have no
     // counterpart in the global layer at all (ADR-0029 — a run configuration
     // is the definition of a project, never a preference), so there is
@@ -189,6 +197,7 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::Terminal => project.terminal.is_some(),
         ScopedField::Analysis => project.analysis.is_some(),
         ScopedField::TabPadding => project.tab_padding.is_some(),
+        ScopedField::Containers => project.containers.is_some(),
     };
     if overridden {
         return Scope::Project;
@@ -279,6 +288,7 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
         ScopedField::Terminal => global.terminal != defaults.terminal,
         ScopedField::Analysis => global.analysis != defaults.analysis,
         ScopedField::TabPadding => global.tab_padding != defaults.tab_padding,
+        ScopedField::Containers => global.containers != defaults.containers,
     }
 }
 
@@ -452,9 +462,10 @@ mod tests {
         assert!(ScopedField::from_id("editorFontSize").is_none());
         assert_eq!(
             ScopedField::ALL.len(),
-            7,
-            "ADR-0022 names five areas, plus Analysis (the PHP tooling plan's B7) \
-             and TabPadding (tab padding, per-side, project-overridable)"
+            8,
+            "ADR-0022 names five areas, plus Analysis (the PHP tooling plan's B7), \
+             TabPadding (tab padding, per-side, project-overridable) and Containers \
+             (ADR-0055)"
         );
     }
 
@@ -705,6 +716,47 @@ mod tests {
         assert_eq!(
             resolve_layouts(&global, &project_layouts(&[])),
             resolve_layouts(&global, &ProjectSettings::default())
+        );
+    }
+
+    #[test]
+    fn containers_is_id_round_trips_and_resolves_like_terminal() {
+        use app_config::ContainerSettings;
+
+        assert_eq!(ScopedField::Containers.id(), "containers");
+        assert_eq!(
+            ScopedField::from_id("containers"),
+            Some(ScopedField::Containers)
+        );
+
+        let global = Settings {
+            containers: ContainerSettings {
+                selinux_relabel: true,
+                ..ContainerSettings::default()
+            },
+            ..Settings::default()
+        };
+        assert_eq!(
+            origin(
+                ScopedField::Containers,
+                &global,
+                &ProjectSettings::default()
+            ),
+            Scope::Global
+        );
+
+        let project = ProjectSettings {
+            containers: Some(ContainerSettings::default()),
+            ..ProjectSettings::default()
+        };
+        assert_eq!(
+            origin(ScopedField::Containers, &global, &project),
+            Scope::Project
+        );
+        assert_eq!(
+            resolve(&global, &project).containers,
+            ContainerSettings::default(),
+            "the project's own (empty) override wins over the global layer"
         );
     }
 }

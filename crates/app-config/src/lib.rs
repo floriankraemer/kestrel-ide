@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 
 /// The `[analysis]` section: per-analyzer trigger/enabled overrides.
 pub mod analysis;
+/// The `[containers]` section: Docker/Podman connections (ADR-0055).
+pub mod containers;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
 /// The `[file_associations]` section: which handler a file pattern opens
@@ -63,6 +65,9 @@ pub mod ai_settings;
 
 pub use ai_settings::{AiProviderSetting, AiToolPolicySetting};
 pub use analysis::{AnalysisSettings, AnalyzerSetting};
+pub use containers::{
+    ContainerConnectionSetting, ContainerSettings, ContainerTargetSetting, RegistrySetting,
+};
 pub use editing::EditingSettings;
 pub use file_associations::{FileAssociationRule, FileAssociationSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
@@ -363,6 +368,10 @@ pub struct Settings {
     /// — see [`analysis`] for the sparse per-row rule.
     #[serde(default)]
     pub analysis: AnalysisSettings,
+    /// The `[containers]` section (ADR-0055), project-scoped like
+    /// [`Settings::terminal`] — see [`containers`].
+    #[serde(default)]
+    pub containers: ContainerSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
     ///
@@ -946,6 +955,7 @@ mod tests {
                 start_directory: "/srv/checkout".to_string(),
                 ..TerminalSettings::default()
             },
+            containers: ContainerSettings::default(),
             analysis: AnalysisSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),

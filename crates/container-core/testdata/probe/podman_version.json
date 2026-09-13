@@ -1,0 +1,22 @@
+{
+  "Client": {
+    "APIVersion": "5.2.3",
+    "Version": "5.2.3",
+    "GoVersion": "go1.22.6",
+    "GitCommit": "",
+    "BuiltTime": "Fri Aug  9 00:00:00 2024",
+    "Built": 1723161600,
+    "OsArch": "linux/amd64",
+    "Os": "linux"
+  },
+  "Server": {
+    "APIVersion": "5.2.3",
+    "Version": "5.2.3",
+    "GoVersion": "go1.22.6",
+    "GitCommit": "",
+    "BuiltTime": "Fri Aug  9 00:00:00 2024",
+    "Built": 1723161600,
+    "OsArch": "linux/amd64",
+    "Os": "linux"
+  }
+}

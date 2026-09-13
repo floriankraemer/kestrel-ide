@@ -89,6 +89,8 @@ mod tests {
             CODE_ATTACHMENT_IO,
             CODE_REFUSED,
             CODE_BEFORE_LAUNCH,
+            CODE_INVALID_ARGUMENT,
+            CODE_UNKNOWN_LAYOUT,
         ];
         for code in codes {
             assert!(

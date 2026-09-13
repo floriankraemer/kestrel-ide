@@ -63,6 +63,7 @@ Support (Qt-free):
 - `crates/pty-core` — cross-platform PTY transport.
 - `crates/terminal-core` — VT100 grid state over `alacritty_terminal`.
 - `crates/mcp-server` — local Streamable-HTTP JSON-RPC MCP server over the shared index.
+- `crates/container-core` — CLI-driven Docker/Podman integration (ADR-0055): connections, discovery, engine probing; snapshot/ops/registries land with later tasks.
 
 Adapter + view:
 - `crates/ui-shell` — adapter (`src/bridge.rs` cxx-qt QObjects) + view (`cpp/` Qt Widgets).

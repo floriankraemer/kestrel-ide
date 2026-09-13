@@ -63,6 +63,10 @@ baseline() {
 	# matches_query live in app-core/src/color_themes.rs and
 	# app-core/src/text_search.rs respectively, rather than in here.
 	crates/app-core/src/lib.rs) echo 1599 ;;           # no split planned; ratcheted so it cannot grow
+	# Raised from the 1500 ceiling by 6 lines for the `containers` module
+	# declaration/re-export and the `Settings::containers` field (ADR-0055,
+	# C1). `ContainerSettings` itself lives in app-config/src/containers.rs.
+	crates/app-config/src/lib.rs) echo 1506 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)

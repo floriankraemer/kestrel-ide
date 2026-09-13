@@ -33,7 +33,7 @@ graph TB
         view["view: cpp/*.cpp<br/>widgets, layout, wiring"] --> adapter["adapter: src/bridge/*.rs<br/>thin QObject translation"]
     end
     adapter --> appcore["application: app-core<br/>AppSession, commands, AppError"]
-    adapter --> support["support: app-config, syntax-core,<br/>index-core, lsp-core, settings-model,<br/>vcs-core, pty-core, terminal-core, run-core,<br/>mcp-server, ai-chat-core"]
+    adapter --> support["support: app-config, syntax-core,<br/>index-core, lsp-core, settings-model,<br/>vcs-core, pty-core, terminal-core, run-core,<br/>mcp-server, ai-chat-core, container-core"]
     appcore --> editorcore["domain: editor-core"]
     appcore --> projectmodel["domain: project-model"]
     support --> editorcore
@@ -62,6 +62,7 @@ graph TB
 | `run-core` | support | Run configurations: the `LaunchSpec` seam, project-scoped detection (Cargo/npm/pnpm/yarn/Makefile), the PTY-backed supervisor, output batching, and the `file:line` link catalogue console output resolves through ([ADR-0032](decisions/0032-run-configurations.md)) | No |
 | `mcp-server` | support | MCP server (protocol + transport) so an agent can read and drive the editor and query the project index ([ADR-0004](decisions/0004-mcp-transport.md), [ADR-0012](decisions/0012-mcp-protocol-index-and-lifecycle.md)) | No |
 | `ai-chat-core` | support | AI assistant rules: provider dialects and capabilities, the conversation block model, token accounting, context assembly and its budget, the tool catalog and approval policy, the agent loop, conversation history, and turning a code block into an edit ([ADR-0021](decisions/0021-ai-chat.md)) | No |
+| `container-core` | support | CLI-driven Docker/Podman integration: connection kinds → `Invocation` (argv/env), discovery of contexts/connections/machines/socket presets, and engine probing ([ADR-0055](decisions/0055-cli-driven-container-integration.md)); snapshot, watching, operations, run configurations, registries and run targets land with later tasks of `containers-plan.md` | No |
 | `ui-shell` | adapter + view | `src/bridge/*.rs`: cxx-qt QObject translation, one module per feature (ADR-0025); `cpp/`: Widgets, layout, menus, dialogs, `QApplication` | Yes |
 | `app` | main | Thin binary; hands off to `ui-shell` | Yes |
 

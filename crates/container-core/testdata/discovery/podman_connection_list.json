@@ -1,0 +1,9 @@
+[
+  {
+    "Name": "remote",
+    "Identity": "/home/user/.ssh/id_ed25519",
+    "URI": "ssh://user@example.com/run/podman/podman.sock",
+    "Default": true,
+    "ReadWrite": true
+  }
+]

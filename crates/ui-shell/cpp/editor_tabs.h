@@ -88,8 +88,13 @@ constexpr int kTabKindImage = 3;
 class EditorTabs : public QObject
 {
 public:
+    // `containerService` is C3's Inspect/Files-open virtual tabs
+    // (`ContainerService::virtualDocumentOpened`, wired just like
+    // `languageService`'s own one below) — optional (may be `nullptr`)
+    // only so a future test harness building `EditorTabs` without one
+    // still compiles.
     EditorTabs(DocumentManager *docManager, LanguageService *languageService, QSplitter *root,
-                QWidget *window);
+                QWidget *window, ContainerService *containerService = nullptr);
 
     // Structure follows whatever tab is current; EditorTabs has no
     // Q_OBJECT (no moc target) so it hands out a callback rather than a

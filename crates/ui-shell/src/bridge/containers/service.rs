@@ -14,6 +14,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::mpsc;
 use std::time::SystemTime;
 
@@ -32,35 +33,96 @@ use crate::bridge::settings::commit_to_project;
 
 /// One connection this session has touched. Connections that were never
 /// connected have no entry and read as `Disconnected`.
-struct Connection {
-    state: ConnectionState,
-    snapshot: Option<EngineSnapshot>,
-    handle: Option<WatcherHandle>,
+pub(crate) struct Connection {
+    pub(crate) state: ConnectionState,
+    pub(crate) snapshot: Option<EngineSnapshot>,
+    pub(crate) handle: Option<WatcherHandle>,
     /// Bumped on every connect/disconnect so an event from a watcher that
     /// was already stopped cannot revive its row.
     generation: u64,
 }
 
-#[derive(Default)]
 pub struct ContainerServiceRust {
-    connections: RefCell<BTreeMap<String, Connection>>,
+    /// `pub(crate)`: C3's `actions.rs`/`sessions.rs` need a connection's
+    /// `WatcherHandle` (to trigger a re-snapshot after an action finishes)
+    /// the same way this file already does — a second `impl
+    /// ffi::ContainerService` block in each of those files, exactly the
+    /// split `bridge/language/{mod,lsp_surface,refactor}.rs` already uses
+    /// for one QObject's surface across files under the size ratchet.
+    pub(crate) connections: RefCell<BTreeMap<String, Connection>>,
     /// `(show_stopped, show_untagged)`, read from settings on first use
     /// and kept in step by `set_filter`.
     filter: RefCell<Option<(bool, bool)>>,
     search: RefCell<String>,
     next_generation: RefCell<u64>,
+    /// C3: the last 10 commands run through "Exec…" for a container, most
+    /// recent first, for the dialog's history combo. Keyed by resource id
+    /// (the container, not the node id — a container keeps its history
+    /// across a reconnect, which mints a fresh node id map only through
+    /// `connections`, never through this one).
+    pub(crate) exec_history: RefCell<BTreeMap<String, Vec<String>>>,
+    /// C3: `openInspect`/`openFile` need `AppSession::open_virtual_document`
+    /// — the same shared session every other adapter reads through
+    /// `bridge::registry::shared_session`, so a container's Inspect tab
+    /// dedups/focuses against the very same tab list the editor shows.
+    pub(crate) session: Rc<RefCell<app_core::AppSession>>,
 }
 
-fn configured_connections() -> Vec<app_config::ContainerConnectionSetting> {
+impl Default for ContainerServiceRust {
+    fn default() -> Self {
+        ContainerServiceRust {
+            connections: RefCell::default(),
+            filter: RefCell::default(),
+            search: RefCell::default(),
+            next_generation: RefCell::default(),
+            exec_history: RefCell::default(),
+            session: crate::bridge::registry::shared_session(),
+        }
+    }
+}
+
+pub(crate) fn configured_connections() -> Vec<app_config::ContainerConnectionSetting> {
     crate::bridge::convert::load_resolved_settings()
         .containers
         .connections
 }
 
-fn work_dir() -> std::path::PathBuf {
+pub(crate) fn work_dir() -> std::path::PathBuf {
     crate::bridge::convert::current_project_root()
         .or_else(|| std::env::current_dir().ok())
         .unwrap_or_default()
+}
+
+/// The `Invocation` for a configured connection, by id — every C3 action
+/// and session goes through this rather than re-deriving it, the same
+/// `ConnectionConfig::from_setting` + minikube-env-if-needed sequence
+/// `test_container_connection` (C1) already established.
+pub(crate) fn connection_invocation(
+    connection_id: &str,
+) -> Result<container_core::connection::Invocation, FfiResult> {
+    let Some(setting) = configured_connections()
+        .into_iter()
+        .find(|setting| setting.id == connection_id)
+    else {
+        return Err(errors::failure(
+            errors::CODE_INVALID_ARGUMENT,
+            format!("no container connection with id '{connection_id}' is configured"),
+        ));
+    };
+    let config = ConnectionConfig::from_setting(&setting);
+    let mut invocation = config.invocation();
+    if matches!(
+        config.kind,
+        container_core::connection::ConnectionKind::Minikube
+    ) {
+        match container_core::connection::minikube_docker_env(&work_dir()) {
+            Ok(env) => invocation = invocation.with_extra_env(env),
+            Err(error) => {
+                return Err(errors::failure(errors::CODE_REFUSED, error.to_string()));
+            }
+        }
+    }
+    Ok(invocation)
 }
 
 fn to_ffi_status(status: tree::NodeStatus) -> ffi::FfiContainerNodeStatus {

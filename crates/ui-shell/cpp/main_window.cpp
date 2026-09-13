@@ -231,7 +231,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     QTreeView *treeView = projectTreeDock.view;
     QAction *projectTreeLocateAction = projectTreeDock.locateAction;
 
-    auto *editorTabs = new EditorTabs(docManager, languageService, editorRoot, window);
+    auto *editorTabs = new EditorTabs(docManager, languageService, editorRoot, window, containerService);
     auto *diagnosticsService =
       wireDiagnosticsService(window, languageService, buildService, analysisService, editorTabs);
 
@@ -377,7 +377,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
-    auto *containersPanel = buildContainersDock(dockManager, docks, bottomArea, containerService);
+    auto *containersPanel = buildContainersDock(dockManager, docks, bottomArea, containerService, terminalSupervisor, appSettings, openAt);
 
     // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`

@@ -146,6 +146,35 @@ fn split_args(args: &str) -> Vec<String> {
     args.split_whitespace().map(str::to_string).collect()
 }
 
+/// The inverse of joining an argv with `\n` — [`TerminalSupervisorRust::
+/// set_command`]'s `args`, one token per line, unlike [`split_args`]'s
+/// whitespace split (a shell-typed command line, where a token never
+/// contains a space to begin with). A blank line is dropped rather than
+/// becoming an empty argument.
+fn split_command_args(args: &str) -> Vec<String> {
+    args.lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// `KEY=VALUE\n`-separated environment entries — the same convention
+/// `bridge/run/mod.rs`'s `env_from_string` uses for `FfiRunConfig::env`,
+/// duplicated locally rather than made `pub(crate)` there: this file has
+/// no other reason to depend on `bridge::run`.
+fn parse_command_env(env: &str) -> Vec<(String, String)> {
+    env.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() {
+                return None;
+            }
+            line.split_once('=')
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+        })
+        .collect()
+}
+
 fn to_ffi_terminal_cell(cell: terminal_core::RenderCell) -> ffi::FfiTerminalCell {
     ffi::FfiTerminalCell {
         character: cell.character as u32,
@@ -303,6 +332,15 @@ pub struct TerminalSupervisorRust {
     /// struct's `#[derive(Default)]`) is what an emulator gets before the
     /// view has ever pushed a theme-derived one down.
     palette: RefCell<terminal_core::Palette>,
+    /// A one-shot override for the next `start(session_id, ..)`, set by
+    /// `set_command` (containers plan C3): a container Log/Terminal/Exec/
+    /// Attach tab decides its own `ShellSpec` (`container_core::session`)
+    /// rather than going through `shell_for`'s "which shell/project" rule,
+    /// which does not apply to a session that never spawns a local shell.
+    /// Taken (removed) the moment `start` reads it, so a later `start` on
+    /// the same id — reopening a closed tab, say — falls back to
+    /// `shell_for` again rather than replaying a stale command.
+    pending_command: RefCell<HashMap<u64, pty_core::ShellSpec>>,
 }
 
 impl Drop for TerminalSupervisorRust {
@@ -422,6 +460,30 @@ impl ffi::TerminalSupervisor {
         }
     }
 
+    /// Set the exact command `session_id`'s next `start()` spawns —
+    /// containers plan C3: `ContainerService::*SessionCommand` decides a
+    /// `docker`/`podman` argv (log/terminal/exec/attach) and hands it back
+    /// as an `FfiCommand`; this is the seam that gets it to a plain
+    /// `TerminalWidget` without teaching `start`/`shell_for` anything about
+    /// containers. `args`/`env` are `\n`-separated (`args`) and
+    /// `KEY=VALUE\n`-separated (`env`) — the same "no `Vec<QString>` on the
+    /// seam" convention `FfiRunConfig::{args,env,before_launch}` already
+    /// use, split with this file's own [`split_args`]/`parse_env`.
+    /// One-shot: taken (removed) the moment `start` reads it — see
+    /// [`TerminalSupervisorRust::pending_command`].
+    pub fn set_command(
+        self: Pin<&mut Self>,
+        session_id: u64,
+        program: &QString,
+        args: &QString,
+        env: &QString,
+    ) {
+        let spec =
+            pty_core::ShellSpec::new(program.to_string(), split_command_args(&args.to_string()))
+                .with_env(parse_command_env(&env.to_string()));
+        self.pending_command.borrow_mut().insert(session_id, spec);
+    }
+
     pub fn start(
         self: Pin<&mut Self>,
         session_id: u64,
@@ -436,14 +498,19 @@ impl ffi::TerminalSupervisor {
             };
         };
 
-        let settings = crate::bridge::convert::load_resolved_settings();
-        let catalogue = self.ensure_shells_cached();
-        let shell = shell_for(
-            &settings.terminal,
-            &shell_id.to_string(),
-            crate::bridge::convert::current_project_root().as_deref(),
-            &catalogue,
-        );
+        let pending = self.pending_command.borrow_mut().remove(&session_id);
+        let shell = if let Some(pending) = pending {
+            pending
+        } else {
+            let settings = crate::bridge::convert::load_resolved_settings();
+            let catalogue = self.ensure_shells_cached();
+            shell_for(
+                &settings.terminal,
+                &shell_id.to_string(),
+                crate::bridge::convert::current_project_root().as_deref(),
+                &catalogue,
+            )
+        };
         let pty_size = pty_core::PtySize::new(rows as u16, cols as u16);
         let mut session = match pty_core::PtySession::spawn(&shell, pty_size) {
             Ok(session) => session,
@@ -1096,6 +1163,47 @@ mod shutdown_order_tests {
 
         wait_until("session 1's grandchild to die", || !alive(grandchild_a));
         wait_until("session 2's grandchild to die", || !alive(grandchild_b));
+    }
+}
+
+#[cfg(test)]
+mod pending_command_tests {
+    //! Containers plan C3: `set_command`/`start` are cxx-qt-generated
+    //! methods on `ffi::TerminalSupervisor` and need a Qt runtime to call
+    //! directly, so — the same reason `shutdown_order_tests` exercises
+    //! `TerminalSupervisorRust`'s plain fields rather than going through
+    //! the QObject wrapper — this drives the `pending_command` map
+    //! directly: insert (what `set_command` does), then remove (what
+    //! `start` does), asserting the one-shot "taken once, gone after"
+    //! contract the doc comment on the field promises.
+    use pty_core::ShellSpec;
+
+    #[test]
+    fn a_pending_command_is_used_once_then_start_falls_back_to_shell_for() {
+        let supervisor = super::TerminalSupervisorRust::default();
+        let spec = ShellSpec::new("docker", vec!["logs".into(), "-f".into(), "c1".into()]);
+        supervisor
+            .pending_command
+            .borrow_mut()
+            .insert(7, spec.clone());
+
+        // First `start(7, ..)`: takes the pending spec.
+        let taken = supervisor.pending_command.borrow_mut().remove(&7);
+        assert_eq!(taken, Some(spec));
+
+        // A second `start(7, ..)` (reopening a closed tab) finds nothing
+        // pending and would fall back to `shell_for`.
+        let taken_again = supervisor.pending_command.borrow_mut().remove(&7);
+        assert_eq!(taken_again, None);
+    }
+
+    #[test]
+    fn a_pending_command_on_one_session_does_not_leak_into_another() {
+        let supervisor = super::TerminalSupervisorRust::default();
+        let spec = ShellSpec::new("docker", vec!["attach".into(), "c1".into()]);
+        supervisor.pending_command.borrow_mut().insert(1, spec);
+
+        assert_eq!(supervisor.pending_command.borrow_mut().remove(&2), None);
     }
 }
 

@@ -214,11 +214,75 @@ pub fn flatten(connections: &[ConnectionRow<'_>], now: SystemTime) -> Vec<TreeNo
             }
         }
         nodes.push(root);
-        if let (ConnectionState::Connected(_), Some(view)) = (connection.state, connection.view) {
+        // A connection that dropped into `Error` (or is `Connecting`
+        // again after having been connected) keeps whatever snapshot it
+        // last had rather than hiding its children: the status text on
+        // the connection row already says something is wrong, and losing
+        // the whole tree under it on every hiccup would be a worse signal
+        // than a stale-but-recognisable one. Only `Disconnected` clears
+        // the snapshot (`ContainerServiceRust::disconnect_engine`), which
+        // is what actually empties this.
+        if let Some(view) = connection.view {
             push_groups(&mut nodes, connection, view, now);
         }
     }
     nodes
+}
+
+/// Which actions apply to a container node in `status` — the *rule* lives
+/// here (Rust), never in `cpp/`: a view only reads the flags this returns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NodeActions {
+    pub can_start: bool,
+    pub can_stop: bool,
+    pub can_restart: bool,
+    pub can_pause: bool,
+    pub can_unpause: bool,
+    pub can_remove: bool,
+}
+
+/// The actions matrix for a container node's current [`NodeStatus`].
+/// `Running` is the only state that can be paused; `Paused` is the only
+/// one that can be unpaused; `Restarting` allows nothing (an operation is
+/// already in flight) except Remove, which is always available — even a
+/// stuck container can be force-removed.
+pub fn actions_for(status: NodeStatus) -> NodeActions {
+    match status {
+        NodeStatus::Running => NodeActions {
+            can_stop: true,
+            can_restart: true,
+            can_pause: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::Paused => NodeActions {
+            can_unpause: true,
+            can_stop: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::Exited | NodeStatus::Created | NodeStatus::Dead => NodeActions {
+            can_start: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::Restarting => NodeActions {
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::Other => NodeActions {
+            can_start: true,
+            can_stop: true,
+            can_restart: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::None
+        | NodeStatus::Disconnected
+        | NodeStatus::Connecting
+        | NodeStatus::Connected
+        | NodeStatus::Error => NodeActions::default(),
+    }
 }
 
 fn push_groups(
@@ -844,6 +908,80 @@ mod tests {
             "no Compose group without projects, no Pods on Docker"
         );
         assert!(nodes[1..].iter().all(|node| node.count == Some(0)));
+    }
+
+    #[test]
+    fn an_error_state_keeps_the_last_snapshot_visible_instead_of_hiding_children() {
+        // C3: reconnecting must not blank out the dock — the status text
+        // on the connection row is the signal, the tree underneath stays.
+        let docker = snapshot("docker");
+        let view = docker.filter(true, true);
+        let state = ConnectionState::Error("connection reset".to_string());
+        let nodes = flatten(
+            &[ConnectionRow {
+                id: "d",
+                name: "Docker",
+                engine: Engine::Docker,
+                state: &state,
+                view: Some(&view),
+            }],
+            now(),
+        );
+        assert_eq!(nodes[0].status, NodeStatus::Error);
+        assert!(
+            nodes
+                .iter()
+                .any(|node| node.kind == NodeKind::ContainersGroup),
+            "children must still be present under an errored connection \
+             that has a stale snapshot"
+        );
+    }
+
+    #[test]
+    fn a_disconnected_connection_with_no_snapshot_has_no_children() {
+        let state = ConnectionState::Disconnected;
+        let nodes = flatten(
+            &[ConnectionRow {
+                id: "d",
+                name: "Docker",
+                engine: Engine::Docker,
+                state: &state,
+                view: None,
+            }],
+            now(),
+        );
+        assert_eq!(nodes.len(), 1);
+    }
+
+    #[test]
+    fn node_actions_matrix_per_status() {
+        let running = actions_for(NodeStatus::Running);
+        assert!(running.can_stop && running.can_restart && running.can_pause && running.can_remove);
+        assert!(!running.can_start && !running.can_unpause);
+
+        let paused = actions_for(NodeStatus::Paused);
+        assert!(paused.can_unpause && paused.can_stop && paused.can_remove);
+        assert!(!paused.can_start && !paused.can_restart && !paused.can_pause);
+
+        for stopped in [NodeStatus::Exited, NodeStatus::Created, NodeStatus::Dead] {
+            let actions = actions_for(stopped);
+            assert!(actions.can_start && actions.can_remove);
+            assert!(!actions.can_stop && !actions.can_restart && !actions.can_pause);
+        }
+
+        let restarting = actions_for(NodeStatus::Restarting);
+        assert!(restarting.can_remove);
+        assert!(!restarting.can_start && !restarting.can_stop && !restarting.can_pause);
+
+        for inert in [
+            NodeStatus::None,
+            NodeStatus::Disconnected,
+            NodeStatus::Connecting,
+            NodeStatus::Connected,
+            NodeStatus::Error,
+        ] {
+            assert_eq!(actions_for(inert), NodeActions::default());
+        }
     }
 
     #[test]

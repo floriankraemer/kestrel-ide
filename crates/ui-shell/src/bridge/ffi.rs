@@ -3597,6 +3597,26 @@ mod ffi {
         #[cxx_name = "setPalette"]
         fn set_palette(self: Pin<&mut TerminalSupervisor>, palette: FfiTerminalPalette);
 
+        /// Containers plan C3: set the exact command `session_id`'s next
+        /// `start()` spawns, in preference to `shell_for`'s "which local
+        /// shell" rule — `ContainerService::*SessionCommand` is the one
+        /// caller, for a Log/Terminal/Exec/Attach tab over `docker`/
+        /// `podman`. `args` is `\n`-separated, `env` is
+        /// `KEY=VALUE\n`-separated (`FfiRunConfig::{args,env}`'s own
+        /// convention — no bare `Vec<QString>` on the seam). One-shot:
+        /// consumed by the next `start()` on this id, then a later
+        /// `start()` (reopening a closed tab) falls back to `shell_for`
+        /// again.
+        #[qinvokable]
+        #[cxx_name = "setCommand"]
+        fn set_command(
+            self: Pin<&mut TerminalSupervisor>,
+            session_id: u64,
+            program: &QString,
+            args: &QString,
+            env: &QString,
+        );
+
         /// Forward keystrokes (already translated to the byte sequence a
         /// shell expects by the view) to `session_id`'s PTY stdin.
         #[qinvokable]
@@ -5377,6 +5397,59 @@ mod ffi {
         show_untagged: bool,
     }
 
+    /// Which actions apply to a container node right now (C3) —
+    /// `container_core::tree::actions_for`'s answer, crossed as flags. The
+    /// view only reads these; the rule that produced them lives in Rust.
+    struct FfiNodeActions {
+        #[cxx_name = "canStart"]
+        can_start: bool,
+        #[cxx_name = "canStop"]
+        can_stop: bool,
+        #[cxx_name = "canRestart"]
+        can_restart: bool,
+        #[cxx_name = "canPause"]
+        can_pause: bool,
+        #[cxx_name = "canUnpause"]
+        can_unpause: bool,
+        #[cxx_name = "canRemove"]
+        can_remove: bool,
+    }
+
+    /// One row of `top`'s output (C3): `cells` is `\t`-joined (no bare
+    /// `Vec<QString>` on the seam — see `FfiBranch`'s doc comment), in the
+    /// same column order as `processesReady`'s own `titles` argument.
+    struct FfiProcessRow {
+        cells: QString,
+    }
+
+    /// One entry of a Files-tab directory listing (C3) —
+    /// `container_core::files::FileEntry` crossed the seam. `kind` is a
+    /// stable word (`dir`, `file`, `symlink`, `other`); the icon and any
+    /// wording are the view's.
+    struct FfiFileEntry {
+        name: QString,
+        kind: QString,
+        size: u64,
+        #[cxx_name = "mtimeEpoch"]
+        mtime_epoch: i64,
+        mode: QString,
+        target: QString,
+    }
+
+    /// A command ready to hand to `TerminalSupervisor::setCommand` (C3):
+    /// `args`/`env` already in that call's own `\n`/`KEY=VALUE\n`
+    /// convention, so the view does no parsing of its own — it only wires
+    /// `newSession()` → `setCommand(..)` → `start(..)`. `Default` is the
+    /// "not a container node" refusal: an empty `program` is never a
+    /// startable command, so the view can treat it as a failure without a
+    /// separate `FfiResult` on these getters.
+    #[derive(Default)]
+    struct FfiCommand {
+        program: QString,
+        args: QString,
+        env: QString,
+    }
+
     extern "RustQt" {
         /// The Containers dock's adapter (containers plan C2, ADR-0055):
         /// starts and stops one `container_core::watcher` per connection,
@@ -5452,6 +5525,185 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "connectionStateChanged"]
         fn connection_state_changed(self: Pin<&mut ContainerService>, connection_id: QString);
+
+        // --- C3: container actions -----------------------------------
+
+        /// Which actions apply to `node_id` right now — the panel's
+        /// toolbar/menu enable state. Empty/unknown node: every flag false.
+        #[qinvokable]
+        #[cxx_name = "nodeActions"]
+        fn node_actions(self: &ContainerService, node_id: &QString) -> FfiNodeActions;
+
+        #[qinvokable]
+        #[cxx_name = "startContainer"]
+        fn start_container(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "stopContainer"]
+        fn stop_container(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "restartContainer"]
+        fn restart_container(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "removeContainer"]
+        fn remove_container(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            force: bool,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "pauseContainer"]
+        fn pause_container(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "unpauseContainer"]
+        fn unpause_container(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        /// The Containers group's "Clean Up" — `container prune -f` on
+        /// `connection_id`.
+        #[qinvokable]
+        #[cxx_name = "pruneContainers"]
+        fn prune_containers(self: Pin<&mut ContainerService>, connection_id: &QString)
+            -> FfiResult;
+
+        /// A lifecycle action finished: `ok`/`message` from its `OpError`
+        /// (empty message on success). The panel shows a failure as a
+        /// non-modal banner, never a dialog (C3 — routine failures are not
+        /// exceptional here).
+        #[qsignal]
+        #[cxx_name = "actionFinished"]
+        fn action_finished(
+            self: Pin<&mut ContainerService>,
+            node_id: QString,
+            ok: bool,
+            message: QString,
+        );
+
+        /// Open `node_id`'s `inspect` JSON as a read-only editor tab (no
+        /// dock tab) — mirrors `LanguageService::virtualDocumentOpened`
+        /// exactly, wired the same way in `editor_tabs.cpp`. A failure
+        /// (engine unreachable, no such container) reports through the
+        /// returned `FfiResult` instead of the signal.
+        #[qinvokable]
+        #[cxx_name = "openInspect"]
+        fn open_inspect(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "virtualDocumentOpened"]
+        fn virtual_document_opened(
+            self: Pin<&mut ContainerService>,
+            tab_id: u64,
+            title: QString,
+            newly_opened: bool,
+        );
+
+        /// Ask for `top`'s answer on a worker thread; `processesReady`
+        /// carries it. `titles` is `\t`-joined, in the same column order as
+        /// every `FfiProcessRow::cells`.
+        #[qinvokable]
+        fn processes(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "processesReady"]
+        fn processes_ready(
+            self: Pin<&mut ContainerService>,
+            node_id: QString,
+            titles: QString,
+            rows: Vec<FfiProcessRow>,
+        );
+
+        /// List `dir` inside `node_id`'s container on a worker thread;
+        /// `filesReady` carries the answer. `dir` empty means the
+        /// container's `/`.
+        #[qinvokable]
+        #[cxx_name = "listFiles"]
+        fn list_files(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            dir: &QString,
+        ) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "filesReady"]
+        fn files_ready(
+            self: Pin<&mut ContainerService>,
+            node_id: QString,
+            dir: QString,
+            entries: Vec<FfiFileEntry>,
+        );
+
+        /// Read `path` out of `node_id`'s container (`cp <id>:<path> -`)
+        /// and open it as a read-only virtual document, the same
+        /// `virtualDocumentOpened` signal `openInspect` uses. Refused (via
+        /// the returned `FfiResult`) for anything over
+        /// `container_core::files::MAX_READ_FILE_BYTES` — Download…
+        /// instead.
+        #[qinvokable]
+        #[cxx_name = "openFile"]
+        fn open_file(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            path: &QString,
+        ) -> FfiResult;
+
+        /// `cp <id>:<path> <host_dest>` on a worker thread; the result
+        /// reports through `actionFinished` (`node_id` unchanged), the same
+        /// banner a lifecycle action's failure shows.
+        #[qinvokable]
+        #[cxx_name = "downloadFile"]
+        fn download_file(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            path: &QString,
+            host_dest: &QString,
+        ) -> FfiResult;
+
+        // --- C3: sessions ---------------------------------------------
+
+        /// The Log tab's command: `logs -f --timestamps --tail <n>` for
+        /// `node_id`'s container, ready for `TerminalSupervisor::
+        /// setCommand`.
+        #[qinvokable]
+        #[cxx_name = "logSessionCommand"]
+        fn log_session_command(self: &ContainerService, node_id: &QString, tail: u32)
+            -> FfiCommand;
+
+        /// The Terminal tab's command: `exec -it [-u 0] <id> sh -c '…'`.
+        #[qinvokable]
+        #[cxx_name = "terminalSessionCommand"]
+        fn terminal_session_command(
+            self: &ContainerService,
+            node_id: &QString,
+            as_root: bool,
+        ) -> FfiCommand;
+
+        /// The Exec dialog's command: `exec -it <id> <command...>`.
+        /// `command` is the dialog's own text, split on whitespace — the
+        /// same limitation a shell-typed command line already has
+        /// elsewhere in this codebase (`TerminalSupervisor`'s own
+        /// `split_args`). Recorded into this container's exec history
+        /// (capped at 10, most recent first).
+        #[qinvokable]
+        #[cxx_name = "execSessionCommand"]
+        fn exec_session_command(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            command: &QString,
+        ) -> FfiCommand;
+
+        /// The Exec dialog's history combo for `node_id`'s container,
+        /// `\n`-separated, most recent first.
+        #[qinvokable]
+        #[cxx_name = "execHistory"]
+        fn exec_history(self: &ContainerService, node_id: &QString) -> QString;
+
+        /// The Attach tab's command: `attach --sig-proxy=false <id>`.
+        #[qinvokable]
+        #[cxx_name = "attachSessionCommand"]
+        fn attach_session_command(self: &ContainerService, node_id: &QString) -> FfiCommand;
     }
 
     impl cxx_qt::Threading for ContainerService {}

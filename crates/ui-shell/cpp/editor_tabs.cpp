@@ -128,7 +128,7 @@ void moveCursorToByteColumn(QPlainTextEdit *editor, int line, int byteColumn)
 } // namespace
 
 EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageService,
-                       QSplitter *root, QWidget *window)
+                       QSplitter *root, QWidget *window, ContainerService *containerService)
   : docManager_(docManager)
   , languageService_(languageService)
   , editorOps_(new EditorOps(this))
@@ -136,6 +136,12 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
   , window_(window)
 {
     connect(docManager_, &DocumentManager::tabOpened, this, &EditorTabs::onTabOpened);
+    // C3: `ContainerService`'s Inspect/Files-open tabs, same signal/handling
+    // as `languageService_`'s own decompiled-source ones just below.
+    if (containerService != nullptr) {
+        connect(containerService, &ContainerService::virtualDocumentOpened, this,
+                [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
+    }
     connect(docManager_, &DocumentManager::tabClosed, this, &EditorTabs::onTabClosed);
     connect(docManager_,
             &DocumentManager::tabModifiedChanged,

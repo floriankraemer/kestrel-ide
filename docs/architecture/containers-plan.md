@@ -211,7 +211,7 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 | C3 | Container actions and tabs | done | `a268df3` |
 | C4 | Images, networks, volumes | done | `83f77fd` |
 | C5 | Run configurations and Compose nodes | done | `1ba53a2` |
-| C6 | Editor assistance | not started | |
+| C6 | Editor assistance | done | `8361f00` |
 | C7 | Registries | not started | |
 | C8 | Run targets | not started | |
 | C9 | Dashboard editing, Podman extras, polish | not started | |

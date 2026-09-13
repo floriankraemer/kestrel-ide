@@ -204,7 +204,7 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 
 | # | Task | Status | Commit |
 |---|------|--------|--------|
-| C1 | Foundation: crate, connections, settings, ADR | done | _pending — filled in by the follow-up commit that lands this row_ |
+| C1 | Foundation: crate, connections, settings, ADR | done | `2d50701` |
 | C2 | Snapshot, watcher, dock tree | not started | |
 | C3 | Container actions and tabs | not started | |
 | C4 | Images, networks, volumes | not started | |

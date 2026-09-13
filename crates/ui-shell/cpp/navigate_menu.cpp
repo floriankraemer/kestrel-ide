@@ -106,6 +106,21 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
     });
 
     navigateMenu->addSeparator();
+    // R4: F2 / Shift+F2. `EditorTabs::goToDiagnostic` reads the caret's own
+    // file and position, the same convention every other caret-relative
+    // action here follows.
+    QAction *nextDiagnosticAction =
+      registerAction(navigateMenu, QStringLiteral("code.nextDiagnostic"),
+                      QObject::tr("Next Highlighted Error"), appSettings, actions);
+    QObject::connect(nextDiagnosticAction, &QAction::triggered, window,
+                      [editorTabs]() { editorTabs->goToDiagnostic(/*forward=*/true); });
+    QAction *previousDiagnosticAction =
+      registerAction(navigateMenu, QStringLiteral("code.previousDiagnostic"),
+                      QObject::tr("Previous Highlighted Error"), appSettings, actions);
+    QObject::connect(previousDiagnosticAction, &QAction::triggered, window,
+                      [editorTabs]() { editorTabs->goToDiagnostic(/*forward=*/false); });
+
+    navigateMenu->addSeparator();
     QAction *backAction = registerAction(navigateMenu, QStringLiteral("navigate.back"),
                                           QObject::tr("Back"), appSettings, actions);
     QObject::connect(backAction, &QAction::triggered, window,

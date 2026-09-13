@@ -12,8 +12,8 @@
 //! invocation (`plugin-host/builtin/php-tools/plugin.toml`); this stub reads
 //! only the last argument (the project root, exactly what
 //! `AnalysisServiceRust::run_next` appends after the manifest's own `args`)
-//! and prints one canned `checkstyle-xml` finding against `src/Greeter.php`
-//! under it — the same file, line, column and message as
+//! and prints the same two canned `checkstyle-xml` findings against
+//! `src/Greeter.php` under it — the same file, lines, column and messages as
 //! `analysis-core/tests/fixtures/checkstyle_one_file.xml`, so the two stay
 //! provably in sync rather than drifting apart as two hand-maintained copies
 //! of the same fixture data.
@@ -35,6 +35,8 @@ fn main() {
          \x20<file name=\"{}\">\n\
          \x20\x20<error line=\"10\" column=\"5\" severity=\"error\" \
          message=\"Undefined variable: $name\" source=\"PHPStan.undefinedVariable\"/>\n\
+         \x20\x20<error line=\"20\" severity=\"warning\" \
+         message=\"Unused variable $x\"/>\n\
          \x20</file>\n\
          </checkstyle>",
         file.display()

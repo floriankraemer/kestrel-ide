@@ -17,6 +17,8 @@ class QTreeWidgetItem;
 
 namespace ui_shell {
 
+class EditorTabs;
+
 // Underline/label colour for one severity, in a hue that stays legible on
 // both the light and the dark themes (the VS Code diagnostic hues, which are
 // chosen for exactly that). Shared with the editor's squiggles so a row and
@@ -46,9 +48,14 @@ public:
     // build's, a language server's and an analyzer's diagnostics for the
     // same file already coexist in the one shared store, so there is no
     // second merge to do here.
+    //
+    // `showQuickFixesAt` (R4) is `openAt` plus opening the intentions
+    // popup right after — a row's context menu reuses the same caret-based
+    // request Alt+Return does (`EditorTabs::showIntentionsNow`) rather than
+    // a second "quick fix" request path into the language server.
     ProblemsPanel(LanguageService *languageService, BuildService *buildService,
                   AnalysisService *analysisService, DiagnosticsService *diagnosticsService,
-                  OpenAt openAt, QWidget *parent);
+                  OpenAt openAt, OpenAt showQuickFixesAt, QWidget *parent);
 
     // Called once, the first time a diagnostic arrives in a session, so the
     // window can raise the dock. Never called again: a panel that reopens
@@ -69,11 +76,16 @@ private:
     void copySelection();
     bool severityEnabled(FfiSeverity severity) const;
     void updateStatus(int shown, int total);
+    // R4: the row's context menu — right now just "Quick Fixes...", but its
+    // own function since a row menu is not the double-click/Enter path
+    // `openRow` already owns.
+    void showRowContextMenu(const QPoint &pos);
 
     LanguageService *languageService_;
     BuildService *buildService_;
     DiagnosticsService *diagnosticsService_;
     OpenAt openAt_;
+    OpenAt showQuickFixesAt_;
     std::function<void()> firstDiagnostic_;
     bool announced_ = false;
     QString currentFile_;
@@ -83,8 +95,21 @@ private:
     QPushButton *errorsButton_ = nullptr;
     QPushButton *warningsButton_ = nullptr;
     QPushButton *infosButton_ = nullptr;
+    // R4: "Current file" scope toggle, off by default — the dock's
+    // long-standing default is every open file, and a toggle a user never
+    // notices is one they never find.
+    QPushButton *currentFileOnlyButton_ = nullptr;
     QTreeWidget *tree_ = nullptr;
     QLabel *statusLabel_ = nullptr;
 };
+
+// Builds the panel with its `showQuickFixesAt` wired from `editorTabs`
+// (`openFileAtLine` then `showIntentionsNow`) — kept out of
+// `main_window.cpp`, which is already at its own line ceiling (ADR-0025),
+// the same reason `wireDiagnosticsService` keeps its own wiring out of it.
+ProblemsPanel *createProblemsPanel(LanguageService *languageService, BuildService *buildService,
+                                    AnalysisService *analysisService,
+                                    DiagnosticsService *diagnosticsService, EditorTabs *editorTabs,
+                                    ProblemsPanel::OpenAt openAt, QWidget *parent);
 
 } // namespace ui_shell

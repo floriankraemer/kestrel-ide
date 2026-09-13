@@ -27,6 +27,12 @@ namespace {
 constexpr int kFoldMarkerWidth = 12;
 // F3-16: width of the change-marker strip, left of the fold triangle.
 constexpr int kChangeMarkerWidth = 4;
+// R4: width of the diagnostic icon column, between the change-marker strip
+// and the fold triangle — always present, the same "does not come and go"
+// reasoning `kBreakpointWidth` documents, since a gutter that reflows every
+// time a diagnostic appears or clears would be worse than one that always
+// reserves the room.
+constexpr int kDiagnosticWidth = 12;
 // R1-7: width of the Run-icon column, leftmost — only added to the gutter's
 // width for a file that has a run target, so a file without one keeps
 // exactly the gutter it had before.
@@ -85,14 +91,18 @@ int CodeEditor::lineNumberAreaWidth() const
         max /= 10;
         ++digits;
     }
-    return runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth + kFoldMarkerWidth + 3
+    return runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth + kDiagnosticWidth
+      + kFoldMarkerWidth + 3
       + fontMetrics().horizontalAdvance(QLatin1Char('9')) * digits
       + (blameEnabled_ ? kBlameWidth : 0);
 }
 
 void CodeEditor::updateLineNumberAreaWidth(int /*newBlockCount*/)
 {
-    setViewportMargins(lineNumberAreaWidth(), 0, minimapWidth(), 0);
+    // R4: the error stripe is always laid out, unlike the minimap — it
+    // works with the minimap off.
+    setViewportMargins(lineNumberAreaWidth(), 0, minimapWidth() + ErrorStripe::preferredWidth(),
+                        0);
 }
 
 void CodeEditor::updateLineNumberArea(const QRect &rect, int dy)
@@ -120,8 +130,15 @@ void CodeEditor::resizeEvent(QResizeEvent *event)
 void CodeEditor::layoutMinimap()
 {
     const QRect cr = contentsRect();
+    const int stripeWidth = ErrorStripe::preferredWidth();
+    // R4: the stripe sits closest to the scrollbar, the minimap (when on)
+    // just to its left — "beside the vertical scrollbar" is the stripe's,
+    // not the minimap's, spot to keep.
+    const int stripeX = cr.right() - stripeWidth - verticalScrollBar()->width() + 1;
+    errorStripe_->setGeometry(QRect(stripeX, cr.top(), stripeWidth, cr.height()));
+
     const int width = minimapWidth();
-    const int x = cr.right() - width - verticalScrollBar()->width() + 1;
+    const int x = stripeX - width;
     minimap_->setGeometry(QRect(x, cr.top(), width, cr.height()));
 }
 
@@ -161,10 +178,10 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
             const QString number = QString::number(blockNumber + 1);
             painter.setPen(isCurrent ? currentDigitColor : digitColor);
             painter.drawText(runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth
-                                + kFoldMarkerWidth,
+                                + kDiagnosticWidth + kFoldMarkerWidth,
                               top,
                               digitAreaWidth - runMarkerWidth() - kBreakpointWidth
-                                - kChangeMarkerWidth - kFoldMarkerWidth - 2,
+                                - kChangeMarkerWidth - kDiagnosticWidth - kFoldMarkerWidth - 2,
                               fontMetrics().height(), Qt::AlignRight, number);
 
             if (blameEnabled_) {
@@ -182,7 +199,7 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
             if (foldStartingAt(blockNumber, &range)) {
                 const bool collapsed = collapsedRanges_.contains(range);
                 const int cx = runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth
-                  + kFoldMarkerWidth / 2;
+                  + kDiagnosticWidth + kFoldMarkerWidth / 2;
                 const int cy = top + fontMetrics().height() / 2;
                 QPolygon triangle;
                 if (collapsed) {
@@ -241,6 +258,17 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
                 painter.fillRect(runMarkerWidth() + kBreakpointWidth, top, kChangeMarkerWidth,
                                   fontMetrics().height(), changeMarkerColor(marker.kind));
             }
+
+            const auto diagnosticIt = diagnosticMarks_.constFind(blockNumber);
+            if (diagnosticIt != diagnosticMarks_.constEnd()) {
+                const int cx = runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth
+                  + kDiagnosticWidth / 2;
+                const int cy = top + fontMetrics().height() / 2;
+                painter.setPen(Qt::NoPen);
+                painter.setBrush(diagnosticIt->color);
+                painter.drawEllipse(QPoint(cx, cy), 4, 4);
+                painter.setBrush(Qt::NoBrush);
+            }
         }
 
         block = block.next();
@@ -260,6 +288,10 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
     const bool onChangeMarkerStrip =
       clickX >= runMarkerWidth() + kBreakpointWidth
       && clickX < runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth;
+    const bool onDiagnosticColumn =
+      clickX >= runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth
+      && clickX
+        < runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth + kDiagnosticWidth;
 
     QTextBlock block = firstVisibleBlock();
     int blockNumber = block.blockNumber();
@@ -284,6 +316,11 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
             if (onChangeMarkerStrip && changeMarkerAt(blockNumber, &marker)) {
                 emit changeMarkerClicked(marker.hunkIndex,
                                           lineNumberArea_->mapToGlobal(event->pos()));
+                return;
+            }
+
+            if (onDiagnosticColumn && diagnosticMarks_.contains(blockNumber)) {
+                emit diagnosticMarkerClicked(blockNumber);
                 return;
             }
             toggleFold(blockNumber);

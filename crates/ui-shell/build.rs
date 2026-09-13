@@ -470,6 +470,10 @@ fn main() {
         // Editor minimap (issue #199): no Q_OBJECT, so only the source is
         // listed, same as vcs_gutter.cpp below.
         .cpp_file("cpp/minimap.cpp")
+        // R4: the error stripe. No Q_OBJECT (it calls its CodeEditor
+        // directly and emits no signals, same as Minimap), so only the
+        // source is listed.
+        .cpp_file("cpp/error_stripe.cpp")
         // F3-16: the change-marker colour/kind and the hunk popup. Free
         // functions and plain structs, no Q_OBJECT, so only the source is
         // listed — same as signature_tip.cpp.

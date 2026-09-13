@@ -222,6 +222,63 @@ impl DiagnosticStore {
         rows.sort_by_key(|r| r.severity);
         rows
     }
+
+    /// The first diagnostic in `uri` strictly after the 0-based
+    /// `(line, character)`, wrapping to the file's first diagnostic when
+    /// none follows — F2's answer (R4). `rows_for_uri`'s own order already
+    /// puts the worse severity first on a tie, so two diagnostics stacked
+    /// at one position are visited errors-before-warnings, same as the
+    /// Problems dock lists them. `None` only when `uri` has no diagnostics
+    /// at all — one diagnostic always finds itself again on the wrap.
+    pub fn next_after(&self, uri: &str, line: u32, character: u32) -> Option<DiagnosticRow> {
+        let rows = self.rows_for_uri(uri);
+        let found = rows
+            .iter()
+            .find(|row| is_after(row, line, character))
+            .cloned();
+        found.or_else(|| rows.into_iter().next())
+    }
+
+    /// Shift+F2's answer: the last diagnostic in `uri` strictly before the
+    /// 0-based `(line, character)`, wrapping to the file's last diagnostic
+    /// when none precedes.
+    pub fn prev_before(&self, uri: &str, line: u32, character: u32) -> Option<DiagnosticRow> {
+        let rows = self.rows_for_uri(uri);
+        let found = rows
+            .iter()
+            .rev()
+            .find(|row| is_before(row, line, character))
+            .cloned();
+        found.or_else(|| rows.into_iter().next_back())
+    }
+
+    /// How many of each severity `uri` alone has — [`Self::counts`]
+    /// narrowed to one file, for the error stripe's corner summary.
+    pub fn summary(&self, uri: &str) -> DiagnosticCounts {
+        let mut counts = DiagnosticCounts::default();
+        for row in self.rows_for_uri(uri) {
+            match row.severity {
+                Severity::Error => counts.errors += 1,
+                Severity::Warning => counts.warnings += 1,
+                Severity::Information => counts.infos += 1,
+                Severity::Hint => counts.hints += 1,
+            }
+        }
+        counts
+    }
+}
+
+/// Whether `row` sits strictly after the 0-based `(line, character)` —
+/// `row.line` is 1-based, so it is compared as `row.line - 1`.
+fn is_after(row: &DiagnosticRow, line: u32, character: u32) -> bool {
+    let row_line = row.line - 1;
+    row_line > line || (row_line == line && row.column > character)
+}
+
+/// Whether `row` sits strictly before the 0-based `(line, character)`.
+fn is_before(row: &DiagnosticRow, line: u32, character: u32) -> bool {
+    let row_line = row.line - 1;
+    row_line < line || (row_line == line && row.column < character)
 }
 
 /// Whether a range covers a position, inclusive of both ends — a diagnostic
@@ -704,5 +761,100 @@ mod tests {
         // `point_diagnostic()` builds a 3-character range: [2:1, 2:4).
         assert_eq!(store.diagnostics_at("file:///p/a.rs", 2, 1).len(), 1);
         assert_eq!(store.diagnostics_at("file:///p/a.rs", 2, 4).len(), 1);
+    }
+
+    #[test]
+    fn next_after_finds_the_following_diagnostic_in_the_file() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp",
+            "file:///p/a.rs",
+            vec![
+                point_diagnostic(2, 0, Severity::Error, "first"),
+                point_diagnostic(9, 0, Severity::Warning, "second"),
+            ],
+        );
+        let next = store.next_after("file:///p/a.rs", 2, 0).unwrap();
+        assert_eq!(next.message, "second", "strictly after, not the same spot");
+    }
+
+    #[test]
+    fn next_after_wraps_to_the_first_diagnostic_past_the_last_one() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp",
+            "file:///p/a.rs",
+            vec![
+                point_diagnostic(2, 0, Severity::Error, "first"),
+                point_diagnostic(9, 0, Severity::Warning, "second"),
+            ],
+        );
+        let wrapped = store.next_after("file:///p/a.rs", 20, 0).unwrap();
+        assert_eq!(wrapped.message, "first");
+    }
+
+    #[test]
+    fn next_after_a_lone_diagnostic_wraps_to_itself() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp",
+            "file:///p/a.rs",
+            vec![point_diagnostic(2, 0, Severity::Error, "only")],
+        );
+        let next = store.next_after("file:///p/a.rs", 2, 0).unwrap();
+        assert_eq!(next.message, "only");
+    }
+
+    #[test]
+    fn next_after_is_none_with_no_diagnostics_at_all() {
+        let store = DiagnosticStore::new();
+        assert!(store.next_after("file:///p/a.rs", 0, 0).is_none());
+    }
+
+    #[test]
+    fn prev_before_finds_the_preceding_diagnostic_and_wraps_to_the_last() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp",
+            "file:///p/a.rs",
+            vec![
+                point_diagnostic(2, 0, Severity::Error, "first"),
+                point_diagnostic(9, 0, Severity::Warning, "second"),
+            ],
+        );
+        let prev = store.prev_before("file:///p/a.rs", 9, 0).unwrap();
+        assert_eq!(prev.message, "first", "strictly before, not the same spot");
+
+        let wrapped = store.prev_before("file:///p/a.rs", 0, 0).unwrap();
+        assert_eq!(
+            wrapped.message, "second",
+            "wraps to the file's last diagnostic"
+        );
+    }
+
+    #[test]
+    fn summary_counts_only_the_requested_file() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "lsp",
+            "file:///p/a.rs",
+            vec![
+                point_diagnostic(0, 0, Severity::Error, "e"),
+                point_diagnostic(1, 0, Severity::Warning, "w"),
+            ],
+        );
+        store.replace(
+            "lsp",
+            "file:///p/b.rs",
+            vec![point_diagnostic(0, 0, Severity::Error, "other file")],
+        );
+        let summary = store.summary("file:///p/a.rs");
+        assert_eq!(summary.errors, 1);
+        assert_eq!(summary.warnings, 1);
+        assert_eq!(summary.infos, 0);
+        assert_eq!(
+            store.summary("file:///p/missing.rs"),
+            DiagnosticCounts::default()
+        );
     }
 }

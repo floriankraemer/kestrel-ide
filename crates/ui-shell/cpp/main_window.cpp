@@ -347,8 +347,9 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // Task L2: the Problems panel, tabbed into the same bottom area as Find
     // in Files and Find Usages — the same "list of locations" shape, fed by
     // the language servers instead of a query.
-    auto *problemsPanel = new ProblemsPanel(languageService, buildService, analysisService,
-                                            diagnosticsService, openAt, dockManager);
+    auto *problemsPanel = createProblemsPanel(languageService, buildService, analysisService,
+                                              diagnosticsService, editorTabs, openAt,
+                                              dockManager);
     auto *problemsDock = new ads::CDockWidget(dockManager, QObject::tr("Problems"));
     problemsDock->setWidget(problemsPanel);
     docks->registerDock(QStringLiteral("problems"), problemsDock, ads::CenterDockWidgetArea,

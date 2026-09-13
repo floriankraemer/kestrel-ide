@@ -64,7 +64,7 @@ ADR numbers 0006 and 0013–0015 were never used; the gaps are historical and in
 
 ## Plans
 
-All plan documents are complete except the plugin-host-and-icon-themes plan, the run-build-debug parity plan, the remote WSL plan, the Changes tab & Git feature revision plan, the IntelliJ-parity refinement plan, and the Containers plan, which are the six currently being delivered; the rest remain as historical records of how each feature phase was delivered.
+All plan documents are complete except the plugin-host-and-icon-themes plan, the run-build-debug parity plan, the remote WSL plan, the Changes tab & Git feature revision plan, and the Containers plan, which are the five currently being delivered; the rest remain as historical records of how each feature phase was delivered.
 (An earlier version of this line called the index-performance and large-files plans incomplete. Both of their Progress tables are fully `done`; the claim was stale.)
 
 - [MVP implementation plan](architecture/mvp-implementation-plan.md) — MVP editor shell; marked historical.
@@ -89,7 +89,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan, the
 - [Colour themes plan](architecture/color-themes-plan.md) — colour themes become a `color-themes` plugin contribution, the three original built-in themes migrate to data with unchanged ids, and the nine GitHub (Primer) theme variants ship as a vendored built-in plugin; carries its own Progress table.
 - [Remote WSL plan](architecture/remote-wsl-plan.md) — the Windows build executes tooling inside a `\\wsl.localhost\...`/`\\wsl$\...` project's own distro via `wsl.exe` while file I/O stays on the UNC share; `ExecHost` as a value in `process-exec`, translation confined to `lsp-core`/`dap-core`/`build-core`; in delivery, carries its own Progress table.
 - [Changes tab & Git feature revision plan](architecture/changes-panel-plan.md) — the Changes dock rebuilt with a toolbar (branch chip, Refresh/Fetch/Pull/Push, Stage/Unstage all), single-letter status codes, and a Merge Conflicts group, sitting on a `git status --porcelain=v2` backend (ADR-0053); in delivery, carries its own Progress table with the Windows/WSL manual pass left open.
-- [IntelliJ-parity refinement plan](architecture/intellij-parity-refinement-plan.md) — eight independent refinements of features that already exist (Tab/indent/brackets, completion depth, real hover/docs popups, diagnostics navigation, debugger UI, hunk staging and commit, Git log/blame/branch ops, Find in Files/Usages), chosen because the Rust core is often ahead of the Qt view; carries its own Progress table.
+- [IntelliJ-parity refinement plan](architecture/intellij-parity-refinement-plan.md) — eight independent refinements of features that already exist (Tab/indent/brackets, completion depth, real hover/docs popups, diagnostics navigation, debugger UI, hunk staging and commit, Git log/blame/branch ops, Find in Files/Usages), chosen because the Rust core is often ahead of the Qt view; delivered as PRs #292–#302, one per item.
 - [Containers plan](architecture/containers-plan.md) — JetBrains-parity Docker/Podman integration: connections, the Containers dock, images/networks/volumes, run configurations and run targets, editor assistance, and registries, delivered CLI-driven (ADR-0055) as ten tasks; carries its own Progress table.
 
 - [LSP conformance](architecture/lsp-conformance.md) — checking the LSP client against a real rust-analyzer; the executable expectations file and why it is not a per-PR gate.

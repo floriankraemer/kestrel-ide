@@ -250,11 +250,11 @@ Files: `crates/index-core/src/lib.rs`, new `crates/lsp-core/src/references.rs`, 
 
 | # | Item | Status | Commit |
 |---|---|---|---|
-| R1 | Indentation, Tab and bracket basics | done | 3061c31 |
-| R2 | Completion popup depth | done | 88af3d4 |
-| R3 | Quick documentation, signature help and hover as real popups | done | d60dde6 |
-| R4 | Diagnostics navigation and the error stripe | done | 5ae6f31 |
-| R5 | Debugger UI: wire the core that already exists | done | c975635 |
-| R6 | Staging and commit workflow | done | cbeb1f8 |
-| R7 | Git log, blame and branch operations | done | 850e974 |
-| R8 | Find in Files and Find Usages depth | done | ccd5cd6 |
+| R1 | Indentation, Tab and bracket basics | done | a2bcdff |
+| R2 | Completion popup depth | done | b54d3f2 |
+| R3 | Quick documentation, signature help and hover as real popups | done | e9777ac |
+| R4 | Diagnostics navigation and the error stripe | done | 2a20f1c |
+| R5 | Debugger UI: wire the core that already exists | done | 12ca51b |
+| R6 | Staging and commit workflow | done | 4aa94cf |
+| R7 | Git log, blame and branch operations | done | 4b0d41a |
+| R8 | Find in Files and Find Usages depth | done | 209e448 |

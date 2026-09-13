@@ -7023,6 +7023,12 @@ mod ffi {
         #[qinvokable]
         fn remotes(self: &VcsService) -> Vec<FfiRemoteInfo>;
 
+        /// Every remote-tracking branch (e.g. `origin/main`), filled by the
+        /// same round trip — R7's branch popup Remote section.
+        #[qinvokable]
+        #[cxx_name = "remoteBranches"]
+        fn remote_branches(self: &VcsService) -> Vec<FfiBranch>;
+
         /// `git merge <branch>`. A conflict surfaces via `vcsFailed` with
         /// `FfiVcsErrorCode::MergeConflict` — the Changes dock's existing
         /// "Merge Conflicts" group picks it up on the `statusChanged` this

@@ -91,6 +91,9 @@ pub struct VcsServiceRust {
     /// trip as `branches` (R6's revision picker).
     ref_names: RefCell<Vec<String>>,
     current_branch: RefCell<String>,
+    /// Remote-tracking branch names, filled by the same round trip (R7's
+    /// branch popup Remote section).
+    remote_branches: RefCell<Vec<String>>,
     /// `refs_by_commit`, filled by the same `refreshBranches` round trip as
     /// `branches`/`ref_names` (R7's log-row ref chips) — recomputed
     /// whenever `HEAD`, a branch or a tag moves, the same triggers that
@@ -145,6 +148,7 @@ impl Default for VcsServiceRust {
             branches: RefCell::default(),
             ref_names: RefCell::default(),
             current_branch: RefCell::default(),
+            remote_branches: RefCell::default(),
             refs_by_commit: RefCell::default(),
             remotes: RefCell::default(),
             commit_details: RefCell::default(),

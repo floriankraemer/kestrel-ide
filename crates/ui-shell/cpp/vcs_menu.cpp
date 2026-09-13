@@ -1,5 +1,6 @@
 #include "vcs_menu.h"
 
+#include "branch_popup.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "editor_tabs.h"
@@ -33,79 +34,6 @@ constexpr int vcsErrorCode(FfiVcsErrorCode code)
 }
 
 } // namespace
-
-// Promoted out of the anonymous namespace above (was `static`) for G6 —
-// declared in vcs_menu.h so `changes_toolbar.cpp`'s branch chip can reuse it
-// rather than copying the checkout/create/delete wiring.
-void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint &globalPos)
-{
-    auto *menu = new QMenu(anchor);
-    menu->setAttribute(Qt::WA_DeleteOnClose);
-
-    // Names copied out to a plain QStringList up front: `rust::Vec<T>` is a
-    // borrowed view over Rust-owned memory, not a value this code should
-    // hold onto past this function, and the delete-branch lambda below
-    // needs the list again after the branch that filled it has closed.
-    const QString current = vcsService->currentBranch();
-    QStringList names;
-    for (const FfiBranch &branch : vcsService->branches()) {
-        names.append(branch.name);
-    }
-    for (const QString &name : names) {
-        QAction *action = menu->addAction(name);
-        action->setCheckable(true);
-        action->setChecked(name == current);
-        QObject::connect(action, &QAction::triggered, vcsService,
-                          [vcsService, name]() { vcsService->checkout(name); });
-    }
-    menu->addSeparator();
-
-    QAction *newBranchAction = menu->addAction(QObject::tr("New Branch..."));
-    QObject::connect(newBranchAction, &QAction::triggered, vcsService, [vcsService, anchor]() {
-        const QString name =
-          QInputDialog::getText(anchor, QObject::tr("New Branch"), QObject::tr("Branch name:"));
-        if (!name.isEmpty()) {
-            vcsService->createBranch(name, QString());
-        }
-    });
-
-    QAction *deleteBranchAction = menu->addAction(QObject::tr("Delete Branch..."));
-    QObject::connect(
-      deleteBranchAction, &QAction::triggered, vcsService, [vcsService, anchor, names]() {
-          if (names.isEmpty()) {
-              return;
-          }
-          bool ok = false;
-          const QString name = QInputDialog::getItem(anchor, QObject::tr("Delete Branch"),
-                                                       QObject::tr("Branch:"), names, 0, false, &ok);
-          if (!ok || name.isEmpty()) {
-              return;
-          }
-          // A refusal (unmerged commits) is shown, not silently retried —
-          // force is a deliberate second click, never an automatic fallback
-          // (Repository::delete_branch's own doc comment on why).
-          QObject::connect(
-            vcsService, &VcsService::vcsFailed, vcsService,
-            [vcsService, anchor, name](FfiResult error) {
-                QObject::disconnect(vcsService, &VcsService::vcsFailed, vcsService, nullptr);
-                if (error.code != vcsErrorCode(FfiVcsErrorCode::UnmergedBranch)) {
-                    QMessageBox::warning(anchor, QObject::tr("Delete Branch"), error.message);
-                    return;
-                }
-                const auto choice = QMessageBox::warning(
-                  anchor, QObject::tr("Delete Branch"),
-                  QObject::tr("'%1' has commits not merged anywhere else. Delete anyway?")
-                    .arg(name),
-                  QMessageBox::Cancel | QMessageBox::Yes, QMessageBox::Cancel);
-                if (choice == QMessageBox::Yes) {
-                    vcsService->deleteBranch(name, /*force=*/true);
-                }
-            });
-          vcsService->deleteBranch(name, /*force=*/false);
-      });
-
-    menu->popup(globalPos);
-}
 
 QToolButton *buildBranchWidget(VcsService *vcsService, QWidget *window, QStatusBar *statusBar)
 {

@@ -1,9 +1,9 @@
 #include "changes_toolbar.h"
 
+#include "branch_popup.h"
 #include "e2e_mark.h"
 #include "theme.h"
 #include "ui_tokens.h"
-#include "vcs_menu.h"
 
 #include <QHBoxLayout>
 #include <QPoint>

@@ -73,6 +73,34 @@ impl Repository {
         Ok(names)
     }
 
+    /// Every remote-tracking branch name (e.g. `origin/main`), sorted —
+    /// `gix`'s `references().remote_branches()`, the same in-process read
+    /// [`Self::branches`] is. R7's branch popup Remote section.
+    ///
+    /// `<remote>/HEAD` — the symbolic ref `git clone`/`git remote set-head`
+    /// creates pointing at the remote's default branch — is filtered out:
+    /// it is not a branch a user can check out or compare against by that
+    /// name, and showing it as a sibling of `origin/main` would read as a
+    /// real, distinct branch.
+    pub fn remote_branches(&self) -> Result<Vec<String>, VcsError> {
+        let platform = self
+            .inner
+            .references()
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        let iter = platform
+            .remote_branches()
+            .map_err(|e| VcsError::Read(e.to_string()))?;
+        let mut names: Vec<String> = iter
+            .map(|r| {
+                r.map(|reference| reference.name().shorten().to_string())
+                    .map_err(|e| VcsError::Read(e.to_string()))
+            })
+            .collect::<Result<_, _>>()?;
+        names.retain(|name| !name.ends_with("/HEAD"));
+        names.sort();
+        Ok(names)
+    }
+
     /// Every tag name, sorted — `gix`'s `references().tags()`, the same
     /// in-process read [`Self::branches`] is (ADR-0031 §1).
     pub fn tags(&self) -> Result<Vec<String>, VcsError> {
@@ -421,6 +449,35 @@ mod tests {
         assert!(matches!(err, VcsError::UnmergedBranch { .. }));
         // Refused, not deleted.
         assert!(repo.branches().unwrap().contains(&"feature".to_string()));
+    }
+
+    #[test]
+    fn remote_branches_lists_the_tracking_branch_after_a_clone() {
+        let remote_dir = tempfile::tempdir().unwrap();
+        git(remote_dir.path(), &["init", "--quiet", "--bare"]);
+        git(
+            remote_dir.path(),
+            &["symbolic-ref", "HEAD", "refs/heads/main"],
+        );
+        let seed = tempfile::tempdir().unwrap();
+        init_with_first_commit(seed.path());
+        git(
+            seed.path(),
+            &["push", remote_dir.path().to_str().unwrap(), "main"],
+        );
+        let local_dir = tempfile::tempdir().unwrap();
+        git(
+            local_dir.path(),
+            &["clone", "--quiet", remote_dir.path().to_str().unwrap(), "."],
+        );
+
+        let repo = open(local_dir.path());
+        // `git clone` also creates `refs/remotes/origin/HEAD`, filtered out
+        // — see `remote_branches`'s own doc comment.
+        assert_eq!(
+            repo.remote_branches().unwrap(),
+            vec!["origin/main".to_string()]
+        );
     }
 
     #[test]

@@ -127,18 +127,35 @@ impl ffi::VcsService {
             // Tags ride along for the revision picker (R6): a third cheap
             // ref read on the same trip, never a round trip of its own.
             let refs = worker.repo.ref_names();
-            // R7: ref decorations (for the log's chips) and the remote
-            // list (for the branch popup's picker) — two more cheap `gix`
-            // reads on the same trip, recomputed on every branch/HEAD move
-            // the same as `names`/`current`/`refs` already are.
+            // R7: remote-tracking branches (the popup's Remote section), ref
+            // decorations (the log's chips) and the remote list (the push
+            // picker) — three more cheap `gix` reads on the same trip,
+            // recomputed on every branch/HEAD move the same as
+            // `names`/`current`/`refs` already are.
+            let remote_branches = worker.repo.remote_branches();
             let refs_by_commit = worker.repo.refs_by_commit();
             let remotes = worker.repo.remotes();
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
-                match (names, current, refs, refs_by_commit, remotes) {
-                    (Ok(names), Ok(current), Ok(refs), Ok(refs_by_commit), Ok(remotes)) => {
+                match (
+                    names,
+                    current,
+                    refs,
+                    remote_branches,
+                    refs_by_commit,
+                    remotes,
+                ) {
+                    (
+                        Ok(names),
+                        Ok(current),
+                        Ok(refs),
+                        Ok(remote_branches),
+                        Ok(refs_by_commit),
+                        Ok(remotes),
+                    ) => {
                         *service.branches.borrow_mut() = names;
                         *service.ref_names.borrow_mut() = refs;
                         *service.current_branch.borrow_mut() = current.unwrap_or_default();
+                        *service.remote_branches.borrow_mut() = remote_branches;
                         *service.refs_by_commit.borrow_mut() = refs_by_commit;
                         *service.remotes.borrow_mut() = remotes;
                         service.as_mut().branch_changed();
@@ -146,8 +163,9 @@ impl ffi::VcsService {
                     (Err(err), ..)
                     | (_, Err(err), ..)
                     | (_, _, Err(err), ..)
-                    | (_, _, _, Err(err), _)
-                    | (_, _, _, _, Err(err)) => {
+                    | (_, _, _, Err(err), ..)
+                    | (_, _, _, _, Err(err), _)
+                    | (_, _, _, _, _, Err(err)) => {
                         let result = to_ffi_result(&err);
                         service.as_mut().vcs_failed(result);
                     }
@@ -178,6 +196,16 @@ impl ffi::VcsService {
 
     pub fn current_branch(&self) -> QString {
         QString::from(self.current_branch.borrow().as_str())
+    }
+
+    pub fn remote_branches(&self) -> Vec<ffi::FfiBranch> {
+        self.remote_branches
+            .borrow()
+            .iter()
+            .map(|name| ffi::FfiBranch {
+                name: QString::from(name.as_str()),
+            })
+            .collect()
     }
 
     pub fn commit_refs(&self, id: &QString) -> Vec<ffi::FfiRefDecoration> {

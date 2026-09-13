@@ -240,7 +240,14 @@ impl ffi::VcsService {
             let result = worker.repo.checkout(&name);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => {
-                    service.as_mut().branch_changed();
+                    // A full `refreshBranches` round trip, not a bare
+                    // `branchChanged()`: `current_branch`/`branches` are
+                    // cached RefCells this job never touched directly, so
+                    // a listener re-reading them right after this signal
+                    // (the branch popup's own `populate`, the status-bar
+                    // widget) would see the answer from before the
+                    // checkout.
+                    service.as_mut().refresh_branches();
                     service.as_mut().refresh_status();
                 }
                 Err(err) => {
@@ -263,7 +270,9 @@ impl ffi::VcsService {
             };
             let result = worker.repo.create_branch(&name, start);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
-                Ok(()) => service.as_mut().branch_changed(),
+                // See `checkout`'s own comment on why this is a full
+                // refresh, not a bare signal.
+                Ok(()) => service.as_mut().refresh_branches(),
                 Err(err) => {
                     let result = to_ffi_result(&err);
                     service.as_mut().vcs_failed(result);
@@ -278,7 +287,7 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let result = worker.repo.delete_branch(&name, force);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
-                Ok(()) => service.as_mut().branch_changed(),
+                Ok(()) => service.as_mut().refresh_branches(),
                 Err(err) => {
                     let result = to_ffi_result(&err);
                     service.as_mut().vcs_failed(result);
@@ -310,7 +319,7 @@ impl ffi::VcsService {
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => {
                     service.as_mut().refresh_status();
-                    service.as_mut().branch_changed();
+                    service.as_mut().refresh_branches();
                 }
                 Err(err) => {
                     let result = to_ffi_result(&err);
@@ -327,7 +336,7 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let result = worker.repo.push(&remote, &branch, set_upstream);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
-                Ok(()) => service.as_mut().branch_changed(),
+                Ok(()) => service.as_mut().refresh_branches(),
                 Err(err) => {
                     let result = to_ffi_result(&err);
                     service.as_mut().vcs_failed(result);
@@ -341,7 +350,7 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let result = worker.repo.push_tracking();
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
-                Ok(()) => service.as_mut().branch_changed(),
+                Ok(()) => service.as_mut().refresh_branches(),
                 Err(err) => {
                     let result = to_ffi_result(&err);
                     service.as_mut().vcs_failed(result);
@@ -363,7 +372,7 @@ impl ffi::VcsService {
             let result = op(&worker.repo);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(()) => {
-                    service.as_mut().branch_changed();
+                    service.as_mut().refresh_branches();
                     service.as_mut().refresh_status();
                 }
                 Err(err) => {
@@ -407,7 +416,7 @@ impl ffi::VcsService {
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let result = worker.repo.rename_branch(&old, &new_name);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
-                Ok(()) => service.as_mut().branch_changed(),
+                Ok(()) => service.as_mut().refresh_branches(),
                 Err(err) => {
                     let result = to_ffi_result(&err);
                     service.as_mut().vcs_failed(result);

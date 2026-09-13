@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QMetaObject>
 #include <QPushButton>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <memory>
@@ -133,9 +134,36 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*gl
             item->setData(kNameRole, name);
         }
     };
+    // R7 E2E: each row's rect, so a flow can click or right-click a
+    // specific branch by name without recomputing list geometry itself —
+    // the same convention `CommitLogPanel::onCommitLogReady`'s marks
+    // follow. Deferred one turn of the event loop: geometry is only real
+    // once the dialog has actually been laid out on screen.
+    const auto markRows = [=]() {
+        const auto markList = [](QListWidget *list, const char *section) {
+            for (int i = 0; i < list->count(); ++i) {
+                QListWidgetItem *item = list->item(i);
+                const QRect rect = list->visualItemRect(item);
+                const QPoint origin = list->viewport()->mapToGlobal(rect.topLeft());
+                e2eMark(QStringLiteral("{\"ev\":\"branch_row\",\"section\":%1,\"name\":%2,"
+                                        "\"rect\":[%3,%4,%5,%6]}")
+                          .arg(e2eJson(QString::fromUtf8(section)),
+                                e2eJson(item->data(kNameRole).toString()))
+                          .arg(origin.x())
+                          .arg(origin.y())
+                          .arg(rect.width())
+                          .arg(rect.height()));
+            }
+        };
+        markList(localList, "local");
+        markList(remoteList, "remote");
+    };
+
     populate();
-    QObject::connect(search, &QLineEdit::textChanged, dialog, populate);
-    QObject::connect(vcsService, &VcsService::branchChanged, dialog, populate);
+    QObject::connect(search, &QLineEdit::textChanged, dialog,
+                      [=]() { populate(); QTimer::singleShot(0, dialog, markRows); });
+    QObject::connect(vcsService, &VcsService::branchChanged, dialog,
+                      [=]() { populate(); QTimer::singleShot(0, dialog, markRows); });
 
     const auto compareWithCurrent = [=](const QString &name) {
         auto connection = std::make_shared<QMetaObject::Connection>();
@@ -176,6 +204,7 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*gl
 
         auto *menu = new QMenu(localList);
         menu->setAttribute(Qt::WA_DeleteOnClose);
+        e2eMarkMenuActions(menu, "branch_context_action");
 
         QAction *checkoutAction = menu->addAction(QObject::tr("Checkout"));
         checkoutAction->setEnabled(!isCurrent);
@@ -258,6 +287,7 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*gl
 
         auto *menu = new QMenu(remoteList);
         menu->setAttribute(Qt::WA_DeleteOnClose);
+        e2eMarkMenuActions(menu, "branch_context_action");
         QAction *checkoutAction = menu->addAction(QObject::tr("Checkout"));
         QAction *compareAction = menu->addAction(QObject::tr("Compare with Current"));
 
@@ -289,6 +319,20 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*gl
     dialog->show();
     dialog->raise();
     dialog->activateWindow();
+    QTimer::singleShot(0, dialog, markRows);
+    // E2E: "New Branch..." has no context-menu geometry of its own to
+    // reuse (`e2eMarkMenuActions` marks a `QMenu`'s actions, not a plain
+    // button) — its rect only reads correctly once the dialog is actually
+    // laid out, same reason `markRows` is deferred.
+    QTimer::singleShot(0, dialog, [newBranchButton]() {
+        const QRect rect(newBranchButton->mapToGlobal(QPoint(0, 0)), newBranchButton->size());
+        e2eMark(QStringLiteral("{\"ev\":\"branch_popup_shown\",\"new_branch_rect\":"
+                                "[%1,%2,%3,%4]}")
+                  .arg(rect.x())
+                  .arg(rect.y())
+                  .arg(rect.width())
+                  .arg(rect.height()));
+    });
 }
 
 } // namespace ui_shell

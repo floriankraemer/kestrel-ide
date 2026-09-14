@@ -1,0 +1,75 @@
+{
+  "rootDir": "/workspace/crates/jvm-build-core/tests/fixtures/gradle-single",
+  "gradleVersion": "8.10.2",
+  "modules": [
+    {
+      "path": ":",
+      "name": "gradle-single",
+      "dir": "/workspace/crates/jvm-build-core/tests/fixtures/gradle-single",
+      "sourceRoots": [
+        {
+          "path": "/workspace/crates/jvm-build-core/tests/fixtures/gradle-single/src/main/resources",
+          "kind": "Main"
+        },
+        {
+          "path": "/workspace/crates/jvm-build-core/tests/fixtures/gradle-single/src/main/java",
+          "kind": "Main"
+        },
+        {
+          "path": "/workspace/crates/jvm-build-core/tests/fixtures/gradle-single/src/test/resources",
+          "kind": "Test"
+        },
+        {
+          "path": "/workspace/crates/jvm-build-core/tests/fixtures/gradle-single/src/test/java",
+          "kind": "Test"
+        }
+      ],
+      "tasks": [
+        {
+          "path": ":build",
+          "name": "build",
+          "group": "build",
+          "description": "Assembles and tests this project."
+        },
+        {
+          "path": ":compileJava",
+          "name": "compileJava",
+          "group": "",
+          "description": "Compiles main Java source."
+        },
+        {
+          "path": ":test",
+          "name": "test",
+          "group": "verification",
+          "description": "Runs the test suite."
+        }
+      ],
+      "dependencies": [
+        {
+          "configuration": "testCompileClasspath",
+          "group": "org.junit",
+          "name": "junit-bom",
+          "version": "5.10.3",
+          "direct": true,
+          "reason": "requested"
+        },
+        {
+          "configuration": "testCompileClasspath",
+          "group": "org.junit.jupiter",
+          "name": "junit-jupiter",
+          "version": "5.10.3",
+          "direct": false,
+          "reason": "requested"
+        },
+        {
+          "configuration": "testCompileClasspath",
+          "group": "org.junit.jupiter",
+          "name": "junit-jupiter-api",
+          "version": "5.10.3",
+          "direct": false,
+          "reason": "constraint"
+        }
+      ]
+    }
+  ]
+}

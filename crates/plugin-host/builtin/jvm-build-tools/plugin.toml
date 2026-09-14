@@ -1,0 +1,80 @@
+# Hand-written, like builtin/php-tools/plugin.toml: no upstream package to
+# import here either. Contributes two `build-tools` rows (Gradle, Maven) and
+# two `test-frameworks` rows (one per tool) rather than a `[wasm]` component
+# — a build tool is a native process the host launches by argv, matching
+# `BuildToolContribution`'s doc comment (a wasm guest can neither spawn a
+# process nor be trusted with either tool's raw output).
+#
+# `ide-model.init.gradle` is the one asset this plugin ships: the script
+# `jvm_build_core::gradle` runs through the project's own wrapper to print a
+# JSON project model to a file, and the same script installs the TeamCity
+# `TestListener` the `junit-gradle` row's `-Pide.teamcity=true` run uses.
+# See that file's own header comment for the init-script rules it follows
+# (ADR-0057).
+id = "jvm-build-tools"
+name = "Gradle and Maven"
+version = "1.0.0"
+api_version = 1
+license = "MIT"
+description = "Gradle and Maven project sync, task tool window, JUnit results and build-file editing."
+
+[[contributes.build-tools]]
+id = "gradle"
+name = "Gradle"
+# `run_core::ToolchainId::as_str()` — resolved with `from_id` at the seam in
+# `jvm-build-core`, never interpreted here (this crate stays a leaf).
+toolchain = "gradle"
+build-files = [
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+    "gradle.properties",
+    "gradle/libs.versions.toml",
+    "gradle/wrapper/gradle-wrapper.properties",
+    "buildSrc/**",
+]
+init-script = "ide-model.init.gradle"
+
+[[contributes.build-tools]]
+id = "maven"
+name = "Maven"
+toolchain = "maven"
+# Maven needs no init-script asset: reads are the static/effective pom and
+# `dependency:tree`, none of which take a script argument the way Gradle's
+# `--init-script` does.
+build-files = ["**/pom.xml", ".mvn/**"]
+
+[[contributes.test-frameworks]]
+id = "junit-gradle"
+name = "JUnit (Gradle)"
+program-candidates = ["./gradlew", "gradle"]
+# `${asset_dir}` expands to this plugin's materialised directory
+# (`plugin_host::expand_asset_dir`) — a builtin plugin's assets are
+# `include_bytes!`-ed into the binary, not a real path on disk, until the
+# first run that needs one materialises them (`LoadedPlugin::asset_dir`).
+# `cleanTest` precedes `test` so a previously all-passing `:test` task that
+# Gradle would otherwise treat as up-to-date always re-runs and re-streams —
+# verified against a real Gradle daemon (A4): a task Gradle skips as
+# up-to-date emits no ##teamcity messages at all, which would read as "zero
+# tests" rather than "nothing changed".
+args = ["--init-script", "${asset_dir}/ide-model.init.gradle", "-Pide.teamcity=true", "--console=plain", "cleanTest", "test"]
+filter-flag = "--tests"
+output-format = "teamcity"
+requires-toolchain = "gradle"
+
+[[contributes.test-frameworks]]
+id = "junit-maven"
+name = "JUnit (Maven)"
+program-candidates = ["./mvnw", "mvn"]
+args = ["-B", "test"]
+# Maven's own `-Dtest=` takes the pattern spliced into one argument, unlike
+# Gradle's/PHPUnit's separate flag+pattern shape — this is exactly the case
+# `filter-template` exists for (A1).
+filter-template = "-Dtest={pattern}"
+output-format = "junit-xml"
+# Surefire (and Failsafe, for integration tests) write one report per test
+# class, never streamed — `test_core::runner::run` reads every matching file
+# once the process exits (ADR-0057 section 5).
+report-glob = "**/target/{surefire,failsafe}-reports/TEST-*.xml"
+requires-toolchain = "maven"

@@ -216,6 +216,133 @@ RUN dotnet tool install --global csharp-ls --version "${CSHARP_LS_VERSION}" \
     && csharp-ls --version
 
 # ---------------------------------------------------------------------------
+# linux-jvm: linux-builder plus Temurin 21, Gradle and Maven, for the
+# jvm-build-core `jvm-integration`-feature tests (jvm-build-tools plan A2,
+# ADR-0057).
+#
+# Deliberately NOT folded into linux-builder, the same "extra weight for a
+# suite most PRs never touch" reasoning the lsp-conformance stage above
+# gives: a JDK plus two build tools is real weight nobody building a
+# non-JVM feature should pay per PR. `make test-jvm` builds and runs this
+# stage nightly/on demand, never through `make test`.
+#
+# Every version is PINNED, for the identical reason rust-analyzer/csharp-ls
+# are above: an unpinned JDK or build tool turns this suite into a random
+# number generator whose red runs mean "upstream changed" as often as "we
+# broke something".
+#
+# The fixture-prewarm step below runs `tests/fixtures/{gradle,maven}-*`
+# once at image-build time so their JUnit 5 dependency resolution is
+# already cached in this layer.
+# ---------------------------------------------------------------------------
+FROM linux-builder AS linux-jvm
+
+# Gradle's and Maven's caches are redirected out of $HOME and into a fixed,
+# world-readable-and-writable location: the prewarm RUN below runs as root
+# (the image build's default user), but `make test-jvm` runs `RUN_JVM`
+# under the *developer's* uid (`DOCKER_USER`, same as `RUN_LINUX`) so a
+# bind-mounted fixture's stray `build`/`.gradle`/`target` directories never
+# end up root-owned on the host. A cache keyed off `$HOME` would be
+# unreadable to that non-root uid (root's own $HOME is 0700); a fixed path
+# both users can reach is what makes the prewarm actually pay off instead
+# of ever missing entirely once the container stops running as root.
+ENV GRADLE_USER_HOME=/opt/jvm-cache/gradle
+ENV MAVEN_OPTS="-Dmaven.repo.local=/opt/jvm-cache/m2"
+
+# Temurin 21 via Eclipse Adoptium's own apt repository — the vendor's
+# recommended install path, not a third-party PPA.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget \
+        gnupg \
+        unzip \
+    && wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
+        | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" \
+        > /etc/apt/sources.list.d/adoptium.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        temurin-21-jdk \
+    && rm -rf /var/lib/apt/lists/* \
+    && java -version
+
+ENV JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Gradle's official binary distribution — no wrapper needed for the
+# system-Gradle path `--features jvm-integration` tests use against
+# wrapper-less fixtures (A4's own note: "the real (wrapper-less, system)
+# gradle binary").
+ARG GRADLE_VERSION=8.10.2
+RUN wget -qO /tmp/gradle.zip \
+        "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && ln -s "/opt/gradle-${GRADLE_VERSION}/bin/gradle" /usr/local/bin/gradle \
+    && rm /tmp/gradle.zip \
+    && gradle --version
+
+# Maven's official binary distribution, from the permanent archive rather
+# than dlcdn.apache.org (which mirrors only the *current* latest release and
+# 404s on an older pinned version the moment a new one ships).
+ARG MAVEN_VERSION=3.9.9
+RUN wget -qO /tmp/maven.tar.gz \
+        "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+    && tar -xzf /tmp/maven.tar.gz -C /opt \
+    && ln -s "/opt/apache-maven-${MAVEN_VERSION}/bin/mvn" /usr/local/bin/mvn \
+    && rm /tmp/maven.tar.gz \
+    && mvn --version
+
+# Fixture prewarm (jvm-build-tools plan A4/A5): copy the five fixture
+# projects to a throwaway path and run exactly the commands
+# gradle_integration.rs/maven_integration.rs run for real, so
+# $GRADLE_USER_HOME and Maven's local repo are already warm with precisely
+# the artifacts those tests need. The tests themselves run with the *real*
+# fixtures bind-mounted at /workspace (the Makefile's DOCKER_MOUNTS) and
+# never see this throwaway copy, but resolve from the same caches — set
+# once, above, as fixed paths rather than $HOME-relative ones, so the cache
+# is reachable both from this RUN (root, the image build's default user)
+# and from `make test-jvm`'s non-root `RUN_JVM` invocation.
+#
+# The daemon registry is deleted after prewarming, not just chmod'd
+# world-writable: a Gradle daemon `chmod 700`s its own registry directory
+# on startup (ownership, not the mode bits `a+rwX` already set), which a
+# non-root uid cannot do to a directory root still owns — "Operation not
+# permitted" the first time `RUN_JVM`'s uid tries to start a daemon in a
+# root-created one. Removing the directory (and `.tmp`, gradle's scratch
+# space, same reasoning) means the *first* daemon a real, non-root run
+# starts creates and owns it itself; every other cache under
+# $GRADLE_USER_HOME (dependency jars, the wrapper distribution) needs no
+# such ownership change and stays prewarmed.
+#
+# gradle-single's and maven-single's fixtures each carry one deliberately
+# failing test (`GreeterTest::deliberatelyFails`, A4/A5's own fixtures) —
+# `|| true` on exactly those two test invocations, since a failing test is
+# the expected, successful outcome of running them and must not fail this
+# RUN (and so the whole image build).
+COPY crates/jvm-build-core/tests/fixtures /tmp/jvm-fixtures
+COPY crates/plugin-host/builtin/jvm-build-tools/ide-model.init.gradle /tmp/ide-model.init.gradle
+RUN cd /tmp/jvm-fixtures/gradle-single \
+    && gradle --init-script /tmp/ide-model.init.gradle -q ideModel --console=plain --no-configuration-cache -Pide.modelOut=/tmp/model.json \
+    && (gradle --init-script /tmp/ide-model.init.gradle -Pide.teamcity=true --console=plain --no-configuration-cache cleanTest test || true) \
+    && cd /tmp/jvm-fixtures/gradle-multi-kts \
+    && gradle --init-script /tmp/ide-model.init.gradle -q ideModel --console=plain --no-configuration-cache -Pide.modelOut=/tmp/model.json \
+    && gradle --init-script /tmp/ide-model.init.gradle -Pide.teamcity=true --console=plain --no-configuration-cache cleanTest test \
+    && cd /tmp/jvm-fixtures/gradle-catalog \
+    && gradle --init-script /tmp/ide-model.init.gradle -q ideModel --console=plain --no-configuration-cache -Pide.modelOut=/tmp/model.json \
+    && gradle --init-script /tmp/ide-model.init.gradle -Pide.teamcity=true --console=plain --no-configuration-cache cleanTest test \
+    && cd /tmp/jvm-fixtures/maven-single \
+    && mvn -B help:effective-pom -Doutput=/tmp/eff.xml \
+    && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree -Dverbose \
+    && cd /tmp/jvm-fixtures/maven-multi/lib \
+    && mvn -B help:effective-pom -Doutput=/tmp/eff-lib.xml \
+    && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree -Dverbose \
+    && cd /tmp/jvm-fixtures/maven-multi/app \
+    && mvn -B help:effective-pom -Doutput=/tmp/eff-app.xml \
+    && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree -Dverbose \
+    && rm -rf /tmp/jvm-fixtures /tmp/model.json /tmp/eff*.xml /tmp/ide-model.init.gradle \
+    && mkdir -p /opt/jvm-cache \
+    && chmod -R a+rwX /opt/jvm-cache \
+    && rm -rf /opt/jvm-cache/gradle/daemon /opt/jvm-cache/gradle/.tmp
+
+# ---------------------------------------------------------------------------
 # linux-artifact-builder: linux-builder + baked-in source, for buildx
 # artifact-extraction builds. Kept separate from linux-builder (used as the
 # dev/test image via `docker run -v $(pwd):/workspace`) so that stage's

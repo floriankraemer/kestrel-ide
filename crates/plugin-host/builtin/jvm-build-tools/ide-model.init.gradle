@@ -1,0 +1,225 @@
+// ide-model.init.gradle — the jvm-build-tools plugin's one asset (ADR-0057).
+//
+// Run through the project's own wrapper: `./gradlew --init-script
+// ide-model.init.gradle -q ideModel --console=plain --no-configuration-cache
+// -Pide.modelOut=<tmp file>`. Prints nothing to stdout on success — the
+// model is written to the file `ide.modelOut` names, never to stdout, since
+// a build script's own `println`s share that stream even under `-q` and
+// would corrupt a JSON parse (jvm_build_core::gradle::model_json reads the
+// file, not the process's stdout).
+//
+// `--no-configuration-cache` is required on the model invocation: this
+// script's `doLast` walks live `Task`/`Configuration` objects, which the
+// configuration cache cannot serialise. Gradle versions before 6.6 have no
+// such flag and do not need one (the cache did not exist yet), so this
+// script targets Gradle >= 6.6 — the version floor the jvm-build-tools plan
+// states.
+//
+// Test runs (the `junit-gradle` test-frameworks row) pass the same flag for
+// a different reason: `Test.addTestListener` (below) is itself
+// configuration-cache-incompatible on Gradle 8.x. `notCompatibleWithTask`
+// is guarded by `respondsTo` because it does not exist before Gradle 7.4 —
+// calling it directly would break every older Gradle this script otherwise
+// supports.
+//
+// The dependency graph is read through `configurations.incoming.resolutionResult`
+// for every configuration that `isCanBeResolved()` — never a plain
+// `configuration.resolve()`, which throws on the first unresolvable
+// dependency instead of reporting it the way a project model should, and
+// never a lenient artifact view: nothing here needs artifact *files*, and
+// resolving every artifact of every configuration just to discard the
+// paths would force a download of the whole dependency graph on every
+// sync. `direct` (whether Gradle resolved a dependency edge straight off
+// the configuration's own root) comes from the resolution result itself,
+// not from `selectionReason`'s text, which reports "requested" for a
+// transitively-pulled, BOM-managed artifact as often as for a real direct
+// one.
+
+import java.nio.file.Files
+import java.nio.file.Paths
+import groovy.json.JsonOutput
+
+allprojects {
+    afterEvaluate { Project evaluated ->
+        // tasks.withType(Test), not tasks.matching { it.name == 'test' }:
+        // matching's closure still gets *every* task by name, Test or not,
+        // and configureEach's own `{ Test testTask -> }` typed parameter
+        // throws MissingMethodException the moment a project's own `test`
+        // task is not actually a Test task (or has none at all) — on every
+        // invocation, including a plain ideModel sync that runs no test
+        // task at all. withType filters by the real task type before the
+        // closure ever runs.
+        tasks.withType(Test).configureEach { Test testTask ->
+            if (evaluated.hasProperty('ide.teamcity') || System.getProperty('ide.teamcity')) {
+                // A guarded call: `notCompatibleWithConfigurationCache` was
+                // added in Gradle 7.4. `respondsTo` is the standard
+                // "does this Gradle understand this method" check, so the
+                // same script runs unmodified on 6.6 (where the call is
+                // simply skipped) and on 8.x (where it is required).
+                if (testTask.respondsTo('notCompatibleWithConfigurationCache')) {
+                    testTask.notCompatibleWithConfigurationCache(
+                        'ide-model.init.gradle installs a live TestListener')
+                }
+                testTask.addTestListener(new IdeTeamCityListener(evaluated.path))
+            }
+        }
+    }
+}
+
+if (gradle.startParameter.taskNames.contains('ideModel')) {
+    rootProject {
+        afterEvaluate {
+            tasks.register('ideModel') {
+                doLast {
+                    def outPath = project.findProperty('ide.modelOut')
+                    if (!outPath) {
+                        throw new GradleException('ideModel requires -Pide.modelOut=<file>')
+                    }
+                    def model = buildIdeModel(rootProject)
+                    def json = JsonOutput.toJson(model)
+                    Files.write(Paths.get(outPath.toString()), json.getBytes('UTF-8'))
+                }
+            }
+        }
+    }
+}
+
+// --- model ---
+
+Map buildIdeModel(Project root) {
+    return [
+        rootDir: root.projectDir.absolutePath,
+        gradleVersion: gradle.gradleVersion,
+        modules: root.allprojects.collect { Project p -> buildModule(p) },
+    ]
+}
+
+Map buildModule(Project p) {
+    def sourceRoots = []
+    def javaExt = p.extensions.findByName('sourceSets')
+    if (javaExt != null) {
+        javaExt.each { sourceSet ->
+            sourceSet.allSource.srcDirs.each { dir ->
+                sourceRoots << [
+                    path: dir.absolutePath,
+                    kind: sourceSet.name == 'test' ? 'Test' : 'Main',
+                ]
+            }
+        }
+    }
+
+    def tasks = p.tasks.collect { t ->
+        [path: t.path, name: t.name, group: t.group ?: '', description: t.description ?: '']
+    }
+
+    def dependencies = []
+    p.configurations.matching { it.isCanBeResolved() }.each { config ->
+        def resolutionResult = config.incoming.resolutionResult
+        def root = resolutionResult.root
+        // One row per distinct (configuration, group, name): the same
+        // module is reached through more than one edge in the graph (a BOM
+        // platform, then again as a direct request), and
+        // resolutionResult.allDependencies walks every edge, not every
+        // distinct module — without this dedupe a widely-used artifact
+        // like a JUnit BOM shows up several times per configuration.
+        def seen = new HashSet()
+        resolutionResult.allDependencies.each { dep ->
+            if (dep.hasProperty('selected')) {
+                def id = dep.selected.id
+                def group = id.hasProperty('group') ? id.group : ''
+                def name = id.hasProperty('module') ? id.module : id.displayName
+                def key = "${config.name}|${group}|${name}"
+                if (!seen.add(key)) {
+                    return
+                }
+                dependencies << [
+                    configuration: config.name,
+                    group: group,
+                    name: name,
+                    version: id.hasProperty('version') ? id.version : '',
+                    // A dependency Gradle resolved directly off the
+                    // configuration's own root is a direct/requested
+                    // dependency; everything else is transitive — the
+                    // resolved *edge*, not selectionReason's text (which
+                    // reports "requested" for a BOM-managed but still
+                    // transitively-pulled artifact just as often as for a
+                    // real direct one, and offers no reliable transitive
+                    // signal at all).
+                    direct: dep.hasProperty('from') && dep.from == root,
+                    reason: dep.hasProperty('selected') && dep.selected.hasProperty('selectionReason')
+                        ? dep.selected.selectionReason.toString()
+                        : '',
+                ]
+            }
+        }
+    }
+
+    return [
+        path: p.path,
+        name: p.name,
+        dir: p.projectDir.absolutePath,
+        sourceRoots: sourceRoots,
+        tasks: tasks,
+        dependencies: dependencies,
+    ]
+}
+
+// --- TeamCity streaming test listener ---
+//
+// One `flowId` per test task, so two modules running in parallel (or a
+// forked worker) interleave their `##teamcity[...]` lines without a
+// consumer mistaking one task's testStarted for another's. Every value
+// interpolated into a message is escaped per the TeamCity service-message
+// spec: `|`, `'`, newline, carriage return, `[` and `]`.
+class IdeTeamCityListener implements TestListener {
+    private final String flowId
+
+    IdeTeamCityListener(String flowId) {
+        this.flowId = flowId
+    }
+
+    private static String escape(String s) {
+        if (s == null) return ''
+        return s.replace('|', '||')
+                .replace("'", "|'")
+                .replace('\n', '|n')
+                .replace('\r', '|r')
+                .replace('[', '|[')
+                .replace(']', '|]')
+    }
+
+    private void message(String text) {
+        println "##teamcity[${text} flowId='${escape(flowId)}']"
+    }
+
+    @Override
+    void beforeSuite(TestDescriptor suite) {
+        if (suite.parent != null) {
+            message("testSuiteStarted name='${escape(suite.name)}'")
+        }
+    }
+
+    @Override
+    void afterSuite(TestDescriptor suite, TestResult result) {
+        if (suite.parent != null) {
+            message("testSuiteFinished name='${escape(suite.name)}'")
+        }
+    }
+
+    @Override
+    void beforeTest(TestDescriptor test) {
+        message("testStarted name='${escape(test.name)}'")
+    }
+
+    @Override
+    void afterTest(TestDescriptor test, TestResult result) {
+        if (result.resultType == TestResult.ResultType.FAILURE) {
+            def detail = result.exceptions.collect { it.toString() }.join('\n')
+            message("testFailed name='${escape(test.name)}' message='${escape(detail)}'")
+        } else if (result.resultType == TestResult.ResultType.SKIPPED) {
+            message("testIgnored name='${escape(test.name)}'")
+        }
+        def durationMs = result.endTime - result.startTime
+        message("testFinished name='${escape(test.name)}' duration='${durationMs}'")
+    }
+}

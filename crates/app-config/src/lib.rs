@@ -16,6 +16,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// The `[analysis]` section: per-analyzer trigger/enabled overrides.
 pub mod analysis;
+/// The `[build_tools]` section: trusted roots and Gradle/Maven overrides
+/// (the jvm-build-tools plan's A7, ADR-0057).
+pub mod build_tools;
 pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0056).
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
 pub mod containers;
@@ -63,6 +66,7 @@ pub mod ai_settings;
 
 pub use ai_settings::{AiProviderSetting, AiToolPolicySetting};
 pub use analysis::{AnalysisSettings, AnalyzerSetting};
+pub use build_tools::{BuildToolsSettings, GradleToolSettings, MavenToolSettings};
 pub use containers::{
     ContainerConnectionSetting, ContainerSettings, ContainerTargetSetting, RegistrySetting,
 };
@@ -109,6 +113,10 @@ pub struct LanguageServerSetting {
 
 pub(crate) fn is_false(b: &bool) -> bool {
     !*b
+}
+
+fn is_default_build_tools(value: &BuildToolsSettings) -> bool {
+    value == &BuildToolsSettings::default()
 }
 
 /// The `[minimap]` section: whether the editor's right-hand code map shows
@@ -370,6 +378,12 @@ pub struct Settings {
     /// [`Settings::terminal`] — see [`containers`].
     #[serde(default)]
     pub containers: ContainerSettings,
+    /// The `[build_tools]` section (ADR-0057): trusted sync roots plus
+    /// Gradle/Maven overrides. `trusted_roots` is global only — see
+    /// [`build_tools`]'s doc comment; the `gradle`/`maven` sub-tables are
+    /// project-scoped like [`Settings::terminal`].
+    #[serde(default, skip_serializing_if = "is_default_build_tools")]
+    pub build_tools: BuildToolsSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
     ///
@@ -901,6 +915,23 @@ mod tests {
         assert!(loaded.minimap.caret_line);
     }
 
+    /// A field lacking `skip_serializing_if` at the `Settings` level would
+    /// still emit an empty `[build_tools]` header on every save even
+    /// though `BuildToolsSettings`'s own sub-struct fields are all
+    /// individually sparse — this is the byte-for-byte round-trip
+    /// `Settings`'s own doc comment promises, checked at the level a bug
+    /// here would actually be visible at (an untouched sub-struct's own
+    /// serialization can be sparse and this still fail, if the *outer*
+    /// field forgets `skip_serializing_if`).
+    #[test]
+    fn an_untouched_build_tools_section_writes_no_header_at_the_settings_level() {
+        let text = toml::to_string(&Settings::default()).expect("serialize");
+        assert!(
+            !text.contains("[build_tools]"),
+            "an untouched [build_tools] section must not appear at all:\n{text}"
+        );
+    }
+
     #[test]
     fn round_trips_non_default_settings() {
         let dir = tempfile::tempdir().unwrap();
@@ -955,6 +986,7 @@ mod tests {
             },
             containers: ContainerSettings::default(),
             analysis: AnalysisSettings::default(),
+            build_tools: BuildToolsSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),

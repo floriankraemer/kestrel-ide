@@ -1,0 +1,32 @@
+[package]
+name = "jvm-build-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `ToolchainId`/wrapper resolution (`gradle_program`/`maven_program`,
+# jvm-build-tools plan A6) and `run_core::RunConfig` — the temporary
+# configuration a task/goal double-click builds.
+run-core = { path = "../run-core" }
+# The piped-exec mechanism a Gradle/Maven sync runs over, and `host::ExecHost`
+# for a WSL project root.
+process-exec = { path = "../process-exec" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = "0.41"
+# BuildToolContribution::build_files patterns can be a glob ("buildSrc/**"),
+# not only a literal filename — is_build_file (A6) matches project-relative
+# paths against them.
+globset = "0.4"
+# Reading META-INF/maven/plugin.xml out of a plugin jar in the local Maven
+# repository (A5, maven::goals) — the one place this crate needs to open a
+# jar rather than run a process or parse text.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Tests that spawn a real gradle/mvn binary against tests/fixtures/*, run
+# only in the linux-jvm image (A2) — never part of the per-PR `make test`.
+jvm-integration = []

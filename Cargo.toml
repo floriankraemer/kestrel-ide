@@ -29,6 +29,7 @@ members = [
     "crates/dap-core",
     "crates/container-core",
     "crates/container-registry",
+    "crates/jvm-build-core",
     "crates/app-core",
     "crates/ui-shell",
     "crates/app",

@@ -31,11 +31,13 @@ mod diagnostics;
 pub mod filter;
 mod junit;
 mod runner;
+mod selection;
 mod teamcity;
 mod tree;
 
 pub use diagnostics::diagnostics_by_file;
 pub use junit::{parse as parse_junit_xml, JUnitTestCase, ParseError as JUnitParseError};
 pub use runner::{run, RunFailure, TestRunHandle, TestSink};
+pub use selection::{select_framework, SUPPORTED_OUTPUT_FORMATS};
 pub use teamcity::{TeamCityEvent, TeamCityParser};
 pub use tree::{NodeKind, TestCounts, TestFailure, TestId, TestNode, TestStatus, TestTree};

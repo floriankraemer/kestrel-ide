@@ -603,7 +603,7 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
         vec!["vendor/bin/phpunit", "phpunit.phar", "phpunit"]
     );
     assert_eq!(phpunit.args, vec!["--teamcity"]);
-    assert_eq!(phpunit.filter_flag, "--filter");
+    assert_eq!(phpunit.filter_flag.as_deref(), Some("--filter"));
     assert_eq!(phpunit.output_format, "teamcity");
     assert_eq!(
         phpunit.config_file_candidates,
@@ -667,4 +667,93 @@ fn analyzers_are_listed_with_the_plugin_that_offers_them() {
     assert_eq!(analyzers[0].0.id(), "php-tools");
     assert_eq!(analyzers[0].1.id, "phpstan");
     assert_eq!(analyzers[0].1.output_format, "checkstyle-xml");
+}
+
+#[test]
+fn the_jvm_build_tools_builtin_loads_through_the_real_path() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::JVM_BUILD_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let plugin = registry
+        .by_id("jvm-build-tools")
+        .expect("the built-in loaded");
+    assert_eq!(plugin.source(), PluginSource::Builtin);
+
+    let tools: Vec<_> = registry.build_tools().collect();
+    assert_eq!(tools.len(), 2, "{tools:?}");
+    let gradle = tools
+        .iter()
+        .find(|(_, t)| t.id == "gradle")
+        .expect("gradle contributed")
+        .1;
+    assert_eq!(gradle.toolchain, "gradle");
+    assert_eq!(
+        gradle.init_script.as_deref(),
+        Some(Path::new("ide-model.init.gradle"))
+    );
+    let maven = tools
+        .iter()
+        .find(|(_, t)| t.id == "maven")
+        .expect("maven contributed")
+        .1;
+    assert_eq!(maven.init_script, None);
+
+    let frameworks: Vec<_> = registry.test_frameworks().collect();
+    assert_eq!(frameworks.len(), 2, "{frameworks:?}");
+}
+
+/// Every path a `jvm-build-tools` contribution names — an `init-script`, or
+/// an `${asset_dir}/<file>` token inside a `test-frameworks` row's `args` —
+/// must actually be one of this plugin's embedded `files`, or the plugin
+/// would validate cleanly and then fail the very first sync/test run that
+/// tries to read the file (A3's own requirement).
+#[test]
+fn every_asset_the_jvm_build_tools_manifest_names_exists_in_its_files() {
+    let manifest =
+        PluginManifest::from_toml_str(builtins::JVM_BUILD_TOOLS.manifest).expect("valid");
+    let file_names: Vec<&str> = builtins::JVM_BUILD_TOOLS
+        .files
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+
+    for tool in &manifest.contributes.build_tools {
+        if let Some(script) = &tool.init_script {
+            let name = script.to_str().expect("utf-8 path");
+            assert!(
+                file_names.contains(&name),
+                "build-tools.{} names init-script `{name}`, which is not in `files`",
+                tool.id
+            );
+        }
+    }
+
+    const TOKEN: &str = "${asset_dir}/";
+    for framework in &manifest.contributes.test_frameworks {
+        for arg in &framework.args {
+            if let Some(name) = arg.strip_prefix(TOKEN) {
+                assert!(
+                    file_names.contains(&name),
+                    "test-frameworks.{} names asset `{name}` in args, which is not in `files`",
+                    framework.id
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn the_jvm_build_tools_init_script_is_materialised_on_demand() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::JVM_BUILD_TOOLS], &[]);
+    let plugin = registry.by_id("jvm-build-tools").expect("loaded");
+    let dir = plugin
+        .asset_dir(fixture.config_dir())
+        .expect("materialises");
+    let script = dir.join("ide-model.init.gradle");
+    assert!(script.is_file(), "{}", script.display());
+    let contents = fs::read_to_string(&script).expect("readable");
+    assert!(contents.contains("ideModel"));
+    assert!(contents.contains("IdeTeamCityListener"));
 }

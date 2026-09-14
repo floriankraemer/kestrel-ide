@@ -15,6 +15,9 @@
 
 pub mod ai;
 pub mod analysis;
+/// Settings > Build Tools: trusted roots and Gradle/Maven overrides
+/// (jvm-build-tools plan A7, ADR-0057).
+pub mod build_tools;
 pub mod editing;
 /// Which handler a file-association rule (or a shipped default) names for a
 /// path — see [`file_associations::resolve_handler`].

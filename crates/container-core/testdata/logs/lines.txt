@@ -1,0 +1,2 @@
+2026-09-14T08:00:00.000000000Z stub_engine: starting up
+2026-09-14T08:00:00.100000000Z stub_engine: ready to accept connections

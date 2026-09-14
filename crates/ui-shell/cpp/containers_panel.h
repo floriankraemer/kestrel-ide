@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 #include <functional>
@@ -76,7 +77,11 @@ public:
     // Images console opens.
     void openPullTab(const QString &connectionId, const QString &reference);
 
+    // E2E only: see this method's own doc comment in the .cpp.
+    void refreshE2eRects() const;
+
 private:
+    QStringList rowRectsJson() const;
     void onTreeChanged();
     void onSelectionChanged();
     void showContextMenu(const QPoint &pos);
@@ -170,6 +175,11 @@ private:
     QAction *showUntaggedAction_ = nullptr;
     QLineEdit *searchEdit_ = nullptr;
     QLabel *statusLabel_ = nullptr;
+    // Which lifecycle op is in flight — `actionFinished` carries `node_id`/
+    // `ok`/`message` but not the action's own name, so the trigger*()
+    // functions below record it here for the `containers_action` E2E
+    // marker to read back once the result arrives.
+    QString pendingAction_;
     QTreeWidget *tree_ = nullptr;
     QTabWidget *detailTabs_ = nullptr;
     QLabel *dashboardName_ = nullptr;

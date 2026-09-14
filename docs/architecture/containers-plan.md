@@ -185,6 +185,7 @@ The Processes/Files tabs keep each container's last-seen state across a selectio
 
 **C10 — E2E, docs, manual pass.**
 `stub_engine` on PATH via fixture (`crates/app/tests/fixtures/containers/`), `e2e_containers.rs`: dock shows tree from canned data, Start records argv, run-config dialog creates a compose config and previews the command, Dockerfile gutter; `overview.md`/`project-structure.md` truthful; manual matrix recorded in this doc's Progress table: Linux docker + rootless podman, Windows Docker Desktop + podman machine, WSL distro connection.
+As landed: `stub_engine` is a `container-core` `[[bin]]` (the `stub_analyzer` precedent — `crates/app` cannot `env!("CARGO_BIN_EXE_stub_engine")`, so `e2e-ci` builds it explicitly and the test locates it beside `app`'s own binary) that answers straight from the crate's `testdata/` tree (`inspect/{docker,podman}`, `probe/`, `discovery/`, plus the C10-added `history/`, `logs/`, `compose/`) and appends every argv to `IDE_STUB_ENGINE_LOG`; the harness gained `Ide::launch_with_env` for the stub's `PATH` entry; the compose run configuration is created from the gutter/`run.runContext` popup's "New Configuration..." rather than the dialog's Add > Containers > Compose entry, since that path fills the compose file in without a native file dialog (which this harness deliberately never drives); the E2E flow surfaced and fixed a real gap — the dock's tree never re-read a project-layer `[containers]` section after the project opened (`projectOpened` -> `refreshAll()`, `containers_menu.cpp`); the manual matrix lives in its own section below rather than in this table.
 
 ## Parity gaps recorded deliberately (not planned)
 
@@ -223,4 +224,19 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 | C7 | Registries | done | `8ca18b5`, `0cbfef9` |
 | C8 | Run targets | done | `bd591c4` |
 | C9 | Dashboard editing, Podman extras, polish | done | `30e786f`, `0dc938e`, `f38e98d`, `6df6c31`, `5710827`, `6759be0`, `eba9e39`, `741d9f4`, `dc72627`, `599ebdc`, `d2abc6c` |
-| C10 | E2E, docs, manual pass | not started | |
+| C10 | E2E, docs, manual pass | done (manual matrix below: Linux Docker verified, the other five rows await a manual session) | `8b153c7`, `709f56e` |
+
+## Manual verification matrix (C10)
+
+The rows below are the manual half of the Verification section above.
+Everything the `stub_engine`-backed E2E suite (`crates/app/tests/e2e_containers.rs`) can prove is covered there; this table only records what needs a real engine or a real second machine.
+"Verified" rows quote the app's own E2E marker stream (`IDE_E2E_EVENTS`) captured while driving the real binary under Xvfb against the real host `docker` — read-only actions only (connect, tree, inspect, log of an already-running container, context discovery), never a lifecycle or prune action against the host's containers.
+
+| Scenario | Status | Evidence / notes |
+|---|---|---|
+| Linux Docker (Docker Desktop's WSL2 engine, `docker` CLI on `PATH`, `kind = "auto"`) | verified 2026-09-14 (read-only) | Real `docker` 29.6.2 (Docker Desktop 4.83.0's WSL2 engine, socket + static CLI mounted into `linux-builder`) driven exactly like `e2e_containers.rs` does the stub: View > Containers, double-click the Docker row, expand Containers, select a container. Captured markers: `{"ev":"containers_connection_state","id":"docker-local","state":"connected"}`, `{"ev":"containers_tree_changed","nodes":207,...}` (the host's 23 containers, images, networks, volumes and compose projects — the tree's Containers group reads "23"), then `{"ev":"containers_tab_opened","kind":"log","nodeId":"docker-local/container/6f4423f6..."}` with the Log tab showing that container's own `logs -f --timestamps` output (a `signoz-schema-migrator` exit trace). `docker context ls --format json` on the same host lists `default` (unix socket, current) and `desktop-linux` (npipe) — the captured `testdata/discovery/docker_context_ls.jsonl` is that output verbatim. Podman connection row present but not connected (no `podman` on the host). No lifecycle, prune, pull or push action was run against the host. |
+| Linux rootless Podman | open — awaits a manual session | `podman` is not installed on the host this task ran on; every Podman fixture in `crates/container-core/testdata/` is hand-authored from the documented output shapes (see the `HAND_AUTHORED.md` files there), so only the E2E stub has exercised the Podman code paths. |
+| Windows Docker Desktop (named pipe / `desktop-linux` context) | open — awaits a manual session | The `docker context ls` capture on this host does list the `desktop-linux` npipe context (`testdata/discovery/docker_context_ls.jsonl`), so "Add from contexts..." has real input for it, but the Windows build itself was not launched. |
+| Windows `podman machine` | open — awaits a manual session | Needs a Windows session with Podman Desktop; `machine.rs`'s `machine list --format json` parser is unit-tested on hand-authored JSON only. |
+| WSL distro connection (`kind = "wsl"`, `wsl.exe -d <distro> -- docker …`) | open — awaits a manual session | This task's own session runs *inside* a WSL2 distro, which is not the same thing as the Windows build connecting into one; `connection.rs`'s WSL argv wrapping is unit-tested. |
+| Private registry pull + push (ghcr.io, credentials in the OS keychain) | open — awaits a manual session | Would need a real token and a push (a mutating action) — deliberately not done from an automated session; `registry_ref`/`session` argv and `container-registry`'s token dance are unit-tested. |

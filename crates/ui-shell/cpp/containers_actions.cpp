@@ -91,6 +91,7 @@ void ContainersPanel::triggerStart()
 {
     QTreeWidgetItem *item = selectedItem();
     if (item != nullptr) {
+        pendingAction_ = QStringLiteral("start");
         report(containerService_->startContainer(item->data(0, kIdRole).toString()));
     }
 }
@@ -99,6 +100,7 @@ void ContainersPanel::triggerStop()
 {
     QTreeWidgetItem *item = selectedItem();
     if (item != nullptr) {
+        pendingAction_ = QStringLiteral("stop");
         report(containerService_->stopContainer(item->data(0, kIdRole).toString()));
     }
 }
@@ -107,6 +109,7 @@ void ContainersPanel::triggerRestart()
 {
     QTreeWidgetItem *item = selectedItem();
     if (item != nullptr) {
+        pendingAction_ = QStringLiteral("restart");
         report(containerService_->restartContainer(item->data(0, kIdRole).toString()));
     }
 }
@@ -119,8 +122,10 @@ void ContainersPanel::triggerPauseOrUnpause()
     }
     const QString id = item->data(0, kIdRole).toString();
     if (containerService_->nodeActions(id).canUnpause) {
+        pendingAction_ = QStringLiteral("unpause");
         report(containerService_->unpauseContainer(id));
     } else {
+        pendingAction_ = QStringLiteral("pause");
         report(containerService_->pauseContainer(id));
     }
 }
@@ -146,6 +151,7 @@ void ContainersPanel::triggerRemove()
     if (confirm.clickedButton() != removeButton) {
         return;
     }
+    pendingAction_ = QStringLiteral("remove");
     report(containerService_->removeContainer(id, forceCheck->isChecked()));
 }
 

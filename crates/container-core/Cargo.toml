@@ -17,3 +17,9 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+# C10: a fake `docker`/`podman` CLI for `e2e_containers` — see
+# `src/bin/stub_engine.rs`'s doc comment.
+name = "stub_engine"
+path = "src/bin/stub_engine.rs"

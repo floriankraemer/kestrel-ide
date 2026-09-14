@@ -59,6 +59,12 @@ pub struct Ide {
     stderr_path: PathBuf,
     child: Option<Child>,
     window: String,
+    /// Extra environment variables the spawned process gets, on top of the
+    /// fixed set [`Ide::spawn`] always sets — [`Ide::launch_with_env`]'s
+    /// whole reason to exist (a stub engine's data/log directories, a `PATH`
+    /// entry). Kept across [`Ide::relaunch`], the same as every other field
+    /// a restart preserves.
+    extra_env: Vec<(String, String)>,
 }
 
 impl Ide {
@@ -66,6 +72,20 @@ impl Ide {
     /// launch. `binary` must come from `env!("CARGO_BIN_EXE_app")` — guessing
     /// at `target/debug` is wrong under every profile but one.
     pub fn launch(name: &str, binary: impl AsRef<Path>, fixture: impl AsRef<Path>) -> Ide {
+        Self::launch_with_env(name, binary, fixture, &[])
+    }
+
+    /// [`Ide::launch`], plus extra environment variables set on the spawned
+    /// process — e.g. a fake `docker`/`podman` on `PATH` and the directory
+    /// it reads canned answers from (`e2e_containers.rs`'s `stub_engine`).
+    /// Never through `std::env::set_var`: [`Ide::spawn`]'s own doc comment
+    /// explains why that would race other tests in this process.
+    pub fn launch_with_env(
+        name: &str,
+        binary: impl AsRef<Path>,
+        fixture: impl AsRef<Path>,
+        envs: &[(&str, &str)],
+    ) -> Ide {
         let home = TempDir::new().expect("temp home");
         let project = TempDir::new().expect("temp project");
         copy_tree(fixture.as_ref(), project.path());
@@ -80,6 +100,10 @@ impl Ide {
             project,
             child: None,
             window: String::new(),
+            extra_env: envs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         };
         std::fs::create_dir_all(ide.config_dir()).expect("config dir");
         // How the app finds the project: there is no CLI argument, and
@@ -125,6 +149,7 @@ impl Ide {
             .env("HOME", self.home.path())
             .env("IDE_E2E_EVENTS", &self.events_path)
             .env_remove("XDG_CONFIG_DIRS")
+            .envs(self.extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
             .spawn()

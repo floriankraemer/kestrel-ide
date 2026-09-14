@@ -237,7 +237,10 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.args = argsEdit->text();
         form.kind = *currentKind;
         form.container = containerPage->options();
-        commandPreviewEdit->setPlainText(editor->commandPreview(form));
+        const QString preview = editor->commandPreview(form);
+        commandPreviewEdit->setPlainText(preview);
+        e2eMark(QStringLiteral("{\"ev\":\"run_config_preview\",\"kind\":%1,\"preview\":%2}")
+                  .arg(e2eJson(*currentKind), e2eJson(preview)));
     };
 
     const auto loadForm = [=](int index) {

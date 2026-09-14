@@ -19,7 +19,51 @@ use crate::model::{BuildModel, Task, Tool};
 pub struct RunOptions {
     pub offline: bool,
     pub skip_tests: bool,
+    /// Maven only: profile ids to activate, each becoming its own `-P<id>`
+    /// (B3) — Maven takes one `-P` per profile, not a comma-joined list, so
+    /// this is a `Vec` rather than the single flag `offline`/`skip_tests`
+    /// are.
+    pub profiles: Vec<String>,
     pub extra_args: Vec<String>,
+}
+
+/// Split the Build Tools dock's "Execute…" line edit into argv (B3) —
+/// shell-style whitespace splitting with single/double-quote grouping, so
+/// `test --tests "com.example.FooTest"` keeps its quoted argument whole
+/// rather than splitting on the space inside it. No escape-character
+/// support beyond the quote itself: a task/goal line has no use for one,
+/// and a naive backslash rule would be one more thing to get wrong for
+/// zero real benefit here.
+pub fn split_args(text: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut in_token = false;
+
+    for ch in text.chars() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '\'' || ch == '"' => {
+                quote = Some(ch);
+                in_token = true;
+            }
+            None if ch.is_whitespace() => {
+                if in_token {
+                    args.push(std::mem::take(&mut current));
+                    in_token = false;
+                }
+            }
+            None => {
+                current.push(ch);
+                in_token = true;
+            }
+        }
+    }
+    if in_token {
+        args.push(current);
+    }
+    args
 }
 
 /// Build the temporary [`RunConfig`] a task/goal double-click launches
@@ -48,6 +92,9 @@ pub fn task_config(model: &BuildModel, task: &Task, opts: &RunOptions) -> RunCon
             }
             if opts.skip_tests {
                 args.push("-DskipTests".to_string());
+            }
+            for profile in &opts.profiles {
+                args.push(format!("-P{profile}"));
             }
         }
     }
@@ -112,7 +159,7 @@ mod tests {
             &RunOptions {
                 offline: true,
                 skip_tests: true,
-                extra_args: vec![],
+                ..RunOptions::default()
             },
         );
         assert_eq!(config.program, "gradle"); // no gradlew in the fixture root
@@ -131,6 +178,7 @@ mod tests {
                 offline: true,
                 skip_tests: true,
                 extra_args: vec!["-B".to_string()],
+                ..RunOptions::default()
             },
         );
         assert_eq!(config.args, vec!["test", "-o", "-DskipTests", "-B"]);
@@ -144,6 +192,41 @@ mod tests {
         let a = task_config(&m, &t, &RunOptions::default());
         let b = task_config(&m, &t, &RunOptions::default());
         assert_eq!(a.id, b.id);
+    }
+
+    #[test]
+    fn a_maven_goal_activates_one_flag_per_profile() {
+        let config = task_config(
+            &model(Tool::Maven),
+            &task("test"),
+            &RunOptions {
+                profiles: vec!["ci".to_string(), "release".to_string()],
+                ..RunOptions::default()
+            },
+        );
+        assert_eq!(config.args, vec!["test", "-Pci", "-Prelease"]);
+    }
+
+    #[test]
+    fn split_args_separates_on_plain_whitespace() {
+        assert_eq!(
+            split_args("--tests com.example.FooTest"),
+            vec!["--tests", "com.example.FooTest"]
+        );
+    }
+
+    #[test]
+    fn split_args_keeps_a_quoted_argument_whole() {
+        assert_eq!(
+            split_args(r#"--tests "com.example.FooTest""#),
+            vec!["--tests", "com.example.FooTest"]
+        );
+        assert_eq!(split_args("-Dtest='Foo Bar'"), vec!["-Dtest=Foo Bar"]);
+    }
+
+    #[test]
+    fn split_args_of_an_empty_line_is_empty() {
+        assert!(split_args("   ").is_empty());
     }
 
     #[test]

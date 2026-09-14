@@ -18,3 +18,5 @@ pub mod maven;
 pub mod model;
 pub mod run;
 pub mod sync;
+/// Shaping a synced model into the Build Tools dock's tree (B2).
+pub mod view;

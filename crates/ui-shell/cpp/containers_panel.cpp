@@ -215,6 +215,7 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     auto *addMenu = new QMenu(addButton_);
     QAction *newConnection = addMenu->addAction(tr("New connection..."));
     QAction *addFromContexts = addMenu->addAction(tr("Add from contexts..."));
+    QAction *newRegistry = addMenu->addAction(tr("Registry..."));
     addButton_->setMenu(addMenu);
     connect(newConnection, &QAction::triggered, this, [this]() {
         if (openSettings_) {
@@ -223,6 +224,15 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     });
     // Discovery lives on the Settings page (C1) — both entries open it.
     connect(addFromContexts, &QAction::triggered, this, [this]() {
+        if (openSettings_) {
+            openSettings_();
+        }
+    });
+    // C7: a registry is added on the Registries tab of the same page —
+    // there is no per-tab-selection hook on `openSettings_` yet, so this
+    // opens the page on whichever tab was last shown, same as the two
+    // entries above did before C7.
+    connect(newRegistry, &QAction::triggered, this, [this]() {
         if (openSettings_) {
             openSettings_();
         }
@@ -418,6 +428,25 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     });
     connect(containerService_, &ContainerService::treeChanged, this,
             &ContainersPanel::onTreeChanged);
+    // C7: a registry/registry-repo node's children are fetched on first
+    // expand rather than eagerly — `nodes()` already includes whatever is
+    // cached, so an empty `childCount()` means "not fetched yet" (or
+    // fetched-and-genuinely-empty, in which case this re-asks once more
+    // per expand, a redundant network call rather than a correctness bug).
+    connect(tree_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem *item) {
+        if (item->childCount() > 0) {
+            return;
+        }
+        const QString kind = item->data(0, kKindRole).toString();
+        const QString id = item->data(0, kIdRole).toString();
+        if (kind == QStringLiteral("registry")) {
+            containerService_->loadRegistryRepositories(id);
+        } else if (kind == QStringLiteral("registry-repo")) {
+            containerService_->loadRegistryTags(id);
+        }
+    });
+    connect(containerService_, &ContainerService::registryChildrenReady, this,
+            [this](const QString &) { onTreeChanged(); });
     connect(containerService_, &ContainerService::connectionStateChanged, this,
             [this](const QString &) { updateToolbarEnablement(); });
     connect(containerService_, &ContainerService::actionFinished, this,
@@ -689,6 +718,18 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
     }
     if (kind == QStringLiteral("compose-service")) {
         showComposeServiceContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("registry")) {
+        showRegistryContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("registry-repo")) {
+        showRegistryRepoContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("registry-tag")) {
+        showRegistryTagContextMenu(item, tree_->viewport()->mapToGlobal(pos));
         return;
     }
 

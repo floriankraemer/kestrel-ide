@@ -1153,6 +1153,22 @@ mod ffi {
         resource_name: QString,
     }
 
+    /// One row of `RegistrySetting`, 1:1 with the app-config struct —
+    /// still no secret field (ADR-0055): a secret crosses separately, only
+    /// ever as a call argument (`testRegistryConnection`/
+    /// `storeRegistrySecret`), never read back.
+    #[derive(Default)]
+    struct FfiRegistrySetting {
+        id: QString,
+        name: QString,
+        /// `"hub"`, `"gitlab"`, `"v2"`, or `"generic"`.
+        kind: QString,
+        address: QString,
+        username: QString,
+        gitlab_project: QString,
+        token_auth: bool,
+    }
+
     /// One local branch name. `cxx`'s `Vec<T>` needs `T: ImplVec`, which
     /// `QString` alone does not satisfy — this one-field wrapper is what
     /// lets `branches()` cross as a list at all, the same reason
@@ -3108,6 +3124,46 @@ mod ffi {
             self: Pin<&mut AppSettings>,
             connection: &FfiContainerConnection,
         ) -> FfiResult;
+
+        /// Every saved registry in the layer `settingsScope()` names (C7).
+        #[qinvokable]
+        #[cxx_name = "registries"]
+        fn registries(self: &AppSettings) -> Vec<FfiRegistrySetting>;
+
+        /// Replace the whole registry list at once, same whole-list-replace
+        /// shape as `saveContainerConnections` — a registry row has no
+        /// live side effect either.
+        #[qinvokable]
+        #[cxx_name = "saveRegistries"]
+        fn save_registries(self: &AppSettings, registries: Vec<FfiRegistrySetting>) -> FfiResult;
+
+        /// "Test connection" for a registry (C7): runs on a worker thread
+        /// (the same shape as `testContainerConnection`) and reports
+        /// through `registryTested`. `registry` need not be saved yet;
+        /// `secret` is the password/token as currently typed, never read
+        /// from the keychain — the Settings page tests what is on screen.
+        #[qinvokable]
+        #[cxx_name = "testRegistryConnection"]
+        fn test_registry_connection(
+            self: Pin<&mut AppSettings>,
+            registry: &FfiRegistrySetting,
+            secret: &QString,
+        ) -> FfiResult;
+
+        /// Store `secret` in the OS keychain for `id` (Apply/OK on the
+        /// Registries page, only when the password/token field was
+        /// touched). A `SecretError::Unavailable` surfaces as an ordinary
+        /// `FfiResult` failure carrying the documented "run `docker
+        /// login`" hint, not a crash — push/pull still work either way.
+        #[qinvokable]
+        #[cxx_name = "storeRegistrySecret"]
+        fn store_registry_secret(self: &AppSettings, id: &QString, secret: &QString) -> FfiResult;
+
+        /// Whether a secret is currently stored for `id`, without reading
+        /// it back — the Registries page's "a password is stored" hint.
+        #[qinvokable]
+        #[cxx_name = "hasRegistrySecret"]
+        fn has_registry_secret(self: &AppSettings, id: &QString) -> bool;
     }
 
     unsafe extern "RustQt" {
@@ -3127,6 +3183,12 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "containerConnectionTested"]
         fn container_connection_tested(self: Pin<&mut AppSettings>, ok: bool, message: QString);
+
+        /// `testRegistryConnection`'s result, same `ok`/`message` shape as
+        /// `containerConnectionTested`.
+        #[qsignal]
+        #[cxx_name = "registryTested"]
+        fn registry_tested(self: Pin<&mut AppSettings>, ok: bool, message: QString);
     }
 
     impl cxx_qt::Threading for AppSettings {}
@@ -6280,6 +6342,68 @@ mod ffi {
             connection_id: QString,
             reference: QString,
         );
+
+        // --- C7: registries ---------------------------------------------
+
+        /// Fetch `registry_id`'s repositories on a worker thread (its
+        /// `RegistryClient::catalog`, page one) and cache them; answers on
+        /// `registryChildrenReady` once they arrive, which the view treats
+        /// like `treeChanged` — a rebuild that keeps the registry node's
+        /// now-first expansion. A `Generic`/unreachable registry's error
+        /// still answers `registryChildrenReady` (with nothing cached, so
+        /// the node simply gets no children) rather than `actionFinished`,
+        /// since there is no dialog waiting on this one to report to; the
+        /// Settings page's own "Test connection" is where that error text
+        /// belongs.
+        #[qinvokable]
+        #[cxx_name = "loadRegistryRepositories"]
+        fn load_registry_repositories(
+            self: Pin<&mut ContainerService>,
+            registry_id: &QString,
+        ) -> FfiResult;
+
+        /// Fetch a repository's tags the same way, keyed by its
+        /// `RegistryRepo` node id (`"registry/<id>/repo/<repository>"`).
+        #[qinvokable]
+        #[cxx_name = "loadRegistryTags"]
+        fn load_registry_tags(
+            self: Pin<&mut ContainerService>,
+            repo_node_id: &QString,
+        ) -> FfiResult;
+
+        /// A registry node gained children (or a refresh replaced them).
+        #[qsignal]
+        #[cxx_name = "registryChildrenReady"]
+        fn registry_children_ready(self: Pin<&mut ContainerService>, parent_id: QString);
+
+        /// `[login &&] pull <reference>` for a `RegistryTag` node, on
+        /// `connection_id` — a single PTY session
+        /// (`container_core::session::pull_from_registry_session`), ready
+        /// for `TerminalSupervisor::setCommand` the same as
+        /// `pullSessionCommand`. Logs in first only when a secret is
+        /// stored for the registry; otherwise anonymous/CLI-credential-
+        /// store pull, per ADR-0055's documented fallback.
+        #[qinvokable]
+        #[cxx_name = "pullFromRegistryCommand"]
+        fn pull_from_registry_command(
+            self: &ContainerService,
+            tag_node_id: &QString,
+            connection_id: &QString,
+        ) -> FfiCommand;
+
+        /// `tag && [login &&] push` for the Push Image dialog: `image_node_id`
+        /// is the image being pushed, `registry_id`/`repository`/`tag` name
+        /// the destination — one PTY session, same login rule as
+        /// `pullFromRegistryCommand`.
+        #[qinvokable]
+        #[cxx_name = "pushImageCommand"]
+        fn push_image_command(
+            self: &ContainerService,
+            image_node_id: &QString,
+            registry_id: &QString,
+            repository: &QString,
+            tag: &QString,
+        ) -> FfiCommand;
     }
 
     impl cxx_qt::Threading for ContainerService {}

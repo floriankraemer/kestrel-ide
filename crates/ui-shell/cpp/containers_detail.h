@@ -72,6 +72,13 @@ public:
     // whatever node happens to be selected.
     void openPullTab(const QString &connectionId, const QString &reference);
 
+    // C7: a closable, titled terminal tab for a command built entirely
+    // outside this class (a registry pull/push) — the same
+    // `addTerminalTab` every tab above already goes through, exposed
+    // publicly since C7's caller has no `nodeId_`-scoped node to select
+    // through `onSelectionChanged` first.
+    void openTerminalCommandTab(const FfiCommand &command, const QString &title);
+
 signals:
     // A "containers using it" row was clicked on an image/network/volume
     // Dashboard — the panel selects that container node in the tree.

@@ -1,5 +1,7 @@
 #include "containers_page.h"
 
+#include "containers_registries_page.h"
+
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
@@ -15,6 +17,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QUuid>
 #include <QVBoxLayout>
 #include <QVector>
@@ -284,12 +287,21 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
     auto *pageLayout = new QVBoxLayout(page);
     pageLayout->setContentsMargins(0, 0, 0, 0);
 
+    // C7: Connections and Registries share this one Settings page as two
+    // tabs, the same nesting `settings_dialog.cpp` already uses for other
+    // multi-section categories — the dialog's own category list stays one
+    // "Containers" entry rather than growing a second top-level row.
+    auto *tabs = new QTabWidget(page);
+    auto *connectionsTab = new QWidget(tabs);
+    auto *connectionsLayout = new QVBoxLayout(connectionsTab);
+    connectionsLayout->setContentsMargins(0, 0, 0, 0);
+
     auto connections = std::make_shared<QVector<FfiContainerConnection>>();
     for (const FfiContainerConnection &row : appSettings->containerConnections()) {
         connections->append(row);
     }
 
-    auto *splitter = new QSplitter(page);
+    auto *splitter = new QSplitter(connectionsTab);
 
     auto *listPane = new QWidget(splitter);
     auto *listLayout = new QVBoxLayout(listPane);
@@ -316,9 +328,9 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
     splitter->addWidget(formPane);
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 2);
-    pageLayout->addWidget(splitter, 1);
+    connectionsLayout->addWidget(splitter, 1);
 
-    auto *filtersBox = new QGroupBox(QObject::tr("Containers dock"), page);
+    auto *filtersBox = new QGroupBox(QObject::tr("Containers dock"), connectionsTab);
     auto *filtersLayout = new QVBoxLayout(filtersBox);
     const FfiContainerSettings currentSettings = appSettings->containerSettings();
     auto *showStopped = new QCheckBox(QObject::tr("Show stopped containers"), filtersBox);
@@ -331,7 +343,12 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
     filtersLayout->addWidget(showStopped);
     filtersLayout->addWidget(showUntagged);
     filtersLayout->addWidget(selinuxRelabel);
-    pageLayout->addWidget(filtersBox);
+    connectionsLayout->addWidget(filtersBox);
+
+    tabs->addTab(connectionsTab, QObject::tr("Connections"));
+    const RegistriesPage registriesPage = buildRegistriesPage(tabs, appSettings);
+    tabs->addTab(registriesPage.widget, QObject::tr("Registries"));
+    pageLayout->addWidget(tabs, 1);
 
     formPane->setEnabled(false);
 
@@ -444,13 +461,14 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
 
     return ContainersPage{
       page,
-      [appSettings, connections, showStopped, showUntagged, selinuxRelabel]() {
+      [appSettings, connections, showStopped, showUntagged, selinuxRelabel, registriesCommit = registriesPage.commit]() {
           appSettings->saveContainerConnections(toRustVec(*connections));
           FfiContainerSettings settings;
           settings.show_stopped_containers = showStopped->isChecked();
           settings.show_untagged_images = showUntagged->isChecked();
           settings.selinux_relabel = selinuxRelabel->isChecked();
           appSettings->saveContainerSettings(settings);
+          registriesCommit();
       },
     };
 }

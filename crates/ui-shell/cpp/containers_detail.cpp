@@ -727,4 +727,9 @@ void ContainerDetailArea::openPullTab(const QString &connectionId, const QString
     addTerminalTab(command, tr("Pull: %1").arg(reference));
 }
 
+void ContainerDetailArea::openTerminalCommandTab(const FfiCommand &command, const QString &title)
+{
+    addTerminalTab(command, title);
+}
+
 } // namespace ui_shell

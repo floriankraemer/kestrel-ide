@@ -122,6 +122,14 @@ private:
     void triggerComposeJumpToSource(const QString &nodeId);
     void showComposeProjectDashboard(const QString &nodeId);
 
+    // containers_registry.cpp (C7): registry/registry-repo/registry-tag
+    // context menus and the Push Image dialog, split out under the same
+    // file-size ratchet as the files above.
+    void showRegistryContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showRegistryRepoContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void showRegistryTagContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void openPushImageDialog(const QString &imageNodeId);
+
     ContainerService *containerService_;
     RunService *runService_ = nullptr;
     RunConfigEditor *runConfigEditor_ = nullptr;

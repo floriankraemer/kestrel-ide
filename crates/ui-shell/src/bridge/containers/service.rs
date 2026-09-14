@@ -69,6 +69,15 @@ pub struct ContainerServiceRust {
     /// C6: the compose lenses last handed to each open editor, so a click
     /// by index resolves against what is on screen.
     pub(crate) lenses: super::editor::LensState,
+    /// C7: a registry's fetched repositories, keyed by its `Registry`
+    /// node id (`"registry/<id>"`) — filled by `loadRegistryRepositories`,
+    /// read back by `nodes()` so a registry's children survive the
+    /// wholesale tree rebuild every `treeChanged` triggers.
+    pub(crate) registry_repos: RefCell<BTreeMap<String, Vec<String>>>,
+    /// C7: a repository's fetched tags (name, full reference), keyed by
+    /// its `RegistryRepo` node id — the [`tree::registry_tag_nodes`]
+    /// input `loadRegistryTags` fills in.
+    pub(crate) registry_tags: RefCell<BTreeMap<String, Vec<(String, String)>>>,
 }
 
 impl Default for ContainerServiceRust {
@@ -81,6 +90,8 @@ impl Default for ContainerServiceRust {
             exec_history: RefCell::default(),
             session: crate::bridge::registry::shared_session(),
             lenses: super::editor::LensState::default(),
+            registry_repos: RefCell::default(),
+            registry_tags: RefCell::default(),
         }
     }
 }
@@ -89,6 +100,16 @@ pub(crate) fn configured_connections() -> Vec<app_config::ContainerConnectionSet
     crate::bridge::convert::load_resolved_settings()
         .containers
         .connections
+}
+
+/// C7: every configured registry, in the order they were added — the
+/// tree's registry root rows, `registries.rs`'s browsing/pull/push calls,
+/// and `bridge/language/containers.rs`'s registry-repository completion
+/// all read through this rather than re-resolving settings themselves.
+pub(crate) fn configured_registries() -> Vec<app_config::RegistrySetting> {
+    crate::bridge::convert::load_resolved_settings()
+        .containers
+        .registries
 }
 
 pub(crate) fn work_dir() -> std::path::PathBuf {
@@ -260,10 +281,47 @@ impl ffi::ContainerService {
                 view: view.as_ref(),
             })
             .collect();
-        tree::flatten(&rows, SystemTime::now())
+        let mut nodes = tree::flatten(&rows, SystemTime::now());
+        nodes.extend(self.registry_nodes());
+        nodes.iter().map(to_ffi_node).collect()
+    }
+
+    /// C7: the registry roots plus whatever repositories/tags have already
+    /// been fetched for them — appended after every connection's own rows
+    /// so a registry always renders as a top-level entry below the engine
+    /// connections, matching the plan's dock mockup.
+    fn registry_nodes(&self) -> Vec<tree::TreeNode> {
+        let configured = super::service::configured_registries();
+        let rows: Vec<tree::RegistryRow<'_>> = configured
             .iter()
-            .map(to_ffi_node)
-            .collect()
+            .map(|setting| tree::RegistryRow {
+                id: &setting.id,
+                name: &setting.name,
+                address: &setting.address,
+            })
+            .collect();
+        let mut nodes = tree::registry_nodes(&rows);
+
+        let repos = self.registry_repos.borrow();
+        let tags = self.registry_tags.borrow();
+        for setting in &configured {
+            let Some(repositories) = repos.get(&setting.id) else {
+                continue;
+            };
+            nodes.extend(tree::registry_repo_nodes(&setting.id, repositories));
+            for repository in repositories {
+                let repo_node_id = format!("registry/{}/repo/{repository}", setting.id);
+                if let Some(repo_tags) = tags.get(&repo_node_id) {
+                    nodes.extend(tree::registry_tag_nodes(
+                        &setting.id,
+                        &repo_node_id,
+                        repository,
+                        repo_tags,
+                    ));
+                }
+            }
+        }
+        nodes
     }
 
     /// Every configured connection (C4's Copy Image to... picker): id,

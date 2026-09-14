@@ -555,6 +555,10 @@ fn main() {
         .cpp_file("cpp/terminal_page.cpp")
         .cpp_file("cpp/tab_padding_page.cpp")
         .cpp_file("cpp/containers_page.cpp")
+        // C7: the Registries sub-page, split out of containers_page.cpp
+        // under the same file-size ratchet reasoning as the dock's own
+        // split files below.
+        .cpp_file("cpp/containers_registries_page.cpp")
         .cpp_file("cpp/problems_panel.cpp")
         // The PHP tooling plan's D5: the Tests dock. Q_OBJECT-free like
         // `build_panel.cpp` (plain QWidget, lambdas and pointer-to-member
@@ -576,6 +580,10 @@ fn main() {
         // Down/Scale/Jump to Source), split out under the same file-size
         // ratchet as the two files above.
         .cpp_file("cpp/containers_compose.cpp")
+        // C7: registry tree nodes' context menus, the Add ▾ menu's
+        // "Registry…" entry, and the Push Image dialog — split out under
+        // the same file-size ratchet reasoning as the three files above.
+        .cpp_file("cpp/containers_registry.cpp")
         // C3: the per-container detail tab area (Log/Terminal/Exec/Attach/
         // Processes/Files). Declares Q_OBJECT (it connects to
         // `ContainerService`'s signals), so its header runs through moc too.

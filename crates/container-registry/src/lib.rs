@@ -17,3 +17,11 @@
 
 /// Docker Hub's public API: repository search and a repository's tags.
 pub mod hub;
+
+/// The Docker Registry HTTP API V2 client (token dance, catalog/tags
+/// pagination), Docker Hub's own repository-listing API, and GitLab's
+/// project-registry API — C7's browsing surface for the Registries tree.
+pub mod registry;
+
+/// The OS-keychain credential store for a configured registry (C7).
+pub mod secrets;

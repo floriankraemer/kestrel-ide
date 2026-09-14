@@ -81,7 +81,7 @@ pub fn split_shell_words(input: &str) -> Vec<String> {
 /// single-quoted (with an embedded `'` escaped as `'\''`) otherwise. Never
 /// executed — only ever fed to [`preview`] — so this only has to *look*
 /// right, not round-trip through a real shell.
-fn quote(word: &str) -> String {
+pub(crate) fn quote(word: &str) -> String {
     let needs_quoting = word.is_empty()
         || !word
             .chars()

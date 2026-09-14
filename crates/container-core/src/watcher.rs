@@ -551,6 +551,36 @@ mod tests {
         );
     }
 
+    /// `sh` standing in for the CLI: the script echoes its argv and one
+    /// environment variable, so this proves the child receives the
+    /// connection's prefix, the `events` argv and its `env` — the three
+    /// things `spawn_events_child` is responsible for handing over.
+    #[cfg(unix)]
+    #[test]
+    fn events_child_runs_the_invocation_with_its_argv_and_env() {
+        use std::io::Read;
+        let invocation = Invocation {
+            program: "sh".to_string(),
+            prefix_args: vec![
+                "-c".to_string(),
+                "printf '%s\\n' \"$STUB_MARK\" \"$@\"".to_string(),
+                "events-stub".to_string(),
+            ],
+            env: vec![("STUB_MARK".to_string(), "marked".to_string())],
+            host: process_exec::host::ExecHost::Local,
+        };
+        let (mut child, mut stdout) =
+            spawn_events_child(&invocation, Engine::Docker, &std::env::temp_dir())
+                .expect("sh spawns");
+        let mut output = String::new();
+        stdout.read_to_string(&mut output).expect("stdout is piped");
+        assert!(child.wait().expect("child exits").success());
+        assert_eq!(
+            output.lines().collect::<Vec<_>>(),
+            ["marked", "events", "--format", "{{json .}}"]
+        );
+    }
+
     #[test]
     fn a_watcher_against_a_missing_cli_reports_an_error_and_stops_cleanly() {
         let (tx, rx) = mpsc::channel();

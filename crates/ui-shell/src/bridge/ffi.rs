@@ -6120,10 +6120,7 @@ mod ffi {
         /// "Start machine"/"Stop machine".
         #[qinvokable]
         #[cxx_name = "isPodmanMachineConnection"]
-        fn is_podman_machine_connection(
-            self: &ContainerService,
-            connection_id: &QString,
-        ) -> bool;
+        fn is_podman_machine_connection(self: &ContainerService, connection_id: &QString) -> bool;
 
         #[qinvokable]
         #[cxx_name = "startMachine"]

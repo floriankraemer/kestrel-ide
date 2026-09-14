@@ -109,6 +109,16 @@ private:
     void populateImageDashboard();
     void populateNetworkDashboard();
     void populateVolumeDashboard();
+
+    // C9: the container node's own Dashboard — editable Env/Ports/Mounts
+    // tables and "Recreate with changes". Defined in
+    // `containers_dashboard_edit.cpp` (this class's methods, split out
+    // under the file-size ratchet the same way `containers_actions.cpp`
+    // splits `ContainersPanel`'s).
+    QWidget *ensureContainerDashboardPage();
+    void populateContainerDashboard();
+    void refreshRecreateButtonState();
+    void triggerRecreate();
     // `containers` is `\n`-joined `"<name>\t<node id>"` pairs
     // (`FfiImageDashboard::containers`'s own convention).
     void fillContainersList(QListWidget *list, const QString &containers);
@@ -172,6 +182,27 @@ private:
     QLabel *volumeDashMountpoint_ = nullptr;
     QListWidget *volumeDashContainers_ = nullptr;
     QTableWidget *volumeDashLabels_ = nullptr;
+
+    // C9: the container Dashboard — replaces the generic Name/ID/Status/
+    // Details page for a container node.
+    QWidget *containerDashboardPage_ = nullptr;
+    QLabel *containerDashName_ = nullptr;
+    QLabel *containerDashId_ = nullptr;
+    QLabel *containerDashImage_ = nullptr;
+    QLabel *containerDashStatus_ = nullptr;
+    QLabel *containerDashNetwork_ = nullptr;
+    QLabel *containerDashRestartPolicy_ = nullptr;
+    QTableWidget *containerDashEnv_ = nullptr;
+    QTableWidget *containerDashPorts_ = nullptr;
+    QTableWidget *containerDashMounts_ = nullptr;
+    QPushButton *containerDashRecreateButton_ = nullptr;
+    // The Dashboard's own last-loaded env/ports/mounts lines — what
+    // `refreshRecreateButtonState` compares the tables' current contents
+    // against to decide whether anything is dirty.
+    QString containerDashOriginalEnv_;
+    QString containerDashOriginalPorts_;
+    QString containerDashOriginalMounts_;
+    bool containerDashCanRecreate_ = false;
 };
 
 } // namespace ui_shell

@@ -269,7 +269,10 @@ void ContainerDetailArea::setGenericDashboardPage(QWidget *page)
 void ContainerDetailArea::updateDashboardTab()
 {
     QWidget *wanted = genericDashboardPage_;
-    if (kind_ == QStringLiteral("image")) {
+    if (kind_ == QStringLiteral("container")) {
+        wanted = ensureContainerDashboardPage();
+        populateContainerDashboard();
+    } else if (kind_ == QStringLiteral("image")) {
         wanted = ensureImageDashboardPage();
         populateImageDashboard();
     } else if (kind_ == QStringLiteral("network")) {

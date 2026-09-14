@@ -100,6 +100,12 @@ QString kindLabel(const QString &kind)
     if (kind == QStringLiteral("pods-group")) {
         return QObject::tr("Pods");
     }
+    // C7 review follow-up: the synthetic pagination row under a registry's
+    // repositories or a repository's tags — carries no name for the same
+    // reason a group row doesn't.
+    if (kind == QStringLiteral("registry-more")) {
+        return QObject::tr("Load more...");
+    }
     return QString();
 }
 
@@ -209,6 +215,7 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
                                  OpenAt openAt, QWidget *parent)
   : QWidget(parent)
   , containerService_(containerService)
+  , appSettings_(appSettings)
 {
     addButton_ = iconButton(":/ui/icons/containers/add.a8", tr("Add"), this);
     addButton_->setPopupMode(QToolButton::InstantPopup);
@@ -219,22 +226,21 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     addButton_->setMenu(addMenu);
     connect(newConnection, &QAction::triggered, this, [this]() {
         if (openSettings_) {
-            openSettings_();
+            openSettings_(QString());
         }
     });
     // Discovery lives on the Settings page (C1) — both entries open it.
     connect(addFromContexts, &QAction::triggered, this, [this]() {
         if (openSettings_) {
-            openSettings_();
+            openSettings_(QString());
         }
     });
-    // C7: a registry is added on the Registries tab of the same page —
-    // there is no per-tab-selection hook on `openSettings_` yet, so this
-    // opens the page on whichever tab was last shown, same as the two
-    // entries above did before C7.
+    // C7 review follow-up: a registry is added on the Registries tab of
+    // the same page — opened directly on it now, rather than whichever tab
+    // was last shown.
     connect(newRegistry, &QAction::triggered, this, [this]() {
         if (openSettings_) {
-            openSettings_();
+            openSettings_(tr("Registries"));
         }
     });
 
@@ -422,8 +428,16 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     connect(tree_, &QTreeWidget::customContextMenuRequested, this,
             &ContainersPanel::showContextMenu);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
-        if (item->data(0, kKindRole).toString() == QStringLiteral("connection")) {
+        const QString kind = item->data(0, kKindRole).toString();
+        if (kind == QStringLiteral("connection")) {
             report(containerService_->connectEngine(item->data(0, kIdRole).toString()));
+        } else if (kind == QStringLiteral("registry-more")) {
+            // C7 review follow-up: the same "activate this leaf-ish row"
+            // gesture the connection row above uses to connect, applied to
+            // fetching the next page of whichever listing this row sits
+            // under — which listing, and its cursor, is Rust's own
+            // decision (`ContainerService::loadMoreRegistryChildren`).
+            report(containerService_->loadMoreRegistryChildren(item->data(0, kIdRole).toString()));
         }
     });
     connect(containerService_, &ContainerService::treeChanged, this,
@@ -675,7 +689,7 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         } else if (chosen == refreshAction) {
             report(containerService_->refresh(id));
         } else if (chosen == editAction && openSettings_) {
-            openSettings_();
+            openSettings_(QString());
         }
         return;
     }

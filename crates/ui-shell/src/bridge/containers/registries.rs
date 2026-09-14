@@ -55,6 +55,26 @@ fn find_registry(registry_id: &str) -> Option<app_config::RegistrySetting> {
         .find(|setting| setting.id == registry_id)
 }
 
+/// Pairs each tag with its fully-qualified reference — the shape
+/// `load_registry_tags`/`load_more_registry_tags` both cache and
+/// `tree::registry_tag_nodes` both take, pulled out so the two fetches
+/// (first page, next page) share one place that knows how a reference is
+/// built rather than repeating the `map` inline.
+fn with_references(
+    kind: RegistryKind,
+    address: &str,
+    repository: &str,
+    tags: Vec<String>,
+) -> Vec<(String, String)> {
+    tags.into_iter()
+        .map(|tag| {
+            let reference =
+                container_core::registry_ref::format_reference(kind, address, repository, &tag);
+            (tag, reference)
+        })
+        .collect()
+}
+
 fn client_for(
     setting: &app_config::RegistrySetting,
     secret: &str,
@@ -103,19 +123,103 @@ impl ffi::ContainerService {
             .unwrap_or_default();
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
-            let repositories = client_for(&setting, &secret)
+            let (repositories, next) = client_for(&setting, &secret)
                 .and_then(|client| {
                     client
                         .catalog(PAGE_SIZE, None)
                         .map_err(|error| error.to_string())
                 })
-                .map(|page| page.items)
+                .map(|page| (page.items, page.next))
                 .unwrap_or_default();
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ContainerService>| {
                 service
                     .registry_repos
                     .borrow_mut()
                     .insert(registry_id.clone(), repositories);
+                service
+                    .registry_repo_next
+                    .borrow_mut()
+                    .insert(registry_id.clone(), next);
+                service.as_mut().registry_children_ready(QString::from(
+                    format!("registry/{registry_id}").as_str(),
+                ));
+            });
+        });
+        FfiResult::default()
+    }
+
+    /// C7 review follow-up: continues `loadRegistryRepositories`/
+    /// `loadRegistryTags` past their first page. `more_node_id` is a
+    /// [`tree::registry_more_node`]'s own id — its parent (the id with the
+    /// trailing `/more` stripped) is either a `Registry` node
+    /// (`"registry/<id>"`) or a `RegistryRepo` node
+    /// (`"registry/<id>/repo/<repository>"`), which is all this needs to
+    /// tell repositories-paging from tags-paging apart, the same
+    /// `"/repo/"`-presence test `loadRegistryTags` already uses.
+    pub fn load_more_registry_children(self: Pin<&mut Self>, more_node_id: &QString) -> FfiResult {
+        let more_node_id = more_node_id.to_string();
+        let Some(parent_id) = more_node_id.strip_suffix("/more") else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "not a registry \"load more\" node id",
+            );
+        };
+        let Some(rest) = parent_id.strip_prefix("registry/") else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "not a registry \"load more\" node id",
+            );
+        };
+        match rest.split_once("/repo/") {
+            Some((registry_id, repository)) => {
+                self.load_more_registry_tags(registry_id, repository, parent_id)
+            }
+            None => self.load_more_registry_repositories(rest),
+        }
+    }
+
+    fn load_more_registry_repositories(mut self: Pin<&mut Self>, registry_id: &str) -> FfiResult {
+        let registry_id = registry_id.to_string();
+        let Some(cursor) = self
+            .registry_repo_next
+            .borrow()
+            .get(&registry_id)
+            .cloned()
+            .flatten()
+        else {
+            return errors::failure(errors::CODE_REFUSED, "no further page for this registry");
+        };
+        let Some(setting) = find_registry(&registry_id) else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("no registry with id '{registry_id}' is configured"),
+            );
+        };
+        let secret = SecretStore::load(&registry_id)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let (more, next) = client_for(&setting, &secret)
+                .and_then(|client| {
+                    client
+                        .catalog(PAGE_SIZE, Some(&cursor))
+                        .map_err(|error| error.to_string())
+                })
+                .map(|page| (page.items, page.next))
+                .unwrap_or_default();
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ContainerService>| {
+                service
+                    .registry_repos
+                    .borrow_mut()
+                    .entry(registry_id.clone())
+                    .or_default()
+                    .extend(more);
+                service
+                    .registry_repo_next
+                    .borrow_mut()
+                    .insert(registry_id.clone(), next);
                 service.as_mut().registry_children_ready(QString::from(
                     format!("registry/{registry_id}").as_str(),
                 ));
@@ -150,34 +254,86 @@ impl ffi::ContainerService {
         let qt_thread = self.as_mut().qt_thread();
         let repo_node_id_for_signal = repo_node_id_str.clone();
         std::thread::spawn(move || {
-            let tags = client_for(&setting, &secret)
+            let (tags, next) = client_for(&setting, &secret)
                 .and_then(|client| {
                     client
                         .tags(&repository, PAGE_SIZE, None)
                         .map_err(|error| error.to_string())
                 })
-                .map(|page| page.items)
+                .map(|page| (page.items, page.next))
                 .unwrap_or_default();
-            let with_references: Vec<(String, String)> = tags
-                .into_iter()
-                .map(|tag| {
-                    let reference = container_core::registry_ref::format_reference(
-                        kind,
-                        &address,
-                        &repository,
-                        &tag,
-                    );
-                    (tag, reference)
-                })
-                .collect();
+            let tagged = with_references(kind, &address, &repository, tags);
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ContainerService>| {
                 service
                     .registry_tags
                     .borrow_mut()
-                    .insert(repo_node_id_for_signal.clone(), with_references);
+                    .insert(repo_node_id_for_signal.clone(), tagged);
+                service
+                    .registry_tag_next
+                    .borrow_mut()
+                    .insert(repo_node_id_for_signal.clone(), next);
                 service
                     .as_mut()
                     .registry_children_ready(QString::from(repo_node_id_for_signal.as_str()));
+            });
+        });
+        FfiResult::default()
+    }
+
+    fn load_more_registry_tags(
+        mut self: Pin<&mut Self>,
+        registry_id: &str,
+        repository: &str,
+        repo_node_id: &str,
+    ) -> FfiResult {
+        let repo_node_id = repo_node_id.to_string();
+        let Some(cursor) = self
+            .registry_tag_next
+            .borrow()
+            .get(&repo_node_id)
+            .cloned()
+            .flatten()
+        else {
+            return errors::failure(errors::CODE_REFUSED, "no further page for this repository");
+        };
+        let Some(setting) = find_registry(registry_id) else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("no registry with id '{registry_id}' is configured"),
+            );
+        };
+        let repository = repository.to_string();
+        let kind = RegistryKind::from_id(&setting.kind);
+        let address = setting.address.clone();
+        let secret = SecretStore::load(&setting.id)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let (tags, next) = client_for(&setting, &secret)
+                .and_then(|client| {
+                    client
+                        .tags(&repository, PAGE_SIZE, Some(&cursor))
+                        .map_err(|error| error.to_string())
+                })
+                .map(|page| (page.items, page.next))
+                .unwrap_or_default();
+            let more = with_references(kind, &address, &repository, tags);
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ContainerService>| {
+                service
+                    .registry_tags
+                    .borrow_mut()
+                    .entry(repo_node_id.clone())
+                    .or_default()
+                    .extend(more);
+                service
+                    .registry_tag_next
+                    .borrow_mut()
+                    .insert(repo_node_id.clone(), next);
+                service
+                    .as_mut()
+                    .registry_children_ready(QString::from(repo_node_id.as_str()));
             });
         });
         FfiResult::default()

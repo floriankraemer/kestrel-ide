@@ -872,9 +872,9 @@ void buildMainWindow(AppSettings *appSettings,
                           appSettings->setSettingsScope(QStringLiteral("global"));
                           showSettingsDialog(window, settingsContext);
                       });
-    central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings]() {
+    central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings](const QString &tab) {
         appSettings->setSettingsScope(QStringLiteral("global"));
-        showSettingsDialog(window, settingsContext, QObject::tr("Containers"));
+        showSettingsDialog(window, settingsContext, QObject::tr("Containers"), tab);
     });
     central.containersPanel->setRunContext(runService, runConfigEditor, editorTabs); // C5
     // The same dialog, opened on the project's own layer (ADR-0022): "configure

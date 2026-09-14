@@ -79,7 +79,16 @@ struct SettingsContext
 // `initialCategory`, when given, is the (translated) category label to
 // open on — e.g. `tr("Containers")` from the Containers dock's "Edit
 // configuration..."; unknown labels fall back to the first category.
+//
+// `initialContainersTab`, when given, additionally selects a tab on the
+// Containers page itself once it is open — e.g. `tr("Registries")` from
+// the Containers dock's "Registry..."/registry-node "Edit..." (C7 review
+// follow-up), which need the Registries tab specifically rather than
+// whichever of Connections/Registries was last shown. Ignored when
+// `initialCategory` is not `tr("Containers")`; unknown tab labels fall
+// back to whichever tab the page already had current.
 void showSettingsDialog(QWidget *parent, const SettingsContext &context,
-                        const QString &initialCategory = QString());
+                        const QString &initialCategory = QString(),
+                        const QString &initialContainersTab = QString());
 
 } // namespace ui_shell

@@ -41,10 +41,14 @@ class EditorTabs;
 class ContainersPanel : public QWidget
 {
 public:
-    // Opens Settings on the Containers page — "New connection..." and "Edit
-    // configuration...". Wired by the main window once the settings context
-    // exists.
-    using OpenSettings = std::function<void()>;
+    // Opens Settings on the Containers page — "New connection...", "Edit
+    // configuration...", "Registry...", and a registry node's "Edit...".
+    // The argument is the (translated) tab to additionally select on that
+    // page — `tr("Registries")` for the last two, empty for the first two
+    // (C7 review follow-up: previously every one of these opened on
+    // whichever tab was last shown). Wired by the main window once the
+    // settings context exists.
+    using OpenSettings = std::function<void(const QString &initialTab)>;
     using OpenAt = std::function<void(const QString &, int, int)>;
 
     ContainersPanel(ContainerService *containerService, TerminalSupervisor *terminalSupervisor,
@@ -131,6 +135,13 @@ private:
     void openPushImageDialog(const QString &imageNodeId);
 
     ContainerService *containerService_;
+    // C7 review follow-up: "Remove" on a registry node writes straight
+    // through `AppSettings::removeRegistry` (settings + keychain), the
+    // same collaborator `buildContainersPage`/`buildRegistriesPage` already
+    // edit registries through — stored here only because this is the first
+    // registry mutation to originate from the tree rather than the
+    // Settings page.
+    AppSettings *appSettings_;
     RunService *runService_ = nullptr;
     RunConfigEditor *runConfigEditor_ = nullptr;
     EditorTabs *editorTabs_ = nullptr;

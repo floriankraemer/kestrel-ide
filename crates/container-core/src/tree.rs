@@ -39,6 +39,11 @@ pub enum NodeKind {
     RegistryRepo,
     /// A tag under a `RegistryRepo` node, listed on demand.
     RegistryTag,
+    /// A synthetic "Load more…" row appended after a `Registry`'s fetched
+    /// repositories, or a `RegistryRepo`'s fetched tags, when the server
+    /// named a further page (C7 review follow-up). Activating it fetches
+    /// and appends the next page; it carries no children of its own.
+    RegistryMore,
 }
 
 impl NodeKind {
@@ -61,6 +66,7 @@ impl NodeKind {
             NodeKind::Registry => "registry",
             NodeKind::RegistryRepo => "registry-repo",
             NodeKind::RegistryTag => "registry-tag",
+            NodeKind::RegistryMore => "registry-more",
         }
     }
 
@@ -88,6 +94,7 @@ impl NodeKind {
             "registry" => NodeKind::Registry,
             "registry-repo" => NodeKind::RegistryRepo,
             "registry-tag" => NodeKind::RegistryTag,
+            "registry-more" => NodeKind::RegistryMore,
             _ => return None,
         })
     }
@@ -348,7 +355,8 @@ pub fn actions_for(kind: NodeKind, status: NodeStatus) -> NodeActions {
         | NodeKind::PodsGroup
         | NodeKind::ComposeProject
         | NodeKind::ComposeService
-        | NodeKind::Pod => NodeActions::default(),
+        | NodeKind::Pod
+        | NodeKind::RegistryMore => NodeActions::default(),
     }
 }
 
@@ -432,6 +440,26 @@ pub fn registry_tag_nodes(
             node
         })
         .collect()
+}
+
+/// A synthetic "Load more…" row (C7 review follow-up), appended after a
+/// registry's fetched repositories or a repository's fetched tags when the
+/// bridge's cursor state says another page exists. `parent_id` is the
+/// `Registry` or `RegistryRepo` node it hangs under; its own id is that
+/// parent's id with `/more` appended, which is also how the bridge parses
+/// activation back to "which listing, whose cursor" (`registries.rs`'s
+/// `load_more_registry_children`). Carries no name, the same "group rows
+/// carry no name" convention every other synthetic row already follows —
+/// the view labels it by kind.
+pub fn registry_more_node(parent_id: &str, registry_id: &str) -> TreeNode {
+    let mut node = TreeNode::new(
+        format!("{parent_id}/more"),
+        parent_id.to_string(),
+        NodeKind::RegistryMore,
+        registry_id,
+    );
+    node.icon = "registry";
+    node
 }
 
 /// The lifecycle-actions matrix for a container node's current
@@ -1229,6 +1257,7 @@ mod tests {
             NodeKind::ComposeProject,
             NodeKind::ComposeService,
             NodeKind::Pod,
+            NodeKind::RegistryMore,
         ] {
             assert_eq!(actions_for(kind, NodeStatus::None), NodeActions::default());
         }
@@ -1254,6 +1283,7 @@ mod tests {
             NodeKind::Registry,
             NodeKind::RegistryRepo,
             NodeKind::RegistryTag,
+            NodeKind::RegistryMore,
         ];
         let mut ids: Vec<&str> = all.iter().map(|kind| kind.id()).collect();
         ids.sort_unstable();
@@ -1333,5 +1363,21 @@ mod tests {
         assert_eq!(nodes[0].resource_id, "acme/app:v1");
         assert_eq!(nodes[0].detail, "ghcr.io/acme/app:v1");
         assert_eq!(nodes[0].tooltip, "ghcr.io/acme/app:v1");
+    }
+
+    #[test]
+    fn registry_more_node_ids_itself_by_its_parent_plus_more() {
+        let repos_more = registry_more_node("registry/r1", "r1");
+        assert_eq!(repos_more.id, "registry/r1/more");
+        assert_eq!(repos_more.parent_id, "registry/r1");
+        assert_eq!(repos_more.kind, NodeKind::RegistryMore);
+        assert_eq!(
+            repos_more.name, "",
+            "labelled by kind in the view, like a group row"
+        );
+
+        let tags_more = registry_more_node("registry/r1/repo/acme/app", "r1");
+        assert_eq!(tags_more.id, "registry/r1/repo/acme/app/more");
+        assert_eq!(tags_more.parent_id, "registry/r1/repo/acme/app");
     }
 }

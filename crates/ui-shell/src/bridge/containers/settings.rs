@@ -434,6 +434,42 @@ impl ffi::AppSettings {
     pub fn has_registry_secret(&self, id: &QString) -> bool {
         container_registry::secrets::SecretStore::has(&id.to_string())
     }
+
+    /// C7 review follow-up: "Remove" on a registry tree node — strips the
+    /// row from whichever layer `registries()` reads (mirroring
+    /// `save_registries`'s own scope handling) and deletes the keychain
+    /// entry. The setting is written first: a secret left behind after a
+    /// failed re-save is recoverable (the row is still there to re-derive
+    /// it from), a setting removed after a secret delete that then fails
+    /// to save would silently resurrect the row on next read while the
+    /// credential is already gone.
+    pub fn remove_registry(&self, id: &QString) -> FfiResult {
+        let id = id.to_string();
+        let containers = match *self.scope.borrow() {
+            settings_model::Scope::Project => crate::bridge::convert::load_project_settings()
+                .containers
+                .unwrap_or_default(),
+            _ => crate::bridge::convert::load_settings().containers,
+        };
+        let remaining = without_registry(containers.registries, &id);
+        let result = self.save_registries(remaining.iter().map(to_ffi_registry).collect());
+        if result.code != errors::CODE_OK {
+            return result;
+        }
+        match container_registry::secrets::SecretStore::delete(&id) {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
+        }
+    }
+}
+
+/// Every row except `id` — the pure decision behind `remove_registry`,
+/// pulled out so it is unit-testable without touching `settings.toml`.
+fn without_registry(
+    rows: Vec<app_config::RegistrySetting>,
+    id: &str,
+) -> Vec<app_config::RegistrySetting> {
+    rows.into_iter().filter(|row| row.id != id).collect()
 }
 
 #[cfg(test)]
@@ -495,5 +531,32 @@ mod tests {
         let ffi = to_ffi_registry(&setting);
         let restored = from_ffi_registry(&ffi);
         assert_eq!(restored, setting);
+    }
+
+    #[test]
+    fn without_registry_drops_only_the_matching_id() {
+        let rows = vec![
+            app_config::RegistrySetting {
+                id: "r1".to_string(),
+                ..app_config::RegistrySetting::default()
+            },
+            app_config::RegistrySetting {
+                id: "r2".to_string(),
+                ..app_config::RegistrySetting::default()
+            },
+        ];
+        let remaining = without_registry(rows, "r1");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "r2");
+    }
+
+    #[test]
+    fn without_registry_is_a_no_op_for_an_id_not_present() {
+        let rows = vec![app_config::RegistrySetting {
+            id: "r1".to_string(),
+            ..app_config::RegistrySetting::default()
+        }];
+        let remaining = without_registry(rows, "does-not-exist");
+        assert_eq!(remaining.len(), 1);
     }
 }

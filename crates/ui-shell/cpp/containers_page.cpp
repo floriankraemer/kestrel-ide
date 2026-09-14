@@ -292,6 +292,10 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
     // multi-section categories — the dialog's own category list stays one
     // "Containers" entry rather than growing a second top-level row.
     auto *tabs = new QTabWidget(page);
+    // Named so `settings_dialog.cpp` can select the Registries tab directly
+    // when opening from "Registry..."/registry-node "Edit..." (C7 review
+    // follow-up) without this page knowing anything about who is asking.
+    tabs->setObjectName(QStringLiteral("containersTabs"));
     auto *connectionsTab = new QWidget(tabs);
     auto *connectionsLayout = new QVBoxLayout(connectionsTab);
     connectionsLayout->setContentsMargins(0, 0, 0, 0);

@@ -3164,6 +3164,16 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "hasRegistrySecret"]
         fn has_registry_secret(self: &AppSettings, id: &QString) -> bool;
+
+        /// C7 review follow-up: "Remove" on a registry tree node. Strips
+        /// the `RegistrySetting` with this `id` from whichever layer
+        /// `settingsScope()` names (the same scope `saveRegistries` writes)
+        /// and deletes its keychain entry — never one without the other,
+        /// so a removed registry leaves nothing behind either the tree or
+        /// the tree's own "Edit..." can bring back by surprise.
+        #[qinvokable]
+        #[cxx_name = "removeRegistry"]
+        fn remove_registry(self: &AppSettings, id: &QString) -> FfiResult;
     }
 
     unsafe extern "RustQt" {
@@ -6369,6 +6379,19 @@ mod ffi {
         fn load_registry_tags(
             self: Pin<&mut ContainerService>,
             repo_node_id: &QString,
+        ) -> FfiResult;
+
+        /// C7 review follow-up: fetches the next page for a `registry-more`
+        /// row — `more_node_id` is that row's own id, a `Registry`'s or
+        /// `RegistryRepo`'s id with `/more` appended — and appends it to
+        /// whichever cache (`registry_repos`/`registry_tags`) the parent
+        /// belongs to. Answers on `registryChildrenReady` the same as
+        /// `loadRegistryRepositories`/`loadRegistryTags`.
+        #[qinvokable]
+        #[cxx_name = "loadMoreRegistryChildren"]
+        fn load_more_registry_children(
+            self: Pin<&mut ContainerService>,
+            more_node_id: &QString,
         ) -> FfiResult;
 
         /// A registry node gained children (or a refresh replaced them).

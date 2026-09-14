@@ -22,6 +22,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QTreeWidgetItem>
 
 namespace ui_shell {
@@ -36,15 +37,30 @@ constexpr int kDetailRole = Qt::UserRole + 4;
 void ContainersPanel::showRegistryContextMenu(QTreeWidgetItem *item, const QPoint &globalPos)
 {
     const QString id = item->data(0, kIdRole).toString();
+    const QString name = item->text(0);
+    const FfiNodeActions actions = containerService_->nodeActions(id);
+
     QMenu menu(tree_);
     QAction *refresh = menu.addAction(tr("Refresh"));
     QAction *edit = menu.addAction(tr("Edit..."));
+    menu.addSeparator();
+    QAction *remove = menu.addAction(tr("Remove..."));
+    remove->setEnabled(actions.canRemove);
     QAction *chosen = menu.exec(globalPos);
     if (chosen == refresh) {
         item->takeChildren();
         containerService_->loadRegistryRepositories(id);
     } else if (chosen == edit && openSettings_) {
-        openSettings_();
+        openSettings_(tr("Registries"));
+    } else if (chosen == remove) {
+        if (QMessageBox::question(this, tr("Remove Registry"),
+                                  tr("Remove registry \"%1\"? Its stored password/token is "
+                                     "deleted too.")
+                                    .arg(name))
+            == QMessageBox::Yes) {
+            report(appSettings_->removeRegistry(id));
+            containerService_->refreshAll();
+        }
     }
 }
 

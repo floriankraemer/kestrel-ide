@@ -1079,7 +1079,7 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
-    buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu);
+    buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu, treeModel, containerService);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);
     // Last of the View entries, under everything it can rearrange.
     buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,

@@ -115,6 +115,10 @@ pub(crate) fn is_false(b: &bool) -> bool {
     !*b
 }
 
+fn is_default_build_tools(value: &BuildToolsSettings) -> bool {
+    value == &BuildToolsSettings::default()
+}
+
 /// The `[minimap]` section: whether the editor's right-hand code map shows
 /// at all, and which overlays light up on it.
 ///
@@ -378,7 +382,7 @@ pub struct Settings {
     /// Gradle/Maven overrides. `trusted_roots` is global only — see
     /// [`build_tools`]'s doc comment; the `gradle`/`maven` sub-tables are
     /// project-scoped like [`Settings::terminal`].
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_default_build_tools")]
     pub build_tools: BuildToolsSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
@@ -909,6 +913,23 @@ mod tests {
         assert!(loaded.minimap.vcs_changes);
         assert!(loaded.minimap.breakpoints);
         assert!(loaded.minimap.caret_line);
+    }
+
+    /// A field lacking `skip_serializing_if` at the `Settings` level would
+    /// still emit an empty `[build_tools]` header on every save even
+    /// though `BuildToolsSettings`'s own sub-struct fields are all
+    /// individually sparse — this is the byte-for-byte round-trip
+    /// `Settings`'s own doc comment promises, checked at the level a bug
+    /// here would actually be visible at (an untouched sub-struct's own
+    /// serialization can be sparse and this still fail, if the *outer*
+    /// field forgets `skip_serializing_if`).
+    #[test]
+    fn an_untouched_build_tools_section_writes_no_header_at_the_settings_level() {
+        let text = toml::to_string(&Settings::default()).expect("serialize");
+        assert!(
+            !text.contains("[build_tools]"),
+            "an untouched [build_tools] section must not appear at all:\n{text}"
+        );
     }
 
     #[test]

@@ -70,7 +70,11 @@ baseline() {
 	# declaration/re-export and the `Settings::build_tools` field
 	# (jvm-build-tools plan A7, ADR-0057). `BuildToolsSettings` itself lives
 	# in app-config/src/build_tools.rs.
-	crates/app-config/src/lib.rs) echo 1515 ;;
+	# Raised from 1515 by 21 lines for is_default_build_tools (the
+	# skip_serializing_if predicate a review found missing, so an untouched
+	# [build_tools] section was emitting an empty header on every save) and
+	# its own round-trip test at the Settings level.
+	crates/app-config/src/lib.rs) echo 1536 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)

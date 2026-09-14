@@ -6322,6 +6322,27 @@ mod ffi {
             prefix: &QString,
         ) -> QString;
 
+        /// [`image_completions`]'s local answer at once, then Docker Hub's
+        /// (C6) merged in through `imageCompletionsReady` once the network
+        /// round trip lands — the New Target wizard's Image field and
+        /// `run_config_container_pages.cpp`'s own Image field both drive a
+        /// `QCompleter` from this the way `containers_panel.cpp`'s Pull row
+        /// already does from `imageCompletions` alone. Both halves are
+        /// `\n`-joined ranked names, most-relevant first (no bare
+        /// `Vec<QString>` on the seam, see `FfiBranch`'s doc comment).
+        #[qinvokable]
+        #[cxx_name = "requestImageCompletions"]
+        fn request_image_completions(
+            self: Pin<&mut ContainerService>,
+            connection_id: &QString,
+            prefix: &QString,
+        ) -> QString;
+
+        /// `requestImageCompletions`'s Hub half, once it answers.
+        #[qsignal]
+        #[cxx_name = "imageCompletionsReady"]
+        fn image_completions_ready(self: Pin<&mut ContainerService>, completions: QString);
+
         #[qinvokable]
         #[cxx_name = "imageDashboard"]
         fn image_dashboard(self: &ContainerService, node_id: &QString) -> FfiImageDashboard;

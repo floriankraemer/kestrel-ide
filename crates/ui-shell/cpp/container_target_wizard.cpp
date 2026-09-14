@@ -3,6 +3,7 @@
 #include "container_target_wizard.h"
 
 #include <QComboBox>
+#include <QCompleter>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -13,6 +14,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QStringListModel>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QVBoxLayout>
@@ -134,12 +136,38 @@ bool showContainerTargetWizard(QWidget *parent, ContainerService *containerServi
     auto *sourceStack = new QStackedWidget(page2);
     page2Layout->addWidget(sourceStack);
 
-    // Image.
+    // Image: `ContainerService::imageCompletions` (C4, local names) at
+    // once, then Docker Hub's own half (C6) merged in when
+    // `imageCompletionsReady` answers — the same `QCompleter` shape
+    // `containers_panel.cpp`'s Pull row already drives from
+    // `imageCompletions` alone, extended to the Hub-backed source
+    // `requestImageCompletions` adds. Re-requested against the connection
+    // chosen on page 1, so switching servers re-ranks local images against
+    // the right daemon's own snapshot.
     auto *imagePane = new QWidget(sourceStack);
     auto *imageForm = new QFormLayout(imagePane);
     auto *imageEdit = new QLineEdit(imagePane);
     imageEdit->setText(prefill.image);
     imageEdit->setPlaceholderText(QStringLiteral("nginx:1.27"));
+    auto *imageCompleter = new QCompleter(imagePane);
+    imageCompleter->setCaseSensitivity(Qt::CaseInsensitive);
+    imageEdit->setCompleter(imageCompleter);
+    const auto requestImageCompletions = [=]() {
+        const QStringList local =
+          containerService
+            ->requestImageCompletions(serverCombo->currentData().toString(), imageEdit->text())
+            .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        imageCompleter->setModel(new QStringListModel(local, imageCompleter));
+    };
+    QObject::connect(imageEdit, &QLineEdit::textEdited, imagePane,
+                     [=](const QString &) { requestImageCompletions(); });
+    QObject::connect(serverCombo, &QComboBox::currentIndexChanged, imagePane,
+                     [=](int) { requestImageCompletions(); });
+    QObject::connect(containerService, &ContainerService::imageCompletionsReady, imagePane,
+                     [=](const QString &completions) {
+                         imageCompleter->setModel(new QStringListModel(
+                           completions.split(QLatin1Char('\n'), Qt::SkipEmptyParts), imageCompleter));
+                     });
     imageForm->addRow(QObject::tr("Image:"), imageEdit);
     sourceStack->addWidget(imagePane);
 

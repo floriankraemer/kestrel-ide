@@ -144,6 +144,7 @@ fn spec_from(invocation: &Invocation, argv: Vec<String>, context: &MacroContext)
         cwd: Some(project_root_of(context)),
         env: invocation.env.clone(),
         console: ConsoleKind::Pty,
+        path_map: None,
     }
 }
 
@@ -315,6 +316,7 @@ pub fn compose_project_up_spec(
         cwd: Some(project_root.to_path_buf()),
         env: invocation.env.clone(),
         console: ConsoleKind::Pty,
+        path_map: None,
     }
 }
 

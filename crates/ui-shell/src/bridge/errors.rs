@@ -61,6 +61,10 @@ pub const CODE_INVALID_ARGUMENT: i32 = 1009;
 /// an error to put in front of the user.
 pub const CODE_UNKNOWN_LAYOUT: i32 = 1010;
 
+/// A configuration's `run_on` (C8) could not be honoured: the target id no
+/// longer exists, or the launch's `cwd` falls outside the project.
+pub const CODE_RUN_TARGET: i32 = 1011;
+
 /// A failure with an adapter code and a finished sentence.
 pub fn failure(code: i32, message: impl AsRef<str>) -> FfiResult {
     debug_assert!(
@@ -91,6 +95,7 @@ mod tests {
             CODE_BEFORE_LAUNCH,
             CODE_INVALID_ARGUMENT,
             CODE_UNKNOWN_LAYOUT,
+            CODE_RUN_TARGET,
         ];
         for code in codes {
             assert!(

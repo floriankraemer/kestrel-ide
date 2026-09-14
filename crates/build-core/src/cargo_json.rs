@@ -9,6 +9,8 @@
 
 use std::path::Path;
 
+use container_core::target::PathMap;
+
 use crate::diagnostics::{severity_from_word, BuildDiagnostic};
 
 /// The argument that makes Cargo emit the JSON this module reads. Appended
@@ -21,7 +23,11 @@ pub const MESSAGE_FORMAT_ARG: &str = "--message-format=json";
 /// output, artifact notifications, the final `build-finished` — and for a
 /// diagnostic with no primary span, which is Cargo's shape for a summary
 /// like "aborting due to 3 previous errors".
-pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
+pub fn parse_line(
+    line: &str,
+    project_root: &Path,
+    path_map: Option<&PathMap>,
+) -> Option<BuildDiagnostic> {
     let value: serde_json::Value = serde_json::from_str(line.trim()).ok()?;
     if value.get("reason")?.as_str()? != "compiler-message" {
         return None;
@@ -34,7 +40,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
         .find(|span| span.get("is_primary").and_then(|p| p.as_bool()) == Some(true))?;
 
     let file = primary.get("file_name")?.as_str()?;
-    let path = crate::diagnostics::resolve_path(file, project_root);
+    let path = crate::diagnostics::resolve_path(file, project_root, path_map);
 
     Some(BuildDiagnostic {
         path,
@@ -67,7 +73,7 @@ mod tests {
 
     #[test]
     fn a_compiler_message_becomes_a_diagnostic_at_its_primary_span() {
-        let diagnostic = parse_line(ERROR, Path::new("/p")).unwrap();
+        let diagnostic = parse_line(ERROR, Path::new("/p"), None).unwrap();
         assert_eq!(diagnostic.path, PathBuf::from("/p/src/main.rs"));
         assert_eq!(diagnostic.line, 4);
         assert_eq!(diagnostic.column, 9);
@@ -79,14 +85,14 @@ mod tests {
     #[test]
     fn an_absolute_path_is_not_joined_onto_the_project_root() {
         let line = ERROR.replace("src/main.rs", "/elsewhere/lib.rs");
-        let diagnostic = parse_line(&line, Path::new("/p")).unwrap();
+        let diagnostic = parse_line(&line, Path::new("/p"), None).unwrap();
         assert_eq!(diagnostic.path, PathBuf::from("/elsewhere/lib.rs"));
     }
 
     #[test]
     fn a_non_primary_span_is_never_the_diagnostics_location() {
         let line = r#"{"reason":"compiler-message","message":{"message":"unused","level":"warning","spans":[{"file_name":"a.rs","line_start":1,"column_start":1,"is_primary":false},{"file_name":"b.rs","line_start":9,"column_start":2,"is_primary":true}]}}"#;
-        let diagnostic = parse_line(line, Path::new("/p")).unwrap();
+        let diagnostic = parse_line(line, Path::new("/p"), None).unwrap();
         assert_eq!(diagnostic.path, PathBuf::from("/p/b.rs"));
         assert_eq!(diagnostic.line, 9);
         assert_eq!(diagnostic.severity, Severity::Warning);
@@ -102,14 +108,14 @@ mod tests {
             "   ",
             "warning: unused variable (plain text, not JSON)",
         ] {
-            assert!(parse_line(line, Path::new("/p")).is_none(), "{line}");
+            assert!(parse_line(line, Path::new("/p"), None).is_none(), "{line}");
         }
     }
 
     #[test]
     fn a_message_containing_something_that_looks_like_a_location_is_not_reparsed() {
         let line = r#"{"reason":"compiler-message","message":{"message":"expected `src/other.rs:99:1`","level":"error","spans":[{"file_name":"src/main.rs","line_start":4,"column_start":9,"is_primary":true}]}}"#;
-        let diagnostic = parse_line(line, Path::new("/p")).unwrap();
+        let diagnostic = parse_line(line, Path::new("/p"), None).unwrap();
         assert_eq!(diagnostic.path, PathBuf::from("/p/src/main.rs"));
         assert_eq!(diagnostic.line, 4);
     }

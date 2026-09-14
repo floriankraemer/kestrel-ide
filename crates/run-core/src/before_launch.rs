@@ -130,12 +130,26 @@ pub fn tasks_of(config: &RunConfig) -> Vec<BeforeLaunchTask> {
 /// validation ([`validate`]) and every other pre-C5 caller only care about
 /// `RunConfiguration` references, so they keep working against configs with
 /// no `[containers]` section to hand this one.
+///
+/// A run target's build (C8, `RunConfigSetting::run_on`) is prepended ahead
+/// of a containerfile configuration's own build task, ahead of everything
+/// else in the configuration's own before-launch list: the target's image
+/// has to exist before *any* of them can meaningfully run, including a
+/// `Build`/`ExternalTool` task the user wrote expecting the target's
+/// container to already be there. In practice the two build tasks never
+/// coexist — a run target only applies to a plain process configuration,
+/// and a containerfile configuration has no `run_on` of its own — but
+/// prepending both, in this order, keeps the rule total rather than
+/// special-cased on `kind`.
 pub fn tasks_of_with_containers(
     config: &RunConfig,
     containers: &app_config::ContainerSettings,
 ) -> Vec<BeforeLaunchTask> {
     let mut tasks = tasks_of(config);
     if let Some(build) = crate::container_run::build_task(config, containers) {
+        tasks.insert(0, build);
+    }
+    if let Some(build) = crate::container_target::target_build_task(config, containers) {
         tasks.insert(0, build);
     }
     tasks

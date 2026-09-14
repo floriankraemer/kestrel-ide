@@ -1,5 +1,6 @@
 #include "containers_page.h"
 
+#include "container_target_wizard.h"
 #include "containers_registries_page.h"
 
 #include <QAction>
@@ -254,6 +255,16 @@ FfiContainerConnection rowFromFields(const ConnectionFields &fields, const QStri
     return converted;
 }
 
+// Run targets (C8): same conversion, `FfiContainerTarget` row.
+::rust::Vec<FfiContainerTarget> toRustVec(const QVector<FfiContainerTarget> &rows)
+{
+    ::rust::Vec<FfiContainerTarget> converted;
+    for (const FfiContainerTarget &row : rows) {
+        converted.push_back(row);
+    }
+    return converted;
+}
+
 void fieldsFromRow(const ConnectionFields &fields, const FfiContainerConnection &row)
 {
     fields.name->setText(row.name);
@@ -281,7 +292,88 @@ void fieldsFromRow(const ConnectionFields &fields, const FfiContainerConnection 
 
 } // namespace
 
-ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
+// Run targets (C8): a plain list + Add/Edit/Remove, all three going through
+// the New Target wizard — Add opens it empty, Edit reopens it prefilled with
+// the selected row. Unlike Connections/Registries there is no per-row form
+// on this page: the wizard *is* the editor, the same "the wizard is the
+// only way to shape one of these" rule the wizard's own doc comment states.
+QWidget *buildRunTargetsTab(QWidget *parent, AppSettings *appSettings,
+                            RunConfigEditor *runConfigEditor, ContainerService *containerService,
+                            std::function<void()> &outCommit)
+{
+    auto *tab = new QWidget(parent);
+    auto *layout = new QVBoxLayout(tab);
+
+    auto targets = std::make_shared<QVector<FfiContainerTarget>>();
+    for (const FfiContainerTarget &row : appSettings->containerTargets()) {
+        targets->append(row);
+    }
+
+    auto *list = new QListWidget(tab);
+    for (const FfiContainerTarget &row : *targets) {
+        list->addItem(row.name.isEmpty() ? QObject::tr("(unnamed)") : row.name);
+    }
+    layout->addWidget(list, 1);
+
+    auto *buttons = new QHBoxLayout();
+    auto *addButton = new QPushButton(QObject::tr("Add..."), tab);
+    auto *editButton = new QPushButton(QObject::tr("Edit..."), tab);
+    auto *removeButton = new QPushButton(QObject::tr("Remove"), tab);
+    buttons->addWidget(addButton);
+    buttons->addWidget(editButton);
+    buttons->addWidget(removeButton);
+    buttons->addStretch(1);
+    layout->addLayout(buttons);
+
+    const auto repaint = [targets, list](int keepRow) {
+        list->clear();
+        for (const FfiContainerTarget &row : *targets) {
+            list->addItem(row.name.isEmpty() ? QObject::tr("(unnamed)") : row.name);
+        }
+        if (keepRow >= 0 && keepRow < list->count()) {
+            list->setCurrentRow(keepRow);
+        }
+    };
+
+    QObject::connect(addButton, &QPushButton::clicked, tab, [=]() {
+        FfiContainerTarget prefill{};
+        FfiContainerTarget created{};
+        if (showContainerTargetWizard(tab, containerService, runConfigEditor, prefill, created)) {
+            if (created.id.isEmpty()) {
+                created.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            }
+            targets->append(created);
+            repaint(targets->size() - 1);
+        }
+    });
+    QObject::connect(editButton, &QPushButton::clicked, tab, [=]() {
+        const int row = list->currentRow();
+        if (row < 0 || row >= targets->size()) {
+            return;
+        }
+        FfiContainerTarget edited{};
+        if (showContainerTargetWizard(tab, containerService, runConfigEditor, (*targets)[row],
+                                      edited)) {
+            (*targets)[row] = edited;
+            repaint(row);
+        }
+    });
+    QObject::connect(removeButton, &QPushButton::clicked, tab, [=]() {
+        const int row = list->currentRow();
+        if (row < 0 || row >= targets->size()) {
+            return;
+        }
+        targets->remove(row);
+        repaint(qMin(row, targets->size() - 1));
+    });
+
+    outCommit = [appSettings, targets]() { appSettings->saveContainerTargets(toRustVec(*targets)); };
+    return tab;
+}
+
+ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings,
+                                   RunConfigEditor *runConfigEditor,
+                                   ContainerService *containerService)
 {
     auto *page = new QWidget(parent);
     auto *pageLayout = new QVBoxLayout(page);
@@ -352,6 +444,10 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
     tabs->addTab(connectionsTab, QObject::tr("Connections"));
     const RegistriesPage registriesPage = buildRegistriesPage(tabs, appSettings);
     tabs->addTab(registriesPage.widget, QObject::tr("Registries"));
+    std::function<void()> runTargetsCommit;
+    QWidget *runTargetsTab =
+      buildRunTargetsTab(tabs, appSettings, runConfigEditor, containerService, runTargetsCommit);
+    tabs->addTab(runTargetsTab, QObject::tr("Run targets"));
     pageLayout->addWidget(tabs, 1);
 
     formPane->setEnabled(false);
@@ -465,7 +561,8 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
 
     return ContainersPage{
       page,
-      [appSettings, connections, showStopped, showUntagged, selinuxRelabel, registriesCommit = registriesPage.commit]() {
+      [appSettings, connections, showStopped, showUntagged, selinuxRelabel,
+       registriesCommit = registriesPage.commit, runTargetsCommit]() {
           appSettings->saveContainerConnections(toRustVec(*connections));
           FfiContainerSettings settings;
           settings.show_stopped_containers = showStopped->isChecked();
@@ -473,6 +570,7 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings)
           settings.selinux_relabel = selinuxRelabel->isChecked();
           appSettings->saveContainerSettings(settings);
           registriesCommit();
+          runTargetsCommit();
       },
     };
 }

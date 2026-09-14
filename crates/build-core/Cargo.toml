@@ -13,6 +13,10 @@ run-core = { path = "../run-core" }
 # needs `ExecHost` to turn its Linux-shaped file references back into the
 # UNC paths the Problems dock and "open file" both expect.
 process-exec = { path = "../process-exec" }
+# Run targets (C8): `diagnostics::resolve_path` also consults a build
+# step's `PathMap` (`container_core::target::PathMap`) when the step ran
+# inside a container run target, the same seam `ExecHost` gives a WSL one.
+container-core = { path = "../container-core" }
 # The one Problems model (ADR-0046): `BuildDiagnostic::severity` is
 # `diagnostics_core::Severity`, so a build's diagnostics and a language
 # server's need no severity translation at the seam.

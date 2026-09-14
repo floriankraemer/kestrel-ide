@@ -108,6 +108,7 @@ fn debugpy_stops_at_a_breakpoint_and_reports_the_variable() {
         cwd: Some(dir.path().to_path_buf()),
         env: Vec::new(),
         console: run_core::ConsoleKind::Pipes,
+        path_map: None,
     };
     // The order DAP actually requires: launch is sent without waiting,
     // breakpoints go in after the adapter says it is ready, and
@@ -185,6 +186,7 @@ fn debugpy_honors_a_conditional_breakpoint() {
         cwd: Some(dir.path().to_path_buf()),
         env: Vec::new(),
         console: run_core::ConsoleKind::Pipes,
+        path_map: None,
     };
     session
         .launch(dap_core::launch::arguments("debugpy", &spec))
@@ -267,6 +269,7 @@ fn debugpy_changes_a_variable_through_set_variable() {
         cwd: Some(dir.path().to_path_buf()),
         env: Vec::new(),
         console: run_core::ConsoleKind::Pipes,
+        path_map: None,
     };
     session
         .launch(dap_core::launch::arguments("debugpy", &spec))

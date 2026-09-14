@@ -211,6 +211,7 @@ impl SessionListener for QtListener {
                 })
                 .unwrap_or_default(),
             console: run_core::ConsoleKind::Pty,
+            path_map: None,
         };
 
         let session_id = self.session_id;
@@ -281,6 +282,27 @@ impl ffi::DebugService {
                 message: QString::from("unknown run configuration"),
             };
         };
+
+        // Run targets (C8) are explicitly out of scope for debugging: the
+        // adapter would have to run *inside* the container, which this
+        // codebase has no mechanism for (ADR-0056's "Run targets" section
+        // records the gap). A container-*kind* configuration (`kind` set)
+        // is unaffected — it was never debuggable through this path either,
+        // caught by the adapter lookup below the same way it always was.
+        if config.kind.is_none()
+            && config
+                .run_on
+                .as_deref()
+                .is_some_and(|run_on| !run_on.trim().is_empty())
+        {
+            return ffi::FfiResult {
+                code: errors::CODE_RUN_TARGET,
+                message: QString::from(
+                    "Debugging inside a container target is not supported yet — run instead, \
+                     or use a remote-attach debug configuration",
+                ),
+            };
+        }
 
         // Which adapter: the configuration's own toolchain if it has one,
         // otherwise whatever the project is built with. Both answers come

@@ -307,7 +307,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     // bound to its widgets), and the OK branch has already been written to
     // call one.
     auto containersPage =
-      std::make_shared<ContainersPage>(buildContainersPage(&dialog, appSettings));
+      std::make_shared<ContainersPage>(buildContainersPage(&dialog, appSettings, context.runConfigEditor, context.containerService));
     const int containersIndex =
       pages->addWidget(scopedPage(QStringLiteral("containers"), containersPage->widget));
     // C7 review follow-up: "Registry..."/registry-node "Edit..." open this
@@ -513,7 +513,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
        languageService = context.languageService, terminalPage, terminalIndex,
        tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
        analysisService = context.analysisService, analysisIndex, containersPage,
-       containersIndex, &lazyBuilders]() {
+       containersIndex, &lazyBuilders, runConfigEditor = context.runConfigEditor,
+       containerService = context.containerService]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -566,7 +567,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
           staleTabPadding->deleteLater();
 
           QWidget *staleContainers = pages->widget(containersIndex);
-          *containersPage = buildContainersPage(&dialog, appSettings);
+          *containersPage = buildContainersPage(&dialog, appSettings, runConfigEditor, containerService);
           pages->insertWidget(
             containersIndex,
             scopedPage(QStringLiteral("containers"), containersPage->widget));

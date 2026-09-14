@@ -443,6 +443,7 @@ dependencies = [
 name = "build-core"
 version = "0.1.0"
 dependencies = [
+ "container-core",
  "diagnostics-core",
  "process-exec",
  "regex",

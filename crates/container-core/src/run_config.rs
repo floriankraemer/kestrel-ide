@@ -125,7 +125,7 @@ fn relabelable(host_path: &str) -> bool {
 }
 
 /// One `-v`/`--mount` bind-mount argument.
-fn mount_arg(
+pub(crate) fn mount_arg(
     host_path: &str,
     container_path: &str,
     read_only: bool,
@@ -148,7 +148,7 @@ fn mount_arg(
 
 /// One `-p`/`--publish` port-binding argument:
 /// `[host_ip:]host_port:container_port[/protocol]`.
-fn port_arg(binding: &app_config::container_run::PortBinding) -> String {
+pub(crate) fn port_arg(binding: &app_config::container_run::PortBinding) -> String {
     let mut spec = String::new();
     if !binding.host_ip.is_empty() {
         spec.push_str(&binding.host_ip);
@@ -520,6 +520,46 @@ pub fn compose_services(
         .collect())
 }
 
+/// Whether `service` has a `build:` key, per `compose -f <files>… config
+/// --format json` — the New Target wizard's own answer to "does this
+/// compose-service target need a before-launch build" (C8), computed once
+/// at wizard time and stored on `ContainerTargetSetting::needs_build` rather
+/// than re-derived on every launch (see that field's own doc comment: a
+/// `compose config` call on every run would make every launch depend on the
+/// daemon being reachable just to decide whether to build).
+pub fn compose_service_needs_build(
+    invocation: &Invocation,
+    files: &[String],
+    service: &str,
+    project_root: &Path,
+) -> Result<bool, OpError> {
+    let mut args = vec!["compose".to_string()];
+    for file in files {
+        args.push("-f".to_string());
+        args.push(file.clone());
+    }
+    args.push("config".to_string());
+    args.push("--format".to_string());
+    args.push("json".to_string());
+    let output = run_op(invocation, &args, project_root)?;
+    Ok(service_has_build_key(&output.stdout, service))
+}
+
+/// The pure half of [`compose_service_needs_build`]: does `service` have a
+/// `build:` key in `compose config --format json`'s output? Separated out
+/// so this is table-testable without spawning a real `compose`.
+/// Malformed/unexpected JSON reads as "no", the same "absent means false"
+/// default this whole feature follows.
+fn service_has_build_key(compose_config_json: &[u8], service: &str) -> bool {
+    let value: serde_json::Value =
+        serde_json::from_slice(compose_config_json).unwrap_or(serde_json::Value::Null);
+    value
+        .get("services")
+        .and_then(|services| services.get(service))
+        .and_then(|svc| svc.get("build"))
+        .is_some()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -856,6 +896,37 @@ mod tests {
         };
         let result = compose_services(&broken, &["docker-compose.yml".to_string()], Path::new("."));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn compose_service_needs_build_reports_the_engine_being_missing_rather_than_panicking() {
+        let broken = Invocation {
+            program: "definitely-not-a-real-engine-binary".to_string(),
+            prefix_args: Vec::new(),
+            env: Vec::new(),
+            host: process_exec::host::ExecHost::Local,
+        };
+        let result = compose_service_needs_build(
+            &broken,
+            &["docker-compose.yml".to_string()],
+            "web",
+            Path::new("."),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn service_has_build_key_reads_a_real_compose_config_json_shape() {
+        let json = br#"{"services":{"web":{"image":"myapp:dev","build":{"context":"."}},"db":{"image":"postgres"}}}"#;
+        assert!(service_has_build_key(json, "web"));
+        assert!(!service_has_build_key(json, "db"));
+        assert!(!service_has_build_key(json, "missing"));
+    }
+
+    #[test]
+    fn service_has_build_key_is_false_on_malformed_json() {
+        assert!(!service_has_build_key(b"not json at all", "web"));
+        assert!(!service_has_build_key(b"", "web"));
     }
 
     #[test]

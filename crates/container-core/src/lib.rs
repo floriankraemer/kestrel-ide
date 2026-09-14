@@ -68,6 +68,11 @@ pub mod session;
 /// One engine's whole state ([`snapshot::EngineSnapshot`]), compose
 /// grouping, and the filter/search views over it.
 pub mod snapshot;
+/// Run targets (C8): wrapping a plain launch to run inside a container
+/// (image | containerfile | compose service), and the local-root <->
+/// mount-root path map that keeps console links and diagnostics resolving
+/// back to the project after the wrap.
+pub mod target;
 /// The Containers dock's rows, flattened and ordered ([`tree::flatten`]).
 pub mod tree;
 /// Volume operations (C4): `volume create`/`rm`/`prune` argv builders and

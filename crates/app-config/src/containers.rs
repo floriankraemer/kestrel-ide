@@ -30,10 +30,10 @@ pub struct ContainerSettings {
     #[serde(default, rename = "registry", skip_serializing_if = "Vec::is_empty")]
     pub registries: Vec<RegistrySetting>,
 
-    /// Run targets (C8): a placeholder today. Kept as a real field rather
-    /// than added later so [`ScopedField::Containers`] and every round-trip
-    /// test written against this struct do not have to change shape again
-    /// when C8 fills it in.
+    /// Run targets (C8): places a *program* run configuration's launch can
+    /// be wrapped to run inside instead of on the local machine —
+    /// [`crate::RunConfigSetting::run_on`] points at one by
+    /// [`ContainerTargetSetting::id`].
     #[serde(default, rename = "target", skip_serializing_if = "Vec::is_empty")]
     pub targets: Vec<ContainerTargetSetting>,
 
@@ -174,13 +174,83 @@ pub struct RegistrySetting {
     pub token_auth: bool,
 }
 
-/// A run target (C8). Empty placeholder for now — the shape lands with C8,
-/// this only reserves the section so [`ContainerSettings`] never has to
-/// change its own field list again.
+/// A run target (C8): a place a *program* run configuration's launch is
+/// wrapped to run inside instead of on the local machine — `RunConfigSetting
+/// ::run_on` points at one by [`ContainerTargetSetting::id`]
+/// (`"container:<id>"`).
+///
+/// Every field every source (`image`/`containerfile`/`compose-service`)
+/// could need is a plain, always-present value rather than a per-source
+/// nested shape, the same flat-row reasoning
+/// [`ContainerConnectionSetting`]'s own doc comment gives: this is meant to
+/// be readable in a project-settings diff, and `toml`'s serde support has no
+/// clean tagged-union story. `container_core::target` is what gives `source`
+/// meaning.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct ContainerTargetSetting {
+    /// Stable id, generated when the target is added. What a run
+    /// configuration's `run_on` string points at — never shown.
     #[serde(default)]
     pub id: String,
+    /// The name shown in the "Run on" combo and the Settings page.
+    #[serde(default)]
+    pub name: String,
+    /// Which `[containers.connection]` row runs this target's container.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub connection_id: String,
+    /// `"image"`, `"containerfile"`, or `"compose-service"`. Unrecognised
+    /// values map to `container_core::target`'s "image" default — the same
+    /// "unknown reads as the least surprising default" rule every other
+    /// string-tagged row in this crate follows.
+    #[serde(default)]
+    pub source: String,
+    /// `source == "image"`: the image reference to run as-is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    /// `source == "containerfile"`: path to the `Dockerfile`/`Containerfile`,
+    /// relative to [`ContainerTargetSetting::context_dir`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dockerfile: Option<String>,
+    /// `source == "containerfile"`: the build context directory,
+    /// project-relative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_dir: Option<String>,
+    /// `source == "containerfile"`: the tag the before-launch build gives
+    /// the image. Empty means a deterministic `ide-target-<id>` tag.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_tag: Option<String>,
+    /// `source == "compose-service"`: `-f <file>` per entry, in order,
+    /// project-relative.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compose_files: Vec<String>,
+    /// `source == "compose-service"`: which service `compose run` targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
+    /// `source == "compose-service"`: whether the wizard found a `build:`
+    /// key on this service, so the before-launch task builds it first.
+    /// Computed once, at wizard time, rather than re-derived on every
+    /// launch — a `compose config` call every run would make every launch
+    /// depend on the daemon being reachable just to decide whether to build.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub needs_build: bool,
+    /// Where the project root is mounted inside the container.
+    /// `container_core::target` defaults an empty value to `/workspace`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub workdir: String,
+    /// Free-form extra `run` arguments, shell-word-split and appended
+    /// verbatim — the same convention
+    /// [`crate::container_run::ContainerImageRunSetting::run_options`] uses.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub run_options: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env: Vec<(String, String)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub port_bindings: Vec<crate::container_run::PortBinding>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub publish_all_ports: bool,
+    /// Bind mounts in addition to the project-root mount every target gets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_mounts: Vec<crate::container_run::BindMount>,
 }
 
 #[cfg(test)]
@@ -288,6 +358,90 @@ mod tests {
             text.trim(),
             "id = \"\"\nname = \"\"\nkind = \"\"\ntoken_auth = false"
         );
+    }
+
+    #[test]
+    fn an_untouched_target_setting_writes_only_its_id_name_and_source() {
+        let text = toml::to_string(&ContainerTargetSetting::default()).expect("serialize");
+        assert_eq!(text.trim(), "id = \"\"\nname = \"\"\nsource = \"\"");
+    }
+
+    #[test]
+    fn an_image_target_round_trips_through_toml() {
+        let target = ContainerTargetSetting {
+            id: "t1".to_string(),
+            name: "nginx".to_string(),
+            connection_id: "local-docker".to_string(),
+            source: "image".to_string(),
+            image: Some("nginx:1.27".to_string()),
+            workdir: "/workspace".to_string(),
+            run_options: "--rm".to_string(),
+            env: vec![("FOO".to_string(), "bar".to_string())],
+            port_bindings: vec![crate::container_run::PortBinding {
+                host_port: "8080".to_string(),
+                container_port: "80".to_string(),
+                ..Default::default()
+            }],
+            publish_all_ports: true,
+            extra_mounts: vec![crate::container_run::BindMount {
+                host_path: "/data".to_string(),
+                container_path: "/data".to_string(),
+                read_only: true,
+            }],
+            ..ContainerTargetSetting::default()
+        };
+        let text = toml::to_string(&target).expect("serialize");
+        let parsed: ContainerTargetSetting = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed, target);
+    }
+
+    #[test]
+    fn a_containerfile_target_round_trips_through_toml() {
+        let target = ContainerTargetSetting {
+            id: "t2".to_string(),
+            name: "app image".to_string(),
+            source: "containerfile".to_string(),
+            dockerfile: Some("Dockerfile".to_string()),
+            context_dir: Some("$PROJECT_DIR$".to_string()),
+            image_tag: Some("ide-target-t2".to_string()),
+            ..ContainerTargetSetting::default()
+        };
+        let text = toml::to_string(&target).expect("serialize");
+        let parsed: ContainerTargetSetting = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed, target);
+    }
+
+    #[test]
+    fn a_compose_service_target_round_trips_through_toml() {
+        let target = ContainerTargetSetting {
+            id: "t3".to_string(),
+            name: "web service".to_string(),
+            source: "compose-service".to_string(),
+            compose_files: vec!["docker-compose.yml".to_string()],
+            service: Some("web".to_string()),
+            needs_build: true,
+            ..ContainerTargetSetting::default()
+        };
+        let text = toml::to_string(&target).expect("serialize");
+        let parsed: ContainerTargetSetting = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed, target);
+    }
+
+    #[test]
+    fn a_section_with_targets_round_trips_through_toml() {
+        let settings = ContainerSettings {
+            targets: vec![ContainerTargetSetting {
+                id: "t1".to_string(),
+                name: "nginx".to_string(),
+                source: "image".to_string(),
+                image: Some("nginx:1.27".to_string()),
+                ..ContainerTargetSetting::default()
+            }],
+            ..ContainerSettings::default()
+        };
+        let text = toml::to_string(&settings).expect("serialize");
+        let parsed: ContainerSettings = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed, settings);
     }
 
     #[test]

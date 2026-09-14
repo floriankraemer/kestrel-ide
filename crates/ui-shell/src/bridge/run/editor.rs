@@ -93,6 +93,8 @@ impl ffi::RunConfigEditor {
         config.allow_parallel = form.allow_parallel;
         config.before_launch = super::tasks_from_string(&form.before_launch.to_string());
         container_form::apply_options(config, &form.kind.to_string(), &form.container);
+        let run_on = form.run_on.to_string();
+        config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
         // Editing a temporary configuration is how IntelliJ's "Save
         // configuration" works: once it has been through the dialog it is
         // one the user meant to keep, so it stops being eviction fodder.
@@ -149,6 +151,182 @@ impl ffi::RunConfigEditor {
         let mut argv = vec![spec.program];
         argv.extend(spec.args);
         QString::from(container_core::run_config::preview(&argv).as_str())
+    }
+
+    /// The run targets the "Run on" combo lists (C8), effective settings
+    /// (global with the project's override applied, same as every other
+    /// container-settings read here) — read-only, edited through
+    /// `AppSettings::containerTargets`/`saveContainerTargets`
+    /// (`bridge/containers/settings.rs`) and the New Target wizard, never
+    /// through this draft.
+    pub fn container_targets(&self) -> Vec<ffi::FfiContainerTarget> {
+        effective_container_settings()
+            .targets
+            .iter()
+            .map(super::to_ffi_target)
+            .collect()
+    }
+
+    /// The command the New Target wizard's live preview shows: `target`
+    /// wrapped around a stand-in `echo hello` launch — never the actual
+    /// configuration being edited, since the wizard runs before any
+    /// configuration references the target at all.
+    pub fn target_command_preview(&self, target: &ffi::FfiContainerTarget) -> QString {
+        let containers = effective_container_settings();
+        let setting = super::from_ffi_target(target);
+        let root = current_project_root().unwrap_or_default();
+        let invocation = containers
+            .connections
+            .iter()
+            .find(|c| c.id == setting.connection_id)
+            .map(container_core::connection::ConnectionConfig::from_setting)
+            .unwrap_or(container_core::connection::ConnectionConfig {
+                engine: container_core::connection::Engine::Docker,
+                kind: container_core::connection::ConnectionKind::Auto,
+                executable: None,
+                compose_executable: None,
+            })
+            .invocation();
+        let sample = container_core::target::SimpleLaunch {
+            program: "echo",
+            args: &["hello".to_string()],
+            cwd: Some(root.as_path()),
+            env: &[],
+        };
+        match container_core::target::wrap_launch(&sample, &setting, &invocation, &root) {
+            Ok(wrapped) => {
+                let mut argv = vec![wrapped.program];
+                argv.extend(wrapped.args);
+                QString::from(container_core::run_config::preview(&argv).as_str())
+            }
+            Err(err) => QString::from(err.to_string().as_str()),
+        }
+    }
+
+    /// Whether `service` needs a before-launch build (C8): worker-thread
+    /// `compose config --format json` against `connection_id`, reported
+    /// through `composeNeedsBuildReady` — same shape as
+    /// `requestComposeServices`, the New Target wizard's page 2 for a
+    /// compose-service source.
+    pub fn request_compose_needs_build(
+        self: Pin<&mut ffi::RunConfigEditor>,
+        connection_id: &QString,
+        files: &QString,
+        service: &QString,
+    ) {
+        let Some(root) = current_project_root() else {
+            let qt_thread = self.qt_thread();
+            let _ = qt_thread.queue(|mut editor: Pin<&mut ffi::RunConfigEditor>| {
+                editor.as_mut().compose_needs_build_ready(false);
+            });
+            return;
+        };
+        let containers = effective_container_settings();
+        let connection_id = connection_id.to_string();
+        let service = service.to_string();
+        let files: Vec<String> = files
+            .to_string()
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(str::to_string)
+            .collect();
+        let qt_thread = self.qt_thread();
+        std::thread::spawn(move || {
+            let needs_build = containers
+                .connections
+                .iter()
+                .find(|c| c.id == connection_id)
+                .map(container_core::connection::ConnectionConfig::from_setting)
+                .map(|c| c.invocation())
+                .and_then(|invocation| {
+                    container_core::run_config::compose_service_needs_build(
+                        &invocation,
+                        &files,
+                        &service,
+                        &root,
+                    )
+                    .ok()
+                })
+                .unwrap_or(false);
+            let _ = qt_thread.queue(move |mut editor: Pin<&mut ffi::RunConfigEditor>| {
+                editor.as_mut().compose_needs_build_ready(needs_build);
+            });
+        });
+    }
+
+    /// New Target wizard's Finish (C8): appends `target` to the *project's*
+    /// `[containers].targets` (project scope always — the dialog is always
+    /// opened against an open project, and a project override already wins
+    /// over a global row of the same id, so there is nothing a global write
+    /// here would buy over this simpler one) and returns the new id, freshly
+    /// generated when `target.id` arrives blank. Immediate, not part of this
+    /// editor's own draft/commit cycle: a target is a `[containers]` row,
+    /// not a run configuration, the same reason `AppSettings::
+    /// saveContainerConnections` commits at once rather than through a
+    /// draft.
+    pub fn add_container_target(&self, target: &ffi::FfiContainerTarget) -> QString {
+        let Some(root) = current_project_root() else {
+            return QString::default();
+        };
+        let mut row = super::from_ffi_target(target);
+        if row.id.trim().is_empty() {
+            row.id = generate_id();
+        }
+        let id = row.id.clone();
+        let _ = app_config::project_settings::update(&root, |settings| {
+            let mut containers = settings.containers.clone().unwrap_or_default();
+            containers.targets.push(row.clone());
+            settings.containers = Some(containers);
+        });
+        QString::from(id.as_str())
+    }
+
+    /// Settings > Containers > Run targets' Edit, reopening the wizard
+    /// prefilled: replaces the project's row with `target.id` in place.
+    pub fn update_container_target(&self, target: &ffi::FfiContainerTarget) -> FfiResult {
+        let Some(root) = current_project_root() else {
+            return FfiResult {
+                code: errors::CODE_NO_PROJECT,
+                message: QString::from("no project is open"),
+            };
+        };
+        let row = super::from_ffi_target(target);
+        match app_config::project_settings::update(&root, |settings| {
+            let mut containers = settings.containers.clone().unwrap_or_default();
+            if let Some(existing) = containers.targets.iter_mut().find(|t| t.id == row.id) {
+                *existing = row.clone();
+            }
+            settings.containers = Some(containers);
+        }) {
+            Ok(()) => FfiResult::default(),
+            Err(err) => FfiResult {
+                code: errors::CODE_SETTINGS_IO,
+                message: QString::from(err.to_string().as_str()),
+            },
+        }
+    }
+
+    /// Settings > Containers > Run targets' Remove.
+    pub fn remove_container_target(&self, id: &QString) -> FfiResult {
+        let Some(root) = current_project_root() else {
+            return FfiResult {
+                code: errors::CODE_NO_PROJECT,
+                message: QString::from("no project is open"),
+            };
+        };
+        let id = id.to_string();
+        match app_config::project_settings::update(&root, |settings| {
+            let mut containers = settings.containers.clone().unwrap_or_default();
+            containers.targets.retain(|t| t.id != id);
+            settings.containers = Some(containers);
+        }) {
+            Ok(()) => FfiResult::default(),
+            Err(err) => FfiResult {
+                code: errors::CODE_SETTINGS_IO,
+                message: QString::from(err.to_string().as_str()),
+            },
+        }
     }
 
     /// `compose config --services` against `connection_id`, for the Compose
@@ -214,6 +392,7 @@ impl ffi::RunConfigEditor {
     /// container-kind one — `program` is unused and always empty there, so
     /// the plain-process check would wrongly flag every one of them.
     pub fn validate(&self) -> FfiResult {
+        let containers = effective_container_settings();
         for config in self.draft.borrow().iter() {
             let problem = match config.kind.as_deref() {
                 Some("container-image") => config
@@ -232,7 +411,15 @@ impl ffi::RunConfigEditor {
                     .program
                     .trim()
                     .is_empty()
-                    .then(|| "has no program to run".to_string()),
+                    .then(|| "has no program to run".to_string())
+                    .or_else(|| {
+                        config.run_on.as_deref().and_then(|run_on| {
+                            let id = run_core::target_id(run_on)?;
+                            containers.targets.iter().all(|t| t.id != id).then(|| {
+                                format!("runs on a target (\"{id}\") that no longer exists")
+                            })
+                        })
+                    }),
             };
             if let Some(problem) = problem {
                 let label = if config.name.trim().is_empty() {

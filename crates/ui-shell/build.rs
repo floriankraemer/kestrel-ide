@@ -688,6 +688,10 @@ fn main() {
         // so its header is listed too — that is what runs moc on it.
         .cpp_file("cpp/run_config_container_pages.h")
         .cpp_file("cpp/run_config_container_pages.cpp")
+        // Run targets (C8): the New Target wizard, Q_OBJECT-free (a plain
+        // `QWizard` built and driven by lambdas, the same shape
+        // `run_config_dialog.cpp` uses for its own `QDialog`).
+        .cpp_file("cpp/container_target_wizard.cpp")
         .cpp_file("cpp/run_menu.cpp")
         // Split out of main_window.cpp to keep it under its 1200-line
         // ceiling (ADR-0025): the status bar's permanent widgets, the

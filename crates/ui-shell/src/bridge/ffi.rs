@@ -1153,6 +1153,38 @@ mod ffi {
         resource_name: QString,
     }
 
+    /// One row of `ContainerTargetSetting` (C8), 1:1 with the app-config
+    /// struct — the same flat-row shape `FfiContainerConnection` uses for
+    /// the same reason (its own doc comment): `source` tags which of the
+    /// other fields apply, `container_core::target` is what gives it
+    /// meaning. Crosses on `AppSettings::containerTargets`/
+    /// `saveContainerTargets` (Settings > Containers > Run targets) and the
+    /// New Target wizard, and read-only from `RunConfigEditor::
+    /// containerTargets` for the run-config dialog's "Run on" combo.
+    #[derive(Default)]
+    struct FfiContainerTarget {
+        id: QString,
+        name: QString,
+        connection_id: QString,
+        /// `"image"`, `"containerfile"`, or `"compose-service"`.
+        source: QString,
+        image: QString,
+        dockerfile: QString,
+        context_dir: QString,
+        image_tag: QString,
+        /// `\n`-separated, ordered.
+        compose_files: QString,
+        service: QString,
+        needs_build: bool,
+        /// Empty means `/workspace` (`container_core::target::DEFAULT_WORKDIR`).
+        workdir: QString,
+        run_options: QString,
+        env: Vec<FfiKeyValue>,
+        port_bindings: Vec<FfiPortBinding>,
+        publish_all_ports: bool,
+        extra_mounts: Vec<FfiBindMount>,
+    }
+
     /// One row of `RegistrySetting`, 1:1 with the app-config struct —
     /// still no secret field (ADR-0055): a secret crosses separately, only
     /// ever as a call argument (`testRegistryConnection`/
@@ -1363,6 +1395,11 @@ mod ffi {
         /// The container-kind sub-table's fields — meaningless (and left at
         /// its default) for a plain process (`kind` empty).
         container: FfiContainerOptions,
+        /// Run targets (C8): empty for "Local" (run on this machine, as
+        /// always), else `"container:<target-id>"` — the "Run on" combo's
+        /// selection. Meaningless for a container-kind configuration
+        /// (`kind` non-empty); the dialog's Run on combo is hidden for one.
+        run_on: QString,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -3136,6 +3173,23 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "saveRegistries"]
         fn save_registries(self: &AppSettings, registries: Vec<FfiRegistrySetting>) -> FfiResult;
+
+        /// Every run target in the layer `settingsScope()` names (C8) —
+        /// the Settings > Containers > Run targets list.
+        #[qinvokable]
+        #[cxx_name = "containerTargets"]
+        fn container_targets(self: &AppSettings) -> Vec<FfiContainerTarget>;
+
+        /// Replace the whole run-target list at once, same whole-list-
+        /// replace shape as `saveContainerConnections`/`saveRegistries` —
+        /// Edit/Remove and the New Target wizard's Finish all write through
+        /// this.
+        #[qinvokable]
+        #[cxx_name = "saveContainerTargets"]
+        fn save_container_targets(
+            self: &AppSettings,
+            targets: Vec<FfiContainerTarget>,
+        ) -> FfiResult;
 
         /// "Test connection" for a registry (C7): runs on a worker thread
         /// (the same shape as `testContainerConnection`) and reports
@@ -8446,6 +8500,13 @@ mod ffi {
         #[cxx_name = "resolveLink"]
         fn resolve_link(self: &RunService, console_id: u64, byte_offset: u32) -> FfiResolvedLink;
 
+        /// The run target `console_id`'s configuration runs on (C8), by
+        /// name — empty for a local launch. The run console header shows
+        /// "on &lt;name&gt;" when this is non-empty.
+        #[qinvokable]
+        #[cxx_name = "consoleTargetLabel"]
+        fn console_target_label(self: &RunService, console_id: u64) -> QString;
+
         /// How the text of this console's most recent `consoleOutput`
         /// signal is styled (R2-1).
         ///
@@ -9071,6 +9132,57 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "composeServicesReady"]
         fn compose_services_ready(self: Pin<&mut RunConfigEditor>, services: QString);
+
+        /// Whether a compose service needs a before-launch build (C8): worker
+        /// thread, reports through `composeNeedsBuildReady`.
+        #[qinvokable]
+        #[cxx_name = "requestComposeNeedsBuild"]
+        fn request_compose_needs_build(
+            self: Pin<&mut RunConfigEditor>,
+            connection_id: &QString,
+            files: &QString,
+            service: &QString,
+        );
+
+        /// `requestComposeNeedsBuild`'s answer.
+        #[qsignal]
+        #[cxx_name = "composeNeedsBuildReady"]
+        fn compose_needs_build_ready(self: Pin<&mut RunConfigEditor>, needs_build: bool);
+
+        /// The run targets the "Run on" combo lists (C8): effective
+        /// settings (global with the project's override applied). Edited
+        /// through `AppSettings::containerTargets`/`saveContainerTargets`
+        /// and the New Target wizard, never through this draft.
+        #[qinvokable]
+        #[cxx_name = "containerTargets"]
+        fn container_targets(self: &RunConfigEditor) -> Vec<FfiContainerTarget>;
+
+        /// The command the New Target wizard's live preview shows: `target`
+        /// wrapped around a stand-in `echo hello` launch.
+        #[qinvokable]
+        #[cxx_name = "targetCommandPreview"]
+        fn target_command_preview(self: &RunConfigEditor, target: &FfiContainerTarget) -> QString;
+
+        /// New Target wizard's Finish (C8): appends `target` to the
+        /// project's `[containers].targets`, returning its id (freshly
+        /// generated when `target.id` arrives blank).
+        #[qinvokable]
+        #[cxx_name = "addContainerTarget"]
+        fn add_container_target(self: &RunConfigEditor, target: &FfiContainerTarget) -> QString;
+
+        /// Settings > Containers > Run targets' Edit, reopening the wizard
+        /// prefilled.
+        #[qinvokable]
+        #[cxx_name = "updateContainerTarget"]
+        fn update_container_target(
+            self: &RunConfigEditor,
+            target: &FfiContainerTarget,
+        ) -> FfiResult;
+
+        /// Settings > Containers > Run targets' Remove.
+        #[qinvokable]
+        #[cxx_name = "removeContainerTarget"]
+        fn remove_container_target(self: &RunConfigEditor, id: &QString) -> FfiResult;
     }
 
     impl cxx_qt::Threading for RunConfigEditor {}

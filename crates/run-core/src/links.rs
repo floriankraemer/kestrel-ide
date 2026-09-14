@@ -38,6 +38,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use container_core::target::PathMap;
+
 /// `path:line` or `path:line:col`, where `path` is either `Makefile`
 /// (`makefile`) or ends in a `.`-extension, and `line`/`col` are plain
 /// digits. Matches rustc's bare form (`src/main.rs:42:5`), its `--> `
@@ -151,7 +153,21 @@ fn path_end_before_line_col(matched: &str, has_col: bool) -> usize {
 /// same rule `build_core::diagnostics::resolve_path` applies to a
 /// compiler's own file references, rather than trusting `PathBuf::join`'s
 /// platform-dependent handling of a rooted-but-unprefixed argument.
-fn resolve_path(path: &str, cwd: &Path) -> PathBuf {
+///
+/// C8: when `path_map` is set (the console's launch was wrapped to run
+/// inside a container run target), an *absolute* path under the target's
+/// mount root (e.g. `/workspace/src/main.rs`) is a container path, not a
+/// literal host one — `path_map.to_local` recovers the project file it
+/// actually names. A relative path needs no such translation: the target
+/// mounts the whole project root at the mount root 1:1, so a relative path
+/// resolves identically against `cwd` (the project root, on the host side)
+/// whether the program ran locally or inside the container.
+fn resolve_path(path: &str, cwd: &Path, path_map: Option<&PathMap>) -> PathBuf {
+    if let Some(map) = path_map {
+        if let Some(local) = map.to_local(path) {
+            return local;
+        }
+    }
     let host = process_exec::host::ExecHost::for_path(cwd);
     if host.is_remote() {
         let linux_path = if path.starts_with('/') {
@@ -177,12 +193,17 @@ fn resolve_path(path: &str, cwd: &Path) -> PathBuf {
 /// and return `None` if the resolved file does not exist. A dead link is
 /// worse than plain text, so a non-existent path is reported the same as no
 /// link at all rather than as a link that goes nowhere.
-pub fn resolve_link(text: &str, byte_offset: usize, cwd: &Path) -> Option<ResolvedLink> {
+pub fn resolve_link(
+    text: &str,
+    byte_offset: usize,
+    cwd: &Path,
+    path_map: Option<&PathMap>,
+) -> Option<ResolvedLink> {
     let candidate = find_candidates(text)
         .into_iter()
         .find(|c| byte_offset >= c.start && byte_offset < c.end)?;
 
-    let resolved_path = resolve_path(&candidate.path, cwd);
+    let resolved_path = resolve_path(&candidate.path, cwd, path_map);
     if !resolved_path.is_file() {
         return None;
     }
@@ -221,7 +242,7 @@ mod tests {
         let text = "error at main.rs:42:5 there";
         let offset = text.find("main.rs").expect("the path is in the text");
 
-        let link = resolve_link(text, offset, dir.path()).expect("a link");
+        let link = resolve_link(text, offset, dir.path(), None).expect("a link");
         assert_eq!(&text[link.start..link.end], "main.rs:42:5");
     }
 
@@ -319,7 +340,7 @@ mod tests {
                 }
                 None => case.text.len() / 2,
             };
-            let resolved = resolve_link(case.text, offset, dir.path());
+            let resolved = resolve_link(case.text, offset, dir.path(), None);
 
             match case.expected {
                 None => assert!(
@@ -346,7 +367,7 @@ mod tests {
 
         let text = r"src\main.rs:12:5";
         let offset = text.len() / 2;
-        let resolved = resolve_link(text, offset, dir.path()).expect("a link");
+        let resolved = resolve_link(text, offset, dir.path(), None).expect("a link");
         assert_eq!(resolved.path, dir.path().join("src/main.rs"));
         assert_eq!(resolved.line, 12);
         assert_eq!(resolved.col, Some(5));
@@ -367,7 +388,10 @@ mod tests {
     fn a_relative_linux_path_resolves_to_the_unc_path_on_a_wsl_cwd() {
         let cwd = PathBuf::from("//wsl.localhost/Ubuntu/tmp/links-e2e-relative");
 
-        assert_eq!(resolve_path("src/main.rs", &cwd), cwd.join("src/main.rs"));
+        assert_eq!(
+            resolve_path("src/main.rs", &cwd, None),
+            cwd.join("src/main.rs")
+        );
     }
 
     #[test]
@@ -376,7 +400,7 @@ mod tests {
         let target = PathBuf::from("//wsl.localhost/Ubuntu/tmp/elsewhere-abs");
 
         assert_eq!(
-            resolve_path("/tmp/elsewhere-abs/lib.rs", &cwd),
+            resolve_path("/tmp/elsewhere-abs/lib.rs", &cwd, None),
             target.join("lib.rs")
         );
     }
@@ -386,8 +410,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(dir.path().join("main.rs"), "").unwrap();
         let text = "before main.rs:1:1 after";
-        assert!(resolve_link(text, 0, dir.path()).is_none());
-        assert!(resolve_link(text, text.len() - 1, dir.path()).is_none());
-        assert!(resolve_link(text, 10, dir.path()).is_some());
+        assert!(resolve_link(text, 0, dir.path(), None).is_none());
+        assert!(resolve_link(text, text.len() - 1, dir.path(), None).is_none());
+        assert!(resolve_link(text, 10, dir.path(), None).is_some());
     }
 }

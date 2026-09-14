@@ -93,6 +93,7 @@ impl BuildSpec {
             cwd: Some(self.project_root.clone()),
             env: Vec::new(),
             console: ConsoleKind::Pty,
+            path_map: None,
         }
     }
 }

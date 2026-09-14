@@ -32,6 +32,12 @@ struct ContainersPage
 // success/failure text says are all decided behind `container_core`
 // (through `AppSettings`). This file renders a connection list, a
 // per-kind form, and the two dock-filter checkboxes.
-ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings);
+// Run targets (C8): `runConfigEditor`/`containerService` feed the Run
+// targets section's New Target wizard (Server combo, Services picker,
+// command preview) — the same two collaborators the run-config dialog
+// already threads to it.
+ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings,
+                                   RunConfigEditor *runConfigEditor,
+                                   ContainerService *containerService);
 
 } // namespace ui_shell

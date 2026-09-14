@@ -102,6 +102,20 @@ pub struct RunConfigSetting {
     pub containerfile: Option<ContainerfileRunSetting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<ComposeRunSetting>,
+    /// Run targets (C8): where a *plain-process* configuration's launch
+    /// actually runs. `None` means "local, as always". `Some("container:<id>")`
+    /// names a `[containers.target]` row this configuration's program/args
+    /// runs inside instead — `run_core::container_run` wraps the launch, the
+    /// same "string plus data another crate interprets" shape `kind` and
+    /// `toolchain` already use (ADR-0039/ADR-0056), so an id this build
+    /// cannot resolve loads as "run locally" rather than failing the whole
+    /// settings file.
+    ///
+    /// Meaningless (and ignored) for a container-kind configuration
+    /// (`kind` set): that configuration's launch already *is* a container
+    /// launch, and wrapping it a second time has no defined meaning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_on: Option<String>,
 }
 
 /// One `[[debug_adapter]]` entry: what the user says about the debug adapter

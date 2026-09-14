@@ -867,7 +867,7 @@ impl ffi::TerminalSupervisor {
         };
 
         let offset = byte_offset_of_column(&text, col as usize);
-        let Some(link) = run_core::resolve_link(&text, offset, &root) else {
+        let Some(link) = run_core::resolve_link(&text, offset, &root, None) else {
             return ffi::FfiTerminalLink::default();
         };
         ffi::FfiTerminalLink {

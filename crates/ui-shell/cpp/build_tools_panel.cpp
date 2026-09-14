@@ -9,7 +9,6 @@
 
 #include <QAction>
 #include <QApplication>
-#include <QCheckBox>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -19,10 +18,15 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QScrollBar>
+#include <QShowEvent>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 namespace ui_shell {
@@ -58,6 +62,10 @@ QIcon iconForKind(FfiBuildToolNodeKind kind)
         return style->standardIcon(QStyle::SP_FileDialogDetailedView);
     case FfiBuildToolNodeKind::Profile:
         return QIcon();
+    case FfiBuildToolNodeKind::Plugin:
+        return style->standardIcon(QStyle::SP_DriveNetIcon);
+    case FfiBuildToolNodeKind::Goal:
+        return style->standardIcon(QStyle::SP_ArrowRight);
     }
     return QIcon();
 }
@@ -77,6 +85,48 @@ QToolButton *glyphButton(QStyle::StandardPixmap icon, const QString &tooltip, QW
     button->setToolTip(tooltip);
     button->setAutoRaise(true);
     return button;
+}
+
+// Same shape, checkable: the Offline/Skip Tests toggles need a pressed
+// state, not just a click — `changes_toolbar.cpp`'s own icon-only,
+// tooltip-carries-the-meaning buttons (its `refreshButton_`) are the
+// precedent this follows, `setCheckable` the only addition a toggle needs.
+QToolButton *checkableGlyphButton(QStyle::StandardPixmap icon, const QString &tooltip,
+                                   QWidget *parent)
+{
+    QToolButton *button = glyphButton(icon, tooltip, parent);
+    button->setCheckable(true);
+    return button;
+}
+
+// Row rects for a headless E2E driver to click precisely instead of
+// guessing coordinates — `project_tree_dock.cpp`'s own `project_tree_row`
+// marker, reused here at this tree's much smaller scale (no coalescing
+// timer: a Build Tools tree tops out at a few dozen rows, not a whole
+// project's worth of files).
+void markVisibleRows(QTreeWidget *tree)
+{
+    for (QTreeWidgetItemIterator it(tree, QTreeWidgetItemIterator::NotHidden); *it; ++it) {
+        QTreeWidgetItem *item = *it;
+        const QRect rect = tree->visualItemRect(item);
+        const QPoint origin = tree->viewport()->mapToGlobal(rect.topLeft());
+        e2eMark(QStringLiteral("{\"ev\":\"build_tools_row\",\"id\":%1,\"rect\":[%2,%3,%4,%5]}")
+                  .arg(e2eJson(item->data(0, kIdRole).toString()))
+                  .arg(origin.x())
+                  .arg(origin.y())
+                  .arg(rect.width())
+                  .arg(rect.height()));
+    }
+}
+
+// A row's geometry is not valid the instant it is inserted or
+// expanded/collapsed — `QTreeWidget` defers that layout pass to the next
+// trip round the event loop — so `markVisibleRows` needs to run one turn
+// later, `project_tree_dock.cpp`'s own reason for coalescing its equivalent
+// report onto a zero-interval `QTimer` rather than calling it inline.
+void scheduleRowMarkers(QTreeWidget *tree)
+{
+    QTimer::singleShot(0, tree, [tree]() { markVisibleRows(tree); });
 }
 
 QString titleFor(FfiBuildToolTitleKind kind)
@@ -103,23 +153,27 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
   , runService_(runService)
   , openAt_(std::move(openAt))
 {
-    auto *reloadButton = glyphButton(QStyle::SP_BrowserReload, tr("Reload"), this);
+    auto *reloadButton =
+      glyphButton(QStyle::SP_BrowserReload, tr("Reload All Gradle/Maven Projects"), this);
     executeEdit_ = new QLineEdit(this);
     executeEdit_->setPlaceholderText(tr("Execute…"));
-    // Keeps the placeholder readable regardless of how many toggle buttons
-    // this toolbar ends up with (Maven's own Skip Tests makes one more than
-    // Gradle's) — the same `find_bar.cpp` rule: the field gets a floor, the
-    // buttons give up space first.
+    // Expanding (not a bare stretch factor) so Execute is the row's own
+    // pressure-release valve: every other control here is icon-only with a
+    // fixed natural width, so the field is the one thing free to shrink
+    // before a fixed-width sibling ever would, matching `find_bar.cpp`'s
+    // "the field gives up space last" rule while still keeping a floor.
+    executeEdit_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     executeEdit_->setMinimumWidth(90);
     auto *runButton = glyphButton(QStyle::SP_MediaPlay, tr("Run"), this);
-    offlineCheck_ = new QCheckBox(tr("Offline"), this);
-    // A short label plus a tooltip, `find_bar.cpp`'s own
-    // `regexCheck_`/`caseCheck_` convention (".*"/"Aa") for a checkbox
-    // beside several other controls in one row: the toolbar's narrowest
-    // point on a right-side dock is Maven's, this toggle's own — the only
-    // one Gradle's toolbar does not also carry.
-    skipTestsCheck_ = new QCheckBox(tr("Skip"), this);
-    skipTestsCheck_->setToolTip(tr("Skip Tests"));
+    // Checkable icon-only toggles, not text checkboxes: `changes_toolbar.cpp`'s
+    // own icon-only `refreshButton_` is the precedent (review fix 4) — a row
+    // of text checkboxes plus three more buttons overflows a right-side
+    // dock's width, especially Maven's, which carries one toggle more than
+    // Gradle's.
+    offlineButton_ =
+      checkableGlyphButton(QStyle::SP_DriveNetIcon, tr("Toggle Offline Mode"), this);
+    skipTestsButton_ =
+      checkableGlyphButton(QStyle::SP_MediaSkipForward, tr("Toggle Skip Tests"), this);
     auto *settingsButton =
       glyphButton(QStyle::SP_FileDialogDetailedView, tr("Settings…"), this);
 
@@ -127,14 +181,27 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     toolbar->addWidget(reloadButton);
     toolbar->addWidget(executeEdit_, 1);
     toolbar->addWidget(runButton);
-    toolbar->addWidget(offlineCheck_);
-    toolbar->addWidget(skipTestsCheck_);
+    toolbar->addWidget(offlineButton_);
+    toolbar->addWidget(skipTestsButton_);
     toolbar->addWidget(settingsButton);
 
     tree_ = new QTreeWidget(this);
     tree_->setColumnCount(2);
     tree_->setHeaderLabels({tr("Name"), tr("Detail")});
     tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    // Detail sized to its own content rather than the default Interactive
+    // width (an arbitrary starting size that otherwise fights Name, the
+    // stretch column, for space on a narrow dock) — `problems_panel.cpp`'s
+    // own convention for a wide stretch column beside narrower fixed ones.
+    tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    // `QHeaderView`'s own default: the LAST section stretches to fill
+    // whatever the header's own resize modes leave over, regardless of what
+    // mode that section was just given — which was quietly overriding
+    // Detail's `ResizeToContents` above and starving Name (review fix 2,
+    // root cause). `plugins_page.cpp`/`languages_page.cpp` already turn this
+    // off for the same reason; this tree needs it too since Detail, not
+    // Name, is its last column.
+    tree_->header()->setStretchLastSection(false);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
 
     statusLabel_ = new QLabel(this);
@@ -166,9 +233,19 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     });
     connect(tree_, &QTreeWidget::customContextMenuRequested, this,
             &BuildToolsPanel::showContextMenu);
-    connect(offlineCheck_, &QCheckBox::toggled, this,
+    // Every row below an expanded/collapsed one moves, so a driver relying
+    // on `build_tools_row`'s rects needs a fresh report after either — the
+    // same reason `project_tree_dock.cpp` re-marks on `expanded`/`collapsed`.
+    connect(tree_, &QTreeWidget::itemExpanded, this, [this]() { scheduleRowMarkers(tree_); });
+    connect(tree_, &QTreeWidget::itemCollapsed, this, [this]() { scheduleRowMarkers(tree_); });
+    // Scrolling moves every row's rect exactly as much as expanding one
+    // does, so a driver relying on `build_tools_row` needs a fresh report
+    // after this too, not just after expand/collapse.
+    connect(tree_->verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this]() { scheduleRowMarkers(tree_); });
+    connect(offlineButton_, &QToolButton::toggled, this,
             [this](bool on) { buildToolsService_->setOffline(on); });
-    connect(skipTestsCheck_, &QCheckBox::toggled, this,
+    connect(skipTestsButton_, &QToolButton::toggled, this,
             [this](bool on) { buildToolsService_->setSkipTests(on); });
     connect(settingsButton, &QToolButton::clicked, this, [this]() {
         if (openSettings_) {
@@ -190,6 +267,12 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     refreshBanner();
 }
 
+void BuildToolsPanel::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    scheduleRowMarkers(tree_);
+}
+
 void BuildToolsPanel::refreshTitle()
 {
     const FfiBuildToolTitleKind title = buildToolsService_->titleKind();
@@ -197,8 +280,8 @@ void BuildToolsPanel::refreshTitle()
     // own toggle above already covers the "skip test task" case through
     // `-x test` regardless, so hiding this one for a pure-Gradle project
     // avoids a control that reads as redundant.
-    skipTestsCheck_->setVisible(title == FfiBuildToolTitleKind::Maven
-                                 || title == FfiBuildToolTitleKind::Both);
+    skipTestsButton_->setVisible(title == FfiBuildToolTitleKind::Maven
+                                  || title == FfiBuildToolTitleKind::Both);
 }
 
 void BuildToolsPanel::refreshBanner()
@@ -242,8 +325,19 @@ void BuildToolsPanel::refreshTree()
         QTreeWidgetItem *parentItem = parentId.isEmpty() ? nullptr : itemsById.value(parentId);
         auto *item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
         item->setText(0, QString(node.label));
-        item->setText(1, QString(node.detail));
         item->setIcon(0, iconForKind(node.kind));
+        // Review fix 3: the root row's label is the project name, not its
+        // path. The path stays reachable as the tooltip only — putting it in
+        // the Detail column too is what was squeezing the Name column down
+        // to "gradle-si…" in the first place (review fix 2): an absolute
+        // path is the longest string this tree ever shows, so handing it to
+        // the `ResizeToContents` column makes that column claim most of a
+        // narrow dock's width for one row, starving every other row's Name.
+        if (node.kind == FfiBuildToolNodeKind::ToolRoot) {
+            item->setToolTip(0, QString(node.detail));
+        } else {
+            item->setText(1, QString(node.detail));
+        }
         item->setData(0, kIdRole, id);
         item->setData(0, kToolRole, QString(node.tool));
         item->setData(0, kRunnableRole, node.kind == FfiBuildToolNodeKind::Task);
@@ -258,6 +352,7 @@ void BuildToolsPanel::refreshTree()
     }
     e2eMark(QStringLiteral("{\"ev\":\"build_tools_model_changed\",\"nodes\":%1}")
               .arg(static_cast<int>(rows.size())));
+    scheduleRowMarkers(tree_);
 }
 
 void BuildToolsPanel::runNode(const QString &nodeId, const QString &extraArgs)

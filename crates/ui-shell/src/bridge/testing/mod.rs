@@ -57,27 +57,55 @@ fn current_project_root() -> Option<PathBuf> {
     crate::bridge::convert::current_project_root()
 }
 
-/// Every `test-frameworks` contribution any loaded plugin offers, gathered
-/// fresh on every call so a plugin enabled or disabled mid-session is
-/// picked up without a restart — the same freshness
-/// `bridge::analysis::contributed_analyzers` gives analyzers.
-fn contributed_frameworks() -> Vec<plugin_api::TestFrameworkContribution> {
+/// Every `test-frameworks` contribution any loaded plugin offers, with the
+/// plugin that owns it — gathered fresh on every call so a plugin enabled
+/// or disabled mid-session is picked up without a restart, the same
+/// freshness `bridge::analysis::contributed_analyzers` gives analyzers.
+/// The owner travels alongside its contribution because a run may need to
+/// expand `${asset_dir}` in that plugin's own `args` (`junit-gradle`'s
+/// `--init-script ${asset_dir}/ide-model.init.gradle`).
+fn contributed_frameworks() -> Vec<(
+    plugin_host::LoadedPlugin,
+    plugin_api::TestFrameworkContribution,
+)> {
     plugin_host::registry()
         .test_frameworks()
-        .map(|(_, framework)| framework.clone())
+        .map(|(plugin, framework)| (plugin.clone(), framework.clone()))
         .collect()
 }
 
-/// The framework this project's run uses: the first contributed framework
-/// whose program resolves against the project. Reuses `analysis_core::
-/// find_program` rather than a second candidate-search — the plan's D7
-/// instruction to generalize rather than duplicate applies just as much to
-/// this call site as to the manifest that feeds it.
-fn detect_framework(root: &Path) -> Option<(plugin_api::TestFrameworkContribution, PathBuf)> {
-    contributed_frameworks().into_iter().find_map(|framework| {
-        analysis_core::find_program(&framework.program_candidates, root)
-            .map(|program| (framework, program))
-    })
+/// The framework this project's run uses, per `test_core::select_framework`
+/// (a Qt-free rule, unit-tested there): the first contribution whose
+/// `requires_toolchain` (if any) this project actually has, whose
+/// `output_format` this build can stream, and whose program resolves.
+/// Reuses `analysis_core::find_program` rather than a second
+/// candidate-search, the same reuse the manifest's own D7 note asks for.
+fn detect_framework(
+    root: &Path,
+) -> Option<(
+    plugin_host::LoadedPlugin,
+    plugin_api::TestFrameworkContribution,
+    PathBuf,
+)> {
+    let owners = contributed_frameworks();
+    let contributions: Vec<plugin_api::TestFrameworkContribution> = owners
+        .iter()
+        .map(|(_, framework)| framework.clone())
+        .collect();
+    let detected: Vec<String> = run_core::toolchain::detect_toolchains(root)
+        .into_iter()
+        .map(|id| id.as_str().to_string())
+        .collect();
+    let detected_refs: Vec<&str> = detected.iter().map(String::as_str).collect();
+
+    let (index, _, program) = test_core::select_framework(
+        &contributions,
+        &detected_refs,
+        test_core::SUPPORTED_OUTPUT_FORMATS,
+        |candidates| analysis_core::find_program(candidates, root),
+    )?;
+    let (plugin, framework) = owners.into_iter().nth(index)?;
+    Some((plugin, framework, program))
 }
 
 fn to_ffi_kind(kind: test_core::NodeKind) -> ffi::FfiTestNodeKind {
@@ -222,10 +250,23 @@ impl ffi::TestService {
         let Some(root) = current_project_root() else {
             return errors::failure(errors::CODE_NO_PROJECT, "no project is open");
         };
-        let Some((framework, program)) = detect_framework(&root) else {
+        let Some((plugin, framework, program)) = detect_framework(&root) else {
             return errors::failure(
                 errors::CODE_REFUSED,
                 "no installed test framework is contributed for this project",
+            );
+        };
+
+        // A test framework's args may name `${asset_dir}` (junit-gradle's
+        // `--init-script ${asset_dir}/ide-model.init.gradle`) — the same
+        // materialise-on-demand seam A3 built for a sync provider, reused
+        // here rather than a second "where do a builtin plugin's files
+        // live" mechanism.
+        let config_dir = app_core::resolve_config_dir();
+        let Ok(asset_dir) = plugin.asset_dir(&config_dir) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                "could not materialise this test framework's plugin assets",
             );
         };
 
@@ -244,7 +285,7 @@ impl ffi::TestService {
             .borrow_mut()
             .clear_source(&source_key(&framework.name));
 
-        let mut args = framework.args.clone();
+        let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
         if let Some(pattern) = filter {
             if let Some(flag) = &framework.filter_flag {
                 args.push(flag.clone());

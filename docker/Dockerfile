@@ -231,13 +231,23 @@ RUN dotnet tool install --global csharp-ls --version "${CSHARP_LS_VERSION}" \
 # number generator whose red runs mean "upstream changed" as often as "we
 # broke something".
 #
-# The fixture-prewarm RUN (building `tests/fixtures/{gradle,maven}-*` once
-# so their JUnit 5 dependency resolution is cached in this layer for
-# `--offline` use) is added once those fixture projects exist — the plan's
-# A4/A5 tasks, not part of this PR. Until then this stage has the toolchain
-# but nothing prewarmed, and `test-jvm` has no fixtures to run against yet.
+# The fixture-prewarm step below runs `tests/fixtures/{gradle,maven}-*`
+# once at image-build time so their JUnit 5 dependency resolution is
+# already cached in this layer.
 # ---------------------------------------------------------------------------
 FROM linux-builder AS linux-jvm
+
+# Gradle's and Maven's caches are redirected out of $HOME and into a fixed,
+# world-readable-and-writable location: the prewarm RUN below runs as root
+# (the image build's default user), but `make test-jvm` runs `RUN_JVM`
+# under the *developer's* uid (`DOCKER_USER`, same as `RUN_LINUX`) so a
+# bind-mounted fixture's stray `build`/`.gradle`/`target` directories never
+# end up root-owned on the host. A cache keyed off `$HOME` would be
+# unreadable to that non-root uid (root's own $HOME is 0700); a fixed path
+# both users can reach is what makes the prewarm actually pay off instead
+# of ever missing entirely once the container stops running as root.
+ENV GRADLE_USER_HOME=/opt/jvm-cache/gradle
+ENV MAVEN_OPTS="-Dmaven.repo.local=/opt/jvm-cache/m2"
 
 # Temurin 21 via Eclipse Adoptium's own apt repository — the vendor's
 # recommended install path, not a third-party PPA.
@@ -282,13 +292,25 @@ RUN wget -qO /tmp/maven.tar.gz \
 
 # Fixture prewarm (jvm-build-tools plan A4/A5): copy the five fixture
 # projects to a throwaway path and run exactly the commands
-# gradle_integration.rs/maven_integration.rs run for real, so ~/.gradle and
-# ~/.m2 are already warm in this image layer with precisely the artifacts
-# those tests need. The tests themselves run with the *real* fixtures
-# bind-mounted at /workspace (the Makefile's DOCKER_MOUNTS) and never see
-# this throwaway copy, but resolve from the same caches — `--offline` in
-# `jvm_build_core::gradle::sync`/`maven::sync`'s SyncOptions works even
-# though `make test-jvm` itself has no outbound network access.
+# gradle_integration.rs/maven_integration.rs run for real, so
+# $GRADLE_USER_HOME and Maven's local repo are already warm with precisely
+# the artifacts those tests need. The tests themselves run with the *real*
+# fixtures bind-mounted at /workspace (the Makefile's DOCKER_MOUNTS) and
+# never see this throwaway copy, but resolve from the same caches — set
+# once, above, as fixed paths rather than $HOME-relative ones, so the cache
+# is reachable both from this RUN (root, the image build's default user)
+# and from `make test-jvm`'s non-root `RUN_JVM` invocation.
+#
+# The daemon registry is deleted after prewarming, not just chmod'd
+# world-writable: a Gradle daemon `chmod 700`s its own registry directory
+# on startup (ownership, not the mode bits `a+rwX` already set), which a
+# non-root uid cannot do to a directory root still owns — "Operation not
+# permitted" the first time `RUN_JVM`'s uid tries to start a daemon in a
+# root-created one. Removing the directory (and `.tmp`, gradle's scratch
+# space, same reasoning) means the *first* daemon a real, non-root run
+# starts creates and owns it itself; every other cache under
+# $GRADLE_USER_HOME (dependency jars, the wrapper distribution) needs no
+# such ownership change and stays prewarmed.
 #
 # gradle-single's and maven-single's fixtures each carry one deliberately
 # failing test (`GreeterTest::deliberatelyFails`, A4/A5's own fixtures) —
@@ -315,7 +337,10 @@ RUN cd /tmp/jvm-fixtures/gradle-single \
     && cd /tmp/jvm-fixtures/maven-multi/app \
     && mvn -B help:effective-pom -Doutput=/tmp/eff-app.xml \
     && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree -Dverbose \
-    && rm -rf /tmp/jvm-fixtures /tmp/model.json /tmp/eff*.xml /tmp/ide-model.init.gradle
+    && rm -rf /tmp/jvm-fixtures /tmp/model.json /tmp/eff*.xml /tmp/ide-model.init.gradle \
+    && mkdir -p /opt/jvm-cache \
+    && chmod -R a+rwX /opt/jvm-cache \
+    && rm -rf /opt/jvm-cache/gradle/daemon /opt/jvm-cache/gradle/.tmp
 
 # ---------------------------------------------------------------------------
 # linux-artifact-builder: linux-builder + baked-in source, for buildx

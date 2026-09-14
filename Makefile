@@ -29,6 +29,13 @@ DOCKER_MOUNTS = -v "$(CURDIR)":/workspace -w /workspace \
 DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
 RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IMAGE)
 
+# Same non-root/--init treatment as RUN_LINUX. Safe now that the linux-jvm
+# stage redirects GRADLE_USER_HOME/Maven's local repo to a fixed,
+# world-writable /opt/jvm-cache rather than $HOME (root's own $HOME during
+# the image's fixture-prewarm build step) — a bind-mounted fixture's stray
+# build/.gradle/target directories never end up root-owned on the host.
+RUN_JVM = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(JVM_IMAGE)
+
 .PHONY: help all test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
 	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci
 
@@ -73,7 +80,7 @@ linux-jvm-image: ## Build the linux-jvm image (linux-builder + Temurin 21 + Grad
 	$(DOCKER) build --target linux-jvm -t $(JVM_IMAGE) -f $(DOCKERFILE) .
 
 test-jvm: linux-jvm-image ## Run jvm-build-core's real-toolchain integration tests
-	$(DOCKER) run --rm $(DOCKER_MOUNTS) $(JVM_IMAGE) $(MAKE) jvm-ci
+	$(RUN_JVM) $(MAKE) jvm-ci
 
 # Inner target: the command line itself, with no Docker wrapper, mirroring
 # `lsp-conformance-ci`'s split.

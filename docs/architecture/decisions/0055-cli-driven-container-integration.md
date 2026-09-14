@@ -76,12 +76,24 @@ Machines are new: `machine::Machine`/`machine::parse_list` over `podman machine 
 `podman-remote` resolution: `ConnectionConfig::program` now tries `podman` on `PATH`, then `podman-remote`, before falling back to `podman` unchanged (an actually-missing CLI is still reported by the op that tries to run it, via `process_exec::Failure::NotFound` — this never guesses at that).
 The search itself (`connection::program_on_path`) is a pure function of a `PATH` string, not `std::env::var` read directly, so it is testable against a fake `PATH` rather than mutating the process environment.
 
+A pod node's own "Inspect" reuses the container Inspect tab's exact virtual-document path: `session::inspect_json` is now `session::inspect_json_with_args`, taking the argv to run (`inspect <id>` for a container, `pods::inspect_args` — `pod inspect <id>` — for a pod) rather than always the former, so one function still backs both rather than a second copy for the pod case.
+A Podman machine's `running`/stopped state reaches the connection row the same way a snapshot does: `ContainerServiceRust::Connection` gained `machine_running: Option<bool>`, refreshed on a worker thread alongside `connect_engine`/`refresh` (never polled on its own timer — a machine's state changes no more often than one of those already-existing triggers), threaded through `tree::ConnectionRow`/`TreeNode::machine_running` as discrete data (`Some(bool)`, never a pre-worded string) so the view still owns the "running"/"stopped" word.
+
 ## Layers: Analyze image (C9, optional-but-landed)
 
 `layer_fs` is a sequential, headers-only tar reader over `save -o` output: every entry's data is seeked past rather than read, so this works on an image of any real-world size without buffering its content.
 It supports ustar name/prefix splitting, GNU `@LongLink` and PAX extended-header long names (both folded into the *next* real entry rather than returned themselves), and whiteout detection (`.wh.<name>` -> deleted, `.wh..wh..opq` -> the containing directory treated as deleted for this layer's own report — a per-layer view, not a merged one, so an "opaque directory" and "this directory was removed and recreated" read the same way here).
 `manifest.json`'s `Layers` list maps each layer id onto its own byte region inside the outer tar (the classic `docker save`/`podman save` layout both engines still write); added/modified/deleted classification tracks a running set of paths seen so far, bottom layer to top, the same order `manifest.json` already gives them.
 Every test builds its tar bytes by hand (`Cursor<Vec<u8>>` implements `Read + Seek`) — no fixture binaries needed for a from-scratch binary format reader.
+
+`analyze` keeps its temp `save` tar on success rather than deleting it immediately (`AnalyzeResult::tar_path`) so a double-clicked entry or "Download..." can reopen it (`layer_fs::read_entry`, re-walking the manifest and the one layer's own tar region) without a second, full `save`.
+`read_entry` takes an optional byte cap — `Some(8 MiB)` for the read-only preview (the same ceiling `files::read_single_tar_entry` already uses for a `cp` stream), `None` for Download, matching JetBrains' own no-cap download.
+`ContainerServiceRust` keeps at most one analyzed image's tar path at a time (`analyzed_image: Option<(node_id, PathBuf)>`), replaced — and the old file removed — by the next `analyzeImage` call, and removed on `Drop` as a last resort if the session ends first.
+
+## Session exit (C9 polish)
+
+`TerminalSupervisor::sessionExited(session_id, exit_code)` closes the gap between "the PTY reader thread saw EOF" and "the view can act on the child's own exit code": the reader thread's loop already breaks on `Ok(0)`/an `Err`, and now queues one more closure onto the Qt thread that calls `PtySession::try_wait` — queued rather than called directly on the reader thread because `TerminalEntry::pty_session` is an `Rc<RefCell<..>>`, not `Send`, and the Qt thread is where every other access to it already happens.
+The Containers dock's Pull/Push consoles (`ContainerDetailArea::addTerminalTab`, an `autoCloseOnExitZero` marker set only for those two) close themselves on `exitCode == 0`; Log/Terminal/Exec/Attach tabs carry no marker and are untouched by the signal, so an interactive shell or a container's own log stream never disappears out from under the user.
 
 ## Consequences
 

@@ -2,6 +2,7 @@
 
 #include "ai_providers_page.h"
 #include "analysis_settings_page.h"
+#include "build_tools_settings_page.h"
 #include "appearance_page.h"
 #include "containers_page.h"
 #include "language_page.h"
@@ -91,6 +92,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
+    categoryList->addItem(QObject::tr("Build Tools"));
     categoryList->addItem(QObject::tr("Containers"));
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
@@ -299,6 +301,15 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
           return scopedPage(QStringLiteral("analysis"),
                              buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService));
       });
+
+    // Build Tools is global only (`bridge::build_tools`'s own doc comment
+    // explains why: `trusted_roots` must never live in a file a project
+    // could vouch for itself in), so it needs no scope rebuild the way
+    // Analysis/Terminal/Tabs do.
+    context.buildToolsEditor->beginEdit();
+    deferPage([&dialog, buildToolsEditor = context.buildToolsEditor]() {
+        return buildBuildToolsSettingsPage(&dialog, buildToolsEditor);
+    });
 
     // Containers is project-scoped for the same reason Terminal/Tabs are:
     // which daemon a checkout talks to is a property of the project at
@@ -734,6 +745,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         language.commit();
         editor.commit();
         context.keymapEditor->commit();
+        context.buildToolsEditor->commit();
         applyKeymap(*context.actions, appSettings);
         context.terminalPanel->reapplyKeymap();
         terminalPage->commit();

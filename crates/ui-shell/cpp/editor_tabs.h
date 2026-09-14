@@ -550,6 +550,11 @@ public:
     // Git — every gutter/popup path below is a no-op without it, the same
     // "no server for this language" shape LanguageService's absence has.
     void setVcsService(VcsService *vcsService);
+    // The jvm-build-tools plan's B4: told once a project may have a
+    // Gradle/Maven reload policy to run a save past. Null in a window
+    // built without one, the same "no service for this feature" shape
+    // `setVcsService` already has.
+    void setBuildToolsService(BuildToolsService *buildToolsService);
     // F3-14: the dock an editable HEAD-vs-working-tree diff opens a tab
     // in, and the callback that reveals that dock — same retrofit shape
     // `setVcsService` uses, set once after both the dock and this class
@@ -965,6 +970,7 @@ private:
     // F3-16: null for a project with no Git — set once, after construction,
     // the same retrofit shape setContextMenuCallback uses.
     VcsService *vcsService_ = nullptr;
+    BuildToolsService *buildToolsService_ = nullptr;
     PreviewProvider *previewProvider_ = nullptr;
     RunService *runService_ = nullptr;
     RunConfigEditor *runConfigEditor_ = nullptr;

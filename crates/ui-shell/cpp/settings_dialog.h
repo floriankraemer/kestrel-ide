@@ -55,6 +55,9 @@ struct SettingsContext
     // (`AnalysisService`), for the Analysis page.
     AnalysisEditor *analysisEditor;
     AnalysisService *analysisService;
+    // The jvm-build-tools plan's B5: Settings > Build Tools's draft, global
+    // only (`bridge::build_tools`'s own doc comment).
+    BuildToolsEditor *buildToolsEditor;
     UiFontTargets uiFontTargets;
     // F4-14b: every open terminal tab's Copy/Paste shortcut is re-read from
     // `appSettings` here on OK, rather than through `actions` — see that

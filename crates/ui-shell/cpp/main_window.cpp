@@ -7,6 +7,7 @@
 #include "changes_panel.h"
 #include "analysis_menu.h"
 #include "build_menu.h"
+#include "build_tools_wiring.h"
 #include "debug_menu.h"
 #include "debug_panel.h"
 #include "build_panel.h"
@@ -134,6 +135,11 @@ struct CentralWidgets
     DebugPanel *debugPanel;
     MarkdownPreviewPanel *previewPanel;
     ContainersPanel *containersPanel;
+    // The jvm-build-tools plan's B1-B4: where `wireBuildTools` (called once
+    // the View menu and `SettingsContext` exist) puts the dock and splices
+    // the editor banner in.
+    ads::CDockAreaWidget *rightArea;
+    ads::CDockWidget *editorDock;
 };
 
 CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeModel,
@@ -620,7 +626,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                            searchEverywhereDialog,
                            problemsPanel,    aiChatPanel,      changesPanel,
                            fileHistoryPanel, runConsolePanel,  buildPanel,
-                           debugPanel,       previewPanel,     containersPanel};
+                           debugPanel,       previewPanel,     containersPanel,
+                           rightArea,        editorDock};
 }
 
 // Menu structure per US-5 acceptance criteria. "Open Folder..." and the
@@ -701,6 +708,10 @@ void buildMainWindow(AppSettings *appSettings,
     // The PHP tooling plan's D4: one test-run adapter per window, same rule.
     auto *testService = new TestService(window);
     auto *containerService = new ContainerService(window); // C2: connects nothing until asked.
+    // The jvm-build-tools plan's B1/B5: one Gradle/Maven adapter per
+    // window, same "nothing runs until asked" rule as the others above.
+    auto *buildToolsService = new BuildToolsService(window);
+    auto *buildToolsEditor = new BuildToolsEditor(window);
     // D3-1: one debug adapter per window. It owns the breakpoints, which
     // exist with no session at all, so it is built before any project opens
     // and told to load them when one does.
@@ -772,7 +783,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildStatusBar(window, appSettings, languageService, buildService,
                      central.diagnosticsService, searchModel, vcsService, editorTabs,
                      central.projectTree, central.docks, central.problemsPanel, treeModel,
-                     analysisService);
+                     analysisService, buildToolsService);
 
     // Every menu action is registered under a stable id from
     // app_config::ACTIONS and takes its shortcut from the persisted keymap,
@@ -863,6 +874,7 @@ void buildMainWindow(AppSettings *appSettings,
       fileAssociationsEditor,
       analysisEditor,
       analysisService,
+      buildToolsEditor,
       uiFontTargets,
       central.terminalPanel,
       runConfigEditor, containerService,
@@ -1077,7 +1089,14 @@ void buildMainWindow(AppSettings *appSettings,
                  central.fileHistoryPanel, viewMenu);
     buildRunMenu(window, runService, runConfigEditor, appSettings, *actions, central.docks,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService);
-    buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu);
+    buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu,
+                   buildToolsService);
+    wireBuildTools(central.dockManager, central.docks, central.rightArea, central.editorDock,
+                   buildToolsService, runService, treeModel, editorTabs, window, appSettings,
+                   *actions, viewMenu, [window, settingsContext, appSettings]() {
+                       appSettings->setSettingsScope(QStringLiteral("global"));
+                       showSettingsDialog(window, settingsContext, QObject::tr("Build Tools"));
+                   });
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
     buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu, treeModel, containerService);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);

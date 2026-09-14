@@ -61,7 +61,8 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                               VcsService *vcsService, EditorTabs *editorTabs,
                               QTreeView *projectTree, DockRegistry *docks,
                               ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel,
-                              AnalysisService *analysisService)
+                              AnalysisService *analysisService,
+                              BuildToolsService *buildToolsService)
 {
     // L3: line:col + language update per current tab / cursor move; "UTF-8"
     // is static since only UTF-8 is supported today (US-2b's binary-file
@@ -247,6 +248,57 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     QObject::connect(analysisService, &AnalysisService::analysisFinished, statusBar,
                       updateAnalysisLabel);
 
+    // The jvm-build-tools plan's B6: "Gradle: syncing..."/"Maven:
+    // syncing..."/a failure, mirroring the analysis label above exactly.
+    // A `QToolButton` rather than a `QLabel`: clicking it opens the dock,
+    // except while syncing, when it cancels instead — one affordance for
+    // both jobs, the same "click a compact status widget" gesture the
+    // Problems counter already gives.
+    auto *buildToolsButton = new QToolButton(statusBar);
+    buildToolsButton->setAutoRaise(true);
+    buildToolsButton->setVisible(false);
+    const auto updateBuildToolsButton = [buildToolsButton, buildToolsService]() {
+        const FfiBuildToolTitleKind title = buildToolsService->titleKind();
+        const FfiSyncStateKind state = buildToolsService->syncStateKind();
+        if (title == FfiBuildToolTitleKind::None && state == FfiSyncStateKind::Idle) {
+            buildToolsButton->setVisible(false);
+            return;
+        }
+        const QString tool = title == FfiBuildToolTitleKind::Maven ? QObject::tr("Maven")
+                              : title == FfiBuildToolTitleKind::Both
+                                ? QObject::tr("Gradle/Maven")
+                                : QObject::tr("Gradle");
+        switch (state) {
+        case FfiSyncStateKind::Syncing:
+            buildToolsButton->setStyleSheet(QString());
+            buildToolsButton->setText(QObject::tr("%1: syncing...").arg(tool));
+            break;
+        case FfiSyncStateKind::Failed:
+            buildToolsButton->setStyleSheet(
+              QStringLiteral("color: %1;").arg(semanticColors().error.name()));
+            buildToolsButton->setText(QObject::tr("%1: sync failed").arg(tool));
+            break;
+        case FfiSyncStateKind::Idle:
+            buildToolsButton->setStyleSheet(QString());
+            buildToolsButton->setText(tool);
+            break;
+        }
+        buildToolsButton->setVisible(true);
+    };
+    updateBuildToolsButton();
+    QObject::connect(buildToolsButton, &QToolButton::clicked, statusBar,
+                      [docks, buildToolsService]() {
+                          if (buildToolsService->syncStateKind() == FfiSyncStateKind::Syncing) {
+                              buildToolsService->cancelSync();
+                          } else {
+                              docks->show(QStringLiteral("buildTools"));
+                          }
+                      });
+    QObject::connect(buildToolsService, &BuildToolsService::syncStateChanged, statusBar,
+                      updateBuildToolsButton);
+    QObject::connect(buildToolsService, &BuildToolsService::modelChanged, statusBar,
+                      updateBuildToolsButton);
+
     // W7-1 (ADR-0052): "WSL: <distro>" when the open project's root is a
     // WSL UNC path, hidden otherwise. `remoteWslDistro()`/
     // `remoteWslLinuxRoot()` do the classification on the Rust side —
@@ -294,6 +346,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     statusBar->addPermanentWidget(serverBar);
     statusBar->addPermanentWidget(problemsButton);
     statusBar->addPermanentWidget(analysisLabel);
+    statusBar->addPermanentWidget(buildToolsButton);
     statusBar->addPermanentWidget(remoteWslLabel);
     statusBar->addPermanentWidget(branchButton);
     statusBar->addPermanentWidget(languageLabel);

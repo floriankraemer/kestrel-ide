@@ -13,7 +13,8 @@
 namespace ui_shell {
 
 void buildBuildMenu(QMainWindow *window, BuildPanel *buildPanel, AppSettings *appSettings,
-                     QHash<QString, QAction *> &actions, DockRegistry *docks, QMenu *viewMenu)
+                     QHash<QString, QAction *> &actions, DockRegistry *docks, QMenu *viewMenu,
+                     BuildToolsService *buildToolsService)
 {
     QMenu *buildMenu = window->menuBar()->addMenu(QObject::tr("&Build"));
     // A top-level menu never goes through `exec()`, so these are the only
@@ -50,6 +51,15 @@ void buildBuildMenu(QMainWindow *window, BuildPanel *buildPanel, AppSettings *ap
     QAction *viewBuildAction = registerAction(viewMenu, QStringLiteral("view.build"),
                                               QObject::tr("Build"), appSettings, actions);
     QObject::connect(viewBuildAction, &QAction::triggered, window, showDock);
+
+    // The jvm-build-tools plan's B4: reload the Gradle/Maven project model,
+    // the same action the editor banner's "Reload" button triggers.
+    buildMenu->addSeparator();
+    QAction *reloadAction =
+      registerAction(buildMenu, QStringLiteral("buildTools.reload"),
+                     QObject::tr("Reload Build Tool Project"), appSettings, actions);
+    QObject::connect(reloadAction, &QAction::triggered, buildToolsService,
+                      [buildToolsService]() { buildToolsService->sync(); });
 }
 
 } // namespace ui_shell

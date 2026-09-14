@@ -544,6 +544,9 @@ fn main() {
         // menu action, Q_OBJECT-free like the pages/menus above.
         .cpp_file("cpp/analysis_settings_page.cpp")
         .cpp_file("cpp/analysis_menu.cpp")
+        // The jvm-build-tools plan's B5: the Build Tools settings page,
+        // Q_OBJECT-free like the Analysis page above.
+        .cpp_file("cpp/build_tools_settings_page.cpp")
         // The settings dialog and the last two pages that were still built
         // inline inside it. Q_OBJECT-free like the pages above — the dialog
         // is a stack-allocated QDialog and the pages are plain QWidgets
@@ -565,6 +568,17 @@ fn main() {
         // connects), so only the source is listed.
         .cpp_file("cpp/tests_panel.cpp")
         .cpp_file("cpp/tests_menu.cpp")
+        // The jvm-build-tools plan's B1-B6: the Build Tools dock and the
+        // reusable editor banner both declare Q_OBJECT (they connect to
+        // `BuildToolsService`'s signals), so their headers run through moc
+        // too, the same pairing `containers_detail.h`/`.cpp` uses below.
+        // `build_tools_wiring.cpp` is Q_OBJECT-free (plain functions and
+        // lambdas), so only its source is listed.
+        .cpp_file("cpp/build_tools_panel.h")
+        .cpp_file("cpp/build_tools_panel.cpp")
+        .cpp_file("cpp/editor_banner.h")
+        .cpp_file("cpp/editor_banner.cpp")
+        .cpp_file("cpp/build_tools_wiring.cpp")
         // Containers plan C2: the Containers dock, same Q_OBJECT-free shape.
         .cpp_file("cpp/containers_panel.cpp")
         .cpp_file("cpp/containers_menu.cpp")

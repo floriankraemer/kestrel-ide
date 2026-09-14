@@ -934,6 +934,12 @@ bool EditorTabs::saveEditor(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdi
         // Servers that only re-analyse on save (and linters behind them)
         // need this; the buffer itself already went across as didChange.
         languageService_->documentSaved(path);
+        if (buildToolsService_) {
+            // The jvm-build-tools plan's B4: an in-IDE save of an open
+            // build file — `jvm_build_core::sync::ChangeOrigin::Save`,
+            // distinct from the filesystem watcher's own relay below.
+            buildToolsService_->fileSaved(path);
+        }
     }
     if (vcsService_ && vcsService_->isRepository()) {
         // A save is exactly what `changedFiles()` (the Changes dock, the

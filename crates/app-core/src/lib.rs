@@ -17,8 +17,7 @@ use project_model::{Project, ProjectSession};
 
 use diff_tab::DiffContent;
 
-/// The project tree's source-root/output-dir decoration join (jvm-build-tools
-/// plan B7, ADR-0057).
+/// The project tree's source-root/output-dir decoration join (B7, ADR-0057).
 pub mod build_tools_tree;
 /// Where plugins and parsed colour themes are joined (ADR-0026, color-themes plan T6).
 pub mod color_themes;

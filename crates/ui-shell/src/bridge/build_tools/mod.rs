@@ -162,6 +162,7 @@ fn to_ffi_node(node: &jvm_build_core::view::Node, tool: Tool) -> ffi::FfiBuildTo
         label: QString::from(node.label.as_str()),
         detail: QString::from(node.detail.as_str()),
         tool: QString::from(tool.toolchain_id()),
+        build_file: QString::from(node.build_file.as_str()),
     }
 }
 
@@ -300,6 +301,9 @@ impl ffi::BuildToolsService {
     pub fn project_opened(mut self: Pin<&mut Self>, root: &QString) {
         let root = PathBuf::from(root.to_string());
         self.models.borrow_mut().clear();
+        crate::bridge::registry::shared_build_models()
+            .borrow_mut()
+            .clear();
         *self.sync_error.borrow_mut() = None;
         self.as_mut().model_changed();
         self.as_mut().refresh_banner(&root);
@@ -499,7 +503,8 @@ impl ffi::BuildToolsService {
                     service.as_mut().sync_state_changed();
                     return;
                 }
-                *service.models.borrow_mut() = models;
+                *service.models.borrow_mut() = models.clone();
+                *crate::bridge::registry::shared_build_models().borrow_mut() = models;
                 if let Some(message) = &error {
                     publish_sync_error(&service.store, &root_for_queue, message);
                 } else {

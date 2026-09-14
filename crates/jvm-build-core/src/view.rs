@@ -32,6 +32,9 @@ pub struct Node {
     /// (`jvm_build_core::run::task_config`'s own `Task::path`), empty for a
     /// row that runs nothing.
     pub task_path: String,
+    /// The build file "Open build file" opens — a module's own
+    /// `build_file`, empty for a row that names none.
+    pub build_file: String,
 }
 
 fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -> Node {
@@ -42,6 +45,7 @@ fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -
         label: label.into(),
         detail: String::new(),
         task_path: String::new(),
+        build_file: String::new(),
     }
 }
 
@@ -116,6 +120,7 @@ pub fn rows(model: &BuildModel) -> Vec<Node> {
             module.name.as_str(),
         );
         module_row.detail = module.dir.display().to_string();
+        module_row.build_file = module.build_file.display().to_string();
         out.push(module_row);
         for root in &module.source_roots {
             let mut root_row = node(

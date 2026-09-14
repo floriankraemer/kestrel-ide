@@ -107,6 +107,11 @@ void EditorTabs::setVcsService(VcsService *vcsService)
     vcsService_ = vcsService;
 }
 
+void EditorTabs::setBuildToolsService(BuildToolsService *buildToolsService)
+{
+    buildToolsService_ = buildToolsService;
+}
+
 QColor EditorTabs::vcsTabColor(const QString &path) const
 {
     // Coloured by VCS status (R6) — the same `changeKindColor` table the

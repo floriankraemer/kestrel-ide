@@ -97,6 +97,22 @@ pub(crate) fn start_plugin_tier() {
     );
 }
 
+thread_local! {
+    /// The project tree's own read of `BuildToolsService`'s current
+    /// models (B7): published here on every `modelChanged`, so
+    /// `bridge::tree`'s icon-key computation can join a row's path against
+    /// `app_core::build_tools_tree::folder_role` without `BuildToolsService`
+    /// and `ProjectTreeModel` needing a direct reference to each other —
+    /// the same "cxx-qt gives no injection point" reasoning [`APP_SESSION`]
+    /// documents above.
+    static BUILD_MODELS: Rc<RefCell<Vec<jvm_build_core::model::BuildModel>>> =
+        Rc::new(RefCell::new(Vec::new()));
+}
+
+pub(crate) fn shared_build_models() -> Rc<RefCell<Vec<jvm_build_core::model::BuildModel>>> {
+    BUILD_MODELS.with(Rc::clone)
+}
+
 pub(crate) fn shared_icons() -> Rc<SharedIcons> {
     ICONS.with(Rc::clone)
 }

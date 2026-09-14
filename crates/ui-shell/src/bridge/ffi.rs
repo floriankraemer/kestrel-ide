@@ -5565,6 +5565,10 @@ mod ffi {
         /// pick an icon by — never used as text (ADR-0049: Rust never
         /// emits user-visible strings).
         tool: QString,
+        /// The build file "Open Build File" opens — empty for a row that
+        /// names none (only a `Module` row carries one today).
+        #[cxx_name = "buildFile"]
+        build_file: QString,
     }
 
     /// The dock's title (computed in Rust from which tools synced

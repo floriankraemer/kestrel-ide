@@ -20,15 +20,14 @@ Those tests are gated behind the `jvm-integration` Cargo feature, not `#[ignore]
 Neither a JDK, Gradle, nor Maven exists in `linux-builder`, and installing all three there would slow every PR's `make test`/`make lint` for work most PRs never touch — exactly the `lsp-conformance` stage's own reasoning for staying a separate image.
 Nightly and on demand.
 
-## What it verifies (once the plan's A4/A5 land)
+## What it verifies
 
-The plan's A4 and A5 tasks add fixture projects under `crates/jvm-build-core/tests/fixtures/`: `gradle-single`, `gradle-multi-kts`, `gradle-catalog`, `maven-single`, `maven-multi`.
-The `jvm-integration` tests run the real, system (wrapper-less) `gradle`/`mvn` binaries this image ships against those fixtures — the init script's model output, the TeamCity test stream, Maven's effective-pom and dependency-tree text — and compare the *shape* of what comes back against what the unit-test fixtures assume, the same "the report is executable" property `lsp-conformance.md` describes for the LSP suite.
+Fixture projects live under `crates/jvm-build-core/tests/fixtures/`: `gradle-single`, `gradle-multi-kts`, `gradle-catalog`, `maven-single`, `maven-multi`.
+`gradle_integration.rs` and `maven_integration.rs`'s `#[cfg(feature = "jvm-integration")]` tests run the real, system (wrapper-less) `gradle`/`mvn` binaries this image ships against those fixtures — the init script's model output and TeamCity test stream, Maven's effective-pom and pinned verbose dependency-tree text — and assert against the *shape* of what comes back, the same "the report is executable" property `lsp-conformance.md` describes for the LSP suite.
 
-The `linux-jvm` stage's fixture-prewarm step (building the fixture projects once at image-build time so their JUnit 5 dependency resolution is cached for `--offline` use) is added in the same change that adds the fixtures — there is nothing to prewarm before then.
+The `linux-jvm` stage's fixture-prewarm step copies the five fixtures to a throwaway path at image-build time and runs the exact commands the integration tests run for real (`ideModel`, the `-Pide.teamcity=true` test task, `help:effective-pom`, the pinned `dependency:tree`), so `~/.gradle`/`~/.m2` are warm with precisely the artifacts those tests need before `make test-jvm` ever runs one.
 
-**Status as of this PR (P0+A1-A7):** the `linux-jvm` image and `make test-jvm`/`jvm-ci` targets exist and the image builds; `jvm-build-core` itself has no `jvm-integration`-feature tests yet, because the Gradle/Maven providers and their fixtures (A4/A5) are a later PR.
-`make test-jvm` at this point in the plan runs an (empty) `cargo nextest run -p jvm-build-core --features jvm-integration` successfully rather than nothing.
+**Status:** 66 tests pass inside `linux-jvm` (59 unit + 4 Gradle + 3 Maven integration), verified by building the image and running `make jvm-ci` directly.
 
 ## Why every version is pinned
 

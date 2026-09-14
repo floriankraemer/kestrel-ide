@@ -40,6 +40,13 @@ pub(crate) struct Connection {
     /// Bumped on every connect/disconnect so an event from a watcher that
     /// was already stopped cannot revive its row.
     generation: u64,
+    /// C9: this connection's own Podman machine's `running` flag — `None`
+    /// for every connection that is not a `PodmanMachine` kind, or one
+    /// that is but has not had its first `machine list` answer back yet.
+    /// Refreshed alongside the connection's own snapshot (`connect_engine`/
+    /// `refresh`), not polled independently — a machine's state changes
+    /// no more often than a user action would trigger one of those.
+    pub(crate) machine_running: Option<bool>,
 }
 
 pub struct ContainerServiceRust {
@@ -89,6 +96,22 @@ pub struct ContainerServiceRust {
     /// C7 review follow-up: `registry_repo_next`'s counterpart for
     /// `registry_tags`, keyed the same way (by `RegistryRepo` node id).
     pub(crate) registry_tag_next: RefCell<BTreeMap<String, Option<String>>>,
+    /// C9: the last "Analyze image" result's own temp tar
+    /// (`container_core::layer_fs::AnalyzeResult::tar_path`), kept around
+    /// so a double-clicked entry or "Download..." can reopen it without a
+    /// second `save` — one at a time (the Layers tab only ever analyzes
+    /// one image), replaced (and the old file removed) by the next
+    /// `analyzeImage` call, and removed on `Drop` as a last resort if
+    /// nothing ever replaced it.
+    pub(crate) analyzed_image: RefCell<Option<(String, std::path::PathBuf)>>,
+}
+
+impl Drop for ContainerServiceRust {
+    fn drop(&mut self) {
+        if let Some((_, tar_path)) = self.analyzed_image.borrow_mut().take() {
+            let _ = std::fs::remove_file(tar_path);
+        }
+    }
 }
 
 impl Default for ContainerServiceRust {
@@ -105,6 +128,7 @@ impl Default for ContainerServiceRust {
             registry_repo_next: RefCell::default(),
             registry_tags: RefCell::default(),
             registry_tag_next: RefCell::default(),
+            analyzed_image: RefCell::default(),
         }
     }
 }
@@ -257,6 +281,10 @@ fn to_ffi_node(node: &tree::TreeNode) -> ffi::FfiContainerNode {
         size_bytes: node.size_bytes.map(|bytes| bytes as i64).unwrap_or(-1),
         detail: QString::from(node.detail.as_str()),
         tooltip: QString::from(node.tooltip.as_str()),
+        machine_running: node
+            .machine_running
+            .map(|running| running as i64)
+            .unwrap_or(-1),
     }
 }
 
@@ -316,6 +344,9 @@ impl ffi::ContainerService {
                     .map(|connection| &connection.state)
                     .unwrap_or(&disconnected),
                 view: view.as_ref(),
+                machine_running: connections
+                    .get(&setting.id)
+                    .and_then(|connection| connection.machine_running),
             })
             .collect();
         let mut nodes = tree::flatten(&rows, SystemTime::now());
@@ -456,7 +487,13 @@ impl ffi::ContainerService {
                 snapshot: None,
                 handle: Some(handle),
                 generation,
+                machine_running: None,
             },
+        );
+        spawn_machine_state_refresh(
+            self.as_mut().qt_thread(),
+            id.clone(),
+            &ConnectionConfig::from_setting(&setting),
         );
 
         let qt_thread = self.as_mut().qt_thread();
@@ -499,14 +536,27 @@ impl ffi::ContainerService {
         FfiResult::default()
     }
 
-    pub fn refresh(self: Pin<&mut Self>, connection_id: &QString) -> FfiResult {
-        let connections = self.connections.borrow();
-        match connections
-            .get(&connection_id.to_string())
-            .and_then(|connection| connection.handle.as_ref())
-        {
-            Some(handle) => {
-                handle.refresh();
+    pub fn refresh(mut self: Pin<&mut Self>, connection_id: &QString) -> FfiResult {
+        let id = connection_id.to_string();
+        let handled = {
+            let connections = self.connections.borrow();
+            connections
+                .get(&id)
+                .and_then(|connection| connection.handle.as_ref())
+                .map(|handle| handle.refresh())
+        };
+        match handled {
+            Some(()) => {
+                if let Some(setting) = configured_connections()
+                    .into_iter()
+                    .find(|setting| setting.id == id)
+                {
+                    spawn_machine_state_refresh(
+                        self.as_mut().qt_thread(),
+                        id,
+                        &ConnectionConfig::from_setting(&setting),
+                    );
+                }
                 FfiResult::default()
             }
             None => errors::failure(
@@ -573,6 +623,45 @@ fn persist_filter(show_stopped: bool, show_untagged: bool) -> FfiResult {
 
 /// A watcher event, on the Qt thread. Ignored when the connection was
 /// disconnected or reconnected since the watcher that sent it started.
+/// C9: `machine list --format json` for `config`'s own machine, on a
+/// worker thread — a no-op for any connection kind other than
+/// `PodmanMachine`. Failures (the CLI missing, the machine gone) just
+/// leave `Connection::machine_running` at whatever it was rather than
+/// surfacing an error for what is a secondary "how's it doing" detail,
+/// not an action.
+fn spawn_machine_state_refresh(
+    qt_thread: cxx_qt::CxxQtThread<ffi::ContainerService>,
+    connection_id: String,
+    config: &ConnectionConfig,
+) {
+    let container_core::connection::ConnectionKind::PodmanMachine { name } = &config.kind else {
+        return;
+    };
+    let name = name.clone();
+    let invocation = config.invocation();
+    let dir = work_dir();
+    std::thread::spawn(move || {
+        let running =
+            container_core::ops::run_op(&invocation, &container_core::machine::list_args(), &dir)
+                .ok()
+                .and_then(|output| {
+                    container_core::machine::parse_list(&String::from_utf8_lossy(&output.stdout))
+                        .ok()
+                })
+                .and_then(|machines| machines.into_iter().find(|machine| machine.name == name))
+                .map(|machine| machine.running);
+        let Some(running) = running else {
+            return;
+        };
+        let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ContainerService>| {
+            if let Some(connection) = service.connections.borrow_mut().get_mut(&connection_id) {
+                connection.machine_running = Some(running);
+            }
+            service.as_mut().tree_changed();
+        });
+    });
+}
+
 fn apply(mut service: Pin<&mut ffi::ContainerService>, generation: u64, event: ContainerEvent) {
     let connection_id = QString::from(event.connection_id.as_str());
     let state_changed = {

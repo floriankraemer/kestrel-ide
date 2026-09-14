@@ -228,30 +228,46 @@ impl ffi::ContainerService {
     /// Open `node_id`'s `inspect` JSON as a read-only virtual document —
     /// synchronous (the round trip is a single small `inspect` call, same
     /// order of magnitude as `probe`), mirroring `LanguageService`'s own
-    /// `virtualDocumentOpened` split: build the tab, then focus it.
+    /// `virtualDocumentOpened` split: build the tab, then focus it. Works
+    /// on a container node (`inspect <id>`) or a pod node (`pod inspect
+    /// <id>`, [`container_core::pods::inspect_args`]) — every other kind
+    /// is refused, same as before this grew the pod case.
     pub fn open_inspect(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
         let node_id_str = node_id.to_string();
-        let Some((connection_id, resource_id)) = parse_container_node_id(&node_id_str) else {
-            return errors::failure(
-                errors::CODE_INVALID_ARGUMENT,
-                format!("'{node_id_str}' is not a container node"),
-            );
+        let container = parse_container_node_id(&node_id_str);
+        let pod = parse_node_id(&node_id_str, NodeKind::Pod);
+        let (connection_id, resource_id, kind_word, args) = match (container, pod) {
+            (Some((connection_id, resource_id)), _) => {
+                let args = vec!["inspect".to_string(), resource_id.clone()];
+                (connection_id, resource_id, "container", args)
+            }
+            (None, Some((connection_id, resource_id))) => {
+                let args = container_core::pods::inspect_args(&resource_id);
+                (connection_id, resource_id, "pod", args)
+            }
+            (None, None) => {
+                return errors::failure(
+                    errors::CODE_INVALID_ARGUMENT,
+                    format!("'{node_id_str}' is not a container or pod node"),
+                );
+            }
         };
         let invocation = match service::connection_invocation(&connection_id) {
             Ok(invocation) => invocation,
             Err(result) => return result,
         };
         let work_dir = service::work_dir();
-        let json = match container_core::session::inspect_json(
+        let json = match container_core::session::inspect_json_with_args(
             &invocation,
-            "container",
+            kind_word,
             &resource_id,
+            &args,
             &work_dir,
         ) {
             Ok(json) => json,
             Err(err) => return errors::failure(errors::CODE_REFUSED, err.message),
         };
-        let key = format!("{connection_id}/container/{resource_id}/inspect.json");
+        let key = format!("{connection_id}/{kind_word}/{resource_id}/inspect.json");
         let opened = self
             .session
             .borrow_mut()

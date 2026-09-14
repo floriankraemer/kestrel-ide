@@ -4122,6 +4122,18 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "shellsChanged"]
         fn shells_changed(self: Pin<&mut TerminalSupervisor>);
+
+        /// Emitted on the Qt thread once `session_id`'s PTY child has
+        /// actually exited (`PtySession::try_wait`, checked right after the
+        /// reader thread sees EOF) — `exitCode` is the child's own code.
+        /// Every session's widget gets this regardless of kind; a Pull/
+        /// Push console closes itself on `exitCode == 0`, an interactive
+        /// Log/Terminal/Exec/Attach tab ignores it (ADR-0055's C9: closing
+        /// those would drop a shell's own scrollback the user is still
+        /// reading).
+        #[qsignal]
+        #[cxx_name = "sessionExited"]
+        fn session_exited(self: Pin<&mut TerminalSupervisor>, session_id: u64, exit_code: u32);
     }
 
     // Enables `self.qt_thread()` on `TerminalSupervisor` for the background
@@ -5740,6 +5752,12 @@ mod ffi {
         size_bytes: i64,
         detail: QString,
         tooltip: QString,
+        /// A `Connection` row's own Podman machine `running` flag (C9):
+        /// `-1` not applicable (not a `PodmanMachine` connection, or no
+        /// answer yet), `0` stopped, `1` running — same `-1`-sentinel
+        /// convention `count`/`running`/`total`/`sizeBytes` already use.
+        #[cxx_name = "machineRunning"]
+        machine_running: i64,
     }
 
     /// One configured connection, for a picker (C4's Copy Image to...
@@ -6164,6 +6182,30 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "layerFsReady"]
         fn layer_fs_ready(self: Pin<&mut ContainerService>, node_id: QString, lines: QString);
+
+        /// A double-clicked regular file entry in the analyzed tree, open
+        /// read-only (8 MiB capped) — refused when `node_id` is not the
+        /// image last analyzed.
+        #[qinvokable]
+        #[cxx_name = "openLayerEntry"]
+        fn open_layer_entry(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            layer_id: &QString,
+            path: &QString,
+        ) -> FfiResult;
+
+        /// "Download..." for a layer entry — no size cap, written to
+        /// `dest_path` (the view's own `QFileDialog` choice).
+        #[qinvokable]
+        #[cxx_name = "downloadLayerEntry"]
+        fn download_layer_entry(
+            self: &ContainerService,
+            node_id: &QString,
+            layer_id: &QString,
+            path: &QString,
+            dest_path: &QString,
+        ) -> FfiResult;
 
         /// A lifecycle action finished: `ok`/`message` from its `OpError`
         /// (empty message on success). The panel shows a failure as a

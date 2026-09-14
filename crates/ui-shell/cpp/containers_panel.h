@@ -80,6 +80,10 @@ private:
     void onTreeChanged();
     void onSelectionChanged();
     void showContextMenu(const QPoint &pos);
+    // C9 polish: "Add from contexts..." opens a checkbox dialog of
+    // discovered-but-not-yet-configured connections instead of only
+    // opening Settings on the discovery button.
+    void openAddFromContextsDialog();
     void updateToolbarEnablement();
     void report(const FfiResult &result);
     QString selectedConnectionId() const;

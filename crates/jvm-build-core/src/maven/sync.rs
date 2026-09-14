@@ -64,9 +64,21 @@ pub fn sync(project_root: &Path, opts: &SyncOptions) -> Result<BuildModel, SyncE
             .collect()
     };
 
+    // The wrapper (`mvnw`) lives at the project root, never inside a child
+    // module's own directory, and `run_core::toolchain::wrapper_or` returns
+    // it as a path relative to wherever the process is spawned (`./mvnw`) —
+    // so every module's invocation is spawned with `project_root` itself as
+    // the working directory, never `module_dir`, and reaches its own POM
+    // through Maven's own `-f`/`--file` flag instead of a `cd`. Resolving
+    // the wrapper once here and passing the program string down (rather
+    // than re-resolving it per module directory, which would silently see
+    // no `mvnw` in a child directory and fall back to a bare `mvn` on
+    // `PATH`) is the other half of the same fix.
+    let program = maven_program(project_root);
+
     let mut modules = Vec::with_capacity(module_dirs.len());
     for dir in &module_dirs {
-        modules.push(sync_module(dir, opts)?);
+        modules.push(sync_module(&program, project_root, dir, opts)?);
     }
 
     let tasks = goals::LIFECYCLE_PHASES
@@ -89,12 +101,18 @@ pub fn sync(project_root: &Path, opts: &SyncOptions) -> Result<BuildModel, SyncE
     })
 }
 
-fn sync_module(module_dir: &Path, opts: &SyncOptions) -> Result<Module, SyncError> {
-    let program = maven_program(module_dir);
+fn sync_module(
+    program: &str,
+    project_root: &Path,
+    module_dir: &Path,
+    opts: &SyncOptions,
+) -> Result<Module, SyncError> {
     let timeout = opts.timeout.unwrap_or(DEFAULT_TIMEOUT);
+    let pom_path = module_dir.join("pom.xml");
 
-    let effective = run_effective_pom(&program, module_dir, opts.offline, timeout)?;
-    let dep_tree_nodes = run_dependency_tree(&program, module_dir, opts.offline, timeout)?;
+    let effective = run_effective_pom(program, project_root, &pom_path, opts.offline, timeout)?;
+    let dep_tree_nodes =
+        run_dependency_tree(program, project_root, &pom_path, opts.offline, timeout)?;
     let dependencies = dep_tree::build_children(&dep_tree_nodes);
 
     let source_roots = [
@@ -136,13 +154,16 @@ fn sync_module(module_dir: &Path, opts: &SyncOptions) -> Result<Module, SyncErro
 
 fn run_effective_pom(
     program: &str,
-    module_dir: &Path,
+    project_root: &Path,
+    pom_path: &Path,
     offline: bool,
     timeout: Duration,
 ) -> Result<effective_pom::EffectivePom, SyncError> {
-    let out_path = temp_file(module_dir, "effective-pom", "xml");
+    let out_path = temp_file(pom_path, "effective-pom", "xml");
     let mut args = vec![
         "-B".to_string(),
+        "-f".to_string(),
+        pom_path.display().to_string(),
         "help:effective-pom".to_string(),
         format!("-Doutput={}", out_path.display()),
     ];
@@ -150,7 +171,7 @@ fn run_effective_pom(
         args.push("-o".to_string());
     }
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = process_exec::run(program, &arg_refs, module_dir, None, timeout, &[])?;
+    let output = process_exec::run(program, &arg_refs, project_root, None, timeout, &[])?;
     if !output.status.success() {
         let _ = std::fs::remove_file(&out_path);
         return Err(SyncError::BuildFailed {
@@ -165,12 +186,15 @@ fn run_effective_pom(
 
 fn run_dependency_tree(
     program: &str,
-    module_dir: &Path,
+    project_root: &Path,
+    pom_path: &Path,
     offline: bool,
     timeout: Duration,
 ) -> Result<Vec<dep_tree::DepTreeNode>, SyncError> {
     let mut args = vec![
         "-B".to_string(),
+        "-f".to_string(),
+        pom_path.display().to_string(),
         DEPENDENCY_PLUGIN_GOAL.to_string(),
         "-Dverbose".to_string(),
     ];
@@ -178,7 +202,7 @@ fn run_dependency_tree(
         args.push("-o".to_string());
     }
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = process_exec::run(program, &arg_refs, module_dir, None, timeout, &[])?;
+    let output = process_exec::run(program, &arg_refs, project_root, None, timeout, &[])?;
     if !output.status.success() {
         return Err(SyncError::BuildFailed {
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -188,18 +212,17 @@ fn run_dependency_tree(
     Ok(dep_tree::parse(&text))
 }
 
-fn temp_file(module_dir: &Path, label: &str, extension: &str) -> PathBuf {
+fn temp_file(pom_path: &Path, label: &str, extension: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let name = format!(
-        "ide-{label}-{}-{unique}.{extension}",
-        module_dir
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
-    );
+    let module_dir_name = pom_path
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let name = format!("ide-{label}-{module_dir_name}-{unique}.{extension}");
     std::env::temp_dir().join(name)
 }
 
@@ -212,5 +235,72 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = sync(dir.path(), &SyncOptions::default());
         assert!(matches!(result, Err(SyncError::RootPomInvalid(_))));
+    }
+
+    /// A wrapper-only multi-module project: `mvnw` exists only at the
+    /// project root, never inside a child module's own directory. Before
+    /// this fix, `sync_module` re-resolved `maven_program` against each
+    /// module directory, so the wrapper "existing" was only ever true for
+    /// whichever module happened to *be* the project root — every other
+    /// module silently fell back to a bare `mvn` on `PATH`.
+    #[cfg(unix)]
+    #[test]
+    fn a_child_modules_sync_finds_the_root_only_wrapper_not_a_bare_mvn() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(
+            root.join("pom.xml"),
+            r#"<project><modelVersion>4.0.0</modelVersion>
+                <groupId>g</groupId><artifactId>root</artifactId><version>1</version>
+                <packaging>pom</packaging>
+                <modules><module>mod-a</module></modules>
+            </project>"#,
+        )
+        .unwrap();
+        fs::create_dir(root.join("mod-a")).unwrap();
+        fs::write(
+            root.join("mod-a/pom.xml"),
+            r#"<project><modelVersion>4.0.0</modelVersion>
+                <parent><groupId>g</groupId><artifactId>root</artifactId><version>1</version></parent>
+                <artifactId>mod-a</artifactId>
+            </project>"#,
+        )
+        .unwrap();
+
+        // A stub "mvnw" that proves it was invoked with the *root* as its
+        // working directory (a real wrapper script's own assumption) by
+        // succeeding only when it can see this project's own root POM
+        // beside it; a wrong cwd (a child module's directory) would not.
+        let stub = root.join("mvnw");
+        fs::write(
+            &stub,
+            "#!/bin/sh\ntest -f pom.xml && test \"$1\" = -B || exit 3\nexit 0\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&stub).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&stub, perms).unwrap();
+
+        let result = sync_module(
+            &maven_program(root),
+            root,
+            &root.join("mod-a"),
+            &SyncOptions {
+                offline: false,
+                timeout: Some(Duration::from_secs(10)),
+            },
+        );
+        // The stub exits 0 without writing an effective-pom output file —
+        // this proves the process actually ran (as `./mvnw` found beside
+        // `pom.xml` in the root working directory, not as `NotFound`/
+        // `BuildFailed`'s exit-3 guard) and stops exactly where a real
+        // `mvn`'s own missing-output-file case would.
+        assert!(
+            matches!(result, Err(SyncError::EffectivePomUnreadable(_))),
+            "{result:?}"
+        );
     }
 }

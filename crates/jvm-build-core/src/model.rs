@@ -85,6 +85,22 @@ pub struct Task {
     pub description: String,
 }
 
+/// Maven only: a plugin bound into the build, with the goals the effective
+/// POM's own `<executions>` actually bind — not every goal the plugin
+/// offers, which `goals.rs`'s jar-reading path answers for build-file
+/// editing (phase D) — this is "what runs", read straight out of the same
+/// effective-pom document `EffectivePom::dependencies` already comes from,
+/// so no extra process or jar read is needed to shape the dock's tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plugin {
+    pub group: String,
+    pub artifact: String,
+    pub version: String,
+    /// One entry per goal an `<execution>` binds, deduplicated and in
+    /// declaration order.
+    pub goals: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Module {
     /// Gradle: the project path (`:app`). Maven: the module's own
@@ -99,6 +115,10 @@ pub struct Module {
     /// said so (Gradle's toolchain, Maven's `maven.compiler.target`).
     pub jdk: Option<String>,
     pub dependencies: Vec<Dependency>,
+    /// Maven only: always empty for Gradle, which has no plugin/goal
+    /// concept the init script models this way (a Gradle plugin is
+    /// modelled as its own contributed tasks instead).
+    pub plugins: Vec<Plugin>,
     pub children: Vec<String>,
 }
 
@@ -107,6 +127,11 @@ pub struct Module {
 pub struct BuildModel {
     pub tool: Tool,
     pub root: PathBuf,
+    /// `rootProject.name` (Gradle) or the root `pom.xml`'s own
+    /// `<artifactId>` (Maven) — what the dock's root row shows; the full
+    /// path (`root`, above) moves to that row's tooltip instead (review
+    /// fix: a raw absolute path is not what any IDE calls a project).
+    pub root_name: String,
     pub modules: Vec<Module>,
     pub tasks: Vec<Task>,
     /// Anything the tool reported that fell short of a hard failure — an
@@ -137,6 +162,7 @@ mod tests {
         let model = BuildModel {
             tool: Tool::Gradle,
             root: PathBuf::from("/proj"),
+            root_name: "proj".to_string(),
             modules: vec![Module {
                 path: ":app".to_string(),
                 name: "app".to_string(),
@@ -146,6 +172,7 @@ mod tests {
                 output_dirs: vec![],
                 jdk: Some("21".to_string()),
                 dependencies: vec![],
+                plugins: vec![],
                 children: vec![],
             }],
             tasks: vec![],

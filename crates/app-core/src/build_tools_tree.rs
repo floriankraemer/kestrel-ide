@@ -79,6 +79,7 @@ mod tests {
         BuildModel {
             tool: Tool::Maven,
             root: PathBuf::from("/proj"),
+            root_name: "proj".to_string(),
             modules: vec![Module {
                 path: "app".to_string(),
                 name: "app".to_string(),
@@ -88,6 +89,7 @@ mod tests {
                 output_dirs,
                 jdk: None,
                 dependencies: vec![],
+                plugins: vec![],
                 children: vec![],
             }],
             tasks: vec![],

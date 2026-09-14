@@ -8,7 +8,9 @@ use std::time::{Duration, SystemTime};
 use run_core::toolchain::maven_program;
 
 use super::{dep_tree, effective_pom, goals, pom};
-use crate::model::{BuildModel, Module, SourceContent, SourceRoot, SourceRootKind, Task, Tool};
+use crate::model::{
+    BuildModel, Module, Plugin, SourceContent, SourceRoot, SourceRootKind, Task, Tool,
+};
 
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -94,6 +96,7 @@ pub fn sync(project_root: &Path, opts: &SyncOptions) -> Result<BuildModel, SyncE
     Ok(BuildModel {
         tool: Tool::Maven,
         root: project_root.to_path_buf(),
+        root_name: root_pom.artifact_id,
         modules,
         tasks,
         warnings: Vec::new(),
@@ -140,6 +143,17 @@ fn sync_module(
         .flatten()
         .collect();
 
+    let plugins = effective
+        .plugins
+        .into_iter()
+        .map(|plugin| Plugin {
+            group: plugin.group_id,
+            artifact: plugin.artifact_id,
+            version: plugin.version,
+            goals: plugin.goals,
+        })
+        .collect();
+
     Ok(Module {
         path: format!("{}:{}", effective.group_id, effective.artifact_id),
         name: effective.artifact_id,
@@ -149,6 +163,7 @@ fn sync_module(
         output_dirs,
         jdk: None,
         dependencies,
+        plugins,
         children: Vec::new(),
     })
 }

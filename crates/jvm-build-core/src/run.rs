@@ -135,6 +135,7 @@ mod tests {
         BuildModel {
             tool,
             root: PathBuf::from("/proj"),
+            root_name: "proj".to_string(),
             modules: vec![],
             tasks: vec![],
             warnings: vec![],

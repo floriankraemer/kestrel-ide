@@ -92,6 +92,7 @@ mod tests {
             }],
             tasks: vec![],
             warnings: vec![],
+            profiles: vec![],
             synced_at: SystemTime::UNIX_EPOCH,
         }
     }

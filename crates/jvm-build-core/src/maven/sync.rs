@@ -97,6 +97,7 @@ pub fn sync(project_root: &Path, opts: &SyncOptions) -> Result<BuildModel, SyncE
         modules,
         tasks,
         warnings: Vec::new(),
+        profiles: root_pom.profiles,
         synced_at: SystemTime::now(),
     })
 }

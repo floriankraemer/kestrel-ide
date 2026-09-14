@@ -113,6 +113,12 @@ pub struct BuildModel {
     /// unresolvable optional dependency, a deprecated DSL call. Shown, not
     /// interpreted.
     pub warnings: Vec<String>,
+    /// Maven only: declared profile ids the project offers to activate
+    /// (`-P<id>`), unioned across every module's own `pom.xml` at the tool
+    /// root rather than kept per-module — a profile is normally declared
+    /// once, at the reactor root, and inherited, so a per-module list would
+    /// only ever repeat the same handful of ids. Always empty for Gradle.
+    pub profiles: Vec<String>,
     pub synced_at: SystemTime,
 }
 
@@ -144,6 +150,7 @@ mod tests {
             }],
             tasks: vec![],
             warnings: vec![],
+            profiles: vec![],
             synced_at: SystemTime::UNIX_EPOCH,
         };
         assert_eq!(model.module(":app").unwrap().name, "app");

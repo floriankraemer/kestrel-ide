@@ -18,6 +18,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -30,6 +31,7 @@ constexpr int kIdRole = Qt::UserRole;
 constexpr int kToolRole = Qt::UserRole + 1;
 constexpr int kRunnableRole = Qt::UserRole + 2;
 constexpr int kBuildFileRole = Qt::UserRole + 3;
+constexpr int kIsProfileRole = Qt::UserRole + 4;
 
 QString titleFor(FfiBuildToolTitleKind kind)
 {
@@ -101,6 +103,12 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
             runNode(item->data(0, kIdRole).toString(), QString());
         }
     });
+    connect(tree_, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int column) {
+        if (column != 0 || !item->data(0, kIsProfileRole).toBool()) {
+            return;
+        }
+        buildToolsService_->setProfileChecked(item->text(0), item->checkState(0) == Qt::Checked);
+    });
     connect(tree_, &QTreeWidget::customContextMenuRequested, this,
             &BuildToolsPanel::showContextMenu);
     connect(offlineCheck_, &QCheckBox::toggled, this,
@@ -153,6 +161,11 @@ void BuildToolsPanel::refreshBanner()
 
 void BuildToolsPanel::refreshTree()
 {
+    // Rebuilding sets every profile row's check state from the model, which
+    // would otherwise re-fire `itemChanged` back into `setProfileChecked`
+    // and loop: that slot calls `modelChanged`, which is exactly the signal
+    // that reaches this function.
+    const QSignalBlocker blocker(tree_);
     QHash<QString, QTreeWidgetItem *> itemsById;
     QHash<QString, bool> expandedById;
     for (auto *item : tree_->findItems(QString(), Qt::MatchContains | Qt::MatchRecursive)) {
@@ -179,6 +192,11 @@ void BuildToolsPanel::refreshTree()
         item->setData(0, kToolRole, QString(node.tool));
         item->setData(0, kRunnableRole, node.kind == FfiBuildToolNodeKind::Task);
         item->setData(0, kBuildFileRole, QString(node.buildFile));
+        if (node.kind == FfiBuildToolNodeKind::Profile) {
+            item->setData(0, kIsProfileRole, true);
+            item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+            item->setCheckState(0, node.checked ? Qt::Checked : Qt::Unchecked);
+        }
         item->setExpanded(expandedById.value(id, node.kind == FfiBuildToolNodeKind::ToolRoot));
         itemsById.insert(id, item);
     }

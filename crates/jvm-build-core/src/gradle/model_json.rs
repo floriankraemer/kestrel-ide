@@ -121,6 +121,7 @@ fn to_build_model(raw: RawModel) -> BuildModel {
         modules,
         tasks,
         warnings: Vec::new(),
+        profiles: Vec::new(),
         synced_at: SystemTime::now(),
     }
 }

@@ -139,6 +139,12 @@ pub struct BuildToolsServiceRust {
     skip_tests: Cell<bool>,
     banner: RefCell<BannerState>,
     save_tracker: RefCell<jvm_build_core::sync::SaveTracker>,
+    /// Maven only (B3): which of the synced model's declared profiles the
+    /// dock's checkboxes have ticked — fed into every task/goal run's
+    /// `-P<id>` flags (`run::RunOptions::profiles`). Kept here rather than
+    /// in `jvm_build_core::view`, which shapes rows from a model and knows
+    /// nothing about UI-held check state.
+    checked_profiles: RefCell<std::collections::HashSet<String>>,
     store: SharedDiagnostics,
 }
 
@@ -151,6 +157,7 @@ fn to_ffi_node_kind(kind: jvm_build_core::view::NodeKind) -> ffi::FfiBuildToolNo
         NodeKind::Module => ffi::FfiBuildToolNodeKind::Module,
         NodeKind::SourceRoot => ffi::FfiBuildToolNodeKind::SourceRoot,
         NodeKind::Dependency => ffi::FfiBuildToolNodeKind::Dependency,
+        NodeKind::Profile => ffi::FfiBuildToolNodeKind::Profile,
     }
 }
 
@@ -163,6 +170,7 @@ fn to_ffi_node(node: &jvm_build_core::view::Node, tool: Tool) -> ffi::FfiBuildTo
         detail: QString::from(node.detail.as_str()),
         tool: QString::from(tool.toolchain_id()),
         build_file: QString::from(node.build_file.as_str()),
+        checked: node.checked,
     }
 }
 
@@ -231,16 +239,31 @@ fn publish_sync_error(store: &SharedDiagnostics, root: &Path, message: &str) {
 
 impl ffi::BuildToolsService {
     pub fn rows(&self) -> Vec<ffi::FfiBuildToolNode> {
+        let checked = self.checked_profiles.borrow();
         self.models
             .borrow()
             .iter()
             .flat_map(|model| {
-                jvm_build_core::view::rows(model)
+                jvm_build_core::view::rows(model, &checked)
                     .into_iter()
                     .map(|node| to_ffi_node(&node, model.tool))
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    /// A profile checkbox in the dock was toggled (B3). `modelChanged` is
+    /// reused to signal it rather than a new signal: the tree rebuilds the
+    /// same way it does for any other row change, and nothing about the
+    /// synced model itself changed.
+    pub fn set_profile_checked(mut self: Pin<&mut Self>, profile: &QString, checked: bool) {
+        let profile = profile.to_string();
+        if checked {
+            self.checked_profiles.borrow_mut().insert(profile);
+        } else {
+            self.checked_profiles.borrow_mut().remove(&profile);
+        }
+        self.as_mut().model_changed();
     }
 
     pub fn title_kind(&self) -> ffi::FfiBuildToolTitleKind {
@@ -529,8 +552,9 @@ impl ffi::BuildToolsService {
         models: &'a [BuildModel],
         node_id: &str,
     ) -> Option<(&'a BuildModel, jvm_build_core::model::Task)> {
+        let no_checked = std::collections::HashSet::new();
         for model in models {
-            for node in jvm_build_core::view::rows(model) {
+            for node in jvm_build_core::view::rows(model, &no_checked) {
                 if node.id == node_id && !node.task_path.is_empty() {
                     let task = model
                         .tasks
@@ -572,10 +596,12 @@ impl ffi::BuildToolsService {
         let Some((model, task)) = self.find_task(&models, &node_id.to_string()) else {
             return ffi::FfiRunConfig::default();
         };
+        let mut profiles: Vec<String> = self.checked_profiles.borrow().iter().cloned().collect();
+        profiles.sort_unstable();
         let opts = jvm_build_core::run::RunOptions {
             offline: self.offline.get(),
             skip_tests: self.skip_tests.get(),
-            profiles: Vec::new(),
+            profiles,
             extra_args: jvm_build_core::run::split_args(extra_args_text),
         };
         let config = jvm_build_core::run::task_config(model, &task, &opts);

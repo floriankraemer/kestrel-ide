@@ -76,6 +76,16 @@ fn maven_multi_syncs_both_child_modules_and_their_inter_module_dependency() {
     assert!(model.modules.iter().any(|m| m.name == "lib"));
 }
 
+/// B3 (review fix 2): the fixture's root pom declares one `<profile>`
+/// (`ci`) with no other change — proves `BuildModel::profiles` actually
+/// reaches a real sync's output, not only the static `pom::parse` unit
+/// tests.
+#[test]
+fn maven_multi_reports_its_declared_profiles() {
+    let model = run_sync(&fixture("maven-multi"), &opts()).expect("sync succeeds");
+    assert_eq!(model.profiles, vec!["ci".to_string()]);
+}
+
 /// A second sync of the same project must succeed again — the effective-pom
 /// temp file scheme (`sync::temp_file`) must never leave a stale file a
 /// later run could collide with or accidentally read.

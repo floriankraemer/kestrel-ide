@@ -5545,6 +5545,8 @@ mod ffi {
         Module,
         SourceRoot,
         Dependency,
+        /// A Maven profile id, checkable (B3).
+        Profile,
     }
 
     /// One row of the Build Tools dock's tree, flattened and
@@ -5569,6 +5571,9 @@ mod ffi {
         /// names none (only a `Module` row carries one today).
         #[cxx_name = "buildFile"]
         build_file: QString,
+        /// Meaningful only for `FfiBuildToolNodeKind::Profile`: whether the
+        /// dock's checkbox for this profile is ticked.
+        checked: bool,
     }
 
     /// The dock's title (computed in Rust from which tools synced
@@ -5637,6 +5642,12 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "setSkipTests"]
         fn set_skip_tests(self: &BuildToolsService, skip_tests: bool);
+
+        /// A Maven profile checkbox was toggled (B3) — fed into every
+        /// task/goal run's `-P<id>` flags from here on.
+        #[qinvokable]
+        #[cxx_name = "setProfileChecked"]
+        fn set_profile_checked(self: Pin<&mut BuildToolsService>, profile: &QString, checked: bool);
 
         /// A project opened (or reopened): detect Gradle/Maven and either
         /// show the trust banner or sync automatically for an

@@ -3,6 +3,8 @@
 //! paints whatever [`rows`] returns and encodes no shaping decision itself
 //! (`docs/architecture/layering.md`'s "cpp/ is a humble view" rule).
 
+use std::collections::HashSet;
+
 use crate::model::{BuildModel, Conflict, Dependency};
 
 /// What kind of row a [`Node`] is — the dock's icon and indent, decided by
@@ -15,6 +17,8 @@ pub enum NodeKind {
     Module,
     SourceRoot,
     Dependency,
+    /// A Maven profile id, checkable — B3's profile checkboxes.
+    Profile,
 }
 
 /// One row of the dock's tree, flattened and parent-qualified — the same
@@ -35,6 +39,11 @@ pub struct Node {
     /// The build file "Open build file" opens — a module's own
     /// `build_file`, empty for a row that names none.
     pub build_file: String,
+    /// Meaningful only for `NodeKind::Profile`: whether this profile is in
+    /// the caller's checked set (`rows`'s own `checked_profiles`
+    /// argument) — the service keeps the checked set, this crate only
+    /// answers "is `label` in it" for the row the service asked to shape.
+    pub checked: bool,
 }
 
 fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -> Node {
@@ -43,6 +52,7 @@ fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -
         parent_id: parent_id.to_string(),
         kind,
         label: label.into(),
+        checked: false,
         detail: String::new(),
         task_path: String::new(),
         build_file: String::new(),
@@ -67,7 +77,7 @@ fn conflict_detail(dependency: &Dependency) -> String {
 /// `Tasks` (grouped by the tool's own `group`/lifecycle string), `Modules`
 /// (each with its source roots as children) and `Dependencies` (grouped by
 /// scope/configuration, per module) underneath.
-pub fn rows(model: &BuildModel) -> Vec<Node> {
+pub fn rows(model: &BuildModel, checked_profiles: &HashSet<String>) -> Vec<Node> {
     let mut out = Vec::new();
     let root_id = format!("root:{}", model.tool.toolchain_id());
     out.push(node(
@@ -179,6 +189,26 @@ pub fn rows(model: &BuildModel) -> Vec<Node> {
         }
     }
 
+    if !model.profiles.is_empty() {
+        let profiles_id = format!("{root_id}:profiles");
+        out.push(node(
+            profiles_id.clone(),
+            &root_id,
+            NodeKind::Group,
+            "Profiles",
+        ));
+        for profile in &model.profiles {
+            let mut row = node(
+                format!("{profiles_id}:{profile}"),
+                &profiles_id,
+                NodeKind::Profile,
+                profile.as_str(),
+            );
+            row.checked = checked_profiles.contains(profile);
+            out.push(row);
+        }
+    }
+
     out
 }
 
@@ -235,13 +265,18 @@ mod tests {
                 },
             ],
             warnings: vec![],
+            profiles: vec!["ci".to_string(), "release".to_string()],
             synced_at: SystemTime::UNIX_EPOCH,
         }
     }
 
+    fn empty_checked() -> HashSet<String> {
+        HashSet::new()
+    }
+
     #[test]
     fn every_row_parents_to_a_row_that_already_exists() {
-        let rows = rows(&sample_model());
+        let rows = rows(&sample_model(), &empty_checked());
         let ids: std::collections::HashSet<&str> = rows.iter().map(|n| n.id.as_str()).collect();
         for row in &rows {
             assert!(
@@ -255,7 +290,7 @@ mod tests {
 
     #[test]
     fn a_task_row_carries_its_own_runnable_path() {
-        let rows = rows(&sample_model());
+        let rows = rows(&sample_model(), &empty_checked());
         let build = rows
             .iter()
             .find(|n| n.kind == NodeKind::Task && n.label == "build")
@@ -265,7 +300,7 @@ mod tests {
 
     #[test]
     fn a_dependency_row_carries_its_conflict_as_the_detail() {
-        let rows = rows(&sample_model());
+        let rows = rows(&sample_model(), &empty_checked());
         let dep = rows
             .iter()
             .find(|n| n.kind == NodeKind::Dependency)
@@ -275,7 +310,7 @@ mod tests {
 
     #[test]
     fn a_source_root_nests_under_its_own_module() {
-        let rows = rows(&sample_model());
+        let rows = rows(&sample_model(), &empty_checked());
         let module = rows
             .iter()
             .find(|n| n.kind == NodeKind::Module)
@@ -287,5 +322,46 @@ mod tests {
             .find(|n| n.kind == NodeKind::SourceRoot)
             .unwrap();
         assert_eq!(source_root.parent_id, module);
+    }
+
+    #[test]
+    fn every_declared_profile_gets_its_own_row_under_one_profiles_group() {
+        let rows = rows(&sample_model(), &empty_checked());
+        let profile_rows: Vec<&Node> = rows
+            .iter()
+            .filter(|n| n.kind == NodeKind::Profile)
+            .collect();
+        assert_eq!(
+            profile_rows
+                .iter()
+                .map(|n| n.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ci", "release"]
+        );
+        let group_id = profile_rows[0].parent_id.clone();
+        assert!(profile_rows.iter().all(|n| n.parent_id == group_id));
+        assert_eq!(
+            rows.iter().find(|n| n.id == group_id).unwrap().label,
+            "Profiles"
+        );
+    }
+
+    #[test]
+    fn a_profile_in_the_checked_set_is_reported_checked_the_rest_are_not() {
+        let checked: HashSet<String> = ["release".to_string()].into_iter().collect();
+        let rows = rows(&sample_model(), &checked);
+        let ci = rows.iter().find(|n| n.label == "ci").unwrap();
+        let release = rows.iter().find(|n| n.label == "release").unwrap();
+        assert!(!ci.checked);
+        assert!(release.checked);
+    }
+
+    #[test]
+    fn a_model_with_no_profiles_has_no_profiles_group_at_all() {
+        let mut model = sample_model();
+        model.profiles.clear();
+        let rows = rows(&model, &empty_checked());
+        assert!(rows.iter().all(|n| n.kind != NodeKind::Profile));
+        assert!(!rows.iter().any(|n| n.label == "Profiles"));
     }
 }

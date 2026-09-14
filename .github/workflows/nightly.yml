@@ -31,6 +31,15 @@ jobs:
     with:
       target: lsp-conformance
 
+  jvm-image:
+    name: JVM image
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/builder-image.yml
+    with:
+      target: linux-jvm
+
   e2e:
     name: E2E flows
     needs: builder-image
@@ -84,3 +93,23 @@ jobs:
 
       - name: Conformance suite
         run: make lsp-conformance-ci
+
+  jvm-integration:
+    name: JVM integration
+    needs: jvm-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ${{ needs.jvm-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: jvm-build-core integration tests
+        run: make jvm-ci

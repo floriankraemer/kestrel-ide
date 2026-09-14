@@ -216,6 +216,71 @@ RUN dotnet tool install --global csharp-ls --version "${CSHARP_LS_VERSION}" \
     && csharp-ls --version
 
 # ---------------------------------------------------------------------------
+# linux-jvm: linux-builder plus Temurin 21, Gradle and Maven, for the
+# jvm-build-core `jvm-integration`-feature tests (jvm-build-tools plan A2,
+# ADR-0057).
+#
+# Deliberately NOT folded into linux-builder, the same "extra weight for a
+# suite most PRs never touch" reasoning the lsp-conformance stage above
+# gives: a JDK plus two build tools is real weight nobody building a
+# non-JVM feature should pay per PR. `make test-jvm` builds and runs this
+# stage nightly/on demand, never through `make test`.
+#
+# Every version is PINNED, for the identical reason rust-analyzer/csharp-ls
+# are above: an unpinned JDK or build tool turns this suite into a random
+# number generator whose red runs mean "upstream changed" as often as "we
+# broke something".
+#
+# The fixture-prewarm RUN (building `tests/fixtures/{gradle,maven}-*` once
+# so their JUnit 5 dependency resolution is cached in this layer for
+# `--offline` use) is added once those fixture projects exist — the plan's
+# A4/A5 tasks, not part of this PR. Until then this stage has the toolchain
+# but nothing prewarmed, and `test-jvm` has no fixtures to run against yet.
+# ---------------------------------------------------------------------------
+FROM linux-builder AS linux-jvm
+
+# Temurin 21 via Eclipse Adoptium's own apt repository — the vendor's
+# recommended install path, not a third-party PPA.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget \
+        gnupg \
+        unzip \
+    && wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
+        | gpg --dearmor -o /usr/share/keyrings/adoptium.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/adoptium.gpg] https://packages.adoptium.net/artifactory/deb bookworm main" \
+        > /etc/apt/sources.list.d/adoptium.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        temurin-21-jdk \
+    && rm -rf /var/lib/apt/lists/* \
+    && java -version
+
+ENV JAVA_HOME=/usr/lib/jvm/temurin-21-jdk-amd64
+ENV PATH="${JAVA_HOME}/bin:${PATH}"
+
+# Gradle's official binary distribution — no wrapper needed for the
+# system-Gradle path `--features jvm-integration` tests use against
+# wrapper-less fixtures (A4's own note: "the real (wrapper-less, system)
+# gradle binary").
+ARG GRADLE_VERSION=8.10.2
+RUN wget -qO /tmp/gradle.zip \
+        "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" \
+    && unzip -q /tmp/gradle.zip -d /opt \
+    && ln -s "/opt/gradle-${GRADLE_VERSION}/bin/gradle" /usr/local/bin/gradle \
+    && rm /tmp/gradle.zip \
+    && gradle --version
+
+# Maven's official binary distribution, from the permanent archive rather
+# than dlcdn.apache.org (which mirrors only the *current* latest release and
+# 404s on an older pinned version the moment a new one ships).
+ARG MAVEN_VERSION=3.9.9
+RUN wget -qO /tmp/maven.tar.gz \
+        "https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz" \
+    && tar -xzf /tmp/maven.tar.gz -C /opt \
+    && ln -s "/opt/apache-maven-${MAVEN_VERSION}/bin/mvn" /usr/local/bin/mvn \
+    && rm /tmp/maven.tar.gz \
+    && mvn --version
+
+# ---------------------------------------------------------------------------
 # linux-artifact-builder: linux-builder + baked-in source, for buildx
 # artifact-extraction builds. Kept separate from linux-builder (used as the
 # dev/test image via `docker run -v $(pwd):/workspace`) so that stage's

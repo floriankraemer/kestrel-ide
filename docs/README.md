@@ -96,6 +96,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan, the
 - [JVM build tools plan](architecture/jvm-build-tools-plan.md) — Gradle and Maven sync, tool window, run, reload, settings, JUnit results and build-file editing, delivered as a `jvm-build-tools` built-in plugin and a new Qt-free `jvm-build-core` crate (ADR-0057); in delivery, carries its own Progress table.
 
 - [LSP conformance](architecture/lsp-conformance.md) — checking the LSP client against a real rust-analyzer; the executable expectations file and why it is not a per-PR gate.
+- [JVM integration](architecture/jvm-integration.md) — checking `jvm-build-core` against a real Gradle/Maven in the `linux-jvm` image; nightly/on-demand like LSP conformance, not a per-PR gate.
 
 ## Design
 

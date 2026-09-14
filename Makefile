@@ -2,6 +2,7 @@ DOCKER ?= docker
 DOCKERFILE := docker/Dockerfile
 LINUX_IMAGE := ide-linux-builder
 LSP_IMAGE := ide-lsp-conformance
+JVM_IMAGE := ide-linux-jvm
 # Named volumes, not bind mounts: the crate registry and the ccache object
 # store must outlive `--rm`, and neither belongs in the source tree. Without
 # them every container start re-downloads the registry and recompiles every
@@ -29,7 +30,7 @@ DOCKER_USER = --user $(shell id -u):$(shell id -g) -e HOME=/tmp
 RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IMAGE)
 
 .PHONY: help all test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
-	lsp-image lsp-conformance lsp-conformance-ci
+	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci
 
 .DEFAULT_GOAL := help
 
@@ -64,6 +65,20 @@ lsp-conformance: lsp-image ## Check the LSP client against real rust-analyzer + 
 lsp-conformance-ci: ## Inner half of `lsp-conformance` — run inside the image
 	cargo test -p lsp-core --test real_server_conformance -- --ignored --nocapture
 	cargo test -p lsp-core --test csharp_conformance -- --ignored --nocapture
+
+# jvm-build-core's `jvm-integration`-feature tests spawn a real gradle/mvn
+# binary against fixture projects — same "own image, nightly/on demand,
+# never per-PR" reasoning as lsp-conformance above (jvm-build-tools plan A2).
+linux-jvm-image: ## Build the linux-jvm image (linux-builder + Temurin 21 + Gradle + Maven)
+	$(DOCKER) build --target linux-jvm -t $(JVM_IMAGE) -f $(DOCKERFILE) .
+
+test-jvm: linux-jvm-image ## Run jvm-build-core's real-toolchain integration tests
+	$(DOCKER) run --rm $(DOCKER_MOUNTS) $(JVM_IMAGE) $(MAKE) jvm-ci
+
+# Inner target: the command line itself, with no Docker wrapper, mirroring
+# `lsp-conformance-ci`'s split.
+jvm-ci: ## Inner half of `test-jvm` — run inside the image
+	cargo nextest run -p jvm-build-core --features jvm-integration
 
 lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings

@@ -71,9 +71,26 @@ pub struct ChangeRouting {
 pub fn route_change(root: &Path, kind: &EventKind, path: &Path) -> ChangeRouting {
     let git_path = classify_git_path(root, path);
     let inside_root = path.strip_prefix(root).is_ok();
+    // The project's own search index (`<root>/.ide-index`, `lib.rs`'s
+    // `INDEX_DIR_NAME`) is exactly the same shape of self-triggering loop
+    // `.git/index.lock` is excluded for above: tantivy's writer commits a
+    // segment (create) then merges/deletes old ones (remove) on its own
+    // schedule, entirely off any user action, and the tree walk already
+    // treats the directory as not part of the project (never shown) — so a
+    // watcher event under it is never project structure and never worth a
+    // VCS refresh either, the same "excluded from both, not just rebuild"
+    // treatment `index.lock` gets.
+    let is_index_dir = path
+        .strip_prefix(root)
+        .ok()
+        .and_then(|relative| relative.components().next())
+        .is_some_and(|first| first.as_os_str() == crate::INDEX_DIR_NAME);
     ChangeRouting {
-        rebuild_tree: inside_root && is_structural_change(kind) && git_path == GitPathKind::NotGit,
-        refresh_vcs: git_path != GitPathKind::IndexLock,
+        rebuild_tree: inside_root
+            && is_structural_change(kind)
+            && git_path == GitPathKind::NotGit
+            && !is_index_dir,
+        refresh_vcs: git_path != GitPathKind::IndexLock && !is_index_dir,
     }
 }
 
@@ -420,6 +437,31 @@ mod route_change_tests {
                     refresh_vcs: false
                 },
                 "expected {kind:?} on .git/index.lock to suppress both"
+            );
+        }
+    }
+
+    // The search index writes into `<root>/.ide-index` on its own schedule
+    // (tantivy segment commits and merges) with no user action behind it —
+    // the same self-triggering-loop shape `.git/index.lock` is excluded
+    // for above, and it is never shown in the tree either (`lib.rs`'s
+    // `DirectoryTree::walk`), so a watcher event under it is never grounds
+    // for a rebuild or a VCS refresh.
+    #[test]
+    fn a_search_index_write_never_rebuilds_the_tree_or_refreshes_vcs() {
+        let root = Path::new("/project");
+        for kind in [
+            EventKind::Create(CreateKind::File),
+            EventKind::Remove(RemoveKind::File),
+        ] {
+            let routing = route_change(root, &kind, &root.join(".ide-index/meta.json"));
+            assert_eq!(
+                routing,
+                ChangeRouting {
+                    rebuild_tree: false,
+                    refresh_vcs: false
+                },
+                "expected {kind:?} on .ide-index/meta.json to suppress both"
             );
         }
     }

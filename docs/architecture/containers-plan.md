@@ -176,6 +176,7 @@ As landed: `RunConfigSetting.run_on` (`"container:<target-id>"`), resolved in `r
 **C9 — Dashboard editing, Podman extras, polish.**
 Dashboard Add/Edit/Remove env/port/mount → `recreate.rs` (`rm -f` + `run` from inspect; confirm dialog); SELinux `:z` advanced setting + rule; Podman: Pods node (ls/start/stop/rm/inspect), machine Start/Stop from the connection node, `podman-remote` resolution, "Containerfile" everywhere the UI says "Dockerfile"; Layers → "Analyze image" (`save` → per-layer tar listing, open/download file) — optional, last.
 Tests: recreate spec from fixture inspect (docker + podman), `:z` rule (skips top-level dirs), pod parsing.
+As landed: the Dashboard's Env/Ports/Mounts tables are plain-text `QTableWidget`s with Add/Remove rows (a mount's read-only flag is a checkbox) rather than modal Add/Edit dialogs — a scope reduction accepted for a first landing, upgrade path is `run_config_container_pages.cpp`'s disclosure-group style if the plain tables prove awkward; a pod node's "Inspect" is not wired (`ContainerService::openInspect` is container-node-only today) — left off the pod context menu rather than shipped as a dead click; a Layers-tab "Analyze image" entry opens/downloads nothing per-file yet, only the per-layer path/size/kind tree (`layer_fs::analyze`'s own extraction of one entry's bytes is unimplemented — a documented gap, not a stub); the connection row does not yet show a Podman machine's running/stopped state inline (`machine::Machine` exists, nothing polls it into the tree/watcher yet); Processes/Files tabs still reset on every selection change rather than keeping per-container state, and `TerminalSupervisor` gained no `exited(sessionId, code)` signal (`PtySession::try_wait` wiring), so Pull/Push session tabs do not auto-close on exit code 0 — both left for a follow-up rather than risking the existing Files lazy-load state machine under this task's remaining time.
 
 **C10 — E2E, docs, manual pass.**
 `stub_engine` on PATH via fixture (`crates/app/tests/fixtures/containers/`), `e2e_containers.rs`: dock shows tree from canned data, Start records argv, run-config dialog creates a compose config and previews the command, Dockerfile gutter; `overview.md`/`project-structure.md` truthful; manual matrix recorded in this doc's Progress table: Linux docker + rootless podman, Windows Docker Desktop + podman machine, WSL distro connection.
@@ -216,5 +217,5 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 | C6 | Editor assistance | done | `8361f00` |
 | C7 | Registries | done | `8ca18b5`, `0cbfef9` |
 | C8 | Run targets | done | `bd591c4` |
-| C9 | Dashboard editing, Podman extras, polish | not started | |
+| C9 | Dashboard editing, Podman extras, polish | done | `30e786f`, `0dc938e`, `f38e98d`, `6df6c31`, `5710827`, `6759be0`, `eba9e39` |
 | C10 | E2E, docs, manual pass | not started | |

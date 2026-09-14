@@ -302,14 +302,17 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                              buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService));
       });
 
-    // Build Tools is global only (`bridge::build_tools`'s own doc comment
-    // explains why: `trusted_roots` must never live in a file a project
-    // could vouch for itself in), so it needs no scope rebuild the way
-    // Analysis/Terminal/Tabs do.
-    context.buildToolsEditor->beginEdit();
-    deferPage([&dialog, buildToolsEditor = context.buildToolsEditor]() {
-        return buildBuildToolsSettingsPage(&dialog, buildToolsEditor);
-    });
+    // Build Tools is project-scoped for the same reason Analysis is: which
+    // Gradle/Maven overrides a checkout wants is a property of the project
+    // at least as often as of the person. `trusted_roots` alone stays
+    // global-only (ADR-0057 §3) — `BuildToolsEditor` never shows or edits
+    // it regardless of scope, see `bridge::build_tools`'s own doc comment.
+    context.buildToolsEditor->beginEdit(appSettings->settingsScope());
+    const int buildToolsIndex =
+      deferPage([&dialog, buildToolsEditor = context.buildToolsEditor, scopedPage]() {
+          return scopedPage(QStringLiteral("buildTools"),
+                            buildBuildToolsSettingsPage(&dialog, buildToolsEditor));
+      });
 
     // Containers is project-scoped for the same reason Terminal/Tabs are:
     // which daemon a checkout talks to is a property of the project at
@@ -556,7 +559,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
        tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
        analysisService = context.analysisService, analysisIndex, containersPage,
        containersIndex, &lazyBuilders, runConfigEditor = context.runConfigEditor,
-       containerService = context.containerService]() {
+       containerService = context.containerService,
+       buildToolsEditor = context.buildToolsEditor, buildToolsIndex]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -625,6 +629,17 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                            buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService)));
               pages->removeWidget(staleAnalysis);
               staleAnalysis->deleteLater();
+          }
+
+          buildToolsEditor->beginEdit(scope);
+          if (!lazyBuilders.contains(buildToolsIndex)) {
+              QWidget *staleBuildTools = pages->widget(buildToolsIndex);
+              pages->insertWidget(
+                buildToolsIndex,
+                scopedPage(QStringLiteral("buildTools"),
+                           buildBuildToolsSettingsPage(&dialog, buildToolsEditor)));
+              pages->removeWidget(staleBuildTools);
+              staleBuildTools->deleteLater();
           }
 
           pages->setCurrentIndex(current);

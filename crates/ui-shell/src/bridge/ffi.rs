@@ -5764,7 +5764,7 @@ mod ffi {
 
         #[qinvokable]
         #[cxx_name = "beginEdit"]
-        fn begin_edit(self: &BuildToolsEditor);
+        fn begin_edit(self: &BuildToolsEditor, scope: &QString);
 
         #[qinvokable]
         fn fields(self: &BuildToolsEditor) -> FfiBuildToolsFields;

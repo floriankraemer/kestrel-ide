@@ -209,31 +209,45 @@ impl BuildToolsDraft {
         problems
     }
 
+    /// The Gradle sub-table this draft would write — its own function so a
+    /// project-scope commit (`BuildToolsProjectSettings`, no
+    /// `trusted_roots` field to speak of) can reuse it without going
+    /// through [`Self::apply_to`]'s whole-`Settings` shape.
+    pub fn to_gradle_settings(&self) -> GradleToolSettings {
+        GradleToolSettings {
+            distribution: (self.gradle_distribution != GradleDistribution::DEFAULT)
+                .then(|| self.gradle_distribution.id().to_string()),
+            gradle_home: self.gradle_home.clone(),
+            java_home: self.gradle_java_home.clone(),
+            offline: self.gradle_offline.then_some(true),
+            auto_reload: (self.gradle_auto_reload != AutoReload::DEFAULT)
+                .then(|| self.gradle_auto_reload.id().to_string()),
+            download_sources: self.gradle_download_sources.then_some(true),
+            jvm_args: self.gradle_jvm_args.clone(),
+        }
+    }
+
+    /// The Maven sub-table this draft would write — see
+    /// [`Self::to_gradle_settings`]'s own doc comment.
+    pub fn to_maven_settings(&self) -> MavenToolSettings {
+        MavenToolSettings {
+            maven_home: self.maven_home.clone(),
+            user_settings_file: self.maven_user_settings_file.clone(),
+            local_repository: self.maven_local_repository.clone(),
+            offline: self.maven_offline.then_some(true),
+            skip_tests: self.maven_skip_tests.then_some(true),
+            threads: self.maven_threads.clone(),
+            always_update_snapshots: self.maven_always_update_snapshots.then_some(true),
+            auto_reload: (self.maven_auto_reload != AutoReload::DEFAULT)
+                .then(|| self.maven_auto_reload.id().to_string()),
+        }
+    }
+
     pub fn apply_to(&self, settings: &mut Settings) {
         settings.build_tools = BuildToolsSettings {
             trusted_roots: self.trusted_roots.clone(),
-            gradle: GradleToolSettings {
-                distribution: (self.gradle_distribution != GradleDistribution::DEFAULT)
-                    .then(|| self.gradle_distribution.id().to_string()),
-                gradle_home: self.gradle_home.clone(),
-                java_home: self.gradle_java_home.clone(),
-                offline: self.gradle_offline.then_some(true),
-                auto_reload: (self.gradle_auto_reload != AutoReload::DEFAULT)
-                    .then(|| self.gradle_auto_reload.id().to_string()),
-                download_sources: self.gradle_download_sources.then_some(true),
-                jvm_args: self.gradle_jvm_args.clone(),
-            },
-            maven: MavenToolSettings {
-                maven_home: self.maven_home.clone(),
-                user_settings_file: self.maven_user_settings_file.clone(),
-                local_repository: self.maven_local_repository.clone(),
-                offline: self.maven_offline.then_some(true),
-                skip_tests: self.maven_skip_tests.then_some(true),
-                threads: self.maven_threads.clone(),
-                always_update_snapshots: self.maven_always_update_snapshots.then_some(true),
-                auto_reload: (self.maven_auto_reload != AutoReload::DEFAULT)
-                    .then(|| self.maven_auto_reload.id().to_string()),
-            },
+            gradle: self.to_gradle_settings(),
+            maven: self.to_maven_settings(),
         };
     }
 }

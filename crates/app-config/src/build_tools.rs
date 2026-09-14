@@ -87,6 +87,24 @@ fn is_default_maven(settings: &MavenToolSettings) -> bool {
     settings == &MavenToolSettings::default()
 }
 
+/// The project's `[build_tools]` override (`ProjectSettings::build_tools`):
+/// the Gradle/Maven sub-tables only, the same shape
+/// [`crate::project_settings::ProjectSettings::containers`] gives
+/// `[containers]`. Structurally carries no `trusted_roots` field at all —
+/// not merely an unread one — so a `trusted_roots` key under a project's
+/// own `[build_tools]` table can never be honoured, ADR-0057 §3's whole
+/// point: the project directory is exactly what the trust gate exists to
+/// guard against, and `serde`'s "unknown field" default (ignore) means a
+/// project file that still writes one is silently no-op rather than a
+/// parse error some other tool would have to explain.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct BuildToolsProjectSettings {
+    #[serde(default, skip_serializing_if = "is_default_gradle")]
+    pub gradle: GradleToolSettings,
+    #[serde(default, skip_serializing_if = "is_default_maven")]
+    pub maven: MavenToolSettings,
+}
+
 impl BuildToolsSettings {
     /// Is `root` (already canonicalised by the caller) one the user has
     /// agreed to sync? A plain `Vec::contains` — canonicalisation happens
@@ -151,6 +169,44 @@ mod tests {
         };
         let text = toml::to_string(&settings).expect("serialize");
         let parsed: BuildToolsSettings = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed, settings);
+    }
+
+    /// ADR-0057 §3: `BuildToolsProjectSettings` has no `trusted_roots`
+    /// field to deserialize into, so a `trusted_roots` key under a
+    /// project's own `[build_tools]` table is silently dropped rather than
+    /// ever taking effect — proven here rather than only asserted in a doc
+    /// comment.
+    #[test]
+    fn trusted_roots_written_into_a_project_table_is_ignored() {
+        let text = "trusted_roots = [\"/etc/passwd\"]\n[gradle]\noffline = true\n";
+        let parsed: BuildToolsProjectSettings = toml::from_str(text).expect("deserialize");
+        assert_eq!(
+            parsed,
+            BuildToolsProjectSettings {
+                gradle: GradleToolSettings {
+                    offline: Some(true),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_configured_project_override_round_trips() {
+        let settings = BuildToolsProjectSettings {
+            gradle: GradleToolSettings {
+                offline: Some(true),
+                ..Default::default()
+            },
+            maven: MavenToolSettings {
+                skip_tests: Some(true),
+                ..Default::default()
+            },
+        };
+        let text = toml::to_string(&settings).expect("serialize");
+        let parsed: BuildToolsProjectSettings = toml::from_str(&text).expect("deserialize");
         assert_eq!(parsed, settings);
     }
 }

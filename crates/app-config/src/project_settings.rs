@@ -202,6 +202,15 @@ pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub containers: Option<ContainerSettings>,
 
+    /// The project's `[build_tools]` override — its own Gradle/Maven
+    /// sub-tables, the same shape `containers` above uses (jvm-build-tools
+    /// plan, ADR-0057 §3). No `trusted_roots` field exists on
+    /// [`crate::BuildToolsProjectSettings`] at all, so a project cannot
+    /// vouch for its own trust regardless of what its `.ide/settings.toml`
+    /// writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_tools: Option<crate::BuildToolsProjectSettings>,
+
     /// Named workspace arrangements the project ships, as a `[layouts]`
     /// table keyed by name.
     ///
@@ -801,6 +810,39 @@ mod tests {
     fn a_project_that_never_touched_tab_padding_has_no_override() {
         let root = project();
         assert!(load(root.path()).unwrap().tab_padding.is_none());
+    }
+
+    /// The jvm-build-tools plan's B: a project file with no `[build_tools]`
+    /// table at all round-trips byte-identically — `save` never invents a
+    /// header for a section the project never touched, the same sparse
+    /// rule every other `Option` field here follows.
+    #[test]
+    fn a_project_without_build_tools_round_trips_byte_identically() {
+        let root = project();
+        save(root.path(), &ProjectSettings::default()).unwrap();
+        let before =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        let settings = load(root.path()).unwrap();
+        assert!(settings.build_tools.is_none());
+        save(root.path(), &settings).unwrap();
+        let after =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn a_project_build_tools_override_round_trips() {
+        let root = project();
+        write_settings(
+            root.path(),
+            "version = 1\n[build_tools.gradle]\noffline = true\n",
+        );
+        let settings = load(root.path()).unwrap();
+        let build_tools = settings.build_tools.as_ref().expect("override present");
+        assert_eq!(build_tools.gradle.offline, Some(true));
+        save(root.path(), &settings).unwrap();
+        let reloaded = load(root.path()).unwrap();
+        assert_eq!(reloaded.build_tools, settings.build_tools);
     }
 
     /// An out-of-range padding is reported, not clamped into range —

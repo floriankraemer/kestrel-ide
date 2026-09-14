@@ -66,7 +66,9 @@ pub mod ai_settings;
 
 pub use ai_settings::{AiProviderSetting, AiToolPolicySetting};
 pub use analysis::{AnalysisSettings, AnalyzerSetting};
-pub use build_tools::{BuildToolsSettings, GradleToolSettings, MavenToolSettings};
+pub use build_tools::{
+    BuildToolsProjectSettings, BuildToolsSettings, GradleToolSettings, MavenToolSettings,
+};
 pub use containers::{
     ContainerConnectionSetting, ContainerSettings, ContainerTargetSetting, RegistrySetting,
 };

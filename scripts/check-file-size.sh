@@ -74,7 +74,11 @@ baseline() {
 	# skip_serializing_if predicate a review found missing, so an untouched
 	# [build_tools] section was emitting an empty header on every save) and
 	# its own round-trip test at the Settings level.
-	crates/app-config/src/lib.rs) echo 1536 ;;
+	# Raised from 1536 by 2 lines: the build_tools re-export gained
+	# BuildToolsProjectSettings (the project's [build_tools] override,
+	# jvm-build-tools plan follow-up), wrapped onto its own line by
+	# rustfmt. No split planned.
+	crates/app-config/src/lib.rs) echo 1538 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)

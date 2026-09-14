@@ -589,12 +589,35 @@ impl ffi::BuildToolsService {
 pub struct BuildToolsEditorRust {
     draft: RefCell<Option<settings_model::build_tools::BuildToolsDraft>>,
     saved: RefCell<Option<settings_model::build_tools::BuildToolsDraft>>,
+    /// The layer this draft came from and will be written back to
+    /// (ADR-0022) — `AnalysisEditor::begin_edit`'s own shape.
+    scope: RefCell<settings_model::Scope>,
 }
 
 impl ffi::BuildToolsEditor {
-    pub fn begin_edit(&self) {
-        let config_dir = app_core::resolve_config_dir();
-        let settings = app_config::load(&config_dir).unwrap_or_default();
+    /// Load the draft from `scope` — `"global"` or `"project"`. Project
+    /// scope shows only the project's own override (defaulted where it
+    /// says nothing), never the resolved/effective value — the same shape
+    /// `AnalysisEditor::begin_edit`'s Project branch uses, and never
+    /// `trusted_roots`, which has no project-scope existence at all
+    /// (ADR-0057 §3).
+    pub fn begin_edit(&self, scope: &QString) {
+        let scope = crate::bridge::settings::scope_from_name(&scope.to_string());
+        *self.scope.borrow_mut() = scope;
+        let settings = match scope {
+            settings_model::Scope::Project => {
+                let project_override = crate::bridge::convert::load_project_settings().build_tools;
+                app_config::Settings {
+                    build_tools: app_config::BuildToolsSettings {
+                        trusted_roots: Vec::new(),
+                        gradle: project_override.clone().unwrap_or_default().gradle,
+                        maven: project_override.unwrap_or_default().maven,
+                    },
+                    ..app_config::Settings::default()
+                }
+            }
+            _ => app_config::load(&app_core::resolve_config_dir()).unwrap_or_default(),
+        };
         let draft = settings_model::build_tools::BuildToolsDraft::new(&settings);
         *self.saved.borrow_mut() = Some(draft.clone());
         *self.draft.borrow_mut() = Some(draft);
@@ -733,6 +756,17 @@ impl ffi::BuildToolsEditor {
         };
         if !draft.validate().is_empty() {
             return errors::failure(errors::CODE_REFUSED, "fix the highlighted fields first");
+        }
+        if *self.scope.borrow() == settings_model::Scope::Project {
+            let gradle = draft.to_gradle_settings();
+            let maven = draft.to_maven_settings();
+            let result = crate::bridge::settings::commit_to_project(move |project| {
+                project.build_tools = Some(app_config::BuildToolsProjectSettings { gradle, maven });
+            });
+            if result.code == 0 {
+                *self.saved.borrow_mut() = Some(draft);
+            }
+            return result;
         }
         let config_dir = app_core::resolve_config_dir();
         let Ok(mut settings) = app_config::load(&config_dir) else {

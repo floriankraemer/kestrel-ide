@@ -27,6 +27,10 @@ regex = "1"
 # not only a literal filename — is_build_file (A6) matches project-relative
 # paths against them.
 globset = "0.4"
+# Reading META-INF/maven/plugin.xml out of a plugin jar in the local Maven
+# repository (A5, maven::goals) — the one place this crate needs to open a
+# jar rather than run a process or parse text.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"

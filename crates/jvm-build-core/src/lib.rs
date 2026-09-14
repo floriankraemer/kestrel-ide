@@ -14,6 +14,7 @@
 //! work and are not present yet — see `docs/architecture/jvm-build-tools-plan.md`.
 
 pub mod gradle;
+pub mod maven;
 pub mod model;
 pub mod run;
 pub mod sync;

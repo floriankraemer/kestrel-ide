@@ -355,12 +355,12 @@ fn spawn_events_child(
         Engine::Docker => "{{json .}}",
         Engine::Podman => "json",
     };
-    let argv = invocation.argv(&["events", "--format", format]);
-    let mut command = std::process::Command::new(&invocation.program);
+    // `Invocation::command`, not a bare `Command::new`: it is the one path
+    // that applies `CREATE_NO_WINDOW`, and this child lives as long as the
+    // connection — a bare spawn parks a visible console on Windows for the
+    // whole session, not the instant a one-shot `inspect` would.
+    let mut command = invocation.command(work_dir, &["events", "--format", format]);
     command
-        .args(&argv)
-        .envs(invocation.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .current_dir(work_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -548,6 +548,36 @@ mod tests {
         assert_eq!(
             received,
             vec![Signal::Change, Signal::Change, Signal::SourceEnded]
+        );
+    }
+
+    /// `sh` standing in for the CLI: the script echoes its argv and one
+    /// environment variable, so this proves the child receives the
+    /// connection's prefix, the `events` argv and its `env` — the three
+    /// things `spawn_events_child` is responsible for handing over.
+    #[cfg(unix)]
+    #[test]
+    fn events_child_runs_the_invocation_with_its_argv_and_env() {
+        use std::io::Read;
+        let invocation = Invocation {
+            program: "sh".to_string(),
+            prefix_args: vec![
+                "-c".to_string(),
+                "printf '%s\\n' \"$STUB_MARK\" \"$@\"".to_string(),
+                "events-stub".to_string(),
+            ],
+            env: vec![("STUB_MARK".to_string(), "marked".to_string())],
+            host: process_exec::host::ExecHost::Local,
+        };
+        let (mut child, mut stdout) =
+            spawn_events_child(&invocation, Engine::Docker, &std::env::temp_dir())
+                .expect("sh spawns");
+        let mut output = String::new();
+        stdout.read_to_string(&mut output).expect("stdout is piped");
+        assert!(child.wait().expect("child exits").success());
+        assert_eq!(
+            output.lines().collect::<Vec<_>>(),
+            ["marked", "events", "--format", "{{json .}}"]
         );
     }
 

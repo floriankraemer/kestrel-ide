@@ -52,7 +52,7 @@ User decisions taken: a **separate `linux-jvm` Docker image** for JVM verificati
 
 ### New crate `jvm-build-core` (support, Qt-free)
 
-Deps: `run-core` (`ToolchainId`, wrapper resolution — `gradle_program`/`maven_program` made `pub`), `process-exec` (`run`/`spawn`, `ExecHost` for WSL roots), `plugin-api` (`BuildToolContribution`), `diagnostics-core` (version hints, sync errors), `app-config` (settings section), plus `serde`, `serde_json`, `quick-xml`, `regex`, `globset`, `zip` (Maven plugin-jar reading, A5 only). No `reqwest` in this phase (P0+A only) — that lands with build-file editing's Maven Central client (phase D). No tokio: every run happens on its own `std::thread`, like `analysis-core`.
+Deps: `run-core` (`ToolchainId`, wrapper resolution — `gradle_program`/`maven_program` made `pub`), `process-exec` (`run`/`spawn`, `ExecHost` for WSL roots), plus `serde`, `serde_json`, `quick-xml`, `globset`, `zip` (Maven plugin-jar reading, A5 only). `plugin-api`, `diagnostics-core` and `app-config` are deliberately **not** dependencies yet in the A-phase — nothing in `model`/`sync`/`run`/`gradle`/`maven` names a type from any of them today (a `BuildToolContribution`'s fields are read by the caller and passed in as plain strings, a sync failure is not yet published as a `Diagnostic`, and `[build_tools]` is read by `settings-model`), and they are added back only in the phase that first has real code needing them rather than carried speculatively. No `regex` either — `globset` alone covers every pattern this phase matches. No `reqwest` in this phase (P0+A only) — that lands with build-file editing's Maven Central client (phase D). No tokio: every run happens on its own `std::thread`, like `analysis-core`.
 
 ```
 src/model.rs      BuildModel { tool, root, modules, tasks, warnings, synced_at }
@@ -67,7 +67,7 @@ src/run.rs         task_config(model, task, opts) -> run_core::RunConfig (tempor
 
 `src/deps.rs` and `src/editing/*` (dependency analyzer views, completion/version-hint editing assistance) are phase D scope and are not built in P0+A.
 
-Layering rows to add: `jvm-build-core` → `run-core`, `process-exec`, `plugin-api`, `diagnostics-core`, `app-config` (No Qt; acyclic — `run-core` already depends on `app-config`).
+Layering rows to add: `jvm-build-core` → `run-core`, `process-exec` (No Qt; acyclic — `run-core` already depends on `app-config`; `plugin-api`/`diagnostics-core`/`app-config` join this crate's own row only once a later phase actually needs them).
 `test-core` gains `globset` for `report-glob`.
 `ui-shell` gaining `jvm-build-core`, and `settings-model::build_tools`/`app-core` gaining it later, are B/B7-phase changes and recorded when those phases land.
 

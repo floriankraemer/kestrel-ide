@@ -112,7 +112,9 @@ impl SaveTracker {
 }
 
 /// Does `relative_path` (project-relative, forward-slash separated) match
-/// one of a [`plugin_api::BuildToolContribution`]'s `build_files` patterns?
+/// one of a `plugin_api::BuildToolContribution`'s `build_files` patterns?
+/// (`plugin-api` is not a dependency of this crate — the caller reads the
+/// contribution and passes its `build_files` list in as plain strings.)
 ///
 /// A pattern with no glob metacharacter (`build.gradle`) matches only that
 /// exact relative path — not "ends with", which would make

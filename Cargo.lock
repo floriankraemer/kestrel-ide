@@ -3469,13 +3469,9 @@ dependencies = [
 name = "jvm-build-core"
 version = "0.1.0"
 dependencies = [
- "app-config",
- "diagnostics-core",
  "globset",
- "plugin-api",
  "process-exec",
  "quick-xml",
- "regex",
  "run-core",
  "serde",
  "serde_json",

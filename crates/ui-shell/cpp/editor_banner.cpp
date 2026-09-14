@@ -1,4 +1,5 @@
 #include "editor_banner.h"
+#include "theme.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
@@ -10,11 +11,25 @@ EditorBanner::EditorBanner(BuildToolsService *buildToolsService, QWidget *parent
   : QWidget(parent)
   , buildToolsService_(buildToolsService)
 {
+    // A plain widget spliced into the dock manager's tree rather than one
+    // of its own dock/area classes, so `dockStyleSheet()`'s cascade is not
+    // reliable for it (confirmed against a screenshot, not assumed) — set
+    // directly from the active theme's palette instead. Does not follow a
+    // live theme switch; acceptable for a bar shown only while a prompt is
+    // pending, and easy to revisit if that gap ever matters.
+    const ChromePalette palette = chromePaletteForTheme(activeThemeName());
+    setStyleSheet(QStringLiteral("QWidget#editorBanner { background-color: %1; "
+                                 "border-bottom: 1px solid %2; }")
+                    .arg(palette.surface2.name(), palette.border.name()));
+    setObjectName(QStringLiteral("editorBanner"));
+
     label_ = new QLabel(this);
     primaryButton_ = new QPushButton(this);
     secondaryButton_ = new QPushButton(this);
 
     auto *layout = new QHBoxLayout(this);
+    layout->setContentsMargins(12, 8, 12, 8);
+    layout->setSpacing(8);
     layout->addWidget(label_, 1);
     layout->addWidget(primaryButton_);
     layout->addWidget(secondaryButton_);

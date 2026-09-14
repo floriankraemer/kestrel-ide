@@ -8,6 +8,7 @@
 #include "DockWidget.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -19,6 +20,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -32,6 +34,33 @@ constexpr int kToolRole = Qt::UserRole + 1;
 constexpr int kRunnableRole = Qt::UserRole + 2;
 constexpr int kBuildFileRole = Qt::UserRole + 3;
 constexpr int kIsProfileRole = Qt::UserRole + 4;
+
+// A row icon per kind (review fix 3, pixel scrutiny): plain platform-style
+// icons, the same "no vendored asset for a handful of kinds" call
+// `tests_panel.cpp`'s own status dot makes, rather than the project tree's
+// icon-theme pipeline — that pipeline resolves a *file's* icon from its
+// path/language, which a Gradle task or a Maven scope has neither of.
+QIcon iconForKind(FfiBuildToolNodeKind kind)
+{
+    QStyle *style = QApplication::style();
+    switch (kind) {
+    case FfiBuildToolNodeKind::ToolRoot:
+        return style->standardIcon(QStyle::SP_DriveHDIcon);
+    case FfiBuildToolNodeKind::Group:
+        return style->standardIcon(QStyle::SP_DirIcon);
+    case FfiBuildToolNodeKind::Task:
+        return style->standardIcon(QStyle::SP_MediaPlay);
+    case FfiBuildToolNodeKind::Module:
+        return style->standardIcon(QStyle::SP_DirClosedIcon);
+    case FfiBuildToolNodeKind::SourceRoot:
+        return style->standardIcon(QStyle::SP_FileIcon);
+    case FfiBuildToolNodeKind::Dependency:
+        return style->standardIcon(QStyle::SP_FileDialogDetailedView);
+    case FfiBuildToolNodeKind::Profile:
+        return QIcon();
+    }
+    return QIcon();
+}
 
 QString titleFor(FfiBuildToolTitleKind kind)
 {
@@ -188,6 +217,7 @@ void BuildToolsPanel::refreshTree()
         auto *item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
         item->setText(0, QString(node.label));
         item->setText(1, QString(node.detail));
+        item->setIcon(0, iconForKind(node.kind));
         item->setData(0, kIdRole, id);
         item->setData(0, kToolRole, QString(node.tool));
         item->setData(0, kRunnableRole, node.kind == FfiBuildToolNodeKind::Task);

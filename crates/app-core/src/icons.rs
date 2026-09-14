@@ -186,6 +186,23 @@ impl IconService {
         Some(format!("{}{KEY_SEPARATOR}{icon}", theme.pack.id))
     }
 
+    /// The same key [`Self::icon_key`] would give a folder literally named
+    /// `canonical_name`, for a source root a build tool reported whose real
+    /// directory name is something else entirely (Maven's `src/main/java`
+    /// is a directory named `main`) — the jvm-build-tools plan's B7,
+    /// `app_core::build_tools_tree::FolderRole::canonical_name` is this
+    /// argument's producer.
+    pub fn folder_icon_key(
+        &self,
+        canonical_name: &str,
+        expanded: bool,
+        appearance: Appearance,
+    ) -> Option<String> {
+        let theme = self.active.as_ref()?;
+        let icon = theme.pack.folder_icon(canonical_name, expanded, appearance);
+        Some(format!("{}{KEY_SEPARATOR}{icon}", theme.pack.id))
+    }
+
     /// Premultiplied RGBA8 for `key` at `px` by `px`, `px * px * 4` bytes.
     ///
     /// `None` when no theme is active, when the key belongs to a pack that

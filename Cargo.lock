@@ -185,6 +185,7 @@ dependencies = [
  "color-theme",
  "editor-core",
  "icon-theme",
+ "jvm-build-core",
  "markdown-preview",
  "plugin-host",
  "project-model",

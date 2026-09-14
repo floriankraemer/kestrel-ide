@@ -10,6 +10,7 @@
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
+class QPushButton;
 class QTableWidget;
 class QTabWidget;
 class QTreeWidget;
@@ -66,6 +67,9 @@ public:
     // Labels — opened on request, same lazy-tab shape as Processes/Files.
     void showLayers();
     void showLabels();
+    // C9: the Layers tab's "Analyze image" button — a per-layer tree of
+    // path/size/kind, from a headers-only `save` tar walk.
+    void triggerAnalyzeImage();
 
     // C4: the Images console's Pull button and the Pull toolbar action —
     // a closable "Pull: <reference>" `TerminalWidget` tab, not tied to
@@ -130,6 +134,11 @@ private:
 
     QWidget *layersPage_ = nullptr;
     QTableWidget *layersTable_ = nullptr;
+    QPushButton *analyzeImageButton_ = nullptr;
+    // C9: per-layer path/size/kind, populated from `layerFsReady`. A top-
+    // level item per layer id, one child per entry — no per-entry open/
+    // download yet (a documented gap; see the PR description).
+    QTreeWidget *layerFsTree_ = nullptr;
 
     QWidget *labelsPage_ = nullptr;
     QTableWidget *labelsTable_ = nullptr;

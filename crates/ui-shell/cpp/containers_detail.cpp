@@ -6,6 +6,7 @@
 #include <QFileDialog>
 #include <QFont>
 #include <QFormLayout>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -14,6 +15,7 @@
 #include <QLocale>
 #include <QMenu>
 #include <QPoint>
+#include <QPushButton>
 #include <QTabBar>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -176,6 +178,39 @@ ContainerDetailArea::ContainerDetailArea(ContainerService *containerService,
                 }
                 layersTable_->resizeColumnsToContents();
             });
+
+    connect(containerService_, &ContainerService::layerFsReady, this,
+            [this](const QString &nodeId, const QString &lines) {
+                if (nodeId != nodeId_ || layerFsTree_ == nullptr) {
+                    return;
+                }
+                layerFsTree_->clear();
+                QHash<QString, QTreeWidgetItem *> layerItems;
+                for (const QString &line : lines.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                    const QStringList fields = line.split(QLatin1Char('\t'));
+                    if (fields.size() != 4) {
+                        continue;
+                    }
+                    const QString &layerId = fields.at(0);
+                    QTreeWidgetItem *layerItem = layerItems.value(layerId);
+                    if (layerItem == nullptr) {
+                        layerItem = new QTreeWidgetItem(layerFsTree_, {layerId});
+                        layerItems.insert(layerId, layerItem);
+                    }
+                    const qint64 size = fields.at(2).toLongLong();
+                    const QString kind = fields.at(3);
+                    const QString glyph = kind == QStringLiteral("deleted")   ? tr("- ")
+                                          : kind == QStringLiteral("modified") ? tr("~ ")
+                                                                               : tr("+ ");
+                    new QTreeWidgetItem(layerItem, {glyph + fields.at(1),
+                                                    kind == QStringLiteral("deleted")
+                                                      ? QString()
+                                                      : QLocale().formattedDataSize(size),
+                                                    kind});
+                }
+                layerFsTree_->expandAll();
+                layerFsTree_->resizeColumnToContents(0);
+            });
 }
 
 void ContainerDetailArea::onSelectionChanged(const QString &nodeId, const QString &kind)
@@ -205,6 +240,8 @@ void ContainerDetailArea::onSelectionChanged(const QString &nodeId, const QStrin
         layersPage_->deleteLater();
         layersPage_ = nullptr;
         layersTable_ = nullptr;
+        analyzeImageButton_ = nullptr;
+        layerFsTree_ = nullptr;
     }
     if (labelsPage_ != nullptr) {
         tabs_->removeTab(tabs_->indexOf(labelsPage_));
@@ -659,11 +696,32 @@ void ContainerDetailArea::showLayers()
         layersTable_->setHorizontalHeaderLabels(
           {tr("Layer ID"), tr("Size"), tr("Created"), tr("Created By")});
         layout->addWidget(layersTable_);
+
+        analyzeImageButton_ = new QPushButton(tr("Analyze image"), layersPage_);
+        connect(analyzeImageButton_, &QPushButton::clicked, this,
+                &ContainerDetailArea::triggerAnalyzeImage);
+        layout->addWidget(analyzeImageButton_, 0, Qt::AlignLeft);
+
+        layerFsTree_ = new QTreeWidget(layersPage_);
+        layerFsTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        layerFsTree_->setColumnCount(3);
+        layerFsTree_->setHeaderLabels({tr("Path"), tr("Size"), tr("Kind")});
+        layout->addWidget(layerFsTree_, 1);
+
         const int layersIndex = tabs_->addTab(layersPage_, tr("Layers"));
         tabs_->tabBar()->setTabButton(layersIndex, QTabBar::RightSide, nullptr);
     }
     tabs_->setCurrentWidget(layersPage_);
     containerService_->imageLayers(nodeId_);
+}
+
+void ContainerDetailArea::triggerAnalyzeImage()
+{
+    if (nodeId_.isEmpty() || kind_ != QStringLiteral("image") || layerFsTree_ == nullptr) {
+        return;
+    }
+    layerFsTree_->clear();
+    containerService_->analyzeImage(nodeId_);
 }
 
 void ContainerDetailArea::showLabels()

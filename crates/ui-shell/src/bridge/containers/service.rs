@@ -279,6 +279,15 @@ impl ContainerServiceRust {
 }
 
 impl ffi::ContainerService {
+    /// Whether `connection_id` is a [`container_core::connection::
+    /// ConnectionKind::PodmanMachine`] connection (C9) — the connection
+    /// node's context menu asks this before offering "Start machine"/
+    /// "Stop machine", since no FFI row otherwise carries a connection's
+    /// kind (only its engine, `FfiConnectionSummary::engine`).
+    pub fn is_podman_machine_connection(&self, connection_id: &QString) -> bool {
+        podman_machine_name(&connection_id.to_string()).is_some()
+    }
+
     pub fn nodes(&self) -> Vec<ffi::FfiContainerNode> {
         let configured = configured_connections();
         let connections = self.connections.borrow();

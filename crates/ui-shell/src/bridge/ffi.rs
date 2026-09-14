@@ -6115,6 +6115,16 @@ mod ffi {
         /// (the cpp context menu asks `nodeActions`... no — asks this
         /// connection's own kind, already known from `connections()`; see
         /// `containers_panel.cpp`'s context-menu builder).
+        /// Whether `connection_id`'s kind is `PodmanMachine` — the
+        /// connection node's context menu asks this before offering
+        /// "Start machine"/"Stop machine".
+        #[qinvokable]
+        #[cxx_name = "isPodmanMachineConnection"]
+        fn is_podman_machine_connection(
+            self: &ContainerService,
+            connection_id: &QString,
+        ) -> bool;
+
         #[qinvokable]
         #[cxx_name = "startMachine"]
         fn start_machine(self: Pin<&mut ContainerService>, connection_id: &QString) -> FfiResult;

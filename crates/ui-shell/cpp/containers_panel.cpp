@@ -679,6 +679,9 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         disconnectAction->setEnabled(!disconnected);
         QAction *refreshAction = menu.addAction(tr("Refresh"));
         refreshAction->setEnabled(!disconnected);
+        QAction *startMachine = nullptr;
+        QAction *stopMachine = nullptr;
+        addMachineActions(menu, id, startMachine, stopMachine);
         menu.addSeparator();
         QAction *editAction = menu.addAction(tr("Edit configuration..."));
         QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
@@ -690,12 +693,20 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
             report(containerService_->refresh(id));
         } else if (chosen == editAction && openSettings_) {
             openSettings_(QString());
+        } else if (chosen != nullptr && chosen == startMachine) {
+            report(containerService_->startMachine(id));
+        } else if (chosen != nullptr && chosen == stopMachine) {
+            report(containerService_->stopMachine(id));
         }
         return;
     }
 
     if (kind == QStringLiteral("container")) {
         showContainerContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("pod")) {
+        showPodContextMenu(item, tree_->viewport()->mapToGlobal(pos));
         return;
     }
     if (kind == QStringLiteral("containers-group")) {

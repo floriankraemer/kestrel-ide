@@ -584,6 +584,10 @@ fn main() {
         // "Registry…" entry, and the Push Image dialog — split out under
         // the same file-size ratchet reasoning as the three files above.
         .cpp_file("cpp/containers_registry.cpp")
+        // C9: the pod node's context menu and a Podman connection's Start
+        // machine/Stop machine entries — split out under the same
+        // file-size ratchet reasoning as the files above.
+        .cpp_file("cpp/containers_podman.cpp")
         // C3: the per-container detail tab area (Log/Terminal/Exec/Attach/
         // Processes/Files). Declares Q_OBJECT (it connects to
         // `ContainerService`'s signals), so its header runs through moc too.

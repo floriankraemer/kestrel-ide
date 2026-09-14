@@ -54,7 +54,9 @@ QIcon iconForKind(FfiBuildToolNodeKind kind)
     case FfiBuildToolNodeKind::Module:
         return style->standardIcon(QStyle::SP_DirClosedIcon);
     case FfiBuildToolNodeKind::SourceRoot:
-        return style->standardIcon(QStyle::SP_FileIcon);
+        // A source root is a directory (`src/main/java`), so it gets the
+        // same folder glyph a module does, not a file's.
+        return style->standardIcon(QStyle::SP_DirIcon);
     case FfiBuildToolNodeKind::Dependency:
         return style->standardIcon(QStyle::SP_FileDialogDetailedView);
     case FfiBuildToolNodeKind::Profile:

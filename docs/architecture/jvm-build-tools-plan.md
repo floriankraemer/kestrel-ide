@@ -124,7 +124,7 @@ Update the row **in the same commit** that finishes the task.
 | B5 — Build Tools settings page (project-scoped) | open | |
 | B6 — status-bar sync indicator | open | |
 | B7 — project-tree source-root/output-dir decoration (`app-core` gains `jvm-build-core`) | open | |
-| B8 — Maven `-pl` build target | open | |
+| B8 — Maven `-pl` build target | done | `77fa9dc` |
 
 ### C — tests (later PR)
 

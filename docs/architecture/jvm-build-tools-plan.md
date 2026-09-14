@@ -103,14 +103,15 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| P0 — plan doc + ADR-0057 + `docs/README.md` + `layering.md` | open | |
-| A1 — `plugin-api`: split `manifest.rs` tests out; `build-tools` point + test-framework fields + validation + round-trip tests | done | `8cd1ba5` |
-| A2 — `linux-jvm` image, `JVM_IMAGE`/`make test-jvm`/`jvm-ci`, nightly job, `jvm-integration.md` | done | `e01f856` |
-| A3 — `plugin-host`: on-demand `asset_dir()` materialisation, `${asset_dir}` expansion, `build_tools()` accessor; builtin registration with the init-script asset + "asset exists" test | done | `50eae4e` |
-| A4 — `jvm-build-core::model` + `gradle::*`: init script + JSON parse; fixture JSON unit tests; `--features jvm-integration` tests against `tests/fixtures/gradle-{single,multi-kts,catalog}` | done | `90908a1` |
-| A5 — `maven::*`: static pom, effective-pom, verbose dep tree (conflicts), plugin goals, lifecycle table; fixtures `maven-{single,multi}` | done | `dca5dd7` |
-| A6 — `sync.rs` policy (three modes, save/watcher dedupe) + trust rule + build-file globs; `run.rs` task → temporary config | done | `4294353` |
-| A7 — `app-config` `[build_tools]` sections + `settings-model::build_tools` draft/scope/validation | done | `1add6d6` |
+| P0 — plan doc + ADR-0057 + `docs/README.md` + `layering.md` | done | `064d25f` |
+| A1 — `plugin-api`: split `manifest.rs` tests out; `build-tools` point + test-framework fields + validation + round-trip tests | done | `184396b` |
+| A2 — `linux-jvm` image, `JVM_IMAGE`/`make test-jvm`/`jvm-ci`, nightly job, `jvm-integration.md` | done | `a74939a`, `5b7b4ae` (fixture prewarm), `9fcd39e` (non-root `RUN_JVM` fix) |
+| A3 — `plugin-host`: on-demand `asset_dir()` materialisation, `${asset_dir}` expansion, `build_tools()` accessor; builtin registration with the init-script asset + "asset exists" test | done | `800ac7c`, `0979e1c` (write-then-rename) |
+| A4 — `jvm-build-core::model` + `gradle::*`: init script + JSON parse; fixture JSON unit tests; `--features jvm-integration` tests against `tests/fixtures/gradle-{single,multi-kts,catalog}` | done | `9abbf0b`, `3c81028`/`9dc3243` (review fixes) |
+| A5 — `maven::*`: static pom, effective-pom, verbose dep tree (conflicts), plugin goals, lifecycle table; fixtures `maven-{single,multi}` | done | `8e812d9`, `de4fe1f`/`777459a` (review fixes) |
+| A6 — `sync.rs` policy (three modes, save/watcher dedupe) + trust rule + build-file globs; `run.rs` task → temporary config | done | `866abd6` |
+| A7 — `app-config` `[build_tools]` sections + `settings-model::build_tools` draft/scope/validation | done | `d55851c`, `3a186e3`/`b34bb37` (review fixes) |
+| Review fixes not tied to one task above | done | `b4e4195` (Tests dock regression, `test-core`/`ui-shell`), `16a5cb5` (unused deps, layering.md) |
 
 ### B — sync, tool window, run, reload, settings (later PR)
 

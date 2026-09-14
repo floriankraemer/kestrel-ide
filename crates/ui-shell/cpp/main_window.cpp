@@ -135,11 +135,7 @@ struct CentralWidgets
     DebugPanel *debugPanel;
     MarkdownPreviewPanel *previewPanel;
     ContainersPanel *containersPanel;
-    // The jvm-build-tools plan's B1-B4: where `wireBuildTools` (called once
-    // the View menu and `SettingsContext` exist) puts the dock and splices
-    // the editor banner in.
-    ads::CDockAreaWidget *rightArea;
-    ads::CDockWidget *editorDock;
+    BuildToolsPanel *buildToolsPanel;
 };
 
 CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeModel,
@@ -150,7 +146,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    BuildService *buildService, DebugService *debugService,
                                    TestService *testService, PreviewProvider *previewProvider,
                                    AnalysisService *analysisService,
-                                   ContainerService *containerService)
+                                   ContainerService *containerService,
+                                   BuildToolsService *buildToolsService)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -384,6 +381,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
     auto *containersPanel = buildContainersDock(dockManager, docks, bottomArea, containerService, terminalSupervisor, appSettings, openAt);
+    auto *buildToolsPanel = wireBuildToolsDock(dockManager, docks, rightArea, editorDock, buildToolsService, runService, treeModel, editorTabs);
 
     // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -626,8 +624,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                            searchEverywhereDialog,
                            problemsPanel,    aiChatPanel,      changesPanel,
                            fileHistoryPanel, runConsolePanel,  buildPanel,
-                           debugPanel,       previewPanel,     containersPanel,
-                           rightArea,        editorDock};
+                           debugPanel,       previewPanel,     containersPanel, buildToolsPanel};
 }
 
 // Menu structure per US-5 acceptance criteria. "Open Folder..." and the
@@ -708,10 +705,8 @@ void buildMainWindow(AppSettings *appSettings,
     // The PHP tooling plan's D4: one test-run adapter per window, same rule.
     auto *testService = new TestService(window);
     auto *containerService = new ContainerService(window); // C2: connects nothing until asked.
-    // The jvm-build-tools plan's B1/B5: one Gradle/Maven adapter per
-    // window, same "nothing runs until asked" rule as the others above.
-    auto *buildToolsService = new BuildToolsService(window);
-    auto *buildToolsEditor = new BuildToolsEditor(window);
+    auto *buildToolsService = new BuildToolsService(window); // B1: nothing runs until asked.
+    auto *buildToolsEditor = new BuildToolsEditor(window); // B5: the Build Tools settings draft.
     // D3-1: one debug adapter per window. It owns the breakpoints, which
     // exist with no session at all, so it is built before any project opens
     // and told to load them when one does.
@@ -739,7 +734,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
                           buildService, debugService, testService, previewProvider,
-                          analysisService, containerService);
+                          analysisService, containerService, buildToolsService);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5
@@ -1091,12 +1086,11 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu,
                    buildToolsService);
-    wireBuildTools(central.dockManager, central.docks, central.rightArea, central.editorDock,
-                   buildToolsService, runService, treeModel, editorTabs, window, appSettings,
-                   *actions, viewMenu, [window, settingsContext, appSettings]() {
-                       appSettings->setSettingsScope(QStringLiteral("global"));
-                       showSettingsDialog(window, settingsContext, QObject::tr("Build Tools"));
-                   });
+    wireBuildToolsMenuAndSettings(window, appSettings, *actions, central.docks, viewMenu, central.buildToolsPanel,
+                                  [window, settingsContext, appSettings]() {
+                                      appSettings->setSettingsScope(QStringLiteral("global"));
+                                      showSettingsDialog(window, settingsContext, QObject::tr("Build Tools"));
+                                  });
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
     buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu, treeModel, containerService);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);

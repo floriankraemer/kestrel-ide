@@ -157,26 +157,39 @@ baseline() {
 	# the same per-dock footprint as the Git history docks above; the
 	# panel, its menu and its wiring live in containers_panel.cpp /
 	# containers_menu.cpp.
-	# Raised from 1230 by 19 lines for the jvm-build-tools plan's B1-B6:
-	# constructing BuildToolsService/BuildToolsEditor alongside the other
-	# per-window services/editors, two new CentralWidgets fields
-	# (rightArea/editorDock, so wireBuildTools can splice the editor
-	# banner and place the dock once the View menu and SettingsContext
-	# exist), one new SettingsContext field, extending the existing
-	# buildStatusBar/buildBuildMenu calls with one argument each, and the
-	# one wireBuildTools(...) call itself — dock construction, the
-	# banner, the View menu entry, the Settings button's handler and the
-	# two relays all live in build_tools_wiring.cpp, following the
-	# buildContainersDock/buildContainersMenu footprint above. No split
-	# planned.
-	crates/ui-shell/cpp/main_window.cpp) echo 1249 ;;
-	# Raised from the 1200 ceiling by 6 lines for the jvm-build-tools
-	# plan's B4: a save of an open build file also reaches
-	# BuildToolsService::fileSaved (setBuildToolsService's own forward,
-	# mirroring setVcsService's shape), right where saveTab already
-	# forwards to LanguageService::documentSaved. No split planned for
-	# these 6 lines alone.
-	crates/ui-shell/cpp/editor_tabs.cpp) echo 1206 ;;
+	# Raised from 1230 by 13 lines for the jvm-build-tools plan's B1-B6
+	# (review fix 4 cut this from an initial 19): constructing
+	# BuildToolsService/BuildToolsEditor alongside the other per-window
+	# services/editors (2 lines), one new CentralWidgets field
+	# (buildToolsPanel — exactly the containersPanel precedent, not the
+	# two raw dock-area pointers an earlier version of this change
+	# carried), one new BuildToolsService parameter on
+	# buildCentralWidget's own signature, the one
+	# wireBuildToolsDock(...) call inside it (dock construction, the
+	# editor banner splice and the two relays all live in
+	# build_tools_wiring.cpp — this is the one call site,
+	# buildContainersDock's own footprint), one new SettingsContext
+	# field, one argument each added to the existing
+	# buildStatusBar/buildBuildMenu calls, and the one
+	# wireBuildToolsMenuAndSettings(...) call for the View menu entry
+	# and the dock's Settings button (the same shape
+	# buildContainersMenu/central.containersPanel->setOpenSettingsHandler
+	# already have, split for the same reason: the View menu and
+	# SettingsContext do not exist yet inside buildCentralWidget). No
+	# further split planned.
+	crates/ui-shell/cpp/main_window.cpp) echo 1243 ;;
+	# Raised from the 1200 ceiling by 3 lines for the jvm-build-tools
+	# plan's B4, review fix 4: a save of an open build file also reaches
+	# BuildToolsService::fileSaved, right where saveTab already forwards
+	# to LanguageService::documentSaved. The 3 lines are the minimum an
+	# `if` guarding one call can cost with this file's own brace style
+	# (every other conditional in this function uses braces); the
+	# forward itself is a callback (`setDocumentSavedCallback`, this
+	# class's own idiom — see `setPreviewChangedCallback` and friends)
+	# set from `build_tools_wiring.cpp`, not a second EditorTabs-owned
+	# service pointer, so this is the whole cost, not part of a larger
+	# one. No split planned for these 3 lines alone.
+	crates/ui-shell/cpp/editor_tabs.cpp) echo 1203 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

@@ -18,25 +18,31 @@ class CDockWidget;
 
 namespace ui_shell {
 
+class BuildToolsPanel;
 class DockRegistry;
 class EditorTabs;
 
-// Every touch point the jvm-build-tools plan's B1-B4/B6 phase needs beyond
-// the Rust bridge itself, in one call from `main_window.cpp`: the dock
-// (B2), the editor banner (B4) spliced above the existing editor widget,
-// the View menu's `view.buildTools` entry, the Settings button's handler,
-// and the two C++ relays (`watchedFileChanged`, and a save via
-// `EditorTabs::setBuildToolsService`) — `main_window.cpp` sits at its own
-// line-count baseline (ADR-0025), so this is the one call it makes rather
-// than building any of this inline, the same split
-// `containers_panel.cpp`/`tests_panel.cpp` already follow. Returns nothing:
-// every collaborator the panel/menu/relays need past construction time is
-// reached through the QObjects passed in here, not handed back out.
-void wireBuildTools(ads::CDockManager *dockManager, DockRegistry *docks,
-                     ads::CDockAreaWidget *rightArea, ads::CDockWidget *editorDock,
-                     BuildToolsService *buildToolsService, RunService *runService,
-                     ProjectTreeModel *treeModel, EditorTabs *editorTabs, QMainWindow *window,
-                     AppSettings *appSettings, QHash<QString, QAction *> &actions, QMenu *viewMenu,
-                     std::function<void()> openSettings);
+// The dock (B2), the editor banner (B4) spliced above the existing editor
+// widget, and the two C++ relays (`watchedFileChanged`, and a save via
+// `EditorTabs::setBuildToolsService`) — everything `buildCentralWidget`
+// already has the collaborators for, called from inside it exactly where
+// `buildContainersDock` is (`main_window.cpp`'s own footprint stays one
+// call plus one `CentralWidgets` field, `buildToolsPanel`, the same shape
+// `containersPanel` already has). Returns the panel so
+// `wireBuildToolsMenuAndSettings` (below) can reach it once the View menu
+// and `SettingsContext` exist, which `buildCentralWidget` does not have.
+BuildToolsPanel *wireBuildToolsDock(ads::CDockManager *dockManager, DockRegistry *docks,
+                                     ads::CDockAreaWidget *rightArea, ads::CDockWidget *editorDock,
+                                     BuildToolsService *buildToolsService, RunService *runService,
+                                     ProjectTreeModel *treeModel, EditorTabs *editorTabs);
+
+// The View menu's `view.buildTools` entry and the dock's Settings button
+// handler — called once from the View-menu section, the same place
+// `buildContainersMenu`/`central.containersPanel->setOpenSettingsHandler`
+// already are.
+void wireBuildToolsMenuAndSettings(QMainWindow *window, AppSettings *appSettings,
+                                    QHash<QString, QAction *> &actions, DockRegistry *docks,
+                                    QMenu *viewMenu, BuildToolsPanel *panel,
+                                    std::function<void()> openSettings);
 
 } // namespace ui_shell

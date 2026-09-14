@@ -37,28 +37,20 @@ void insertEditorBanner(ads::CDockWidget *editorDock, BuildToolsService *buildTo
 
 } // namespace
 
-void wireBuildTools(ads::CDockManager *dockManager, DockRegistry *docks,
-                     ads::CDockAreaWidget *rightArea, ads::CDockWidget *editorDock,
-                     BuildToolsService *buildToolsService, RunService *runService,
-                     ProjectTreeModel *treeModel, EditorTabs *editorTabs, QMainWindow *window,
-                     AppSettings *appSettings, QHash<QString, QAction *> &actions, QMenu *viewMenu,
-                     std::function<void()> openSettings)
+BuildToolsPanel *wireBuildToolsDock(ads::CDockManager *dockManager, DockRegistry *docks,
+                                     ads::CDockAreaWidget *rightArea, ads::CDockWidget *editorDock,
+                                     BuildToolsService *buildToolsService, RunService *runService,
+                                     ProjectTreeModel *treeModel, EditorTabs *editorTabs)
 {
     auto openAt = [editorTabs](const QString &path, int line, int column) {
         editorTabs->openFileAtLine(path, line, column);
     };
     BuildToolsPanel *panel =
       buildBuildToolsDock(dockManager, docks, rightArea, buildToolsService, runService, openAt);
-    panel->setOpenSettingsHandler(std::move(openSettings));
 
     insertEditorBanner(editorDock, buildToolsService);
-
-    QAction *viewAction = registerAction(viewMenu, QStringLiteral("view.buildTools"),
-                                         QObject::tr("Build Tools"), appSettings, actions);
-    QObject::connect(viewAction, &QAction::triggered, window,
-                      [docks]() { docks->show(QStringLiteral("buildTools")); });
-
-    editorTabs->setBuildToolsService(buildToolsService);
+    editorTabs->setDocumentSavedCallback(
+      [buildToolsService](const QString &path) { buildToolsService->fileSaved(path); });
 
     QObject::connect(treeModel, &ProjectTreeModel::projectOpened, buildToolsService,
                       [buildToolsService](const QString &root) {
@@ -72,6 +64,21 @@ void wireBuildTools(ads::CDockManager *dockManager, DockRegistry *docks,
                       [buildToolsService](const QString &path, qint32) {
                           buildToolsService->fileChanged(path);
                       });
+
+    return panel;
+}
+
+void wireBuildToolsMenuAndSettings(QMainWindow *window, AppSettings *appSettings,
+                                    QHash<QString, QAction *> &actions, DockRegistry *docks,
+                                    QMenu *viewMenu, BuildToolsPanel *panel,
+                                    std::function<void()> openSettings)
+{
+    panel->setOpenSettingsHandler(std::move(openSettings));
+
+    QAction *viewAction = registerAction(viewMenu, QStringLiteral("view.buildTools"),
+                                         QObject::tr("Build Tools"), appSettings, actions);
+    QObject::connect(viewAction, &QAction::triggered, window,
+                      [docks]() { docks->show(QStringLiteral("buildTools")); });
 }
 
 } // namespace ui_shell

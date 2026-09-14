@@ -355,12 +355,12 @@ fn spawn_events_child(
         Engine::Docker => "{{json .}}",
         Engine::Podman => "json",
     };
-    let argv = invocation.argv(&["events", "--format", format]);
-    let mut command = std::process::Command::new(&invocation.program);
+    // `Invocation::command`, not a bare `Command::new`: it is the one path
+    // that applies `CREATE_NO_WINDOW`, and this child lives as long as the
+    // connection — a bare spawn parks a visible console on Windows for the
+    // whole session, not the instant a one-shot `inspect` would.
+    let mut command = invocation.command(work_dir, &["events", "--format", format]);
     command
-        .args(&argv)
-        .envs(invocation.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .current_dir(work_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

@@ -350,6 +350,14 @@ pub fn is_compose_file_name(path: &Path) -> bool {
     container_core::compose_file::is_compose_file(path)
 }
 
+/// Whether `path`'s own name marks it a Containerfile rather than a
+/// Dockerfile (C9) — the gutter popup and "New Configuration..." wording
+/// pick between the two words with this, one rule shared with
+/// `container_core::run_config::is_named_containerfile`.
+pub fn is_named_containerfile(path: &Path) -> bool {
+    container_core::run_config::is_named_containerfile(path)
+}
+
 /// A `kind = "containerfile"` suggestion when the project root has a
 /// `Dockerfile` or `Containerfile` — `RunConfigExt::toolchain` stays `None`
 /// for it (a container flavor is not a build tool, ADR-0056), so the

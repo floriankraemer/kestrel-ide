@@ -144,8 +144,14 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
     // "run" is ambiguous for them (build only? build and run? which
     // connection?) in a way it is not for `cargo run`.
     if (runService_->canRunContainerfile(path)) {
+        // C9: Podman's naming convention gets its own word in the popup
+        // rather than always saying "Dockerfile" — `isNamedContainerfile`
+        // is the one rule (`container_core::run_config::
+        // is_named_containerfile`), this only picks which translated word.
+        const QString word = runService_->isNamedContainerfile(path) ? tr("Containerfile")
+                                                                       : tr("Dockerfile");
         QMenu menu(editor);
-        QAction *build = menu.addAction(tr("Build Image"));
+        QAction *build = menu.addAction(tr("Build Image from %1").arg(word));
         QAction *run = menu.addAction(tr("Run Container"));
         QAction *newConfig = menu.addAction(tr("New Configuration..."));
         QAction *chosen = menu.exec(QCursor::pos());

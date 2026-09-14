@@ -262,6 +262,24 @@ pub fn containerfile_run_argv(
 }
 
 /// `build -f <context_dir>/<dockerfile> -t <image_tag> [--build-arg k=v]…
+/// Whether `path`'s own file name names it a Containerfile rather than a
+/// Dockerfile (C9) — Podman's convention, `docker build`/`podman build`
+/// both accept either name. The gutter popup and "New Configuration..."
+/// wording pick between the two words with this (`is_named_containerfile
+/// (path) -> "Containerfile" : "Dockerfile"` at the call site), never
+/// hard-coding "Dockerfile" the way JetBrains' own Docker plugin does.
+/// `Dockerfile.<stage>` (the multi-stage suffix convention) still reads as
+/// a Dockerfile, matching `syntax_core`'s own `dockerfile` language entry.
+pub fn is_named_containerfile(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    name == "containerfile" || name.ends_with(".containerfile")
+}
+
+/// `build -t <tag> -f <dockerfile_path> [<build_options…>]
 /// <build_options…> <context_dir>` — the Containerfile configuration's
 /// before-launch build step.
 pub fn containerfile_build_argv(setting: &ContainerfileRunSetting) -> Vec<String> {
@@ -961,5 +979,23 @@ mod tests {
             ..Default::default()
         })
         .is_none());
+    }
+
+    #[test]
+    fn is_named_containerfile_matches_the_podman_convention_case_insensitively() {
+        for name in ["Containerfile", "containerfile", "app.containerfile"] {
+            assert!(is_named_containerfile(Path::new(name)), "{name}");
+        }
+        for name in [
+            "Dockerfile",
+            "dockerfile",
+            "Dockerfile.build",
+            "app.dockerfile",
+        ] {
+            assert!(!is_named_containerfile(Path::new(name)), "{name}");
+        }
+        assert!(is_named_containerfile(Path::new(
+            "/home/f/project/Containerfile"
+        )));
     }
 }

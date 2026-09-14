@@ -8464,6 +8464,12 @@ mod ffi {
         #[cxx_name = "canRunContainerfile"]
         fn can_run_containerfile(self: &RunService, path: &QString) -> bool;
 
+        /// Whether `path`'s gutter popup should say "Containerfile" rather
+        /// than "Dockerfile" (C9) — Podman's naming convention.
+        #[qinvokable]
+        #[cxx_name = "isNamedContainerfile"]
+        fn is_named_containerfile(self: &RunService, path: &QString) -> bool;
+
         /// Whether `path`'s gutter should show the compose popup.
         #[qinvokable]
         #[cxx_name = "canRunComposeFile"]

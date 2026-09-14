@@ -22,6 +22,13 @@ impl ffi::RunService {
         syntax_core::language_for_path(Path::new(&path.to_string())).id() == "dockerfile"
     }
 
+    /// Whether `path`'s gutter popup should say "Containerfile" rather than
+    /// "Dockerfile" (C9) — Podman's naming convention;
+    /// `run_core::detect::is_named_containerfile` is the one rule.
+    pub fn is_named_containerfile(&self, path: &QString) -> bool {
+        run_core::detect::is_named_containerfile(Path::new(&path.to_string()))
+    }
+
     /// Whether `path`'s gutter should show the compose popup — a file-name
     /// rule (compose is a YAML *flavor*, not a language, ADR-0018), the
     /// same one [`crate::bridge::run::detect_compose`] would suggest it

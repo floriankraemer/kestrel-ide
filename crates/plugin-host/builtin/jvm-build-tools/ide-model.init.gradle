@@ -23,10 +23,17 @@
 // supports.
 //
 // The dependency graph is read through `configurations.incoming.resolutionResult`
-// for every configuration that `isCanBeResolved()`, and files through a
-// `lenientArtifactView` — never a plain `configuration.resolve()`, which
-// throws on the first unresolvable dependency instead of reporting it as a
-// warning the way the project model should.
+// for every configuration that `isCanBeResolved()` — never a plain
+// `configuration.resolve()`, which throws on the first unresolvable
+// dependency instead of reporting it the way a project model should, and
+// never a lenient artifact view: nothing here needs artifact *files*, and
+// resolving every artifact of every configuration just to discard the
+// paths would force a download of the whole dependency graph on every
+// sync. `direct` (whether Gradle resolved a dependency edge straight off
+// the configuration's own root) comes from the resolution result itself,
+// not from `selectionReason`'s text, which reports "requested" for a
+// transitively-pulled, BOM-managed artifact as often as for a real direct
+// one.
 
 import java.nio.file.Files
 import java.nio.file.Paths
@@ -100,16 +107,37 @@ Map buildModule(Project p) {
     def dependencies = []
     p.configurations.matching { it.isCanBeResolved() }.each { config ->
         def resolutionResult = config.incoming.resolutionResult
-        def lenientView = config.incoming.artifactView { viewSpec -> viewSpec.lenient(true) }
-        def files = lenientView.files.files.collectEntries { f -> [(f.name): f.absolutePath] }
+        def root = resolutionResult.root
+        // One row per distinct (configuration, group, name): the same
+        // module is reached through more than one edge in the graph (a BOM
+        // platform, then again as a direct request), and
+        // resolutionResult.allDependencies walks every edge, not every
+        // distinct module — without this dedupe a widely-used artifact
+        // like a JUnit BOM shows up several times per configuration.
+        def seen = new HashSet()
         resolutionResult.allDependencies.each { dep ->
             if (dep.hasProperty('selected')) {
                 def id = dep.selected.id
+                def group = id.hasProperty('group') ? id.group : ''
+                def name = id.hasProperty('module') ? id.module : id.displayName
+                def key = "${config.name}|${group}|${name}"
+                if (!seen.add(key)) {
+                    return
+                }
                 dependencies << [
                     configuration: config.name,
-                    group: id.hasProperty('group') ? id.group : '',
-                    name: id.hasProperty('module') ? id.module : id.displayName,
+                    group: group,
+                    name: name,
                     version: id.hasProperty('version') ? id.version : '',
+                    // A dependency Gradle resolved directly off the
+                    // configuration's own root is a direct/requested
+                    // dependency; everything else is transitive — the
+                    // resolved *edge*, not selectionReason's text (which
+                    // reports "requested" for a BOM-managed but still
+                    // transitively-pulled artifact just as often as for a
+                    // real direct one, and offers no reliable transitive
+                    // signal at all).
+                    direct: dep.hasProperty('from') && dep.from == root,
                     reason: dep.hasProperty('selected') && dep.selected.hasProperty('selectionReason')
                         ? dep.selected.selectionReason.toString()
                         : '',

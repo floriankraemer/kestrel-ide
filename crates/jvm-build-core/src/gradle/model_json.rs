@@ -63,11 +63,23 @@ struct RawDependency {
     name: String,
     #[serde(default)]
     version: String,
-    /// Gradle's own `selectionReason` text: `"requested"` for a directly
-    /// declared dependency, `"constraint"` for one pulled in by a BOM/
-    /// platform, or a longer sentence when Gradle actually resolved a
-    /// conflict. Parsing that sentence into a [`crate::model::Conflict`] is
-    /// deferred — see this module's `to_build_model` doc comment.
+    /// Whether Gradle resolved this dependency straight off the
+    /// configuration's own root (a direct/requested dependency) rather
+    /// than through another dependency (transitive). Computed by the
+    /// script from the resolution result's own edge
+    /// (`dep.from == resolutionResult.root`), not from `selectionReason`'s
+    /// text — that text reports `"requested"` for a transitively-pulled,
+    /// BOM-managed artifact just as often as for a genuinely direct one,
+    /// so it was never a reliable transitive signal.
+    #[serde(default)]
+    direct: bool,
+    /// Gradle's own `selectionReason` text: `"requested"`, `"constraint"`
+    /// (a BOM/platform-managed version), or a longer sentence when Gradle
+    /// actually resolved a version conflict. Parsing that sentence into a
+    /// [`crate::model::Conflict`] is deferred — see this module's
+    /// `to_build_model` doc comment. Deserialized (so a future change can
+    /// read it) but not yet consumed.
+    #[allow(dead_code)]
     #[serde(default)]
     reason: String,
 }
@@ -78,9 +90,9 @@ pub fn parse(text: &str) -> Result<BuildModel, serde_json::Error> {
     Ok(to_build_model(raw))
 }
 
-/// `reason` values this build recognises as "not a plain request" (and so
-/// as `transitive: true`) without yet classifying *why* — Gradle's
-/// `selectionReason` can also report an actual version conflict
+/// `reason` is carried through on every [`crate::model::Dependency`] as
+/// free text but does not yet decide [`crate::model::Dependency::conflict`]
+/// — Gradle's `selectionReason` can report an actual version conflict
 /// ("selected by rule", "by conflict resolution"), which
 /// [`crate::model::Conflict`] exists to carry; recognising those specific
 /// sentences is deferred to whichever consumer (a future dependency-
@@ -136,7 +148,7 @@ fn to_module(raw: RawModule) -> (Module, Vec<Task>) {
             requested: d.version.clone(),
             resolved: d.version,
             scope: d.configuration,
-            transitive: d.reason != "requested",
+            transitive: !d.direct,
             file: None,
             conflict: None,
             children: Vec::new(),
@@ -231,11 +243,19 @@ mod tests {
     }
 
     #[test]
-    fn a_requested_dependency_is_not_transitive_and_a_constraint_is() {
+    fn a_direct_dependency_is_not_transitive_and_a_constraint_is() {
+        // Real-captured (A4/review fix): the direct/transitive split comes
+        // from `direct`, the script's own resolution-result-edge computation
+        // (`dep.from == resolutionResult.root`), not from `selectionReason`'s
+        // free text — `junit-bom`, an explicitly imported platform, is the
+        // dependency this fixture project actually declares straight on
+        // `testCompileClasspath`, while `junit-jupiter` itself is reached
+        // through the platform's own node in the graph once a platform is
+        // in play, and a `"constraint"` reason is always transitive.
         let model = parse(FIXTURE).expect("valid");
         let deps = &model.modules[0].dependencies;
-        let requested = deps.iter().find(|d| d.artifact == "junit-jupiter").unwrap();
-        assert!(!requested.transitive);
+        let direct = deps.iter().find(|d| d.artifact == "junit-bom").unwrap();
+        assert!(!direct.transitive);
         let constraint = deps
             .iter()
             .find(|d| d.artifact == "junit-jupiter-api")
@@ -256,7 +276,7 @@ mod tests {
                 "dependencies": [{
                     "configuration": "compileClasspath",
                     "group": "", "name": "project :lib", "version": "",
-                    "reason": "requested"
+                    "direct": true, "reason": "requested"
                 }]
             }]
         }"#;

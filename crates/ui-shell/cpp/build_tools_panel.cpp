@@ -18,15 +18,11 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
-#include <QScrollBar>
-#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStyle>
-#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
-#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 namespace ui_shell {
@@ -97,36 +93,6 @@ QToolButton *checkableGlyphButton(QStyle::StandardPixmap icon, const QString &to
     QToolButton *button = glyphButton(icon, tooltip, parent);
     button->setCheckable(true);
     return button;
-}
-
-// Row rects for a headless E2E driver to click precisely instead of
-// guessing coordinates — `project_tree_dock.cpp`'s own `project_tree_row`
-// marker, reused here at this tree's much smaller scale (no coalescing
-// timer: a Build Tools tree tops out at a few dozen rows, not a whole
-// project's worth of files).
-void markVisibleRows(QTreeWidget *tree)
-{
-    for (QTreeWidgetItemIterator it(tree, QTreeWidgetItemIterator::NotHidden); *it; ++it) {
-        QTreeWidgetItem *item = *it;
-        const QRect rect = tree->visualItemRect(item);
-        const QPoint origin = tree->viewport()->mapToGlobal(rect.topLeft());
-        e2eMark(QStringLiteral("{\"ev\":\"build_tools_row\",\"id\":%1,\"rect\":[%2,%3,%4,%5]}")
-                  .arg(e2eJson(item->data(0, kIdRole).toString()))
-                  .arg(origin.x())
-                  .arg(origin.y())
-                  .arg(rect.width())
-                  .arg(rect.height()));
-    }
-}
-
-// A row's geometry is not valid the instant it is inserted or
-// expanded/collapsed — `QTreeWidget` defers that layout pass to the next
-// trip round the event loop — so `markVisibleRows` needs to run one turn
-// later, `project_tree_dock.cpp`'s own reason for coalescing its equivalent
-// report onto a zero-interval `QTimer` rather than calling it inline.
-void scheduleRowMarkers(QTreeWidget *tree)
-{
-    QTimer::singleShot(0, tree, [tree]() { markVisibleRows(tree); });
 }
 
 QString titleFor(FfiBuildToolTitleKind kind)
@@ -233,16 +199,6 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     });
     connect(tree_, &QTreeWidget::customContextMenuRequested, this,
             &BuildToolsPanel::showContextMenu);
-    // Every row below an expanded/collapsed one moves, so a driver relying
-    // on `build_tools_row`'s rects needs a fresh report after either — the
-    // same reason `project_tree_dock.cpp` re-marks on `expanded`/`collapsed`.
-    connect(tree_, &QTreeWidget::itemExpanded, this, [this]() { scheduleRowMarkers(tree_); });
-    connect(tree_, &QTreeWidget::itemCollapsed, this, [this]() { scheduleRowMarkers(tree_); });
-    // Scrolling moves every row's rect exactly as much as expanding one
-    // does, so a driver relying on `build_tools_row` needs a fresh report
-    // after this too, not just after expand/collapse.
-    connect(tree_->verticalScrollBar(), &QScrollBar::valueChanged, this,
-            [this]() { scheduleRowMarkers(tree_); });
     connect(offlineButton_, &QToolButton::toggled, this,
             [this](bool on) { buildToolsService_->setOffline(on); });
     connect(skipTestsButton_, &QToolButton::toggled, this,
@@ -265,12 +221,6 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     refreshTree();
     refreshTitle();
     refreshBanner();
-}
-
-void BuildToolsPanel::showEvent(QShowEvent *event)
-{
-    QWidget::showEvent(event);
-    scheduleRowMarkers(tree_);
 }
 
 void BuildToolsPanel::refreshTitle()
@@ -352,7 +302,6 @@ void BuildToolsPanel::refreshTree()
     }
     e2eMark(QStringLiteral("{\"ev\":\"build_tools_model_changed\",\"nodes\":%1}")
               .arg(static_cast<int>(rows.size())));
-    scheduleRowMarkers(tree_);
 }
 
 void BuildToolsPanel::runNode(const QString &nodeId, const QString &extraArgs)

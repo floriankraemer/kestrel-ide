@@ -9,7 +9,6 @@ class QAction;
 class QLabel;
 class QLineEdit;
 class QPoint;
-class QShowEvent;
 class QToolButton;
 class QTreeWidget;
 class QTreeWidgetItem;
@@ -41,16 +40,6 @@ public:
                      OpenAt openAt, QWidget *parent);
 
     void setOpenSettingsHandler(OpenSettingsHandler handler) { openSettings_ = std::move(handler); }
-
-protected:
-    // The dock starts hidden (its own construction-time `refreshTree()`
-    // therefore reports every row's rect as the empty `[x,y,0,0]` a
-    // zero-size viewport always yields) and ADS never re-triggers a model
-    // refresh just because the user later switches to its tab — so a
-    // driver clicking off `build_tools_row`'s rects needs one more report
-    // once there is a real viewport to measure, which `showEvent` is the
-    // one reliable signal for.
-    void showEvent(QShowEvent *event) override;
 
 private:
     void refreshTree();

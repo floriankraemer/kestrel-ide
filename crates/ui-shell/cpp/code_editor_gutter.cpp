@@ -68,7 +68,7 @@ constexpr int kBlameWidth = 220;
 
 int CodeEditor::runMarkerWidth() const
 {
-    return runnable_ ? kRunMarkerWidth : 0;
+    return runLines_.isEmpty() ? 0 : kRunMarkerWidth;
 }
 
 bool CodeEditor::onBreakpointColumn(int x) const
@@ -96,12 +96,12 @@ void CodeEditor::setExecutionLine(int blockNumber)
     viewport()->update();
 }
 
-void CodeEditor::setRunnable(bool runnable)
+void CodeEditor::setRunLines(const QSet<int> &lines)
 {
-    if (runnable_ == runnable) {
+    if (runLines_ == lines) {
         return;
     }
-    runnable_ = runnable;
+    runLines_ = lines;
     // The column is only there when the file is runnable, so the gutter has
     // to be remeasured, not just repainted.
     updateLineNumberAreaWidth(0);
@@ -246,10 +246,7 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
                 painter.drawPolygon(triangle);
             }
 
-            // ponytail: the icon sits on the first line, not on the entry
-            // point's own declaration — naming that line needs the symbol
-            // index, and "run this file" is what the click means either way.
-            if (runnable_ && blockNumber == 0) {
+            if (runLines_.contains(blockNumber)) {
                 const int cx = kRunMarkerWidth / 2;
                 const int cy = top + fontMetrics().height() / 2;
                 QPolygon play;
@@ -313,7 +310,7 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
 {
     const int clickX = static_cast<int>(event->position().x());
     const int clickY = static_cast<int>(event->position().y());
-    const bool onRunMarker = runnable_ && clickX < runMarkerWidth();
+    const bool onRunMarker = !runLines_.isEmpty() && clickX < runMarkerWidth();
     const bool isOnBreakpointColumn = onBreakpointColumn(clickX);
     const bool onChangeMarkerStrip =
       clickX >= runMarkerWidth() + kBreakpointWidth
@@ -335,8 +332,8 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
     while (block.isValid() && top <= clickY) {
         if (block.isVisible() && clickY >= top && clickY < bottom) {
             if (onRunMarker) {
-                if (blockNumber == 0) {
-                    emit runRequested();
+                if (runLines_.contains(blockNumber)) {
+                    emit runRequested(blockNumber);
                 }
                 return;
             }

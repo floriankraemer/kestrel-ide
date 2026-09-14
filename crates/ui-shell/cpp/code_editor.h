@@ -496,12 +496,13 @@ public:
     void setBreakpointLines(const QSet<int> &lines);
     void setExecutionLine(int blockNumber);
 
-    // R1-7: whether this file has a run target, decided by
-    // `RunService::canRunFile` and pushed in by EditorTabs — the gutter
-    // shows IntelliJ's Run icon on the first line when it does. The widget
-    // never asks what makes a file runnable.
-    void setRunnable(bool runnable);
-    bool runnable() const { return runnable_; }
+    // R1-7/C6: the lines that carry a Run icon, decided by
+    // `RunService::runLines` and pushed in by EditorTabs — line 0 for a
+    // file run as a whole, one per compose service (C6). Empty means no
+    // gutter column at all. The widget never asks what makes a line
+    // runnable.
+    void setRunLines(const QSet<int> &lines);
+    bool runnable() const { return !runLines_.isEmpty(); }
 
     // F3-18: per-line blame text, off by default (vcs.annotate toggles it).
     // Replaces whatever was set before — the caller re-sends the whole file's
@@ -659,9 +660,10 @@ signals:
     // dock for it (or anything else) is `EditorTabs`'s job.
     void blameLineClicked(const QString &commitId);
 
-    // R1-7: the gutter's Run icon was clicked. What that runs is
-    // EditorTabs's business, via `RunService::runContext`.
-    void runRequested();
+    // R1-7/C6: the gutter's Run icon on `line` was clicked. What that
+    // runs is EditorTabs's business, via `RunService::runContext` and the
+    // container gutter popups.
+    void runRequested(int line);
     // C10-followup: a click landed on lens `index` (into the last vector
     // `setCodeLenses` was given). Only ever emitted for a `clickable` one —
     // running it, and what its answer means, is EditorTabs's job via
@@ -781,9 +783,9 @@ private:
     // R4: always laid out, unlike `minimap_` — the error stripe works with
     // the minimap off (ADR-0044's overlays do not).
     ErrorStripe *errorStripe_;
-    // R1-7: set from RunService::canRunFile; widens the gutter by one icon
-    // column and puts the Run triangle on the first line.
-    bool runnable_ = false;
+    // R1-7/C6: set from RunService::runLines; a non-empty set widens the
+    // gutter by one icon column and puts a Run triangle on each line.
+    QSet<int> runLines_;
     // D2-5: breakpoints in this file, and the suspended line.
     QSet<int> breakpointLines_;
     int executionLine_ = -1;

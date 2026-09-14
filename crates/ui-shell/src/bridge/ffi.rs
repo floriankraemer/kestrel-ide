@@ -4859,6 +4859,27 @@ mod ffi {
         #[cxx_name = "codeLensesReady"]
         fn code_lenses_ready(self: Pin<&mut LanguageService>, path: QString);
 
+        /// C6: the connected engines' image names, `\n`-joined, for the
+        /// local half of image-name completion on `FROM`/`image:` lines.
+        /// Pushed by the view from `ContainerService::localImageNames` on
+        /// each `treeChanged`, so the two QObjects never reach into each
+        /// other.
+        #[qinvokable]
+        #[cxx_name = "setLocalImages"]
+        fn set_local_images(self: Pin<&mut LanguageService>, names: &QString);
+
+        /// C6: an intention of kind `container.*` was applied — `kind`
+        /// (`container.pull`) and its payload (the image reference). The
+        /// view wires it to `ContainerService::pullImage`; nothing here
+        /// knows how a pull happens.
+        #[qsignal]
+        #[cxx_name = "containerActionRequested"]
+        fn container_action_requested(
+            self: Pin<&mut LanguageService>,
+            kind: QString,
+            payload: QString,
+        );
+
         /// The last-fetched lenses for `path`: line, label, clickable —
         /// what the C++ lens strip needs to draw one row per lens and
         /// forward a click back by index. Empty before the first answer,
@@ -5774,6 +5795,22 @@ mod ffi {
         env: QString,
     }
 
+    /// One compose code lens (C6): the status of one service (`running` of
+    /// `total` containers up; `exit_code` of the first failed one, `-1`
+    /// when none failed) or, with `is_open_url`, one published `host_port`
+    /// of a running service. The view formats the words (`tr()`); the
+    /// facts are `container_core::lenses`'s.
+    #[derive(Default)]
+    struct FfiComposeLens {
+        line: u32,
+        is_open_url: bool,
+        running: i64,
+        total: i64,
+        exit_code: i64,
+        host_port: QString,
+        clickable: bool,
+    }
+
     extern "RustQt" {
         /// The Containers dock's adapter (containers plan C2, ADR-0055):
         /// starts and stops one `container_core::watcher` per connection,
@@ -6181,6 +6218,68 @@ mod ffi {
         #[cxx_name = "volumeDashboard"]
         fn volume_dashboard(self: &ContainerService, node_id: &QString) -> FfiVolumeDashboard;
 
+        // --- C6: editor assistance ------------------------------------
+
+        /// Whether `path`'s code lenses come from this service (a compose
+        /// file) rather than the language server — the click router's
+        /// question, answered by the Rust-side file rule.
+        #[qinvokable]
+        #[cxx_name = "ownsLenses"]
+        fn owns_lenses(self: &ContainerService, path: &QString) -> bool;
+
+        /// The lenses for compose file `path` with live buffer `text`,
+        /// from every connected snapshot. Re-read on `treeChanged`, open
+        /// and save; empty for a file this service does not own.
+        #[qinvokable]
+        #[cxx_name = "composeLenses"]
+        fn compose_lenses(
+            self: &ContainerService,
+            path: &QString,
+            text: &QString,
+        ) -> Vec<FfiComposeLens>;
+
+        /// A click on lens `index` of `path` (the index into the last
+        /// `composeLenses` answer): answers on `containerLogRequested` or
+        /// `openUrlRequested`.
+        #[qinvokable]
+        #[cxx_name = "runLens"]
+        fn run_lens(self: Pin<&mut ContainerService>, path: &QString, index: u32);
+
+        /// A status lens was clicked: select `node_id` in the Containers
+        /// dock and show its Log tab.
+        #[qsignal]
+        #[cxx_name = "containerLogRequested"]
+        fn container_log_requested(self: Pin<&mut ContainerService>, node_id: QString);
+
+        /// An "Open localhost:<port>" lens was clicked.
+        #[qsignal]
+        #[cxx_name = "openUrlRequested"]
+        fn open_url_requested(self: Pin<&mut ContainerService>, url: QString);
+
+        /// Every connected engine's image names, `\n`-joined — forwarded
+        /// by the view to `LanguageService::setLocalImages` on each
+        /// `treeChanged`, the local half of image-name completion.
+        #[qinvokable]
+        #[cxx_name = "localImageNames"]
+        fn local_image_names(self: &ContainerService) -> QString;
+
+        /// The editor's "Pull image <reference>" intention: picks the
+        /// first connected (else the only configured) connection and
+        /// answers on `pullRequested`; refuses with `CODE_REFUSED` when
+        /// there is no connection to pull on.
+        #[qinvokable]
+        #[cxx_name = "pullImage"]
+        fn pull_image(self: Pin<&mut ContainerService>, reference: &QString) -> FfiResult;
+
+        /// Open the Images console's Pull tab for `reference` on
+        /// `connection_id`.
+        #[qsignal]
+        #[cxx_name = "pullRequested"]
+        fn pull_requested(
+            self: Pin<&mut ContainerService>,
+            connection_id: QString,
+            reference: QString,
+        );
     }
 
     impl cxx_qt::Threading for ContainerService {}
@@ -8072,6 +8171,45 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "newComposeFileConfiguration"]
         fn new_compose_file_configuration(self: Pin<&mut RunService>, path: &QString) -> QString;
+
+        /// A compose service line's marker (C6): `compose up` for that one
+        /// service, remembered as its own temporary configuration.
+        #[qinvokable]
+        #[cxx_name = "runComposeService"]
+        fn run_compose_service(
+            self: Pin<&mut RunService>,
+            path: &QString,
+            service: &QString,
+        ) -> FfiResult;
+
+        /// The service line's "New configuration..." (C6).
+        #[qinvokable]
+        #[cxx_name = "newComposeServiceConfiguration"]
+        fn new_compose_service_configuration(
+            self: Pin<&mut RunService>,
+            path: &QString,
+            service: &QString,
+        ) -> QString;
+
+        /// The 0-based lines of `path` that carry a gutter run marker (C6):
+        /// a compose file's `services:` key and every service under it,
+        /// line 0 for any other runnable file, none otherwise. `text` is the
+        /// live buffer so the markers follow unsaved edits.
+        #[qinvokable]
+        #[cxx_name = "runLines"]
+        fn run_lines(self: &RunService, path: &QString, text: &QString) -> Vec<u32>;
+
+        /// The compose service declared at `line`, empty on the `services:`
+        /// line and in any other file — what a marker click's popup is
+        /// scoped to (C6).
+        #[qinvokable]
+        #[cxx_name = "composeServiceAt"]
+        fn compose_service_at(
+            self: &RunService,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> QString;
 
         /// Stop `console_id`: `kill_tree()`s its process on the worker
         /// thread, flushes whatever output was still pending, and answers

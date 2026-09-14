@@ -7,6 +7,11 @@ edition = "2021"
 process-exec = { path = "../process-exec" }
 app-config = { path = "../app-config" }
 pty-core = { path = "../pty-core" }
+# C6: compose services/lines over tree-sitter-yaml through the one registry
+# (ADR-0018); `tree-sitter` is the same runtime `syntax-core` is built
+# against, a node tree cannot cross two of them (the `edit-ops` precedent).
+syntax-core = { path = "../syntax-core" }
+tree-sitter = "0.26"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

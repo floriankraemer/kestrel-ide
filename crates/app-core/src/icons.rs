@@ -181,7 +181,7 @@ impl IconService {
                 (language != syntax_core::Language::PLAIN_TEXT).then(|| language.id());
             theme
                 .pack
-                .file_icon(&name, language_id.as_deref(), appearance)
+                .file_icon(&pack_name_for(&name), language_id.as_deref(), appearance)
         };
         Some(format!("{}{KEY_SEPARATOR}{icon}", theme.pack.id))
     }
@@ -278,8 +278,40 @@ impl IconAssets for PluginAssets<'_> {
     }
 }
 
+/// The name the icon pack is asked about for `file_name` — the IDE's own
+/// aliases over the pack's tables (C6). Material knows `docker-compose.yml`
+/// and `compose.yaml` but not Podman's and the generic `container-`
+/// spelling of the same file, so those are looked up as the Docker one
+/// rather than by editing `third_party/`.
+fn pack_name_for(file_name: &str) -> std::borrow::Cow<'_, str> {
+    ["container-compose.", "podman-compose."]
+        .iter()
+        .find_map(|prefix| file_name.strip_prefix(prefix))
+        .filter(|rest| matches!(*rest, "yml" | "yaml"))
+        .map(|rest| std::borrow::Cow::Owned(format!("docker-compose.{rest}")))
+        .unwrap_or(std::borrow::Cow::Borrowed(file_name))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn compose_name_variants_alias_to_the_docker_compose_row() {
+        assert_eq!(
+            super::pack_name_for("podman-compose.yml"),
+            "docker-compose.yml"
+        );
+        assert_eq!(
+            super::pack_name_for("container-compose.yaml"),
+            "docker-compose.yaml"
+        );
+        assert_eq!(super::pack_name_for("compose.yaml"), "compose.yaml");
+        assert_eq!(
+            super::pack_name_for("podman-compose.txt"),
+            "podman-compose.txt"
+        );
+        assert_eq!(super::pack_name_for("main.rs"), "main.rs");
+    }
+
     use super::*;
 
     /// The real Material pack, embedded in the binary, loaded through the

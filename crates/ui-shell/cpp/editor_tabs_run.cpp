@@ -18,8 +18,13 @@
 
 #include <QAction>
 #include <QCursor>
+#include <QDesktopServices>
+#include <QMainWindow>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QSet>
+#include <QStatusBar>
+#include <QUrl>
 
 namespace ui_shell {
 
@@ -45,6 +50,58 @@ void EditorTabs::setContainerRunContext(RunConfigEditor *runConfigEditor,
 {
     runConfigEditor_ = runConfigEditor;
     containerService_ = containerService;
+    if (containerService_ == nullptr) {
+        return;
+    }
+    // C6: editor assistance. The two services never reach into each other
+    // on the Rust side; this is the one place they are introduced.
+    connect(containerService_, &ContainerService::treeChanged, this, [this]() {
+        languageService_->setLocalImages(containerService_->localImageNames());
+        refreshComposeLenses();
+    });
+    connect(languageService_, &LanguageService::containerActionRequested, this,
+            [this](const QString &, const QString &payload) {
+                const FfiResult result = containerService_->pullImage(payload);
+                auto *mainWindow = qobject_cast<QMainWindow *>(window_);
+                if (result.code != 0 && mainWindow != nullptr) {
+                    mainWindow->statusBar()->showMessage(QString(result.message), 6000);
+                }
+            });
+    connect(containerService_, &ContainerService::openUrlRequested, this,
+            [](const QString &url) { QDesktopServices::openUrl(QUrl(url)); });
+}
+
+void EditorTabs::refreshComposeLensesFor(CodeEditor *editor)
+{
+    if (containerService_ == nullptr || editor == nullptr) {
+        return;
+    }
+    const QString path = editor->property("lspPath").toString();
+    if (path.isEmpty() || !containerService_->ownsLenses(path)) {
+        return;
+    }
+    QVector<CodeLensSpan> lenses;
+    for (const FfiComposeLens &lens : containerService_->composeLenses(path, editor->toPlainText())) {
+        QString label;
+        if (lens.is_open_url) {
+            label = tr("Open localhost:%1").arg(QString(lens.host_port));
+        } else if (lens.running > 0) {
+            label = tr("\u25CF running (%1/%2)").arg(lens.running).arg(lens.total);
+        } else if (lens.exit_code >= 0) {
+            label = tr("\u2717 exited (%1)").arg(lens.exit_code);
+        } else {
+            label = tr("\u25CB stopped");
+        }
+        lenses.append(CodeLensSpan{ static_cast<int>(lens.line), label, lens.clickable });
+    }
+    editor->setCodeLenses(lenses);
+}
+
+void EditorTabs::refreshComposeLenses()
+{
+    forEachEditor([this](QPlainTextEdit *editor) {
+        refreshComposeLensesFor(qobject_cast<CodeEditor *>(editor));
+    });
 }
 
 void EditorTabs::refreshRunMarker(CodeEditor *editor)
@@ -54,12 +111,13 @@ void EditorTabs::refreshRunMarker(CodeEditor *editor)
     }
     const quint64 tabId = editor->property("tabId").toULongLong();
     const QString path = docManager_->tabPath(tabId);
-    if (path.isEmpty()) {
-        editor->setRunnable(false);
-        return;
+    QSet<int> lines;
+    if (!path.isEmpty()) {
+        for (const quint32 line : runService_->runLines(path, editor->toPlainText())) {
+            lines.insert(static_cast<int>(line));
+        }
     }
-    editor->setRunnable(runService_->canRunFile(path) || runService_->canRunContainerfile(path)
-                       || runService_->canRunComposeFile(path));
+    editor->setRunLines(lines);
 }
 
 void EditorTabs::refreshRunMarkers()
@@ -69,7 +127,7 @@ void EditorTabs::refreshRunMarkers()
     });
 }
 
-void EditorTabs::requestRunFor(CodeEditor *editor)
+void EditorTabs::requestRunFor(CodeEditor *editor, int line)
 {
     if (!runService_ || !editor) {
         return;
@@ -104,14 +162,25 @@ void EditorTabs::requestRunFor(CodeEditor *editor)
         return;
     }
     if (runService_->canRunComposeFile(path)) {
+        // C6: a marker on a service line scopes the popup to that service;
+        // the `services:` line (and `run.runContext`) means the whole file.
+        const QString service =
+          runService_->composeServiceAt(path, editor->toPlainText(), static_cast<quint32>(line));
         QMenu menu(editor);
-        QAction *run = menu.addAction(tr("Run Compose Project"));
+        QAction *run = menu.addAction(service.isEmpty() ? tr("Run Compose Project")
+                                                        : tr("Run Service '%1'").arg(service));
         QAction *newConfig = menu.addAction(tr("New Configuration..."));
         QAction *chosen = menu.exec(QCursor::pos());
         if (chosen == run) {
-            runService_->runComposeFile(path);
+            if (service.isEmpty()) {
+                runService_->runComposeFile(path);
+            } else {
+                runService_->runComposeService(path, service);
+            }
         } else if (chosen == newConfig && runConfigEditor_) {
-            const QString id = runService_->newComposeFileConfiguration(path);
+            const QString id = service.isEmpty()
+              ? runService_->newComposeFileConfiguration(path)
+              : runService_->newComposeServiceConfiguration(path, service);
             if (!id.isEmpty()) {
                 showRunConfigDialog(editor, runConfigEditor_, containerService_, id);
             }

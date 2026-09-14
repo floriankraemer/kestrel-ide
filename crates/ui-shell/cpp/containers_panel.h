@@ -64,6 +64,13 @@ public:
     void setRunContext(RunService *runService, RunConfigEditor *runConfigEditor,
                        EditorTabs *editorTabs);
 
+    // C6: a compose code lens was clicked — select `nodeId` in the tree
+    // (which opens its Log tab) and bring that tab to the front.
+    void revealContainerLog(const QString &nodeId);
+    // C6: the editor's "Pull image" intention — the same Pull tab the
+    // Images console opens.
+    void openPullTab(const QString &connectionId, const QString &reference);
+
 private:
     void onTreeChanged();
     void onSelectionChanged();

@@ -66,6 +66,9 @@ pub struct ContainerServiceRust {
     /// `bridge::registry::shared_session`, so a container's Inspect tab
     /// dedups/focuses against the very same tab list the editor shows.
     pub(crate) session: Rc<RefCell<app_core::AppSession>>,
+    /// C6: the compose lenses last handed to each open editor, so a click
+    /// by index resolves against what is on screen.
+    pub(crate) lenses: super::editor::LensState,
 }
 
 impl Default for ContainerServiceRust {
@@ -77,6 +80,7 @@ impl Default for ContainerServiceRust {
             next_generation: RefCell::default(),
             exec_history: RefCell::default(),
             session: crate::bridge::registry::shared_session(),
+            lenses: super::editor::LensState::default(),
         }
     }
 }

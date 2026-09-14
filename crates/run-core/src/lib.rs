@@ -37,7 +37,8 @@ pub use container_run::{
     compose_project_up_spec, down_command, stop_command,
 };
 pub use context::{
-    compose_config, config_for_file, containerfile_config, remember_temporary, TEMPORARY_CAP,
+    compose_config, compose_run_lines, compose_service_at, config_for_file, containerfile_config,
+    remember_temporary, TEMPORARY_CAP,
 };
 pub use detect::{detect, is_compose_file_name, merge_detected};
 pub use error::RunError;

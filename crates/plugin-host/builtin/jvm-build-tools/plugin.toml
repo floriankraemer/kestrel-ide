@@ -53,7 +53,12 @@ program-candidates = ["./gradlew", "gradle"]
 # (`plugin_host::expand_asset_dir`) — a builtin plugin's assets are
 # `include_bytes!`-ed into the binary, not a real path on disk, until the
 # first run that needs one materialises them (`LoadedPlugin::asset_dir`).
-args = ["--init-script", "${asset_dir}/ide-model.init.gradle", "-Pide.teamcity=true", "--console=plain", "test"]
+# `cleanTest` precedes `test` so a previously all-passing `:test` task that
+# Gradle would otherwise treat as up-to-date always re-runs and re-streams —
+# verified against a real Gradle daemon (A4): a task Gradle skips as
+# up-to-date emits no ##teamcity messages at all, which would read as "zero
+# tests" rather than "nothing changed".
+args = ["--init-script", "${asset_dir}/ide-model.init.gradle", "-Pide.teamcity=true", "--console=plain", "cleanTest", "test"]
 filter-flag = "--tests"
 output-format = "teamcity"
 requires-toolchain = "gradle"

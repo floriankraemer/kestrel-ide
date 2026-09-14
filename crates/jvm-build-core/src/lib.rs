@@ -13,6 +13,7 @@
 //! editing-assistance modules (`deps`, `editing::*`, phase D) are later
 //! work and are not present yet — see `docs/architecture/jvm-build-tools-plan.md`.
 
+pub mod gradle;
 pub mod model;
 pub mod run;
 pub mod sync;

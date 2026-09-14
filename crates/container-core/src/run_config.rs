@@ -102,29 +102,10 @@ pub fn preview(argv: &[String]) -> String {
         .join(" ")
 }
 
-/// Top-level directories a bind mount must never get the SELinux `:z`
-/// relabel suffix for, even with `[containers].selinux_relabel` on:
-/// relabeling one of these is either a system-breaking mistake (`/`, `/etc`,
-/// `/usr`, `/bin`, `/lib`, `/lib64`, `/sbin`, `/boot`, `/dev`, `/proc`,
-/// `/sys`) or almost always the wrong container-security tradeoff for a
-/// whole shared directory (`/home`, `/root`, `/tmp`, `/var`, `/opt`, `/mnt`,
-/// `/media`, `/srv`). A project directory under `/home/<user>/...` is
-/// unaffected — only the bare top-level path itself matches.
-const NEVER_RELABEL: &[&str] = &[
-    "/", "/bin", "/usr", "/etc", "/home", "/lib", "/lib64", "/sbin", "/boot", "/dev", "/proc",
-    "/sys", "/root", "/tmp", "/var", "/opt", "/mnt", "/media", "/srv",
-];
-
-/// Whether `host_path` may take the SELinux `:z` suffix at all — independent
-/// of whether the setting turns it on, so the rule is one function both
-/// [`image_run_argv`] and its tests can name directly.
-fn relabelable(host_path: &str) -> bool {
-    let trimmed = host_path.trim_end_matches('/');
-    let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
-    !NEVER_RELABEL.contains(&trimmed)
-}
-
-/// One `-v`/`--mount` bind-mount argument.
+/// One `-v`/`--mount` bind-mount argument. The SELinux `:z` suffix rule
+/// itself lives in [`crate::selinux::relabel_suffix`] — shared with
+/// [`crate::target::wrap_launch`] and [`crate::recreate::recreate_argv`]
+/// (C9) so the three argv builders that emit bind mounts cannot drift.
 pub(crate) fn mount_arg(
     host_path: &str,
     container_path: &str,
@@ -136,8 +117,10 @@ pub(crate) fn mount_arg(
     if read_only {
         options.push("ro");
     }
-    if selinux_relabel && relabelable(host_path) {
-        options.push("z");
+    if selinux_relabel {
+        if let Some(suffix) = crate::selinux::relabel_suffix(host_path) {
+            options.push(suffix);
+        }
     }
     if !options.is_empty() {
         spec.push(':');
@@ -279,6 +262,24 @@ pub fn containerfile_run_argv(
 }
 
 /// `build -f <context_dir>/<dockerfile> -t <image_tag> [--build-arg k=v]…
+/// Whether `path`'s own file name names it a Containerfile rather than a
+/// Dockerfile (C9) — Podman's convention, `docker build`/`podman build`
+/// both accept either name. The gutter popup and "New Configuration..."
+/// wording pick between the two words with this (`is_named_containerfile
+/// (path) -> "Containerfile" : "Dockerfile"` at the call site), never
+/// hard-coding "Dockerfile" the way JetBrains' own Docker plugin does.
+/// `Dockerfile.<stage>` (the multi-stage suffix convention) still reads as
+/// a Dockerfile, matching `syntax_core`'s own `dockerfile` language entry.
+pub fn is_named_containerfile(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    name == "containerfile" || name.ends_with(".containerfile")
+}
+
+/// `build -t <tag> -f <dockerfile_path> [<build_options…>]
 /// <build_options…> <context_dir>` — the Containerfile configuration's
 /// before-launch build step.
 pub fn containerfile_build_argv(setting: &ContainerfileRunSetting) -> Vec<String> {
@@ -978,5 +979,23 @@ mod tests {
             ..Default::default()
         })
         .is_none());
+    }
+
+    #[test]
+    fn is_named_containerfile_matches_the_podman_convention_case_insensitively() {
+        for name in ["Containerfile", "containerfile", "app.containerfile"] {
+            assert!(is_named_containerfile(Path::new(name)), "{name}");
+        }
+        for name in [
+            "Dockerfile",
+            "dockerfile",
+            "Dockerfile.build",
+            "app.dockerfile",
+        ] {
+            assert!(!is_named_containerfile(Path::new(name)), "{name}");
+        }
+        assert!(is_named_containerfile(Path::new(
+            "/home/f/project/Containerfile"
+        )));
     }
 }

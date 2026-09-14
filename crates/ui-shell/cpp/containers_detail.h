@@ -2,7 +2,10 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QHash>
 #include <QString>
+#include <QStringList>
+#include <QVector>
 #include <QWidget>
 
 #include <functional>
@@ -10,6 +13,7 @@
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
+class QPushButton;
 class QTableWidget;
 class QTabWidget;
 class QTreeWidget;
@@ -66,6 +70,9 @@ public:
     // Labels — opened on request, same lazy-tab shape as Processes/Files.
     void showLayers();
     void showLabels();
+    // C9: the Layers tab's "Analyze image" button — a per-layer tree of
+    // path/size/kind, from a headers-only `save` tar walk.
+    void triggerAnalyzeImage();
 
     // C4: the Images console's Pull button and the Pull toolbar action —
     // a closable "Pull: <reference>" `TerminalWidget` tab, not tied to
@@ -87,7 +94,8 @@ signals:
 private:
     void openOrReplaceLogTab();
     void closeLogTab();
-    void addTerminalTab(const FfiCommand &command, const QString &title);
+    void addTerminalTab(const FfiCommand &command, const QString &title,
+                        bool autoCloseOnExitZero = false);
     void closeTerminalTab(int index);
 
     void refreshProcesses();
@@ -95,6 +103,19 @@ private:
     void populateFilesRoot();
     void requestChildren(QTreeWidgetItem *dirItem, const QString &dir);
     void downloadPrompt(const QString &path, QWidget *dialogParent);
+
+    // C9 polish: Processes/Files keep each container's last-seen state
+    // across a selection change instead of resetting to empty, cached by
+    // node id (`nodeIdsStillInTree` prunes an id that left the tree, e.g.
+    // a removed container).
+    struct ProcessesSnapshot {
+        QStringList titles;
+        QVector<QStringList> rows;
+    };
+    void populateProcessesTable(const ProcessesSnapshot &snapshot);
+    void populateFilesRootFromCache(const QVector<FfiFileEntry> &entries);
+    void onContainerTreeChanged();
+    void evictStaleCacheEntries();
 
     // C4: per-kind Dashboard (tab 0), swapped in place of the generic page
     // for image/network/volume nodes.
@@ -105,6 +126,16 @@ private:
     void populateImageDashboard();
     void populateNetworkDashboard();
     void populateVolumeDashboard();
+
+    // C9: the container node's own Dashboard — editable Env/Ports/Mounts
+    // tables and "Recreate with changes". Defined in
+    // `containers_dashboard_edit.cpp` (this class's methods, split out
+    // under the file-size ratchet the same way `containers_actions.cpp`
+    // splits `ContainersPanel`'s).
+    QWidget *ensureContainerDashboardPage();
+    void populateContainerDashboard();
+    void refreshRecreateButtonState();
+    void triggerRecreate();
     // `containers` is `\n`-joined `"<name>\t<node id>"` pairs
     // (`FfiImageDashboard::containers`'s own convention).
     void fillContainersList(QListWidget *list, const QString &containers);
@@ -124,12 +155,26 @@ private:
 
     QWidget *processesPage_ = nullptr;
     QTableWidget *processesTable_ = nullptr;
+    // Keyed by container node id; survives a selection change (evicted
+    // only once the node itself leaves the tree — see
+    // `evictStaleCacheEntries`).
+    QHash<QString, ProcessesSnapshot> processesCache_;
 
     QWidget *filesPage_ = nullptr;
     QTreeWidget *filesTree_ = nullptr;
+    // The root listing only (a known, documented ceiling: a deeper
+    // directory the user had expanded before switching away is re-fetched
+    // lazily on the next expand, same as a container visited for the
+    // first time).
+    QHash<QString, QVector<FfiFileEntry>> filesCache_;
 
     QWidget *layersPage_ = nullptr;
     QTableWidget *layersTable_ = nullptr;
+    QPushButton *analyzeImageButton_ = nullptr;
+    // C9: per-layer path/size/kind, populated from `layerFsReady`. A top-
+    // level item per layer id, one child per entry — no per-entry open/
+    // download yet (a documented gap; see the PR description).
+    QTreeWidget *layerFsTree_ = nullptr;
 
     QWidget *labelsPage_ = nullptr;
     QTableWidget *labelsTable_ = nullptr;
@@ -163,6 +208,27 @@ private:
     QLabel *volumeDashMountpoint_ = nullptr;
     QListWidget *volumeDashContainers_ = nullptr;
     QTableWidget *volumeDashLabels_ = nullptr;
+
+    // C9: the container Dashboard — replaces the generic Name/ID/Status/
+    // Details page for a container node.
+    QWidget *containerDashboardPage_ = nullptr;
+    QLabel *containerDashName_ = nullptr;
+    QLabel *containerDashId_ = nullptr;
+    QLabel *containerDashImage_ = nullptr;
+    QLabel *containerDashStatus_ = nullptr;
+    QLabel *containerDashNetwork_ = nullptr;
+    QLabel *containerDashRestartPolicy_ = nullptr;
+    QTableWidget *containerDashEnv_ = nullptr;
+    QTableWidget *containerDashPorts_ = nullptr;
+    QTableWidget *containerDashMounts_ = nullptr;
+    QPushButton *containerDashRecreateButton_ = nullptr;
+    // The Dashboard's own last-loaded env/ports/mounts lines — what
+    // `refreshRecreateButtonState` compares the tables' current contents
+    // against to decide whether anything is dirty.
+    QString containerDashOriginalEnv_;
+    QString containerDashOriginalPorts_;
+    QString containerDashOriginalMounts_;
+    bool containerDashCanRecreate_ = false;
 };
 
 } // namespace ui_shell

@@ -62,7 +62,7 @@ fn parse_clean_up_kind(kind: &str) -> Option<container_core::prune::CleanUpKind>
     })
 }
 
-fn to_ffi_node_actions(actions: NodeActions) -> FfiNodeActions {
+fn to_ffi_node_actions(actions: NodeActions, can_recreate: bool) -> FfiNodeActions {
     FfiNodeActions {
         can_start: actions.can_start,
         can_stop: actions.can_stop,
@@ -76,6 +76,7 @@ fn to_ffi_node_actions(actions: NodeActions) -> FfiNodeActions {
         can_copy: actions.can_copy,
         can_clean_up: actions.can_clean_up,
         can_create: actions.can_create,
+        can_recreate,
     }
 }
 
@@ -113,7 +114,32 @@ impl ffi::ContainerService {
         };
         let kind = NodeKind::from_id(&node.kind.to_string()).unwrap_or(NodeKind::Connection);
         let status = node_status_from_ffi(node.status);
-        to_ffi_node_actions(tree::actions_for(kind, status))
+        let can_recreate = kind == NodeKind::Container && self.container_recreatable(&node_id);
+        to_ffi_node_actions(tree::actions_for(kind, status), can_recreate)
+    }
+
+    /// Whether `node_id` (a container node) is a real, still-present
+    /// container that is not compose-managed
+    /// ([`container_core::recreate::is_compose_managed`]) — the
+    /// Dashboard's "Recreate with changes" is refused for both a compose-
+    /// managed container (edit the compose file instead) and a node that
+    /// no longer resolves to a snapshot entry.
+    fn container_recreatable(&self, node_id: &str) -> bool {
+        let Some((connection_id, resource_id)) = parse_container_node_id(node_id) else {
+            return false;
+        };
+        let connections = self.connections.borrow();
+        let Some(snapshot) = connections
+            .get(&connection_id)
+            .and_then(|connection| connection.snapshot.as_ref())
+        else {
+            return false;
+        };
+        snapshot
+            .containers
+            .iter()
+            .find(|container| container.id == resource_id)
+            .is_some_and(|container| !container_core::recreate::is_compose_managed(container))
     }
 
     pub fn start_container(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
@@ -140,6 +166,44 @@ impl ffi::ContainerService {
         run_lifecycle_op(self, node_id, move |id| ops::remove_args(id, force))
     }
 
+    // --- C9: pods ----------------------------------------------------
+
+    pub fn start_pod(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_pod_lifecycle_op(self, node_id, container_core::pods::start_args)
+    }
+
+    pub fn stop_pod(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_pod_lifecycle_op(self, node_id, container_core::pods::stop_args)
+    }
+
+    pub fn restart_pod(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        run_pod_lifecycle_op(self, node_id, container_core::pods::restart_args)
+    }
+
+    pub fn remove_pod(self: Pin<&mut Self>, node_id: &QString, force: bool) -> FfiResult {
+        run_pod_lifecycle_op(self, node_id, move |id| {
+            container_core::pods::remove_args(id, force)
+        })
+    }
+
+    // --- C9: Podman machines, from the connection node's own menu ----
+
+    pub fn start_machine(mut self: Pin<&mut Self>, connection_id: &QString) -> FfiResult {
+        run_machine_op(
+            self.as_mut(),
+            connection_id,
+            container_core::machine::start_args,
+        )
+    }
+
+    pub fn stop_machine(mut self: Pin<&mut Self>, connection_id: &QString) -> FfiResult {
+        run_machine_op(
+            self.as_mut(),
+            connection_id,
+            container_core::machine::stop_args,
+        )
+    }
+
     /// The Containers group's "Clean Up": `container prune -f` on
     /// `connection_id`. Not per-container, so it does not go through
     /// [`run_lifecycle_op`]'s node-id parsing; `actionFinished`'s
@@ -164,30 +228,46 @@ impl ffi::ContainerService {
     /// Open `node_id`'s `inspect` JSON as a read-only virtual document —
     /// synchronous (the round trip is a single small `inspect` call, same
     /// order of magnitude as `probe`), mirroring `LanguageService`'s own
-    /// `virtualDocumentOpened` split: build the tab, then focus it.
+    /// `virtualDocumentOpened` split: build the tab, then focus it. Works
+    /// on a container node (`inspect <id>`) or a pod node (`pod inspect
+    /// <id>`, [`container_core::pods::inspect_args`]) — every other kind
+    /// is refused, same as before this grew the pod case.
     pub fn open_inspect(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
         let node_id_str = node_id.to_string();
-        let Some((connection_id, resource_id)) = parse_container_node_id(&node_id_str) else {
-            return errors::failure(
-                errors::CODE_INVALID_ARGUMENT,
-                format!("'{node_id_str}' is not a container node"),
-            );
+        let container = parse_container_node_id(&node_id_str);
+        let pod = parse_node_id(&node_id_str, NodeKind::Pod);
+        let (connection_id, resource_id, kind_word, args) = match (container, pod) {
+            (Some((connection_id, resource_id)), _) => {
+                let args = vec!["inspect".to_string(), resource_id.clone()];
+                (connection_id, resource_id, "container", args)
+            }
+            (None, Some((connection_id, resource_id))) => {
+                let args = container_core::pods::inspect_args(&resource_id);
+                (connection_id, resource_id, "pod", args)
+            }
+            (None, None) => {
+                return errors::failure(
+                    errors::CODE_INVALID_ARGUMENT,
+                    format!("'{node_id_str}' is not a container or pod node"),
+                );
+            }
         };
         let invocation = match service::connection_invocation(&connection_id) {
             Ok(invocation) => invocation,
             Err(result) => return result,
         };
         let work_dir = service::work_dir();
-        let json = match container_core::session::inspect_json(
+        let json = match container_core::session::inspect_json_with_args(
             &invocation,
-            "container",
+            kind_word,
             &resource_id,
+            &args,
             &work_dir,
         ) {
             Ok(json) => json,
             Err(err) => return errors::failure(errors::CODE_REFUSED, err.message),
         };
-        let key = format!("{connection_id}/container/{resource_id}/inspect.json");
+        let key = format!("{connection_id}/{kind_word}/{resource_id}/inspect.json");
         let opened = self
             .session
             .borrow_mut()
@@ -323,6 +403,70 @@ fn run_lifecycle_op(
             result,
             connection_id,
         );
+    });
+    FfiResult::default()
+}
+
+/// [`run_lifecycle_op`], for a pod node instead of a container node — same
+/// shape, `parse_node_id(.., NodeKind::Pod)` in place of
+/// [`parse_container_node_id`].
+fn run_pod_lifecycle_op(
+    mut service: Pin<&mut ffi::ContainerService>,
+    node_id: &QString,
+    build_args: impl FnOnce(&str) -> Vec<String> + Send + 'static,
+) -> FfiResult {
+    let node_id_str = node_id.to_string();
+    let Some((connection_id, resource_id)) = parse_node_id(&node_id_str, NodeKind::Pod) else {
+        return errors::failure(
+            errors::CODE_INVALID_ARGUMENT,
+            format!("'{node_id_str}' is not a pod node"),
+        );
+    };
+    let invocation = match service::connection_invocation(&connection_id) {
+        Ok(invocation) => invocation,
+        Err(result) => return result,
+    };
+    let work_dir = service::work_dir();
+    let qt_thread = service.as_mut().qt_thread();
+    std::thread::spawn(move || {
+        let args = build_args(&resource_id);
+        let result: Result<(), OpError> = ops::run_op(&invocation, &args, &work_dir).map(|_| ());
+        report(
+            qt_thread,
+            QString::from(node_id_str.as_str()),
+            result,
+            connection_id,
+        );
+    });
+    FfiResult::default()
+}
+
+/// `machine start`/`machine stop` for `connection_id`'s own Podman
+/// machine (its [`container_core::connection::ConnectionKind::
+/// PodmanMachine`] name) — refused for any other connection kind, rather
+/// than running the CLI against a machine name that does not apply here.
+fn run_machine_op(
+    mut service: Pin<&mut ffi::ContainerService>,
+    connection_id: &QString,
+    build_args: impl FnOnce(&str) -> Vec<String> + Send + 'static,
+) -> FfiResult {
+    let connection_id_str = connection_id.to_string();
+    let Some(machine_name) = super::service::podman_machine_name(&connection_id_str) else {
+        return errors::failure(
+            errors::CODE_INVALID_ARGUMENT,
+            format!("'{connection_id_str}' is not a Podman machine connection"),
+        );
+    };
+    let invocation = match service::connection_invocation(&connection_id_str) {
+        Ok(invocation) => invocation,
+        Err(result) => return result,
+    };
+    let work_dir = service::work_dir();
+    let qt_thread = service.as_mut().qt_thread();
+    std::thread::spawn(move || {
+        let args = build_args(&machine_name);
+        let result: Result<(), OpError> = ops::run_op(&invocation, &args, &work_dir).map(|_| ());
+        report(qt_thread, QString::from(""), result, connection_id_str);
     });
     FfiResult::default()
 }

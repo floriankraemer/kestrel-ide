@@ -231,6 +231,7 @@ pub fn wrap_launch(
     target: &ContainerTargetSetting,
     invocation: &Invocation,
     project_root: &Path,
+    selinux_relabel: bool,
 ) -> Result<WrappedLaunch, TargetError> {
     let path_map = PathMap::new(project_root.to_path_buf(), &target.workdir);
 
@@ -269,10 +270,11 @@ pub fn wrap_launch(
         argv.push("-i".to_string());
         argv.push("-t".to_string());
         argv.push("-v".to_string());
-        argv.push(format!(
-            "{}:{}",
-            mount_source(invocation, project_root),
-            path_map.remote_root
+        argv.push(mount_arg(
+            &mount_source(invocation, project_root),
+            &path_map.remote_root,
+            false,
+            selinux_relabel,
         ));
         argv.push("-w".to_string());
         argv.push(remote_cwd);
@@ -293,7 +295,7 @@ pub fn wrap_launch(
                 &mount.host_path,
                 &mount.container_path,
                 mount.read_only,
-                false,
+                selinux_relabel,
             ));
         }
         if !target.run_options.is_empty() {
@@ -477,7 +479,8 @@ mod tests {
         let project_root = Path::new("/home/f/proj");
         let launch = spec(Some(project_root), &[]);
         let target = image_target();
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
 
         assert_eq!(wrapped.program, "docker");
         assert_eq!(
@@ -499,12 +502,42 @@ mod tests {
     }
 
     #[test]
+    fn selinux_relabel_applies_to_the_workspace_mount_and_extra_mounts() {
+        let project_root = Path::new("/home/f/proj");
+        let launch = spec(Some(project_root), &[]);
+        let mut target = image_target();
+        target.extra_mounts = vec![app_config::container_run::BindMount {
+            host_path: "/home/f/data".to_string(),
+            container_path: "/data".to_string(),
+            read_only: true,
+        }];
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, true).unwrap();
+
+        assert!(
+            wrapped
+                .args
+                .contains(&"/home/f/proj:/workspace:z".to_string()),
+            "{:?}",
+            wrapped.args
+        );
+        assert!(
+            wrapped
+                .args
+                .contains(&"/home/f/data:/data:ro,z".to_string()),
+            "{:?}",
+            wrapped.args
+        );
+    }
+
+    #[test]
     fn a_relative_cwd_under_the_project_is_rebased_under_the_workdir() {
         let project_root = Path::new("/home/f/proj");
         let cwd = project_root.join("backend");
         let launch = spec(Some(&cwd), &[]);
         let target = image_target();
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
         assert!(wrapped.args.contains(&"/workspace/backend".to_string()));
     }
 
@@ -513,7 +546,8 @@ mod tests {
         let project_root = Path::new("/home/f/proj");
         let launch = spec(Some(Path::new("/home/f/elsewhere")), &[]);
         let target = image_target();
-        let err = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap_err();
+        let err =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap_err();
         assert_eq!(
             err,
             TargetError::CwdOutsideProject(PathBuf::from("/home/f/elsewhere"))
@@ -526,7 +560,8 @@ mod tests {
         let env = vec![("DATA_DIR".to_string(), "/home/f/proj/data".to_string())];
         let launch = spec(Some(project_root), &env);
         let target = image_target();
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
         assert!(wrapped
             .args
             .contains(&"DATA_DIR=/workspace/data".to_string()));
@@ -538,7 +573,8 @@ mod tests {
         let env = vec![("LOG_LEVEL".to_string(), "debug".to_string())];
         let launch = spec(Some(project_root), &env);
         let target = image_target();
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
         assert!(wrapped.args.contains(&"LOG_LEVEL=debug".to_string()));
     }
 
@@ -560,7 +596,8 @@ mod tests {
             }],
             ..image_target()
         };
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
         assert!(wrapped.args.contains(&"-P".to_string()));
         assert!(wrapped.args.contains(&"8080:80".to_string()));
         assert!(wrapped.args.contains(&"/data:/data:ro".to_string()));
@@ -574,7 +611,8 @@ mod tests {
             run_options: "--label foo=bar".to_string(),
             ..image_target()
         };
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
         let pos = wrapped
             .args
             .iter()
@@ -594,7 +632,8 @@ mod tests {
             image_tag: Some("myapp:dev".to_string()),
             ..image_target()
         };
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
         assert!(wrapped.args.contains(&"myapp:dev".to_string()));
     }
 
@@ -620,7 +659,8 @@ mod tests {
             image: None,
             ..image_target()
         };
-        let wrapped = wrap_launch(&launch, &target, &local_invocation(), project_root).unwrap();
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
         assert_eq!(
             wrapped.args,
             vec![
@@ -699,7 +739,7 @@ mod tests {
         let project_root = Path::new(r"\\wsl.localhost\Ubuntu\home\f\proj");
         let launch = spec(Some(project_root), &[]);
         let target = image_target();
-        let wrapped = wrap_launch(&launch, &target, &invocation, project_root).unwrap();
+        let wrapped = wrap_launch(&launch, &target, &invocation, project_root, false).unwrap();
         assert!(wrapped.args.iter().any(|a| a == "/home/f/proj:/workspace"));
     }
 }

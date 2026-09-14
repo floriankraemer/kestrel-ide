@@ -1,0 +1,38 @@
+[
+  {
+    "Name": "podman-machine-default",
+    "Default": true,
+    "Created": "2026-08-01T09:00:00+02:00",
+    "Running": true,
+    "Starting": false,
+    "LastUp": "Currently running",
+    "Stream": "default",
+    "VMType": "wsl",
+    "CPUs": 4,
+    "Memory": 2147483648,
+    "DiskSize": 107374182400,
+    "Port": 0,
+    "RemoteUsername": "user",
+    "IdentityPath": "",
+    "Rootful": true,
+    "UserModeNetworking": true
+  },
+  {
+    "Name": "podman-machine-secondary",
+    "Default": false,
+    "Created": "2026-08-15T09:00:00+02:00",
+    "Running": false,
+    "Starting": false,
+    "LastUp": "3 days ago",
+    "Stream": "default",
+    "VMType": "wsl",
+    "CPUs": 2,
+    "Memory": 1073741824,
+    "DiskSize": 53687091200,
+    "Port": 0,
+    "RemoteUsername": "user",
+    "IdentityPath": "",
+    "Rootful": false,
+    "UserModeNetworking": true
+  }
+]

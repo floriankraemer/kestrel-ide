@@ -6,6 +6,7 @@
 #include <QFileDialog>
 #include <QFont>
 #include <QFormLayout>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -13,7 +14,10 @@
 #include <QListWidget>
 #include <QLocale>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPoint>
+#include <QPushButton>
+#include <QSet>
 #include <QTabBar>
 #include <QTableWidget>
 #include <QTabWidget>
@@ -33,11 +37,53 @@ constexpr int kFilesKindRole = Qt::UserRole + 1;
 // listing.
 constexpr int kFilesLoadedRole = Qt::UserRole + 2;
 
+// C9: a layer-fs entry item's own layer id/path/kind, for the Layers
+// tab's double-click-to-open and Download... actions. Only ever set on a
+// *child* item (a layer id's own top-level item carries none of these).
+constexpr int kLayerFsLayerIdRole = Qt::UserRole;
+constexpr int kLayerFsPathRole = Qt::UserRole + 1;
+constexpr int kLayerFsKindRole = Qt::UserRole + 2;
+
 // The Log tab's tail: generous scrollback without asking the engine to
 // replay a container's entire history on every "Restart".
 constexpr quint32 kLogTail = 2000;
 
 constexpr int kContainerNodeIdRole = Qt::UserRole;
+
+// C9: a `TerminalWidget` dynamic property marking a Pull/Push console for
+// `sessionExited`'s handler — a plain `const char *`, the same style
+// `editor->property("tabId")` already uses elsewhere in this codebase.
+constexpr const char *kAutoCloseOnExitZeroProperty = "autoCloseOnExitZero";
+
+// One `ls -la`-derived entry under `target` in the Files tree — shared by
+// the live `filesReady` handler and `populateFilesRootFromCache` (C9
+// polish) so the two paths cannot draw a listing two different ways.
+void appendFileEntryItem(QTreeWidgetItem *target, const QString &dir, const FfiFileEntry &entry)
+{
+    const QString name = entry.name;
+    const QString kind = entry.kind;
+    const QString path =
+      dir.endsWith(QLatin1Char('/')) ? dir + name : dir + QLatin1Char('/') + name;
+    auto *child = new QTreeWidgetItem(target);
+    child->setText(0, name);
+    child->setData(0, kFilesPathRole, path);
+    child->setData(0, kFilesKindRole, kind);
+    child->setData(0, kFilesLoadedRole, true);
+    if (!QString(entry.target).isEmpty()) {
+        child->setText(1, QObject::tr("-> %1").arg(QString(entry.target)));
+        QFont italic = child->font(1);
+        italic.setItalic(true);
+        child->setFont(1, italic);
+    } else if (kind == QStringLiteral("file")) {
+        child->setText(1, QString::number(entry.size));
+    }
+    if (kind == QStringLiteral("dir")) {
+        // Placeholder child so the expand arrow shows up before the real
+        // listing is known.
+        auto *placeholder = new QTreeWidgetItem(child);
+        placeholder->setData(0, kFilesLoadedRole, false);
+    }
+}
 
 QLabel *readOnlyValue(QWidget *parent)
 {
@@ -68,29 +114,56 @@ ContainerDetailArea::ContainerDetailArea(ContainerService *containerService,
         closeTerminalTab(index);
     });
 
-    connect(containerService_, &ContainerService::processesReady, this,
-            [this](const QString &nodeId, const QString &titles, const ::rust::Vec<FfiProcessRow> &rows) {
-                if (nodeId != nodeId_ || processesTable_ == nullptr) {
+    // C9 polish: prune the Processes/Files caches once their container has
+    // actually left the tree (removed, or its connection disconnected) —
+    // every other tree change is a no-op pass over `nodes()`.
+    connect(containerService_, &ContainerService::treeChanged, this,
+            &ContainerDetailArea::onContainerTreeChanged);
+
+    // C9 polish: a Pull/Push console (marked at `addTerminalTab` time)
+    // closes itself on a clean exit; a Log/Terminal/Exec/Attach tab never
+    // carries the marker, so this is a no-op for those.
+    connect(terminalSupervisor_, &TerminalSupervisor::sessionExited, this,
+            [this](quint64 sessionId, quint32 exitCode) {
+                if (exitCode != 0) {
                     return;
                 }
-                const QStringList columns = titles.split(QLatin1Char('\t'));
-                processesTable_->clear();
-                processesTable_->setColumnCount(columns.size());
-                processesTable_->setHorizontalHeaderLabels(columns);
-                processesTable_->setRowCount(static_cast<int>(rows.size()));
-                int row = 0;
-                for (const FfiProcessRow &entry : rows) {
-                    const QStringList cells = QString(entry.cells).split(QLatin1Char('\t'));
-                    for (int column = 0; column < cells.size() && column < columns.size(); ++column) {
-                        processesTable_->setItem(row, column, new QTableWidgetItem(cells.at(column)));
+                for (int index = 0; index < tabs_->count(); ++index) {
+                    auto *widget = qobject_cast<TerminalWidget *>(tabs_->widget(index));
+                    if (widget == nullptr || widget->sessionId() != sessionId) {
+                        continue;
                     }
-                    ++row;
+                    if (widget->property(kAutoCloseOnExitZeroProperty).toBool()) {
+                        closeTerminalTab(index);
+                    }
+                    break;
                 }
-                processesTable_->resizeColumnsToContents();
+            });
+
+    connect(containerService_, &ContainerService::processesReady, this,
+            [this](const QString &nodeId, const QString &titles, const ::rust::Vec<FfiProcessRow> &rows) {
+                ProcessesSnapshot snapshot;
+                snapshot.titles = titles.split(QLatin1Char('\t'));
+                snapshot.rows.reserve(static_cast<int>(rows.size()));
+                for (const FfiProcessRow &entry : rows) {
+                    snapshot.rows.push_back(QString(entry.cells).split(QLatin1Char('\t')));
+                }
+                processesCache_.insert(nodeId, snapshot);
+                if (nodeId == nodeId_ && processesTable_ != nullptr) {
+                    populateProcessesTable(snapshot);
+                }
             });
 
     connect(containerService_, &ContainerService::filesReady, this,
             [this](const QString &nodeId, const QString &dir, const ::rust::Vec<FfiFileEntry> &entries) {
+                QVector<FfiFileEntry> copied;
+                copied.reserve(static_cast<int>(entries.size()));
+                for (const FfiFileEntry &entry : entries) {
+                    copied.push_back(entry);
+                }
+                if (dir == QStringLiteral("/")) {
+                    filesCache_.insert(nodeId, copied);
+                }
                 if (nodeId != nodeId_ || filesTree_ == nullptr) {
                     return;
                 }
@@ -120,29 +193,8 @@ ContainerDetailArea::ContainerDetailArea(ContainerService *containerService,
                     return;
                 }
                 target->takeChildren();
-                for (const FfiFileEntry &entry : entries) {
-                    const QString name = entry.name;
-                    const QString kind = entry.kind;
-                    const QString path = dir.endsWith(QLatin1Char('/')) ? dir + name : dir + QLatin1Char('/') + name;
-                    auto *child = new QTreeWidgetItem(target);
-                    child->setText(0, name);
-                    child->setData(0, kFilesPathRole, path);
-                    child->setData(0, kFilesKindRole, kind);
-                    child->setData(0, kFilesLoadedRole, true);
-                    if (!QString(entry.target).isEmpty()) {
-                        child->setText(1, tr("-> %1").arg(QString(entry.target)));
-                        QFont italic = child->font(1);
-                        italic.setItalic(true);
-                        child->setFont(1, italic);
-                    } else if (kind == QStringLiteral("file")) {
-                        child->setText(1, QString::number(entry.size));
-                    }
-                    if (kind == QStringLiteral("dir")) {
-                        // Placeholder child so the expand arrow shows up
-                        // before the real listing is known.
-                        auto *placeholder = new QTreeWidgetItem(child);
-                        placeholder->setData(0, kFilesLoadedRole, false);
-                    }
+                for (const FfiFileEntry &entry : copied) {
+                    appendFileEntryItem(target, dir, entry);
                 }
                 if (target != filesTree_->invisibleRootItem()) {
                     target->setData(0, kFilesLoadedRole, true);
@@ -176,6 +228,44 @@ ContainerDetailArea::ContainerDetailArea(ContainerService *containerService,
                 }
                 layersTable_->resizeColumnsToContents();
             });
+
+    connect(containerService_, &ContainerService::layerFsReady, this,
+            [this](const QString &nodeId, const QString &lines) {
+                if (nodeId != nodeId_ || layerFsTree_ == nullptr) {
+                    return;
+                }
+                layerFsTree_->clear();
+                QHash<QString, QTreeWidgetItem *> layerItems;
+                for (const QString &line : lines.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+                    const QStringList fields = line.split(QLatin1Char('\t'));
+                    if (fields.size() != 4) {
+                        continue;
+                    }
+                    const QString &layerId = fields.at(0);
+                    QTreeWidgetItem *layerItem = layerItems.value(layerId);
+                    if (layerItem == nullptr) {
+                        layerItem = new QTreeWidgetItem(layerFsTree_, {layerId});
+                        layerItems.insert(layerId, layerItem);
+                    }
+                    const qint64 size = fields.at(2).toLongLong();
+                    const QString &path = fields.at(1);
+                    const QString kind = fields.at(3);
+                    const QString glyph = kind == QStringLiteral("deleted")   ? tr("- ")
+                                          : kind == QStringLiteral("modified") ? tr("~ ")
+                                                                               : tr("+ ");
+                    auto *entryItem =
+                      new QTreeWidgetItem(layerItem, {glyph + path,
+                                                      kind == QStringLiteral("deleted")
+                                                        ? QString()
+                                                        : QLocale().formattedDataSize(size),
+                                                      kind});
+                    entryItem->setData(0, kLayerFsLayerIdRole, layerId);
+                    entryItem->setData(0, kLayerFsPathRole, path);
+                    entryItem->setData(0, kLayerFsKindRole, kind);
+                }
+                layerFsTree_->expandAll();
+                layerFsTree_->resizeColumnToContents(0);
+            });
 }
 
 void ContainerDetailArea::onSelectionChanged(const QString &nodeId, const QString &kind)
@@ -188,23 +278,45 @@ void ContainerDetailArea::onSelectionChanged(const QString &nodeId, const QStrin
     } else {
         closeLogTab();
     }
-    if (processesPage_ != nullptr) {
-        tabs_->removeTab(tabs_->indexOf(processesPage_));
-        processesPage_->deleteLater();
-        processesPage_ = nullptr;
-        processesTable_ = nullptr;
-    }
-    if (filesPage_ != nullptr) {
-        tabs_->removeTab(tabs_->indexOf(filesPage_));
-        filesPage_->deleteLater();
-        filesPage_ = nullptr;
-        filesTree_ = nullptr;
+    // C9 polish: Processes/Files stay open across a container-to-container
+    // selection change (repopulated for the newly selected one, from
+    // `processesCache_`/`filesCache_` first if it has been seen before)
+    // rather than being torn down — only closed outright when the new
+    // selection is not a container at all, where they mean nothing.
+    if (!isContainer_) {
+        if (processesPage_ != nullptr) {
+            tabs_->removeTab(tabs_->indexOf(processesPage_));
+            processesPage_->deleteLater();
+            processesPage_ = nullptr;
+            processesTable_ = nullptr;
+        }
+        if (filesPage_ != nullptr) {
+            tabs_->removeTab(tabs_->indexOf(filesPage_));
+            filesPage_->deleteLater();
+            filesPage_ = nullptr;
+            filesTree_ = nullptr;
+        }
+    } else {
+        if (processesTable_ != nullptr) {
+            const auto cached = processesCache_.constFind(nodeId_);
+            if (cached != processesCache_.constEnd()) {
+                populateProcessesTable(cached.value());
+            } else {
+                processesTable_->setRowCount(0);
+            }
+            refreshProcesses();
+        }
+        if (filesTree_ != nullptr) {
+            populateFilesRoot();
+        }
     }
     if (layersPage_ != nullptr) {
         tabs_->removeTab(tabs_->indexOf(layersPage_));
         layersPage_->deleteLater();
         layersPage_ = nullptr;
         layersTable_ = nullptr;
+        analyzeImageButton_ = nullptr;
+        layerFsTree_ = nullptr;
     }
     if (labelsPage_ != nullptr) {
         tabs_->removeTab(tabs_->indexOf(labelsPage_));
@@ -232,7 +344,10 @@ void ContainerDetailArea::setGenericDashboardPage(QWidget *page)
 void ContainerDetailArea::updateDashboardTab()
 {
     QWidget *wanted = genericDashboardPage_;
-    if (kind_ == QStringLiteral("image")) {
+    if (kind_ == QStringLiteral("container")) {
+        wanted = ensureContainerDashboardPage();
+        populateContainerDashboard();
+    } else if (kind_ == QStringLiteral("image")) {
         wanted = ensureImageDashboardPage();
         populateImageDashboard();
     } else if (kind_ == QStringLiteral("network")) {
@@ -463,12 +578,19 @@ void ContainerDetailArea::closeLogTab()
     terminalSupervisor_->closeSession(sessionId);
 }
 
-void ContainerDetailArea::addTerminalTab(const FfiCommand &command, const QString &title)
+void ContainerDetailArea::addTerminalTab(const FfiCommand &command, const QString &title,
+                                         bool autoCloseOnExitZero)
 {
     const quint64 sessionId = terminalSupervisor_->newSession();
     terminalSupervisor_->setCommand(sessionId, command.program, command.args, command.env);
     auto *widget =
       new TerminalWidget(terminalSupervisor_, sessionId, QString(), appSettings_, openAt_, tabs_);
+    // C9: a Pull/Push console closes itself on a clean exit
+    // (`sessionExited`'s handler below); a Log/Terminal/Exec/Attach tab
+    // never does, so it carries no such marker at all.
+    if (autoCloseOnExitZero) {
+        widget->setProperty(kAutoCloseOnExitZeroProperty, true);
+    }
     const int index = tabs_->addTab(widget, title);
     tabs_->setTabsClosable(true);
     tabs_->setCurrentIndex(index);
@@ -539,6 +661,50 @@ void ContainerDetailArea::openAttach()
     addTerminalTab(command, tr("Attach"));
 }
 
+void ContainerDetailArea::onContainerTreeChanged()
+{
+    evictStaleCacheEntries();
+}
+
+void ContainerDetailArea::evictStaleCacheEntries()
+{
+    if (processesCache_.isEmpty() && filesCache_.isEmpty()) {
+        return;
+    }
+    QSet<QString> liveContainerIds;
+    for (const FfiContainerNode &node : containerService_->nodes()) {
+        if (node.kind == QStringLiteral("container")) {
+            liveContainerIds.insert(QString(node.id));
+        }
+    }
+    const auto evict = [&liveContainerIds](auto &cache) {
+        for (auto it = cache.begin(); it != cache.end();) {
+            if (liveContainerIds.contains(it.key())) {
+                ++it;
+            } else {
+                it = cache.erase(it);
+            }
+        }
+    };
+    evict(processesCache_);
+    evict(filesCache_);
+}
+
+void ContainerDetailArea::populateProcessesTable(const ProcessesSnapshot &snapshot)
+{
+    processesTable_->clear();
+    processesTable_->setColumnCount(snapshot.titles.size());
+    processesTable_->setHorizontalHeaderLabels(snapshot.titles);
+    processesTable_->setRowCount(snapshot.rows.size());
+    for (int row = 0; row < snapshot.rows.size(); ++row) {
+        const QStringList &cells = snapshot.rows.at(row);
+        for (int column = 0; column < cells.size() && column < snapshot.titles.size(); ++column) {
+            processesTable_->setItem(row, column, new QTableWidgetItem(cells.at(column)));
+        }
+    }
+    processesTable_->resizeColumnsToContents();
+}
+
 void ContainerDetailArea::showProcesses()
 {
     if (nodeId_.isEmpty()) {
@@ -562,6 +728,13 @@ void ContainerDetailArea::showProcesses()
         tabs_->tabBar()->setTabButton(processesIndex, QTabBar::RightSide, nullptr);
     }
     tabs_->setCurrentWidget(processesPage_);
+    // Instant if this container's processes were seen before (C9 polish);
+    // a background refresh still runs either way, so cached data is never
+    // shown as if it were current for longer than the round trip takes.
+    const auto cached = processesCache_.constFind(nodeId_);
+    if (cached != processesCache_.constEnd()) {
+        populateProcessesTable(cached.value());
+    }
     refreshProcesses();
 }
 
@@ -623,7 +796,21 @@ void ContainerDetailArea::ensureFilesTab()
 void ContainerDetailArea::populateFilesRoot()
 {
     filesTree_->clear();
+    // Instant if this container's root listing was seen before (C9
+    // polish); a background refresh still runs either way.
+    const auto cached = filesCache_.constFind(nodeId_);
+    if (cached != filesCache_.constEnd()) {
+        populateFilesRootFromCache(cached.value());
+    }
     containerService_->listFiles(nodeId_, QStringLiteral("/"));
+}
+
+void ContainerDetailArea::populateFilesRootFromCache(const QVector<FfiFileEntry> &entries)
+{
+    QTreeWidgetItem *root = filesTree_->invisibleRootItem();
+    for (const FfiFileEntry &entry : entries) {
+        appendFileEntryItem(root, QStringLiteral("/"), entry);
+    }
 }
 
 void ContainerDetailArea::requestChildren(QTreeWidgetItem *dirItem, const QString &dir)
@@ -659,11 +846,75 @@ void ContainerDetailArea::showLayers()
         layersTable_->setHorizontalHeaderLabels(
           {tr("Layer ID"), tr("Size"), tr("Created"), tr("Created By")});
         layout->addWidget(layersTable_);
+
+        analyzeImageButton_ = new QPushButton(tr("Analyze image"), layersPage_);
+        connect(analyzeImageButton_, &QPushButton::clicked, this,
+                &ContainerDetailArea::triggerAnalyzeImage);
+        layout->addWidget(analyzeImageButton_, 0, Qt::AlignLeft);
+
+        layerFsTree_ = new QTreeWidget(layersPage_);
+        layerFsTree_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        layerFsTree_->setColumnCount(3);
+        layerFsTree_->setHeaderLabels({tr("Path"), tr("Size"), tr("Kind")});
+        layerFsTree_->setContextMenuPolicy(Qt::CustomContextMenu);
+        layout->addWidget(layerFsTree_, 1);
+
+        // A deleted (whiteout) entry has nothing left to open/download —
+        // both actions below refuse it via the same `isRegularFile` check.
+        const auto isRegularFile = [](QTreeWidgetItem *item) {
+            return item != nullptr && item->data(0, kLayerFsLayerIdRole).isValid()
+                && item->data(0, kLayerFsKindRole).toString() != QStringLiteral("deleted");
+        };
+        connect(layerFsTree_, &QTreeWidget::itemDoubleClicked, this,
+                [this, isRegularFile](QTreeWidgetItem *item, int) {
+                    if (!isRegularFile(item)) {
+                        return;
+                    }
+                    const FfiResult result = containerService_->openLayerEntry(
+                      nodeId_, item->data(0, kLayerFsLayerIdRole).toString(),
+                      item->data(0, kLayerFsPathRole).toString());
+                    if (result.code != 0) {
+                        QMessageBox::warning(nullptr, tr("Open File"), QString(result.message));
+                    }
+                });
+        connect(layerFsTree_, &QTreeWidget::customContextMenuRequested, this,
+                [this, isRegularFile](const QPoint &pos) {
+                    QTreeWidgetItem *item = layerFsTree_->itemAt(pos);
+                    if (!isRegularFile(item)) {
+                        return;
+                    }
+                    QMenu menu(layerFsTree_);
+                    QAction *download = menu.addAction(tr("Download..."));
+                    if (menu.exec(layerFsTree_->viewport()->mapToGlobal(pos)) != download) {
+                        return;
+                    }
+                    const QString path = item->data(0, kLayerFsPathRole).toString();
+                    const QString destPath = QFileDialog::getSaveFileName(
+                      nullptr, tr("Download"), path.section(QLatin1Char('/'), -1));
+                    if (destPath.isEmpty()) {
+                        return;
+                    }
+                    const FfiResult result = containerService_->downloadLayerEntry(
+                      nodeId_, item->data(0, kLayerFsLayerIdRole).toString(), path, destPath);
+                    if (result.code != 0) {
+                        QMessageBox::warning(nullptr, tr("Download"), QString(result.message));
+                    }
+                });
+
         const int layersIndex = tabs_->addTab(layersPage_, tr("Layers"));
         tabs_->tabBar()->setTabButton(layersIndex, QTabBar::RightSide, nullptr);
     }
     tabs_->setCurrentWidget(layersPage_);
     containerService_->imageLayers(nodeId_);
+}
+
+void ContainerDetailArea::triggerAnalyzeImage()
+{
+    if (nodeId_.isEmpty() || kind_ != QStringLiteral("image") || layerFsTree_ == nullptr) {
+        return;
+    }
+    layerFsTree_->clear();
+    containerService_->analyzeImage(nodeId_);
 }
 
 void ContainerDetailArea::showLabels()
@@ -724,12 +975,14 @@ void ContainerDetailArea::openPullTab(const QString &connectionId, const QString
     if (QString(command.program).isEmpty()) {
         return;
     }
-    addTerminalTab(command, tr("Pull: %1").arg(reference));
+    addTerminalTab(command, tr("Pull: %1").arg(reference), /*autoCloseOnExitZero=*/true);
 }
 
 void ContainerDetailArea::openTerminalCommandTab(const FfiCommand &command, const QString &title)
 {
-    addTerminalTab(command, title);
+    // Pull/Push (registry) consoles both go through this entry point —
+    // both auto-close on a clean exit.
+    addTerminalTab(command, title, /*autoCloseOnExitZero=*/true);
 }
 
 } // namespace ui_shell

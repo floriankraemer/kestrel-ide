@@ -176,6 +176,12 @@ As landed: `RunConfigSetting.run_on` (`"container:<target-id>"`), resolved in `r
 **C9 — Dashboard editing, Podman extras, polish.**
 Dashboard Add/Edit/Remove env/port/mount → `recreate.rs` (`rm -f` + `run` from inspect; confirm dialog); SELinux `:z` advanced setting + rule; Podman: Pods node (ls/start/stop/rm/inspect), machine Start/Stop from the connection node, `podman-remote` resolution, "Containerfile" everywhere the UI says "Dockerfile"; Layers → "Analyze image" (`save` → per-layer tar listing, open/download file) — optional, last.
 Tests: recreate spec from fixture inspect (docker + podman), `:z` rule (skips top-level dirs), pod parsing.
+As landed: the Dashboard's Env/Ports/Mounts tables are plain-text `QTableWidget`s with Add/Remove rows (a mount's read-only flag is a checkbox) rather than modal Add/Edit dialogs — a scope reduction accepted for a first landing, upgrade path is `run_config_container_pages.cpp`'s disclosure-group style if the plain tables prove awkward.
+A pod node's "Inspect" opens its `pod inspect` JSON through the same `openInspect`/virtual-document path a container's does (`session::inspect_json_with_args` takes the argv now, rather than always `inspect <id>`).
+The Layers tab's "Analyze image" tree supports double-click-to-open (8 MiB capped, `layer_fs::read_entry`) and a "Download..." context action with no cap; the temp tar `save` produced is kept (not deleted) until the next analysis, a different image's analysis, or `ContainerServiceRust::drop`, so extraction never re-runs `save`.
+The connection row shows a Podman machine's running/stopped state (`ConnectionRow::machine_running`, refreshed alongside `connect`/`refresh` on a worker thread, never polled independently).
+The Processes/Files tabs keep each container's last-seen state across a selection change (`processesCache_`/`filesCache_`, keyed by node id, pruned on `treeChanged` once a node actually leaves the tree) — Files caches only the root listing, not a previously-expanded subdirectory's contents, a documented depth-1 ceiling.
+`TerminalSupervisor::sessionExited(sessionId, exitCode)` fires once the PTY reader thread sees EOF and `PtySession::try_wait` (queued onto the Qt thread, since `Rc<RefCell<..>>` is not `Send`) confirms the child has exited; a Pull/Push console (marked at `addTerminalTab` time) closes itself on `exitCode == 0`, a Log/Terminal/Exec/Attach tab never carries the marker and stays open.
 
 **C10 — E2E, docs, manual pass.**
 `stub_engine` on PATH via fixture (`crates/app/tests/fixtures/containers/`), `e2e_containers.rs`: dock shows tree from canned data, Start records argv, run-config dialog creates a compose config and previews the command, Dockerfile gutter; `overview.md`/`project-structure.md` truthful; manual matrix recorded in this doc's Progress table: Linux docker + rootless podman, Windows Docker Desktop + podman machine, WSL distro connection.
@@ -216,5 +222,5 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 | C6 | Editor assistance | done | `8361f00` |
 | C7 | Registries | done | `8ca18b5`, `0cbfef9` |
 | C8 | Run targets | done | `bd591c4` |
-| C9 | Dashboard editing, Podman extras, polish | not started | |
+| C9 | Dashboard editing, Podman extras, polish | done | `30e786f`, `0dc938e`, `f38e98d`, `6df6c31`, `5710827`, `6759be0`, `eba9e39`, `741d9f4`, `dc72627`, `599ebdc`, `d2abc6c` |
 | C10 | E2E, docs, manual pass | not started | |

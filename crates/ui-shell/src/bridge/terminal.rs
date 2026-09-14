@@ -585,6 +585,23 @@ impl ffi::TerminalSupervisor {
                     Err(_) => break,
                 }
             }
+            // The child has exited (EOF) or the pipe broke; either way,
+            // `try_wait` on the Qt thread — `entry.pty_session` is an
+            // `Rc<RefCell<..>>`, not `Send`, so it cannot be reached from
+            // this background thread directly, and `try_wait` itself is
+            // non-blocking so queuing it costs nothing worth avoiding.
+            let _ = qt_thread.queue(move |mut supervisor: Pin<&mut Self>| {
+                let exit_code = supervisor.handles(session_id).and_then(|entry| {
+                    entry
+                        .pty_session
+                        .borrow_mut()
+                        .as_mut()
+                        .and_then(|session| session.try_wait().ok().flatten())
+                });
+                if let Some(exit_code) = exit_code {
+                    supervisor.as_mut().session_exited(session_id, exit_code);
+                }
+            });
         });
 
         FfiResult::default()

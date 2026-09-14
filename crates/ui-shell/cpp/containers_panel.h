@@ -12,6 +12,7 @@ class QAction;
 class QCompleter;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QTabWidget;
 class QToolButton;
 class QTreeWidget;
@@ -79,6 +80,10 @@ private:
     void onTreeChanged();
     void onSelectionChanged();
     void showContextMenu(const QPoint &pos);
+    // C9 polish: "Add from contexts..." opens a checkbox dialog of
+    // discovered-but-not-yet-configured connections instead of only
+    // opening Settings on the discovery button.
+    void openAddFromContextsDialog();
     void updateToolbarEnablement();
     void report(const FfiResult &result);
     QString selectedConnectionId() const;
@@ -133,6 +138,13 @@ private:
     void showRegistryRepoContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
     void showRegistryTagContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
     void openPushImageDialog(const QString &imageNodeId);
+
+    // containers_podman.cpp (C9): a pod node's own lifecycle context menu,
+    // and a Podman connection's Start machine/Stop machine entries added
+    // onto the connection context menu built in showContextMenu().
+    void showPodContextMenu(QTreeWidgetItem *item, const QPoint &globalPos);
+    void addMachineActions(QMenu &menu, const QString &connectionId, QAction *&startAction,
+                           QAction *&stopAction);
 
     ContainerService *containerService_;
     // C7 review follow-up: "Remove" on a registry node writes straight

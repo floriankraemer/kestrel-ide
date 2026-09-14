@@ -33,6 +33,11 @@ pub enum OpErrorCode {
     NotRunning,
     PermissionDenied,
     EngineUnavailable,
+    /// [`crate::recreate::recreate`] only: the old container was already
+    /// removed (`rm -f` succeeded) but the new `run` then failed, so there
+    /// is no container under this id any more — the confirm dialog's own
+    /// warning, now a fact rather than a possibility.
+    OldContainerRemoved,
     Other,
 }
 

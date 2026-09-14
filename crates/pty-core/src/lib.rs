@@ -506,6 +506,38 @@ mod tests {
         assert!(session.try_wait().expect("try_wait after kill").is_some());
     }
 
+    /// The exact mechanism `ui-shell`'s `TerminalSupervisor` read loop
+    /// depends on for `sessionExited` (C9): reading until `Ok(0)` (EOF —
+    /// the child exited and closed the PTY) then `try_wait` reporting its
+    /// exit code. A short retry loop covers the small window between the
+    /// PTY closing and the OS having actually reaped the child — the same
+    /// race `try_wait` being non-blocking exists to let a caller handle
+    /// its own way, here just "ask again a few times" rather than block.
+    #[test]
+    fn read_until_eof_then_try_wait_reports_the_exit_code() {
+        let shell = ShellSpec::new("/bin/sh", vec!["-c".into(), "exit 7".into()]);
+        let mut session = PtySession::spawn(&shell, PtySize::new(24, 80)).expect("spawn");
+
+        let mut buf = [0u8; 256];
+        loop {
+            match session.read(&mut buf) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+
+        let mut exit_code = None;
+        for _ in 0..50 {
+            if let Some(code) = session.try_wait().expect("try_wait") {
+                exit_code = Some(code);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert_eq!(exit_code, Some(7));
+    }
+
     #[test]
     fn take_reader_moves_reading_out_and_still_works() {
         let shell = ShellSpec::new("/bin/sh", vec!["-c".into(), "echo hi".into()]);

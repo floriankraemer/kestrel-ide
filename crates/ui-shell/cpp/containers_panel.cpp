@@ -13,11 +13,14 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCompleter>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QLocale>
 #include <QMenu>
 #include <QMessageBox>
@@ -28,7 +31,9 @@
 #include <QTabWidget>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QUuid>
 #include <QVBoxLayout>
+#include <QVector>
 
 namespace ui_shell {
 
@@ -188,7 +193,9 @@ QString statusColumn(const FfiContainerNode &node)
 }
 
 // The Details column: engine text as-is, or an image's size in the
-// locale's own SI units, or a pod's container count.
+// locale's own SI units, or a pod's container count, or (C9) a Podman
+// machine connection's own running/stopped state appended after the
+// engine word ("Podman · running").
 QString detailColumn(const FfiContainerNode &node)
 {
     if (node.sizeBytes >= 0) {
@@ -196,6 +203,11 @@ QString detailColumn(const FfiContainerNode &node)
     }
     if (node.kind == QStringLiteral("pod")) {
         return QObject::tr("%n container(s)", nullptr, static_cast<int>(node.count));
+    }
+    if (node.kind == QStringLiteral("connection") && node.machineRunning >= 0) {
+        const QString state =
+          node.machineRunning != 0 ? QObject::tr("running") : QObject::tr("stopped");
+        return QObject::tr("%1 · %2").arg(QString(node.detail), state);
     }
     return QString(node.detail);
 }
@@ -229,12 +241,10 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
             openSettings_(QString());
         }
     });
-    // Discovery lives on the Settings page (C1) — both entries open it.
-    connect(addFromContexts, &QAction::triggered, this, [this]() {
-        if (openSettings_) {
-            openSettings_(QString());
-        }
-    });
+    // C9: a small checkbox dialog rather than only opening Settings — see
+    // openAddFromContextsDialog()'s own doc comment.
+    connect(addFromContexts, &QAction::triggered, this,
+            [this]() { openAddFromContextsDialog(); });
     // C7 review follow-up: a registry is added on the Registries tab of
     // the same page — opened directly on it now, rather than whichever tab
     // was last shown.
@@ -515,6 +525,95 @@ void ContainersPanel::setRunContext(RunService *runService, RunConfigEditor *run
     editorTabs_ = editorTabs;
 }
 
+// "Add from contexts..." (C9 polish): a checkbox list of everything
+// `discoverContainerConnections()` finds that is not already one of
+// `containerConnections()`'s own rows, matched on every field a
+// connection kind actually varies by (path/url/distro/resource_name) —
+// name/id are never part of the match, so renaming an already-added
+// connection does not make it reappear here as "new". Ticked entries are
+// appended and the whole list is saved in one `saveContainerConnections`
+// call, then `refreshAll()` picks the new rows up in the tree
+// immediately, the same as any other settings change this dock reacts to.
+void ContainersPanel::openAddFromContextsDialog()
+{
+    const auto discovered = appSettings_->discoverContainerConnections();
+    const auto existing = appSettings_->containerConnections();
+    const auto alreadyConfigured = [&existing](const FfiDiscoveredConnection &candidate) {
+        for (const FfiContainerConnection &row : existing) {
+            if (QString(row.engine) == QString(candidate.engine)
+                && QString(row.kind) == QString(candidate.kind)
+                && QString(row.path) == QString(candidate.path)
+                && QString(row.url) == QString(candidate.url)
+                && QString(row.distro) == QString(candidate.distro)
+                && QString(row.resource_name) == QString(candidate.resource_name)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    QVector<FfiDiscoveredConnection> candidates;
+    for (const FfiDiscoveredConnection &candidate : discovered) {
+        if (!alreadyConfigured(candidate)) {
+            candidates.push_back(candidate);
+        }
+    }
+    if (candidates.isEmpty()) {
+        QMessageBox::information(
+          this, tr("Add from Contexts"),
+          discovered.empty() ? tr("No connections were discovered.")
+                              : tr("Every discovered connection is already configured."));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Add from Contexts"));
+    auto *layout = new QVBoxLayout(&dialog);
+    layout->addWidget(new QLabel(tr("Select the connections to add:"), &dialog));
+    auto *list = new QListWidget(&dialog);
+    for (const FfiDiscoveredConnection &candidate : candidates) {
+        auto *item = new QListWidgetItem(QString(candidate.label), list);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+    }
+    layout->addWidget(list);
+    auto *buttons =
+      new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    ::rust::Vec<FfiContainerConnection> merged;
+    for (const FfiContainerConnection &row : existing) {
+        merged.push_back(row);
+    }
+    bool anyChosen = false;
+    for (int row = 0; row < list->count(); ++row) {
+        if (list->item(row)->checkState() != Qt::Checked) {
+            continue;
+        }
+        const FfiDiscoveredConnection &candidate = candidates.at(row);
+        FfiContainerConnection connection;
+        connection.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        connection.name = candidate.label;
+        connection.engine = candidate.engine;
+        connection.kind = candidate.kind;
+        connection.path = candidate.path;
+        connection.url = candidate.url;
+        connection.distro = candidate.distro;
+        connection.resource_name = candidate.resource_name;
+        merged.push_back(connection);
+        anyChosen = true;
+    }
+    if (!anyChosen) {
+        return;
+    }
+    report(appSettings_->saveContainerConnections(merged));
+    containerService_->refreshAll();
+}
+
 void ContainersPanel::report(const FfiResult &result)
 {
     if (result.code == 0) {
@@ -679,6 +778,9 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         disconnectAction->setEnabled(!disconnected);
         QAction *refreshAction = menu.addAction(tr("Refresh"));
         refreshAction->setEnabled(!disconnected);
+        QAction *startMachine = nullptr;
+        QAction *stopMachine = nullptr;
+        addMachineActions(menu, id, startMachine, stopMachine);
         menu.addSeparator();
         QAction *editAction = menu.addAction(tr("Edit configuration..."));
         QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
@@ -690,12 +792,20 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
             report(containerService_->refresh(id));
         } else if (chosen == editAction && openSettings_) {
             openSettings_(QString());
+        } else if (chosen != nullptr && chosen == startMachine) {
+            report(containerService_->startMachine(id));
+        } else if (chosen != nullptr && chosen == stopMachine) {
+            report(containerService_->stopMachine(id));
         }
         return;
     }
 
     if (kind == QStringLiteral("container")) {
         showContainerContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("pod")) {
+        showPodContextMenu(item, tree_->viewport()->mapToGlobal(pos));
         return;
     }
     if (kind == QStringLiteral("containers-group")) {

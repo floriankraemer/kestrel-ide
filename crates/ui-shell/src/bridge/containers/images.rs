@@ -372,6 +372,152 @@ impl ffi::ContainerService {
         immediate
     }
 
+    /// "Analyze image" (C9): `save -o` + a headers-only tar walk, on a
+    /// worker thread — an image of any real-world size still only reads
+    /// headers, but it is still I/O on a temp file, not a snapshot lookup.
+    pub fn analyze_image(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let node_id_str = node_id.to_string();
+        let Some((connection_id, resource_id)) = parse_node_id(&node_id_str, NodeKind::Image)
+        else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("'{node_id_str}' is not an image node"),
+            );
+        };
+        let invocation = match service::connection_invocation(&connection_id) {
+            Ok(invocation) => invocation,
+            Err(result) => return result,
+        };
+        let work_dir = service::work_dir();
+        // The previous analysis' temp tar (if any) is no longer reachable
+        // once a new one starts — remove it now rather than leaking it
+        // until `Drop`.
+        if let Some((_, old_path)) = self.analyzed_image.borrow_mut().take() {
+            let _ = std::fs::remove_file(old_path);
+        }
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let result = container_core::layer_fs::analyze(&invocation, &resource_id, &work_dir);
+            let _ = qt_thread.queue(
+                move |mut service: Pin<&mut ffi::ContainerService>| match result {
+                    Ok(analyzed) => {
+                        let lines = analyzed
+                            .layers
+                            .iter()
+                            .flat_map(|layer| {
+                                layer.entries.iter().map(move |entry| {
+                                    let kind = match entry.kind {
+                                        container_core::layer_fs::EntryKind::Added => "added",
+                                        container_core::layer_fs::EntryKind::Modified => "modified",
+                                        container_core::layer_fs::EntryKind::Deleted => "deleted",
+                                    };
+                                    format!(
+                                        "{}\t{}\t{}\t{kind}",
+                                        layer.layer_id, entry.path, entry.size
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        *service.analyzed_image.borrow_mut() =
+                            Some((node_id_str.clone(), analyzed.tar_path));
+                        service.as_mut().layer_fs_ready(
+                            QString::from(node_id_str.as_str()),
+                            QString::from(lines.as_str()),
+                        );
+                    }
+                    Err(err) => {
+                        service.as_mut().action_finished(
+                            QString::from(node_id_str.as_str()),
+                            false,
+                            QString::from(err.message.as_str()),
+                        );
+                    }
+                },
+            );
+        });
+        FfiResult::default()
+    }
+
+    /// Open a double-clicked regular file entry from the Layers tab's
+    /// analyzed tree as a read-only virtual document (C9), 8 MiB capped —
+    /// same shape as `openInspect`. Refused when `node_id` is not the
+    /// image last analyzed (a stale tree from before a re-analysis or a
+    /// different image).
+    pub fn open_layer_entry(
+        mut self: Pin<&mut Self>,
+        node_id: &QString,
+        layer_id: &QString,
+        path: &QString,
+    ) -> FfiResult {
+        const MAX_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
+        let node_id_str = node_id.to_string();
+        let tar_path = match self.analyzed_image.borrow().as_ref() {
+            Some((id, tar_path)) if *id == node_id_str => tar_path.clone(),
+            _ => {
+                return errors::failure(
+                    errors::CODE_REFUSED,
+                    "this image has not been analyzed (or was analyzed again since) — click Analyze image first",
+                );
+            }
+        };
+        let bytes = match container_core::layer_fs::read_entry(
+            &tar_path,
+            &layer_id.to_string(),
+            &path.to_string(),
+            Some(MAX_PREVIEW_BYTES),
+        ) {
+            Ok(bytes) => bytes,
+            Err(err) => return errors::failure(errors::CODE_REFUSED, err.message),
+        };
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let key = format!("{node_id_str}/layer/{layer_id}/{path}");
+        let opened = self
+            .session
+            .borrow_mut()
+            .open_virtual_document("container", &key, &text);
+        self.as_mut().virtual_document_opened(
+            opened.id.raw(),
+            QString::from(opened.title.as_str()),
+            opened.newly_opened,
+        );
+        FfiResult::default()
+    }
+
+    /// "Download..." for a layer entry (C9): the full bytes, no size cap,
+    /// written to `dest_path` (chosen by the view's own `QFileDialog`).
+    pub fn download_layer_entry(
+        &self,
+        node_id: &QString,
+        layer_id: &QString,
+        path: &QString,
+        dest_path: &QString,
+    ) -> FfiResult {
+        let node_id_str = node_id.to_string();
+        let tar_path = match self.analyzed_image.borrow().as_ref() {
+            Some((id, tar_path)) if *id == node_id_str => tar_path.clone(),
+            _ => {
+                return errors::failure(
+                    errors::CODE_REFUSED,
+                    "this image has not been analyzed (or was analyzed again since) — click Analyze image first",
+                );
+            }
+        };
+        let bytes = match container_core::layer_fs::read_entry(
+            &tar_path,
+            &layer_id.to_string(),
+            &path.to_string(),
+            None,
+        ) {
+            Ok(bytes) => bytes,
+            Err(err) => return errors::failure(errors::CODE_REFUSED, err.message),
+        };
+        match std::fs::write(dest_path.to_string(), bytes) {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
+        }
+    }
+
     pub fn image_dashboard(&self, node_id: &QString) -> FfiImageDashboard {
         let Some((connection_id, resource_id)) =
             parse_node_id(&node_id.to_string(), NodeKind::Image)

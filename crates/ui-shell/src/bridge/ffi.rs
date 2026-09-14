@@ -5547,6 +5547,11 @@ mod ffi {
         Dependency,
         /// A Maven profile id, checkable (B3).
         Profile,
+        /// A Maven plugin bound into the build (review fix: Maven's own
+        /// Lifecycle/Plugins/Dependencies/Profiles vocabulary).
+        Plugin,
+        /// A goal one Maven plugin's `<executions>` binds.
+        Goal,
     }
 
     /// One row of the Build Tools dock's tree, flattened and

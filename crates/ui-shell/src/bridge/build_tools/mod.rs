@@ -158,6 +158,8 @@ fn to_ffi_node_kind(kind: jvm_build_core::view::NodeKind) -> ffi::FfiBuildToolNo
         NodeKind::SourceRoot => ffi::FfiBuildToolNodeKind::SourceRoot,
         NodeKind::Dependency => ffi::FfiBuildToolNodeKind::Dependency,
         NodeKind::Profile => ffi::FfiBuildToolNodeKind::Profile,
+        NodeKind::Plugin => ffi::FfiBuildToolNodeKind::Plugin,
+        NodeKind::Goal => ffi::FfiBuildToolNodeKind::Goal,
     }
 }
 

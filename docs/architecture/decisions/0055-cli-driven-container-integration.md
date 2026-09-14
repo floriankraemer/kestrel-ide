@@ -42,6 +42,22 @@ Every read goes through `inspect`/`version --format json` rather than `ps`/`imag
 
 **Cost accepted:** this requires the `docker`/`podman` CLI installed (JetBrains needs it too, for remote hosts and buildx), and one process spawn per query — roughly 10-30 ms, acceptable for a settings-page probe or an on-demand snapshot refresh, and the same cost every other CLI-driven crate in this codebase (`vcs-core`, `analysis-core`, `test-core`) already pays.
 
+## Registries and secrets (C7)
+
+The Docker Registry HTTP API V2 client, Docker Hub's own repository-listing API, and GitLab's project-registry API all live in `container-registry::registry`, alongside the C6 Hub search/tags client — the same crate for the same reason: every one of them is a blocking `reqwest` call, and `reqwest::blocking` carries a private tokio runtime that must never enter `container-core`'s tree.
+`container_core::registry_ref` stays the one place a registry's *kind* has meaning (`RegistryKind`, reference formatting, login/push argv) — `container-registry::registry` re-exports it rather than defining a second copy, the same "one enum, shared through the lower layer" shape `Engine`/`ConnectionKind` already establish for connections.
+
+**Credentials live in the OS keychain**, via the `keyring` crate's `linux-native` backend on Linux (kernel keyutils) — deliberately not `sync-secret-service` or `linux-native-sync-persistent`, both of which pull in `dbus-secret-service` and therefore need `libdbus-1-dev` + `pkg-config` just to *compile*.
+The linux-builder image has neither, and even a build that added them would still be exercising a D-Bus Secret Service daemon that CI, a headless server, and plenty of minimal desktops do not run — the exact reasoning ADR-0021 already gives for rejecting `keyring` outright for `ai-chat-core`'s provider API keys.
+`linux-native` needs no system package at all, so the build itself never depends on one being present.
+On Windows and macOS the native OS credential stores (`windows-native`/`apple-native`) are used instead, no such gap there.
+
+That still leaves a real gap: a container running with the kernel's keyutils syscalls themselves blocked (a locked-down sandbox, some minimal container base images) has no working backend at runtime even though the build succeeded.
+`container_registry::secrets::SecretStore` classifies exactly that failure — `keyring::Error::NoStorageAccess`/`PlatformFailure` — into `SecretError::Unavailable`, carrying one fixed, actionable message: *"No OS keychain available — run `docker login <address>` and leave the password empty"*.
+This is not a dead end: every registry action here (`pullFromRegistryCommand`/`pushImageCommand`) already skips its login line entirely when no secret is stored, and lets the engine CLI's own credential store (whatever `docker login`/`podman login` already wrote to `~/.docker/config.json` or the platform equivalent) supply the credentials instead.
+Push and pull keep working either way, just without this IDE's own "store a password" convenience.
+A `RegistrySetting` row itself never carries a secret field, matching `ContainerConnectionSetting`/the AI chat providers' own settings-vs-key split (ADR-0017/ADR-0039): `id`, `name`, `kind`, `address`, `username`, `gitlab_project`, `token_auth` are all TOML ever sees.
+
 ## Consequences
 
 - New Qt-free crate `container-core`: `connection` (`Engine`, `ConnectionKind`, `Invocation`), `discovery` (contexts/connections/machines/socket presets), `probe` (`version --format json` → `EngineInfo`/`ConnectionError`) in C1; `model`/`snapshot`/`watcher`/`session`/`ops`/`recreate`/`run_config`/`compose_file`/`target`/`registry`/`image_ref` land in C2-C9 per the plan.

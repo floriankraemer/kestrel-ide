@@ -42,6 +42,7 @@
 #include <QStackedWidget>
 #include <QStandardItemModel>
 #include <QString>
+#include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -51,7 +52,7 @@
 namespace ui_shell {
 
 void showSettingsDialog(QWidget *parent, const SettingsContext &context,
-                        const QString &initialCategory)
+                        const QString &initialCategory, const QString &initialContainersTab)
 {
     AppSettings *appSettings = context.appSettings;
     EditorTabs *editorTabs = context.editorTabs;
@@ -309,6 +310,22 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
       std::make_shared<ContainersPage>(buildContainersPage(&dialog, appSettings));
     const int containersIndex =
       pages->addWidget(scopedPage(QStringLiteral("containers"), containersPage->widget));
+    // C7 review follow-up: "Registry..."/registry-node "Edit..." open this
+    // page directly on its Registries tab rather than whichever tab was
+    // last shown — the page is built eagerly (unlike the `deferPage`
+    // categories above), so its `QTabWidget` (named in
+    // `buildContainersPage`) already exists to select a tab on.
+    if (!initialContainersTab.isEmpty()) {
+        if (auto *containersTabs =
+              containersPage->widget->findChild<QTabWidget *>(QStringLiteral("containersTabs"))) {
+            for (int i = 0; i < containersTabs->count(); ++i) {
+                if (containersTabs->tabText(i) == initialContainersTab) {
+                    containersTabs->setCurrentIndex(i);
+                    break;
+                }
+            }
+        }
+    }
 
     const McpPage mcp =
       buildMcpPage(&dialog, appSettings, context.docManager, *context.mcpStatus);

@@ -100,6 +100,12 @@ QString kindLabel(const QString &kind)
     if (kind == QStringLiteral("pods-group")) {
         return QObject::tr("Pods");
     }
+    // C7 review follow-up: the synthetic pagination row under a registry's
+    // repositories or a repository's tags — carries no name for the same
+    // reason a group row doesn't.
+    if (kind == QStringLiteral("registry-more")) {
+        return QObject::tr("Load more...");
+    }
     return QString();
 }
 
@@ -209,22 +215,32 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
                                  OpenAt openAt, QWidget *parent)
   : QWidget(parent)
   , containerService_(containerService)
+  , appSettings_(appSettings)
 {
     addButton_ = iconButton(":/ui/icons/containers/add.a8", tr("Add"), this);
     addButton_->setPopupMode(QToolButton::InstantPopup);
     auto *addMenu = new QMenu(addButton_);
     QAction *newConnection = addMenu->addAction(tr("New connection..."));
     QAction *addFromContexts = addMenu->addAction(tr("Add from contexts..."));
+    QAction *newRegistry = addMenu->addAction(tr("Registry..."));
     addButton_->setMenu(addMenu);
     connect(newConnection, &QAction::triggered, this, [this]() {
         if (openSettings_) {
-            openSettings_();
+            openSettings_(QString());
         }
     });
     // Discovery lives on the Settings page (C1) — both entries open it.
     connect(addFromContexts, &QAction::triggered, this, [this]() {
         if (openSettings_) {
-            openSettings_();
+            openSettings_(QString());
+        }
+    });
+    // C7 review follow-up: a registry is added on the Registries tab of
+    // the same page — opened directly on it now, rather than whichever tab
+    // was last shown.
+    connect(newRegistry, &QAction::triggered, this, [this]() {
+        if (openSettings_) {
+            openSettings_(tr("Registries"));
         }
     });
 
@@ -412,12 +428,39 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     connect(tree_, &QTreeWidget::customContextMenuRequested, this,
             &ContainersPanel::showContextMenu);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem *item, int) {
-        if (item->data(0, kKindRole).toString() == QStringLiteral("connection")) {
+        const QString kind = item->data(0, kKindRole).toString();
+        if (kind == QStringLiteral("connection")) {
             report(containerService_->connectEngine(item->data(0, kIdRole).toString()));
+        } else if (kind == QStringLiteral("registry-more")) {
+            // C7 review follow-up: the same "activate this leaf-ish row"
+            // gesture the connection row above uses to connect, applied to
+            // fetching the next page of whichever listing this row sits
+            // under — which listing, and its cursor, is Rust's own
+            // decision (`ContainerService::loadMoreRegistryChildren`).
+            report(containerService_->loadMoreRegistryChildren(item->data(0, kIdRole).toString()));
         }
     });
     connect(containerService_, &ContainerService::treeChanged, this,
             &ContainersPanel::onTreeChanged);
+    // C7: a registry/registry-repo node's children are fetched on first
+    // expand rather than eagerly — `nodes()` already includes whatever is
+    // cached, so an empty `childCount()` means "not fetched yet" (or
+    // fetched-and-genuinely-empty, in which case this re-asks once more
+    // per expand, a redundant network call rather than a correctness bug).
+    connect(tree_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem *item) {
+        if (item->childCount() > 0) {
+            return;
+        }
+        const QString kind = item->data(0, kKindRole).toString();
+        const QString id = item->data(0, kIdRole).toString();
+        if (kind == QStringLiteral("registry")) {
+            containerService_->loadRegistryRepositories(id);
+        } else if (kind == QStringLiteral("registry-repo")) {
+            containerService_->loadRegistryTags(id);
+        }
+    });
+    connect(containerService_, &ContainerService::registryChildrenReady, this,
+            [this](const QString &) { onTreeChanged(); });
     connect(containerService_, &ContainerService::connectionStateChanged, this,
             [this](const QString &) { updateToolbarEnablement(); });
     connect(containerService_, &ContainerService::actionFinished, this,
@@ -646,7 +689,7 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         } else if (chosen == refreshAction) {
             report(containerService_->refresh(id));
         } else if (chosen == editAction && openSettings_) {
-            openSettings_();
+            openSettings_(QString());
         }
         return;
     }
@@ -689,6 +732,18 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
     }
     if (kind == QStringLiteral("compose-service")) {
         showComposeServiceContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("registry")) {
+        showRegistryContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("registry-repo")) {
+        showRegistryRepoContextMenu(item, tree_->viewport()->mapToGlobal(pos));
+        return;
+    }
+    if (kind == QStringLiteral("registry-tag")) {
+        showRegistryTagContextMenu(item, tree_->viewport()->mapToGlobal(pos));
         return;
     }
 

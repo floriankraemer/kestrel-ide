@@ -34,6 +34,53 @@ pub enum ImageCompletionKind {
     Community,
     /// A tag of the repository typed before the `:`.
     Tag,
+    /// A repository on one of the user's configured registries (C7).
+    Registry,
+}
+
+/// If `prefix` names a repository under one of `registries`
+/// (`(id, address)` pairs, `settings.registries`'s shape) via
+/// `<address>/<rest>`, the matching registry's id, its address, and
+/// `<rest>` — the part the bridge asks that registry's client to list
+/// repositories/tags for. The longest matching address wins, so a
+/// registry address that is itself a prefix of another configured one
+/// (unusual, but not forbidden) never shadows the more specific match.
+pub fn registry_match<'a>(
+    prefix: &str,
+    registries: &'a [(String, String)],
+) -> Option<(&'a str, &'a str, String)> {
+    registries
+        .iter()
+        .filter_map(|(id, address)| {
+            let rest = prefix.strip_prefix(address.as_str())?.strip_prefix('/')?;
+            Some((id.as_str(), address.as_str(), rest.to_string()))
+        })
+        .max_by_key(|(_, address, _)| address.len())
+}
+
+/// Repositories of one registry, ranked by prefix match against `rest` —
+/// the part of the image reference typed after `<address>/`. Mirrors
+/// [`tag_completions`]'s local ranking, without a Hub-vs-local split since
+/// a registry has no "already local" half.
+pub fn registry_repo_completions(
+    address: &str,
+    rest: &str,
+    repositories: &[String],
+) -> Vec<ImageCompletion> {
+    let rest_lower = rest.to_lowercase();
+    repositories
+        .iter()
+        .filter(|repo| repo.to_lowercase().starts_with(&rest_lower))
+        .map(|repo| {
+            let full = format!("{address}/{repo}");
+            ImageCompletion {
+                label: full.clone(),
+                insert: full,
+                detail: format!("{address} repository"),
+                kind: ImageCompletionKind::Registry,
+            }
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,6 +258,53 @@ mod tests {
     fn empty_prefix_lists_every_local_image_once() {
         let local = vec!["a:1".to_string(), "b:2".to_string()];
         assert_eq!(image_completions("", &local, None).len(), 2);
+    }
+
+    #[test]
+    fn registry_match_finds_the_configured_registry_by_address_prefix() {
+        let registries = vec![
+            ("r1".to_string(), "ghcr.io".to_string()),
+            ("r2".to_string(), "registry.gitlab.com/ns".to_string()),
+        ];
+        assert_eq!(
+            registry_match("ghcr.io/acme/ap", &registries),
+            Some(("r1", "ghcr.io", "acme/ap".to_string()))
+        );
+        assert_eq!(
+            registry_match("registry.gitlab.com/ns/app", &registries),
+            Some(("r2", "registry.gitlab.com/ns", "app".to_string()))
+        );
+        assert_eq!(registry_match("nginx", &registries), None);
+        assert_eq!(registry_match("ghcr.io", &registries), None, "no slash yet");
+    }
+
+    #[test]
+    fn registry_match_prefers_the_longest_matching_address() {
+        let registries = vec![
+            ("short".to_string(), "example.com".to_string()),
+            ("long".to_string(), "example.com/team".to_string()),
+        ];
+        assert_eq!(
+            registry_match("example.com/team/app", &registries),
+            Some(("long", "example.com/team", "app".to_string()))
+        );
+    }
+
+    #[test]
+    fn registry_repo_completions_rank_by_prefix_match() {
+        let repos = vec![
+            "acme/app".to_string(),
+            "acme/web".to_string(),
+            "other/x".to_string(),
+        ];
+        let got = registry_repo_completions("ghcr.io", "acme", &repos);
+        assert_eq!(
+            labels(&got),
+            vec![
+                ("ghcr.io/acme/app", ImageCompletionKind::Registry),
+                ("ghcr.io/acme/web", ImageCompletionKind::Registry)
+            ]
+        );
     }
 
     #[test]

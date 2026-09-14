@@ -136,19 +136,42 @@ pub struct ContainerConnectionSetting {
 }
 
 /// A configured registry, credentials excluded (ADR-0055: those live in
-/// the OS keychain, keyed by `id`).
+/// the OS keychain, keyed by `id` — `container_registry::secrets::
+/// SecretStore`).
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 pub struct RegistrySetting {
+    /// Stable id, generated when the registry is added. What the OS
+    /// keychain entry is keyed by, and what a run configuration/tree node
+    /// id points at — never shown.
     #[serde(default)]
     pub id: String,
-    /// Host[:port], e.g. `ghcr.io`, `registry.gitlab.com`, `docker.io`.
+    /// The name shown in the Settings page and the Containers dock tree.
     #[serde(default)]
+    pub name: String,
+    /// `"hub"`, `"gitlab"`, `"v2"`, or `"generic"`. Unrecognised values map
+    /// to `container_core::registry_ref::RegistryKind::Generic`
+    /// (push-only) the same "never assume support" default that crate
+    /// documents. GHCR/Quay are `"v2"` with a prefilled `address` — a
+    /// Settings-page convenience, not a kind of their own.
+    #[serde(default)]
+    pub kind: String,
+    /// Host\[:port\]\[/path\], e.g. `ghcr.io`, `registry.gitlab.com`,
+    /// `docker.io` — empty for Docker Hub, whose address is implicit.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub address: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub username: String,
-    /// `"hub"`, `"gitlab"`, `"v2"`, or `"generic"` (C7).
+    /// GitLab only: `group/project` or a numeric project id, so browsing
+    /// lists that project's container registry rather than falling back to
+    /// the plain V2 catalog (which most GitLab tokens cannot read at all).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub gitlab_project: String,
+    /// Whether the stored secret is a personal access token rather than a
+    /// password — some registries (GitLab, GHCR) special-case this in
+    /// their own UI wording, but it changes no argv here: `--password-stdin`
+    /// takes either one identically.
     #[serde(default)]
-    pub kind: String,
+    pub token_auth: bool,
 }
 
 /// A run target (C8). Empty placeholder for now — the shape lands with C8,
@@ -204,12 +227,26 @@ mod tests {
                     ..ContainerConnectionSetting::default()
                 },
             ],
-            registries: vec![RegistrySetting {
-                id: "ghcr".to_string(),
-                address: "ghcr.io".to_string(),
-                username: "florian".to_string(),
-                kind: "generic".to_string(),
-            }],
+            registries: vec![
+                RegistrySetting {
+                    id: "ghcr".to_string(),
+                    name: "GHCR".to_string(),
+                    address: "ghcr.io".to_string(),
+                    username: "florian".to_string(),
+                    kind: "v2".to_string(),
+                    gitlab_project: String::new(),
+                    token_auth: true,
+                },
+                RegistrySetting {
+                    id: "gl".to_string(),
+                    name: "GitLab".to_string(),
+                    address: "registry.gitlab.com".to_string(),
+                    username: "florian".to_string(),
+                    kind: "gitlab".to_string(),
+                    gitlab_project: "team/app".to_string(),
+                    token_auth: true,
+                },
+            ],
             targets: Vec::new(),
             show_stopped_containers: Some(false),
             show_untagged_images: Some(true),
@@ -220,6 +257,37 @@ mod tests {
         let parsed: ContainerSettings = toml::from_str(&text).expect("deserialize");
 
         assert_eq!(parsed, settings);
+    }
+
+    #[test]
+    fn a_registry_setting_round_trips_with_no_secret_field_at_all() {
+        // ADR-0055: secrets never touch TOML — asserting the struct has no
+        // secret-shaped field to serialize is the point of this test, not
+        // just that the fields it does have round-trip.
+        let registry = RegistrySetting {
+            id: "ghcr".to_string(),
+            name: "GHCR".to_string(),
+            kind: "v2".to_string(),
+            address: "ghcr.io".to_string(),
+            username: "florian".to_string(),
+            gitlab_project: String::new(),
+            token_auth: true,
+        };
+        let text = toml::to_string(&registry).expect("serialize");
+        assert!(!text.to_lowercase().contains("password"));
+        assert!(!text.to_lowercase().contains("secret"));
+        assert!(!text.to_lowercase().contains("token") || text.contains("token_auth"));
+        let parsed: RegistrySetting = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed, registry);
+    }
+
+    #[test]
+    fn an_untouched_registry_setting_writes_only_its_id_kind_and_flag() {
+        let text = toml::to_string(&RegistrySetting::default()).expect("serialize");
+        assert_eq!(
+            text.trim(),
+            "id = \"\"\nname = \"\"\nkind = \"\"\ntoken_auth = false"
+        );
     }
 
     #[test]

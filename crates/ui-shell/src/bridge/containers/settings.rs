@@ -323,6 +323,155 @@ impl ffi::AppSettings {
     }
 }
 
+fn to_ffi_registry(setting: &app_config::RegistrySetting) -> ffi::FfiRegistrySetting {
+    ffi::FfiRegistrySetting {
+        id: QString::from(setting.id.as_str()),
+        name: QString::from(setting.name.as_str()),
+        kind: QString::from(setting.kind.as_str()),
+        address: QString::from(setting.address.as_str()),
+        username: QString::from(setting.username.as_str()),
+        gitlab_project: QString::from(setting.gitlab_project.as_str()),
+        token_auth: setting.token_auth,
+    }
+}
+
+fn from_ffi_registry(row: &ffi::FfiRegistrySetting) -> app_config::RegistrySetting {
+    app_config::RegistrySetting {
+        id: row.id.to_string(),
+        name: row.name.to_string(),
+        kind: row.kind.to_string(),
+        address: row.address.to_string(),
+        username: row.username.to_string(),
+        gitlab_project: row.gitlab_project.to_string(),
+        token_auth: row.token_auth,
+    }
+}
+
+impl ffi::AppSettings {
+    pub fn registries(&self) -> Vec<ffi::FfiRegistrySetting> {
+        let containers = match *self.scope.borrow() {
+            settings_model::Scope::Project => crate::bridge::convert::load_project_settings()
+                .containers
+                .unwrap_or_default(),
+            _ => crate::bridge::convert::load_settings().containers,
+        };
+        containers.registries.iter().map(to_ffi_registry).collect()
+    }
+
+    pub fn save_registries(&self, registries: Vec<ffi::FfiRegistrySetting>) -> FfiResult {
+        let rows: Vec<app_config::RegistrySetting> =
+            registries.iter().map(from_ffi_registry).collect();
+
+        if *self.scope.borrow() == settings_model::Scope::Project {
+            let previous = crate::bridge::convert::load_project_settings()
+                .containers
+                .unwrap_or_default();
+            let updated = app_config::ContainerSettings {
+                registries: rows,
+                ..previous
+            };
+            return commit_to_project(|project| project.containers = Some(updated));
+        }
+        let config_dir = app_core::resolve_config_dir();
+        let previous = crate::bridge::convert::load_settings().containers;
+        let updated = app_config::ContainerSettings {
+            registries: rows,
+            ..previous
+        };
+        match app_config::update(&config_dir, |loaded| loaded.containers = updated) {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_SETTINGS_IO, error.to_string()),
+        }
+    }
+
+    /// "Test connection" for a registry (C7): runs `RegistryClient::
+    /// test_connection` on a worker thread — a real network call, never on
+    /// the Qt thread — and reports through `registryTested`.
+    pub fn test_registry_connection(
+        self: Pin<&mut Self>,
+        registry: &ffi::FfiRegistrySetting,
+        secret: &QString,
+    ) -> FfiResult {
+        let setting = from_ffi_registry(registry);
+        let secret = secret.to_string();
+        let qt_thread = self.qt_thread();
+
+        std::thread::spawn(move || {
+            let kind = container_core::registry_ref::RegistryKind::from_id(&setting.kind);
+            let result = container_registry::registry::RegistryClient::new(
+                &setting.address,
+                kind,
+                &setting.username,
+                &secret,
+                &setting.gitlab_project,
+            )
+            .and_then(|client| client.test_connection());
+            let (ok, message) = match result {
+                Ok(info) => (true, info.to_string()),
+                Err(error) => (false, error.to_string()),
+            };
+            let _ = qt_thread.queue(move |mut settings: Pin<&mut ffi::AppSettings>| {
+                settings
+                    .as_mut()
+                    .registry_tested(ok, QString::from(message.as_str()));
+            });
+        });
+
+        FfiResult::default()
+    }
+
+    /// Store `secret` in the OS keychain for `id` — runs synchronously
+    /// (a local keychain call, not a network one, so no worker thread is
+    /// needed the way `testRegistryConnection` needs one).
+    pub fn store_registry_secret(&self, id: &QString, secret: &QString) -> FfiResult {
+        match container_registry::secrets::SecretStore::store(&id.to_string(), &secret.to_string())
+        {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
+        }
+    }
+
+    pub fn has_registry_secret(&self, id: &QString) -> bool {
+        container_registry::secrets::SecretStore::has(&id.to_string())
+    }
+
+    /// C7 review follow-up: "Remove" on a registry tree node — strips the
+    /// row from whichever layer `registries()` reads (mirroring
+    /// `save_registries`'s own scope handling) and deletes the keychain
+    /// entry. The setting is written first: a secret left behind after a
+    /// failed re-save is recoverable (the row is still there to re-derive
+    /// it from), a setting removed after a secret delete that then fails
+    /// to save would silently resurrect the row on next read while the
+    /// credential is already gone.
+    pub fn remove_registry(&self, id: &QString) -> FfiResult {
+        let id = id.to_string();
+        let containers = match *self.scope.borrow() {
+            settings_model::Scope::Project => crate::bridge::convert::load_project_settings()
+                .containers
+                .unwrap_or_default(),
+            _ => crate::bridge::convert::load_settings().containers,
+        };
+        let remaining = without_registry(containers.registries, &id);
+        let result = self.save_registries(remaining.iter().map(to_ffi_registry).collect());
+        if result.code != errors::CODE_OK {
+            return result;
+        }
+        match container_registry::secrets::SecretStore::delete(&id) {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
+        }
+    }
+}
+
+/// Every row except `id` — the pure decision behind `remove_registry`,
+/// pulled out so it is unit-testable without touching `settings.toml`.
+fn without_registry(
+    rows: Vec<app_config::RegistrySetting>,
+    id: &str,
+) -> Vec<app_config::RegistrySetting> {
+    rows.into_iter().filter(|row| row.id != id).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,5 +515,48 @@ mod tests {
         let ffi = to_ffi_connection(&setting);
         let restored = from_ffi_connection(&ffi);
         assert_eq!(restored, setting);
+    }
+
+    #[test]
+    fn ffi_registry_round_trips_every_field() {
+        let setting = app_config::RegistrySetting {
+            id: "r1".to_string(),
+            name: "GHCR".to_string(),
+            kind: "v2".to_string(),
+            address: "ghcr.io".to_string(),
+            username: "alice".to_string(),
+            gitlab_project: String::new(),
+            token_auth: true,
+        };
+        let ffi = to_ffi_registry(&setting);
+        let restored = from_ffi_registry(&ffi);
+        assert_eq!(restored, setting);
+    }
+
+    #[test]
+    fn without_registry_drops_only_the_matching_id() {
+        let rows = vec![
+            app_config::RegistrySetting {
+                id: "r1".to_string(),
+                ..app_config::RegistrySetting::default()
+            },
+            app_config::RegistrySetting {
+                id: "r2".to_string(),
+                ..app_config::RegistrySetting::default()
+            },
+        ];
+        let remaining = without_registry(rows, "r1");
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "r2");
+    }
+
+    #[test]
+    fn without_registry_is_a_no_op_for_an_id_not_present() {
+        let rows = vec![app_config::RegistrySetting {
+            id: "r1".to_string(),
+            ..app_config::RegistrySetting::default()
+        }];
+        let remaining = without_registry(rows, "does-not-exist");
+        assert_eq!(remaining.len(), 1);
     }
 }

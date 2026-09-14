@@ -31,6 +31,19 @@ pub enum NodeKind {
     ComposeProject,
     ComposeService,
     Pod,
+    /// A configured registry (C7) — a top-level row like `Connection`, but
+    /// sourced from `[containers].registry` settings rather than a live
+    /// engine snapshot; its children are fetched lazily on expand.
+    Registry,
+    /// A repository under a `Registry` node, listed on demand.
+    RegistryRepo,
+    /// A tag under a `RegistryRepo` node, listed on demand.
+    RegistryTag,
+    /// A synthetic "Load more…" row appended after a `Registry`'s fetched
+    /// repositories, or a `RegistryRepo`'s fetched tags, when the server
+    /// named a further page (C7 review follow-up). Activating it fetches
+    /// and appends the next page; it carries no children of its own.
+    RegistryMore,
 }
 
 impl NodeKind {
@@ -50,6 +63,10 @@ impl NodeKind {
             NodeKind::ComposeProject => "compose-project",
             NodeKind::ComposeService => "compose-service",
             NodeKind::Pod => "pod",
+            NodeKind::Registry => "registry",
+            NodeKind::RegistryRepo => "registry-repo",
+            NodeKind::RegistryTag => "registry-tag",
+            NodeKind::RegistryMore => "registry-more",
         }
     }
 
@@ -74,6 +91,10 @@ impl NodeKind {
             "compose-project" => NodeKind::ComposeProject,
             "compose-service" => NodeKind::ComposeService,
             "pod" => NodeKind::Pod,
+            "registry" => NodeKind::Registry,
+            "registry-repo" => NodeKind::RegistryRepo,
+            "registry-tag" => NodeKind::RegistryTag,
+            "registry-more" => NodeKind::RegistryMore,
             _ => return None,
         })
     }
@@ -278,6 +299,10 @@ pub struct NodeActions {
     /// A group row: its "Create..." (Create Network/Volume; Images uses
     /// the console's Pull button instead, so this stays `false` there).
     pub can_create: bool,
+    /// A `Registry`/`RegistryRepo` row (C7): re-fetch its children.
+    pub can_refresh: bool,
+    /// A `Registry` row: open Settings > Containers > Registries on it.
+    pub can_edit: bool,
 }
 
 /// The actions matrix for a node of `kind` in `status`. Container status
@@ -311,13 +336,130 @@ pub fn actions_for(kind: NodeKind, status: NodeStatus) -> NodeActions {
             can_clean_up: true,
             ..NodeActions::default()
         },
+        NodeKind::Registry => NodeActions {
+            can_refresh: true,
+            can_edit: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeKind::RegistryRepo => NodeActions {
+            can_refresh: true,
+            ..NodeActions::default()
+        },
+        NodeKind::RegistryTag => NodeActions {
+            can_pull: true,
+            ..NodeActions::default()
+        },
         NodeKind::Connection
         | NodeKind::ComposeGroup
         | NodeKind::PodsGroup
         | NodeKind::ComposeProject
         | NodeKind::ComposeService
-        | NodeKind::Pod => NodeActions::default(),
+        | NodeKind::Pod
+        | NodeKind::RegistryMore => NodeActions::default(),
     }
+}
+
+/// One configured registry, as the tree needs it (C7).
+pub struct RegistryRow<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub address: &'a str,
+}
+
+/// The top-level `Registry` rows (C7's "📦 Registry: ghcr.io" mockup
+/// entries) — sourced from `[containers].registry` settings, not from any
+/// engine snapshot, so these exist even when every connection is
+/// disconnected. Children (repositories, tags) are fetched on demand by
+/// the bridge and appended separately through [`registry_repo_nodes`]/
+/// [`registry_tag_nodes`] once they arrive.
+pub fn registry_nodes(registries: &[RegistryRow<'_>]) -> Vec<TreeNode> {
+    registries
+        .iter()
+        .map(|registry| {
+            let mut node = TreeNode::new(
+                format!("registry/{}", registry.id),
+                String::new(),
+                NodeKind::Registry,
+                registry.id,
+            );
+            node.name = registry.name.to_string();
+            node.resource_id = registry.id.to_string();
+            node.icon = "registry";
+            node.detail = registry.address.to_string();
+            node.tooltip = registry.address.to_string();
+            node
+        })
+        .collect()
+}
+
+/// A registry's fetched repositories, nested under its `Registry` node.
+pub fn registry_repo_nodes(registry_id: &str, repositories: &[String]) -> Vec<TreeNode> {
+    let parent_id = format!("registry/{registry_id}");
+    repositories
+        .iter()
+        .map(|repository| {
+            let mut node = TreeNode::new(
+                format!("{parent_id}/repo/{repository}"),
+                parent_id.clone(),
+                NodeKind::RegistryRepo,
+                registry_id,
+            );
+            node.name = repository.clone();
+            node.resource_id = repository.clone();
+            node.icon = "registry";
+            node
+        })
+        .collect()
+}
+
+/// A repository's fetched tags, nested under its `RegistryRepo` node.
+/// `reference` is the already fully-qualified `address/repo:tag` (or
+/// Hub-qualified `docker.io/library/repo:tag`) — [`registry_ref::
+/// format_reference`]'s answer, carried in `tooltip` so "Copy reference"
+/// never has to re-derive it, and Pull reads it straight off the node.
+pub fn registry_tag_nodes(
+    registry_id: &str,
+    repo_node_id: &str,
+    repository: &str,
+    tags: &[(String, String)],
+) -> Vec<TreeNode> {
+    tags.iter()
+        .map(|(tag, reference)| {
+            let mut node = TreeNode::new(
+                format!("{repo_node_id}/tag/{tag}"),
+                repo_node_id.to_string(),
+                NodeKind::RegistryTag,
+                registry_id,
+            );
+            node.name = tag.clone();
+            node.resource_id = format!("{repository}:{tag}");
+            node.icon = "registry";
+            node.detail = reference.clone();
+            node.tooltip = reference.clone();
+            node
+        })
+        .collect()
+}
+
+/// A synthetic "Load more…" row (C7 review follow-up), appended after a
+/// registry's fetched repositories or a repository's fetched tags when the
+/// bridge's cursor state says another page exists. `parent_id` is the
+/// `Registry` or `RegistryRepo` node it hangs under; its own id is that
+/// parent's id with `/more` appended, which is also how the bridge parses
+/// activation back to "which listing, whose cursor" (`registries.rs`'s
+/// `load_more_registry_children`). Carries no name, the same "group rows
+/// carry no name" convention every other synthetic row already follows —
+/// the view labels it by kind.
+pub fn registry_more_node(parent_id: &str, registry_id: &str) -> TreeNode {
+    let mut node = TreeNode::new(
+        format!("{parent_id}/more"),
+        parent_id.to_string(),
+        NodeKind::RegistryMore,
+        registry_id,
+    );
+    node.icon = "registry";
+    node
 }
 
 /// The lifecycle-actions matrix for a container node's current
@@ -1115,6 +1257,7 @@ mod tests {
             NodeKind::ComposeProject,
             NodeKind::ComposeService,
             NodeKind::Pod,
+            NodeKind::RegistryMore,
         ] {
             assert_eq!(actions_for(kind, NodeStatus::None), NodeActions::default());
         }
@@ -1137,6 +1280,10 @@ mod tests {
             NodeKind::ComposeProject,
             NodeKind::ComposeService,
             NodeKind::Pod,
+            NodeKind::Registry,
+            NodeKind::RegistryRepo,
+            NodeKind::RegistryTag,
+            NodeKind::RegistryMore,
         ];
         let mut ids: Vec<&str> = all.iter().map(|kind| kind.id()).collect();
         ids.sort_unstable();
@@ -1152,5 +1299,85 @@ mod tests {
             );
         }
         assert_eq!(NodeKind::from_id("not-a-kind"), None);
+    }
+
+    #[test]
+    fn registry_actions_matrix() {
+        let registry = actions_for(NodeKind::Registry, NodeStatus::None);
+        assert!(registry.can_refresh && registry.can_edit && registry.can_remove);
+        assert!(!registry.can_pull);
+
+        let repo = actions_for(NodeKind::RegistryRepo, NodeStatus::None);
+        assert!(repo.can_refresh);
+        assert!(!repo.can_pull && !repo.can_remove);
+
+        let tag = actions_for(NodeKind::RegistryTag, NodeStatus::None);
+        assert!(tag.can_pull);
+        assert!(!tag.can_refresh && !tag.can_remove);
+    }
+
+    #[test]
+    fn registry_root_nodes_are_top_level_rows_keyed_by_id() {
+        let nodes = registry_nodes(&[
+            RegistryRow {
+                id: "r1",
+                name: "GHCR",
+                address: "ghcr.io",
+            },
+            RegistryRow {
+                id: "r2",
+                name: "Docker Hub",
+                address: "docker.io",
+            },
+        ]);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].id, "registry/r1");
+        assert_eq!(nodes[0].parent_id, "");
+        assert_eq!(nodes[0].kind, NodeKind::Registry);
+        assert_eq!(nodes[0].name, "GHCR");
+        assert_eq!(nodes[0].detail, "ghcr.io");
+        assert_eq!(nodes[0].connection_id, "r1");
+    }
+
+    #[test]
+    fn registry_repo_nodes_nest_under_their_registry() {
+        let nodes = registry_repo_nodes("r1", &["acme/app".to_string(), "acme/web".to_string()]);
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[0].id, "registry/r1/repo/acme/app");
+        assert_eq!(nodes[0].parent_id, "registry/r1");
+        assert_eq!(nodes[0].kind, NodeKind::RegistryRepo);
+        assert_eq!(nodes[0].name, "acme/app");
+    }
+
+    #[test]
+    fn registry_tag_nodes_carry_the_full_reference_in_detail_and_tooltip() {
+        let nodes = registry_tag_nodes(
+            "r1",
+            "registry/r1/repo/acme/app",
+            "acme/app",
+            &[("v1".to_string(), "ghcr.io/acme/app:v1".to_string())],
+        );
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].id, "registry/r1/repo/acme/app/tag/v1");
+        assert_eq!(nodes[0].parent_id, "registry/r1/repo/acme/app");
+        assert_eq!(nodes[0].resource_id, "acme/app:v1");
+        assert_eq!(nodes[0].detail, "ghcr.io/acme/app:v1");
+        assert_eq!(nodes[0].tooltip, "ghcr.io/acme/app:v1");
+    }
+
+    #[test]
+    fn registry_more_node_ids_itself_by_its_parent_plus_more() {
+        let repos_more = registry_more_node("registry/r1", "r1");
+        assert_eq!(repos_more.id, "registry/r1/more");
+        assert_eq!(repos_more.parent_id, "registry/r1");
+        assert_eq!(repos_more.kind, NodeKind::RegistryMore);
+        assert_eq!(
+            repos_more.name, "",
+            "labelled by kind in the view, like a group row"
+        );
+
+        let tags_more = registry_more_node("registry/r1/repo/acme/app", "r1");
+        assert_eq!(tags_more.id, "registry/r1/repo/acme/app/more");
+        assert_eq!(tags_more.parent_id, "registry/r1/repo/acme/app");
     }
 }

@@ -21,10 +21,14 @@ use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 
 use container_core::completion::{
-    image_completions, HubRepo, ImageCompletion, ImageCompletionKind,
+    image_completions, registry_match, registry_repo_completions, HubRepo, ImageCompletion,
+    ImageCompletionKind,
 };
 use container_core::image_ref::{self, ImageRef};
 use container_registry::hub;
+use container_registry::registry::RegistryClient;
+
+use crate::bridge::containers::configured_registries;
 
 use crate::bridge::ffi;
 
@@ -41,7 +45,7 @@ pub(crate) const PULL_INTENTION_KIND: &str = "container.pull";
 /// worker's sender, and which request the popup is currently waiting on.
 #[derive(Default)]
 pub(crate) struct HubState {
-    cache: HashMap<String, (Instant, Vec<HubRepo>)>,
+    cache: HashMap<String, (Instant, Fetched)>,
     worker: Option<Sender<HubQuery>>,
     /// `(prefix, generation)` of the request whose answer may still refill
     /// the popup; bumped on every new completion so a late answer for an
@@ -55,10 +59,56 @@ struct HubQuery {
     generation: u64,
 }
 
-/// One Hub lookup for `prefix`: a tag list when it names a repository
-/// and a `:`, a repository search otherwise.
-fn fetch(prefix: &str) -> Vec<HubRepo> {
-    match prefix.split_once(':') {
+/// What one background lookup answered: Docker Hub's search/tags (the
+/// original C6 shape), or a configured registry's repository catalog
+/// (C7) once `prefix` names one via `<address>/`.
+#[derive(Clone)]
+enum Fetched {
+    Hub(Vec<HubRepo>),
+    Registry { repositories: Vec<String> },
+}
+
+/// C7: every configured registry as the `(id, address)` pairs
+/// `registry_match`/`registry_repo_completions` take.
+fn registry_pairs() -> Vec<(String, String)> {
+    configured_registries()
+        .into_iter()
+        .filter(|setting| setting.kind != "generic") // push-only, never browsable
+        .map(|setting| (setting.id, setting.address))
+        .collect()
+}
+
+/// One background lookup for `prefix`: a configured registry's
+/// repositories when `prefix` names one via `<address>/` (C7); otherwise
+/// Docker Hub — a tag list when `prefix` names a repository and a `:`, a
+/// repository search otherwise (C6).
+fn fetch(prefix: &str) -> Fetched {
+    let registries = registry_pairs();
+    if let Some((id, _, _)) = registry_match(prefix, &registries) {
+        let repositories = configured_registries()
+            .into_iter()
+            .find(|setting| setting.id == id)
+            .and_then(|setting| {
+                let secret = container_registry::secrets::SecretStore::load(&setting.id)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                RegistryClient::new(
+                    &setting.address,
+                    container_core::registry_ref::RegistryKind::from_id(&setting.kind),
+                    &setting.username,
+                    &secret,
+                    &setting.gitlab_project,
+                )
+                .ok()
+            })
+            .and_then(|client| client.catalog(100, None).ok())
+            .map(|page| page.items)
+            .unwrap_or_default();
+        return Fetched::Registry { repositories };
+    }
+
+    let hub = match prefix.split_once(':') {
         Some((repository, _)) => ImageRef::parse(repository)
             .and_then(|reference| reference.hub_repository())
             .and_then(|repository| hub::tags(&repository).ok())
@@ -75,7 +125,8 @@ fn fetch(prefix: &str) -> Vec<HubRepo> {
             .unwrap_or_default(),
         None if prefix.is_empty() => Vec::new(),
         None => hub::search(prefix).unwrap_or_default(),
-    }
+    };
+    Fetched::Hub(hub)
 }
 
 /// The worker loop: take the newest query, wait [`HUB_DEBOUNCE`] for a
@@ -110,7 +161,9 @@ fn to_item(
     // already has, so a Hub hit and a local image read differently.
     let kind = match completion.kind {
         ImageCompletionKind::Local => 21,
-        ImageCompletionKind::Official | ImageCompletionKind::Community => 9,
+        ImageCompletionKind::Official
+        | ImageCompletionKind::Community
+        | ImageCompletionKind::Registry => 9,
         ImageCompletionKind::Tag => 20,
     };
     lsp_core::CompletionItem {
@@ -177,9 +230,9 @@ impl ffi::LanguageService {
             character.saturating_sub(context.prefix.encode_utf16().count() as u32);
         *self.container_completion_span.borrow_mut() = (line, start_character, character);
 
-        let cached = self.cached_hub(&context.prefix);
+        let cached = self.cached_fetch(&context.prefix);
         self.as_mut()
-            .fill_image_completions(&context.prefix, cached.as_deref());
+            .fill_image_completions(&context.prefix, cached.as_ref());
         if cached.is_none() {
             self.as_mut().ask_hub(HubQuery {
                 prefix: context.prefix,
@@ -189,13 +242,13 @@ impl ffi::LanguageService {
         true
     }
 
-    fn cached_hub(&self, prefix: &str) -> Option<Vec<HubRepo>> {
+    fn cached_fetch(&self, prefix: &str) -> Option<Fetched> {
         self.hub
             .borrow()
             .cache
             .get(prefix)
-            .filter(|(fetched, _)| fetched.elapsed() < HUB_CACHE_TTL)
-            .map(|(_, repos)| repos.clone())
+            .filter(|(fetched_at, _)| fetched_at.elapsed() < HUB_CACHE_TTL)
+            .map(|(_, fetched)| fetched.clone())
     }
 
     fn ask_hub(mut self: Pin<&mut Self>, query: HubQuery) {
@@ -211,31 +264,41 @@ impl ffi::LanguageService {
         }
     }
 
-    /// A Hub answer landed on the Qt thread: cache it, and refill the popup
-    /// only if it is still waiting on exactly this prefix.
-    fn hub_answered(self: Pin<&mut Self>, prefix: String, generation: u64, repos: Vec<HubRepo>) {
+    /// A background lookup landed on the Qt thread: cache it, and refill
+    /// the popup only if it is still waiting on exactly this prefix.
+    fn hub_answered(self: Pin<&mut Self>, prefix: String, generation: u64, fetched: Fetched) {
         let still_wanted = {
             let mut hub_state = self.hub.borrow_mut();
             hub_state
                 .cache
-                .insert(prefix.clone(), (Instant::now(), repos.clone()));
+                .insert(prefix.clone(), (Instant::now(), fetched.clone()));
             hub_state.pending == Some((prefix.clone(), generation))
         };
         if still_wanted {
-            self.fill_image_completions(&prefix, Some(&repos));
+            self.fill_image_completions(&prefix, Some(&fetched));
         }
     }
 
-    fn fill_image_completions(mut self: Pin<&mut Self>, prefix: &str, hub: Option<&[HubRepo]>) {
+    fn fill_image_completions(mut self: Pin<&mut Self>, prefix: &str, fetched: Option<&Fetched>) {
         let local = self.local_image_names();
         let (line, start_character, end_character) = *self.container_completion_span.borrow();
-        let items = image_completions(prefix, &local, hub)
+        let mut candidates = match fetched {
+            Some(Fetched::Hub(hub)) => image_completions(prefix, &local, Some(hub)),
+            None => image_completions(prefix, &local, None),
+            Some(Fetched::Registry { .. }) => image_completions(prefix, &local, None),
+        };
+        if let Some(Fetched::Registry { repositories }) = fetched {
+            if let Some((_, address, rest)) = registry_match(prefix, &registry_pairs()) {
+                candidates.extend(registry_repo_completions(address, &rest, repositories));
+            }
+        }
+        let items = candidates
             .into_iter()
             .map(|completion| to_item(completion, line, start_character, end_character))
             .collect();
         *self.completions.borrow_mut() = lsp_core::CompletionList {
             items,
-            is_incomplete: hub.is_none(),
+            is_incomplete: fetched.is_none(),
         };
         self.as_mut().completion_ready();
     }

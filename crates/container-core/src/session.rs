@@ -10,6 +10,7 @@ use pty_core::ShellSpec;
 
 use crate::connection::Invocation;
 use crate::ops::{run_op, OpError};
+use crate::registry_ref;
 
 /// Turn `invocation` plus a subcommand's argv into a [`ShellSpec`]: the
 /// program and prefix args an interactive/streaming session spawns
@@ -85,6 +86,132 @@ pub fn attach_session(invocation: &Invocation, id: &str) -> ShellSpec {
 /// user exactly like every other streamed command in this crate.
 pub fn pull_session(invocation: &Invocation, reference: &str) -> ShellSpec {
     shell_spec(invocation, vec!["pull".to_string(), reference.to_string()])
+}
+
+/// The env var name a login+pull/push script reads the registry secret
+/// from (C7) — never argv, so it never appears in a process listing or
+/// shell history; the caller sets it as this [`ShellSpec`]'s one extra
+/// environment entry.
+pub const REGISTRY_SECRET_ENV: &str = "IDE_REGISTRY_SECRET";
+
+/// Split `invocation` into what a login+action script needs: the outer
+/// command that actually gets spawned (`sh` for every local/flag-based
+/// connection kind; `wsl.exe` plus its `-d <distro> --` wrapper for a WSL
+/// connection) and the inner engine program + flags each script line runs.
+///
+/// Every connection kind but WSL already runs the engine binary directly
+/// (`Invocation::program`, with `prefix_args` pure flags like `-H
+/// <url>`/`--context <name>`) — for those the inner program is `program`
+/// itself and the outer command is `sh` with no extra wrapper. WSL instead
+/// bakes the engine binary as the *last* element of `prefix_args`
+/// (`connection.rs`'s `Wsl` arm), ahead of the caller's own args, so a
+/// script needs that split undone rather than re-derived.
+fn engine_split(invocation: &Invocation) -> (String, Vec<String>, String, Vec<String>) {
+    if let process_exec::host::ExecHost::Wsl(_) = &invocation.host {
+        if let Some((inner, outer)) = invocation.prefix_args.split_last() {
+            return (
+                invocation.program.clone(),
+                outer.to_vec(),
+                inner.clone(),
+                Vec::new(),
+            );
+        }
+    }
+    (
+        "sh".to_string(),
+        Vec::new(),
+        invocation.program.clone(),
+        invocation.prefix_args.clone(),
+    )
+}
+
+fn engine_line(inner_program: &str, inner_flags: &[String], args: &[String]) -> String {
+    let mut argv = inner_flags.to_vec();
+    argv.extend(args.iter().cloned());
+    registry_ref::shell_line(inner_program, &argv)
+}
+
+/// A login (only when `credential` is given and a secret is stored), then
+/// every one of `steps` in order, as ONE `sh -c` script so the whole
+/// sequence shares a single PTY session (ADR-0055's Log/Terminal shape,
+/// reused for C7's registry pull/push) — progress from every stage stays
+/// visible in the one tab the view opens for it. No `credential`/`secret`
+/// skips the login line entirely: an anonymous pull, or a push the CLI's
+/// own credential store already has a login for (C7's documented fallback
+/// when no OS keychain is available).
+fn login_and_run(
+    invocation: &Invocation,
+    credential: Option<(&str, &str)>,
+    secret: Option<&str>,
+    steps: Vec<Vec<String>>,
+) -> ShellSpec {
+    let (outer_program, outer_prefix, inner_program, inner_flags) = engine_split(invocation);
+    let mut lines = Vec::new();
+    if let (Some((address, username)), Some(_)) = (credential, secret) {
+        let login = registry_ref::login_args(address, username);
+        lines.push(format!(
+            "echo \"${REGISTRY_SECRET_ENV}\" | {}",
+            engine_line(&inner_program, &inner_flags, &login)
+        ));
+    }
+    for step in &steps {
+        lines.push(engine_line(&inner_program, &inner_flags, step));
+    }
+    let script = lines.join(" && ");
+
+    let mut args = outer_prefix;
+    // WSL's outer program is `wsl.exe`, so the distro wrapper still needs
+    // an explicit `sh` after its `--`; a local connection's outer program
+    // already *is* `sh`, so its args start straight at `-c`.
+    if outer_program != "sh" {
+        args.push("sh".to_string());
+    }
+    args.push("-c".to_string());
+    args.push(script);
+
+    let mut env = invocation.env.clone();
+    if let (Some(secret), Some(_)) = (secret, credential) {
+        env.push((REGISTRY_SECRET_ENV.to_string(), secret.to_string()));
+    }
+    ShellSpec::new(outer_program, args).with_env(env)
+}
+
+/// `[login &&] pull <reference>` (C7): the registry tree's "Pull Image…"
+/// and the editor's "Pull image" intention once a reference names a
+/// configured private registry. `credential` is `(address, username)` —
+/// `None` for anonymous/public pulls, matching [`login_and_run`].
+pub fn pull_from_registry_session(
+    invocation: &Invocation,
+    reference: &str,
+    credential: Option<(&str, &str)>,
+    secret: Option<&str>,
+) -> ShellSpec {
+    login_and_run(
+        invocation,
+        credential,
+        secret,
+        vec![crate::images::pull_args(reference)],
+    )
+}
+
+/// `tag <image> <destination> && [login &&] push <destination>` (C7): the
+/// Images console's "Push Image…" dialog.
+pub fn push_to_registry_session(
+    invocation: &Invocation,
+    image_reference: &str,
+    destination: &str,
+    credential: Option<(&str, &str)>,
+    secret: Option<&str>,
+) -> ShellSpec {
+    login_and_run(
+        invocation,
+        credential,
+        secret,
+        vec![
+            crate::images::tag_args(image_reference, destination),
+            registry_ref::push_args(destination),
+        ],
+    )
 }
 
 /// `inspect <id>`, pretty-printed — the Inspect tab's virtual document
@@ -222,6 +349,101 @@ mod tests {
                 "--tail",
                 "100",
                 "c1"
+            ]
+        );
+    }
+
+    #[test]
+    fn pull_from_registry_without_credentials_skips_login() {
+        let spec = pull_from_registry_session(
+            &invocation(Engine::Docker),
+            "ghcr.io/acme/app:v1",
+            None,
+            None,
+        );
+        assert_eq!(spec.program, "sh");
+        assert_eq!(spec.args[0], "-c");
+        assert_eq!(spec.args[1], "docker pull ghcr.io/acme/app:v1");
+        assert!(spec.env.is_empty());
+    }
+
+    #[test]
+    fn pull_from_registry_with_credentials_logs_in_first_via_stdin() {
+        let spec = pull_from_registry_session(
+            &invocation(Engine::Docker),
+            "ghcr.io/acme/app:v1",
+            Some(("ghcr.io", "alice")),
+            Some("s3cr3t"),
+        );
+        assert_eq!(
+            spec.args[1],
+            "echo \"$IDE_REGISTRY_SECRET\" | docker login --username alice --password-stdin ghcr.io \
+             && docker pull ghcr.io/acme/app:v1"
+        );
+        assert_eq!(
+            spec.env,
+            vec![(REGISTRY_SECRET_ENV.to_string(), "s3cr3t".to_string())]
+        );
+    }
+
+    #[test]
+    fn push_to_registry_tags_then_logs_in_then_pushes() {
+        let spec = push_to_registry_session(
+            &invocation(Engine::Podman),
+            "app:dev",
+            "ghcr.io/acme/app:v1",
+            Some(("ghcr.io", "alice")),
+            Some("s3cr3t"),
+        );
+        assert_eq!(
+            spec.args[1],
+            "echo \"$IDE_REGISTRY_SECRET\" | podman login --username alice --password-stdin ghcr.io \
+             && podman tag app:dev ghcr.io/acme/app:v1 && podman push ghcr.io/acme/app:v1"
+        );
+    }
+
+    #[test]
+    fn push_to_registry_without_credentials_still_tags_and_pushes() {
+        let spec = push_to_registry_session(
+            &invocation(Engine::Docker),
+            "app:dev",
+            "ghcr.io/acme/app:v1",
+            None,
+            None,
+        );
+        assert_eq!(
+            spec.args[1],
+            "docker tag app:dev ghcr.io/acme/app:v1 && docker push ghcr.io/acme/app:v1"
+        );
+    }
+
+    #[test]
+    fn a_wsl_connection_wraps_sh_after_its_own_prefix_instead_of_the_engine_program() {
+        let invocation = Invocation {
+            program: "wsl.exe".to_string(),
+            prefix_args: vec![
+                "-d".to_string(),
+                "Ubuntu".to_string(),
+                "--".to_string(),
+                "docker".to_string(),
+            ],
+            env: Vec::new(),
+            host: process_exec::host::ExecHost::Wsl(process_exec::host::WslHost {
+                distro: "Ubuntu".to_string(),
+                unc_prefix: "//wsl.localhost/Ubuntu".to_string(),
+            }),
+        };
+        let spec = pull_from_registry_session(&invocation, "ghcr.io/acme/app:v1", None, None);
+        assert_eq!(spec.program, "wsl.exe");
+        assert_eq!(
+            spec.args,
+            vec![
+                "-d",
+                "Ubuntu",
+                "--",
+                "sh",
+                "-c",
+                "docker pull ghcr.io/acme/app:v1"
             ]
         );
     }

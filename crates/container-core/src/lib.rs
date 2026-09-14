@@ -57,6 +57,7 @@ pub mod probe;
 /// Clean Up (C4): the group "Clean Up" menus' matrix — which prune kind
 /// runs which command(s), and whether it is offered per engine.
 pub mod prune;
+pub mod registry_ref;
 /// Run-configuration argv compilers (C5, ADR-0056): Image/Containerfile/
 /// Compose option structs -> exact CLI argv, plus `preview()` and the
 /// compose services picker.

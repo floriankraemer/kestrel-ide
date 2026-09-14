@@ -74,8 +74,6 @@ void ContainersPanel::showImageContextMenu(QTreeWidgetItem *item, const QPoint &
     QAction *pull = menu.addAction(tr("Pull"));
     pull->setEnabled(actions.canPull);
     QAction *push = menu.addAction(tr("Push Image..."));
-    push->setEnabled(false);
-    push->setToolTip(tr("Push Image is not available until registries (C7) land."));
     QAction *copyTo = menu.addAction(tr("Copy Image to..."));
     copyTo->setEnabled(actions.canCopy);
     QAction *tag = menu.addAction(tr("Tag..."));
@@ -96,6 +94,8 @@ void ContainersPanel::showImageContextMenu(QTreeWidgetItem *item, const QPoint &
         const QString connectionId = item->data(0, kConnectionRole).toString();
         const QString reference = item->text(0);
         detail_->openPullTab(connectionId, reference);
+    } else if (chosen == push) {
+        openPushImageDialog(id);
     } else if (chosen == copyTo) {
         openCopyImageDialog(id);
     } else if (chosen == tag) {

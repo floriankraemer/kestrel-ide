@@ -51,8 +51,9 @@ pub fn tag_args(src: &str, dst: &str) -> Vec<String> {
     vec!["tag".to_string(), src.to_string(), dst.to_string()]
 }
 
-/// `save -o <tar_path> <id>`.
-fn save_args(id: &str, tar_path: &str) -> Vec<String> {
+/// `save -o <tar_path> <id>`. `pub(crate)` — [`crate::layer_fs::analyze`]
+/// reuses this exact argv rather than a second copy.
+pub(crate) fn save_args(id: &str, tar_path: &str) -> Vec<String> {
     vec![
         "save".to_string(),
         "-o".to_string(),
@@ -219,6 +220,21 @@ fn temp_tar_path(image_id: &str) -> std::path::PathBuf {
         .unwrap_or(0);
     std::env::temp_dir().join(format!(
         "ide-container-image-{}-{}-{unique}.tar",
+        std::process::id(),
+        model::short_id(image_id)
+    ))
+}
+
+/// [`temp_tar_path`], reused by [`crate::layer_fs::analyze`] for its own
+/// `save -o` temp file — same collision-free naming, a distinct prefix so
+/// a leftover file's purpose is obvious.
+pub(crate) fn analyze_temp_tar_path(image_id: &str) -> std::path::PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "ide-container-image-analyze-{}-{}-{unique}.tar",
         std::process::id(),
         model::short_id(image_id)
     ))

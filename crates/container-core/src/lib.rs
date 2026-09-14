@@ -39,9 +39,16 @@ pub mod files;
 /// caret in a `FROM`/`image:` line, and the completion trigger.
 pub mod image_ref;
 pub mod images;
+/// Per-layer filesystem changes (C9, "Analyze image"): a sequential tar
+/// reader (ustar/pax long names, whiteout entries) over `save -o` output,
+/// and the `manifest.json` -> layer mapping.
+pub mod layer_fs;
 /// Compose code lenses (C6): service status and published ports for an
 /// open compose file, from the snapshots.
 pub mod lenses;
+/// Podman machines (C9): `podman machine list --format json` and
+/// start/stop argv.
+pub mod machine;
 /// Typed, lenient views over `inspect` JSON: [`model::Container`],
 /// [`model::Image`], [`model::Volume`], [`model::Network`], [`model::Pod`].
 pub mod model;
@@ -51,17 +58,26 @@ pub mod networks;
 /// unpause/prune argv builders, the [`ops::run_op`] executor and its typed
 /// [`ops::OpError`], and the `top` process-table parser.
 pub mod ops;
+/// Podman pods (C9): pod lifecycle argv (`pod ls` itself already lands in
+/// [`snapshot`]/[`model::Pod`] from C2).
+pub mod pods;
 /// "Test connection": `<cli> version --format json`, parsed into
 /// [`probe::EngineInfo`] or a [`probe::ConnectionError`].
 pub mod probe;
 /// Clean Up (C4): the group "Clean Up" menus' matrix — which prune kind
 /// runs which command(s), and whether it is offered per engine.
 pub mod prune;
+/// Dashboard editing -> recreate (C9): `inspect` JSON -> [`recreate::RunSpec`],
+/// `recreate_argv`, and `recreate` (`rm -f` + `run`).
+pub mod recreate;
 pub mod registry_ref;
 /// Run-configuration argv compilers (C5, ADR-0056): Image/Containerfile/
 /// Compose option structs -> exact CLI argv, plus `preview()` and the
 /// compose services picker.
 pub mod run_config;
+/// The SELinux `:z` bind-mount relabel rule (C9), shared by every argv
+/// builder that emits a bind mount.
+pub mod selinux;
 /// Streaming sessions (C3): `pty_core::ShellSpec` builders for Log/
 /// Terminal/Exec/Attach, and `inspect` pretty-printing for the Inspect tab.
 pub mod session;

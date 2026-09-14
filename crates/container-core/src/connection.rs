@@ -52,6 +52,47 @@ impl Engine {
     }
 }
 
+/// `podman` when it is on `path_env`, else `podman-remote` when *that* is,
+/// else `podman` unchanged (the pre-existing behaviour: a missing CLI is
+/// reported by the op that actually tries to run it, via
+/// `process_exec::Failure::NotFound`, not guessed at here).
+///
+/// A pure function of `path_env` (not `std::env::var("PATH")` read
+/// directly) so a test can hand it a fake PATH without mutating the
+/// process environment — [`ConnectionConfig::program`] is the one real
+/// caller.
+fn resolve_podman_program(path_env: &str, os: &str) -> &'static str {
+    if program_on_path("podman", path_env, os) {
+        "podman"
+    } else if program_on_path("podman-remote", path_env, os) {
+        "podman-remote"
+    } else {
+        "podman"
+    }
+}
+
+/// Whether `name` resolves to an executable file somewhere on `path_env`,
+/// the same directories-joined-by-the-platform-separator search
+/// `process_exec::host::resolve_program` does for a WSL guest, applied
+/// here to the local host's own `PATH`. Windows executables carry a
+/// `PATHEXT` suffix (`.exe`, ...); this checks the bare name and `.exe`
+/// only — the one extension every Windows Podman install actually ships,
+/// not the full `PATHEXT` list — good enough to pick between `podman` and
+/// `podman-remote`, not a general "is this on PATH" utility.
+fn program_on_path(name: &str, path_env: &str, os: &str) -> bool {
+    let separator = if os == "windows" { ';' } else { ':' };
+    path_env.split(separator).any(|dir| {
+        if dir.is_empty() {
+            return false;
+        }
+        let candidate = Path::new(dir).join(name);
+        if candidate.is_file() {
+            return true;
+        }
+        os == "windows" && candidate.with_extension("exe").is_file()
+    })
+}
+
 /// How this engine is reached.
 ///
 /// One enum for both engines rather than an `EngineKind` per engine: every
@@ -188,9 +229,19 @@ impl ConnectionConfig {
     }
 
     fn program(&self) -> String {
-        self.executable
-            .clone()
-            .unwrap_or_else(|| self.engine.default_program().to_string())
+        if let Some(executable) = &self.executable {
+            return executable.clone();
+        }
+        match self.engine {
+            // `podman-remote` resolution only matters for Podman: Docker
+            // ships one CLI (`docker`), never a `docker-remote`.
+            Engine::Podman => resolve_podman_program(
+                &std::env::var("PATH").unwrap_or_default(),
+                std::env::consts::OS,
+            )
+            .to_string(),
+            Engine::Docker => self.engine.default_program().to_string(),
+        }
     }
 
     /// Build the [`Invocation`] this connection runs every command through.
@@ -798,5 +849,61 @@ mod tests {
             invocation.env,
             vec![("DOCKER_HOST".to_string(), "new".to_string())]
         );
+    }
+
+    // -------------------------------------------- podman-remote resolution
+
+    fn fake_path_dir(name: &str, files: &[&str]) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "container-core-podman-remote-test-{name}-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in files {
+            std::fs::write(dir.join(file), b"").unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn resolves_to_podman_when_it_is_on_path() {
+        let dir = fake_path_dir("both", &["podman", "podman-remote"]);
+        let path_env = dir.to_string_lossy().to_string();
+        assert_eq!(resolve_podman_program(&path_env, "linux"), "podman");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn falls_back_to_podman_remote_when_podman_is_missing() {
+        let dir = fake_path_dir("remote-only", &["podman-remote"]);
+        let path_env = dir.to_string_lossy().to_string();
+        assert_eq!(resolve_podman_program(&path_env, "linux"), "podman-remote");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn falls_back_to_podman_unchanged_when_neither_is_on_path() {
+        let dir = fake_path_dir("neither", &[]);
+        let path_env = dir.to_string_lossy().to_string();
+        assert_eq!(resolve_podman_program(&path_env, "linux"), "podman");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn windows_path_entries_are_split_on_semicolons_and_match_the_exe_suffix() {
+        let dir = fake_path_dir("windows", &["podman-remote.exe"]);
+        let path_env = format!("C:\\nothing;{}", dir.to_string_lossy());
+        assert_eq!(
+            resolve_podman_program(&path_env, "windows"),
+            "podman-remote"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_explicit_executable_override_skips_resolution_entirely() {
+        let mut cfg = config(Engine::Podman, ConnectionKind::Auto);
+        cfg.executable = Some("podman-remote".to_string());
+        assert_eq!(cfg.invocation().program, "podman-remote");
     }
 }

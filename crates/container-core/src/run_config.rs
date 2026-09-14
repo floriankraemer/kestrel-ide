@@ -102,29 +102,10 @@ pub fn preview(argv: &[String]) -> String {
         .join(" ")
 }
 
-/// Top-level directories a bind mount must never get the SELinux `:z`
-/// relabel suffix for, even with `[containers].selinux_relabel` on:
-/// relabeling one of these is either a system-breaking mistake (`/`, `/etc`,
-/// `/usr`, `/bin`, `/lib`, `/lib64`, `/sbin`, `/boot`, `/dev`, `/proc`,
-/// `/sys`) or almost always the wrong container-security tradeoff for a
-/// whole shared directory (`/home`, `/root`, `/tmp`, `/var`, `/opt`, `/mnt`,
-/// `/media`, `/srv`). A project directory under `/home/<user>/...` is
-/// unaffected — only the bare top-level path itself matches.
-const NEVER_RELABEL: &[&str] = &[
-    "/", "/bin", "/usr", "/etc", "/home", "/lib", "/lib64", "/sbin", "/boot", "/dev", "/proc",
-    "/sys", "/root", "/tmp", "/var", "/opt", "/mnt", "/media", "/srv",
-];
-
-/// Whether `host_path` may take the SELinux `:z` suffix at all — independent
-/// of whether the setting turns it on, so the rule is one function both
-/// [`image_run_argv`] and its tests can name directly.
-fn relabelable(host_path: &str) -> bool {
-    let trimmed = host_path.trim_end_matches('/');
-    let trimmed = if trimmed.is_empty() { "/" } else { trimmed };
-    !NEVER_RELABEL.contains(&trimmed)
-}
-
-/// One `-v`/`--mount` bind-mount argument.
+/// One `-v`/`--mount` bind-mount argument. The SELinux `:z` suffix rule
+/// itself lives in [`crate::selinux::relabel_suffix`] — shared with
+/// [`crate::target::wrap_launch`] and [`crate::recreate::recreate_argv`]
+/// (C9) so the three argv builders that emit bind mounts cannot drift.
 pub(crate) fn mount_arg(
     host_path: &str,
     container_path: &str,
@@ -136,8 +117,10 @@ pub(crate) fn mount_arg(
     if read_only {
         options.push("ro");
     }
-    if selinux_relabel && relabelable(host_path) {
-        options.push("z");
+    if selinux_relabel {
+        if let Some(suffix) = crate::selinux::relabel_suffix(host_path) {
+            options.push(suffix);
+        }
     }
     if !options.is_empty() {
         spec.push(':');

@@ -123,9 +123,15 @@ pub fn validate_run_on(
         cwd: cwd.as_deref(),
         env: &[],
     };
-    target::wrap_launch(&simple, target, &invocation, project_root)
-        .map(|_| ())
-        .map_err(TargetLaunchError::from)
+    target::wrap_launch(
+        &simple,
+        target,
+        &invocation,
+        project_root,
+        containers.selinux_relabel,
+    )
+    .map(|_| ())
+    .map_err(TargetLaunchError::from)
 }
 
 /// Wrap `spec` (a plain process launch, already macro-expanded) through the
@@ -154,7 +160,13 @@ pub fn wrap_process_spec(
         cwd: spec.cwd.as_deref(),
         env: &spec.env,
     };
-    let wrapped: WrappedLaunch = target::wrap_launch(&simple, target, &invocation, &project_root)?;
+    let wrapped: WrappedLaunch = target::wrap_launch(
+        &simple,
+        target,
+        &invocation,
+        &project_root,
+        containers.selinux_relabel,
+    )?;
     Ok(Some(LaunchSpec {
         program: wrapped.program,
         args: wrapped.args,

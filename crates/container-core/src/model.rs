@@ -16,7 +16,7 @@ use serde_json::Value;
 
 /// `#[serde(default)]` alone rejects an explicit `null`; Docker writes
 /// `"Labels": null` and `"Entrypoint": null` routinely.
-fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+pub(crate) fn null_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de> + Default,

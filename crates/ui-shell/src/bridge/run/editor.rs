@@ -193,7 +193,13 @@ impl ffi::RunConfigEditor {
             cwd: Some(root.as_path()),
             env: &[],
         };
-        match container_core::target::wrap_launch(&sample, &setting, &invocation, &root) {
+        match container_core::target::wrap_launch(
+            &sample,
+            &setting,
+            &invocation,
+            &root,
+            containers.selinux_relabel,
+        ) {
             Ok(wrapped) => {
                 let mut argv = vec![wrapped.program];
                 argv.extend(wrapped.args);

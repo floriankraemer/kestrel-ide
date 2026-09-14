@@ -43,6 +43,8 @@ void ContainersPanel::showPodContextMenu(QTreeWidgetItem *item, const QPoint &gl
     QAction *remove = menu.addAction(tr("Remove..."));
     remove->setEnabled(actions.canRemove);
     menu.addSeparator();
+    QAction *inspect = menu.addAction(tr("Inspect"));
+    menu.addSeparator();
     QAction *copyId = menu.addAction(tr("Copy Pod ID"));
     copyId->setEnabled(!item->data(0, kResourceIdRole).toString().isEmpty());
 
@@ -67,6 +69,8 @@ void ContainersPanel::showPodContextMenu(QTreeWidgetItem *item, const QPoint &gl
         if (confirm.clickedButton() == removeButton) {
             report(containerService_->removePod(id, forceCheck->isChecked()));
         }
+    } else if (chosen == inspect) {
+        report(containerService_->openInspect(id));
     } else if (chosen == copyId) {
         QApplication::clipboard()->setText(item->data(0, kResourceIdRole).toString());
     }

@@ -193,7 +193,9 @@ QString statusColumn(const FfiContainerNode &node)
 }
 
 // The Details column: engine text as-is, or an image's size in the
-// locale's own SI units, or a pod's container count.
+// locale's own SI units, or a pod's container count, or (C9) a Podman
+// machine connection's own running/stopped state appended after the
+// engine word ("Podman · running").
 QString detailColumn(const FfiContainerNode &node)
 {
     if (node.sizeBytes >= 0) {
@@ -201,6 +203,11 @@ QString detailColumn(const FfiContainerNode &node)
     }
     if (node.kind == QStringLiteral("pod")) {
         return QObject::tr("%n container(s)", nullptr, static_cast<int>(node.count));
+    }
+    if (node.kind == QStringLiteral("connection") && node.machineRunning >= 0) {
+        const QString state =
+          node.machineRunning != 0 ? QObject::tr("running") : QObject::tr("stopped");
+        return QObject::tr("%1 · %2").arg(QString(node.detail), state);
     }
     return QString(node.detail);
 }

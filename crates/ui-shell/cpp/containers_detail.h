@@ -2,7 +2,10 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QHash>
 #include <QString>
+#include <QStringList>
+#include <QVector>
 #include <QWidget>
 
 #include <functional>
@@ -91,7 +94,8 @@ signals:
 private:
     void openOrReplaceLogTab();
     void closeLogTab();
-    void addTerminalTab(const FfiCommand &command, const QString &title);
+    void addTerminalTab(const FfiCommand &command, const QString &title,
+                        bool autoCloseOnExitZero = false);
     void closeTerminalTab(int index);
 
     void refreshProcesses();
@@ -99,6 +103,19 @@ private:
     void populateFilesRoot();
     void requestChildren(QTreeWidgetItem *dirItem, const QString &dir);
     void downloadPrompt(const QString &path, QWidget *dialogParent);
+
+    // C9 polish: Processes/Files keep each container's last-seen state
+    // across a selection change instead of resetting to empty, cached by
+    // node id (`nodeIdsStillInTree` prunes an id that left the tree, e.g.
+    // a removed container).
+    struct ProcessesSnapshot {
+        QStringList titles;
+        QVector<QStringList> rows;
+    };
+    void populateProcessesTable(const ProcessesSnapshot &snapshot);
+    void populateFilesRootFromCache(const QVector<FfiFileEntry> &entries);
+    void onContainerTreeChanged();
+    void evictStaleCacheEntries();
 
     // C4: per-kind Dashboard (tab 0), swapped in place of the generic page
     // for image/network/volume nodes.
@@ -138,9 +155,18 @@ private:
 
     QWidget *processesPage_ = nullptr;
     QTableWidget *processesTable_ = nullptr;
+    // Keyed by container node id; survives a selection change (evicted
+    // only once the node itself leaves the tree — see
+    // `evictStaleCacheEntries`).
+    QHash<QString, ProcessesSnapshot> processesCache_;
 
     QWidget *filesPage_ = nullptr;
     QTreeWidget *filesTree_ = nullptr;
+    // The root listing only (a known, documented ceiling: a deeper
+    // directory the user had expanded before switching away is re-fetched
+    // lazily on the next expand, same as a container visited for the
+    // first time).
+    QHash<QString, QVector<FfiFileEntry>> filesCache_;
 
     QWidget *layersPage_ = nullptr;
     QTableWidget *layersTable_ = nullptr;

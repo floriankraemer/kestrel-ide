@@ -7,7 +7,7 @@ This page is orientation only; the crate table lives in [overview.md §3](overvi
 
 | Path | Contents |
 |------|----------|
-| `crates/` | The 13-crate Cargo workspace; one directory per crate. |
+| `crates/` | The Cargo workspace; one directory per crate — see [overview.md §3](overview.md#3-building-block-view) for the full, current list. |
 | `crates/ui-shell/cpp/` | The Qt Widgets humble view (C++), built alongside `ui-shell`'s Rust adapter. |
 | `docs/architecture/` | Overview, layering rules, this page, and the completed plan documents. |
 | `docs/architecture/decisions/` | Architecture Decision Records (ADRs), numbered. |
@@ -18,11 +18,11 @@ This page is orientation only; the crate table lives in [overview.md §3](overvi
 
 ## Layers
 
-Five layers, detailed in [overview.md](overview.md) and enforced by [layering.md](layering.md):
+Five layers, detailed in [overview.md §3](overview.md#3-building-block-view) (the per-crate table there is the source of truth — not duplicated here, so it cannot drift out of sync) and enforced by [layering.md](layering.md):
 
 - Domain: `editor-core`, `project-model`.
 - Application: `app-core`.
-- Support: `app-config`, `syntax-core`, `index-core`, `lsp-core`, `settings-model`, `pty-core`, `terminal-core`, `mcp-server`.
+- Support: everything else that is Qt-free — `app-config`, `syntax-core`, `index-core`, `lsp-core`, `settings-model`, `edit-ops`, `pty-core`, `terminal-core`, `run-core`, `mcp-server`, `container-core`, `container-registry`, and more (overview.md's table has the full list).
 - Adapter + view: `ui-shell`.
 - Main: `app`.
 

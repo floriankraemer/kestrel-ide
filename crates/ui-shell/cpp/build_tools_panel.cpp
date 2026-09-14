@@ -90,6 +90,11 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     reloadButton->setText(tr("Reload"));
     executeEdit_ = new QLineEdit(this);
     executeEdit_->setPlaceholderText(tr("Execute…"));
+    // Keeps the placeholder readable regardless of how many toggle buttons
+    // this toolbar ends up with (Maven's own Skip Tests makes one more than
+    // Gradle's) — the same `find_bar.cpp` rule: the field gets a floor, the
+    // buttons give up space first.
+    executeEdit_->setMinimumWidth(90);
     auto *runButton = new QToolButton(this);
     runButton->setText(tr("Run"));
     offlineCheck_ = new QCheckBox(tr("Offline"), this);

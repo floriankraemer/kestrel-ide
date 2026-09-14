@@ -246,8 +246,12 @@ impl ffi::TestService {
 
         let mut args = framework.args.clone();
         if let Some(pattern) = filter {
-            args.push(framework.filter_flag.clone());
-            args.push(pattern);
+            if let Some(flag) = &framework.filter_flag {
+                args.push(flag.clone());
+                args.push(pattern);
+            } else if let Some(template) = &framework.filter_template {
+                args.push(template.replace("{pattern}", &pattern));
+            }
         }
 
         let run_id = self.next_id.get() + 1;

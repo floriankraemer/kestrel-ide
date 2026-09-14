@@ -45,8 +45,8 @@ mod manifest;
 
 pub use error::{LoadErrorKind, PluginLoadError};
 pub use manifest::{
-    check_api_version, expand_capability_path, AnalyzerContribution, Capabilities,
-    ColorThemeContribution, CommandContribution, Contributes, ContributionPoint,
+    check_api_version, expand_capability_path, AnalyzerContribution, BuildToolContribution,
+    Capabilities, ColorThemeContribution, CommandContribution, Contributes, ContributionPoint,
     IconThemeContribution, LanguageServerContribution, PluginManifest, PreviewContribution,
     TestFrameworkContribution, WasmSection, ID_MAX_LEN, MANIFEST_FILE, PLUGIN_DIR_TOKEN,
 };

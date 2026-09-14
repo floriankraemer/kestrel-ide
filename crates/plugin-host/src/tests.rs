@@ -603,7 +603,7 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
         vec!["vendor/bin/phpunit", "phpunit.phar", "phpunit"]
     );
     assert_eq!(phpunit.args, vec!["--teamcity"]);
-    assert_eq!(phpunit.filter_flag, "--filter");
+    assert_eq!(phpunit.filter_flag.as_deref(), Some("--filter"));
     assert_eq!(phpunit.output_format, "teamcity");
     assert_eq!(
         phpunit.config_file_candidates,

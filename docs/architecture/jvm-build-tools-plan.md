@@ -104,7 +104,7 @@ Update the row **in the same commit** that finishes the task.
 | Task | Status | Commit |
 |---|---|---|
 | P0 — plan doc + ADR-0057 + `docs/README.md` + `layering.md` | open | |
-| A1 — `plugin-api`: split `manifest.rs` tests out; `build-tools` point + test-framework fields + validation + round-trip tests | open | |
+| A1 — `plugin-api`: split `manifest.rs` tests out; `build-tools` point + test-framework fields + validation + round-trip tests | done | `8cd1ba5` |
 | A2 — `linux-jvm` image, `JVM_IMAGE`/`make test-jvm`/`jvm-ci`, nightly job, `jvm-integration.md` | open | |
 | A3 — `plugin-host`: on-demand `asset_dir()` materialisation, `${asset_dir}` expansion, `build_tools()` accessor; builtin registration with the init-script asset + "asset exists" test | open | |
 | A4 — `jvm-build-core::model` + `gradle::*`: init script + JSON parse; fixture JSON unit tests; `--features jvm-integration` tests against `tests/fixtures/gradle-{single,multi-kts,catalog}` | open | |

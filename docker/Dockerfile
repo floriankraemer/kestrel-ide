@@ -280,6 +280,43 @@ RUN wget -qO /tmp/maven.tar.gz \
     && rm /tmp/maven.tar.gz \
     && mvn --version
 
+# Fixture prewarm (jvm-build-tools plan A4/A5): copy the five fixture
+# projects to a throwaway path and run exactly the commands
+# gradle_integration.rs/maven_integration.rs run for real, so ~/.gradle and
+# ~/.m2 are already warm in this image layer with precisely the artifacts
+# those tests need. The tests themselves run with the *real* fixtures
+# bind-mounted at /workspace (the Makefile's DOCKER_MOUNTS) and never see
+# this throwaway copy, but resolve from the same caches — `--offline` in
+# `jvm_build_core::gradle::sync`/`maven::sync`'s SyncOptions works even
+# though `make test-jvm` itself has no outbound network access.
+#
+# gradle-single's and maven-single's fixtures each carry one deliberately
+# failing test (`GreeterTest::deliberatelyFails`, A4/A5's own fixtures) —
+# `|| true` on exactly those two test invocations, since a failing test is
+# the expected, successful outcome of running them and must not fail this
+# RUN (and so the whole image build).
+COPY crates/jvm-build-core/tests/fixtures /tmp/jvm-fixtures
+COPY crates/plugin-host/builtin/jvm-build-tools/ide-model.init.gradle /tmp/ide-model.init.gradle
+RUN cd /tmp/jvm-fixtures/gradle-single \
+    && gradle --init-script /tmp/ide-model.init.gradle -q ideModel --console=plain --no-configuration-cache -Pide.modelOut=/tmp/model.json \
+    && (gradle --init-script /tmp/ide-model.init.gradle -Pide.teamcity=true --console=plain --no-configuration-cache cleanTest test || true) \
+    && cd /tmp/jvm-fixtures/gradle-multi-kts \
+    && gradle --init-script /tmp/ide-model.init.gradle -q ideModel --console=plain --no-configuration-cache -Pide.modelOut=/tmp/model.json \
+    && gradle --init-script /tmp/ide-model.init.gradle -Pide.teamcity=true --console=plain --no-configuration-cache cleanTest test \
+    && cd /tmp/jvm-fixtures/gradle-catalog \
+    && gradle --init-script /tmp/ide-model.init.gradle -q ideModel --console=plain --no-configuration-cache -Pide.modelOut=/tmp/model.json \
+    && gradle --init-script /tmp/ide-model.init.gradle -Pide.teamcity=true --console=plain --no-configuration-cache cleanTest test \
+    && cd /tmp/jvm-fixtures/maven-single \
+    && mvn -B help:effective-pom -Doutput=/tmp/eff.xml \
+    && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree -Dverbose \
+    && cd /tmp/jvm-fixtures/maven-multi/lib \
+    && mvn -B help:effective-pom -Doutput=/tmp/eff-lib.xml \
+    && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree -Dverbose \
+    && cd /tmp/jvm-fixtures/maven-multi/app \
+    && mvn -B help:effective-pom -Doutput=/tmp/eff-app.xml \
+    && mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.6.1:tree -Dverbose \
+    && rm -rf /tmp/jvm-fixtures /tmp/model.json /tmp/eff*.xml /tmp/ide-model.init.gradle
+
 # ---------------------------------------------------------------------------
 # linux-artifact-builder: linux-builder + baked-in source, for buildx
 # artifact-extraction builds. Kept separate from linux-builder (used as the

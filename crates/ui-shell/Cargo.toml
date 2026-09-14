@@ -37,6 +37,9 @@ run-core = { path = "../run-core" }
 build-core = { path = "../build-core" }
 # D3: the debugger.
 dap-core = { path = "../dap-core" }
+# jvm-build-tools plan B1: BuildToolsService drives Gradle/Maven sync,
+# reload policy and task-config building directly.
+jvm-build-core = { path = "../jvm-build-core" }
 container-core = { path = "../container-core" }
 # C6: the Docker Hub worker behind image-name completion (`bridge/language/containers.rs`).
 container-registry = { path = "../container-registry" }

@@ -40,6 +40,8 @@ pub mod ai;
 pub mod analysis;
 pub mod app_info;
 pub mod build;
+/// Gradle/Maven sync, tool window and settings (jvm-build-tools plan B1/B5).
+pub mod build_tools;
 /// Containers (ADR-0055): the Settings > Containers accessors on
 /// `AppSettings` (C1) and the `ContainerService` QObject behind the
 /// Containers dock (C2).

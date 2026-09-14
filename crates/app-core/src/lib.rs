@@ -17,6 +17,9 @@ use project_model::{Project, ProjectSession};
 
 use diff_tab::DiffContent;
 
+/// The project tree's source-root/output-dir decoration join (jvm-build-tools
+/// plan B7, ADR-0057).
+pub mod build_tools_tree;
 /// Where plugins and parsed colour themes are joined (ADR-0026, color-themes plan T6).
 pub mod color_themes;
 /// Read-only `TabKind::Diff` tabs: `DiffContent` and the `AppSession`
@@ -26,9 +29,6 @@ mod diff_tab;
 mod error;
 /// File operations a workspace edit asks for (F2; its ADR is unwritten).
 pub mod file_ops;
-/// The project tree's source-root/output-dir decoration join (jvm-build-tools
-/// plan B7, ADR-0057).
-pub mod build_tools_tree;
 /// Where plugins and icon packs are joined (ADR-0026, ADR-0027).
 pub mod icons;
 /// Rasterising an SVG image tab's file, reusing `icon-theme`'s pipeline.

@@ -6945,6 +6945,7 @@ dependencies = [
  "edit-ops",
  "editor-core",
  "index-core",
+ "jvm-build-core",
  "lsp-core",
  "markdown-preview",
  "mcp-server",

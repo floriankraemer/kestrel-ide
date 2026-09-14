@@ -140,7 +140,11 @@ pub fn rows(model: &BuildModel) -> Vec<Node> {
         if module.dependencies.is_empty() {
             continue;
         }
-        let mut scopes: Vec<&str> = module.dependencies.iter().map(|d| d.scope.as_str()).collect();
+        let mut scopes: Vec<&str> = module
+            .dependencies
+            .iter()
+            .map(|d| d.scope.as_str())
+            .collect();
         scopes.sort_unstable();
         scopes.dedup();
         for scope in scopes {
@@ -233,8 +237,7 @@ mod tests {
     #[test]
     fn every_row_parents_to_a_row_that_already_exists() {
         let rows = rows(&sample_model());
-        let ids: std::collections::HashSet<&str> =
-            rows.iter().map(|n| n.id.as_str()).collect();
+        let ids: std::collections::HashSet<&str> = rows.iter().map(|n| n.id.as_str()).collect();
         for row in &rows {
             assert!(
                 row.parent_id.is_empty() || ids.contains(row.parent_id.as_str()),

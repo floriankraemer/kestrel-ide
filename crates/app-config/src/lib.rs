@@ -16,6 +16,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// The `[analysis]` section: per-analyzer trigger/enabled overrides.
 pub mod analysis;
+/// The `[build_tools]` section: trusted roots and Gradle/Maven overrides
+/// (the jvm-build-tools plan's A7, ADR-0057).
+pub mod build_tools;
 pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0056).
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
 pub mod containers;
@@ -63,6 +66,7 @@ pub mod ai_settings;
 
 pub use ai_settings::{AiProviderSetting, AiToolPolicySetting};
 pub use analysis::{AnalysisSettings, AnalyzerSetting};
+pub use build_tools::{BuildToolsSettings, GradleToolSettings, MavenToolSettings};
 pub use containers::{
     ContainerConnectionSetting, ContainerSettings, ContainerTargetSetting, RegistrySetting,
 };
@@ -370,6 +374,12 @@ pub struct Settings {
     /// [`Settings::terminal`] — see [`containers`].
     #[serde(default)]
     pub containers: ContainerSettings,
+    /// The `[build_tools]` section (ADR-0057): trusted sync roots plus
+    /// Gradle/Maven overrides. `trusted_roots` is global only — see
+    /// [`build_tools`]'s doc comment; the `gradle`/`maven` sub-tables are
+    /// project-scoped like [`Settings::terminal`].
+    #[serde(default)]
+    pub build_tools: BuildToolsSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
     ///
@@ -955,6 +965,7 @@ mod tests {
             },
             containers: ContainerSettings::default(),
             analysis: AnalysisSettings::default(),
+            build_tools: BuildToolsSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),

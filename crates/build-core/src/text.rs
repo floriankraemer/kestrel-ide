@@ -17,6 +17,8 @@ use std::path::Path;
 
 use regex::Regex;
 
+use container_core::target::PathMap;
+
 use crate::diagnostics::{severity_from_word, BuildDiagnostic};
 
 /// One tool's way of writing a diagnostic line.
@@ -65,7 +67,11 @@ fn patterns() -> &'static [Pattern] {
 /// Parse one line of a build tool's output, or `None` when it is not a
 /// diagnostic — which is the overwhelming majority of lines, so this is
 /// written to fail fast rather than to be clever.
-pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
+pub fn parse_line(
+    line: &str,
+    project_root: &Path,
+    path_map: Option<&PathMap>,
+) -> Option<BuildDiagnostic> {
     // Every pattern needs a colon and a digit; skipping the ones that have
     // neither keeps a normal build's thousands of progress lines off the
     // regex engine entirely.
@@ -84,7 +90,7 @@ pub fn parse_line(line: &str, project_root: &Path) -> Option<BuildDiagnostic> {
         if raw_path.is_empty() {
             continue;
         }
-        let path = crate::diagnostics::resolve_path(raw_path, project_root);
+        let path = crate::diagnostics::resolve_path(raw_path, project_root, path_map);
 
         return Some(BuildDiagnostic {
             path,
@@ -109,7 +115,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn parse(line: &str) -> Option<BuildDiagnostic> {
-        parse_line(line, Path::new("/p"))
+        parse_line(line, Path::new("/p"), None)
     }
 
     #[test]

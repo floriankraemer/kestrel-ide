@@ -180,7 +180,7 @@ impl ffi::TestService {
             .and_then(|node| node.failure.as_ref())
             .map(|failure| failure.details.clone())
             .unwrap_or_default();
-        match run_core::resolve_link(&details, byte_offset as usize, &root) {
+        match run_core::resolve_link(&details, byte_offset as usize, &root, None) {
             Some(link) => ffi::FfiResolvedLink {
                 found: true,
                 path: QString::from(link.path.display().to_string().as_str()),

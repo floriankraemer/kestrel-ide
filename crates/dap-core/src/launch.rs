@@ -227,6 +227,7 @@ mod tests {
             cwd: Some(PathBuf::from("/p")),
             env: vec![("RUST_LOG".into(), "debug".into())],
             console: run_core::ConsoleKind::Pty,
+            path_map: None,
         }
     }
 

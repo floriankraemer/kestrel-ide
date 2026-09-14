@@ -20,6 +20,10 @@ pub mod config;
 /// containerfile auto-build before-launch task, and the compose console's
 /// Stop/Down commands.
 pub mod container_run;
+/// Run targets (C8): resolving `RunConfig::run_on` against
+/// `[containers.target]` and wrapping a plain process launch through
+/// `container_core::target::wrap_launch`.
+pub mod container_target;
 pub mod context;
 pub mod detect;
 pub mod error;
@@ -36,6 +40,7 @@ pub use container_run::{
     compose_project_down_command, compose_project_scale_command, compose_project_stop_command,
     compose_project_up_spec, down_command, stop_command,
 };
+pub use container_target::{target_id, validate_run_on, TargetLaunchError};
 pub use context::{
     compose_config, compose_run_lines, compose_service_at, config_for_file, containerfile_config,
     remember_temporary, TEMPORARY_CAP,

@@ -1,10 +1,12 @@
 #include "run_config_dialog.h"
 
+#include "container_target_wizard.h"
 #include "e2e_mark.h"
 #include "run_config_container_pages.h"
 
 #include <QAction>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QHBoxLayout>
@@ -27,6 +29,13 @@
 namespace ui_shell {
 
 namespace {
+
+// The "Run on" combo's data role for its two fixed rows; every other row's
+// data is `"container:<target-id>"`, exactly `RunConfigSetting::run_on`'s
+// own spelling — `container_core::target` reads this string, so this combo
+// never invents a second one.
+const QString kRunOnLocal = QString();
+const QString kRunOnNewTarget = QStringLiteral("__new_target__");
 
 int configCount(RunConfigEditor *editor)
 {
@@ -134,6 +143,23 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     parallelCheck->setToolTip(
       QObject::tr("Run this configuration again without stopping the running one"));
 
+    // Run targets (C8): where a plain-process configuration's launch
+    // actually runs. Meaningless (and hidden) for a container-kind one —
+    // its launch already is a container launch.
+    auto *runOnCombo = new QComboBox(&dialog);
+    const auto refreshRunOnCombo = [=](const QString &keepData) {
+        const QSignalBlocker blocker(runOnCombo);
+        runOnCombo->clear();
+        runOnCombo->addItem(QObject::tr("Local"), kRunOnLocal);
+        for (const FfiContainerTarget &target : editor->containerTargets()) {
+            runOnCombo->addItem(QString(target.name), QStringLiteral("container:%1").arg(target.id));
+        }
+        runOnCombo->addItem(QObject::tr("New target..."), kRunOnNewTarget);
+        const int index = runOnCombo->findData(keepData);
+        runOnCombo->setCurrentIndex(index >= 0 ? index : 0);
+    };
+    refreshRunOnCombo(QString());
+
     auto *containerPage = new ContainerOptionsPage(containerService, editor, &dialog);
 
     auto *commandPreviewEdit = new QPlainTextEdit(&dialog);
@@ -153,6 +179,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     addRow(QObject::tr("Program:"), programEdit);
     addRow(QObject::tr("Arguments:"), argsEdit);
     addRow(QObject::tr("Working dir:"), cwdEdit);
+    addRow(QObject::tr("Run on:"), runOnCombo);
     form->addWidget(new QLabel(QObject::tr("Before launch:"), &dialog));
     form->addWidget(beforeLaunchEdit);
     form->addWidget(parallelCheck);
@@ -199,6 +226,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.before_launch = beforeLaunchEdit->toPlainText();
         form.kind = *currentKind;
         form.container = containerPage->options();
+        form.run_on = runOnCombo->currentData().toString();
         editor->updateConfiguration(static_cast<quint32>(index), form);
     };
 
@@ -237,10 +265,34 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         programEdit->setEnabled(has && !isContainer);
         argsEdit->setEnabled(has && !isContainer);
         cwdEdit->setEnabled(has && !isContainer);
+        // "Run on" only means something for a plain-process configuration —
+        // a container-kind one's launch already is a container launch.
+        runOnCombo->setVisible(!isContainer);
+        refreshRunOnCombo(config.run_on);
         containerPage->setKind(config.kind);
         containerPage->setOptions(config.container);
         refreshPreview();
     };
+
+    // "New target..." opens the wizard right away rather than staying
+    // selected: picking it is an action, not a value, the same reason
+    // `containers_menu.cpp`'s "Add from contexts..." never leaves itself
+    // selected in a combo either.
+    QObject::connect(runOnCombo, &QComboBox::activated, &dialog, [=, &dialog](int index) {
+        if (runOnCombo->itemData(index).toString() != kRunOnNewTarget) {
+            refreshPreview();
+            return;
+        }
+        FfiContainerTarget prefill{};
+        FfiContainerTarget created{};
+        if (showContainerTargetWizard(&dialog, containerService, editor, prefill, created)) {
+            const QString id = editor->addContainerTarget(created);
+            refreshRunOnCombo(QStringLiteral("container:%1").arg(id));
+        } else {
+            refreshRunOnCombo(kRunOnLocal);
+        }
+        refreshPreview();
+    });
 
     QObject::connect(containerPage, &ContainerOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(programEdit, &QLineEdit::textChanged, &dialog, refreshPreview);

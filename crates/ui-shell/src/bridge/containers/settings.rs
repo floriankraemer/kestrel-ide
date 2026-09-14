@@ -384,6 +384,53 @@ impl ffi::AppSettings {
         }
     }
 
+    /// Run targets (C8): the Settings > Containers > Run targets list.
+    pub fn container_targets(&self) -> Vec<ffi::FfiContainerTarget> {
+        let containers = match *self.scope.borrow() {
+            settings_model::Scope::Project => crate::bridge::convert::load_project_settings()
+                .containers
+                .unwrap_or_default(),
+            _ => crate::bridge::convert::load_settings().containers,
+        };
+        containers
+            .targets
+            .iter()
+            .map(crate::bridge::run::to_ffi_target)
+            .collect()
+    }
+
+    /// Save the whole Run targets list — Edit/Remove and the New Target
+    /// wizard's Finish all go through this, the same "whole list, draft
+    /// edited in the view" shape `saveContainerConnections`/
+    /// `saveRegistries` already use.
+    pub fn save_container_targets(&self, targets: Vec<ffi::FfiContainerTarget>) -> FfiResult {
+        let rows: Vec<app_config::ContainerTargetSetting> = targets
+            .iter()
+            .map(crate::bridge::run::from_ffi_target)
+            .collect();
+
+        if *self.scope.borrow() == settings_model::Scope::Project {
+            let previous = crate::bridge::convert::load_project_settings()
+                .containers
+                .unwrap_or_default();
+            let updated = app_config::ContainerSettings {
+                targets: rows,
+                ..previous
+            };
+            return commit_to_project(|project| project.containers = Some(updated));
+        }
+        let config_dir = app_core::resolve_config_dir();
+        let previous = crate::bridge::convert::load_settings().containers;
+        let updated = app_config::ContainerSettings {
+            targets: rows,
+            ..previous
+        };
+        match app_config::update(&config_dir, |loaded| loaded.containers = updated) {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_SETTINGS_IO, error.to_string()),
+        }
+    }
+
     /// "Test connection" for a registry (C7): runs `RegistryClient::
     /// test_connection` on a worker thread — a real network call, never on
     /// the Qt thread — and reports through `registryTested`.

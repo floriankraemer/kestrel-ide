@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use container_core::target::PathMap;
 use run_core::toolchain::ToolchainId;
 
 use crate::diagnostics::BuildDiagnostic;
@@ -36,6 +37,11 @@ impl Strategy {
 pub struct DiagnosticParser {
     strategy: Strategy,
     project_root: PathBuf,
+    /// C8: set when the step this parser reads was wrapped to run inside a
+    /// container run target, so an in-container absolute path
+    /// (`/workspace/src/x.rs`) a diagnostic names resolves back to the
+    /// project file it actually means — see [`Self::with_path_map`].
+    path_map: Option<PathMap>,
     /// The trailing fragment of the last chunk, before its newline arrived.
     pending: String,
 }
@@ -45,8 +51,19 @@ impl DiagnosticParser {
         Self {
             strategy: Strategy::for_toolchain(toolchain),
             project_root: project_root.into(),
+            path_map: None,
             pending: String::new(),
         }
+    }
+
+    /// Attach the launch's [`PathMap`] (C8) — a builder rather than a `new`
+    /// parameter, the same "an extra field almost nothing sets" shape
+    /// `run_core::MacroContext::with_containers` uses, so every existing
+    /// caller/test keeps compiling unchanged.
+    #[must_use]
+    pub fn with_path_map(mut self, path_map: Option<PathMap>) -> Self {
+        self.path_map = path_map;
+        self
     }
 
     /// Feed the next chunk of output; returns whatever complete lines in it
@@ -86,8 +103,12 @@ impl DiagnosticParser {
             return None;
         }
         match self.strategy {
-            Strategy::CargoJson => cargo_json::parse_line(line, Path::new(&self.project_root)),
-            Strategy::Text => text::parse_line(line, Path::new(&self.project_root)),
+            Strategy::CargoJson => {
+                cargo_json::parse_line(line, Path::new(&self.project_root), self.path_map.as_ref())
+            }
+            Strategy::Text => {
+                text::parse_line(line, Path::new(&self.project_root), self.path_map.as_ref())
+            }
         }
     }
 }

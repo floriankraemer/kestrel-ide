@@ -41,6 +41,15 @@ pub struct LaunchSpec {
     pub cwd: Option<PathBuf>,
     pub env: Vec<(String, String)>,
     pub console: ConsoleKind,
+    /// Set only when this launch was wrapped to run inside a container run
+    /// target (C8): the local project root <-> the container's mount root,
+    /// so a console's file links and a build's diagnostic paths resolve a
+    /// path the wrapped program reports (e.g. `/workspace/src/x.rs:12`)
+    /// back to the project file it actually names. `None` for every other
+    /// launch — the same "absent means nothing to translate" shape
+    /// `process_exec::host::ExecHost::Local` gives path translation
+    /// (ADR-0052).
+    pub path_map: Option<container_core::target::PathMap>,
 }
 
 /// Methods on [`RunConfig`] — an extension trait rather than an inherent
@@ -86,7 +95,33 @@ impl RunConfigExt for RunConfig {
             }
             _ => None,
         }
-        .unwrap_or_else(|| process_launch_spec(self, context))
+        .unwrap_or_else(|| {
+            let spec = process_launch_spec(self, context);
+            // Run targets (C8) only apply to a plain process configuration
+            // — a container-kind one's launch already *is* a container
+            // launch (`RunConfigSetting::run_on`'s own doc comment). An
+            // unresolvable target (blank/unknown id, or a `cwd` outside the
+            // project) falls back to the unwrapped local spec here — the
+            // same "unknown reads as the least surprising default" rule
+            // `toolchain` and `kind` themselves follow; `RunService::launch`
+            // is where the interactive path checks this ahead of time and
+            // reports it instead of silently running locally (see
+            // `crate::container_target::validate_run_on`).
+            self.run_on
+                .as_deref()
+                .and_then(|run_on| crate::container_target::target_id(run_on))
+                .and_then(|target_id| {
+                    crate::container_target::wrap_process_spec(
+                        &spec,
+                        target_id,
+                        context,
+                        &containers,
+                    )
+                    .ok()
+                    .flatten()
+                })
+                .unwrap_or(spec)
+        })
     }
 
     fn toolchain(&self) -> Option<ToolchainId> {
@@ -114,6 +149,7 @@ fn process_launch_spec(config: &RunConfig, context: &MacroContext) -> LaunchSpec
             .map(|(k, v)| (k.clone(), macros::expand(v, context)))
             .collect(),
         console: ConsoleKind::Pty,
+        path_map: None,
     }
 }
 

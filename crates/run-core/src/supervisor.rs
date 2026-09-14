@@ -247,6 +247,7 @@ mod tests {
             cwd: None,
             env: Vec::new(),
             console: ConsoleKind::Pty,
+            path_map: None,
         }
     }
 
@@ -475,6 +476,7 @@ mod tests {
             cwd: Some(std::env::temp_dir()),
             env: Vec::new(),
             console: ConsoleKind::Pty,
+            path_map: None,
         };
         let id = supervisor.launch("pid", &spec).unwrap();
         assert!(supervisor.process_id(id).is_some());
@@ -491,6 +493,7 @@ mod tests {
             cwd: Some(std::env::temp_dir()),
             env: Vec::new(),
             console: ConsoleKind::Pty,
+            path_map: None,
         };
         let id = supervisor.launch("waiter", &spec).unwrap();
         assert_eq!(supervisor.wait(id).unwrap(), 3);

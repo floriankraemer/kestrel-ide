@@ -61,6 +61,13 @@ struct SettingsContext
     // field's doc comment above for why a per-tab QAction can't live in a
     // shared-by-id map.
     TerminalSessionsPanel *terminalPanel;
+    // Run targets (C8): the Containers page's own Run targets section
+    // reuses the New Target wizard (`container_target_wizard.h`), which
+    // needs both — `containerService` for the Server combo,
+    // `runConfigEditor` for the Services picker and command preview, the
+    // same two collaborators `run_config_dialog.cpp` already threads to it.
+    RunConfigEditor *runConfigEditor;
+    ContainerService *containerService;
 };
 
 // Settings dialog (S1: category list + stacked detail pane). One page per

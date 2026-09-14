@@ -13,6 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
+use container_core::target::PathMap;
+
 /// The one Problems model's severity (ADR-0046) — shared with `lsp-core`
 /// rather than a build-specific three-value enum, so the seam that used to
 /// translate "Note" onto "Information" no longer exists.
@@ -46,7 +48,19 @@ pub fn severity_from_word(word: &str) -> Severity {
 /// `Path::is_absolute` never recognises a bare `/...` as absolute at all).
 /// `ExecHost::to_remote`/`to_local` is used explicitly instead, the same
 /// seam every other translation site in this plan goes through.
-pub fn resolve_path(raw_path: &str, project_root: &Path) -> PathBuf {
+///
+/// C8: when `path_map` is set (the build step this diagnostic came from was
+/// wrapped to run inside a container run target), an absolute path under
+/// the target's mount root is a container path, not a literal host one —
+/// `path_map.to_local` recovers the project file it names, the same rule
+/// `run_core::links::resolve_path` applies to a console's own `file:line`
+/// links.
+pub fn resolve_path(raw_path: &str, project_root: &Path, path_map: Option<&PathMap>) -> PathBuf {
+    if let Some(map) = path_map {
+        if let Some(local) = map.to_local(raw_path) {
+            return local;
+        }
+    }
     let host = process_exec::host::ExecHost::for_path(project_root);
     if !host.is_remote() {
         let path = Path::new(raw_path);
@@ -105,7 +119,7 @@ mod tests {
     #[test]
     fn a_relative_path_joins_onto_a_local_project_root() {
         assert_eq!(
-            resolve_path("src/main.rs", Path::new("/p")),
+            resolve_path("src/main.rs", Path::new("/p"), None),
             PathBuf::from("/p/src/main.rs")
         );
     }
@@ -113,7 +127,7 @@ mod tests {
     #[test]
     fn an_absolute_path_is_kept_as_is_on_a_local_project_root() {
         assert_eq!(
-            resolve_path("/elsewhere/lib.rs", Path::new("/p")),
+            resolve_path("/elsewhere/lib.rs", Path::new("/p"), None),
             PathBuf::from("/elsewhere/lib.rs")
         );
     }
@@ -126,7 +140,8 @@ mod tests {
         assert_eq!(
             resolve_path(
                 "src/main.rs",
-                Path::new("//wsl.localhost/Ubuntu/home/f/proj")
+                Path::new("//wsl.localhost/Ubuntu/home/f/proj"),
+                None
             ),
             PathBuf::from("//wsl.localhost/Ubuntu/home/f/proj/src/main.rs")
         );
@@ -137,9 +152,35 @@ mod tests {
         assert_eq!(
             resolve_path(
                 "/home/f/.cargo/registry/src/lib.rs",
-                Path::new("//wsl.localhost/Ubuntu/home/f/proj")
+                Path::new("//wsl.localhost/Ubuntu/home/f/proj"),
+                None
             ),
             PathBuf::from("//wsl.localhost/Ubuntu/home/f/.cargo/registry/src/lib.rs")
+        );
+    }
+
+    // C8: an absolute path under the target's mount root resolves through
+    // the path map instead of being joined (wrongly) onto the local
+    // project root.
+    #[test]
+    fn a_container_target_path_resolves_through_the_path_map() {
+        let map = PathMap::new("/home/f/proj", "/workspace");
+        assert_eq!(
+            resolve_path(
+                "/workspace/src/main.rs",
+                Path::new("/home/f/proj"),
+                Some(&map)
+            ),
+            PathBuf::from("/home/f/proj/src/main.rs")
+        );
+    }
+
+    #[test]
+    fn a_path_map_present_but_not_matching_falls_back_to_the_ordinary_rule() {
+        let map = PathMap::new("/home/f/proj", "/workspace");
+        assert_eq!(
+            resolve_path("src/main.rs", Path::new("/home/f/proj"), Some(&map)),
+            PathBuf::from("/home/f/proj/src/main.rs")
         );
     }
 }

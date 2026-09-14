@@ -137,7 +137,7 @@ fn run_step(
     };
     *handle.current.lock().map_err(|_| "build lock poisoned")? = Some(id);
 
-    read_to_end(reader, toolchain, project_root, sink);
+    read_to_end(reader, toolchain, project_root, step.path_map.clone(), sink);
 
     *handle.current.lock().map_err(|_| "build lock poisoned")? = None;
     let mut supervisor = handle
@@ -160,9 +160,10 @@ fn read_to_end(
     mut reader: Box<dyn Read + Send>,
     toolchain: ToolchainId,
     project_root: &std::path::Path,
+    path_map: Option<container_core::target::PathMap>,
     sink: &mut dyn BuildSink,
 ) {
-    let mut parser = DiagnosticParser::new(toolchain, project_root);
+    let mut parser = DiagnosticParser::new(toolchain, project_root).with_path_map(path_map);
     let mut ansi = AnsiStripper::default();
     let mut buffer = [0u8; 8192];
     loop {
@@ -215,6 +216,7 @@ mod tests {
             cwd: Some(std::env::temp_dir()),
             env: Vec::new(),
             console: run_core::ConsoleKind::Pty,
+            path_map: None,
         }
     }
 

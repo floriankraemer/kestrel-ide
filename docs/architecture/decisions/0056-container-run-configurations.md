@@ -3,6 +3,7 @@
 ## Status
 
 Accepted and fully implemented: `RunConfigSetting.kind` + the three container-kind sub-tables, `container_core::run_config`'s argv compilers and validators, `run-core`'s dispatch (`to_launch_spec_in`, the containerfile auto-build task, compose stop/down/scale), the run-config dialog's structured per-kind pages (Server combo, tables, disclosure menu, Services picker, live command preview), the Compose tree's Start All/Stop/Down/Scale/Jump-to-Source actions and project dashboard, the Dockerfile/compose gutter popups, and "Create Container..." replacing C4's `createContainerQuick`.
+Extended by C8 (§7 below, "Run targets"): a *plain-process* configuration can now run inside a container too, through `RunConfigSetting.run_on` and `container_core::target`.
 
 ## Context
 
@@ -68,9 +69,45 @@ C4's `createContainerQuick` (a name + "publish all ports" checkbox, `docker run 
 
 Compose Down (both the run console's button and the tree's) and Start All/Stop/Scale all launch through `RunServiceRust::spawn_ad_hoc_console` — the `launch()` tail (worker-thread `Supervisor::launch` + reader thread + `consoleStarted`) factored out and reused with no before-launch tasks — so every one of them is a real, visible console in the run dock, not a fire-and-forget `std::process::Command::spawn`. This ADR's own §5 originally reserved a `TerminalWidget`-session fallback for the case where `Supervisor` "cannot host a second command for the same config"; it turned out that it always can (a console's tracking key is an arbitrary string label, not a uniqueness constraint), so the fallback was never needed and is not built.
 
+### 7. Run targets (C8): wrap the `LaunchSpec`, not a new `ExecHost` variant
+
+A container run *target* is a different feature from everything above it: it lets an ordinary process configuration — `cargo run`, `pytest`, `./manage.py runserver` — execute inside a container instead of locally, the way a run configuration can already execute inside a WSL distro (ADR-0052).
+The natural-looking answer, "add `ExecHost::Container` next to `ExecHost::Wsl`", is wrong for the same reason the plan's own seam facts already ruled it out: `ExecHost::for_path` classifies a *path* — it looks at a project root and decides whether that root lives in a WSL distro — and a container connection is not a property of a path at all.
+Two project roots that are byte-for-byte the same path can target two different containers depending on which run configuration is launched, and the same root has no container association when nothing names one.
+`process-exec` would have nothing to classify against.
+
+The chosen shape instead extends `RunConfigSetting` with `run_on: Option<String>` — `None` (or an id nothing resolves, ADR-0039's own "unknown reads as the default" rule) means local, `Some("container:<target-id>")` names a `[containers.target]` row — and a new `container_core::target` module rewrites the compiled `LaunchSpec` in `run-core::container_target::wrap_process_spec`, called from `RunConfigExt::to_launch_spec_in`'s process branch, after `process_launch_spec` has already expanded every macro.
+This is exactly the WSL design's own "wrap the launch, don't thread a host through every crate" choice (ADR-0052 §"`run`/`spawn` classify their own `work_dir`"), applied one layer up: `wrap_launch` takes a `program`/`args`/`cwd`/`env` (a `SimpleLaunch`, containing nothing `container-core` needs from `run-core`'s own `LaunchSpec` type — layering runs `run-core` -> `container-core`, never back) and returns the same shape wrapped in `docker run …`/`compose run …`, plus a `PathMap`.
+
+Three container sources, one wrapper: `image` runs the given reference as-is; `containerfile` runs the tag its own before-launch build produces (`ContainerTargetSetting::image_tag`, or a deterministic `ide-target-<id>` when left blank — stable across relaunches without persisting a value the wizard never asked the user to type); `compose-service` runs through `compose run --rm --service-ports <service> <program> <args…>` instead of `docker run`, since a service's image, network and environment are compose's to resolve, not this module's to re-derive.
+A target's own before-launch build (`container_core::target::before_launch_for`, wrapped into a `BeforeLaunchTask::ExternalTool` by `run_core::container_target::target_build_task`) is prepended ahead of *every* other before-launch task, containerfile-configuration's own build task included (`before_launch::tasks_of_with_containers`): the target's image has to exist before anything else in the list can mean anything, the same reason a Containerfile configuration's own auto-build task (§4 above) runs first for that configuration.
+
+### The path-map seam: `LaunchSpec::path_map`, threaded to two consumers
+
+A wrapped launch's `cwd`/`program`/`args` all still make sense to `Supervisor::launch` unchanged — it never has to know the process it started is inside a container.
+What breaks is anything that reads a *path the wrapped process itself prints*: a run console's `file:line` link (`run_core::links::resolve_link`) and a build step's compiler diagnostics (`build_core::diagnostics::resolve_path`), both of which resolve a relative or absolute path against the launch's own `cwd` — and a program running inside the container sees `/workspace/src/main.rs`, not the host path that same file has.
+
+`LaunchSpec` gains one field, `path_map: Option<container_core::target::PathMap>`, set only by `wrap_process_spec`; every other launch (local, WSL, container-kind C5) leaves it `None`, the same "absent means nothing to translate" shape `ExecHost::Local` already establishes for WSL translation.
+`PathMap::to_local`/`to_remote` do an exact, separator-normalised, case-insensitive-on-a-drive-letter prefix match between the project root and the container's mount root — deliberately not going through `ExecHost` (a container connection reached over `wsl.exe` still needs `ExecHost::to_remote` once, to compute the `-v` mount source itself, but the `PathMap` a console/build reads afterward is host-root-to-mount-root, a different pair of endpoints entirely).
+`resolve_link`/`resolve_path` try `path_map.to_local` first when a `PathMap` is present, and fall through to their existing WSL/local rule when it does not match (a relative path a containerized program prints needs no translation at all: the whole project root is mounted 1:1, so it resolves identically against the host-side `cwd` either way — only an *absolute* in-container path needs the map).
+This is the honest place to thread it: `build-core` already depends on `process-exec` for exactly this kind of translation (ADR-0052), so a new `container-core` edge below it — the smallest new dependency, not a bigger one — is the same shape, not a new one.
+
+### `cwd` outside the project is a refusal, not a best effort
+
+A run target has exactly one mount — the project root — so a launch whose `cwd` resolves outside it (an absolute path elsewhere, or a macro that expanded to one) has no honest path inside the container to start from.
+`container_core::target::wrap_launch` returns `TargetError::CwdOutsideProject` rather than guessing (mounting a second directory, or silently falling back to the mount root); `run_core::container_target::validate_run_on` surfaces the same check — and an unknown target id — ahead of the launch, on the Qt thread, the same "refuse before anything starts" role `before_launch::validate` already plays for a before-launch cycle.
+`to_launch_spec_in` itself stays infallible (an unresolvable target there quietly falls back to the unwrapped local spec, ADR-0039's "unknown reads as the default" rule again) precisely because `validate_run_on` is what turns the same condition into a reported `RunError`-shaped refusal on the one path that actually launches something.
+
+### Debugging a run target is a recorded gap, not a silent one
+
+Starting a debug session against a `run_on` configuration would need the debug adapter running *inside* the container too — a different mechanism this codebase does not have (`dap-core`'s `DapSession::start` spawns the adapter locally, the same way `Supervisor::launch` used to spawn the debuggee before WSL wrapping existed for it).
+Rather than let it silently debug the *local* program (technically launchable, semantically wrong — the user asked to debug what Run would run, and Run would run it in the container), `DebugService::debug` refuses a `run_on`-configured launch outright with a typed, actionable message before ever resolving an adapter, pointing at Run and remote-attach debugging (already possible today, unaffected) as the two working alternatives.
+
 ## Consequences
 
 - `run-core` depends on `container-core` (new edge; `docs/architecture/layering.md` updated, `cargo tree -p run-core -e normal | grep -iE 'qt|tokio'` still empty).
+- `build-core` depends on `container-core` (C8, new edge for the same reason it already depends on `process-exec`: `diagnostics::resolve_path` needs `PathMap::to_local` the way it already needs `ExecHost::to_local`; `docs/architecture/layering.md` updated, `cargo tree -p build-core -e normal | grep -iE 'qt|tokio'` still empty).
+- Debugging inside a run target is not supported (see above) — a deliberate, documented gap, not an oversight; the plan's own "Parity gaps" already named this.
 - `MacroContext` grows a fourth field; every existing constructor (`for_project`, `for_file`) had to be touched to initialize it, but no existing call site's behaviour changed (`containers` defaults to `None`).
 - A containerfile configuration's `run_built_image` flag changes what "launch" means (run vs. build-only) rather than adding a distinct configuration kind for "build only" — a JetBrains-matching choice, but a reader of `to_launch_spec_in` has to know this to understand why a containerfile launch sometimes never runs a container.
 - `FfiContainerOptions` is one large flattened struct (every kind's fields at once, ~40 of them) rather than three smaller ones — the same tradeoff `FfiContainerConnection` already made for connection kinds, for the same reason (no clean tagged-union shape crosses this seam).
@@ -91,5 +128,7 @@ Compose Down (both the run console's button and the tree's) and Start All/Stop/S
 - [ADR-0032: run configurations](0032-run-configurations.md) — `LaunchSpec`, the debugger-agnostic seam every kind here still produces.
 - [ADR-0039: typed run configurations](0039-typed-run-configurations.md) — the `toolchain`/`target` string-plus-data pattern this ADR extends to `kind`.
 - [ADR-0055: CLI-driven container integration](0055-cli-driven-container-integration.md) — `Invocation`, `Engine`, `ConnectionConfig`, and the "one argv, two engines" rule this task's compilers depend on.
-- `docs/architecture/containers-plan.md`'s C5 entry — the task this ADR documents, including the deferred UI scope.
-- `crates/app-config/src/container_run.rs`, `crates/container-core/src/run_config.rs`, `crates/run-core/src/container_run.rs`, `crates/ui-shell/src/bridge/run/{mod,editor}.rs`, `crates/ui-shell/cpp/run_config_dialog.cpp` — the code.
+- [ADR-0052: remote WSL execution](0052-remote-wsl-execution.md) — the "wrap the launch instead of adding a new `ExecHost`" precedent §7 (Run targets) follows, and `ExecHost::to_remote`/`to_local`, the shape `PathMap` mirrors one layer up.
+- `docs/architecture/containers-plan.md`'s C5 and C8 entries — the tasks this ADR documents, including the deferred UI scope and the C8 debugging gap.
+- `crates/app-config/src/container_run.rs`, `crates/container-core/src/run_config.rs`, `crates/run-core/src/container_run.rs`, `crates/ui-shell/src/bridge/run/{mod,editor}.rs`, `crates/ui-shell/cpp/run_config_dialog.cpp` — the C5 code.
+- `crates/app-config/src/containers.rs` (`ContainerTargetSetting`, `RunConfigSetting::run_on`), `crates/container-core/src/target.rs` (`PathMap`, `wrap_launch`, `before_launch_for`), `crates/run-core/src/container_target.rs` (`validate_run_on`, `wrap_process_spec`, `target_build_task`), `crates/run-core/src/links.rs` and `crates/build-core/src/diagnostics.rs` (`PathMap`-aware `resolve_path`), `crates/ui-shell/src/bridge/debug/mod.rs` (the `run_on` debug refusal), `crates/ui-shell/cpp/container_target_wizard.{h,cpp}` — the C8 code.

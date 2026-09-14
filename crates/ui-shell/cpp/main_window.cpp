@@ -841,7 +841,6 @@ void buildMainWindow(AppSettings *appSettings,
     QObject::connect(saveAsAction, &QAction::triggered, window, [editorTabs]() {
         editorTabs->saveCurrentTabAs();
     });
-
     // Built once, outside the lambda, and captured whole: fourteen separate
     // captures is what the parameter object exists to replace (see
     // SettingsContext). Every member is a pointer or a handle that outlives
@@ -866,6 +865,7 @@ void buildMainWindow(AppSettings *appSettings,
       analysisService,
       uiFontTargets,
       central.terminalPanel,
+      runConfigEditor, containerService,
     };
     QObject::connect(preferencesAction, &QAction::triggered, window,
                       [window, settingsContext, appSettings]() {

@@ -48,7 +48,11 @@ use crate::bridge::ffi;
 mod container_form;
 mod editor;
 mod gutter;
+/// `FfiContainerTarget` <-> `ContainerTargetSetting` (C8): structured, no
+/// JSON, split out of this module under the file-size ratchet.
+mod target_form;
 pub use editor::RunConfigEditorRust;
+pub(crate) use target_form::{from_ffi_target, to_ffi_target};
 
 /// One unit of work for the worker thread that owns the `Supervisor`.
 /// Mirrors `VcsJob` (`crate::bridge::vcs`): every call against the
@@ -75,6 +79,11 @@ struct RunWorker {
 struct ConsoleState {
     config_id: String,
     cwd: PathBuf,
+    /// Set only for a launch wrapped to run inside a container run target
+    /// (C8): what `resolveLink` translates an in-container path
+    /// (`/workspace/src/x.rs:12`) back through, so a link in the console
+    /// still opens the project's own file.
+    path_map: Option<container_core::target::PathMap>,
     output: String,
     /// Escape sequences are resolved here, once: `output` (what
     /// `resolveLink` byte-offsets index into) and what `consoleOutput`
@@ -236,6 +245,7 @@ fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
         before_launch: QString::from(tasks_to_string(config).as_str()),
         kind: QString::from(config.kind.clone().unwrap_or_default().as_str()),
         container: container_form::to_ffi_options(config),
+        run_on: QString::from(config.run_on.clone().unwrap_or_default().as_str()),
     }
 }
 
@@ -480,6 +490,7 @@ fn resolve_task(
                 cwd: Some(root.to_path_buf()),
                 env: Vec::new(),
                 console: run_core::ConsoleKind::Pty,
+                path_map: None,
             };
             Ok((program.clone(), vec![spec], tool_for_output(root)))
         }
@@ -545,6 +556,7 @@ fn spawn_console_on_worker(
     qt_thread: &CxxQtThread<ffi::RunService>,
 ) {
     let cwd = spec.cwd.clone().unwrap_or_default();
+    let path_map = spec.path_map.clone();
     match worker.supervisor.launch(config_id.clone(), &spec) {
         Ok(id) => {
             let reader = worker.supervisor.take_reader(id);
@@ -557,6 +569,7 @@ fn spawn_console_on_worker(
                     ConsoleState {
                         config_id: started_config_id.clone(),
                         cwd,
+                        path_map,
                         output: String::new(),
                         ansi: AnsiResolver::default(),
                         last_runs: Vec::new(),
@@ -886,6 +899,17 @@ impl ffi::RunService {
 
         let root = root.to_path_buf();
         let containers = effective_container_settings();
+        // Run targets (C8): checked here, ahead of everything else, the
+        // same "refuse before anything starts" role `before_launch::validate`
+        // plays for a task-graph cycle just below — an unresolvable target
+        // (renamed/deleted since the configuration was saved) is reported
+        // rather than silently falling back to a local launch.
+        if let Err(err) = run_core::validate_run_on(&config, &containers, &root) {
+            return ffi::FfiResult {
+                code: errors::CODE_RUN_TARGET,
+                message: QString::from(err.to_string().as_str()),
+            };
+        }
         let context = context.clone().with_containers(containers.clone());
         let mut spec = config.to_launch_spec_in(&context);
         let cwd = spec.cwd.clone().unwrap_or_else(|| root.clone());
@@ -1063,6 +1087,7 @@ impl ffi::RunService {
             cwd: Some(root),
             env: Vec::new(),
             console: run_core::ConsoleKind::Pty,
+            path_map: None,
         };
         self.as_mut()
             .spawn_ad_hoc_console(format!("{}:down", config.id), spec);
@@ -1118,6 +1143,7 @@ impl ffi::RunService {
             cwd: Some(root),
             env: Vec::new(),
             console: run_core::ConsoleKind::Pty,
+            path_map: None,
         };
         self.as_mut()
             .spawn_ad_hoc_console(format!("compose:{project_name}:stop"), spec);
@@ -1148,6 +1174,7 @@ impl ffi::RunService {
             cwd: Some(root),
             env: Vec::new(),
             console: run_core::ConsoleKind::Pty,
+            path_map: None,
         };
         self.as_mut()
             .spawn_ad_hoc_console(format!("compose:{project_name}:down"), spec);
@@ -1181,6 +1208,7 @@ impl ffi::RunService {
             cwd: Some(root),
             env: Vec::new(),
             console: run_core::ConsoleKind::Pty,
+            path_map: None,
         };
         let label = format!("compose:{service}:scale");
         self.as_mut().spawn_ad_hoc_console(label, spec);
@@ -1280,7 +1308,12 @@ impl ffi::RunService {
         let Some(state) = consoles.get(&console_id) else {
             return ffi::FfiResolvedLink::default();
         };
-        match run_core::resolve_link(&state.output, byte_offset as usize, &state.cwd) {
+        match run_core::resolve_link(
+            &state.output,
+            byte_offset as usize,
+            &state.cwd,
+            state.path_map.as_ref(),
+        ) {
             Some(link) => ffi::FfiResolvedLink {
                 found: true,
                 path: QString::from(link.path.display().to_string().as_str()),
@@ -1290,6 +1323,44 @@ impl ffi::RunService {
             },
             None => ffi::FfiResolvedLink::default(),
         }
+    }
+
+    /// The run target `console_id`'s configuration runs on (C8), by name —
+    /// empty for a local launch. The run console header shows "on <name>"
+    /// when this is non-empty (`run_menu.cpp`); Rust supplies the label so
+    /// the view never re-derives "which target" from `run_on` itself.
+    pub fn console_target_label(&self, console_id: u64) -> QString {
+        let Some(state) = self
+            .consoles
+            .borrow()
+            .get(&console_id)
+            .map(|s| s.config_id.clone())
+        else {
+            return QString::default();
+        };
+        let Some(root) = current_project_root() else {
+            return QString::default();
+        };
+        let configs = app_config::project_settings::load(&root)
+            .unwrap_or_default()
+            .run_configs
+            .unwrap_or_default();
+        let Some(run_on) = configs
+            .iter()
+            .find(|c| c.id == state)
+            .and_then(|c| c.run_on.clone())
+        else {
+            return QString::default();
+        };
+        let Some(target_id) = run_core::target_id(&run_on) else {
+            return QString::default();
+        };
+        effective_container_settings()
+            .targets
+            .iter()
+            .find(|t| t.id == target_id)
+            .map(|t| QString::from(t.name.as_str()))
+            .unwrap_or_default()
     }
 }
 

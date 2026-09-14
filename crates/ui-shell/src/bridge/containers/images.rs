@@ -28,6 +28,34 @@ use crate::bridge::ffi::{
 };
 
 use super::actions::parse_node_id;
+
+/// Docker Hub's half of [`ffi::ContainerService::request_image_completions`]
+/// (C6): a repository search for a bare prefix, or that repository's own
+/// tag list once `prefix` names one with a `:` — the same split
+/// `bridge/language/containers.rs`'s `fetch` uses for the editor's popup,
+/// simplified to Hub only (no configured-registry browsing: a run target's
+/// Image field names an image reference, not one of this project's
+/// registries specifically). Never panics on a network failure — an empty
+/// list just means the popup's Hub half stays whatever it last had.
+fn fetch_hub(prefix: &str) -> Vec<container_core::completion::HubRepo> {
+    match prefix.split_once(':') {
+        Some((repository, _)) => container_core::image_ref::ImageRef::parse(repository)
+            .and_then(|reference| reference.hub_repository())
+            .and_then(|repository| container_registry::hub::tags(&repository).ok())
+            .map(|tags| {
+                tags.into_iter()
+                    .map(|name| container_core::completion::HubRepo {
+                        name,
+                        is_official: false,
+                        star_count: 0,
+                        description: String::new(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        None => container_registry::hub::search(prefix).unwrap_or_default(),
+    }
+}
 use super::service;
 
 fn labels_to_ffi(labels: &BTreeMap<String, String>) -> Vec<FfiKeyValue> {
@@ -273,6 +301,75 @@ impl ffi::ContainerService {
             .unwrap_or_default();
         let ranked = images::complete_images(&images, &prefix.to_string());
         QString::from(ranked.join("\n").as_str())
+    }
+
+    /// [`Self::image_completions`]'s local answer at once, then Docker Hub's
+    /// (C6, `container_registry::hub`) merged in once the network round
+    /// trip answers, through [`ffi::ContainerService::image_completions_ready`]
+    /// — the same "local now, Hub when it lands" split
+    /// `bridge/language/containers.rs`'s editor popup already uses,
+    /// `container_core::completion::image_completions` is the one ranking
+    /// both go through so this list and that popup never disagree about
+    /// what "official first" means. A `QCompleter`-driving widget (the New
+    /// Target wizard's Image field, `run_config_container_pages.cpp`'s own
+    /// Image field) calls this once per keystroke and replaces its model
+    /// twice: immediately with the local half, again when the signal
+    /// arrives.
+    pub fn request_image_completions(
+        mut self: Pin<&mut Self>,
+        connection_id: &QString,
+        prefix: &QString,
+    ) -> QString {
+        let connection_id = connection_id.to_string();
+        let prefix = prefix.to_string();
+        let mut local_names: Vec<String> = self
+            .connections
+            .borrow()
+            .get(&connection_id)
+            .and_then(|connection| connection.snapshot.as_ref())
+            .map(|snapshot| {
+                snapshot
+                    .images
+                    .iter()
+                    .flat_map(|image| image.repo_tags.iter().cloned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        local_names.sort();
+        local_names.dedup();
+
+        let local_only = container_core::completion::image_completions(&prefix, &local_names, None);
+        let immediate = QString::from(
+            local_only
+                .iter()
+                .map(|item| item.insert.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .as_str(),
+        );
+
+        if !prefix.trim().is_empty() {
+            let qt_thread = self.as_mut().qt_thread();
+            std::thread::spawn(move || {
+                let hub = fetch_hub(&prefix);
+                let merged = container_core::completion::image_completions(
+                    &prefix,
+                    &local_names,
+                    Some(&hub),
+                );
+                let joined = merged
+                    .iter()
+                    .map(|item| item.insert.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ContainerService>| {
+                    service
+                        .as_mut()
+                        .image_completions_ready(QString::from(joined.as_str()));
+                });
+            });
+        }
+        immediate
     }
 
     pub fn image_dashboard(&self, node_id: &QString) -> FfiImageDashboard {

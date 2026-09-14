@@ -117,13 +117,13 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| B1 — `BuildToolsService` bridge + `RunService::run_temporary` + `build_tools_wiring.cpp` relays | done | `b169381`, `d4e8694` |
-| B2 — dock panel (tasks/lifecycle/modules/dependencies; profiles deferred, see note) | done | `d4e8694` |
-| B3 — run task/goal → `task_config`/`taskConfigWithArgs` → `run_temporary` → Run dock; "Execute…" line edit. Maven profile checkboxes deferred: `BuildModel` carries no profile data from phase A's Maven sync, so there is nothing to check — `RunOptions::profiles`/the `-P<id>` rule are built and tested (`53b93c7`) for whenever that data lands | partial (flag-building rule + dock's Run/Run-with-Args done; profile checkboxes blocked on model data) | `d4e8694` |
-| B4 — `EditorBanner` + reload policy wiring + trust prompt; "Reload Build Tool Project" is unbound by default, not Ctrl+Shift+O (collides with `view.goToSymbol`'s existing default — rebindable in Settings > Keymap) | done | `d4e8694` |
-| B5 — Build Tools settings page — global only, not project-scoped (see `b169381`'s message) | done | `b169381` (Rust), `d4e8694` (C++) |
+| B1 — `BuildToolsService` bridge + `RunService::run_temporary` + `build_tools_wiring.cpp` relays | done | `b169381`, `d4e8694`, `24cdddb` |
+| B2 — dock panel (tasks/lifecycle/modules/dependencies/profiles). "Open Build File" only works on a `Module` row — only `Module` carries a `build_file` path in `view::Node`; a `ToolRoot` row does not | done | `d4e8694`, `5235c60` |
+| B3 — run task/goal → `task_config`/`taskConfigWithArgs` → `run_temporary` → Run dock; "Execute…" line edit; Maven profile checkboxes (`view::rows`'s Profiles group, `BuildToolsService::setProfileChecked`, fed into `RunOptions::profiles`'s already-tested `-P<id>` rule) | done | `d4e8694`, `5235c60` |
+| B4 — `EditorBanner` + reload policy wiring + trust prompt; `buildTools.reload` has no default binding (Ctrl+Shift+O is `view.goToSymbol` here — collided and failed a keymap test) | done | `d4e8694` |
+| B5 — Build Tools settings page, project-scoped (`ScopedField::BuildTools`, the same `containers`/`analysis` shape) — `trusted_roots` stays global-only, structurally (`BuildToolsProjectSettings` has no such field) | done | `b169381` (initial, global-only), `7715feb` (made project-scoped) |
 | B6 — status-bar sync indicator | done | `d4e8694` |
-| B7 — project-tree source-root/output-dir decoration (`app-core` gains `jvm-build-core`); output-dir greying deferred (needs a new per-row style role the tree model does not have yet) | partial (icon role done; greying deferred) | `76245e9` (join fn), `d4e8694` (tree wiring) |
+| B7 — project-tree source-root/output-dir decoration (`app-core` gains `jvm-build-core`). Output-dir greying is deferred: it needs a new per-row style/foreground role on `ProjectTreeModel` that does not exist yet (no "dimmed row" precedent to extend) | partial (icon role done; greying deferred) | `76245e9` (join fn), `d4e8694` (tree wiring) |
 | B8 — Maven `-pl` build target | done | `77fa9dc` |
 
 ### C — tests (later PR)

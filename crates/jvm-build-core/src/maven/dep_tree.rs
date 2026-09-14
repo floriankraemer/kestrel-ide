@@ -31,8 +31,33 @@ pub struct DepTreeNode {
 /// Parse every line of a verbose `dependency:tree` run into a flat,
 /// depth-tagged list — the shape [`build_children`] turns into the nested
 /// form [`crate::model::Dependency::children`] expects.
+///
+/// Stops at the `[INFO] BUILD SUCCESS`/`[INFO] BUILD FAILURE` line: everything
+/// Maven prints after it (`Total time:`, `Finished at: 2026-09-14T18:35:01Z`,
+/// …) is `[INFO] ` text too, and a timestamp line's own colons parse as a
+/// plausible-looking four-field `group:artifact:packaging:version` root
+/// coordinate — exactly the shape [`parse_coordinate`]'s depth-0 case
+/// accepts — if nothing stops the scan before it's reached.
+///
+/// Not a bare `"---"`-prefix check: Maven prints several `---`-bordered
+/// section headers *before* the tree itself (a reactor project's own
+/// `--- <name> ---` banner, the goal's own `--- dependency:3.6.1:tree
+/// (default-cli) @ <module> ---` line) that would stop the scan before it
+/// ever reached a single tree line.
 pub fn parse(text: &str) -> Vec<DepTreeNode> {
-    text.lines().filter_map(parse_line).collect()
+    let mut nodes = Vec::new();
+    for line in text.lines() {
+        let Some(rest) = line.strip_prefix("[INFO] ") else {
+            continue;
+        };
+        if rest == "BUILD SUCCESS" || rest == "BUILD FAILURE" {
+            break;
+        }
+        if let Some(node) = parse_line(line) {
+            nodes.push(node);
+        }
+    }
+    nodes
 }
 
 /// Rebuild the nested `children` shape from [`parse`]'s flat, depth-tagged
@@ -140,6 +165,17 @@ fn parse_coordinate(text: &str, depth: usize, reason: Option<&str>) -> Option<De
         [g, a, p, c, v, s] => (*g, *a, *p, Some(*c), *v, *s),
         _ => return None,
     };
+    // A defensive second guard alongside `parse`'s own divider/BUILD stop:
+    // no field of a real Maven coordinate ever contains whitespace, so a
+    // colon-bearing line that merely *looks* like one (a stray `[INFO]`
+    // message this parser has not anticipated) is rejected rather than
+    // accepted as a plausible but wrong node.
+    if [group_id, artifact_id, packaging, version, scope]
+        .iter()
+        .any(|field| field.contains(char::is_whitespace))
+    {
+        return None;
+    }
     Some(DepTreeNode {
         group_id: group_id.to_string(),
         artifact_id: artifact_id.to_string(),
@@ -152,24 +188,55 @@ fn parse_coordinate(text: &str, depth: usize, reason: Option<&str>) -> Option<De
     })
 }
 
+/// Maven can print more than one annotation for a single artifact, joined
+/// with `"; "` (`"version managed from 1.1; omitted for duplicate"` — the
+/// version was both managed *and* the line itself is a duplicate). Each
+/// segment is classified on its own; when more than one segment
+/// classifies, the more specific one wins over the generic
+/// `OmittedForDuplicate` — regardless of which order Maven printed them
+/// in — since "this version was managed to X" is the more useful answer
+/// than "this line repeats another one".
 fn to_conflict(reason: &str) -> Conflict {
-    if let Some(winner) = reason.strip_prefix("omitted for conflict with ") {
-        Conflict::OmittedForConflict {
+    let mut result: Option<Conflict> = None;
+    for segment in reason.split("; ") {
+        let Some(parsed) = classify_reason_segment(segment.trim()) else {
+            continue;
+        };
+        result = match (result, parsed) {
+            (None, parsed) => Some(parsed),
+            // The slot already holds only the generic classification —
+            // any later segment, specific or not, replaces it.
+            (Some(Conflict::OmittedForDuplicate), parsed) => Some(parsed),
+            // The slot already holds a specific classification — a later
+            // generic "omitted for duplicate" segment must not overwrite
+            // it with something less useful.
+            (Some(specific), Conflict::OmittedForDuplicate) => Some(specific),
+            (Some(_), parsed) => Some(parsed),
+        };
+    }
+    result.unwrap_or(Conflict::OmittedForDuplicate)
+}
+
+fn classify_reason_segment(segment: &str) -> Option<Conflict> {
+    if let Some(winner) = segment.strip_prefix("omitted for conflict with ") {
+        Some(Conflict::OmittedForConflict {
             winner: winner.to_string(),
-        }
-    } else if reason == "omitted for duplicate" {
-        Conflict::OmittedForDuplicate
-    } else if let Some(from) = reason.strip_prefix("version managed from ") {
-        Conflict::VersionManagedFrom {
+        })
+    } else if segment == "omitted for duplicate" {
+        Some(Conflict::OmittedForDuplicate)
+    } else if let Some(from) = segment.strip_prefix("version managed from ") {
+        Some(Conflict::VersionManagedFrom {
             from: from.to_string(),
-        }
+        })
+    } else if segment.is_empty() {
+        None
     } else {
         // A reason text this build has not seen yet — kept as a conflict
         // with no more specific classification than "the tool flagged
         // this artifact", the same "note, never a guess" rule
         // build-core's severity table follows for a word it does not
         // recognise.
-        Conflict::OmittedForDuplicate
+        Some(Conflict::OmittedForDuplicate)
     }
 }
 
@@ -289,5 +356,52 @@ mod tests {
     fn non_tree_lines_are_ignored() {
         let text = "[INFO] Scanning for projects...\n[INFO] BUILD SUCCESS\n";
         assert!(parse(text).is_empty());
+    }
+
+    #[test]
+    fn a_finished_at_timestamp_after_the_divider_is_never_parsed_as_a_root_node() {
+        // "Finished at: 2026-09-14T18:35:01Z" splits on ':' into exactly
+        // four fields — the same shape parse_coordinate's depth-0 case
+        // accepts for a real root coordinate — so the real fix is `parse`
+        // stopping at the "---"/"BUILD" divider before ever reaching it;
+        // this also exercises the whitespace-shape guard directly (a real
+        // coordinate field never contains a space, and "Finished at"
+        // does).
+        let text = "[INFO] com.example:maven-single:jar:1.0.0\n\
+                     [INFO] ------------------------------------------------------------------------\n\
+                     [INFO] BUILD SUCCESS\n\
+                     [INFO] ------------------------------------------------------------------------\n\
+                     [INFO] Total time:  1.056 s\n\
+                     [INFO] Finished at: 2026-09-14T18:35:01Z\n\
+                     [INFO] ------------------------------------------------------------------------\n";
+        let nodes = parse(text);
+        assert_eq!(nodes.len(), 1, "{nodes:?}");
+        assert_eq!(nodes[0].artifact_id, "maven-single");
+    }
+
+    #[test]
+    fn a_compound_reason_prefers_the_specific_classification_over_duplicate() {
+        let line =
+            "[INFO]    +- (com.example:widget:jar:2.0:compile - version managed from 1.1; omitted for duplicate)";
+        let nodes = parse(line);
+        assert_eq!(
+            nodes[0].conflict,
+            Some(Conflict::VersionManagedFrom {
+                from: "1.1".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn a_compound_reason_in_the_opposite_order_still_prefers_the_specific_one() {
+        let line =
+            "[INFO]    +- (com.example:widget:jar:2.0:compile - omitted for duplicate; version managed from 1.1)";
+        let nodes = parse(line);
+        assert_eq!(
+            nodes[0].conflict,
+            Some(Conflict::VersionManagedFrom {
+                from: "1.1".to_string()
+            })
+        );
     }
 }

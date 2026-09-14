@@ -200,7 +200,24 @@ impl LoadedPlugin {
                         .map(|existing| existing == *bytes)
                         .unwrap_or(false);
                     if !up_to_date {
-                        std::fs::write(&path, bytes)?;
+                        // Written to a sibling temp file and renamed into
+                        // place, not a direct `fs::write`: a rename within
+                        // the same directory is atomic, so a concurrent
+                        // reader (a sync `gradlew --init-script` launch
+                        // racing this same materialisation) never observes
+                        // a partially written script — only the old
+                        // complete content or the new complete content,
+                        // never a truncated file caught mid-write.
+                        let tmp_name = format!(
+                            "{}.{}.tmp",
+                            path.file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                            std::process::id()
+                        );
+                        let tmp_path = path.with_file_name(tmp_name);
+                        std::fs::write(&tmp_path, bytes)?;
+                        std::fs::rename(&tmp_path, &path)?;
                     }
                 }
                 Ok(dir)

@@ -14,6 +14,7 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -60,13 +61,15 @@ QIcon iconForKind(FfiBuildToolNodeKind kind)
         return QIcon();
     case FfiBuildToolNodeKind::Plugin: {
         // `SP_DriveNetIcon` (review fix 3) reads as a network/monitor glyph
-        // at 16px, wrong for a build plugin — review fix, round 6. The icon
-        // theme ships a real Maven-branded asset (`maven.svg`, the same one
-        // `pom.xml` rows already use), fetched by id directly rather than
-        // through the theme's file/language resolution this tree otherwise
-        // avoids (a plugin row names neither). Falls back to the platform
-        // glyph if the active pack has no such id.
-        const QIcon themed = sharedIconCache().iconFor(QStringLiteral("maven"), 16);
+        // at 16px, wrong for a build plugin — review fix, round 6. Every
+        // Maven plugin's own home is `pom.xml`, and the icon theme already
+        // has real Maven-branded art for that file — `fileIcon` is the same
+        // per-path resolution the Project tree uses for an actual pom.xml
+        // row, borrowed here rather than a raw theme-id lookup (which
+        // returned null: whatever `iconKeyForPath` layers on top of a bare
+        // id — appearance, pack fallback — a shortcut around it skips).
+        // Falls back to the platform glyph if the active pack has none.
+        const QIcon themed = fileIcon(QStringLiteral("pom.xml"), 16);
         return themed.isNull() ? style->standardIcon(QStyle::SP_DriveNetIcon) : themed;
     }
     case FfiBuildToolNodeKind::Goal:
@@ -170,6 +173,16 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     // itself (`view::rows`'s job) and whatever didn't becomes the row's
     // tooltip instead (`refreshTree`, below).
     tree_->setHeaderHidden(true);
+    // Sized to its widest row rather than the viewport: a dependency's full
+    // group:artifact:version coordinate can run well past a ~260px dock's
+    // width, and eliding it is worse than a horizontal scrollbar — the same
+    // trade-off IntelliJ itself makes for this exact row.
+    tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    // `QHeaderView`'s own default: the last (here, only) section always
+    // stretches to fill the viewport regardless of its own resize mode —
+    // exactly what would silently undo `ResizeToContents` above and force
+    // every long coordinate back to eliding instead of scrolling.
+    tree_->header()->setStretchLastSection(false);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
 
     statusLabel_ = new QLabel(this);

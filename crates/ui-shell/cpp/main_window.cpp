@@ -216,7 +216,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // tree as this one dock widget, leaving D4's dock save/restore alone.
     auto *editorRoot = new QSplitter(Qt::Horizontal);
     auto *editorDock = new ads::CDockWidget(dockManager, QObject::tr("Editor"));
-    editorDock->setWidget(editorRoot);
+    editorDock->setWidget(wrapEditorDockContent(editorRoot));
     // The editor is ADS's *central* dock widget, not an ordinary center-area
     // one: a central widget absorbs the leftover space, so the side and
     // bottom panels keep their size hints instead of splitting the window

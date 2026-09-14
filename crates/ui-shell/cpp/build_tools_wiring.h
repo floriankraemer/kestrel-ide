@@ -9,6 +9,7 @@
 class QAction;
 class QMainWindow;
 class QMenu;
+class QWidget;
 
 namespace ads {
 class CDockAreaWidget;
@@ -21,6 +22,15 @@ namespace ui_shell {
 class BuildToolsPanel;
 class DockRegistry;
 class EditorTabs;
+
+// The editor dock's widget, wrapped once and for all in a plain container
+// with room above `editorRoot` for `wireBuildToolsDock`'s banner (B4) to
+// insert into later — `main_window.cpp` calls this instead of handing
+// `editorRoot` to `editorDock->setWidget()` directly, so that call never
+// has to happen a second time. See `insertEditorBanner`'s own comment
+// (`build_tools_wiring.cpp`) for why a second `setWidget()` on this,
+// ADS's *central* dock, is the thing this avoids.
+QWidget *wrapEditorDockContent(QWidget *editorRoot);
 
 // The dock (B2), the editor banner (B4) spliced above the existing editor
 // widget, and the two C++ relays (`watchedFileChanged`, and a save via

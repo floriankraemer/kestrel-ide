@@ -223,8 +223,27 @@ pub fn inspect_json(
     id: &str,
     work_dir: &Path,
 ) -> Result<String, OpError> {
-    let args = vec!["inspect".to_string(), id.to_string()];
-    let output = run_op(invocation, &args, work_dir).map_err(|err| OpError {
+    inspect_json_with_args(
+        invocation,
+        kind,
+        id,
+        &["inspect".to_string(), id.to_string()],
+        work_dir,
+    )
+}
+
+/// [`inspect_json`], but with the argv the caller supplies rather than the
+/// generic `inspect <id>` — a pod's own inspect is `pod inspect <id>`
+/// ([`crate::pods::inspect_args`]), not the type-agnostic `inspect` every
+/// other kind here uses.
+pub fn inspect_json_with_args(
+    invocation: &Invocation,
+    kind: &str,
+    id: &str,
+    args: &[String],
+    work_dir: &Path,
+) -> Result<String, OpError> {
+    let output = run_op(invocation, args, work_dir).map_err(|err| OpError {
         code: err.code,
         message: format!("inspecting {kind} '{id}' failed: {}", err.message),
     })?;

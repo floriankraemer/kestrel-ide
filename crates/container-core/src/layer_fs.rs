@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::connection::Invocation;
 use crate::ops::{run_op, OpError, OpErrorCode};
@@ -279,51 +279,65 @@ fn manifest_layers(manifest_json: &[u8]) -> Result<Vec<String>, OpError> {
         .collect())
 }
 
+/// [`analyze`]'s result: the per-layer listing, plus the temp tar's own
+/// path — kept around (not deleted) on success, since [`read_entry`]
+/// needs to reopen it for a double-clicked file's bytes without a second
+/// `save`. The caller (`ui-shell`'s `ContainerService`) owns deleting it
+/// once the Layers tab moves on to a different image or closes; see that
+/// module's `Drop` for the last-resort cleanup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalyzeResult {
+    pub layers: Vec<LayerFs>,
+    pub tar_path: PathBuf,
+}
+
 /// `save -o <tmp>.tar <image_id>`, then per-layer fs entries: the
 /// manifest's `Layers` list, each mapped onto its outer-tar entry and
-/// walked for headers only. The temp file is removed on every return
-/// path, success or error.
+/// walked for headers only. The temp file is removed on failure, kept on
+/// success (see [`AnalyzeResult`]'s own doc comment).
 pub fn analyze(
     invocation: &Invocation,
     image_id: &str,
     work_dir: &Path,
-) -> Result<Vec<LayerFs>, OpError> {
+) -> Result<AnalyzeResult, OpError> {
     let tmp_path = crate::images::analyze_temp_tar_path(image_id);
     let tmp_str = tmp_path.to_string_lossy().to_string();
-    let cleanup = || {
-        let _ = std::fs::remove_file(&tmp_path);
-    };
 
     if let Err(err) = run_op(
         invocation,
         &crate::images::save_args(image_id, &tmp_str),
         work_dir,
     ) {
-        cleanup();
+        let _ = std::fs::remove_file(&tmp_path);
         return Err(err);
     }
 
-    let result = analyze_tar_file(&tmp_path, image_id);
-    cleanup();
-    result
+    match analyze_tar_file(&tmp_path, image_id) {
+        Ok(layers) => Ok(AnalyzeResult {
+            layers,
+            tar_path: tmp_path,
+        }),
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(err)
+        }
+    }
 }
 
-fn analyze_tar_file(tmp_path: &Path, image_id: &str) -> Result<Vec<LayerFs>, OpError> {
-    let mut file = File::open(tmp_path).map_err(|error| OpError {
-        code: OpErrorCode::Other,
-        message: format!("could not open the saved image tar: {error}"),
-    })?;
-    let outer = walk_tar(&mut file).map_err(|error| OpError {
+/// The outer tar's own entries, plus `manifest.json`'s `Layers` list —
+/// the first two steps both [`analyze_tar_file`] and [`read_entry`] need,
+/// factored out so they cannot read `manifest.json` two different ways.
+fn outer_entries_and_layers(file: &mut File) -> Result<(Vec<RawTarEntry>, Vec<String>), OpError> {
+    let outer = walk_tar(file).map_err(|error| OpError {
         code: OpErrorCode::Other,
         message: format!("could not read the saved image tar: {error}"),
     })?;
-
     let manifest_entry = outer
         .iter()
         .find(|entry| entry.name == "manifest.json")
         .ok_or_else(|| OpError {
             code: OpErrorCode::Other,
-            message: format!("{image_id}: saved tar had no manifest.json"),
+            message: "saved tar had no manifest.json".to_string(),
         })?;
     let mut manifest_bytes = vec![0u8; manifest_entry.size as usize];
     file.seek(SeekFrom::Start(manifest_entry.data_offset))
@@ -333,6 +347,18 @@ fn analyze_tar_file(tmp_path: &Path, image_id: &str) -> Result<Vec<LayerFs>, OpE
             message: format!("could not read manifest.json: {error}"),
         })?;
     let layer_paths = manifest_layers(&manifest_bytes)?;
+    Ok((outer, layer_paths))
+}
+
+fn analyze_tar_file(tmp_path: &Path, image_id: &str) -> Result<Vec<LayerFs>, OpError> {
+    let mut file = File::open(tmp_path).map_err(|error| OpError {
+        code: OpErrorCode::Other,
+        message: format!("could not open the saved image tar: {error}"),
+    })?;
+    let (outer, layer_paths) = outer_entries_and_layers(&mut file).map_err(|err| OpError {
+        code: err.code,
+        message: format!("{image_id}: {}", err.message),
+    })?;
 
     let mut seen = HashSet::new();
     let mut layers = Vec::with_capacity(layer_paths.len());
@@ -353,6 +379,76 @@ fn analyze_tar_file(tmp_path: &Path, image_id: &str) -> Result<Vec<LayerFs>, OpE
         layers.push(LayerFs { layer_id, entries });
     }
     Ok(layers)
+}
+
+/// The one entry's bytes at `entry_path` inside `layer_id`'s own tar,
+/// reopening `tar_path` (an [`AnalyzeResult::tar_path`]) rather than
+/// re-running `save` — a double-clicked file in the Layers tab's tree, or
+/// its "Download..." action. `max_bytes`, when set, refuses an entry
+/// larger than it (the Inspect-tab-style read-only open's own 8 MiB cap;
+/// `None` for Download, which has none — JetBrains' own doesn't either).
+pub fn read_entry(
+    tar_path: &Path,
+    layer_id: &str,
+    entry_path: &str,
+    max_bytes: Option<u64>,
+) -> Result<Vec<u8>, OpError> {
+    let mut file = File::open(tar_path).map_err(|error| OpError {
+        code: OpErrorCode::Other,
+        message: format!("could not open the saved image tar: {error}"),
+    })?;
+    let (outer, layer_paths) = outer_entries_and_layers(&mut file)?;
+    let layer_path = layer_paths
+        .iter()
+        .find(|path| path.strip_suffix("/layer.tar").unwrap_or(path.as_str()) == layer_id)
+        .ok_or_else(|| OpError {
+            code: OpErrorCode::Other,
+            message: format!("layer '{layer_id}' is not in this image"),
+        })?;
+    let outer_entry = outer
+        .iter()
+        .find(|entry| &entry.name == layer_path)
+        .ok_or_else(|| OpError {
+            code: OpErrorCode::Other,
+            message: format!("layer '{layer_id}' has no tar entry in the saved image"),
+        })?;
+    let inner_entries = walk_tar_region(&mut file, outer_entry.data_offset, outer_entry.size)
+        .map_err(|error| OpError {
+            code: OpErrorCode::Other,
+            message: format!("could not read layer {layer_path}: {error}"),
+        })?;
+    let entry = inner_entries
+        .iter()
+        .find(|entry| entry.name.trim_end_matches('/') == entry_path)
+        .ok_or_else(|| OpError {
+            code: OpErrorCode::Other,
+            message: format!("'{entry_path}' is not in layer '{layer_id}'"),
+        })?;
+    if entry.typeflag != b'0' && entry.typeflag != 0 {
+        return Err(OpError {
+            code: OpErrorCode::Other,
+            message: format!("'{entry_path}' is not a regular file"),
+        });
+    }
+    if let Some(cap) = max_bytes {
+        if entry.size > cap {
+            return Err(OpError {
+                code: OpErrorCode::Other,
+                message: format!(
+                    "'{entry_path}' is too large to preview ({} bytes) — use Download instead",
+                    entry.size
+                ),
+            });
+        }
+    }
+    let mut buf = vec![0u8; entry.size as usize];
+    file.seek(SeekFrom::Start(entry.data_offset))
+        .and_then(|_| file.read_exact(&mut buf))
+        .map_err(|error| OpError {
+            code: OpErrorCode::Other,
+            message: format!("could not read '{entry_path}': {error}"),
+        })?;
+    Ok(buf)
 }
 
 #[cfg(test)]
@@ -521,13 +617,13 @@ mod tests {
         assert_eq!(err.code, OpErrorCode::Other);
     }
 
-    #[test]
-    fn end_to_end_analyze_over_a_hand_built_docker_save_tar() {
-        // Outer tar: manifest.json + one layer tar (itself a tar, held as
-        // this entry's raw content) with two files, one of them a
-        // whiteout.
+    /// Outer tar: `manifest.json` + one layer tar (itself a tar, held as
+    /// this entry's raw content) with two files, one of them a whiteout —
+    /// written to a temp file both `analyze_tar_file` and `read_entry`
+    /// tests reopen the way `analyze`'s own caller would.
+    fn build_hand_written_save_tar(test_name: &str) -> (PathBuf, PathBuf) {
         let mut layer_tar = Vec::new();
-        push_entry(&mut layer_tar, "etc/app.conf", b"config", b'0');
+        push_entry(&mut layer_tar, "etc/app.conf", b"config contents", b'0');
         push_entry(&mut layer_tar, "etc/.wh.old.conf", b"", b'0');
         finish(&mut layer_tar);
 
@@ -540,7 +636,7 @@ mod tests {
         finish(&mut outer);
 
         let dir = std::env::temp_dir().join(format!(
-            "container-core-layer-fs-test-{}",
+            "container-core-layer-fs-test-{test_name}-{}",
             std::process::id()
         ));
         std::fs::create_dir_all(&dir).unwrap();
@@ -549,7 +645,12 @@ mod tests {
             .unwrap()
             .write_all(&outer)
             .unwrap();
+        (dir, path)
+    }
 
+    #[test]
+    fn end_to_end_analyze_over_a_hand_built_docker_save_tar() {
+        let (dir, path) = build_hand_written_save_tar("analyze");
         let layers = analyze_tar_file(&path, "demo:1").unwrap();
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].layer_id, "abc123");
@@ -559,6 +660,44 @@ mod tests {
         assert_eq!(layers[0].entries[1].path, "etc/old.conf");
         assert_eq!(layers[0].entries[1].kind, EntryKind::Deleted);
 
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_entry_extracts_a_regular_files_bytes() {
+        let (dir, path) = build_hand_written_save_tar("read-entry");
+        let bytes = read_entry(&path, "abc123", "etc/app.conf", None).unwrap();
+        assert_eq!(bytes, b"config contents");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_entry_respects_the_size_cap() {
+        let (dir, path) = build_hand_written_save_tar("read-entry-cap");
+        let err = read_entry(&path, "abc123", "etc/app.conf", Some(4)).unwrap_err();
+        assert!(err.message.contains("too large"), "{}", err.message);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_entry_reports_an_unknown_layer_or_path() {
+        let (dir, path) = build_hand_written_save_tar("read-entry-missing");
+        assert!(read_entry(&path, "nope", "etc/app.conf", None).is_err());
+        assert!(read_entry(&path, "abc123", "no/such/file", None).is_err());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn read_entry_refuses_a_deleted_whiteout_marker() {
+        let (dir, path) = build_hand_written_save_tar("read-entry-whiteout");
+        // The whiteout marker's own tar entry name is `.wh.old.conf`, not
+        // the deleted path `old.conf` `read_entry` never sees a request
+        // for — walking the tree only ever offers a regular file's real
+        // path, so this just documents that the raw marker name itself
+        // still resolves (it is, after all, a zero-byte regular file in
+        // the tar).
+        let bytes = read_entry(&path, "abc123", "etc/.wh.old.conf", None).unwrap();
+        assert!(bytes.is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
 }

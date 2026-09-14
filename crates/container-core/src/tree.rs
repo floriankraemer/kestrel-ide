@@ -189,6 +189,12 @@ pub struct TreeNode {
     /// Engine text for the tooltip: full ids, tags, mount points, config
     /// files. The view adds nothing of its own.
     pub tooltip: String,
+    /// A `Connection` row's own Podman machine `running` flag (C9) —
+    /// `None` for every other kind of row, and for a `PodmanMachine`
+    /// connection with no answer yet. Discrete data, not text: the view
+    /// owns the "running"/"stopped" word, same rule as every other status
+    /// on this struct.
+    pub machine_running: Option<bool>,
 }
 
 impl TreeNode {
@@ -210,6 +216,7 @@ impl TreeNode {
             size_bytes: None,
             detail: String::new(),
             tooltip: String::new(),
+            machine_running: None,
         }
     }
 }
@@ -222,6 +229,10 @@ pub struct ConnectionRow<'a> {
     pub state: &'a ConnectionState,
     /// `None` until the first snapshot arrives.
     pub view: Option<&'a SnapshotView<'a>>,
+    /// This connection's own Podman machine's `running` flag (C9) —
+    /// `None` for every connection that is not a `PodmanMachine` kind, or
+    /// one that is but has no `machine list` answer yet.
+    pub machine_running: Option<bool>,
 }
 
 /// Flatten every connection, in the order given, into rows. `now` is what
@@ -246,6 +257,7 @@ pub fn flatten(connections: &[ConnectionRow<'_>], now: SystemTime) -> Vec<TreeNo
             Engine::Podman => "Podman",
         }
         .to_string();
+        root.machine_running = connection.machine_running;
         match connection.state {
             ConnectionState::Disconnected => root.status = NodeStatus::Disconnected,
             ConnectionState::Connecting => root.status = NodeStatus::Connecting,
@@ -811,10 +823,28 @@ mod tests {
     }
 
     #[test]
+    fn a_podman_machine_connections_running_flag_lands_on_its_own_row() {
+        let state = ConnectionState::Connected(info(Engine::Podman));
+        let nodes = flatten(
+            &[ConnectionRow {
+                machine_running: Some(true),
+                id: "p1",
+                name: "Podman (machine)",
+                engine: Engine::Podman,
+                state: &state,
+                view: None,
+            }],
+            now(),
+        );
+        assert_eq!(nodes[0].machine_running, Some(true));
+    }
+
+    #[test]
     fn a_disconnected_connection_is_a_single_row() {
         let state = ConnectionState::Disconnected;
         let nodes = flatten(
             &[ConnectionRow {
+                machine_running: None,
                 id: "local",
                 name: "Docker (local)",
                 engine: Engine::Docker,
@@ -840,6 +870,7 @@ mod tests {
         let nodes = flatten(
             &[
                 ConnectionRow {
+                    machine_running: None,
                     id: "a",
                     name: "a",
                     engine: Engine::Docker,
@@ -847,6 +878,7 @@ mod tests {
                     view: None,
                 },
                 ConnectionRow {
+                    machine_running: None,
                     id: "b",
                     name: "b",
                     engine: Engine::Docker,
@@ -854,6 +886,7 @@ mod tests {
                     view: None,
                 },
                 ConnectionRow {
+                    machine_running: None,
                     id: "c",
                     name: "c",
                     engine: Engine::Podman,
@@ -887,6 +920,7 @@ mod tests {
         let state = ConnectionState::Connected(info(Engine::Docker));
         let nodes = flatten(
             &[ConnectionRow {
+                machine_running: None,
                 id: "local",
                 name: "Docker (local)",
                 engine: Engine::Docker,
@@ -982,6 +1016,7 @@ mod tests {
         let state = ConnectionState::Connected(info(Engine::Docker));
         let nodes = flatten(
             &[ConnectionRow {
+                machine_running: None,
                 id: "c",
                 name: "d",
                 engine: Engine::Docker,
@@ -1036,6 +1071,7 @@ mod tests {
         let nodes = flatten(
             &[
                 ConnectionRow {
+                    machine_running: None,
                     id: "d",
                     name: "Docker",
                     engine: Engine::Docker,
@@ -1043,6 +1079,7 @@ mod tests {
                     view: None,
                 },
                 ConnectionRow {
+                    machine_running: None,
                     id: "p",
                     name: "Podman",
                     engine: Engine::Podman,
@@ -1121,6 +1158,7 @@ mod tests {
         let state = ConnectionState::Connected(info(Engine::Docker));
         let nodes = flatten(
             &[ConnectionRow {
+                machine_running: None,
                 id: "x",
                 name: "x",
                 engine: Engine::Docker,
@@ -1142,6 +1180,7 @@ mod tests {
         let state = ConnectionState::Connected(info(Engine::Docker));
         let nodes = flatten(
             &[ConnectionRow {
+                machine_running: None,
                 id: "x",
                 name: "x",
                 engine: Engine::Docker,
@@ -1173,6 +1212,7 @@ mod tests {
         let state = ConnectionState::Error("connection reset".to_string());
         let nodes = flatten(
             &[ConnectionRow {
+                machine_running: None,
                 id: "d",
                 name: "Docker",
                 engine: Engine::Docker,
@@ -1196,6 +1236,7 @@ mod tests {
         let state = ConnectionState::Disconnected;
         let nodes = flatten(
             &[ConnectionRow {
+                machine_running: None,
                 id: "d",
                 name: "Docker",
                 engine: Engine::Docker,

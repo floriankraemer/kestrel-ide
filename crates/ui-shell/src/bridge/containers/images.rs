@@ -372,6 +372,64 @@ impl ffi::ContainerService {
         immediate
     }
 
+    /// "Analyze image" (C9): `save -o` + a headers-only tar walk, on a
+    /// worker thread — an image of any real-world size still only reads
+    /// headers, but it is still I/O on a temp file, not a snapshot lookup.
+    pub fn analyze_image(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let node_id_str = node_id.to_string();
+        let Some((connection_id, resource_id)) = parse_node_id(&node_id_str, NodeKind::Image)
+        else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("'{node_id_str}' is not an image node"),
+            );
+        };
+        let invocation = match service::connection_invocation(&connection_id) {
+            Ok(invocation) => invocation,
+            Err(result) => return result,
+        };
+        let work_dir = service::work_dir();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let result = container_core::layer_fs::analyze(&invocation, &resource_id, &work_dir);
+            let _ = qt_thread.queue(
+                move |mut service: Pin<&mut ffi::ContainerService>| match result {
+                    Ok(layers) => {
+                        let lines = layers
+                            .iter()
+                            .flat_map(|layer| {
+                                layer.entries.iter().map(move |entry| {
+                                    let kind = match entry.kind {
+                                        container_core::layer_fs::EntryKind::Added => "added",
+                                        container_core::layer_fs::EntryKind::Modified => "modified",
+                                        container_core::layer_fs::EntryKind::Deleted => "deleted",
+                                    };
+                                    format!(
+                                        "{}\t{}\t{}\t{kind}",
+                                        layer.layer_id, entry.path, entry.size
+                                    )
+                                })
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        service.as_mut().layer_fs_ready(
+                            QString::from(node_id_str.as_str()),
+                            QString::from(lines.as_str()),
+                        );
+                    }
+                    Err(err) => {
+                        service.as_mut().action_finished(
+                            QString::from(node_id_str.as_str()),
+                            false,
+                            QString::from(err.message.as_str()),
+                        );
+                    }
+                },
+            );
+        });
+        FfiResult::default()
+    }
+
     pub fn image_dashboard(&self, node_id: &QString) -> FfiImageDashboard {
         let Some((connection_id, resource_id)) =
             parse_node_id(&node_id.to_string(), NodeKind::Image)

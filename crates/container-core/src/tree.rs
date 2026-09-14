@@ -350,13 +350,46 @@ pub fn actions_for(kind: NodeKind, status: NodeStatus) -> NodeActions {
             can_pull: true,
             ..NodeActions::default()
         },
+        NodeKind::Pod => pod_actions_for(status),
         NodeKind::Connection
         | NodeKind::ComposeGroup
         | NodeKind::PodsGroup
         | NodeKind::ComposeProject
         | NodeKind::ComposeService
-        | NodeKind::Pod
         | NodeKind::RegistryMore => NodeActions::default(),
+    }
+}
+
+/// A pod's own lifecycle-actions matrix (C9) — narrower than a
+/// container's: no pause/unpause (`container_core::pods` has no argv for
+/// it, and neither engine's `pod` subcommand documents one worth adding
+/// speculatively).
+fn pod_actions_for(status: NodeStatus) -> NodeActions {
+    match status {
+        NodeStatus::Running | NodeStatus::Paused => NodeActions {
+            can_stop: true,
+            can_restart: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::Exited | NodeStatus::Created | NodeStatus::Dead => NodeActions {
+            can_start: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::Other => NodeActions {
+            can_start: true,
+            can_stop: true,
+            can_restart: true,
+            can_remove: true,
+            ..NodeActions::default()
+        },
+        NodeStatus::None
+        | NodeStatus::Disconnected
+        | NodeStatus::Connecting
+        | NodeStatus::Connected
+        | NodeStatus::Error
+        | NodeStatus::Restarting => NodeActions::default(),
     }
 }
 
@@ -1206,6 +1239,29 @@ mod tests {
                 NodeActions::default()
             );
         }
+    }
+
+    #[test]
+    fn pod_node_actions_matrix_per_status() {
+        let running = actions_for(NodeKind::Pod, NodeStatus::Running);
+        assert!(running.can_stop && running.can_restart && running.can_remove);
+        assert!(!running.can_start);
+
+        for stopped in [NodeStatus::Exited, NodeStatus::Created, NodeStatus::Dead] {
+            let actions = actions_for(NodeKind::Pod, stopped);
+            assert!(actions.can_start && actions.can_remove);
+            assert!(!actions.can_stop && !actions.can_restart);
+        }
+
+        let degraded = actions_for(NodeKind::Pod, NodeStatus::Other);
+        assert!(
+            degraded.can_start && degraded.can_stop && degraded.can_restart && degraded.can_remove
+        );
+
+        assert_eq!(
+            actions_for(NodeKind::Pod, NodeStatus::None),
+            NodeActions::default()
+        );
     }
 
     #[test]

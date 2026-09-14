@@ -12,6 +12,8 @@
 //! QObject's surface across files.
 
 mod actions;
+/// The container node's Dashboard tab and "Recreate with changes" (C9).
+mod dashboard;
 mod editor;
 mod images;
 mod networks;

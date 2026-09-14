@@ -366,6 +366,120 @@ pub fn recreate(
     }
 }
 
+/// [`RunSpec::env`] as `"KEY=VALUE"` lines — the Dashboard's Env table
+/// crosses the FFI seam as one `\n`-joined `QString`, the same convention
+/// every other multi-row Dashboard field in this integration uses
+/// (`FfiNetworkDashboard::labels`, ...).
+pub fn format_env_lines(env: &[(String, String)]) -> Vec<String> {
+    env.iter().map(|(k, v)| format!("{k}={v}")).collect()
+}
+
+/// The inverse of [`format_env_lines`]: a line with no `=` becomes a
+/// key with an empty value rather than being dropped — the Dashboard's
+/// table already validates its own rows before it lets one through with
+/// no `=`; this stays total either way.
+pub fn parse_env_lines(lines: &[String]) -> Vec<(String, String)> {
+    lines
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| match line.split_once('=') {
+            Some((k, v)) => (k.to_string(), v.to_string()),
+            None => (line.clone(), String::new()),
+        })
+        .collect()
+}
+
+/// [`RunSpec::ports`] as `"host_ip:host_port:container_port/protocol"`
+/// lines (protocol omitted when `tcp`, matching [`port_arg`]'s own
+/// shorthand).
+pub fn format_port_lines(ports: &[PortBinding]) -> Vec<String> {
+    ports.iter().map(port_arg).collect()
+}
+
+/// The inverse of [`format_port_lines`]. A line missing its `host_port:
+/// container_port` shape is skipped rather than erroring — same "the
+/// table validates, this stays total" rule as [`parse_env_lines`].
+pub fn parse_port_lines(lines: &[String]) -> Vec<PortBinding> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let (host, container_and_proto) = line.rsplit_once(':')?;
+            let (container_port, protocol) = match container_and_proto.split_once('/') {
+                Some((port, proto)) => (port, proto),
+                None => (container_and_proto, "tcp"),
+            };
+            let (host_ip, host_port) = match host.rsplit_once(':') {
+                Some((ip, port)) => (ip.to_string(), port.to_string()),
+                None => (String::new(), host.to_string()),
+            };
+            if container_port.is_empty() || host_port.is_empty() {
+                return None;
+            }
+            Some(PortBinding {
+                host_ip,
+                host_port,
+                container_port: container_port.to_string(),
+                protocol: protocol.to_string(),
+            })
+        })
+        .collect()
+}
+
+/// [`RunSpec::mounts`] as `"<kind>|<source>|<target>|<ro>"` lines
+/// (`kind` is `bind`/`volume`, `ro` is `1`/`0`) — `|` rather than `:`
+/// because a Windows bind-mount source (`C:\...`) already contains `:`.
+pub fn format_mount_lines(mounts: &[Mount]) -> Vec<String> {
+    mounts
+        .iter()
+        .map(|mount| {
+            let kind = if mount.kind == "volume" {
+                "volume"
+            } else {
+                "bind"
+            };
+            let source = if kind == "volume" {
+                &mount.name
+            } else {
+                &mount.source
+            };
+            let ro = if mount.read_write { "0" } else { "1" };
+            format!("{kind}|{source}|{}|{ro}", mount.destination)
+        })
+        .collect()
+}
+
+/// The inverse of [`format_mount_lines`]. A malformed line (not exactly
+/// four `|`-separated fields) is skipped.
+pub fn parse_mount_lines(lines: &[String]) -> Vec<Mount> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.splitn(4, '|').collect();
+            let [kind, source, target, ro] = fields.as_slice() else {
+                return None;
+            };
+            let read_write = *ro != "1";
+            Some(if *kind == "volume" {
+                Mount {
+                    kind: "volume".to_string(),
+                    name: source.to_string(),
+                    source: String::new(),
+                    destination: target.to_string(),
+                    read_write,
+                }
+            } else {
+                Mount {
+                    kind: "bind".to_string(),
+                    name: String::new(),
+                    source: source.to_string(),
+                    destination: target.to_string(),
+                    read_write,
+                }
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,5 +654,83 @@ mod tests {
         assert!(argv.contains(&"--privileged".to_string()));
         assert!(argv.contains(&"-P".to_string()));
         assert!(argv.windows(2).any(|w| w == ["--add-host", "db:10.0.0.1"]));
+    }
+
+    // ------------------------------------------------- FFI line formats --
+
+    #[test]
+    fn env_lines_round_trip() {
+        let env = vec![
+            ("FOO".to_string(), "bar".to_string()),
+            ("EMPTY".to_string(), String::new()),
+        ];
+        let lines = format_env_lines(&env);
+        assert_eq!(lines, vec!["FOO=bar".to_string(), "EMPTY=".to_string()]);
+        assert_eq!(parse_env_lines(&lines), env);
+    }
+
+    #[test]
+    fn port_lines_round_trip_including_host_ip_and_udp() {
+        let ports = vec![
+            PortBinding {
+                host_ip: String::new(),
+                host_port: "8080".to_string(),
+                container_port: "80".to_string(),
+                protocol: "tcp".to_string(),
+            },
+            PortBinding {
+                host_ip: "127.0.0.1".to_string(),
+                host_port: "53".to_string(),
+                container_port: "53".to_string(),
+                protocol: "udp".to_string(),
+            },
+        ];
+        let lines = format_port_lines(&ports);
+        assert_eq!(
+            lines,
+            vec!["8080:80".to_string(), "127.0.0.1:53:53/udp".to_string()]
+        );
+        assert_eq!(parse_port_lines(&lines), ports);
+    }
+
+    #[test]
+    fn mount_lines_round_trip_bind_and_named_volume() {
+        let mounts = vec![
+            Mount {
+                kind: "bind".to_string(),
+                name: String::new(),
+                source: "/home/f/data".to_string(),
+                destination: "/data".to_string(),
+                read_write: false,
+            },
+            Mount {
+                kind: "volume".to_string(),
+                name: "app_node_modules".to_string(),
+                source: "/var/lib/docker/volumes/app_node_modules/_data".to_string(),
+                destination: "/app/node_modules".to_string(),
+                read_write: true,
+            },
+        ];
+        let lines = format_mount_lines(&mounts);
+        assert_eq!(
+            lines,
+            vec![
+                "bind|/home/f/data|/data|1".to_string(),
+                "volume|app_node_modules|/app/node_modules|0".to_string(),
+            ]
+        );
+        let parsed = parse_mount_lines(&lines);
+        assert_eq!(parsed[0].source, "/home/f/data");
+        assert_eq!(parsed[0].destination, "/data");
+        assert!(!parsed[0].read_write);
+        assert_eq!(parsed[1].name, "app_node_modules");
+        assert_eq!(parsed[1].destination, "/app/node_modules");
+        assert!(parsed[1].read_write);
+    }
+
+    #[test]
+    fn malformed_lines_are_skipped_rather_than_erroring() {
+        assert!(parse_port_lines(&["nonsense".to_string()]).is_empty());
+        assert!(parse_mount_lines(&["only|two".to_string()]).is_empty());
     }
 }

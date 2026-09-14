@@ -5803,6 +5803,12 @@ mod ffi {
         /// C4: a group node's Create Network.../Create Volume...
         #[cxx_name = "canCreate"]
         can_create: bool,
+        /// C9: a container node's "Recreate with changes" — `false` for a
+        /// compose-managed container (`container_core::recreate::
+        /// is_compose_managed`), which must be edited through its compose
+        /// file instead.
+        #[cxx_name = "canRecreate"]
+        can_recreate: bool,
     }
 
     /// One `history` layer (C4) — `container_core::images::Layer` crossed
@@ -5874,6 +5880,26 @@ mod ffi {
         subnets: QString,
         containers: QString,
         labels: QString,
+    }
+
+    /// A container node's Dashboard tab (C9): `env`/`ports`/`mounts` are
+    /// `\n`-joined lines in `container_core::recreate`'s own line formats
+    /// (`format_env_lines`/`format_port_lines`/`format_mount_lines`) — the
+    /// Env/Ports/Mounts tables read and write these same lines, so
+    /// `recreateContainer` takes them back unchanged plus whatever the
+    /// tables' Add/Edit/Remove editing did to them.
+    #[derive(Default)]
+    struct FfiContainerDashboard {
+        name: QString,
+        id: QString,
+        image: QString,
+        status: QString,
+        env: QString,
+        ports: QString,
+        mounts: QString,
+        network: QString,
+        #[cxx_name = "restartPolicy"]
+        restart_policy: QString,
     }
 
     /// A volume node's Dashboard tab (C4).
@@ -6060,6 +6086,77 @@ mod ffi {
         #[cxx_name = "pruneContainers"]
         fn prune_containers(self: Pin<&mut ContainerService>, connection_id: &QString)
             -> FfiResult;
+
+        // --- C9: pods (Podman), a pod node's own lifecycle -------------
+
+        #[qinvokable]
+        #[cxx_name = "startPod"]
+        fn start_pod(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "stopPod"]
+        fn stop_pod(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "restartPod"]
+        fn restart_pod(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "removePod"]
+        fn remove_pod(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            force: bool,
+        ) -> FfiResult;
+
+        // --- C9: Podman machines, from the connection node's own menu --
+
+        /// Offered only when `connection_id`'s kind is `PodmanMachine`
+        /// (the cpp context menu asks `nodeActions`... no — asks this
+        /// connection's own kind, already known from `connections()`; see
+        /// `containers_panel.cpp`'s context-menu builder).
+        #[qinvokable]
+        #[cxx_name = "startMachine"]
+        fn start_machine(self: Pin<&mut ContainerService>, connection_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "stopMachine"]
+        fn stop_machine(self: Pin<&mut ContainerService>, connection_id: &QString) -> FfiResult;
+
+        // --- C9: Dashboard editing -> recreate --------------------------
+
+        #[qinvokable]
+        #[cxx_name = "containerDashboard"]
+        fn container_dashboard(self: &ContainerService, node_id: &QString)
+            -> FfiContainerDashboard;
+
+        /// `env`/`ports`/`mounts` are `\n`-joined lines in
+        /// `FfiContainerDashboard`'s own formats — whatever the Dashboard's
+        /// tables currently hold, edited or not. Refused with
+        /// `errors::CODE_REFUSED` for a compose-managed container.
+        #[qinvokable]
+        #[cxx_name = "recreateContainer"]
+        fn recreate_container(
+            self: Pin<&mut ContainerService>,
+            node_id: &QString,
+            env: &QString,
+            ports: &QString,
+            mounts: &QString,
+        ) -> FfiResult;
+
+        // --- C9: Layers tab -> "Analyze image" --------------------------
+
+        /// `save -o` + a headers-only tar walk on a worker thread;
+        /// `layerFsReady` carries the result as `\n`-joined
+        /// `"<layer_id>\t<path>\t<size>\t<kind>"` lines (`kind` is
+        /// `added`/`modified`/`deleted`).
+        #[qinvokable]
+        #[cxx_name = "analyzeImage"]
+        fn analyze_image(self: Pin<&mut ContainerService>, node_id: &QString) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "layerFsReady"]
+        fn layer_fs_ready(self: Pin<&mut ContainerService>, node_id: QString, lines: QString);
 
         /// A lifecycle action finished: `ok`/`message` from its `OpError`
         /// (empty message on success). The panel shows a failure as a

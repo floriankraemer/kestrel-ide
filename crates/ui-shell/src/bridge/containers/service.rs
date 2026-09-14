@@ -131,6 +131,21 @@ pub(crate) fn work_dir() -> std::path::PathBuf {
         .unwrap_or_default()
 }
 
+/// `connection_id`'s own `podman machine` name (C9), when it is a
+/// [`container_core::connection::ConnectionKind::PodmanMachine`]
+/// connection — `None` for every other kind, so "Start machine"/"Stop
+/// machine" are refused rather than run against a name that does not
+/// apply here.
+pub(crate) fn podman_machine_name(connection_id: &str) -> Option<String> {
+    let setting = configured_connections()
+        .into_iter()
+        .find(|setting| setting.id == connection_id)?;
+    match ConnectionConfig::from_setting(&setting).kind {
+        container_core::connection::ConnectionKind::PodmanMachine { name } => Some(name),
+        _ => None,
+    }
+}
+
 /// The `Invocation` for a configured connection, by id — every C3 action
 /// and session goes through this rather than re-deriving it, the same
 /// `ConnectionConfig::from_setting` + minikube-env-if-needed sequence

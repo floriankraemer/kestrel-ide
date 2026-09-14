@@ -62,6 +62,23 @@ QIcon iconForKind(FfiBuildToolNodeKind kind)
     return QIcon();
 }
 
+// Icon-only, tooltip-carries-the-meaning toolbar buttons — the same shape
+// `run_toolbar.cpp`'s own `makeGlyphButton` uses for its Run/Stop/Rerun
+// cluster, reused here rather than invented fresh (review fix 3,
+// follow-up): a right-side dock is narrower than a bottom one, and Maven's
+// toolbar has one more toggle than Gradle's, so a row of full-text buttons
+// clips under that width pressure regardless of any one widget's own
+// minimum width — the fix is fewer pixels demanded, not a floor that only
+// moves the squeeze to whichever button is still text.
+QToolButton *glyphButton(QStyle::StandardPixmap icon, const QString &tooltip, QWidget *parent)
+{
+    auto *button = new QToolButton(parent);
+    button->setIcon(QApplication::style()->standardIcon(icon));
+    button->setToolTip(tooltip);
+    button->setAutoRaise(true);
+    return button;
+}
+
 QString titleFor(FfiBuildToolTitleKind kind)
 {
     switch (kind) {
@@ -86,8 +103,7 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
   , runService_(runService)
   , openAt_(std::move(openAt))
 {
-    auto *reloadButton = new QToolButton(this);
-    reloadButton->setText(tr("Reload"));
+    auto *reloadButton = glyphButton(QStyle::SP_BrowserReload, tr("Reload"), this);
     executeEdit_ = new QLineEdit(this);
     executeEdit_->setPlaceholderText(tr("Execute…"));
     // Keeps the placeholder readable regardless of how many toggle buttons
@@ -95,12 +111,17 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     // Gradle's) — the same `find_bar.cpp` rule: the field gets a floor, the
     // buttons give up space first.
     executeEdit_->setMinimumWidth(90);
-    auto *runButton = new QToolButton(this);
-    runButton->setText(tr("Run"));
+    auto *runButton = glyphButton(QStyle::SP_MediaPlay, tr("Run"), this);
     offlineCheck_ = new QCheckBox(tr("Offline"), this);
-    skipTestsCheck_ = new QCheckBox(tr("Skip Tests"), this);
-    auto *settingsButton = new QToolButton(this);
-    settingsButton->setText(tr("Settings…"));
+    // A short label plus a tooltip, `find_bar.cpp`'s own
+    // `regexCheck_`/`caseCheck_` convention (".*"/"Aa") for a checkbox
+    // beside several other controls in one row: the toolbar's narrowest
+    // point on a right-side dock is Maven's, this toggle's own — the only
+    // one Gradle's toolbar does not also carry.
+    skipTestsCheck_ = new QCheckBox(tr("Skip"), this);
+    skipTestsCheck_->setToolTip(tr("Skip Tests"));
+    auto *settingsButton =
+      glyphButton(QStyle::SP_FileDialogDetailedView, tr("Settings…"), this);
 
     auto *toolbar = new QHBoxLayout();
     toolbar->addWidget(reloadButton);

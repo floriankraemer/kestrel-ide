@@ -71,6 +71,20 @@ pub(crate) const PHP_TOOLS: BuiltinPlugin = BuiltinPlugin {
     files: &[],
 };
 
+/// Gradle and Maven support (the jvm-build-tools plan's A3, ADR-0057),
+/// first-party like `php-tools` above. Unlike PHP's tools, this plugin
+/// ships one real asset: the Gradle init script `jvm_build_core::gradle`
+/// runs through a project's own wrapper. It is materialised on disk on
+/// demand (`LoadedPlugin::asset_dir`) rather than read from memory, because
+/// `gradlew --init-script` needs a real file path, not bytes.
+pub(crate) const JVM_BUILD_TOOLS: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/jvm-build-tools/plugin.toml"),
+    files: &[(
+        "ide-model.init.gradle",
+        include_bytes!("../builtin/jvm-build-tools/ide-model.init.gradle"),
+    )],
+};
+
 /// The three colour themes that used to be hardcoded in `ui-shell`'s
 /// `theme.cpp` and `syntax-core`'s `theme.rs`, first-party like the
 /// Markdown preview above: a `color-themes` contribution needs no `[wasm]`

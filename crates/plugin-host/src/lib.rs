@@ -47,12 +47,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
-    AnalyzerContribution, ColorThemeContribution, CommandContribution, IconThemeContribution,
-    LanguageServerContribution, LoadErrorKind, PluginLoadError, PluginManifest,
-    PreviewContribution, TestFrameworkContribution, MANIFEST_FILE, QUARANTINE_DIR,
+    AnalyzerContribution, BuildToolContribution, ColorThemeContribution, CommandContribution,
+    IconThemeContribution, LanguageServerContribution, LoadErrorKind, PluginLoadError,
+    PluginManifest, PreviewContribution, TestFrameworkContribution, MANIFEST_FILE, QUARANTINE_DIR,
 };
 
-pub use plugin::{BuiltinPlugin, LoadedPlugin, PluginSource};
+pub use plugin::{expand_asset_dir, BuiltinPlugin, LoadedPlugin, PluginSource};
 /// Re-exported because "where do installed plugins live" is a question
 /// about the host, and a consumer that only asks it should not have to
 /// depend on the contract crate to hear the answer.
@@ -75,6 +75,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::PHP_TOOLS,
     builtins::CORE_THEMES,
     builtins::GITHUB_VSCODE_THEME,
+    builtins::JVM_BUILD_TOOLS,
 ];
 
 /// Every plugin that loaded, and every one that did not.
@@ -198,6 +199,19 @@ impl PluginRegistry {
                 .test_frameworks
                 .iter()
                 .map(move |framework| (plugin, framework))
+        })
+    }
+
+    /// Every `build-tools` contribution, with the plugin that offers it
+    /// (the jvm-build-tools plan's A3).
+    pub fn build_tools(&self) -> impl Iterator<Item = (&LoadedPlugin, &BuildToolContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .build_tools
+                .iter()
+                .map(move |tool| (plugin, tool))
         })
     }
 

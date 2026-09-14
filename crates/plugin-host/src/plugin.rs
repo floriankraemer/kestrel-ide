@@ -8,9 +8,14 @@
 //! directory to a manifest-supplied path itself.
 
 use std::borrow::Cow;
+use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use plugin_api::{LoadErrorKind, PluginManifest};
+
+/// Where a built-in plugin's materialised assets live, under the config
+/// directory (jvm-build-tools plan A3, ADR-0057 §2).
+const PLUGIN_ASSETS_DIR: &str = "plugin-assets";
 
 /// Where a plugin came from.
 ///
@@ -165,6 +170,69 @@ impl LoadedPlugin {
             }
         }
     }
+
+    /// A real directory on disk this plugin's files can be found in.
+    ///
+    /// For an installed plugin, its own directory — already on disk. For a
+    /// built-in, `<config_dir>/plugin-assets/<id>/`: every one of
+    /// [`Self::manifest`]'s [`BuiltinPlugin::files`] is written there, but
+    /// only when missing or when its content differs from what is already
+    /// on disk (a byte compare, not a hash — a builtin's files are few and
+    /// small, so a fresh library dependency buys nothing here).
+    ///
+    /// Materialising happens on demand rather than at [`load`]/`reload`
+    /// time, because `load` runs on every settings-page scan and most
+    /// built-ins (an icon pack, a preview renderer) never need a real path
+    /// at all — only a consumer that must hand the file's *path* to an
+    /// external process (`gradlew --init-script <path>`) does.
+    pub fn asset_dir(&self, config_dir: &Path) -> io::Result<PathBuf> {
+        match &self.assets {
+            Assets::Installed(dir) => Ok(dir.clone()),
+            Assets::Builtin(files) => {
+                let dir = config_dir.join(PLUGIN_ASSETS_DIR).join(self.id());
+                std::fs::create_dir_all(&dir)?;
+                for (name, bytes) in files.iter() {
+                    let path = dir.join(name);
+                    if let Some(parent) = path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    let up_to_date = std::fs::read(&path)
+                        .map(|existing| existing == *bytes)
+                        .unwrap_or(false);
+                    if !up_to_date {
+                        std::fs::write(&path, bytes)?;
+                    }
+                }
+                Ok(dir)
+            }
+        }
+    }
+}
+
+/// Replace every `${asset_dir}` token in `args` with `dir`, joined the same
+/// way [`plugin_api::expand_capability_path`] joins `${plugin_dir}` —
+/// [`LoadedPlugin::asset_dir`] is what a caller hands as `dir`.
+///
+/// A whole-argument token (`"${asset_dir}"` alone) becomes `dir` itself;
+/// a token used as a path prefix (`"${asset_dir}/ide-model.init.gradle"`)
+/// is joined onto it. Neither shape needs the substring case a capability
+/// path allows, because a manifest's `args` are whole argv entries, not
+/// arbitrary strings a token might appear in the middle of.
+pub fn expand_asset_dir(args: &[String], dir: &Path) -> Vec<String> {
+    const TOKEN: &str = "${asset_dir}";
+    args.iter()
+        .map(|arg| {
+            if arg == TOKEN {
+                dir.display().to_string()
+            } else if let Some(rest) = arg.strip_prefix(TOKEN) {
+                dir.join(rest.trim_start_matches(['/', '\\']))
+                    .display()
+                    .to_string()
+            } else {
+                arg.clone()
+            }
+        })
+        .collect()
 }
 
 /// Reject anything that is not a plain relative path.
@@ -186,4 +254,95 @@ fn check_relative(relative: &Path) -> Result<(), LoadErrorKind> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MANIFEST: &str = r#"
+        id = "jvm-build-tools"
+        name = "Gradle and Maven"
+        version = "1.0.0"
+        api_version = 1
+    "#;
+
+    fn builtin_plugin() -> LoadedPlugin {
+        let manifest = PluginManifest::from_toml_str(MANIFEST).expect("valid");
+        let builtin = BuiltinPlugin {
+            manifest: MANIFEST,
+            files: &[("ide-model.init.gradle", b"// init script\n")],
+        };
+        LoadedPlugin::builtin(manifest, &builtin)
+    }
+
+    #[test]
+    fn a_builtin_asset_dir_materialises_its_files() {
+        let plugin = builtin_plugin();
+        let config_dir = tempfile::tempdir().unwrap();
+        let dir = plugin.asset_dir(config_dir.path()).unwrap();
+        assert_eq!(
+            dir,
+            config_dir
+                .path()
+                .join("plugin-assets")
+                .join("jvm-build-tools")
+        );
+        let contents = std::fs::read(dir.join("ide-model.init.gradle")).unwrap();
+        assert_eq!(contents, b"// init script\n");
+    }
+
+    #[test]
+    fn materialising_twice_does_not_rewrite_unchanged_content() {
+        let plugin = builtin_plugin();
+        let config_dir = tempfile::tempdir().unwrap();
+        let dir = plugin.asset_dir(config_dir.path()).unwrap();
+        let asset = dir.join("ide-model.init.gradle");
+        let before = std::fs::metadata(&asset).unwrap().modified().unwrap();
+
+        // A filesystem's mtime resolution can be coarser than this test's
+        // wall-clock gap, so the proof is content-based, not time-based:
+        // hand-edit the file, then confirm a second `asset_dir()` call
+        // restores the shipped content rather than leaving the edit alone.
+        std::fs::write(&asset, b"tampered\n").unwrap();
+        let dir_again = plugin.asset_dir(config_dir.path()).unwrap();
+        assert_eq!(dir_again, dir);
+        assert_eq!(std::fs::read(&asset).unwrap(), b"// init script\n");
+        let _ = before;
+    }
+
+    #[test]
+    fn an_installed_plugins_asset_dir_is_its_own_directory() {
+        let manifest = PluginManifest::from_toml_str(MANIFEST).expect("valid");
+        let dir = tempfile::tempdir().unwrap();
+        let plugin = LoadedPlugin::installed(manifest, dir.path().to_path_buf());
+        assert_eq!(plugin.asset_dir(Path::new("/unused")).unwrap(), dir.path());
+    }
+
+    #[test]
+    fn expand_asset_dir_replaces_a_whole_argument_token() {
+        let dir = Path::new("/home/u/.config/ide/plugin-assets/jvm-build-tools");
+        let args = vec!["${asset_dir}".to_string(), "-q".to_string()];
+        let expanded = expand_asset_dir(&args, dir);
+        assert_eq!(expanded[0], dir.display().to_string());
+        assert_eq!(expanded[1], "-q");
+    }
+
+    #[test]
+    fn expand_asset_dir_joins_a_prefixed_token() {
+        let dir = Path::new("/home/u/.config/ide/plugin-assets/jvm-build-tools");
+        let args = vec!["${asset_dir}/ide-model.init.gradle".to_string()];
+        let expanded = expand_asset_dir(&args, dir);
+        assert_eq!(
+            expanded[0],
+            dir.join("ide-model.init.gradle").display().to_string()
+        );
+    }
+
+    #[test]
+    fn expand_asset_dir_leaves_unrelated_arguments_alone() {
+        let dir = Path::new("/tmp/x");
+        let args = vec!["--console=plain".to_string()];
+        assert_eq!(expand_asset_dir(&args, dir), args);
+    }
 }

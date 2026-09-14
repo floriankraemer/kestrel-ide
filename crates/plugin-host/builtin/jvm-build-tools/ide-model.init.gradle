@@ -41,7 +41,15 @@ import groovy.json.JsonOutput
 
 allprojects {
     afterEvaluate { Project evaluated ->
-        tasks.matching { it.name == 'test' }.configureEach { Test testTask ->
+        // tasks.withType(Test), not tasks.matching { it.name == 'test' }:
+        // matching's closure still gets *every* task by name, Test or not,
+        // and configureEach's own `{ Test testTask -> }` typed parameter
+        // throws MissingMethodException the moment a project's own `test`
+        // task is not actually a Test task (or has none at all) — on every
+        // invocation, including a plain ideModel sync that runs no test
+        // task at all. withType filters by the real task type before the
+        // closure ever runs.
+        tasks.withType(Test).configureEach { Test testTask ->
             if (evaluated.hasProperty('ide.teamcity') || System.getProperty('ide.teamcity')) {
                 // A guarded call: `notCompatibleWithConfigurationCache` was
                 // added in Gradle 7.4. `respondsTo` is the standard

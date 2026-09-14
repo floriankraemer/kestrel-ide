@@ -92,6 +92,7 @@ pub enum BuildToolsField {
     GradleAutoReload,
     MavenHome,
     MavenAutoReload,
+    MavenThreads,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,10 +197,11 @@ impl BuildToolsDraft {
         if let Some(threads) = &self.maven_threads {
             if !is_valid_thread_count(threads) {
                 problems.push(BuildToolsProblem {
-                    field: BuildToolsField::MavenAutoReload,
+                    field: BuildToolsField::MavenThreads,
                     sentence: format!(
-                        "`{threads}` is not a thread count `mvn -T` accepts — use a number \
-                         (`4`) or a number followed by `C` (`1C`)"
+                        "`{threads}` is not a thread count `mvn -T` accepts — use a plain \
+                         number (`4`), a number of threads per core (`1C`, `1.5C`), or `C` \
+                         alone for one thread per core"
                     ),
                 });
             }
@@ -240,9 +242,31 @@ fn as_str(path: &std::path::Path) -> &str {
     path.to_str().unwrap_or("")
 }
 
+/// `mvn -T`'s own grammar: a plain integer thread count (`4`), a
+/// (possibly decimal) multiplier of the machine's core count followed by
+/// `C` (`1C`, `1.5C`), or `C` alone for one thread per core.
 fn is_valid_thread_count(value: &str) -> bool {
-    let digits = value.strip_suffix(['C', 'c']).unwrap_or(value);
-    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+    match value.strip_suffix(['C', 'c']) {
+        Some("") => true,
+        Some(multiplier) => is_decimal_number(multiplier),
+        None => !value.is_empty() && value.chars().all(|c| c.is_ascii_digit()),
+    }
+}
+
+fn is_decimal_number(value: &str) -> bool {
+    if value.is_empty() || value.starts_with('.') || value.ends_with('.') {
+        return false;
+    }
+    let mut seen_dot = false;
+    value.chars().all(|c| {
+        if c == '.' {
+            let first_dot = !seen_dot;
+            seen_dot = true;
+            first_dot
+        } else {
+            c.is_ascii_digit()
+        }
+    })
 }
 
 #[cfg(test)]
@@ -317,17 +341,20 @@ mod tests {
 
     #[test]
     fn an_invalid_thread_count_is_a_problem() {
-        for bad in ["", "x", "4x", "C"] {
+        for bad in ["", "x", "4x", "1.5", "1.C", ".5C", "1.5.5C"] {
             let mut draft = BuildToolsDraft::new(&Settings::default());
             draft.maven_threads = Some(bad.to_string());
             let problems = draft.validate();
             assert_eq!(problems.len(), 1, "`{bad}` should have been rejected");
+            assert_eq!(problems[0].field, BuildToolsField::MavenThreads);
         }
     }
 
     #[test]
     fn valid_thread_counts_are_accepted() {
-        for good in ["4", "1C", "8"] {
+        // mvn -T's own grammar: a plain integer, C alone (one thread per
+        // core), or a (possibly decimal) per-core multiplier followed by C.
+        for good in ["4", "8", "C", "1C", "1.5C", "0.5C"] {
             let mut draft = BuildToolsDraft::new(&Settings::default());
             draft.maven_threads = Some(good.to_string());
             assert!(

@@ -14,6 +14,7 @@
 #include "editor_tabs.h"
 
 #include "code_editor.h"
+#include "e2e_mark.h"
 #include "run_config_dialog.h"
 
 #include <QAction>
@@ -95,6 +96,8 @@ void EditorTabs::refreshComposeLensesFor(CodeEditor *editor)
         lenses.append(CodeLensSpan{ static_cast<int>(lens.line), label, lens.clickable });
     }
     editor->setCodeLenses(lenses);
+    e2eMark(QStringLiteral("{\"ev\":\"compose_lenses\",\"path\":%1,\"count\":%2}")
+              .arg(e2eJson(path)).arg(lenses.size()));
 }
 
 void EditorTabs::refreshComposeLenses()
@@ -118,6 +121,12 @@ void EditorTabs::refreshRunMarker(CodeEditor *editor)
         }
     }
     editor->setRunLines(lines);
+    QStringList lineNumbers;
+    for (const int line : lines) {
+        lineNumbers << QString::number(line);
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"gutter_run_lines\",\"path\":%1,\"lines\":[%2]}")
+              .arg(e2eJson(path), lineNumbers.join(QLatin1Char(','))));
 }
 
 void EditorTabs::refreshRunMarkers()
@@ -154,6 +163,7 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
         QAction *build = menu.addAction(tr("Build Image from %1").arg(word));
         QAction *run = menu.addAction(tr("Run Container"));
         QAction *newConfig = menu.addAction(tr("New Configuration..."));
+        e2eMarkMenuActions(&menu, "run_gutter_menu_action");
         QAction *chosen = menu.exec(QCursor::pos());
         if (chosen == build) {
             runService_->buildContainerfile(path);
@@ -176,6 +186,7 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
         QAction *run = menu.addAction(service.isEmpty() ? tr("Run Compose Project")
                                                         : tr("Run Service '%1'").arg(service));
         QAction *newConfig = menu.addAction(tr("New Configuration..."));
+        e2eMarkMenuActions(&menu, "run_gutter_menu_action");
         QAction *chosen = menu.exec(QCursor::pos());
         if (chosen == run) {
             if (service.isEmpty()) {

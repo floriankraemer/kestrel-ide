@@ -2,6 +2,7 @@
 
 #include "container_target_wizard.h"
 #include "containers_registries_page.h"
+#include "e2e_mark.h"
 
 #include <QAction>
 #include <QCheckBox>
@@ -450,6 +451,17 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings,
     tabs->addTab(runTargetsTab, QObject::tr("Run targets"));
     pageLayout->addWidget(tabs, 1);
 
+    // Named for `settings_dialog.cpp`'s own `containers_settings_page_shown`
+    // marker, which reports this button's rect too — only reliable once the
+    // dialog is actually on screen (its own doc comment explains why),
+    // which this page's construction is ahead of.
+    fields.testButton->setObjectName(QStringLiteral("containersTestConnectionButton"));
+    const auto markPageShown = [tabs](int index) {
+        e2eMark(QStringLiteral("{\"ev\":\"containers_settings_page_shown\",\"page\":%1}")
+                  .arg(e2eJson(tabs->tabText(index))));
+    };
+    QObject::connect(tabs, &QTabWidget::currentChanged, tabs, markPageShown);
+
     formPane->setEnabled(false);
 
     // Every field writes its current row back into the draft as it is
@@ -553,6 +565,9 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings,
                           fields.testResult->setText(message);
                           fields.testResult->setStyleSheet(ok ? QStringLiteral("color: #4caf50;")
                                                               : QStringLiteral("color: #e53935;"));
+                          e2eMark(QStringLiteral(
+                                    "{\"ev\":\"containers_test_connection_result\",\"ok\":%1}")
+                                    .arg(ok ? "true" : "false"));
                       });
 
     if (!connections->isEmpty()) {

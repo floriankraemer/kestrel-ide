@@ -1,0 +1,3 @@
+{"ID":"sha256:83a1b4068e0f983d6084c4a6cdc88e8f426d39c72668ddc096e7f7bbd08fc2b3","CreatedAt":"2024-12-06T00:14:30Z","CreatedBy":"/bin/sh -c #(nop) CMD [\"postgres\"]","Size":"0B","Comment":""}
+{"ID":"<missing>","CreatedAt":"2024-12-06T00:14:25Z","CreatedBy":"/bin/sh -c #(nop) EXPOSE 5432","Size":"0B","Comment":""}
+{"ID":"<missing>","CreatedAt":"2024-12-06T00:14:20Z","CreatedBy":"/bin/sh -c apt-get update && apt-get install -y libpq5","Size":"22.3MB","Comment":""}

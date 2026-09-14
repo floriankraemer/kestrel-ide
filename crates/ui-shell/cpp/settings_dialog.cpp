@@ -438,6 +438,37 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                                         .arg(topLeft.y()));
                           });
                       });
+    // The Containers page's "Test connection" button rect: same "a freshly
+    // current page has no valid rect until Qt lays it out one turn of the
+    // event loop later" reasoning `editorIndex`'s own marker above gives,
+    // reported once as `containers_settings_page_shown` when the category
+    // is first switched to (its own `page`/`test_button_rect` fields) —
+    // `containers_page.cpp` reports every later tab switch inside the page
+    // on its own, since that has no such timing problem once the page
+    // itself is already on screen.
+    QObject::connect(categoryList, &QListWidget::currentRowChanged, &dialog,
+                      [pages, containersIndex](int index) {
+                          if (index != containersIndex) {
+                              return;
+                          }
+                          QTimer::singleShot(0, pages, [pages, containersIndex]() {
+                              auto *testButton =
+                                pages->widget(containersIndex)->findChild<QPushButton *>(
+                                  QStringLiteral("containersTestConnectionButton"));
+                              if (testButton == nullptr) {
+                                  return;
+                              }
+                              const QRect rect = testButton->rect();
+                              const QPoint origin = testButton->mapToGlobal(rect.topLeft());
+                              e2eMark(QStringLiteral(
+                                        "{\"ev\":\"containers_settings_page_shown\","
+                                        "\"page\":\"Connections\",\"test_button_rect\":[%1,%2,%3,%4]}")
+                                        .arg(origin.x())
+                                        .arg(origin.y())
+                                        .arg(rect.width())
+                                        .arg(rect.height()));
+                          });
+                      });
     int initialRow = 0;
     for (int i = 0; i < categoryList->count(); ++i) {
         if (!initialCategory.isEmpty() && categoryList->item(i)->text() == initialCategory) {
@@ -675,12 +706,21 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         const QRect editorCategoryRect(
           categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(2)).topLeft()),
           categoryList->visualItemRect(categoryList->item(2)).size());
+        // C10: the Containers category row, from the real index
+        // `pages->addWidget` returned above — not a literal, unlike
+        // `editingCategoryRect`/`editorCategoryRect`, since this file
+        // already has it.
+        const QRect containersCategoryRect(
+          categoryList->mapToGlobal(
+            categoryList->visualItemRect(categoryList->item(containersIndex)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(containersIndex)).size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"settings_dialog\","
                                 "\"scope_rect\":%1,\"editing_category_rect\":%2,"
                                 "\"tab_width_rect\":%3,\"ok_rect\":%4,"
-                                "\"editor_category_rect\":%5}")
+                                "\"editor_category_rect\":%5,\"containers_category_rect\":%6}")
                   .arg(rectJson(scopeRect), rectJson(editingCategoryRect), rectJson(tabWidthRect),
-                       rectJson(okRect), rectJson(editorCategoryRect)));
+                       rectJson(okRect), rectJson(editorCategoryRect))
+                  .arg(rectJson(containersCategoryRect)));
     });
     QObject::connect(&dialog, &QDialog::finished, &dialog, [](int result) {
         e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"settings_dialog\","

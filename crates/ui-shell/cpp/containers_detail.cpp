@@ -1,5 +1,6 @@
 #include "containers_detail.h"
 
+#include "e2e_mark.h"
 #include "terminal_widget.h"
 
 #include <QAbstractItemView>
@@ -563,6 +564,8 @@ void ContainerDetailArea::openOrReplaceLogTab()
 
     const int logIndex = tabs_->insertTab(1, logPage_, tr("Log"));
     tabs_->tabBar()->setTabButton(logIndex, QTabBar::RightSide, nullptr);
+    e2eMark(QStringLiteral("{\"ev\":\"containers_tab_opened\",\"kind\":\"log\",\"nodeId\":%1}")
+              .arg(e2eJson(nodeId_)));
 }
 
 void ContainerDetailArea::closeLogTab()
@@ -620,6 +623,8 @@ void ContainerDetailArea::openTerminal(bool asRoot)
         return;
     }
     addTerminalTab(command, asRoot ? tr("Terminal (root)") : tr("Terminal"));
+    e2eMark(QStringLiteral("{\"ev\":\"containers_tab_opened\",\"kind\":\"terminal\",\"nodeId\":%1}")
+              .arg(e2eJson(nodeId_)));
 }
 
 void ContainerDetailArea::openExecDialog(QWidget *dialogParent)
@@ -647,6 +652,8 @@ void ContainerDetailArea::openExecDialog(QWidget *dialogParent)
         return;
     }
     addTerminalTab(command, tr("Exec: %1").arg(commandText));
+    e2eMark(QStringLiteral("{\"ev\":\"containers_tab_opened\",\"kind\":\"exec\",\"nodeId\":%1}")
+              .arg(e2eJson(nodeId_)));
 }
 
 void ContainerDetailArea::openAttach()
@@ -659,6 +666,8 @@ void ContainerDetailArea::openAttach()
         return;
     }
     addTerminalTab(command, tr("Attach"));
+    e2eMark(QStringLiteral("{\"ev\":\"containers_tab_opened\",\"kind\":\"attach\",\"nodeId\":%1}")
+              .arg(e2eJson(nodeId_)));
 }
 
 void ContainerDetailArea::onContainerTreeChanged()

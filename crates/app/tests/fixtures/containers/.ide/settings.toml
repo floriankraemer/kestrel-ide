@@ -1,0 +1,15 @@
+version = 1
+
+[[containers.connection]]
+id = "docker-local"
+name = "Docker"
+engine = "docker"
+kind = "auto"
+executable = "docker"
+
+[[containers.connection]]
+id = "podman-local"
+name = "Podman"
+engine = "podman"
+kind = "auto"
+executable = "podman"

@@ -29,6 +29,7 @@
 #include <QSplitter>
 #include <QStringListModel>
 #include <QTabWidget>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QUuid>
@@ -469,15 +470,29 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
             containerService_->loadRegistryTags(id);
         }
     });
+    // E2E only: an expanded group's newly-visible children have no rect
+    // until Qt lays them out one turn of the event loop later — see
+    // `refreshE2eRects`'s own doc comment.
+    connect(tree_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem *) {
+        QTimer::singleShot(0, this, [this]() { refreshE2eRects(); });
+    });
     connect(containerService_, &ContainerService::registryChildrenReady, this,
             [this](const QString &) { onTreeChanged(); });
     connect(containerService_, &ContainerService::connectionStateChanged, this,
-            [this](const QString &) { updateToolbarEnablement(); });
+            [this](const QString &connectionId) {
+                updateToolbarEnablement();
+                const FfiConnectionState state = containerService_->connectionState(connectionId);
+                e2eMark(QStringLiteral("{\"ev\":\"containers_connection_state\",\"id\":%1,\"state\":%2}")
+                          .arg(e2eJson(connectionId), e2eJson(QString(state.state))));
+            });
     connect(containerService_, &ContainerService::actionFinished, this,
-            [this](const QString &, bool ok, const QString &message) {
+            [this](const QString &nodeId, bool ok, const QString &message) {
                 if (!ok) {
                     statusLabel_->setText(message);
                 }
+                e2eMark(QStringLiteral("{\"ev\":\"containers_action\",\"action\":%1,"
+                                        "\"nodeId\":%2,\"ok\":%3}")
+                          .arg(e2eJson(pendingAction_), e2eJson(nodeId), ok ? "true" : "false"));
             });
 
     detail_ = new ContainerDetailArea(containerService_, terminalSupervisor, appSettings,
@@ -698,7 +713,82 @@ void ContainersPanel::onTreeChanged()
     statusLabel_->setText(tree_->topLevelItemCount() == 0
                             ? tr("No connections configured. Use Add to create one.")
                             : QString());
-    e2eMark(QStringLiteral("{\"ev\":\"containers_tree_changed\",\"nodes\":%1}").arg(total));
+    e2eMark(QStringLiteral("{\"ev\":\"containers_tree_changed\",\"nodes\":%1,\"rows\":[%2]}")
+              .arg(total)
+              .arg(rowRectsJson().join(QLatin1Char(','))));
+}
+
+// Every row's own screen rect, id- and kind-keyed: the tree is the one
+// widget an E2E flow has no other handle on (no model, and more than one
+// configured connection means `selectedConnectionId()`'s "only one row"
+// shortcut does not apply) — the same problem `e2eMarkMenuActions` solves
+// for a popup menu, reported here instead since this is not a menu. A
+// collapsed row's `visualItemRect` is a null rect and a scrolled-away
+// row's lies outside the viewport, both filtered out here, so what comes
+// back is exactly what a viewer could click right now — expand a group
+// first (`itemExpanded` below re-emits this) before looking for one of its
+// children. All-empty until the dock is actually on screen and laid
+// out — see `refreshE2eRects`.
+QStringList ContainersPanel::rowRectsJson() const
+{
+    QStringList rects;
+    for (auto it = itemsById_.constBegin(); it != itemsById_.constEnd(); ++it) {
+        QTreeWidgetItem *item = it.value();
+        const QRect rect = tree_->visualItemRect(item);
+        // Collapsed rows report a null rect; rows scrolled out of the
+        // viewport report one outside it — neither is clickable, so neither
+        // is reported.
+        if (!rect.isValid() || rect.isEmpty() || !tree_->viewport()->rect().contains(rect)) {
+            continue;
+        }
+        const QPoint origin = tree_->viewport()->mapToGlobal(rect.topLeft());
+        rects << QStringLiteral("{\"id\":%1,\"kind\":%2,\"rect\":[%3,%4,%5,%6]}")
+                    .arg(e2eJson(it.key()), e2eJson(item->data(0, kKindRole).toString()))
+                    .arg(origin.x())
+                    .arg(origin.y())
+                    .arg(rect.width())
+                    .arg(rect.height());
+    }
+    return rects;
+}
+
+// E2E only: re-report the tree's row rects and the lifecycle toolbar's
+// button rects now that the dock is actually visible and laid out —
+// `buildContainersDock` calls this once per `visibilityChanged(true)`.
+void ContainersPanel::refreshE2eRects() const
+{
+    e2eMark(QStringLiteral("{\"ev\":\"containers_tree_changed\",\"nodes\":%1,\"rows\":[%2]}")
+              .arg(itemsById_.size())
+              .arg(rowRectsJson().join(QLatin1Char(','))));
+
+    struct ButtonEntry
+    {
+        const char *name;
+        QToolButton *button;
+    };
+    const ButtonEntry entries[] = {
+        { "connect", connectButton_ },       { "disconnect", disconnectButton_ },
+        { "start", startButton_ },           { "stop", stopButton_ },
+        { "restart", restartButton_ },       { "pause", pauseButton_ },
+        { "remove", removeButton_ },         { "refresh", refreshButton_ },
+        { "pull", pullButton_ },
+    };
+    QStringList buttons;
+    for (const ButtonEntry &entry : entries) {
+        if (entry.button == nullptr) {
+            continue;
+        }
+        const QPoint origin = entry.button->mapToGlobal(QPoint(0, 0));
+        const QSize size = entry.button->size();
+        buttons << QStringLiteral("{\"name\":%1,\"rect\":[%2,%3,%4,%5]}")
+                      .arg(e2eJson(QString::fromUtf8(entry.name)))
+                      .arg(origin.x())
+                      .arg(origin.y())
+                      .arg(size.width())
+                      .arg(size.height());
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"containers_toolbar_rects\",\"buttons\":[%1]}")
+              .arg(buttons.join(QLatin1Char(','))));
 }
 
 void ContainersPanel::onSelectionChanged()
@@ -880,6 +970,19 @@ ContainersPanel *buildContainersDock(ads::CDockManager *dockManager, DockRegistr
     docks->registerDock(QStringLiteral("containers"), dock, ads::CenterDockWidgetArea,
                         relativeTo);
     docks->hide(QStringLiteral("containers"));
+    // E2E only: the tree's per-row rects (`containers_tree_changed`'s
+    // `connections` field) and the lifecycle toolbar's are empty until the
+    // dock is actually on screen and laid out — same reasoning
+    // `settings_dialog.cpp`'s `editor_page_shown` marker gives for waiting
+    // a turn of the event loop past `setCurrentIndex`. `visibilityChanged`
+    // covers every path that can show this dock (the View menu, a compose
+    // lens/pull-image jump, a restored layout) rather than duplicating the
+    // wait at each one.
+    QObject::connect(dock, &ads::CDockWidget::visibilityChanged, panel, [panel](bool visible) {
+        if (visible) {
+            QTimer::singleShot(0, panel, [panel]() { panel->refreshE2eRects(); });
+        }
+    });
     // C6: the editor's compose lenses and "Pull image" land in this dock.
     QObject::connect(containerService, &ContainerService::containerLogRequested, panel,
                      [panel, docks](const QString &nodeId) {

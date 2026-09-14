@@ -82,7 +82,12 @@ impl ToolchainId {
             ToolchainId::Cmake => &["CMakeLists.txt"],
             ToolchainId::Python => &["pyproject.toml", "setup.py", "requirements.txt"],
             ToolchainId::Maven => &["pom.xml"],
-            ToolchainId::Gradle => &["build.gradle", "build.gradle.kts", "settings.gradle"],
+            ToolchainId::Gradle => &[
+                "build.gradle",
+                "build.gradle.kts",
+                "settings.gradle",
+                "settings.gradle.kts",
+            ],
             ToolchainId::Npm => &["package.json"],
             ToolchainId::Make => &["Makefile", "makefile"],
         }
@@ -188,12 +193,16 @@ pub fn python_program(project_root: &Path) -> &'static str {
 
 /// The project's Gradle wrapper when it has one, so the build runs the
 /// version the project pins rather than whatever is on `PATH`.
-fn gradle_program(project_root: &Path) -> String {
+///
+/// `pub` since the jvm-build-tools plan (A6, ADR-0057): `jvm_build_core::run`
+/// needs the same wrapper-aware lookup a build/clean invocation already
+/// uses, rather than a second copy of the wrapper-preference rule.
+pub fn gradle_program(project_root: &Path) -> String {
     wrapper_or(project_root, "gradlew", "gradle")
 }
 
 /// The project's Maven wrapper when it has one, for the same reason.
-fn maven_program(project_root: &Path) -> String {
+pub fn maven_program(project_root: &Path) -> String {
     wrapper_or(project_root, "mvnw", "mvn")
 }
 
@@ -261,6 +270,15 @@ mod tests {
     fn markers_select_the_toolchain() {
         let dir = project_with(&["Cargo.toml"]);
         assert_eq!(detect_toolchains(dir.path()), vec![ToolchainId::Cargo]);
+    }
+
+    #[test]
+    fn a_kotlin_dsl_settings_file_alone_selects_gradle() {
+        // A Kotlin-DSL multi-module project can have no build.gradle.kts at
+        // the root at all — only settings.gradle.kts declaring the
+        // subprojects (jvm-build-tools plan A6, ADR-0057).
+        let dir = project_with(&["settings.gradle.kts"]);
+        assert_eq!(detect_toolchains(dir.path()), vec![ToolchainId::Gradle]);
     }
 
     #[test]

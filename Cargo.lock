@@ -3452,6 +3452,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "jvm-build-core"
+version = "0.1.0"
+dependencies = [
+ "app-config",
+ "diagnostics-core",
+ "globset",
+ "plugin-api",
+ "process-exec",
+ "quick-xml",
+ "regex",
+ "run-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "keyring"
 version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

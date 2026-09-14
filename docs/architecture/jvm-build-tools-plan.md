@@ -109,7 +109,7 @@ Update the row **in the same commit** that finishes the task.
 | A3 — `plugin-host`: on-demand `asset_dir()` materialisation, `${asset_dir}` expansion, `build_tools()` accessor; builtin registration with the init-script asset + "asset exists" test | done | `50eae4e` |
 | A4 — `jvm-build-core::model` + `gradle::*`: init script + JSON parse; fixture JSON unit tests; `--features jvm-integration` tests against `tests/fixtures/gradle-{single,multi-kts,catalog}` | open | |
 | A5 — `maven::*`: static pom, effective-pom, verbose dep tree (conflicts), plugin goals, lifecycle table; fixtures `maven-{single,multi}` | open | |
-| A6 — `sync.rs` policy (three modes, save/watcher dedupe) + trust rule + build-file globs; `run.rs` task → temporary config | open | |
+| A6 — `sync.rs` policy (three modes, save/watcher dedupe) + trust rule + build-file globs; `run.rs` task → temporary config | done | `4294353` |
 | A7 — `app-config` `[build_tools]` sections + `settings-model::build_tools` draft/scope/validation | done | `1add6d6` |
 
 ### B — sync, tool window, run, reload, settings (later PR)

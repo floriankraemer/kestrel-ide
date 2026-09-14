@@ -1,0 +1,37 @@
+[package]
+name = "jvm-build-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `ToolchainId`/wrapper resolution (`gradle_program`/`maven_program`,
+# jvm-build-tools plan A6) and `run_core::RunConfig` — the temporary
+# configuration a task/goal double-click builds.
+run-core = { path = "../run-core" }
+# The piped-exec mechanism a Gradle/Maven sync runs over, and `host::ExecHost`
+# for a WSL project root.
+process-exec = { path = "../process-exec" }
+# `BuildToolContribution`: the declarative manifest shape a sync provider's
+# marker files and init-script asset are built from.
+plugin-api = { path = "../plugin-api" }
+# A version hint or a sync failure becomes a `Diagnostic`, the same rule
+# every other publisher follows (ADR-0046).
+diagnostics-core = { path = "../diagnostics-core" }
+# `[build_tools]` is read and mapped here (A7).
+app-config = { path = "../app-config" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+quick-xml = "0.41"
+regex = "1"
+# BuildToolContribution::build_files patterns can be a glob ("buildSrc/**"),
+# not only a literal filename — is_build_file (A6) matches project-relative
+# paths against them.
+globset = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+# Tests that spawn a real gradle/mvn binary against tests/fixtures/*, run
+# only in the linux-jvm image (A2) — never part of the per-PR `make test`.
+jvm-integration = []

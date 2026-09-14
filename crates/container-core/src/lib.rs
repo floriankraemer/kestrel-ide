@@ -84,6 +84,10 @@ pub mod session;
 /// One engine's whole state ([`snapshot::EngineSnapshot`]), compose
 /// grouping, and the filter/search views over it.
 pub mod snapshot;
+/// C10: `stub_engine`'s pure dispatch/loader logic (`respond`,
+/// `StubData::load`), unit-tested here since a `[[bin]]`'s own lines are
+/// invisible to coverage — see `src/bin/stub_engine.rs`'s thin wrapper.
+pub mod stub_engine;
 /// Run targets (C8): wrapping a plain launch to run inside a container
 /// (image | containerfile | compose service), and the local-root <->
 /// mount-root path map that keeps console links and diagnostics resolving

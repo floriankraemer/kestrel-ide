@@ -2,6 +2,7 @@
 
 #include "dock_layout.h"
 #include "e2e_mark.h"
+#include "icon_cache.h"
 
 #include "DockAreaWidget.h"
 #include "DockManager.h"
@@ -13,7 +14,6 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
-#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -58,8 +58,17 @@ QIcon iconForKind(FfiBuildToolNodeKind kind)
         return style->standardIcon(QStyle::SP_FileDialogDetailedView);
     case FfiBuildToolNodeKind::Profile:
         return QIcon();
-    case FfiBuildToolNodeKind::Plugin:
-        return style->standardIcon(QStyle::SP_DriveNetIcon);
+    case FfiBuildToolNodeKind::Plugin: {
+        // `SP_DriveNetIcon` (review fix 3) reads as a network/monitor glyph
+        // at 16px, wrong for a build plugin — review fix, round 6. The icon
+        // theme ships a real Maven-branded asset (`maven.svg`, the same one
+        // `pom.xml` rows already use), fetched by id directly rather than
+        // through the theme's file/language resolution this tree otherwise
+        // avoids (a plugin row names neither). Falls back to the platform
+        // glyph if the active pack has no such id.
+        const QIcon themed = sharedIconCache().iconFor(QStringLiteral("maven"), 16);
+        return themed.isNull() ? style->standardIcon(QStyle::SP_DriveNetIcon) : themed;
+    }
     case FfiBuildToolNodeKind::Goal:
         return style->standardIcon(QStyle::SP_ArrowRight);
     }
@@ -152,22 +161,15 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     toolbar->addWidget(settingsButton);
 
     tree_ = new QTreeWidget(this);
-    tree_->setColumnCount(2);
-    tree_->setHeaderLabels({tr("Name"), tr("Detail")});
-    tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    // Detail sized to its own content rather than the default Interactive
-    // width (an arbitrary starting size that otherwise fights Name, the
-    // stretch column, for space on a narrow dock) — `problems_panel.cpp`'s
-    // own convention for a wide stretch column beside narrower fixed ones.
-    tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    // `QHeaderView`'s own default: the LAST section stretches to fill
-    // whatever the header's own resize modes leave over, regardless of what
-    // mode that section was just given — which was quietly overriding
-    // Detail's `ResizeToContents` above and starving Name (review fix 2,
-    // root cause). `plugins_page.cpp`/`languages_page.cpp` already turn this
-    // off for the same reason; this tree needs it too since Detail, not
-    // Name, is its last column.
-    tree_->header()->setStretchLastSection(false);
+    tree_->setColumnCount(1);
+    // Review fix (round 6): a second "Detail" column cost every row's Name
+    // ~70px on a ~260px dock — long GAVs and paths clipped there while
+    // Detail itself only ever showed a handful of characters, a net loss no
+    // resize mode fixed. One column, no header, `project_tree_dock.cpp`'s
+    // own shape — whatever needed the extra width now folds into the label
+    // itself (`view::rows`'s job) and whatever didn't becomes the row's
+    // tooltip instead (`refreshTree`, below).
+    tree_->setHeaderHidden(true);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
 
     statusLabel_ = new QLabel(this);
@@ -276,17 +278,15 @@ void BuildToolsPanel::refreshTree()
         auto *item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
         item->setText(0, QString(node.label));
         item->setIcon(0, iconForKind(node.kind));
-        // Review fix 3: the root row's label is the project name, not its
-        // path. The path stays reachable as the tooltip only — putting it in
-        // the Detail column too is what was squeezing the Name column down
-        // to "gradle-si…" in the first place (review fix 2): an absolute
-        // path is the longest string this tree ever shows, so handing it to
-        // the `ResizeToContents` column makes that column claim most of a
-        // narrow dock's width for one row, starving every other row's Name.
-        if (node.kind == FfiBuildToolNodeKind::ToolRoot) {
+        // `detail` is never shown as its own column any more (review fix,
+        // round 6) — every row's label already carries what a user needs to
+        // scan the tree by (`view::rows`'s job: a relative source-root path,
+        // a dependency's full coordinate, a plugin's artifactId…), and
+        // `detail` becomes the one place the rest — a root's full path, a
+        // conflict reason, a plugin's groupId:version — still reaches
+        // someone who asks for it.
+        if (!QString(node.detail).isEmpty()) {
             item->setToolTip(0, QString(node.detail));
-        } else {
-            item->setText(1, QString(node.detail));
         }
         item->setData(0, kIdRole, id);
         item->setData(0, kToolRole, QString(node.tool));

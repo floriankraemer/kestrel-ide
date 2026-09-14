@@ -43,9 +43,13 @@ pub struct Node {
     pub parent_id: String,
     pub kind: NodeKind,
     pub label: String,
-    /// Shown in the dock's own Detail column *and* as row 0's tooltip
-    /// (`cpp/`'s job) — the one place a value too long for the Name
-    /// column, like the root row's full path, still reaches the user.
+    /// Every row's tooltip (`cpp/`'s job, review fix round 6 — there is no
+    /// Detail column any more, it cost every row's `label` too much width
+    /// on a narrow dock for too little of its own). Whatever a user scans
+    /// the tree *by* belongs in `label` instead — a relative source-root
+    /// path, a dependency's full coordinate, a plugin's artifactId; this is
+    /// for the rest: the root row's full path, a conflict's reason, a
+    /// plugin's groupId:version.
     pub detail: String,
     /// The task/goal path a double-click on this row runs
     /// (`jvm_build_core::run::task_config`'s own `Task::path`), empty for a
@@ -237,11 +241,21 @@ fn modules_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
         module_row.build_file = module.build_file.display().to_string();
         out.push(module_row);
         for root in &module.source_roots {
+            // Relative to the module, never the absolute path (review fix,
+            // round 6) — `src/main/java` scans; the module's own dir
+            // (already this row's own parent's tooltip) would only repeat
+            // itself on every one of its source roots.
+            let relative = root
+                .path
+                .strip_prefix(&module.dir)
+                .unwrap_or(&root.path)
+                .display()
+                .to_string();
             let mut root_row = node(
                 format!("{module_id}:src:{}", root.path.display()),
                 &module_id,
                 NodeKind::SourceRoot,
-                root.path.display().to_string(),
+                relative,
             );
             root_row.detail = format!("{:?} / {:?}", root.kind, root.content);
             out.push(root_row);
@@ -249,10 +263,11 @@ fn modules_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
     }
 }
 
-/// `Dependencies`, grouped by module then scope/configuration — the same
-/// shape for both tools; a single-module Maven project's one module still
-/// gets its own scope subgroups, exactly as it did before this row's
-/// parent stopped being a `Modules` node.
+/// `Dependencies` — Gradle nests module → configuration → dependency
+/// (review fix, round 6: a module can carry 6-10 resolvable configurations,
+/// which made a flat "module (configuration)" row per configuration
+/// unwieldy); Maven's own 3-4 scopes stay flat as a single "module (scope)"
+/// row, plenty scannable at that count.
 fn dependencies_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
     let deps_id = format!("{root_id}:dependencies");
     out.push(node(
@@ -261,6 +276,66 @@ fn dependencies_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
         NodeKind::Group,
         "Dependencies",
     ));
+    match model.tool {
+        Tool::Gradle => gradle_dependencies(out, model, &deps_id),
+        Tool::Maven => maven_dependencies(out, model, &deps_id),
+    }
+}
+
+/// The configurations almost every task actually resolves against, first;
+/// everything else (the declaration-only configurations like
+/// `implementation`, and anything a plugin contributed) alphabetical after
+/// them.
+const PRIORITY_CONFIGURATIONS: [&str; 4] = [
+    "compileClasspath",
+    "runtimeClasspath",
+    "testCompileClasspath",
+    "testRuntimeClasspath",
+];
+
+fn gradle_dependencies(out: &mut Vec<Node>, model: &BuildModel, deps_id: &str) {
+    for module in &model.modules {
+        if module.dependencies.is_empty() {
+            continue;
+        }
+        let module_id = format!("{deps_id}:{}", module.path);
+        out.push(node(
+            module_id.clone(),
+            deps_id,
+            NodeKind::Group,
+            module.name.as_str(),
+        ));
+        let mut configurations: Vec<&str> = module
+            .dependencies
+            .iter()
+            .map(|d| d.scope.as_str())
+            .collect();
+        configurations.sort_unstable();
+        configurations.dedup();
+        // A stable sort by (priority rank, name) keeps the priority four in
+        // their own fixed order and leaves everything else alphabetical —
+        // one sort rather than two.
+        configurations.sort_by_key(|configuration| {
+            let rank = PRIORITY_CONFIGURATIONS
+                .iter()
+                .position(|p| p == configuration)
+                .unwrap_or(PRIORITY_CONFIGURATIONS.len());
+            (rank, *configuration)
+        });
+        for configuration in configurations {
+            let configuration_id = format!("{module_id}:{configuration}");
+            out.push(node(
+                configuration_id.clone(),
+                &module_id,
+                NodeKind::Group,
+                configuration,
+            ));
+            push_dependency_rows(out, module, configuration, &configuration_id);
+        }
+    }
+}
+
+fn maven_dependencies(out: &mut Vec<Node>, model: &BuildModel, deps_id: &str) {
     for module in &model.modules {
         if module.dependencies.is_empty() {
             continue;
@@ -276,27 +351,44 @@ fn dependencies_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
             let scope_id = format!("{deps_id}:{}:{scope}", module.path);
             out.push(node(
                 scope_id.clone(),
-                &deps_id,
+                deps_id,
                 NodeKind::Group,
                 format!("{} ({scope})", module.name),
             ));
-            for dependency in module.dependencies.iter().filter(|d| d.scope == scope) {
-                let mut dep_row = node(
-                    format!(
-                        "{scope_id}:{}:{}:{}",
-                        dependency.group, dependency.artifact, dependency.resolved
-                    ),
-                    &scope_id,
-                    NodeKind::Dependency,
-                    format!(
-                        "{}:{}:{}",
-                        dependency.group, dependency.artifact, dependency.resolved
-                    ),
-                );
-                dep_row.detail = conflict_detail(dependency);
-                out.push(dep_row);
-            }
+            push_dependency_rows(out, module, scope, &scope_id);
         }
+    }
+}
+
+/// One dependency row per entry of `module.dependencies` whose `scope`
+/// matches, parented to `group_id` — the leaf shape both `gradle_dependencies`
+/// and `maven_dependencies` share once the tool-specific grouping above it
+/// is decided.
+fn push_dependency_rows(
+    out: &mut Vec<Node>,
+    module: &crate::model::Module,
+    scope: &str,
+    group_id: &str,
+) {
+    for dependency in module.dependencies.iter().filter(|d| d.scope == scope) {
+        // The full coordinate, not just the artifact id (review fix, round
+        // 6): IntelliJ shows it in full and expects the row to scroll
+        // rather than truncate a GAV, which is exactly what a one-column,
+        // no-Detail tree now lets it do.
+        let mut dep_row = node(
+            format!(
+                "{group_id}:{}:{}:{}",
+                dependency.group, dependency.artifact, dependency.resolved
+            ),
+            group_id,
+            NodeKind::Dependency,
+            format!(
+                "{}:{}:{}",
+                dependency.group, dependency.artifact, dependency.resolved
+            ),
+        );
+        dep_row.detail = conflict_detail(dependency);
+        out.push(dep_row);
     }
 }
 
@@ -570,6 +662,92 @@ mod tests {
             .find(|n| n.kind == NodeKind::SourceRoot)
             .unwrap();
         assert_eq!(source_root.parent_id, module);
+    }
+
+    #[test]
+    fn a_source_root_label_is_relative_to_its_module_dir_kind_goes_in_the_tooltip() {
+        // gradle_model()'s one source root is `/proj/app/src/main/java`
+        // under a module whose `dir` is `/proj/app`.
+        let rows = rows(&gradle_model(), &empty_checked());
+        let root = rows
+            .iter()
+            .find(|n| n.kind == NodeKind::SourceRoot)
+            .unwrap();
+        assert_eq!(root.label, "src/main/java");
+        assert!(root.detail.contains("Main"), "detail was {}", root.detail);
+    }
+
+    #[test]
+    fn a_dependency_row_shows_the_full_coordinate_as_its_label() {
+        let rows = rows(&gradle_model(), &empty_checked());
+        let dep = rows
+            .iter()
+            .find(|n| n.kind == NodeKind::Dependency)
+            .unwrap();
+        assert_eq!(dep.label, "com.google.guava:guava:32.0");
+    }
+
+    #[test]
+    fn gradle_dependencies_nest_module_then_configuration_priority_ones_first() {
+        let mut model = gradle_model();
+        let dep = |scope: &str| Dependency {
+            group: "g".to_string(),
+            artifact: format!("a-{scope}"),
+            requested: "1".to_string(),
+            resolved: "1".to_string(),
+            scope: scope.to_string(),
+            transitive: false,
+            file: None,
+            conflict: None,
+            children: vec![],
+        };
+        model.modules[0].dependencies = vec![
+            dep("testRuntimeClasspath"),
+            dep("annotationProcessor"),
+            dep("compileClasspath"),
+            dep("runtimeClasspath"),
+            dep("testCompileClasspath"),
+        ];
+        let rows = rows(&model, &empty_checked());
+        let deps_group = rows.iter().find(|n| n.label == "Dependencies").unwrap();
+        let module_group = rows
+            .iter()
+            .find(|n| n.parent_id == deps_group.id)
+            .expect("one module group under Dependencies");
+        assert_eq!(module_group.label, "app");
+        let configurations: Vec<&str> = rows
+            .iter()
+            .filter(|n| n.parent_id == module_group.id)
+            .map(|n| n.label.as_str())
+            .collect();
+        assert_eq!(
+            configurations,
+            vec![
+                "compileClasspath",
+                "runtimeClasspath",
+                "testCompileClasspath",
+                "testRuntimeClasspath",
+                "annotationProcessor",
+            ]
+        );
+        let compile_classpath = rows.iter().find(|n| n.label == "compileClasspath").unwrap();
+        assert!(rows
+            .iter()
+            .any(|n| n.parent_id == compile_classpath.id && n.kind == NodeKind::Dependency));
+    }
+
+    #[test]
+    fn maven_dependencies_stay_flat_as_one_module_scope_row() {
+        let rows = rows(&maven_model(), &empty_checked());
+        let deps_group = rows.iter().find(|n| n.label == "Dependencies").unwrap();
+        let scope_group = rows
+            .iter()
+            .find(|n| n.parent_id == deps_group.id)
+            .expect("one scope group directly under Dependencies");
+        assert_eq!(scope_group.label, "app (test)");
+        assert!(rows
+            .iter()
+            .any(|n| n.parent_id == scope_group.id && n.kind == NodeKind::Dependency));
     }
 
     #[test]

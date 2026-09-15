@@ -13,6 +13,7 @@
 //! cannot use a function that returns after the process has already
 //! exited, which is exactly why `process_exec::spawn` exists.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -138,34 +139,61 @@ fn walk_matching(
     }
 }
 
-/// Some filesystems (notably a bind mount backed by a coarser host clock)
-/// truncate an mtime to whole seconds, so a report written a few
-/// milliseconds after `run_started_at` can round down to *before* it. A
-/// grace window this small still rejects anything genuinely stale — a
-/// leftover report from a previous run is seconds to hours old, never
-/// within a couple of seconds of "now".
-const STALE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+/// A report file's identity for staleness comparison: modification time and
+/// byte length. Two reads of the same untouched file always agree on both;
+/// a report this run actually wrote almost never does, and the rare
+/// coincidence where it does (same mtime resolution, same byte count) only
+/// happens when the new content is indistinguishable from the old, which is
+/// not a result worth re-reading differently anyway.
+type ReportFingerprint = (SystemTime, u64);
 
-/// Drop any report file whose mtime is older than `run_started_at` (minus
-/// [`STALE_GRACE`]) — a stale Surefire/Failsafe report a previous run left
-/// under the same `target/` directory must never be misread as this run's
-/// own output. A file whose mtime cannot be read at all is dropped too,
-/// rather than guessed to be fresh.
-fn exclude_stale(paths: Vec<PathBuf>, run_started_at: SystemTime) -> Vec<PathBuf> {
-    let cutoff = run_started_at
-        .checked_sub(STALE_GRACE)
-        .unwrap_or(run_started_at);
-    paths
+/// Fingerprint every report file matching `report_glob` under `work_dir`,
+/// taken *before* the process is spawned — the clock-free replacement for
+/// the old wall-clock/mtime-cutoff approach (review finding 4): comparing
+/// against "what was already there" rather than "before vs. after now"
+/// means neither a coarse filesystem clock (a report dir bind-mounted from
+/// `/mnt/c` under WSL2) rejecting a genuinely fresh report, nor a run that
+/// writes no reports at all (a config error) silently re-reading a previous
+/// run's leftovers, can happen. A file whose metadata cannot be read is
+/// dropped from the snapshot rather than guessed at — [`changed_since`]
+/// then sees it as "not present before", so if it is readable afterwards it
+/// counts as changed, the safer of the two wrong guesses.
+fn snapshot_reports(work_dir: &Path, report_glob: &str) -> HashMap<PathBuf, ReportFingerprint> {
+    glob_matches(work_dir, report_glob)
         .into_iter()
-        .filter(|path| {
-            std::fs::metadata(path)
-                .and_then(|meta| meta.modified())
-                .is_ok_and(|mtime| mtime >= cutoff)
+        .filter_map(|path| {
+            let meta = std::fs::metadata(&path).ok()?;
+            let mtime = meta.modified().ok()?;
+            Some((path, (mtime, meta.len())))
         })
         .collect()
 }
 
-/// Read and parse every surviving `junit-xml` report under `work_dir`
+/// Every report file matching `report_glob` under `work_dir` that is new or
+/// has changed since `before` was taken — a file present in `before` with
+/// an identical fingerprint is this run's own report only if the run
+/// rewrote it byte-for-byte, which is indistinguishable from "unchanged"
+/// and correctly dropped either way.
+fn changed_since(
+    work_dir: &Path,
+    report_glob: &str,
+    before: &HashMap<PathBuf, ReportFingerprint>,
+) -> Vec<PathBuf> {
+    glob_matches(work_dir, report_glob)
+        .into_iter()
+        .filter(|path| {
+            let Ok(meta) = std::fs::metadata(path) else {
+                return false;
+            };
+            let Ok(mtime) = meta.modified() else {
+                return false;
+            };
+            before.get(path) != Some(&(mtime, meta.len()))
+        })
+        .collect()
+}
+
+/// Read and parse every new-or-changed `junit-xml` report under `work_dir`
 /// matching `report_glob`, in a stable (sorted-path) order so a caller's
 /// resulting tree is deterministic across runs. A file that fails to parse
 /// is skipped rather than failing the whole batch — one malformed report
@@ -173,9 +201,9 @@ fn exclude_stale(paths: Vec<PathBuf>, run_started_at: SystemTime) -> Vec<PathBuf
 fn collect_junit_cases(
     work_dir: &Path,
     report_glob: &str,
-    run_started_at: SystemTime,
+    before: &HashMap<PathBuf, ReportFingerprint>,
 ) -> Vec<JUnitTestCase> {
-    let mut paths = exclude_stale(glob_matches(work_dir, report_glob), run_started_at);
+    let mut paths = changed_since(work_dir, report_glob, before);
     paths.sort();
     paths
         .iter()
@@ -238,7 +266,14 @@ pub fn run(
     report_glob: Option<&str>,
     sink: &mut dyn TestSink,
 ) -> Result<Option<i32>, RunFailure> {
-    let run_started_at = SystemTime::now();
+    // Taken before the process is even spawned (finding 4): the clock-free
+    // snapshot this run's own reports are diffed against, so a run that
+    // writes nothing at all never gets mistaken for a run whose reports
+    // simply resolved as "not stale".
+    let pre_run_reports = match (format, report_glob) {
+        (OutputFormat::JunitXml, Some(pattern)) => snapshot_reports(work_dir, pattern),
+        _ => HashMap::new(),
+    };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let spawned = process_exec::spawn(program, &arg_refs, work_dir).map_err(|e| match e {
         process_exec::Failure::NotFound => RunFailure::NotFound,
@@ -295,7 +330,7 @@ pub fn run(
         .map_err(|_| RunFailure::Io("run handle lock poisoned".into()))? = None;
 
     if let (OutputFormat::JunitXml, Some(pattern)) = (format, report_glob) {
-        sink.junit(collect_junit_cases(work_dir, pattern, run_started_at));
+        sink.junit(collect_junit_cases(work_dir, pattern, &pre_run_reports));
     }
 
     Ok(exit_code)
@@ -568,35 +603,70 @@ mod tests {
         );
     }
 
+    /// The core claim of the clock-free snapshot (review finding 4): a
+    /// report file that already existed *and is byte-for-byte unchanged*
+    /// after the run must be dropped, even when its mtime happens to be
+    /// only a second old — the case a fast successive run produces, and
+    /// exactly the case a wall-clock cutoff with any grace window at all
+    /// gets wrong in one direction or the other.
     #[test]
-    fn a_report_older_than_the_run_start_is_excluded_as_stale() {
+    fn an_unchanged_pre_existing_report_is_dropped_even_with_a_fresh_mtime() {
         let dir = tempfile::tempdir().unwrap();
-        let report = dir.path().join("stale.xml");
-        std::fs::write(&report, junit_xml("Stale")).unwrap();
-        // Force the mtime to well before "now" so it reads as older than a
-        // run that starts after this line, regardless of filesystem mtime
-        // resolution.
-        let old = SystemTime::now() - std::time::Duration::from_secs(3600);
-        let file = std::fs::File::open(&report).unwrap();
-        file.set_modified(old).unwrap();
+        let report = dir.path().join("target/surefire-reports/TEST-Old.xml");
+        std::fs::create_dir_all(report.parent().unwrap()).unwrap();
+        std::fs::write(&report, junit_xml("Old")).unwrap();
+        // A "fast successive run" mtime: one second old, well inside any
+        // grace window the old wall-clock approach would have needed.
+        let recent = SystemTime::now() - std::time::Duration::from_secs(1);
+        std::fs::File::open(&report)
+            .unwrap()
+            .set_modified(recent)
+            .unwrap();
 
-        let run_started_at = SystemTime::now();
-        let kept = exclude_stale(vec![report], run_started_at);
+        let pattern = "**/target/surefire-reports/TEST-*.xml";
+        let before = snapshot_reports(dir.path(), pattern);
+        // No write happens between the snapshot and the diff — the file is
+        // truly untouched by "this run".
+        let changed = changed_since(dir.path(), pattern, &before);
         assert!(
-            kept.is_empty(),
-            "a report older than the run start must be dropped"
+            changed.is_empty(),
+            "an untouched report must never be reported as this run's own output"
         );
     }
 
     #[test]
-    fn a_report_written_after_the_run_started_is_kept() {
+    fn a_newly_written_report_not_present_in_the_snapshot_is_kept() {
         let dir = tempfile::tempdir().unwrap();
-        let run_started_at = SystemTime::now();
+        let pattern = "**/*.xml";
+        let before = snapshot_reports(dir.path(), pattern);
+
         let report = dir.path().join("fresh.xml");
         std::fs::write(&report, junit_xml("Fresh")).unwrap();
 
-        let kept = exclude_stale(vec![report.clone()], run_started_at);
-        assert_eq!(kept, vec![report]);
+        let changed = changed_since(dir.path(), pattern, &before);
+        assert_eq!(changed, vec![report]);
+    }
+
+    #[test]
+    fn a_report_rewritten_with_different_content_is_kept_even_at_the_same_mtime_second() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = dir.path().join("report.xml");
+        std::fs::write(&report, junit_xml("Old")).unwrap();
+        let pattern = "**/*.xml";
+        let before = snapshot_reports(dir.path(), pattern);
+
+        // Rewrite with different (longer) content but pin the mtime back to
+        // exactly what it was before — proving the length half of the
+        // fingerprint, not just mtime, is what catches this.
+        let before_mtime = before[&report].0;
+        std::fs::write(&report, junit_xml("SubstantiallyDifferentSuiteName")).unwrap();
+        std::fs::File::open(&report)
+            .unwrap()
+            .set_modified(before_mtime)
+            .unwrap();
+
+        let changed = changed_since(dir.path(), pattern, &before);
+        assert_eq!(changed, vec![report]);
     }
 
     /// The end-to-end shape C1 adds: a fake `mvn`-like script writes a

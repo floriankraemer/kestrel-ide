@@ -2,6 +2,7 @@
 
 #include "ai_providers_page.h"
 #include "analysis_settings_page.h"
+#include "build_tools_settings_page.h"
 #include "appearance_page.h"
 #include "containers_page.h"
 #include "language_page.h"
@@ -91,6 +92,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
+    categoryList->addItem(QObject::tr("Build Tools"));
     categoryList->addItem(QObject::tr("Containers"));
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
@@ -298,6 +300,18 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                  analysisService = context.analysisService, scopedPage]() {
           return scopedPage(QStringLiteral("analysis"),
                              buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService));
+      });
+
+    // Build Tools is project-scoped for the same reason Analysis is: which
+    // Gradle/Maven overrides a checkout wants is a property of the project
+    // at least as often as of the person. `trusted_roots` alone stays
+    // global-only (ADR-0057 §3) — `BuildToolsEditor` never shows or edits
+    // it regardless of scope, see `bridge::build_tools`'s own doc comment.
+    context.buildToolsEditor->beginEdit(appSettings->settingsScope());
+    const int buildToolsIndex =
+      deferPage([&dialog, buildToolsEditor = context.buildToolsEditor, scopedPage]() {
+          return scopedPage(QStringLiteral("buildTools"),
+                            buildBuildToolsSettingsPage(&dialog, buildToolsEditor));
       });
 
     // Containers is project-scoped for the same reason Terminal/Tabs are:
@@ -545,7 +559,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
        tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
        analysisService = context.analysisService, analysisIndex, containersPage,
        containersIndex, &lazyBuilders, runConfigEditor = context.runConfigEditor,
-       containerService = context.containerService]() {
+       containerService = context.containerService,
+       buildToolsEditor = context.buildToolsEditor, buildToolsIndex]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -614,6 +629,17 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                            buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService)));
               pages->removeWidget(staleAnalysis);
               staleAnalysis->deleteLater();
+          }
+
+          buildToolsEditor->beginEdit(scope);
+          if (!lazyBuilders.contains(buildToolsIndex)) {
+              QWidget *staleBuildTools = pages->widget(buildToolsIndex);
+              pages->insertWidget(
+                buildToolsIndex,
+                scopedPage(QStringLiteral("buildTools"),
+                           buildBuildToolsSettingsPage(&dialog, buildToolsEditor)));
+              pages->removeWidget(staleBuildTools);
+              staleBuildTools->deleteLater();
           }
 
           pages->setCurrentIndex(current);
@@ -734,6 +760,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         language.commit();
         editor.commit();
         context.keymapEditor->commit();
+        context.buildToolsEditor->commit();
         applyKeymap(*context.actions, appSettings);
         context.terminalPanel->reapplyKeymap();
         terminalPage->commit();

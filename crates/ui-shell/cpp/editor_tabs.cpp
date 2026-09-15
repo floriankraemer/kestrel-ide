@@ -934,6 +934,9 @@ bool EditorTabs::saveEditor(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdi
         // Servers that only re-analyse on save (and linters behind them)
         // need this; the buffer itself already went across as didChange.
         languageService_->documentSaved(path);
+        if (documentSavedCallback_) {
+            documentSavedCallback_(path);
+        }
     }
     if (vcsService_ && vcsService_->isRepository()) {
         // A save is exactly what `changedFiles()` (the Changes dock, the

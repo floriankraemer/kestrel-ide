@@ -56,6 +56,11 @@ Parsing stays split by trust boundary the same way `build-core` splits Cargo (st
 `test-core::junit`'s parser and `TestTree::apply_junit` were built generalised and unused (ADR-0048 §consequences, "the very next test-frameworks contribution that cannot stream is a manifest change away from using it").
 The `junit-maven` test-frameworks row (`output-format = "junit-xml"`, `report-glob = "**/target/{surefire,failsafe}-reports/TEST-*.xml"`) is that contribution: `test_core::runner::run` reads the glob's matching files once the process exits, skips report files older than the run's own start time (a stale report from a previous run left on disk), and delivers them through a new `TestSink::junit` the same way TeamCity events already deliver through `TestSink::event`.
 
+### 6a. `app-core` gains `jvm-build-core`, for the project-tree decoration join only (phase B7)
+
+`app_core::build_tools_tree::folder_role` joins a synced `BuildModel`'s source roots and output directories onto a project-tree path, the same shape `app_core::icons`/`app_core::preview` already use for the icon-theme and previews joins: `jvm-build-core` never learns an icon pack's folder-name keys, and `icon-theme` never learns what a Gradle source set or a Maven module is, so the two meet in `app-core`.
+This is the one B-phase change to the A-phase's dependency row (`docs/architecture/layering.md`'s `jvm-build-core` row itself is unchanged — only `app-core`'s own row gains the edge) and stays within the no-Qt rule: `jvm-build-core` carries no cxx-qt/Qt dependency of its own, so `cargo tree -p app-core -e normal | grep -i qt` stays empty.
+
 ### 6. Verification: a separate `linux-jvm` image, nightly, outside the per-PR E2E budget
 
 Neither a JDK, Gradle, nor Maven exists in `linux-builder`, and installing all three there would slow every PR's `make test`/`make lint` for work most PRs never touch.

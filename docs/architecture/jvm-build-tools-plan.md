@@ -117,14 +117,14 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| B1 — `BuildToolsService` bridge + `RunService::run_temporary` + the two C++ relays in `build_tools_wiring.cpp` | open | |
-| B2 — dock panel (tasks/goals/lifecycle/plugins/profiles/modules/dependencies) | open | |
-| B3 — run task/goal → `task_config` → `run_temporary` → Run dock; "Execute…" line edit; Maven profile checkboxes | open | |
-| B4 — `EditorBanner` + reload policy wiring + Ctrl+Shift+O + trust prompt | open | |
-| B5 — Build Tools settings page (project-scoped) | open | |
-| B6 — status-bar sync indicator | open | |
-| B7 — project-tree source-root/output-dir decoration (`app-core` gains `jvm-build-core`) | open | |
-| B8 — Maven `-pl` build target | open | |
+| B1 — `BuildToolsService` bridge + `RunService::run_temporary` + `build_tools_wiring.cpp` relays | done | `b169381`, `d4e8694`, `24cdddb` |
+| B2 — dock panel (tasks/lifecycle/modules/dependencies/profiles). "Open Build File" only works on a `Module` row — only `Module` carries a `build_file` path in `view::Node`; a `ToolRoot` row does not | done | `d4e8694`, `5235c60` |
+| B3 — run task/goal → `task_config`/`taskConfigWithArgs` → `run_temporary` → Run dock; "Execute…" line edit; Maven profile checkboxes (`view::rows`'s Profiles group, `BuildToolsService::setProfileChecked`, fed into `RunOptions::profiles`'s already-tested `-P<id>` rule) | done | `d4e8694`, `5235c60` |
+| B4 — `EditorBanner` + reload policy wiring + trust prompt; `buildTools.reload` has no default binding (Ctrl+Shift+O is `view.goToSymbol` here — collided and failed a keymap test) | done | `d4e8694` |
+| B5 — Build Tools settings page, project-scoped (`ScopedField::BuildTools`, the same `containers`/`analysis` shape) — `trusted_roots` stays global-only, structurally (`BuildToolsProjectSettings` has no such field) | done | `b169381` (initial, global-only), `7715feb` (made project-scoped) |
+| B6 — status-bar sync indicator | done | `d4e8694` |
+| B7 — project-tree source-root/output-dir decoration (`app-core` gains `jvm-build-core`). Output-dir greying is deferred: it needs a new per-row style/foreground role on `ProjectTreeModel` that does not exist yet (no "dimmed row" precedent to extend) | partial (icon role done; greying deferred) | `76245e9` (join fn), `d4e8694` (tree wiring) |
+| B8 — Maven `-pl` build target | done | `77fa9dc` |
 
 ### C — tests (later PR)
 

@@ -90,11 +90,16 @@ pub enum ScopedField {
     /// The `[containers]` section: Docker/Podman connections, registries
     /// and the dock filters (ADR-0055).
     Containers,
+    /// The `[build_tools]` section's Gradle/Maven sub-tables only
+    /// (jvm-build-tools plan, ADR-0057 §3) — `trusted_roots` is not part
+    /// of this field at all, since `BuildToolsProjectSettings` has no such
+    /// field to override with.
+    BuildTools,
 }
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 8] = [
+    pub const ALL: [ScopedField; 9] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
@@ -103,6 +108,7 @@ impl ScopedField {
         ScopedField::Analysis,
         ScopedField::TabPadding,
         ScopedField::Containers,
+        ScopedField::BuildTools,
     ];
 
     /// The stable id the view names this field by — the same string the
@@ -118,6 +124,7 @@ impl ScopedField {
             ScopedField::Analysis => "analysis",
             ScopedField::TabPadding => "tabPadding",
             ScopedField::Containers => "containers",
+            ScopedField::BuildTools => "buildTools",
         }
     }
 
@@ -162,6 +169,15 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     if let Some(containers) = &project.containers {
         resolved.containers = containers.clone();
     }
+    if let Some(build_tools) = &project.build_tools {
+        // `trusted_roots` is deliberately never touched here: it has no
+        // counterpart on `BuildToolsProjectSettings` to read from, so the
+        // global layer's own value always survives this overlay (ADR-0057
+        // §3) — only the Gradle/Maven sub-tables are the project's to
+        // override.
+        resolved.build_tools.gradle = build_tools.gradle.clone();
+        resolved.build_tools.maven = build_tools.maven.clone();
+    }
     // Run configurations are deliberately *not* folded in: they have no
     // counterpart in the global layer at all (ADR-0029 — a run configuration
     // is the definition of a project, never a preference), so there is
@@ -198,6 +214,7 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::Analysis => project.analysis.is_some(),
         ScopedField::TabPadding => project.tab_padding.is_some(),
         ScopedField::Containers => project.containers.is_some(),
+        ScopedField::BuildTools => project.build_tools.is_some(),
     };
     if overridden {
         return Scope::Project;
@@ -289,6 +306,16 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
         ScopedField::Analysis => global.analysis != defaults.analysis,
         ScopedField::TabPadding => global.tab_padding != defaults.tab_padding,
         ScopedField::Containers => global.containers != defaults.containers,
+        // Compares only the Gradle/Maven sub-tables, never `trusted_roots`:
+        // a global file that has trusted a root but touched no other
+        // `[build_tools]` field must not report this field as "set
+        // globally" — trusted_roots is not what this field means at all.
+        ScopedField::BuildTools => {
+            (
+                global.build_tools.gradle.clone(),
+                global.build_tools.maven.clone(),
+            ) != (defaults.build_tools.gradle, defaults.build_tools.maven)
+        }
     }
 }
 
@@ -462,10 +489,10 @@ mod tests {
         assert!(ScopedField::from_id("editorFontSize").is_none());
         assert_eq!(
             ScopedField::ALL.len(),
-            8,
+            9,
             "ADR-0022 names five areas, plus Analysis (the PHP tooling plan's B7), \
-             TabPadding (tab padding, per-side, project-overridable) and Containers \
-             (ADR-0055)"
+             TabPadding (tab padding, per-side, project-overridable), Containers \
+             (ADR-0055) and BuildTools (jvm-build-tools plan, ADR-0057 §3)"
         );
     }
 
@@ -757,6 +784,66 @@ mod tests {
             resolve(&global, &project).containers,
             ContainerSettings::default(),
             "the project's own (empty) override wins over the global layer"
+        );
+    }
+
+    #[test]
+    fn build_tools_id_round_trips() {
+        assert_eq!(ScopedField::BuildTools.id(), "buildTools");
+        assert_eq!(
+            ScopedField::from_id("buildTools"),
+            Some(ScopedField::BuildTools)
+        );
+    }
+
+    /// ADR-0057 §3: a project's Gradle/Maven override resolves like any
+    /// other scoped field, but `trusted_roots` — set only in the global
+    /// layer, since `BuildToolsProjectSettings` has no such field —
+    /// survives the overlay untouched regardless of what the project
+    /// overrides.
+    #[test]
+    fn build_tools_resolves_gradle_and_maven_but_never_touches_trusted_roots() {
+        use app_config::{BuildToolsProjectSettings, BuildToolsSettings, GradleToolSettings};
+        use std::path::PathBuf;
+
+        let global = Settings {
+            build_tools: BuildToolsSettings {
+                trusted_roots: vec![PathBuf::from("/home/u/project")],
+                ..BuildToolsSettings::default()
+            },
+            ..Settings::default()
+        };
+        assert_eq!(
+            origin(
+                ScopedField::BuildTools,
+                &global,
+                &ProjectSettings::default()
+            ),
+            // trusted_roots alone must not read as "set globally" for this
+            // field — see `set_globally`'s own comment.
+            Scope::Default
+        );
+
+        let project = ProjectSettings {
+            build_tools: Some(BuildToolsProjectSettings {
+                gradle: GradleToolSettings {
+                    offline: Some(true),
+                    ..GradleToolSettings::default()
+                },
+                ..BuildToolsProjectSettings::default()
+            }),
+            ..ProjectSettings::default()
+        };
+        assert_eq!(
+            origin(ScopedField::BuildTools, &global, &project),
+            Scope::Project
+        );
+        let resolved = resolve(&global, &project);
+        assert_eq!(resolved.build_tools.gradle.offline, Some(true));
+        assert_eq!(
+            resolved.build_tools.trusted_roots,
+            vec![PathBuf::from("/home/u/project")],
+            "a project override must never change which roots are trusted"
         );
     }
 }

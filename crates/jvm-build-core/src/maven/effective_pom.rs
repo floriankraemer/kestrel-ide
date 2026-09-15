@@ -20,6 +20,23 @@ pub struct EffectiveDependency {
     pub scope: String,
 }
 
+/// A plugin bound into the build, its goals read from its own
+/// `<executions>` — what actually runs, not the plugin's full goal
+/// catalogue (that is `super::goals::goals_from_jar`'s answer, for
+/// build-file editing rather than this dock's tree).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectivePlugin {
+    pub group_id: String,
+    pub artifact_id: String,
+    pub version: String,
+    pub goals: Vec<String>,
+}
+
+/// Maven core plugins' effective-pom entry omits `groupId` when it is this
+/// default — the same convention `super::pom::DEFAULT_PLUGIN_GROUP` reads
+/// for the static POM.
+const DEFAULT_PLUGIN_GROUP: &str = "org.apache.maven.plugins";
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct EffectivePom {
     pub group_id: String,
@@ -27,6 +44,7 @@ pub struct EffectivePom {
     pub version: String,
     pub packaging: String,
     pub dependencies: Vec<EffectiveDependency>,
+    pub plugins: Vec<EffectivePlugin>,
     pub source_directory: Option<PathBuf>,
     pub test_source_directory: Option<PathBuf>,
     pub output_directory: Option<PathBuf>,
@@ -53,6 +71,37 @@ pub fn parse(text: &str) -> Result<EffectivePom, XmlError> {
         .unwrap_or_default();
 
     let build = root.child("build");
+    let plugins = build
+        .and_then(|b| b.child("plugins"))
+        .map(|p| {
+            p.children_named("plugin")
+                .map(|plugin| {
+                    let mut goals: Vec<String> = Vec::new();
+                    if let Some(executions) = plugin.child("executions") {
+                        for execution in executions.children_named("execution") {
+                            if let Some(goal_list) = execution.child("goals") {
+                                for goal in goal_list.children_named("goal") {
+                                    let name = goal.text.trim();
+                                    if !name.is_empty() && !goals.iter().any(|g| g == name) {
+                                        goals.push(name.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    EffectivePlugin {
+                        group_id: plugin
+                            .text_of("groupId")
+                            .unwrap_or_else(|| DEFAULT_PLUGIN_GROUP.to_string()),
+                        artifact_id: plugin.text_of("artifactId").unwrap_or_default(),
+                        version: plugin.text_of("version").unwrap_or_default(),
+                        goals,
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     Ok(EffectivePom {
         group_id: root.text_of("groupId").unwrap_or_default(),
         artifact_id: root.text_of("artifactId").unwrap_or_default(),
@@ -61,6 +110,7 @@ pub fn parse(text: &str) -> Result<EffectivePom, XmlError> {
             .text_of("packaging")
             .unwrap_or_else(|| "jar".to_string()),
         dependencies,
+        plugins,
         source_directory: build
             .and_then(|b| b.text_of("sourceDirectory"))
             .map(PathBuf::from),
@@ -89,6 +139,26 @@ mod tests {
         assert_eq!(pom.artifact_id, "maven-single");
         assert_eq!(pom.version, "1.0.0");
         assert_eq!(pom.packaging, "jar");
+    }
+
+    #[test]
+    fn bound_plugins_read_their_own_executions_goals() {
+        let pom = parse(FIXTURE).expect("valid");
+        let surefire = pom
+            .plugins
+            .iter()
+            .find(|p| p.artifact_id == "maven-surefire-plugin")
+            .expect("surefire plugin");
+        assert_eq!(surefire.group_id, "org.apache.maven.plugins");
+        assert_eq!(surefire.version, "3.3.1");
+        assert_eq!(surefire.goals, vec!["test".to_string()]);
+
+        // pluginManagement's own <plugins> (declared but not bound into this
+        // build) must never be read as if it were the real, active list.
+        assert!(!pom
+            .plugins
+            .iter()
+            .any(|p| p.artifact_id == "maven-release-plugin"));
     }
 
     #[test]

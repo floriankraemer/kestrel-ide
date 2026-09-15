@@ -761,6 +761,24 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // The jvm-build-tools plan's B4: a reload from anywhere, not only from
+    // the banner's own button. IntelliJ's own default for this action is
+    // Ctrl+Shift+O, already `view.goToSymbol`'s binding here — unbound by
+    // default rather than displacing it; Settings > Keymap can still bind
+    // it to Ctrl+Shift+O for anyone who wants the IntelliJ muscle memory.
+    ActionDef {
+        id: "buildTools.reload",
+        label: "Reload Build Tool Project",
+        category: "Build",
+        default_shortcut: "",
+    },
+    // B2/B6: the Build Tools dock. Unbound like `view.build`.
+    ActionDef {
+        id: "view.buildTools",
+        label: "Build Tools",
+        category: "View",
+        default_shortcut: "",
+    },
     // The PHP tooling plan's B9: runs every enabled, installed analyzer
     // against the whole open project via `AnalysisService::inspectProject`.
     ActionDef {

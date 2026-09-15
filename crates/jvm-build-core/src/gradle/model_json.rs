@@ -21,6 +21,12 @@ use crate::model::{
 #[serde(rename_all = "camelCase")]
 struct RawModel {
     root_dir: String,
+    /// Absent in an old capture fixture with no `rootName` key yet —
+    /// `#[serde(default)]` degrades that to an empty string rather than a
+    /// parse failure, and `to_build_model` falls back to the root
+    /// directory's own name when this is empty (see its own comment).
+    #[serde(default)]
+    root_name: String,
     #[allow(dead_code)] // carried through for a future "unsupported Gradle" diagnostic
     gradle_version: String,
     modules: Vec<RawModule>,
@@ -115,12 +121,22 @@ fn to_build_model(raw: RawModel) -> BuildModel {
             module
         })
         .collect();
+    let root = PathBuf::from(raw.root_dir);
+    let root_name = if raw.root_name.is_empty() {
+        root.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    } else {
+        raw.root_name
+    };
     BuildModel {
         tool: Tool::Gradle,
-        root: PathBuf::from(raw.root_dir),
+        root,
+        root_name,
         modules,
         tasks,
         warnings: Vec::new(),
+        profiles: Vec::new(),
         synced_at: SystemTime::now(),
     }
 }
@@ -175,6 +191,7 @@ fn to_module(raw: RawModule) -> (Module, Vec<Task>) {
         output_dirs: Vec::new(),
         jdk: None,
         dependencies,
+        plugins: Vec::new(),
         children: Vec::new(),
     };
     (module, tasks)

@@ -29,7 +29,8 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                               VcsService *vcsService, EditorTabs *editorTabs,
                               QTreeView *projectTree, DockRegistry *docks,
                               ProblemsPanel *problemsPanel, ProjectTreeModel *treeModel,
-                              AnalysisService *analysisService);
+                              AnalysisService *analysisService,
+                              BuildToolsService *buildToolsService);
 
 // Busy indication for an in-flight "Open Folder..."/Recent Projects open
 // (ADR-0037: the walk itself runs off the Qt thread, so nothing else says a

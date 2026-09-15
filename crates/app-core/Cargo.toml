@@ -23,6 +23,11 @@ color-theme = { path = "../color-theme" }
 # neither may depend on the other. Qt-free, so app-core's no-Qt rule is
 # untouched.
 markdown-preview = { path = "../markdown-preview" }
+# The project-tree source-root/output-dir decoration join (jvm-build-tools
+# plan B7, ADR-0057): `jvm-build-core` owns the synced `BuildModel`,
+# `icon-theme` owns the icon pack, neither depends on the other. Qt-free,
+# so app-core's no-Qt rule is untouched.
+jvm-build-core = { path = "../jvm-build-core" }
 
 [dev-dependencies]
 tempfile = "3"

@@ -17,6 +17,7 @@ use crate::bridge::ai::chat::AiChatRust;
 use crate::bridge::analysis::{AnalysisEditorRust, AnalysisServiceRust};
 use crate::bridge::app_info::AppInfoRust;
 use crate::bridge::build::BuildServiceRust;
+use crate::bridge::build_tools::{BuildToolsEditorRust, BuildToolsServiceRust};
 use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::debug::DebugServiceRust;
@@ -5535,6 +5536,326 @@ mod ffi {
         fn commit(self: &AnalysisEditor);
     }
 
+    /// A Build Tools dock row's kind (the jvm-build-tools plan's B1/B2) —
+    /// `jvm_build_core::view::NodeKind` crossed the seam.
+    enum FfiBuildToolNodeKind {
+        ToolRoot,
+        Group,
+        Task,
+        Module,
+        SourceRoot,
+        Dependency,
+        /// A Maven profile id, checkable (B3).
+        Profile,
+        /// A Maven plugin bound into the build (review fix: Maven's own
+        /// Lifecycle/Plugins/Dependencies/Profiles vocabulary).
+        Plugin,
+        /// A goal one Maven plugin's `<executions>` binds.
+        Goal,
+    }
+
+    /// One row of the Build Tools dock's tree, flattened and
+    /// parent-qualified like `FfiTestNode` — a `QTreeWidget` builds its own
+    /// hierarchy from `parentId` rather than nesting a `Vec` inside a `Vec`.
+    struct FfiBuildToolNode {
+        id: QString,
+        #[cxx_name = "parentId"]
+        parent_id: QString,
+        kind: FfiBuildToolNodeKind,
+        label: QString,
+        /// A task's description, a source root's kind/content, or a
+        /// dependency's conflict — whatever `jvm_build_core::view::Node`
+        /// itself carries for this row's kind; empty when it carries
+        /// nothing.
+        detail: QString,
+        /// `"gradle"` or `"maven"` (`Tool::toolchain_id()`), for `cpp/` to
+        /// pick an icon by — never used as text (ADR-0049: Rust never
+        /// emits user-visible strings).
+        tool: QString,
+        /// The build file "Open Build File" opens — empty for a row that
+        /// names none (only a `Module` row carries one today).
+        #[cxx_name = "buildFile"]
+        build_file: QString,
+        /// Meaningful only for `FfiBuildToolNodeKind::Profile`: whether the
+        /// dock's checkbox for this profile is ticked.
+        checked: bool,
+    }
+
+    /// The dock's title (computed in Rust from which tools synced
+    /// successfully) — `cpp/` maps this to a `tr()` string, never Rust.
+    enum FfiBuildToolTitleKind {
+        None,
+        Gradle,
+        Maven,
+        Both,
+    }
+
+    /// A sync's own state — `cpp/` maps this to a `tr()` string via
+    /// `syncMessage()` for the `Failed` case.
+    enum FfiSyncStateKind {
+        Idle,
+        Syncing,
+        Failed,
+    }
+
+    /// The editor banner's state (B4): which prompt, if any, is showing
+    /// above the editor area. `cpp/` maps this to `tr()` text and buttons.
+    enum FfiBannerKind {
+        None,
+        TrustGradle,
+        TrustMaven,
+        ReloadNeeded,
+    }
+
+    extern "RustQt" {
+        /// Detects Gradle/Maven, syncs on a worker thread and shapes the
+        /// result into the dock's tree (the jvm-build-tools plan's B1).
+        /// One registered `#[qobject]`, mirroring `AnalysisService`'s shape.
+        #[qobject]
+        type BuildToolsService = super::BuildToolsServiceRust;
+
+        /// The dock's whole tree, flattened (B2).
+        #[qinvokable]
+        fn rows(self: &BuildToolsService) -> Vec<FfiBuildToolNode>;
+
+        #[qinvokable]
+        #[cxx_name = "titleKind"]
+        fn title_kind(self: &BuildToolsService) -> FfiBuildToolTitleKind;
+
+        #[qinvokable]
+        #[cxx_name = "syncStateKind"]
+        fn sync_state_kind(self: &BuildToolsService) -> FfiSyncStateKind;
+
+        /// The last sync's failure message — empty unless `syncStateKind`
+        /// is `Failed`.
+        #[qinvokable]
+        #[cxx_name = "syncMessage"]
+        fn sync_message(self: &BuildToolsService) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "bannerKind"]
+        fn banner_kind(self: &BuildToolsService) -> FfiBannerKind;
+
+        #[qinvokable]
+        #[cxx_name = "dismissBanner"]
+        fn dismiss_banner(self: Pin<&mut BuildToolsService>);
+
+        #[qinvokable]
+        #[cxx_name = "setOffline"]
+        fn set_offline(self: &BuildToolsService, offline: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setSkipTests"]
+        fn set_skip_tests(self: &BuildToolsService, skip_tests: bool);
+
+        /// A Maven profile checkbox was toggled (B3) — fed into every
+        /// task/goal run's `-P<id>` flags from here on.
+        #[qinvokable]
+        #[cxx_name = "setProfileChecked"]
+        fn set_profile_checked(self: Pin<&mut BuildToolsService>, profile: &QString, checked: bool);
+
+        /// A project opened (or reopened): detect Gradle/Maven and either
+        /// show the trust banner or sync automatically for an
+        /// already-trusted root.
+        #[qinvokable]
+        #[cxx_name = "projectOpened"]
+        fn project_opened(self: Pin<&mut BuildToolsService>, root: &QString);
+
+        /// "Load" on the trust banner (ADR-0057 §3): trusts the project
+        /// root in the **global** settings file, then syncs.
+        #[qinvokable]
+        #[cxx_name = "trustAndLoad"]
+        fn trust_and_load(self: Pin<&mut BuildToolsService>) -> FfiResult;
+
+        /// A watched build file changed on disk (`main_window.cpp`'s
+        /// `watchedFileChanged` relay).
+        #[qinvokable]
+        #[cxx_name = "fileChanged"]
+        fn file_changed(self: Pin<&mut BuildToolsService>, path: &QString);
+
+        /// The user saved a build file open in a tab
+        /// (`editor_tabs.cpp`'s `documentSaved` relay).
+        #[qinvokable]
+        #[cxx_name = "fileSaved"]
+        fn file_saved(self: Pin<&mut BuildToolsService>, path: &QString);
+
+        /// Run (or re-run) a sync of every detected, trusted tool.
+        #[qinvokable]
+        fn sync(self: Pin<&mut BuildToolsService>) -> FfiResult;
+
+        /// Stop waiting on the current sync (see `syncMessage`'s own doc
+        /// comment on this method's actual reach).
+        #[qinvokable]
+        #[cxx_name = "cancelSync"]
+        fn cancel_sync(self: &BuildToolsService);
+
+        /// The temporary `RunConfig` a double-click on task/goal row
+        /// `node_id` launches (B3) — `RunService::runTemporary` takes this
+        /// straight back.
+        #[qinvokable]
+        #[cxx_name = "taskConfig"]
+        fn task_config(self: &BuildToolsService, node_id: &QString) -> FfiRunConfig;
+
+        /// Same, with the "Execute…" field's text split into extra argv.
+        #[qinvokable]
+        #[cxx_name = "taskConfigWithArgs"]
+        fn task_config_with_args(
+            self: &BuildToolsService,
+            node_id: &QString,
+            extra_args: &QString,
+        ) -> FfiRunConfig;
+
+        #[qsignal]
+        #[cxx_name = "modelChanged"]
+        fn model_changed(self: Pin<&mut BuildToolsService>);
+
+        #[qsignal]
+        #[cxx_name = "syncStateChanged"]
+        fn sync_state_changed(self: Pin<&mut BuildToolsService>);
+
+        #[qsignal]
+        #[cxx_name = "bannerChanged"]
+        fn banner_changed(self: Pin<&mut BuildToolsService>);
+    }
+
+    impl cxx_qt::Threading for BuildToolsService {}
+
+    /// Every field the Build Tools settings page (B5) edits — one struct
+    /// rather than nineteen separate getters, the same convention a
+    /// multi-field form elsewhere on this seam uses.
+    #[derive(Default)]
+    struct FfiBuildToolsFields {
+        #[cxx_name = "gradleDistribution"]
+        gradle_distribution: QString,
+        #[cxx_name = "gradleHome"]
+        gradle_home: QString,
+        #[cxx_name = "gradleJavaHome"]
+        gradle_java_home: QString,
+        #[cxx_name = "gradleOffline"]
+        gradle_offline: bool,
+        #[cxx_name = "gradleAutoReload"]
+        gradle_auto_reload: QString,
+        #[cxx_name = "gradleDownloadSources"]
+        gradle_download_sources: bool,
+        #[cxx_name = "gradleJvmArgs"]
+        gradle_jvm_args: QString,
+        #[cxx_name = "mavenHome"]
+        maven_home: QString,
+        #[cxx_name = "mavenUserSettingsFile"]
+        maven_user_settings_file: QString,
+        #[cxx_name = "mavenLocalRepository"]
+        maven_local_repository: QString,
+        #[cxx_name = "mavenOffline"]
+        maven_offline: bool,
+        #[cxx_name = "mavenSkipTests"]
+        maven_skip_tests: bool,
+        #[cxx_name = "mavenThreads"]
+        maven_threads: QString,
+        #[cxx_name = "mavenAlwaysUpdateSnapshots"]
+        maven_always_update_snapshots: bool,
+        #[cxx_name = "mavenAutoReload"]
+        maven_auto_reload: QString,
+    }
+
+    /// Which field a `FfiBuildToolsProblem` is about, for the page to
+    /// highlight — `settings_model::build_tools::BuildToolsField` crossed.
+    enum FfiBuildToolsField {
+        GradleHome,
+        GradleAutoReload,
+        MavenHome,
+        MavenAutoReload,
+        MavenThreads,
+    }
+
+    struct FfiBuildToolsProblem {
+        field: FfiBuildToolsField,
+        sentence: QString,
+    }
+
+    extern "RustQt" {
+        /// Settings > Build Tools (B5), global only — see
+        /// `bridge::build_tools`'s module doc for why.
+        #[qobject]
+        type BuildToolsEditor = super::BuildToolsEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &BuildToolsEditor, scope: &QString);
+
+        #[qinvokable]
+        fn fields(self: &BuildToolsEditor) -> FfiBuildToolsFields;
+
+        #[qinvokable]
+        fn problems(self: &BuildToolsEditor) -> Vec<FfiBuildToolsProblem>;
+
+        #[qinvokable]
+        #[cxx_name = "setGradleDistribution"]
+        fn set_gradle_distribution(self: &BuildToolsEditor, id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setGradleHome"]
+        fn set_gradle_home(self: &BuildToolsEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setGradleJavaHome"]
+        fn set_gradle_java_home(self: &BuildToolsEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setGradleOffline"]
+        fn set_gradle_offline(self: &BuildToolsEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setGradleAutoReload"]
+        fn set_gradle_auto_reload(self: &BuildToolsEditor, id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setGradleDownloadSources"]
+        fn set_gradle_download_sources(self: &BuildToolsEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setGradleJvmArgs"]
+        fn set_gradle_jvm_args(self: &BuildToolsEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenHome"]
+        fn set_maven_home(self: &BuildToolsEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenUserSettingsFile"]
+        fn set_maven_user_settings_file(self: &BuildToolsEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenLocalRepository"]
+        fn set_maven_local_repository(self: &BuildToolsEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenOffline"]
+        fn set_maven_offline(self: &BuildToolsEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenSkipTests"]
+        fn set_maven_skip_tests(self: &BuildToolsEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenThreads"]
+        fn set_maven_threads(self: &BuildToolsEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenAlwaysUpdateSnapshots"]
+        fn set_maven_always_update_snapshots(self: &BuildToolsEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setMavenAutoReload"]
+        fn set_maven_auto_reload(self: &BuildToolsEditor, id: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "isDirty"]
+        fn is_dirty(self: &BuildToolsEditor) -> bool;
+
+        #[qinvokable]
+        fn commit(self: &BuildToolsEditor) -> FfiResult;
+    }
+
     /// Whether a Tests dock row is a suite/class grouping or a leaf test
     /// method — `test_core::NodeKind` crossed the seam.
     enum FfiTestNodeKind {
@@ -8498,6 +8819,14 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "runContext"]
         fn run_context(self: Pin<&mut RunService>, path: &QString) -> FfiResult;
+
+        /// Launch `config` as a temporary run configuration, remembering it
+        /// first (jvm-build-tools plan B1/B3):
+        /// `BuildToolsService::taskConfig`'s own answer, handed straight
+        /// back here by a task/goal double-click.
+        #[qinvokable]
+        #[cxx_name = "runTemporary"]
+        fn run_temporary(self: Pin<&mut RunService>, config: &FfiRunConfig) -> FfiResult;
 
         /// Whether `path`'s gutter should show the Dockerfile/Containerfile
         /// popup (C5, ADR-0056) — `syntax_core`'s own `dockerfile` language

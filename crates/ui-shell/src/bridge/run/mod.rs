@@ -230,7 +230,7 @@ fn tasks_from_string(text: &str) -> Vec<app_config::BeforeLaunchSetting> {
         .collect()
 }
 
-fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
+pub(crate) fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
     ffi::FfiRunConfig {
         id: QString::from(config.id.as_str()),
         name: QString::from(config.name.as_str()),
@@ -247,6 +247,45 @@ fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
         container: container_form::to_ffi_options(config),
         run_on: QString::from(config.run_on.clone().unwrap_or_default().as_str()),
     }
+}
+
+/// The inverse of [`to_ffi_run_config`] — a fresh [`run_core::RunConfig`]
+/// from a form the caller built rather than one drawn from the draft, the
+/// same shape `RunConfigEditor::command_preview`'s own "scratch" config
+/// uses. `BuildToolsService::runTemporary` (the jvm-build-tools plan's B1)
+/// is this function's only caller: it already has a full `FfiRunConfig`
+/// from `BuildToolsService::taskConfig` and needs it back as a
+/// `RunConfig` to launch.
+pub(crate) fn from_ffi_run_config(form: &ffi::FfiRunConfig) -> run_core::RunConfig {
+    let mut config = run_core::RunConfig {
+        id: form.id.to_string(),
+        name: form.name.to_string(),
+        program: form.program.to_string(),
+        args: form
+            .args
+            .to_string()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect(),
+        toolchain: (!form.toolchain.to_string().is_empty()).then(|| form.toolchain.to_string()),
+        target: (!form.target.to_string().is_empty()).then(|| form.target.to_string()),
+        temporary: true,
+        allow_parallel: form.allow_parallel,
+        before_launch: tasks_from_string(&form.before_launch.to_string()),
+        kind: (!form.kind.to_string().is_empty()).then(|| form.kind.to_string()),
+        ..run_core::RunConfig::default()
+    };
+    let cwd = form.cwd.to_string();
+    config.cwd = if cwd.trim().is_empty() {
+        None
+    } else {
+        Some(cwd)
+    };
+    config.env = env_from_string(&form.env.to_string());
+    container_form::apply_options(&mut config, &form.kind.to_string(), &form.container);
+    let run_on = form.run_on.to_string();
+    config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
+    config
 }
 
 /// The `[containers]` section actually in force — the global layer with the
@@ -798,6 +837,21 @@ impl ffi::RunService {
             return unknown_run_config("unknown run configuration");
         };
 
+        let context = run_core::MacroContext::for_project(&root);
+        self.as_mut().launch(config, &root, &context)
+    }
+
+    /// Launch `config` as a temporary run configuration, persisting it
+    /// first (`remember_only`) exactly as [`Self::run_context`] does — the
+    /// jvm-build-tools plan's B1: `BuildToolsService::taskConfig` builds
+    /// the `FfiRunConfig` a task/goal double-click hands here.
+    pub fn run_temporary(mut self: Pin<&mut Self>, config: &ffi::FfiRunConfig) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let mut config = from_ffi_run_config(config);
+        config.temporary = true;
+        self.as_mut().remember_only(config.clone());
         let context = run_core::MacroContext::for_project(&root);
         self.as_mut().launch(config, &root, &context)
     }

@@ -43,4 +43,14 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <!-- Exercises jvm-build-core's profile-id parsing (view::rows's
+         Profiles group, B3): declared here, never activated, so a sync
+         run in linux-jvm proves the id is read without changing anything
+         else this fixture already asserts. -->
+    <profiles>
+        <profile>
+            <id>ci</id>
+        </profile>
+    </profiles>
 </project>

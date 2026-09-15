@@ -89,6 +89,10 @@ if (gradle.startParameter.taskNames.contains('ideModel')) {
 Map buildIdeModel(Project root) {
     return [
         rootDir: root.projectDir.absolutePath,
+        // `rootProject.name` (settings.gradle's own `rootProject.name =`,
+        // defaulting to the directory name Gradle itself falls back to) —
+        // the dock's root row shows this, never the raw path (review fix).
+        rootName: root.name,
         gradleVersion: gradle.gradleVersion,
         modules: root.allprojects.collect { Project p -> buildModule(p) },
     ]

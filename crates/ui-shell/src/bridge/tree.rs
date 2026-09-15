@@ -167,9 +167,32 @@ impl ffi::ProjectTreeModel {
             }
             r if r == user_role(Roles::IsDir) => QVariant::from(&node.is_dir),
             r if r == user_role(Roles::IconKey) => {
+                // B7 (ADR-0057): a synced Gradle/Maven source root paints
+                // as the icon pack's own src/test/resources art, by role
+                // rather than by this directory's real name (Maven's
+                // `src/main/java` is a directory named `main`) —
+                // `folder_role`'s whole point.
+                let role = node
+                    .is_dir
+                    .then(|| {
+                        crate::bridge::registry::shared_build_models()
+                            .borrow()
+                            .iter()
+                            .find_map(|model| {
+                                app_core::build_tools_tree::folder_role(&node.path, model)
+                            })
+                    })
+                    .flatten();
                 // The arena's root node is the model's invisible root, so no
                 // row a view ever asks about is the project root itself.
                 let key = |expanded| {
+                    if let Some(role) = role {
+                        return self.icons.service.borrow().folder_icon_key(
+                            role.canonical_name(),
+                            expanded,
+                            self.icons.appearance.get(),
+                        );
+                    }
                     self.icons.service.borrow().icon_key(
                         &node.path,
                         node.is_dir,

@@ -116,7 +116,16 @@ fn with_target(toolchain: ToolchainId, mut command: ToolCommand, target: &str) -
             // than adding to it.
             command.args = vec![format!(":{target}:build")];
         }
-        ToolchainId::Maven | ToolchainId::Npm | ToolchainId::Python | ToolchainId::Make => {}
+        ToolchainId::Maven => {
+            // `-pl :<module> -am`: build only `target`'s reactor module,
+            // plus every module it depends on (`-am`, "also make") so a
+            // single-module build never fails on an unresolved sibling
+            // dependency that was never installed to the local repo.
+            command.args.push("-pl".into());
+            command.args.push(format!(":{target}"));
+            command.args.push("-am".into());
+        }
+        ToolchainId::Npm | ToolchainId::Python | ToolchainId::Make => {}
     }
     command
 }
@@ -212,6 +221,22 @@ mod tests {
 
     #[test]
     fn a_toolchain_with_no_target_spelling_builds_everything() {
+        let dir = project_with(&["package.json"]);
+        let steps = BuildSpec::new(
+            ToolchainId::Npm,
+            BuildKind::Target("app".into()),
+            dir.path(),
+        )
+        .steps()
+        .unwrap();
+        assert_eq!(steps[0].args, vec!["run", "build"]);
+    }
+
+    /// B8 (the jvm-build-tools plan): a Maven module target builds only
+    /// that reactor module, plus whatever it depends on — `-am` ("also
+    /// make") so a single-module build never fails on an unbuilt sibling.
+    #[test]
+    fn a_maven_target_builds_its_module_and_what_it_depends_on() {
         let dir = project_with(&["pom.xml"]);
         let steps = BuildSpec::new(
             ToolchainId::Maven,
@@ -220,7 +245,7 @@ mod tests {
         )
         .steps()
         .unwrap();
-        assert_eq!(steps[0].args, vec!["compile"]);
+        assert_eq!(steps[0].args, vec!["compile", "-pl", ":app", "-am"]);
     }
 
     #[test]

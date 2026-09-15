@@ -67,7 +67,12 @@ requires-toolchain = "gradle"
 id = "junit-maven"
 name = "JUnit (Maven)"
 program-candidates = ["./mvnw", "mvn"]
-args = ["-B", "test"]
+# `-Dsurefire.failIfNoSpecifiedTests=false`: without it, a `-Dtest=`
+# filtered rerun (D6's "rerun this one node") whose pattern matches no test
+# class in a given module fails the whole multi-module build instead of
+# just running zero tests there — the same "some modules legitimately have
+# none" case Surefire's own default assumes is a mistake.
+args = ["-B", "test", "-Dsurefire.failIfNoSpecifiedTests=false"]
 # Maven's own `-Dtest=` takes the pattern spliced into one argument, unlike
 # Gradle's/PHPUnit's separate flag+pattern shape — this is exactly the case
 # `filter-template` exists for (A1).

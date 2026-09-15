@@ -41,6 +41,37 @@ pub fn for_many(ids: &[TestId]) -> String {
     format!("^(?:{})$", alternatives.join("|"))
 }
 
+/// Append a rerun `pattern` to a framework's base `args`, in whichever of
+/// its two mutually-exclusive styles the manifest declares (`plugin-api`'s
+/// `TestFrameworkContribution` validates exactly one is set): a
+/// `filter_flag` is pushed as its own argument followed by `pattern`
+/// (PHPUnit's/Gradle's `--filter foo`, `--tests foo`); a `filter_template`
+/// has `{pattern}` substituted inside one argument (Maven's
+/// `-Dtest={pattern}`, which Maven would not parse split across two argv
+/// entries). Neither set means no rerun narrowing is possible for this
+/// framework — `args` is returned unchanged, same as calling this with no
+/// pattern at all.
+///
+/// This is the one call site `runner::run`'s caller (`ui-shell`'s
+/// `TestServiceRust::start`) uses for both styles, kept here rather than
+/// duplicated in the adapter so it gets the same unit tests every other
+/// `test-core` rule does (jvm-build-tools plan C1).
+pub fn apply_filter(
+    args: &[String],
+    filter_flag: Option<&str>,
+    filter_template: Option<&str>,
+    pattern: &str,
+) -> Vec<String> {
+    let mut args = args.to_vec();
+    if let Some(flag) = filter_flag {
+        args.push(flag.to_string());
+        args.push(pattern.to_string());
+    } else if let Some(template) = filter_template {
+        args.push(template.replace("{pattern}", pattern));
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +121,28 @@ mod tests {
     fn regex_metacharacters_in_a_data_provider_suffix_are_escaped() {
         let pattern = for_many(&[TestId("A::testX with data set #1 (a, b)".into())]);
         assert_eq!(pattern, "^(?:A::testX with data set \\#1 \\(a, b\\))$");
+    }
+
+    #[test]
+    fn a_filter_flag_is_pushed_as_flag_then_pattern() {
+        let args = apply_filter(&["test".into()], Some("--tests"), None, "com.example.ATest");
+        assert_eq!(args, vec!["test", "--tests", "com.example.ATest"]);
+    }
+
+    #[test]
+    fn a_filter_template_substitutes_the_pattern_placeholder_in_one_argument() {
+        let args = apply_filter(
+            &["-B".into(), "test".into()],
+            None,
+            Some("-Dtest={pattern}"),
+            "com.example.ATest",
+        );
+        assert_eq!(args, vec!["-B", "test", "-Dtest=com.example.ATest"]);
+    }
+
+    #[test]
+    fn neither_style_set_leaves_args_unchanged() {
+        let args = apply_filter(&["test".into()], None, None, "whatever");
+        assert_eq!(args, vec!["test"]);
     }
 }

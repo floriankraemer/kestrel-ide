@@ -14,10 +14,12 @@
 
 use plugin_api::TestFrameworkContribution;
 
-/// Output formats [`crate::runner::run`] can actually stream today.
-/// `junit-xml` (a post-run file read, not a stream) is not one of them —
-/// added when C1 gives it a runner.
-pub const SUPPORTED_OUTPUT_FORMATS: &[&str] = &["teamcity"];
+/// Output formats [`crate::runner::run`] can actually produce results for
+/// today: `teamcity` streams incrementally, `junit-xml` is read once after
+/// the process exits (C1, jvm-build-tools plan/ADR-0057) — both are
+/// "supported" in the sense this list gates, `select_framework` does not
+/// care which.
+pub const SUPPORTED_OUTPUT_FORMATS: &[&str] = &["teamcity", "junit-xml"];
 
 /// The first framework, in contribution order, that is runnable against
 /// this project: its `requires_toolchain` (if any) is among
@@ -105,10 +107,19 @@ mod tests {
     #[test]
     fn a_framework_with_an_unsupported_output_format_is_skipped() {
         let mut maven = framework("junit-maven");
-        maven.output_format = "junit-xml".to_string();
+        maven.output_format = "some-future-format".to_string();
         let frameworks = vec![maven];
         let result = select_framework(&frameworks, &[], &["teamcity"], always_resolves);
-        assert!(result.is_none(), "junit-xml has no runner yet (C1)");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn junit_xml_is_now_a_supported_output_format() {
+        let mut maven = framework("junit-maven");
+        maven.output_format = "junit-xml".to_string();
+        let frameworks = vec![maven];
+        let result = select_framework(&frameworks, &[], SUPPORTED_OUTPUT_FORMATS, always_resolves);
+        assert!(result.is_some());
     }
 
     #[test]

@@ -14,9 +14,11 @@
 //! exited, which is exactly why `process_exec::spawn` exists.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
+use crate::junit::JUnitTestCase;
 use crate::teamcity::{TeamCityEvent, TeamCityParser};
 
 /// What a caller wants to hear while a run is in flight.
@@ -27,6 +29,129 @@ pub trait TestSink {
     fn output(&mut self, text: &str);
     /// One parsed TeamCity service message, as it streams in.
     fn event(&mut self, event: TeamCityEvent);
+    /// Every case parsed from a `junit-xml` run's report files, delivered
+    /// once after the process has exited (C1). A `teamcity` run never calls
+    /// this — the two output formats are mutually exclusive per run.
+    fn junit(&mut self, cases: Vec<JUnitTestCase>);
+}
+
+/// Which shape a test framework's results arrive in
+/// (`TestFrameworkContribution::output_format`, jvm-build-tools plan C1):
+/// `teamcity` streams incrementally while the process runs; `junit_xml` has
+/// no per-test timeline, only a batch of report files [`run`] reads once the
+/// process exits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    TeamCity,
+    JunitXml,
+}
+
+/// An `output-format` string a manifest names that no runner in this build
+/// understands — a typed error the caller can turn into a Problems row or a
+/// refused run, never a silent fallback to `teamcity` and never a panic.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownOutputFormat(pub String);
+
+impl std::fmt::Display for UnknownOutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown test output format: {}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownOutputFormat {}
+
+/// Parse a `TestFrameworkContribution::output_format` string into the
+/// enum [`run`] dispatches on.
+pub fn parse_output_format(value: &str) -> Result<OutputFormat, UnknownOutputFormat> {
+    match value {
+        "teamcity" => Ok(OutputFormat::TeamCity),
+        "junit-xml" => Ok(OutputFormat::JunitXml),
+        other => Err(UnknownOutputFormat(other.to_string())),
+    }
+}
+
+/// Every path under `work_dir` matching glob `pattern` (e.g.
+/// `**/target/{surefire,failsafe}-reports/TEST-*.xml`), matched against the
+/// path relative to `work_dir` so the pattern never has to know the
+/// project's absolute location. Walked by hand rather than pulling in a
+/// `walkdir` dependency — this crate has none today and the recursion is a
+/// handful of lines.
+fn glob_matches(work_dir: &Path, pattern: &str) -> Vec<PathBuf> {
+    let Ok(glob) = globset::Glob::new(pattern) else {
+        return Vec::new();
+    };
+    let matcher = glob.compile_matcher();
+    let mut found = Vec::new();
+    walk_matching(work_dir, work_dir, &matcher, &mut found);
+    found
+}
+
+fn walk_matching(
+    root: &Path,
+    dir: &Path,
+    matcher: &globset::GlobMatcher,
+    found: &mut Vec<PathBuf>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            walk_matching(root, &path, matcher, found);
+        } else if let Ok(relative) = path.strip_prefix(root) {
+            if matcher.is_match(relative) {
+                found.push(path);
+            }
+        }
+    }
+}
+
+/// Some filesystems (notably a bind mount backed by a coarser host clock)
+/// truncate an mtime to whole seconds, so a report written a few
+/// milliseconds after `run_started_at` can round down to *before* it. A
+/// grace window this small still rejects anything genuinely stale — a
+/// leftover report from a previous run is seconds to hours old, never
+/// within a couple of seconds of "now".
+const STALE_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Drop any report file whose mtime is older than `run_started_at` (minus
+/// [`STALE_GRACE`]) — a stale Surefire/Failsafe report a previous run left
+/// under the same `target/` directory must never be misread as this run's
+/// own output. A file whose mtime cannot be read at all is dropped too,
+/// rather than guessed to be fresh.
+fn exclude_stale(paths: Vec<PathBuf>, run_started_at: SystemTime) -> Vec<PathBuf> {
+    let cutoff = run_started_at
+        .checked_sub(STALE_GRACE)
+        .unwrap_or(run_started_at);
+    paths
+        .into_iter()
+        .filter(|path| {
+            std::fs::metadata(path)
+                .and_then(|meta| meta.modified())
+                .is_ok_and(|mtime| mtime >= cutoff)
+        })
+        .collect()
+}
+
+/// Read and parse every surviving `junit-xml` report under `work_dir`
+/// matching `report_glob`, in a stable (sorted-path) order so a caller's
+/// resulting tree is deterministic across runs. A file that fails to parse
+/// is skipped rather than failing the whole batch — one malformed report
+/// should not hide every other test's result.
+fn collect_junit_cases(
+    work_dir: &Path,
+    report_glob: &str,
+    run_started_at: SystemTime,
+) -> Vec<JUnitTestCase> {
+    let mut paths = exclude_stale(glob_matches(work_dir, report_glob), run_started_at);
+    paths.sort();
+    paths
+        .iter()
+        .filter_map(|path| std::fs::read_to_string(path).ok())
+        .filter_map(|xml| crate::junit::parse(&xml).ok())
+        .flatten()
+        .collect()
 }
 
 /// A handle another thread can use to stop a running test process.
@@ -63,6 +188,14 @@ pub enum RunFailure {
 /// `sink` as they arrive. Blocks until the process exits or
 /// [`TestRunHandle::stop`] kills it.
 ///
+/// When `format` is [`OutputFormat::JunitXml`], `report_glob` (required by
+/// the manifest for that format, but taken as `Option` here so a caller
+/// with a malformed contribution degrades to "no reports read" instead of
+/// panicking) is globbed under `work_dir` once the process has exited, and
+/// every surviving report's cases are delivered through
+/// [`TestSink::junit`] in one call — no per-test timeline exists for this
+/// format, unlike `teamcity`'s incremental [`TestSink::event`].
+///
 /// Returns the exit code, or `None` when the process could not be waited
 /// on (most commonly: it was just stopped).
 pub fn run(
@@ -70,8 +203,11 @@ pub fn run(
     program: &str,
     args: &[String],
     work_dir: &Path,
+    format: OutputFormat,
+    report_glob: Option<&str>,
     sink: &mut dyn TestSink,
 ) -> Result<Option<i32>, RunFailure> {
+    let run_started_at = SystemTime::now();
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
     let spawned = process_exec::spawn(program, &arg_refs, work_dir).map_err(|e| match e {
         process_exec::Failure::NotFound => RunFailure::NotFound,
@@ -120,11 +256,18 @@ pub fn run(
     }
     let _ = stderr_reader.join();
 
+    let exit_code = spawned.wait().ok().and_then(|status| status.code());
+
     *handle
         .spawned
         .lock()
         .map_err(|_| RunFailure::Io("run handle lock poisoned".into()))? = None;
-    Ok(spawned.wait().ok().and_then(|status| status.code()))
+
+    if let (OutputFormat::JunitXml, Some(pattern)) = (format, report_glob) {
+        sink.junit(collect_junit_cases(work_dir, pattern, run_started_at));
+    }
+
+    Ok(exit_code)
 }
 
 #[cfg(test)]
@@ -135,6 +278,7 @@ mod tests {
     struct Collected {
         output: String,
         events: Vec<TeamCityEvent>,
+        junit_cases: Vec<JUnitTestCase>,
     }
 
     impl TestSink for Collected {
@@ -143,6 +287,9 @@ mod tests {
         }
         fn event(&mut self, event: TeamCityEvent) {
             self.events.push(event);
+        }
+        fn junit(&mut self, cases: Vec<JUnitTestCase>) {
+            self.junit_cases = cases;
         }
     }
 
@@ -158,6 +305,8 @@ mod tests {
             "sh",
             &["-c".into(), script.into()],
             dir.path(),
+            OutputFormat::TeamCity,
+            None,
             &mut collected,
         )
         .unwrap();
@@ -176,6 +325,8 @@ mod tests {
             "this-binary-does-not-exist-anywhere",
             &[],
             dir.path(),
+            OutputFormat::TeamCity,
+            None,
             &mut collected,
         )
         .unwrap_err();
@@ -197,6 +348,8 @@ mod tests {
             "sh",
             &["-c".into(), "sleep 5".into()],
             dir.path(),
+            OutputFormat::TeamCity,
+            None,
             &mut collected,
         )
         .unwrap();
@@ -256,12 +409,142 @@ mod tests {
         }
         let handle = TestRunHandle::new();
         let mut collected = Collected::default();
-        let code = run(&handle, "some-test-runner", &[], work_dir, &mut collected);
+        let code = run(
+            &handle,
+            "some-test-runner",
+            &[],
+            work_dir,
+            OutputFormat::TeamCity,
+            None,
+            &mut collected,
+        );
         unsafe {
             std::env::set_var("PATH", original_path);
         }
 
         assert_eq!(code.unwrap(), Some(0));
         assert_eq!(collected.events.len(), 2);
+    }
+
+    #[test]
+    fn parse_output_format_accepts_the_two_known_values() {
+        assert_eq!(parse_output_format("teamcity"), Ok(OutputFormat::TeamCity));
+        assert_eq!(parse_output_format("junit-xml"), Ok(OutputFormat::JunitXml));
+    }
+
+    #[test]
+    fn parse_output_format_rejects_an_unknown_value_as_a_typed_error_not_a_panic() {
+        let err = parse_output_format("checkstyle-xml").unwrap_err();
+        assert_eq!(err, UnknownOutputFormat("checkstyle-xml".to_string()));
+    }
+
+    fn junit_xml(name: &str) -> String {
+        format!(
+            "<testsuite name=\"{name}\"><testcase name=\"a\" time=\"0.1\"/>\
+             <testcase name=\"b\" time=\"0.2\"><failure message=\"boom\"/></testcase></testsuite>"
+        )
+    }
+
+    /// Both Surefire's (`target/surefire-reports`) and Failsafe's
+    /// (`target/failsafe-reports`) report directory shapes match the
+    /// manifest's one `{surefire,failsafe}` brace-alternate pattern.
+    #[test]
+    fn glob_matches_both_surefire_and_failsafe_report_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let surefire = dir.path().join("target/surefire-reports");
+        let failsafe = dir.path().join("target/failsafe-reports");
+        std::fs::create_dir_all(&surefire).unwrap();
+        std::fs::create_dir_all(&failsafe).unwrap();
+        std::fs::write(surefire.join("TEST-ATest.xml"), junit_xml("ATest")).unwrap();
+        std::fs::write(failsafe.join("TEST-BIT.xml"), junit_xml("BIT")).unwrap();
+        std::fs::write(surefire.join("not-a-report.txt"), "ignore me").unwrap();
+
+        let pattern = "**/target/{surefire,failsafe}-reports/TEST-*.xml";
+        let mut found = glob_matches(dir.path(), pattern);
+        found.sort();
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn a_report_older_than_the_run_start_is_excluded_as_stale() {
+        let dir = tempfile::tempdir().unwrap();
+        let report = dir.path().join("stale.xml");
+        std::fs::write(&report, junit_xml("Stale")).unwrap();
+        // Force the mtime to well before "now" so it reads as older than a
+        // run that starts after this line, regardless of filesystem mtime
+        // resolution.
+        let old = SystemTime::now() - std::time::Duration::from_secs(3600);
+        let file = std::fs::File::open(&report).unwrap();
+        file.set_modified(old).unwrap();
+
+        let run_started_at = SystemTime::now();
+        let kept = exclude_stale(vec![report], run_started_at);
+        assert!(
+            kept.is_empty(),
+            "a report older than the run start must be dropped"
+        );
+    }
+
+    #[test]
+    fn a_report_written_after_the_run_started_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_started_at = SystemTime::now();
+        let report = dir.path().join("fresh.xml");
+        std::fs::write(&report, junit_xml("Fresh")).unwrap();
+
+        let kept = exclude_stale(vec![report.clone()], run_started_at);
+        assert_eq!(kept, vec![report]);
+    }
+
+    /// The end-to-end shape C1 adds: a fake `mvn`-like script writes a
+    /// Surefire report only after it starts (so it is never stale), and a
+    /// stale report from a *previous* run already sits under the same
+    /// `target/surefire-reports` — the runner must read the fresh one and
+    /// skip the stale one.
+    #[test]
+    fn a_junit_xml_run_delivers_only_fresh_reports_to_the_sink() {
+        let dir = tempfile::tempdir().unwrap();
+        let reports = dir.path().join("target/surefire-reports");
+        std::fs::create_dir_all(&reports).unwrap();
+
+        let stale_path = reports.join("TEST-OldTest.xml");
+        std::fs::write(&stale_path, junit_xml("OldTest")).unwrap();
+        let old = SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::open(&stale_path)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        let fresh_report = reports.join("TEST-NewTest.xml");
+        let script = format!(
+            "cat > {} <<'EOF'\n{}\nEOF\n",
+            fresh_report.display(),
+            junit_xml("NewTest")
+        );
+
+        let handle = TestRunHandle::new();
+        let mut collected = Collected::default();
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), script],
+            dir.path(),
+            OutputFormat::JunitXml,
+            Some("**/target/surefire-reports/TEST-*.xml"),
+            &mut collected,
+        )
+        .unwrap();
+        assert_eq!(code, Some(0));
+
+        let suites: Vec<&str> = collected
+            .junit_cases
+            .iter()
+            .map(|c| c.suite.as_str())
+            .collect();
+        assert_eq!(
+            suites,
+            vec!["NewTest", "NewTest"],
+            "only the fresh report's cases arrive"
+        );
     }
 }

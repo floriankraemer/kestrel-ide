@@ -130,7 +130,7 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| C1 — `test-core`: output-format dispatch, `junit-xml` post-run read, `TestSink::junit`; `report-glob`/`filter-template`/`requires-toolchain` in detection; `teamcity` parser accepts `flowId` | open | |
+| C1 — `test-core`: output-format dispatch, `junit-xml` post-run read, `TestSink::junit`; `report-glob`/`filter-template`/`requires-toolchain` in detection; `teamcity` parser accepts `flowId` | done | `2d6f73f` |
 | C2 — integration (JVM image): fixture `gradle test`/`mvn test` streams/fills live; a failing test is a diagnostic; second run is not empty | open | |
 
 ### D — build-file editing (later PR)

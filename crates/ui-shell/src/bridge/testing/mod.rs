@@ -287,13 +287,21 @@ impl ffi::TestService {
 
         let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
         if let Some(pattern) = filter {
-            if let Some(flag) = &framework.filter_flag {
-                args.push(flag.clone());
-                args.push(pattern);
-            } else if let Some(template) = &framework.filter_template {
-                args.push(template.replace("{pattern}", &pattern));
-            }
+            args = test_core::filter::apply_filter(
+                &args,
+                framework.filter_flag.as_deref(),
+                framework.filter_template.as_deref(),
+                &pattern,
+            );
         }
+
+        let Ok(output_format) = test_core::parse_output_format(&framework.output_format) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                "this test framework's output-format is not one this build understands",
+            );
+        };
+        let report_glob = framework.report_glob.clone();
 
         let run_id = self.next_id.get() + 1;
         self.next_id.set(run_id);
@@ -309,7 +317,15 @@ impl ffi::TestService {
                 ansi: run_core::AnsiStripper::default(),
             };
             let program_str = program.to_string_lossy().into_owned();
-            let result = test_core::run(&handle, &program_str, &args, &root, &mut sink);
+            let result = test_core::run(
+                &handle,
+                &program_str,
+                &args,
+                &root,
+                output_format,
+                report_glob.as_deref(),
+                &mut sink,
+            );
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
                 let (ok, message) = match result {
@@ -378,6 +394,16 @@ impl test_core::TestSink for QtSink {
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.tree.borrow_mut().apply(event);
+                republish(&service);
+                service.as_mut().test_tree_changed();
+            });
+    }
+
+    fn junit(&mut self, cases: Vec<test_core::JUnitTestCase>) {
+        let _ = self
+            .qt_thread
+            .queue(move |mut service: Pin<&mut ffi::TestService>| {
+                service.tree.borrow_mut().apply_junit(&cases);
                 republish(&service);
                 service.as_mut().test_tree_changed();
             });

@@ -17,6 +17,11 @@ process-exec = { path = "../process-exec" }
 # built from.
 plugin-api = { path = "../plugin-api" }
 quick-xml = "0.41"
+# `report_glob` (the `junit-xml` output format's post-run file glob,
+# ADR-0057 C1): matching `**/target/{surefire,failsafe}-reports/TEST-*.xml`
+# against a walked `work_dir` needs brace-alternate glob syntax, not a
+# hand-rolled matcher.
+globset = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

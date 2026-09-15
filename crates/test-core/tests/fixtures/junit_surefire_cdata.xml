@@ -2,8 +2,16 @@
 <testsuite name="com.example.GreeterTest" tests="2" failures="1">
   <testcase name="deliberatelyFails" classname="com.example.GreeterTest" time="0.027">
     <failure message="expected: &lt;Hello, World!&gt; but was: &lt;Hello, Nobody!&gt;" type="org.opentest4j.AssertionFailedError"><![CDATA[org.opentest4j.AssertionFailedError: expected: <Hello, World!> but was: <Hello, Nobody!>
+	at org.junit.jupiter.api.AssertionFailureBuilder.build(AssertionFailureBuilder.java:151)
+	at org.junit.jupiter.api.AssertionFailureBuilder.buildAndThrow(AssertionFailureBuilder.java:132)
+	at org.junit.jupiter.api.AssertEquals.failNotEqual(AssertEquals.java:197)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:182)
+	at org.junit.jupiter.api.AssertEquals.assertEquals(AssertEquals.java:177)
 	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:1145)
 	at com.example.GreeterTest.deliberatelyFails(GreeterTest.java:16)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
 ]]></failure>
   </testcase>
   <testcase name="greetsByName" classname="com.example.GreeterTest" time="0.002"/>

@@ -386,9 +386,17 @@ impl ffi::TestService {
 fn republish(service: &ffi::TestService) {
     let framework = service.framework_name.borrow().clone();
     let key = source_key(&framework);
-    let grouped = test_core::diagnostics_by_file(&service.tree.borrow(), &framework);
     let mut store = service.store.borrow_mut();
     store.clear_source(&key);
+    // Locating a JVM failure's real source file (test-core's `diagnostics`
+    // module, review finding 3) needs the project root to resolve a class
+    // name to a path; with no project open there is nothing to republish
+    // against in the first place, so clearing the stale source above is all
+    // this call does.
+    let Some(work_dir) = current_project_root() else {
+        return;
+    };
+    let grouped = test_core::diagnostics_by_file(&service.tree.borrow(), &framework, &work_dir);
     for (uri, diagnostics) in grouped {
         store.replace(&key, &uri, diagnostics);
     }

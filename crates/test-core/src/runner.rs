@@ -75,8 +75,10 @@ pub fn parse_output_format(value: &str) -> Result<OutputFormat, UnknownOutputFor
 /// path relative to `work_dir` so the pattern never has to know the
 /// project's absolute location. Walked by hand rather than pulling in a
 /// `walkdir` dependency — this crate has none today and the recursion is a
-/// handful of lines.
-fn glob_matches(work_dir: &Path, pattern: &str) -> Vec<PathBuf> {
+/// handful of lines. `pub(crate)` rather than private: `diagnostics`
+/// reuses it too, for the same symlink-safe, pruned walk, rather than a
+/// second globber (review finding 3).
+pub(crate) fn glob_matches(work_dir: &Path, pattern: &str) -> Vec<PathBuf> {
     let Ok(glob) = globset::Glob::new(pattern) else {
         return Vec::new();
     };

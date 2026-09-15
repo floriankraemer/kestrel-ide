@@ -200,11 +200,22 @@ fn maven_single_fills_the_tree_from_surefire_xml_and_the_failure_carries_a_messa
     // C2's "a failing test becomes a diagnostic" requirement, at the same
     // tree -> diagnostics conversion `ui-shell`'s `republish` already calls
     // for the TeamCity path — proves the JUnit-XML path feeds the same
-    // Problems surface, not a parallel one.
-    let grouped = diagnostics_by_file(&tree, "junit-maven");
+    // Problems surface, not a parallel one. Review finding 3: against a
+    // real (untrimmed) Surefire report, the diagnostic must land on the
+    // test's own `GreeterTest.java:16` assertion call site, not the
+    // trace's last line (a JDK-internal frame Surefire never trims).
+    let grouped = diagnostics_by_file(&tree, "junit-maven", &work_dir);
+    assert_eq!(grouped.len(), 1, "exactly one file must carry a diagnostic");
+    let (uri, diagnostics) = grouped.iter().next().unwrap();
     assert!(
-        !grouped.is_empty(),
-        "the failing test's message must locate a file:line and become a diagnostic"
+        uri.ends_with("GreeterTest.java"),
+        "diagnostic must resolve to the real test source file, got: {uri}"
+    );
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].range.start.line, 15,
+        "GreeterTest.java's `assertEquals` call for deliberatelyFails is on line 16 \
+         (0-indexed 15), not a JDK-internal trace line"
     );
 }
 

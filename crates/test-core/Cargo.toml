@@ -25,3 +25,10 @@ globset = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# Gates `tests/jvm_integration.rs`, which shells out to the real `gradle`/
+# `mvn` binaries `linux-jvm` ships against jvm-build-core's fixture projects
+# (jvm-build-tools plan C2, ADR-0057) — never enabled by
+# `cargo test --workspace`/`make test`, only `make test-jvm`.
+jvm-integration = []

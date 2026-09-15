@@ -86,6 +86,19 @@ fn glob_matches(work_dir: &Path, pattern: &str) -> Vec<PathBuf> {
     found
 }
 
+/// Directory names no report glob this crate matches against
+/// (`**/target/{surefire,failsafe}-reports/TEST-*.xml`, PHPUnit's own
+/// `--log-junit` output path) would ever live under, so walking into them
+/// on every single test run only burns time: `.git`'s object store alone
+/// can be tens of thousands of files, and `node_modules` a JVM/PHP project
+/// occasionally still has beside a frontend build.
+fn is_walk_pruned(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".git") | Some("node_modules")
+    )
+}
+
 fn walk_matching(
     root: &Path,
     dir: &Path,
@@ -96,8 +109,24 @@ fn walk_matching(
         return;
     };
     for entry in entries.flatten() {
+        // `DirEntry::file_type()` reports the entry itself, never following
+        // a symlink — unlike `Path::is_dir()` (which stats through it).
+        // Symlinks are skipped outright rather than followed: a
+        // self-referencing one (`foo -> .`) would otherwise recurse forever
+        // (a stack overflow aborts the process, uncatchable), and one
+        // pointing outside `work_dir` must never let report-globbing escape
+        // the project directory.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_symlink() {
+            continue;
+        }
         let path = entry.path();
-        if path.is_dir() {
+        if file_type.is_dir() {
+            if is_walk_pruned(&path) {
+                continue;
+            }
             walk_matching(root, &path, matcher, found);
         } else if let Ok(relative) = path.strip_prefix(root) {
             if matcher.is_match(relative) {
@@ -463,6 +492,78 @@ mod tests {
         let mut found = glob_matches(dir.path(), pattern);
         found.sort();
         assert_eq!(found.len(), 2);
+    }
+
+    /// A self-referencing symlink (`foo -> .`) under `work_dir` must not
+    /// send the walk into infinite recursion — the review finding this
+    /// guards: the old walk followed symlinks (`Path::is_dir()` stats
+    /// through them), so a directory that links to itself recursed until
+    /// the process aborted on a stack overflow, uncatchable by any `Result`.
+    #[test]
+    #[cfg(unix)]
+    fn a_self_referencing_symlink_does_not_hang_or_crash_the_walk() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        symlink(dir.path(), dir.path().join("foo")).unwrap();
+        std::fs::write(dir.path().join("TEST-Real.xml"), junit_xml("Real")).unwrap();
+
+        let found = glob_matches(dir.path(), "**/TEST-*.xml");
+        // The real file is found exactly once; the self-referencing `foo`
+        // symlink is never descended into at all, so it neither duplicates
+        // the match nor hangs.
+        assert_eq!(found.len(), 1);
+    }
+
+    /// A symlink pointing outside `work_dir` must never let report-globbing
+    /// escape the project directory — proven by a report file that exists
+    /// only through such a symlink never being matched.
+    #[test]
+    #[cfg(unix)]
+    fn a_symlink_pointing_outside_work_dir_is_not_followed() {
+        use std::os::unix::fs::symlink;
+
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(
+            outside.path().join("TEST-Outside.xml"),
+            junit_xml("Outside"),
+        )
+        .unwrap();
+
+        let work_dir = tempfile::tempdir().unwrap();
+        symlink(outside.path(), work_dir.path().join("escape")).unwrap();
+
+        let found = glob_matches(work_dir.path(), "**/TEST-*.xml");
+        assert!(
+            found.is_empty(),
+            "a report reachable only through a symlink out of work_dir must not be matched"
+        );
+    }
+
+    /// `.git`/`node_modules` are pruned outright, not merely non-matching —
+    /// proven by a report-shaped file placed *inside* one still not being
+    /// found, since a real `.git` never legitimately holds one either way.
+    #[test]
+    fn dot_git_and_node_modules_directories_are_pruned_from_the_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let git_dir = dir.path().join(".git").join("nested");
+        let modules_dir = dir.path().join("node_modules").join("nested");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::create_dir_all(&modules_dir).unwrap();
+        std::fs::write(git_dir.join("TEST-InGit.xml"), junit_xml("InGit")).unwrap();
+        std::fs::write(
+            modules_dir.join("TEST-InModules.xml"),
+            junit_xml("InModules"),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("TEST-Real.xml"), junit_xml("Real")).unwrap();
+
+        let found = glob_matches(dir.path(), "**/TEST-*.xml");
+        assert_eq!(
+            found.len(),
+            1,
+            "only the report outside .git/node_modules must be found"
+        );
     }
 
     #[test]

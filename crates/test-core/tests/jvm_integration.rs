@@ -23,8 +23,8 @@
 use std::path::{Path, PathBuf};
 
 use test_core::{
-    diagnostics_by_file, run, JUnitTestCase, OutputFormat, TeamCityEvent, TestRunHandle, TestSink,
-    TestStatus, TestTree,
+    diagnostics_by_file, filter, run, JUnitTestCase, OutputFormat, TeamCityEvent, TestId,
+    TestRunHandle, TestSink, TestStatus, TestTree,
 };
 
 /// jvm-build-core owns the fixture projects (phase A); no crate dependency
@@ -206,4 +206,91 @@ fn maven_single_fills_the_tree_from_surefire_xml_and_the_failure_carries_a_messa
         !grouped.is_empty(),
         "the failing test's message must locate a file:line and become a diagnostic"
     );
+}
+
+/// Review finding 1: a rerun built in PHPUnit's PCRE dialect against Gradle
+/// compiles fine and matches zero tests. This proves the `gradle` dialect
+/// (`filter::for_node` + `filter::apply_filter`) actually narrows a real
+/// `gradle --tests` invocation to exactly the one failing node, both
+/// `greetsByName` (still run, since `cleanTest` always re-runs) excluded.
+#[test]
+fn rerunning_one_failing_gradle_node_runs_exactly_that_one_test() {
+    let work_dir = fixture("gradle-single");
+    let asset_dir = write_init_script();
+
+    let id = TestId("com.example.GreeterTest::deliberatelyFails".to_string());
+    let patterns = filter::for_node(&TestTree::new(), &id, filter::FilterDialect::Gradle);
+    let mut args = gradle_args(asset_dir.path());
+    args = filter::apply_filter(&args, Some("--tests"), None, &patterns);
+
+    let handle = TestRunHandle::new();
+    let mut collected = Collected::default();
+    let code = run(
+        &handle,
+        "gradle",
+        &args,
+        &work_dir,
+        OutputFormat::TeamCity,
+        None,
+        &mut collected,
+    )
+    .expect("gradle test runs");
+    assert!(code.is_some());
+
+    let mut tree = TestTree::new();
+    for event in collected.events {
+        tree.apply(event);
+    }
+    let counts = tree.counts();
+    assert_eq!(
+        counts.passed + counts.failed,
+        1,
+        "exactly one test must run, not the whole suite: {}",
+        collected.output
+    );
+    assert_eq!(counts.failed, 1, "the one test run must be the failing one");
+}
+
+/// Same review finding, Maven side: a `-Dtest=` pattern built in PHPUnit's
+/// dialect (or Gradle's) silently matches nothing, and with
+/// `-Dsurefire.failIfNoSpecifiedTests=false` the run then "passes" having
+/// run zero tests. This proves the `surefire` dialect
+/// (`Class#method`) actually narrows a real `mvn -Dtest=` rerun to exactly
+/// the one failing node.
+#[test]
+fn rerunning_one_failing_maven_node_runs_exactly_that_one_test() {
+    let work_dir = fixture("maven-single");
+    let _ = std::fs::remove_dir_all(work_dir.join("target"));
+
+    let id = TestId("com.example.GreeterTest::deliberatelyFails".to_string());
+    let patterns = filter::for_node(&TestTree::new(), &id, filter::FilterDialect::Surefire);
+    let base_args = vec![
+        "-B".to_string(),
+        "test".to_string(),
+        "-Dsurefire.failIfNoSpecifiedTests=false".to_string(),
+    ];
+    let args = filter::apply_filter(&base_args, None, Some("-Dtest={pattern}"), &patterns);
+
+    let handle = TestRunHandle::new();
+    let mut collected = Collected::default();
+    let _code = run(
+        &handle,
+        "mvn",
+        &args,
+        &work_dir,
+        OutputFormat::JunitXml,
+        Some("**/target/{surefire,failsafe}-reports/TEST-*.xml"),
+        &mut collected,
+    )
+    .expect("mvn test runs");
+
+    assert_eq!(
+        collected.junit_cases.len(),
+        1,
+        "exactly one test case must come back, not the whole suite (or zero, if the \
+         dialect were wrong): mvn output: {}",
+        collected.output
+    );
+    assert_eq!(collected.junit_cases[0].name, "deliberatelyFails");
+    assert_eq!(collected.junit_cases[0].status, TestStatus::Failed);
 }

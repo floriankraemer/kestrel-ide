@@ -108,6 +108,17 @@ fn detect_framework(
     Some((plugin, framework, program))
 }
 
+/// What `start` was asked to rerun, carried from `run_failed`/`run_node`
+/// through to the point the framework (and so its filter dialect) is known
+/// — building the actual pattern has to wait until then (review finding 1),
+/// so this just carries the *un*-interpreted request. Translation-only, no
+/// rule of its own: `test_core::filter` decides what a `Failed`/`Node`
+/// selection turns into for a given dialect.
+enum RerunSelection {
+    Failed(Vec<test_core::TestId>),
+    Node(test_core::TestId),
+}
+
 fn to_ffi_kind(kind: test_core::NodeKind) -> ffi::FfiTestNodeKind {
     match kind {
         test_core::NodeKind::Suite => ffi::FfiTestNodeKind::Suite,
@@ -233,17 +244,15 @@ impl ffi::TestService {
         if ids.is_empty() {
             return errors::failure(errors::CODE_REFUSED, "no failed tests to rerun");
         }
-        let pattern = test_core::filter::for_many(&ids);
-        self.start(Some(pattern))
+        self.start(Some(RerunSelection::Failed(ids)))
     }
 
     pub fn run_node(self: Pin<&mut Self>, node_id: &QString) -> ffi::FfiResult {
         let id = test_core::TestId(node_id.to_string());
-        let pattern = test_core::filter::for_node(&self.tree.borrow(), &id);
-        self.start(Some(pattern))
+        self.start(Some(RerunSelection::Node(id)))
     }
 
-    fn start(mut self: Pin<&mut Self>, filter: Option<String>) -> ffi::FfiResult {
+    fn start(mut self: Pin<&mut Self>, selection: Option<RerunSelection>) -> ffi::FfiResult {
         if !self.runs.borrow().is_empty() {
             return errors::failure(errors::CODE_REFUSED, "a test run is already in progress");
         }
@@ -274,7 +283,7 @@ impl ffi::TestService {
         // filtered rerun updates only the nodes it touches, so the rest of
         // the previous run's results stay visible (D6's "reruns exactly
         // the failed node", not "clears the dock").
-        if filter.is_none() {
+        if selection.is_none() {
             self.tree.borrow_mut().reset();
         }
         *self.framework_name.borrow_mut() = framework.name.clone();
@@ -285,15 +294,35 @@ impl ffi::TestService {
             .borrow_mut()
             .clear_source(&source_key(&framework.name));
 
-        let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
-        if let Some(pattern) = filter {
-            args = test_core::filter::apply_filter(
-                &args,
-                framework.filter_flag.as_deref(),
-                framework.filter_template.as_deref(),
-                &pattern,
+        // Which target-selection syntax this framework's rerun flag/
+        // template actually speaks — PHPUnit's PCRE `--filter` is not the
+        // only dialect once a framework runs on the JVM (review finding 1):
+        // Surefire's `-Dtest=` and Gradle's `--tests` each need their own
+        // pattern shape built from the node being rerun, not a PHPUnit-
+        // shaped one that would compile fine and match nothing.
+        let Ok(dialect) =
+            test_core::filter::parse_filter_dialect(framework.filter_dialect.as_deref())
+        else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                "this test framework's filter-dialect is not one this build understands",
             );
-        }
+        };
+        let patterns = match &selection {
+            None => Vec::new(),
+            Some(RerunSelection::Failed(ids)) => test_core::filter::for_many(ids, dialect),
+            Some(RerunSelection::Node(id)) => {
+                test_core::filter::for_node(&self.tree.borrow(), id, dialect)
+            }
+        };
+
+        let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
+        args = test_core::filter::apply_filter(
+            &args,
+            framework.filter_flag.as_deref(),
+            framework.filter_template.as_deref(),
+            &patterns,
+        );
 
         let Ok(output_format) = test_core::parse_output_format(&framework.output_format) else {
             return errors::failure(

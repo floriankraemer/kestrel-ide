@@ -273,6 +273,19 @@ pub struct TestFrameworkContribution {
     /// their result from disk instead of from stdout.
     #[serde(default, rename = "report-glob")]
     pub report_glob: Option<String>,
+    /// Which target-selection syntax [`Self::filter_flag`]/
+    /// [`Self::filter_template`] speaks: `"phpunit-regex"` (PHPUnit's own
+    /// PCRE `--filter`, the default when absent), `"surefire"` (Maven's
+    /// `-Dtest=Class#method`), or `"gradle"` (Gradle's dotted
+    /// `--tests pkg.Class.method`). `test-core::filter` is the only crate
+    /// that interprets the value — this crate stays a leaf and just checks
+    /// it is one of the three dialects a run could actually speak, the same
+    /// "unknown string is a load error, not a silent PHPUnit-regex
+    /// fallback" rule [`Self::output_format`] would give if it were an enum
+    /// too (review finding: a JVM rerun built in the wrong dialect silently
+    /// matches zero tests instead of the intended one).
+    #[serde(default, rename = "filter-dialect")]
+    pub filter_dialect: Option<String>,
 }
 
 /// One build tool a plugin offers (the jvm-build-tools plan's A1).
@@ -567,6 +580,15 @@ impl PluginManifest {
                 "contributes.test-frameworks.output-format",
                 &framework.output_format,
             )?;
+            if let Some(dialect) = &framework.filter_dialect {
+                non_empty("contributes.test-frameworks.filter-dialect", dialect)?;
+                if !matches!(dialect.as_str(), "phpunit-regex" | "surefire" | "gradle") {
+                    return Err(LoadErrorKind::MalformedManifest(format!(
+                        "contributes.test-frameworks.filter-dialect `{dialect}` must be one of \
+                         `phpunit-regex`, `surefire`, `gradle`"
+                    )));
+                }
+            }
         }
         check_unique(
             ContributionPoint::TestFrameworks,

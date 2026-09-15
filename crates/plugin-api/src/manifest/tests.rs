@@ -648,6 +648,7 @@ fn a_test_framework_contribution_round_trips() {
     assert_eq!(frameworks[0].filter_template, None);
     assert_eq!(frameworks[0].requires_toolchain, None);
     assert_eq!(frameworks[0].report_glob, None);
+    assert_eq!(frameworks[0].filter_dialect, None);
     assert_eq!(frameworks[0].output_format, "teamcity");
     assert_eq!(
         frameworks[0].config_file_candidates,
@@ -766,6 +767,41 @@ fn a_test_framework_may_use_a_filter_template_instead_of_a_flag() {
         Some("**/target/surefire-reports/TEST-*.xml")
     );
     assert_eq!(framework.requires_toolchain.as_deref(), Some("maven"));
+}
+
+#[test]
+fn a_test_framework_may_declare_a_non_default_filter_dialect() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.test-frameworks]]
+            id = "junit-maven"
+            name = "JUnit (Maven)"
+            program-candidates = ["./mvnw", "mvn"]
+            filter-template = "-Dtest={pattern}"
+            output-format = "junit-xml"
+            filter-dialect = "surefire"
+            "#,
+    ))
+    .expect("valid");
+    let framework = &manifest.contributes.test_frameworks[0];
+    assert_eq!(framework.filter_dialect.as_deref(), Some("surefire"));
+}
+
+#[test]
+fn an_unknown_filter_dialect_is_a_load_error_not_a_silent_fallback() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            filter-dialect = "some-future-dialect"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)), "{err}");
 }
 
 #[test]

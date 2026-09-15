@@ -69,6 +69,7 @@ mod tests {
             config_file_candidates: vec![],
             requires_toolchain: None,
             report_glob: None,
+            filter_dialect: None,
         }
     }
 

@@ -471,16 +471,15 @@ impl ffi::LanguageService {
         self.as_mut().diagnostics_changed();
     }
 
-    /// D7: the "Update to `latest`" quick fix, synthesised — there is no
-    /// server here to ask for one. Injected the same way
-    /// `container_intentions` (C6) is: a synchronous branch
-    /// `request_intentions` tries *before* the language-server path,
-    /// short-circuiting it entirely (unlike the plan's original sketch of
-    /// merging the item into the queued `push_job` closure — this file's
-    /// two other branches already establish "handle a build file
-    /// synchronously, never touch `push_job`" as the convention, and a
-    /// caret's fix does not need the extra hop through the LSP worker
-    /// thread's queue for an answer that never involved a server).
+    /// D7's synthesised "Update to `latest`" quick fix for the caret in
+    /// `path`, if any — `None` both for a file this module does not
+    /// recognise and for a build file with no version-hint issue under
+    /// the caret. Pure (no `self` mutation): shared by
+    /// [`build_file_intentions`](Self::build_file_intentions)'s
+    /// short-circuit path (no server exists for this file) and
+    /// `request_intentions`'s own merge path (review fix #3 — a server
+    /// *does* exist), so the same computation backs both rather than two
+    /// copies of it drifting apart.
     ///
     /// Recomputed from the *local* index only, deliberately, the same
     /// tradeoff `build_file_completion`'s first delivery makes: instant,
@@ -492,14 +491,14 @@ impl ffi::LanguageService {
     /// alongside D5's completion's own Central-vs-local sync note, rather
     /// than caching D6's last-published hints on this struct for one
     /// caller.
-    pub(crate) fn build_file_intentions(
-        mut self: Pin<&mut Self>,
+    pub(crate) fn build_file_quick_fix(
+        &self,
         path: &str,
         line: u32,
         character: u32,
-    ) -> bool {
+    ) -> Option<lsp_core::Intention> {
         if !is_build_file_path(path) {
-            return false;
+            return None;
         }
         let content = self
             .session
@@ -524,17 +523,39 @@ impl ffi::LanguageService {
                     })
                     .unwrap_or_default();
                 versions::hint_for(d, &candidates)
-            });
+            })?;
+        Some(lsp_core::Intention {
+            item: quick_fix_item(&hint, path, &content),
+            group: lsp_core::IntentionGroup::QuickFix,
+            preferred: true,
+        })
+    }
 
-        self.intentions_tracker.borrow_mut().begin();
-        *self.intentions.borrow_mut() = match hint {
-            Some(hint) => vec![lsp_core::Intention {
-                item: quick_fix_item(&hint, path, &content),
-                group: lsp_core::IntentionGroup::QuickFix,
-                preferred: true,
-            }],
-            None => Vec::new(),
+    /// D7's short-circuit branch: `request_intentions` tries this
+    /// *before* the language-server path, mirroring C6's
+    /// `container_intentions`. Returns `false` — never touching
+    /// `self.intentions` — both when there is no hint at all (the file
+    /// is not a build file, or nothing is wrong at the caret) and when
+    /// one exists but a real server is also configured for this file
+    /// (`pom.xml` with lemminx, `build.gradle.kts` with
+    /// kotlin-language-server): review fix #3 — short-circuiting there
+    /// would silently hide every one of that server's own intentions.
+    /// `request_intentions` merges the quick fix back in for that case
+    /// itself, via [`build_file_quick_fix`](Self::build_file_quick_fix).
+    pub(crate) fn build_file_intentions(
+        mut self: Pin<&mut Self>,
+        path: &str,
+        line: u32,
+        character: u32,
+    ) -> bool {
+        let Some(intention) = self.build_file_quick_fix(path, line, character) else {
+            return false;
         };
+        if self.config_for_path(path).is_some() {
+            return false;
+        }
+        self.intentions_tracker.borrow_mut().begin();
+        *self.intentions.borrow_mut() = vec![intention];
         self.intentions_language.borrow_mut().clear();
         self.as_mut().intentions_ready();
         true

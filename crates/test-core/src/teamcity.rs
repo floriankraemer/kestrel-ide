@@ -56,13 +56,20 @@ pub enum TeamCityEvent {
 }
 
 /// Streaming parser: one instance per run, fed chunks as they arrive.
+///
+/// One suite stack per `flowId` (jvm-build-tools plan C1, ADR-0057): Gradle's
+/// `ide-model.init.gradle` tags every message with the emitting `Test` task's
+/// path as `flowId`, and two test tasks (two Gradle subprojects, or forked
+/// workers) can interleave their lines in the same stdout stream. A single
+/// global stack would let flow B's `testSuiteStarted` push onto — and flow
+/// A's `testSuiteFinished` pop off — the *same* stack, corrupting both
+/// flows' nesting. Messages with no `flowId` (PHPUnit's own reporter never
+/// sends one) all share one stack, keyed by the empty string, which is
+/// exactly today's single-stack behavior.
 #[derive(Debug, Default)]
 pub struct TeamCityParser {
     buffer: String,
-    /// Currently open suites, outermost first — a test never nests
-    /// another test, so only `testSuiteStarted`/`testSuiteFinished` push
-    /// and pop this.
-    stack: Vec<TestId>,
+    stacks: HashMap<String, Vec<TestId>>,
 }
 
 impl TeamCityParser {
@@ -101,18 +108,20 @@ impl TeamCityParser {
 
     fn parse_line(&mut self, line: &str) -> Option<TeamCityEvent> {
         let message = ServiceMessage::parse(line)?;
-        let parent = self.stack.last().cloned();
+        let flow = message.get("flowId").unwrap_or("").to_string();
+        let stack = self.stacks.entry(flow).or_default();
+        let parent = stack.last().cloned();
         match message.name.as_str() {
             "testSuiteStarted" => {
                 let name = message.get("name")?.to_string();
                 let id = TestId::child(parent.as_ref(), &name);
-                self.stack.push(id);
+                stack.push(id);
                 Some(TeamCityEvent::SuiteStarted { parent, name })
             }
             "testSuiteFinished" => {
                 let name = message.get("name")?.to_string();
-                self.stack.pop();
-                let parent = self.stack.last().cloned();
+                stack.pop();
+                let parent = stack.last().cloned();
                 Some(TeamCityEvent::SuiteFinished { parent, name })
             }
             "testStarted" => Some(TeamCityEvent::TestStarted {
@@ -344,6 +353,60 @@ mod tests {
                 parent: None,
                 name: "testX".into()
             }]
+        );
+    }
+
+    /// Two Gradle test tasks (two `flowId`s) interleaving their messages in
+    /// one stdout stream must not corrupt each other's suite nesting — the
+    /// jvm-build-tools plan's C1 requirement, reproducing exactly the shape
+    /// `ide-model.init.gradle`'s `IdeTeamCityListener` produces for two
+    /// subprojects run in parallel.
+    #[test]
+    fn interleaved_flows_keep_separate_suite_stacks() {
+        let mut parser = TeamCityParser::new();
+        let mut out = parser.feed(
+            "##teamcity[testSuiteStarted name='com.a.ATest' flowId=':a:test']\n\
+             ##teamcity[testSuiteStarted name='com.b.BTest' flowId=':b:test']\n\
+             ##teamcity[testStarted name='testFromA' flowId=':a:test']\n\
+             ##teamcity[testStarted name='testFromB' flowId=':b:test']\n\
+             ##teamcity[testFinished name='testFromB' duration='1' flowId=':b:test']\n\
+             ##teamcity[testSuiteFinished name='com.b.BTest' flowId=':b:test']\n\
+             ##teamcity[testFinished name='testFromA' duration='2' flowId=':a:test']\n\
+             ##teamcity[testSuiteFinished name='com.a.ATest' flowId=':a:test']\n",
+        );
+        out.extend(parser.finish());
+
+        let started_a = out
+            .iter()
+            .find(|e| matches!(e, TeamCityEvent::TestStarted { name, .. } if name == "testFromA"))
+            .unwrap();
+        let TeamCityEvent::TestStarted { parent, .. } = started_a else {
+            unreachable!()
+        };
+        assert_eq!(parent.as_ref().unwrap().as_str(), "com.a.ATest");
+
+        let started_b = out
+            .iter()
+            .find(|e| matches!(e, TeamCityEvent::TestStarted { name, .. } if name == "testFromB"))
+            .unwrap();
+        let TeamCityEvent::TestStarted { parent, .. } = started_b else {
+            unreachable!()
+        };
+        assert_eq!(parent.as_ref().unwrap().as_str(), "com.b.BTest");
+
+        // Flow B closing its suite must not pop flow A's still-open one.
+        let finished_a = out
+            .iter()
+            .find(
+                |e| matches!(e, TeamCityEvent::SuiteFinished { name, .. } if name == "com.a.ATest"),
+            )
+            .unwrap();
+        assert_eq!(
+            finished_a,
+            &TeamCityEvent::SuiteFinished {
+                parent: None,
+                name: "com.a.ATest".into(),
+            }
         );
     }
 

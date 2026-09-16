@@ -116,12 +116,18 @@ pub fn parse(xml: &str) -> Result<Vec<JUnitTestCase>, ParseError> {
                     let decoded = quick_xml::escape::unescape(&raw)
                         .map_err(|e| ParseError(e.to_string()))?
                         .into_owned();
-                    if message.is_empty() {
-                        *message = decoded;
-                    } else {
-                        message.push('\n');
-                        message.push_str(&decoded);
-                    }
+                    append_to(message, &decoded);
+                }
+            }
+            // Surefire's own `<failure>`/`<error>` schema wraps its stack
+            // trace in a `<![CDATA[...]]>` section, not plain text — a real
+            // report's body arrives here, never as `Event::Text` above. A
+            // CDATA section is verbatim by definition (that is what CDATA
+            // means), so it needs no `unescape`, unlike ordinary text.
+            Ok(Event::CData(cdata)) => {
+                if let Some((_, message)) = collecting.as_mut() {
+                    let decoded = String::from_utf8_lossy(&cdata.into_inner()).into_owned();
+                    append_to(message, &decoded);
                 }
             }
             Ok(Event::End(tag)) => match tag.name().as_ref() {
@@ -152,6 +158,18 @@ pub fn parse(xml: &str) -> Result<Vec<JUnitTestCase>, ParseError> {
     }
 
     Ok(cases)
+}
+
+/// Append `decoded` to an accumulating failure/error message, on its own
+/// line once something is already there — shared by the plain-text and
+/// CDATA branches above so both feed the exact same accumulation rule.
+fn append_to(message: &mut String, decoded: &str) {
+    if message.is_empty() {
+        *message = decoded.to_string();
+    } else {
+        message.push('\n');
+        message.push_str(decoded);
+    }
 }
 
 fn new_pending_case(
@@ -261,6 +279,31 @@ mod tests {
         assert_eq!(cases.len(), 2);
         assert_eq!(cases[0].suite, "Tests\\ATest");
         assert_eq!(cases[1].suite, "Tests\\BTest");
+    }
+
+    /// Real Surefire output wraps its stack trace in `<![CDATA[...]]>`,
+    /// never plain text — the shape that motivated adding `Event::CData`
+    /// handling alongside `Event::Text` (jvm-build-tools plan C2: found by
+    /// the Maven integration test against a real `mvn test` run, whose
+    /// diagnostic conversion needs a `path:line` the CDATA body carries and
+    /// the `message` attribute alone does not).
+    #[test]
+    fn a_surefire_style_cdata_failure_body_is_captured_as_details() {
+        let cases = parse(&fixture("junit_surefire_cdata.xml")).unwrap();
+        let failing = cases
+            .iter()
+            .find(|c| c.name == "deliberatelyFails")
+            .unwrap();
+        let failure = failing.failure.as_ref().unwrap();
+        assert_eq!(
+            failure.message,
+            "expected: <Hello, World!> but was: <Hello, Nobody!>"
+        );
+        assert!(
+            failure.details.contains("GreeterTest.java:16"),
+            "the CDATA stack trace must end up in details, got: {}",
+            failure.details
+        );
     }
 
     #[test]

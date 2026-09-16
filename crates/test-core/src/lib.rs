@@ -37,7 +37,10 @@ mod tree;
 
 pub use diagnostics::diagnostics_by_file;
 pub use junit::{parse as parse_junit_xml, JUnitTestCase, ParseError as JUnitParseError};
-pub use runner::{run, RunFailure, TestRunHandle, TestSink};
+pub use runner::{
+    parse_output_format, run, OutputFormat, RunFailure, TestRunHandle, TestSink,
+    UnknownOutputFormat,
+};
 pub use selection::{select_framework, SUPPORTED_OUTPUT_FORMATS};
 pub use teamcity::{TeamCityEvent, TeamCityParser};
 pub use tree::{NodeKind, TestCounts, TestFailure, TestId, TestNode, TestStatus, TestTree};

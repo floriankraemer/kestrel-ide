@@ -17,6 +17,18 @@ process-exec = { path = "../process-exec" }
 # built from.
 plugin-api = { path = "../plugin-api" }
 quick-xml = "0.41"
+# `report_glob` (the `junit-xml` output format's post-run file glob,
+# ADR-0057 C1): matching `**/target/{surefire,failsafe}-reports/TEST-*.xml`
+# against a walked `work_dir` needs brace-alternate glob syntax, not a
+# hand-rolled matcher.
+globset = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+
+[features]
+# Gates `tests/jvm_integration.rs`, which shells out to the real `gradle`/
+# `mvn` binaries `linux-jvm` ships against jvm-build-core's fixture projects
+# (jvm-build-tools plan C2, ADR-0057) — never enabled by
+# `cargo test --workspace`/`make test`, only `make test-jvm`.
+jvm-integration = []

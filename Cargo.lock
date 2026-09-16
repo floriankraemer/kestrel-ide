@@ -6221,6 +6221,7 @@ name = "test-core"
 version = "0.1.0"
 dependencies = [
  "diagnostics-core",
+ "globset",
  "plugin-api",
  "process-exec",
  "quick-xml",

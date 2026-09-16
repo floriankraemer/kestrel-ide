@@ -612,6 +612,14 @@ impl ffi::LanguageService {
         self.as_mut().request_semantic_tokens(path, text);
         // C10: same fire-and-forget convention, immediately above.
         self.as_mut().request_code_lenses(path);
+        // D6 (review fix #6): a build file can have a real language
+        // server configured too (lemminx for `pom.xml`,
+        // kotlin-language-server for `build.gradle.kts`) — that branch
+        // returned before this point instead of falling through to
+        // `open_build_file_document`, so version hints were only ever
+        // computed when *no* server existed. Cheap no-op for any other
+        // file, same as every other `refresh_version_hints` call site.
+        self.as_mut().refresh_version_hints(&path.to_string());
     }
 
     /// D0: a build file (`pom.xml`, `build.gradle(.kts)`, `libs.versions.toml`, …)

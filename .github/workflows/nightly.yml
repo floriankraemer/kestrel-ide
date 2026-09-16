@@ -98,7 +98,11 @@ jobs:
     name: JVM integration
     needs: jvm-image
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Matches the `e2e` job's own ceiling: this job now builds `app` and
+    # runs the Xvfb E2E flows (jvm-build-tools plan E2/E) on top of the
+    # real-toolchain integration tests, the same real-Gradle/Maven-plus-
+    # Xvfb budget `e2e` already needs 30 minutes for.
+    timeout-minutes: 30
     container:
       image: ${{ needs.jvm-image.outputs.image }}
       credentials:
@@ -113,3 +117,15 @@ jobs:
 
       - name: jvm-build-core integration tests
         run: make jvm-ci
+
+      # Same reasoning as the `e2e` job's own upload step above: the E2E
+      # flows this job now runs write events.jsonl always, and
+      # stdout/stderr/screenshot on panic (crates/e2e/src/lib.rs, `impl
+      # Drop for Ide`) — the only evidence of a failure nobody can
+      # reproduce locally.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: jvm-integration-artifacts
+          path: target/e2e-artifacts/**
+          if-no-files-found: warn

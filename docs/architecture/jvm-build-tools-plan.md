@@ -137,15 +137,15 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| D0 — build files registered as open documents without a server | done | `TBD` |
-| D1 — Groovy grammar row | done | `TBD` |
-| D2 — `editing::context` for pom.xml, `build.gradle(.kts)`, `libs.versions.toml` | done | `TBD` |
-| D3 — local repository index (`~/.m2`, `~/.gradle/caches`) | done | `TBD` |
-| D4 — Maven Central client with disk cache; offline-aware | done | `TBD` |
-| D5 — completion merge in `completion_at` | done | `TBD` |
-| D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | done | `TBD` |
-| D7 — "Update to X" quick fix via synthesised `CodeActionItem` | done | `TBD` |
-| D8 — dependency analyzer | done | `TBD` |
+| D0 — build files registered as open documents without a server | done | `a435faf` |
+| D1 — Groovy grammar row | done | `033d41d` |
+| D2 — `editing::context` for pom.xml, `build.gradle(.kts)`, `libs.versions.toml` | done | `44136b1` |
+| D3 — local repository index (`~/.m2`, `~/.gradle/caches`) | done | `4aa168c` |
+| D4 — Maven Central client with disk cache; offline-aware | done | `672783c` |
+| D5 — completion merge in `completion_at` | done | `e09c391` |
+| D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | done | `7088043` |
+| D7 — "Update to X" quick fix via synthesised `CodeActionItem` | done | `b6f7cd6` |
+| D8 — dependency analyzer | done | `c902946, 145126d` |
 
 ### E — docs & verification (later PR)
 

@@ -142,7 +142,7 @@ Update the row **in the same commit** that finishes the task.
 | D2 — `editing::context` for pom.xml, `build.gradle(.kts)`, `libs.versions.toml` | done | `TBD` |
 | D3 — local repository index (`~/.m2`, `~/.gradle/caches`) | done | `TBD` |
 | D4 — Maven Central client with disk cache; offline-aware | done | `TBD` |
-| D5 — completion merge in `completion_at` | open | |
+| D5 — completion merge in `completion_at` | done | `TBD` |
 | D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | open | |
 | D7 — "Update to X" quick fix via synthesised `CodeActionItem` | open | |
 | D8 — dependency analyzer | open | |

@@ -6956,6 +6956,7 @@ dependencies = [
  "cxx-qt-lib",
  "dap-core",
  "diagnostics-core",
+ "dirs",
  "edit-ops",
  "editor-core",
  "index-core",

@@ -9,5 +9,7 @@
 //! into `lsp_core::CompletionItem`, not this crate.
 
 pub mod central;
+pub mod completion;
 pub mod context;
 pub mod repo_index;
+pub mod version_order;

@@ -60,6 +60,10 @@ color-theme = { path = "../color-theme" }
 # The agent's tool arguments and results are `serde_json::Value`s
 # (`ai_chat_core::tools::ToolCall`), so the seam has to read and write them.
 serde_json = "1"
+# D5 (`bridge/language/build_files.rs`): the OS home directory, for D3's
+# local repository index default paths (`~/.m2`, `~/.gradle`) — same crate
+# and version `app-config`/`index-core`/`project-model` already pull.
+dirs = "5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
 cxx = "1"
 cxx-qt = "0.9"

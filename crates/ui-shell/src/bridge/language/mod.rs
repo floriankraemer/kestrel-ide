@@ -14,6 +14,11 @@ use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 /// file-size ceiling, the way `ai/agent.rs` splits out of `ai/chat.rs`.
 /// C6: image-name completion and the "Pull image" intention, injected
 /// before the language-server gate.
+/// D5 (jvm-build-tools plan): pom.xml/build.gradle(.kts)/
+/// libs.versions.toml coordinate completion, injected before the
+/// language-server path the same way `containers.rs` injects image-name
+/// completion — split out for the same file-size-ceiling reason.
+mod build_files;
 mod containers;
 mod lsp_surface;
 
@@ -1003,6 +1008,15 @@ impl ffi::LanguageService {
             character,
             &text_before_cursor.to_string(),
         ) {
+            return;
+        }
+        // D5: a build file has no server (D0 registers it in `open_docs`
+        // anyway, for D7's quick fix), so without this the LSP branch
+        // below would silently answer nothing for it.
+        if self
+            .as_mut()
+            .build_file_completion(&path, line, character, explicit_request)
+        {
             return;
         }
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {

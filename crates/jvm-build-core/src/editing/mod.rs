@@ -8,5 +8,6 @@
 //! is what maps a [`context::EditContext`]'s eventual completion items
 //! into `lsp_core::CompletionItem`, not this crate.
 
+pub mod central;
 pub mod context;
 pub mod repo_index;

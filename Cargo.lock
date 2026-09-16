@@ -3474,6 +3474,7 @@ dependencies = [
  "process-exec",
  "quick-xml",
  "regex",
+ "reqwest",
  "run-core",
  "serde",
  "serde_json",

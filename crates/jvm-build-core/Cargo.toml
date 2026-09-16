@@ -22,6 +22,24 @@ globset = "0.4"
 # repository (A5, maven::goals) — the one place this crate needs to open a
 # jar rather than run a process or parse text.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# `editing::context` (D2, plan phase D): caret-context classification for
+# Gradle/Kotlin-DSL dependency-configuration calls and
+# `libs.versions.toml`'s flat tables — regex/line scanning per the plan
+# (pom.xml uses quick-xml's own tag-stack instead; no tree-sitter
+# dependency in this crate).
+regex = "1"
+# `editing::central` (D4): the Maven Central client — blocking, `rustls-tls`
+# (not `native-tls`, so the MXE Windows cross-build never vendors OpenSSL),
+# same feature set and spelling as `ai-chat-core`'s and
+# `container-registry`'s. Safe to add directly here rather than splitting
+# into a `jvm-build-registry` crate the way `container-registry` split off
+# `container-core`: nothing under `run-core` depends on `jvm-build-core` —
+# only `app-core` and `ui-shell` do, and neither sits beneath `run-core` —
+# so reqwest's private tokio runtime never enters that tree. Verified with
+# `cargo tree -p run-core -e normal | grep -i tokio` (empty) after this
+# change; re-check that command if `jvm-build-core` ever gains a `run-core`-side
+# dependent.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 
 [dev-dependencies]
 tempfile = "3"

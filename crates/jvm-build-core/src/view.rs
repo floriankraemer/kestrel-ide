@@ -81,14 +81,54 @@ fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -
 /// A dependency's conflict, as one line for the row's `detail` column — the
 /// same "carried through, never re-derived" rule [`crate::model::Conflict`]
 /// itself follows.
+/// Review fix #11: `requested → resolved (reason)`, not the reason alone
+/// — the row's `detail` (its tooltip; there is no separate Detail
+/// column, review fix round 6) previously never showed what was actually
+/// *requested*, only the tool's own free-text reason. A "Conflicts only"
+/// row is exactly the row a user opened this dock to understand, and
+/// "omitted for conflict" alone answers "what happened" but not "from
+/// what to what".
 fn conflict_detail(dependency: &Dependency) -> String {
-    match &dependency.conflict {
-        Some(Conflict::OmittedForConflict { winner }) => {
-            format!("omitted for conflict, resolved to {winner}")
+    let reason = match &dependency.conflict {
+        Some(Conflict::OmittedForConflict { .. }) => "omitted for conflict",
+        Some(Conflict::OmittedForDuplicate) => "omitted for duplicate",
+        Some(Conflict::VersionManagedFrom { from }) => {
+            return format!(
+                "{} → {} (version managed from {from})",
+                dependency.requested, dependency.resolved
+            )
         }
-        Some(Conflict::OmittedForDuplicate) => "omitted for duplicate".to_string(),
-        Some(Conflict::VersionManagedFrom { from }) => format!("version managed from {from}"),
-        None => String::new(),
+        None => return String::new(),
+    };
+    format!(
+        "{} → {} ({reason})",
+        dependency.requested, dependency.resolved
+    )
+}
+
+/// Which build tool(s) the dock's title (and, for an empty tree, its
+/// placeholder text) should name — from *detection* (a marker file found in
+/// the project root) or a synced model, whichever a caller has, combined the
+/// same way either source: the dock must never wait on a sync finishing
+/// before it can say "Gradle" (D8, screenshot review) when detection alone
+/// already knows that much.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolPresence {
+    Gradle,
+    Maven,
+    Both,
+    None,
+}
+
+/// [`ToolPresence`] from "is Gradle present" / "is Maven present" — detected,
+/// synced, or (typically) an OR of both, since a caller that has already
+/// synced still wants its title to keep agreeing with what got detected.
+pub fn tool_presence(has_gradle: bool, has_maven: bool) -> ToolPresence {
+    match (has_gradle, has_maven) {
+        (true, true) => ToolPresence::Both,
+        (true, false) => ToolPresence::Gradle,
+        (false, true) => ToolPresence::Maven,
+        (false, false) => ToolPresence::None,
     }
 }
 
@@ -388,6 +428,12 @@ fn push_dependency_rows(
             ),
         );
         dep_row.detail = conflict_detail(dependency);
+        // D8: "Go to Declaration" needs the owning module's build file —
+        // the same field `Module` rows already carry `build_file` in for
+        // "Open Build File", read by a different bridge lookup for this
+        // kind (`deps::declaration_site`, which needs the line too, not
+        // just the file).
+        dep_row.build_file = module.build_file.display().to_string();
         out.push(dep_row);
     }
 }
@@ -428,6 +474,20 @@ mod tests {
     use crate::model::{Module, Plugin, SourceContent, SourceRoot, SourceRootKind, Task, Tool};
     use std::path::PathBuf;
     use std::time::SystemTime;
+
+    /// D8 (screenshot review — the dock stuck on "Build Tools" for a
+    /// detected-but-unsynced Gradle project): every combination of
+    /// "detected"/"synced" Gradle and Maven presence maps to the one
+    /// [`ToolPresence`] a caller needs regardless of which source it came
+    /// from — detection alone (no sync yet), a synced model alone, or both
+    /// ORed together.
+    #[test]
+    fn tool_presence_combines_gradle_and_maven_independently() {
+        assert_eq!(tool_presence(false, false), ToolPresence::None);
+        assert_eq!(tool_presence(true, false), ToolPresence::Gradle);
+        assert_eq!(tool_presence(false, true), ToolPresence::Maven);
+        assert_eq!(tool_presence(true, true), ToolPresence::Both);
+    }
 
     fn gradle_model() -> BuildModel {
         BuildModel {
@@ -645,7 +705,30 @@ mod tests {
             .iter()
             .find(|n| n.kind == NodeKind::Dependency)
             .unwrap();
-        assert_eq!(dep.detail, "omitted for conflict, resolved to 32.0");
+        assert_eq!(dep.detail, "31.0 → 32.0 (omitted for conflict)");
+    }
+
+    /// Review fix #11: `VersionManagedFrom` gets the same `requested →
+    /// resolved (reason)` shape as every other conflict kind.
+    #[test]
+    fn a_version_managed_dependency_row_shows_requested_and_resolved() {
+        let dep = Dependency {
+            group: "org.example".to_string(),
+            artifact: "lib".to_string(),
+            requested: "1.0".to_string(),
+            resolved: "2.0".to_string(),
+            scope: "implementation".to_string(),
+            transitive: true,
+            file: None,
+            conflict: Some(Conflict::VersionManagedFrom {
+                from: "1.0".to_string(),
+            }),
+            children: vec![],
+        };
+        assert_eq!(
+            conflict_detail(&dep),
+            "1.0 → 2.0 (version managed from 1.0)"
+        );
     }
 
     #[test]

@@ -387,6 +387,32 @@ pub const BUILTIN_LANGUAGES: &[LanguageDef] = &[
         queries: queries!("kotlin"),
     },
     LanguageDef {
+        id: "groovy",
+        name: "Groovy",
+        extensions: &["groovy", "gradle", "gvy"],
+        // Gradle's non-Kotlin build scripts are extensionless-by-convention
+        // filenames, the same reason `settings.gradle.kts` resolves through
+        // Kotlin's own extension match rather than needing a filename entry
+        // here.
+        filenames: &["build.gradle", "settings.gradle"],
+        // `tree-sitter-groovy` 0.1.2 (murtaza64/tree-sitter-groovy): links
+        // against the 0.26 runtime this workspace already pins (verified —
+        // it builds the same way tree-sitter-kotlin-ng does). It ships no
+        // `queries/` directory of its own (the bindings crate's own
+        // `HIGHLIGHTS_QUERY` etc. are commented out upstream), so
+        // queries/groovy/highlights.scm is hand-written the same way
+        // kotlin's is — off this grammar's own `node-types.json`, which is
+        // close enough to `tree-sitter-java`'s node shape (it is a fork of
+        // it) that most of java's highlights.scm carries over unchanged,
+        // plus Groovy's own `def`, closures and GString interpolation.
+        line_comment: Some("//"),
+        block_comment: Some(("/*", "*/")),
+        brackets: BRACKETS,
+        quotes: QUOTES_DOUBLE_SINGLE,
+        grammar: || tree_sitter_groovy::LANGUAGE.into(),
+        queries: queries!("groovy"),
+    },
+    LanguageDef {
         id: "swift",
         name: "Swift",
         extensions: &["swift"],

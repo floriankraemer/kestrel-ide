@@ -22,7 +22,7 @@ Five layers, detailed in [overview.md §3](overview.md#3-building-block-view) (t
 
 - Domain: `editor-core`, `project-model`.
 - Application: `app-core`.
-- Support: everything else that is Qt-free — `app-config`, `syntax-core`, `index-core`, `lsp-core`, `settings-model`, `edit-ops`, `pty-core`, `terminal-core`, `run-core`, `mcp-server`, `container-core`, `container-registry`, and more (overview.md's table has the full list).
+- Support: everything else that is Qt-free — `app-config`, `syntax-core`, `index-core`, `lsp-core`, `settings-model`, `edit-ops`, `pty-core`, `terminal-core`, `run-core`, `mcp-server`, `container-core`, `container-registry`, `jvm-build-core`, and more (overview.md's table has the full list).
 - Adapter + view: `ui-shell`.
 - Main: `app`.
 

@@ -5705,6 +5705,32 @@ mod ffi {
             extra_args: &QString,
         ) -> FfiRunConfig;
 
+        /// D8: every distinct scope/configuration the synced model(s)
+        /// declare a dependency under — the dependency analyzer's scope
+        /// combo's item list.
+        #[qinvokable]
+        #[cxx_name = "dependencyScopes"]
+        fn dependency_scopes(self: &BuildToolsService) -> QStringList;
+
+        /// D8: the scope combo changed; an empty string means "every
+        /// scope".
+        #[qinvokable]
+        #[cxx_name = "setDependencyScope"]
+        fn set_dependency_scope(self: Pin<&mut BuildToolsService>, scope: &QString);
+
+        /// D8: the "Conflicts only" toggle changed.
+        #[qinvokable]
+        #[cxx_name = "setConflictsOnly"]
+        fn set_conflicts_only(self: Pin<&mut BuildToolsService>, conflicts_only: bool);
+
+        /// D8: "Go to Declaration" for a Dependency row — the 1-based
+        /// line to open its `buildFile` at, or `-1` when none is found
+        /// (a transitive dependency, which never appears in the build
+        /// file itself).
+        #[qinvokable]
+        #[cxx_name = "dependencyDeclarationLine"]
+        fn dependency_declaration_line(self: &BuildToolsService, node_id: &QString) -> i32;
+
         #[qsignal]
         #[cxx_name = "modelChanged"]
         fn model_changed(self: Pin<&mut BuildToolsService>);

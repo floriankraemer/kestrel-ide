@@ -145,6 +145,10 @@ pub struct BuildToolsServiceRust {
     /// in `jvm_build_core::view`, which shapes rows from a model and knows
     /// nothing about UI-held check state.
     checked_profiles: RefCell<std::collections::HashSet<String>>,
+    /// D8: the Dependencies subtree's scope/configuration filter and
+    /// "Conflicts only" toggle — dock-held view state, the same reason
+    /// `checked_profiles` lives here rather than in `jvm_build_core::view`.
+    dependency_filter: RefCell<jvm_build_core::deps::DependencyFilter>,
     store: SharedDiagnostics,
 }
 
@@ -239,19 +243,121 @@ fn publish_sync_error(store: &SharedDiagnostics, root: &Path, message: &str) {
     store.replace(SOURCE_KEY, &uri, vec![core_diagnostic]);
 }
 
+/// A model with `deps::filter` applied to every module's own dependency
+/// list — `view::rows` groups dependencies by their own `scope` field, so
+/// filtering *before* it, rather than teaching it a filter parameter, is
+/// what makes a scope with nothing left after filtering simply not
+/// produce a subtree at all (the "distinct scopes" scan it does is over
+/// this same already-filtered list).
+fn filtered_model(
+    model: &BuildModel,
+    filter: &jvm_build_core::deps::DependencyFilter,
+) -> BuildModel {
+    let mut filtered = model.clone();
+    for module in &mut filtered.modules {
+        module.dependencies = jvm_build_core::deps::filter(&module.dependencies, filter);
+    }
+    filtered
+}
+
 impl ffi::BuildToolsService {
     pub fn rows(&self) -> Vec<ffi::FfiBuildToolNode> {
         let checked = self.checked_profiles.borrow();
+        let filter = self.dependency_filter.borrow();
         self.models
             .borrow()
             .iter()
+            .map(|model| filtered_model(model, &filter))
             .flat_map(|model| {
-                jvm_build_core::view::rows(model, &checked)
+                jvm_build_core::view::rows(&model, &checked)
                     .into_iter()
                     .map(|node| to_ffi_node(&node, model.tool))
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    /// D8: every distinct scope/configuration the synced model(s) declare
+    /// a dependency under — the dock combo's own item list, built fresh
+    /// from the *unfiltered* models (a scope the current filter already
+    /// hides must stay selectable, to switch back to it).
+    pub fn dependency_scopes(&self) -> ffi::QStringList {
+        let mut scopes: Vec<String> = self
+            .models
+            .borrow()
+            .iter()
+            .flat_map(|model| model.modules.iter())
+            .flat_map(|module| module.dependencies.iter())
+            .map(|dep| dep.scope.clone())
+            .collect();
+        scopes.sort_unstable();
+        scopes.dedup();
+        scopes.iter().map(|s| QString::from(s.as_str())).collect()
+    }
+
+    /// D8: the scope combo changed. An empty `scope` means "every scope" —
+    /// the combo's own "All" entry, translated to `None` here rather than
+    /// carrying a sentinel string through `jvm_build_core::deps`.
+    pub fn set_dependency_scope(mut self: Pin<&mut Self>, scope: &QString) {
+        let scope = scope.to_string();
+        self.dependency_filter.borrow_mut().scope = (!scope.is_empty()).then_some(scope);
+        self.as_mut().model_changed();
+    }
+
+    /// D8: the "Conflicts only" toggle changed.
+    pub fn set_conflicts_only(mut self: Pin<&mut Self>, conflicts_only: bool) {
+        self.dependency_filter.borrow_mut().conflicts_only = conflicts_only;
+        self.as_mut().model_changed();
+    }
+
+    /// D8: "Go to Declaration" for a Dependency row (`node_id`, the same
+    /// id `rows()` gave the row — `"{scope_id}:{group}:{artifact}:
+    /// {resolved}"`, `view::push_dependency_rows`'s own shape). The
+    /// 1-based line to open the row's `build_file` at, or `-1` when
+    /// `deps::declaration_site` finds no match (a transitive dependency,
+    /// which by definition never appears in the build file itself).
+    pub fn dependency_declaration_line(&self, node_id: &QString) -> i32 {
+        let node_id = node_id.to_string();
+        // The id's last two colon-separated segments before the trailing
+        // resolved-version segment are `group:artifact` — reconstructing
+        // this from the id (rather than looking the row up by identity)
+        // keeps this a stateless query, the same as `task_config`'s own
+        // node-id lookup pattern below.
+        let mut segments: Vec<&str> = node_id.split(':').collect();
+        if segments.len() < 3 {
+            return -1;
+        }
+        segments.pop(); // resolved version, unused here
+        let artifact = segments.pop().unwrap_or_default();
+        let group = segments.pop().unwrap_or_default();
+
+        for model in self.models.borrow().iter() {
+            for module in &model.modules {
+                let Some(dep) = module
+                    .dependencies
+                    .iter()
+                    .find(|d| d.group == group && d.artifact == artifact)
+                else {
+                    continue;
+                };
+                // The live buffer when the build file is open (unsaved
+                // edits included, the same "the buffer wins" rule D5/D6
+                // already follow), disk otherwise.
+                let text = crate::bridge::registry::shared_session()
+                    .borrow()
+                    .content_for_path(&module.build_file)
+                    .or_else(|| std::fs::read_to_string(&module.build_file).ok());
+                let Some(text) = text else {
+                    continue;
+                };
+                if let Some(line) =
+                    jvm_build_core::deps::declaration_site(dep, &module.build_file, &text)
+                {
+                    return line as i32;
+                }
+            }
+        }
+        -1
     }
 
     /// A profile checkbox in the dock was toggled (B3). `modelChanged` is

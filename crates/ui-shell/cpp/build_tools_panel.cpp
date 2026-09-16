@@ -10,7 +10,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
+#include <QComboBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
@@ -35,6 +37,13 @@ constexpr int kToolRole = Qt::UserRole + 1;
 constexpr int kRunnableRole = Qt::UserRole + 2;
 constexpr int kBuildFileRole = Qt::UserRole + 3;
 constexpr int kIsProfileRole = Qt::UserRole + 4;
+// D8: which rows "Go to Declaration" applies to.
+constexpr int kIsDependencyRole = Qt::UserRole + 5;
+
+// D8: the dependency scope combo's "every scope" entry — translated to an
+// empty string at the seam (`BuildToolsService::setDependencyScope`'s own
+// doc comment), never carried through as a sentinel string past this file.
+const int kAllScopesIndex = 0;
 
 // A row icon per kind (review fix 3, pixel scrutiny): plain platform-style
 // icons, the same "no vendored asset for a handful of kinds" call
@@ -165,6 +174,18 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     toolbar->addWidget(skipTestsButton_);
     toolbar->addWidget(settingsButton);
 
+    // D8: the dependency analyzer's own row, under the main toolbar — a
+    // combo needs its selected text on screen (unlike every icon-only
+    // toggle above it), so it cannot fold into that row without either
+    // losing its label or pushing Execute… below its usable-width floor.
+    dependencyScopeCombo_ = new QComboBox(this);
+    dependencyScopeCombo_->addItem(tr("All Scopes"));
+    dependencyScopeCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    conflictsOnlyCheck_ = new QCheckBox(tr("Conflicts Only"), this);
+    auto *dependencyToolbar = new QHBoxLayout();
+    dependencyToolbar->addWidget(dependencyScopeCombo_, 1);
+    dependencyToolbar->addWidget(conflictsOnlyCheck_);
+
     tree_ = new QTreeWidget(this);
     tree_->setColumnCount(1);
     // Review fix (round 6): a second "Detail" column cost every row's Name
@@ -193,6 +214,7 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addLayout(toolbar);
+    layout->addLayout(dependencyToolbar);
     layout->addWidget(statusLabel_);
     layout->addWidget(tree_, 1);
 
@@ -225,8 +247,16 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
             openSettings_();
         }
     });
+    connect(dependencyScopeCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        buildToolsService_->setDependencyScope(index == kAllScopesIndex
+                                                  ? QString()
+                                                  : dependencyScopeCombo_->itemText(index));
+    });
+    connect(conflictsOnlyCheck_, &QCheckBox::toggled, this,
+            [this](bool on) { buildToolsService_->setConflictsOnly(on); });
 
     connect(buildToolsService_, &BuildToolsService::modelChanged, this, [this]() {
+        refreshDependencyScopes();
         refreshTree();
         refreshTitle();
     });
@@ -235,6 +265,7 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     connect(buildToolsService_, &BuildToolsService::bannerChanged, this,
             &BuildToolsPanel::refreshBanner);
 
+    refreshDependencyScopes();
     refreshTree();
     refreshTitle();
     refreshBanner();
@@ -262,6 +293,26 @@ void BuildToolsPanel::refreshBanner()
     } else {
         statusLabel_->setVisible(false);
     }
+}
+
+void BuildToolsPanel::refreshDependencyScopes()
+{
+    // Blocked the same way `refreshTree`'s own `QSignalBlocker` is:
+    // repopulating fires `currentIndexChanged` on every `addItem` call
+    // otherwise, which would re-enter `setDependencyScope` for a
+    // selection nothing actually chose.
+    const QSignalBlocker blocker(dependencyScopeCombo_);
+    const QString selected = dependencyScopeCombo_->currentIndex() > kAllScopesIndex
+                                ? dependencyScopeCombo_->currentText()
+                                : QString();
+    dependencyScopeCombo_->clear();
+    dependencyScopeCombo_->addItem(tr("All Scopes"));
+    for (const QString &scope : buildToolsService_->dependencyScopes()) {
+        dependencyScopeCombo_->addItem(scope);
+    }
+    const int index = selected.isEmpty() ? kAllScopesIndex
+                                          : dependencyScopeCombo_->findText(selected);
+    dependencyScopeCombo_->setCurrentIndex(index >= 0 ? index : kAllScopesIndex);
 }
 
 void BuildToolsPanel::refreshTree()
@@ -307,6 +358,7 @@ void BuildToolsPanel::refreshTree()
         item->setData(0, kToolRole, QString(node.tool));
         item->setData(0, kRunnableRole, node.kind == FfiBuildToolNodeKind::Task);
         item->setData(0, kBuildFileRole, QString(node.buildFile));
+        item->setData(0, kIsDependencyRole, node.kind == FfiBuildToolNodeKind::Dependency);
         if (node.kind == FfiBuildToolNodeKind::Profile) {
             item->setData(0, kIsProfileRole, true);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -341,6 +393,7 @@ void BuildToolsPanel::showContextMenu(const QPoint &pos)
     }
     const QString nodeId = item->data(0, kIdRole).toString();
     const bool runnable = item->data(0, kRunnableRole).toBool();
+    const bool isDependency = item->data(0, kIsDependencyRole).toBool();
     const QString buildFile = item->data(0, kBuildFileRole).toString();
     if (!runnable && buildFile.isEmpty()) {
         return;
@@ -352,8 +405,16 @@ void BuildToolsPanel::showContextMenu(const QPoint &pos)
     if (runnable) {
         menu.addSeparator();
     }
-    QAction *openBuildFile =
-      !buildFile.isEmpty() ? menu.addAction(tr("Open Build File")) : nullptr;
+    // D8: "Go to Declaration" (a specific line, via `deps::declaration_site`)
+    // replaces the generic "Open Build File" (line 1) for a Dependency row —
+    // offering both would be two menu entries for "open the same file",
+    // differing only in which line, which is not a real choice.
+    QAction *openBuildFile = (!isDependency && !buildFile.isEmpty())
+                                ? menu.addAction(tr("Open Build File"))
+                                : nullptr;
+    QAction *goToDeclaration = (isDependency && !buildFile.isEmpty())
+                                  ? menu.addAction(tr("Go to Declaration"))
+                                  : nullptr;
     QAction *copy = menu.addAction(tr("Copy Coordinate"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
     if (chosen == run) {
@@ -363,6 +424,11 @@ void BuildToolsPanel::showContextMenu(const QPoint &pos)
     } else if (chosen == openBuildFile) {
         if (openAt_) {
             openAt_(buildFile, 1, 0);
+        }
+    } else if (chosen == goToDeclaration) {
+        const int line = buildToolsService_->dependencyDeclarationLine(nodeId);
+        if (openAt_ && line >= 1) {
+            openAt_(buildFile, line, 0);
         }
     } else if (chosen == copy) {
         QGuiApplication::clipboard()->setText(item->text(0));

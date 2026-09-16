@@ -388,6 +388,12 @@ fn push_dependency_rows(
             ),
         );
         dep_row.detail = conflict_detail(dependency);
+        // D8: "Go to Declaration" needs the owning module's build file —
+        // the same field `Module` rows already carry `build_file` in for
+        // "Open Build File", read by a different bridge lookup for this
+        // kind (`deps::declaration_site`, which needs the line too, not
+        // just the file).
+        dep_row.build_file = module.build_file.display().to_string();
         out.push(dep_row);
     }
 }

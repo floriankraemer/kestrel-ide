@@ -6,6 +6,8 @@
 #include <functional>
 
 class QAction;
+class QCheckBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPoint;
@@ -45,6 +47,7 @@ private:
     void refreshTree();
     void refreshTitle();
     void refreshBanner();
+    void refreshDependencyScopes();
     void runNode(const QString &nodeId, const QString &extraArgs);
     void showContextMenu(const QPoint &pos);
 
@@ -57,6 +60,13 @@ private:
     QLineEdit *executeEdit_;
     QToolButton *offlineButton_;
     QToolButton *skipTestsButton_;
+    // D8's dependency analyzer: the Dependencies subtree's scope filter
+    // and "Conflicts only" toggle. A second toolbar row rather than
+    // crowding the first (review-fix-round-6's own reasoning: the first
+    // row is already tight on a right-side dock's width, and these two
+    // controls matter only while looking at Dependencies).
+    QComboBox *dependencyScopeCombo_;
+    QCheckBox *conflictsOnlyCheck_;
     QLabel *statusLabel_;
 };
 

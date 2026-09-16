@@ -188,12 +188,10 @@ fn e2e_gradle_sync_run_and_test() {
     // assertion failure rather than a timeout. Review fix #6: 180s, not
     // the harness's 60s default — a real Gradle sync in Docker is not
     // this harness's own UI driving itself.
-    let synced = ide.wait_for_event_within(
-        mark,
-        REAL_TOOLCHAIN_TIMEOUT,
-        "the sync to finish",
-        |e| e["ev"] == "build_tools_synced",
-    );
+    let synced =
+        ide.wait_for_event_within(mark, REAL_TOOLCHAIN_TIMEOUT, "the sync to finish", |e| {
+            e["ev"] == "build_tools_synced"
+        });
     assert_eq!(
         synced["failed"], false,
         "Gradle sync failed against the real toolchain"

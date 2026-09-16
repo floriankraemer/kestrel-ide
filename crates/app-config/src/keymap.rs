@@ -1241,7 +1241,11 @@ mod tests {
         }
         // A directory that failed to glob any `.cpp` file would make this
         // test vacuously pass — assert it actually walked something.
-        assert!(files_scanned > 10, "found suspiciously few .cpp files under {}", cpp_dir.display());
+        assert!(
+            files_scanned > 10,
+            "found suspiciously few .cpp files under {}",
+            cpp_dir.display()
+        );
         assert!(
             missing.is_empty(),
             "registerAction() call(s) with no ACTIONS row in keymap.rs — Search Everywhere/Find \

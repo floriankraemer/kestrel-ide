@@ -137,15 +137,17 @@ Update the row **in the same commit** that finishes the task.
 
 | Task | Status | Commit |
 |---|---|---|
-| D0 — build files registered as open documents without a server | done | `a435faf` |
-| D1 — Groovy grammar row | done | `033d41d` |
-| D2 — `editing::context` for pom.xml, `build.gradle(.kts)`, `libs.versions.toml` | done | `44136b1` |
-| D3 — local repository index (`~/.m2`, `~/.gradle/caches`) | done | `4aa168c` |
-| D4 — Maven Central client with disk cache; offline-aware | done | `672783c` |
-| D5 — completion merge in `completion_at` | done | `e09c391` |
-| D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | done | `7088043` |
-| D7 — "Update to X" quick fix via synthesised `CodeActionItem` | done | `b6f7cd6` |
-| D8 — dependency analyzer | done | `c902946, 145126d` |
+| D0 — build files registered as open documents without a server | done | `4110b08`, `533af5b` (review fix #7 — basename rule, not the sync globs) |
+| D1 — Groovy grammar row | done | `63a05ab` |
+| D2 — `editing::context` for pom.xml, `build.gradle(.kts)`, `libs.versions.toml` | done | `2374fed`, `6c642e9` (review fix #4 — nested elements no longer overwrite the enclosing coordinate) |
+| D3 — local repository index (`~/.m2`, `~/.gradle/caches`) | done | `b1846b7`, `840c0ef` (review fix #11 — symlinks not followed) |
+| D4 — Maven Central client with disk cache; offline-aware | done | `f6fba63` |
+| D5 — completion merge in `completion_at` | done | `77da507`, `9f26da4` (review fix #1 — tracker prefix), `491f40a` (review fix #2 — repo index off the Qt thread), `fc0eeb1` (review fix #10 — client reuse/negative cache/generation guard/cap), `aa61457` (screenshot review — completion popup double-painted a label) |
+| D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | done | `5e27c3c`, `491f40a` (review fix #2), `6c642e9` (review fix #4), `d0f1fc6` (review fix #5 — `${property}` resolution), `ca99c1b` (review fix #6 — hints computed on open even with a server), `fc0eeb1` (review fix #10) |
+| D7 — "Update to X" quick fix via synthesised `CodeActionItem` | done | `ab6e959`, `81e8a7f` (review fix #3 — no longer shadows a real server's intentions), `533af5b` (review fix #7 — `open_docs` guard), `6650ba5` (screenshot review — quick fix reads the diagnostic's own stored hint set) |
+| D8 — dependency analyzer | done | `600316f`, `3d5bdf8`, `f185e2c` (review fix #9 — Go to Declaration module scoping + managed-dependency fallback), `840c0ef` (review fix #11 — conflict row detail), `90f578c` (screenshot review — title/empty-state reflect detection, not just sync) |
+
+Review fix #8 (`d9a9563`, docs/CI only — the layering doc's stale tokio check and a missing `jvm-build-core` qt check in `ci.yml`) touches no single D-task above.
 
 ### E — docs & verification (later PR)
 

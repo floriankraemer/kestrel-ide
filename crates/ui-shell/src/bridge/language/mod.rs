@@ -627,7 +627,7 @@ impl ffi::LanguageService {
     /// `Err(LspError::NoServer(..))`, and every caller in this file already
     /// swallows that with `let _ =` — see
     /// `lsp_core::manager::no_server_document_lifecycle_tests`.
-    fn open_build_file_document(self: Pin<&mut Self>, path_str: &str, text: &QString) {
+    fn open_build_file_document(mut self: Pin<&mut Self>, path_str: &str, text: &QString) {
         let Some(root) = crate::bridge::convert::current_project_root() else {
             return;
         };
@@ -650,6 +650,9 @@ impl ffi::LanguageService {
         self.push_job(move |manager| {
             let _ = manager.did_open(&uri, &language_id, &text_str);
         });
+        // D6: the file just entered `open_docs`, so its version hints
+        // (if any) have never been computed.
+        self.as_mut().refresh_version_hints(path_str);
     }
 
     pub fn document_changed(self: Pin<&mut Self>, path: &QString, text: &QString) {
@@ -664,7 +667,7 @@ impl ffi::LanguageService {
         });
     }
 
-    pub fn document_saved(self: Pin<&mut Self>, path: &QString) {
+    pub fn document_saved(mut self: Pin<&mut Self>, path: &QString) {
         let path = path.to_string();
         if !self.open_docs.borrow().contains_key(&path) {
             return;
@@ -673,6 +676,11 @@ impl ffi::LanguageService {
         self.push_job(move |manager| {
             let _ = manager.did_save(&uri);
         });
+        // D6: a saved build file may have changed the declared versions
+        // (or their coordinates) — recompute. Cheap no-op for any other
+        // file: `refresh_version_hints` only does real work once
+        // `editing::context::declared_versions` recognises the path.
+        self.as_mut().refresh_version_hints(&path);
     }
 
     pub fn document_closed(mut self: Pin<&mut Self>, path: &QString) {
@@ -688,6 +696,9 @@ impl ffi::LanguageService {
         self.push_job(move |manager| {
             let _ = manager.did_close(&closed);
         });
+        // D6: a closed build file's version hints must go with it, the
+        // same way its language-server rows just did above.
+        self.as_mut().clear_version_hints(&path);
         self.as_mut().diagnostics_changed();
     }
 

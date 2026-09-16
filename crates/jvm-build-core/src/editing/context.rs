@@ -167,7 +167,12 @@ fn local_name(raw: &[u8]) -> String {
     s.rsplit(':').next().unwrap_or(&s).to_string()
 }
 
-fn pom_context(text: &str, caret: usize) -> Option<EditContext> {
+/// Every `<dependency>`/`<plugin>`/`<parent>` block in `text`, each with
+/// whichever of its `<groupId>`/`<artifactId>`/`<version>` children it
+/// has and their own text-content ranges. Shared by [`pom_context`] (which
+/// searches these for the one the caret is in) and D6's whole-document
+/// version scan (which wants all of them).
+fn pom_blocks(text: &str) -> Vec<PomBlock> {
     let mut reader = Reader::from_str(text);
     reader.config_mut().trim_text(false);
     let mut buf = Vec::new();
@@ -227,7 +232,11 @@ fn pom_context(text: &str, caret: usize) -> Option<EditContext> {
     // still worth searching, since the caret is very likely inside the
     // element the user has not finished typing yet.
     blocks.extend(container_stack);
+    blocks
+}
 
+fn pom_context(text: &str, caret: usize) -> Option<EditContext> {
+    let blocks = pom_blocks(text);
     for block in &blocks {
         let coordinate = Coordinate {
             group_id: block.group_id.as_ref().map(|(v, _)| v.clone()),
@@ -374,6 +383,42 @@ fn split_coordinate(
     (part, absolute_range, coordinate)
 }
 
+/// Every `"group:artifact:version"` dependency-configuration-call literal
+/// in `text`, with the coordinate it parses to and the version segment's
+/// own absolute range — D6's whole-document version scan (D2's
+/// [`gradle_coordinate_context`] answers "what is the caret in", this
+/// answers "what is declared, everywhere").
+fn all_gradle_coordinates(text: &str) -> Vec<(Range<usize>, Coordinate)> {
+    let mut found = Vec::new();
+    for re in [&*GRADLE_COORDINATE_DQ, &*GRADLE_COORDINATE_SQ] {
+        for caps in re.captures_iter(text) {
+            let coord = caps.name("coord").expect("named group");
+            // Caret at the coordinate's own end reliably lands the split
+            // on its last segment (`Version`), which is all this caller
+            // wants — there is no real caret here to make ambiguous.
+            let (_, range, coordinate) =
+                split_coordinate(coord.as_str(), coord.len(), coord.start());
+            found.push((range, coordinate));
+        }
+    }
+    found
+}
+
+/// Every `plugins { id("…") version "…" }` literal in `text`, with the
+/// version's own range and the plugin id, if named.
+fn all_gradle_plugin_versions(text: &str) -> Vec<(Range<usize>, Option<String>)> {
+    let mut found = Vec::new();
+    for re in [&*GRADLE_PLUGIN_VERSION_DQ, &*GRADLE_PLUGIN_VERSION_SQ] {
+        for caps in re.captures_iter(text) {
+            let version = caps.name("version").expect("named group");
+            let range = version.start()..version.end();
+            let plugin_id = caps.name("id").map(|m| m.as_str().to_string());
+            found.push((range, plugin_id));
+        }
+    }
+    found
+}
+
 // ---------------------------------------------------------------------
 // gradle/libs.versions.toml
 // ---------------------------------------------------------------------
@@ -418,6 +463,58 @@ fn toml_context(text: &str, caret: usize) -> Option<EditContext> {
     None
 }
 
+/// Every `[versions]` key with its literal value and the value's own
+/// range, and every `[libraries]` entry — D6's whole-document version
+/// scan reads both: the version lives in the first, and is reached from
+/// the second only through `version.ref`.
+/// `(key, value, value's byte range)` for one `[versions]` table entry.
+type TomlVersionEntry = (String, String, Range<usize>);
+
+fn all_toml_sections(text: &str) -> (Vec<TomlVersionEntry>, Vec<TomlLibraryEntry>) {
+    let mut versions = Vec::new();
+    let mut libraries = Vec::new();
+    let mut section = String::new();
+    let mut line_start = 0usize;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_end_matches(['\n', '\r']);
+        if let Some(caps) = TOML_SECTION.captures(trimmed) {
+            section = caps[1].to_string();
+        } else {
+            match section.as_str() {
+                "versions" => {
+                    if let Some(caps) = TOML_VERSION_ENTRY.captures(trimmed) {
+                        if let (Some(key), Some(value)) = (trimmed.split('=').next(), caps.get(1)) {
+                            versions.push((
+                                key.trim().to_string(),
+                                value.as_str().to_string(),
+                                (line_start + value.start())..(line_start + value.end()),
+                            ));
+                        }
+                    }
+                }
+                "libraries" => {
+                    let entry = TomlLibraryEntry {
+                        module: TOML_FIELD_MODULE
+                            .captures(trimmed)
+                            .map(|c| c[1].to_string()),
+                        group: TOML_FIELD_GROUP.captures(trimmed).map(|c| c[1].to_string()),
+                        name: TOML_FIELD_NAME.captures(trimmed).map(|c| c[1].to_string()),
+                        version_ref: TOML_FIELD_VERSION_REF
+                            .captures(trimmed)
+                            .map(|c| c[1].to_string()),
+                    };
+                    if entry.module.is_some() || entry.group.is_some() {
+                        libraries.push(entry);
+                    }
+                }
+                _ => {}
+            }
+        }
+        line_start += line.len();
+    }
+    (versions, libraries)
+}
+
 fn toml_version_context(line: &str, line_start: usize, caret: usize) -> Option<EditContext> {
     let caps = TOML_VERSION_ENTRY.captures(line)?;
     let key = line.split('=').next()?.trim().to_string();
@@ -457,6 +554,124 @@ fn toml_library_context(line: &str, line_start: usize, caret: usize) -> Option<E
         }
     }
     None
+}
+
+// ---------------------------------------------------------------------
+// Whole-document version scan (D6)
+// ---------------------------------------------------------------------
+
+/// One dependency version declared anywhere in an open build file — D6's
+/// "newer version available" hint works from every one of these, not just
+/// the one under the caret [`context`] answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredVersion {
+    pub group_id: String,
+    pub artifact_id: String,
+    pub current: String,
+    /// Where an accepted "Update to X" fix replaces. For pom.xml and
+    /// Gradle this is the version literal's own range; for
+    /// `libs.versions.toml` it is the `[versions]` table's value range —
+    /// the one place the literal actually lives, since a `[libraries]`
+    /// entry only references it by key through `version.ref`, and
+    /// editing the table's own value updates every entry that shares it.
+    pub range: Range<usize>,
+}
+
+/// Every dependency version declared in `text`, across the whole
+/// document — the scan D6's version-hint diagnostics run over on open,
+/// save and after a sync.
+pub fn declared_versions(path: &Path, text: &str) -> Vec<DeclaredVersion> {
+    match classify(path) {
+        Some(FileKind::Pom) => pom_declared_versions(text),
+        Some(FileKind::Gradle) => gradle_declared_versions(text),
+        Some(FileKind::VersionCatalog) => toml_declared_versions(text),
+        None => Vec::new(),
+    }
+}
+
+fn pom_declared_versions(text: &str) -> Vec<DeclaredVersion> {
+    pom_blocks(text)
+        .into_iter()
+        .filter_map(|block| {
+            let (group_id, _) = block.group_id?;
+            let (artifact_id, _) = block.artifact_id?;
+            let (current, range) = block.version?;
+            if group_id.is_empty() || artifact_id.is_empty() || current.is_empty() {
+                return None;
+            }
+            Some(DeclaredVersion {
+                group_id,
+                artifact_id,
+                current,
+                range,
+            })
+        })
+        .collect()
+}
+
+fn gradle_declared_versions(text: &str) -> Vec<DeclaredVersion> {
+    let mut found: Vec<DeclaredVersion> = all_gradle_coordinates(text)
+        .into_iter()
+        .filter_map(|(range, coordinate)| {
+            let group_id = coordinate.group_id.filter(|v| !v.is_empty())?;
+            let artifact_id = coordinate.artifact_id.filter(|v| !v.is_empty())?;
+            let current = coordinate.version.filter(|v| !v.is_empty())?;
+            Some(DeclaredVersion {
+                group_id,
+                artifact_id,
+                current,
+                range,
+            })
+        })
+        .collect();
+    found.extend(
+        all_gradle_plugin_versions(text)
+            .into_iter()
+            .filter_map(|(range, plugin_id)| {
+                let id = plugin_id.filter(|v| !v.is_empty())?;
+                Some(DeclaredVersion {
+                    artifact_id: format!("{id}.gradle.plugin"),
+                    group_id: id,
+                    current: text.get(range.clone())?.to_string(),
+                    range,
+                })
+            }),
+    );
+    found
+}
+
+fn toml_declared_versions(text: &str) -> Vec<DeclaredVersion> {
+    let (versions, libraries) = all_toml_sections(text);
+    let mut seen_ranges = std::collections::BTreeSet::new();
+    let mut found = Vec::new();
+    for library in &libraries {
+        let Some(key) = library.version_ref.as_deref().filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        let Some((_, current, range)) = versions.iter().find(|(k, _, _)| k == key) else {
+            continue;
+        };
+        if !seen_ranges.insert(range.start) {
+            continue;
+        }
+        let (group_id, artifact_id) = match &library.module {
+            Some(module) => match module.split_once(':') {
+                Some((g, a)) => (g.to_string(), a.to_string()),
+                None => continue,
+            },
+            None => match (&library.group, &library.name) {
+                (Some(g), Some(a)) if !g.is_empty() && !a.is_empty() => (g.clone(), a.clone()),
+                _ => continue,
+            },
+        };
+        found.push(DeclaredVersion {
+            group_id,
+            artifact_id,
+            current: current.clone(),
+            range: range.clone(),
+        });
+    }
+    found
 }
 
 #[cfg(test)]
@@ -648,5 +863,101 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "guava
     #[test]
     fn non_build_file_path_is_no_context() {
         assert_eq!(ctx("/proj/src/Main.java", "class Main {}", 0), None);
+    }
+
+    // ---- declared_versions (D6) ------------------------------------
+
+    #[test]
+    fn pom_declared_versions_finds_every_dependency_and_the_parent() {
+        let text = r#"<project>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.2.0</version>
+  </parent>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.guava</groupId>
+      <artifactId>guava</artifactId>
+      <version>32.1.3-jre</version>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>managed-by-bom</artifactId>
+    </dependency>
+  </dependencies>
+</project>
+"#;
+        let found = declared_versions(Path::new("/proj/pom.xml"), text);
+        assert_eq!(found.len(), 2);
+        assert!(found
+            .iter()
+            .any(|d| d.artifact_id == "spring-boot-starter-parent" && d.current == "3.2.0"));
+        assert!(found
+            .iter()
+            .any(|d| d.artifact_id == "guava" && d.current == "32.1.3-jre"));
+        // No version at all (relying on a BOM) is not a declared version.
+        assert!(!found.iter().any(|d| d.artifact_id == "managed-by-bom"));
+    }
+
+    #[test]
+    fn gradle_declared_versions_finds_dependencies_and_plugins_not_two_segment_calls() {
+        let text = r#"plugins {
+    id("org.springframework.boot") version "3.2.0"
+}
+dependencies {
+    implementation("com.google.guava:guava:32.1.3-jre")
+    api("org.example:no-version")
+}
+"#;
+        let found = declared_versions(Path::new("/proj/build.gradle.kts"), text);
+        assert_eq!(found.len(), 2);
+        assert!(found
+            .iter()
+            .any(|d| d.group_id == "org.springframework.boot"
+                && d.artifact_id == "org.springframework.boot.gradle.plugin"
+                && d.current == "3.2.0"));
+        assert!(found
+            .iter()
+            .any(|d| d.artifact_id == "guava" && d.current == "32.1.3-jre"));
+        assert!(!found.iter().any(|d| d.artifact_id == "no-version"));
+    }
+
+    #[test]
+    fn toml_declared_versions_resolves_version_ref() {
+        let text = r#"[versions]
+guava = "32.1.3-jre"
+junit = "5.10.0"
+
+[libraries]
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+junit-jupiter = { group = "org.junit.jupiter", name = "junit-jupiter", version.ref = "junit" }
+"#;
+        let found = declared_versions(Path::new("/proj/gradle/libs.versions.toml"), text);
+        assert_eq!(found.len(), 2);
+        assert!(found.iter().any(|d| d.group_id == "com.google.guava"
+            && d.artifact_id == "guava"
+            && d.current == "32.1.3-jre"));
+        assert!(found.iter().any(|d| d.group_id == "org.junit.jupiter"
+            && d.artifact_id == "junit-jupiter"
+            && d.current == "5.10.0"));
+    }
+
+    #[test]
+    fn toml_declared_versions_dedups_two_libraries_sharing_one_versions_key() {
+        // Two artifacts referencing the same `[versions]` key share one
+        // physical location in the document — one hint there, not two
+        // competing ones, keyed off whichever library named the key
+        // first.
+        let text = r#"[versions]
+guava = "32.1.3-jre"
+
+[libraries]
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+guava-testlib = { group = "com.google.guava", name = "guava-testlib", version.ref = "guava" }
+"#;
+        let found = declared_versions(Path::new("/proj/gradle/libs.versions.toml"), text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].artifact_id, "guava");
     }
 }

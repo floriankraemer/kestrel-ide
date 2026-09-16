@@ -51,10 +51,18 @@ use std::sync::OnceLock;
 use cxx_qt::Threading;
 
 use jvm_build_core::editing::completion::{self, Completion};
-use jvm_build_core::editing::context::{self, CoordinatePart, EditContext, TomlLibraryField};
+use jvm_build_core::editing::context::{
+    self, CoordinatePart, DeclaredVersion, EditContext, TomlLibraryField,
+};
+use jvm_build_core::editing::versions::{self, VersionHint};
 use jvm_build_core::editing::{central, repo_index};
 
 use crate::bridge::ffi;
+
+/// D6's diagnostics-store key (ADR-0046): a version hint never clobbers,
+/// or gets clobbered by, a sync failure (`build-tools:sync`) or a
+/// language server's own rows for the same file.
+const VERSION_HINTS_SOURCE: &str = "build-tools:versions";
 
 static REPO_INDEX: OnceLock<repo_index::RepoIndex> = OnceLock::new();
 
@@ -354,5 +362,142 @@ impl ffi::LanguageService {
             });
         }
         true
+    }
+
+    /// D6: recompute every "newer version available" hint for `path` and
+    /// republish them under [`VERSION_HINTS_SOURCE`] — replacing whatever
+    /// this source previously held for the file, an empty list included
+    /// (an upgrade landing, or the last declared dependency being
+    /// deleted, must clear the row exactly as publishing a fresh one
+    /// does). Called from `document_opened`'s build-file branch (D0) and
+    /// `document_saved`; `document_closed` calls [`clear_version_hints`]
+    /// instead.
+    ///
+    /// A no-op, cheaply, for a file `editing::context::declared_versions`
+    /// does not recognise — every caller here runs unconditionally on
+    /// every open/save rather than pre-filtering by extension, so this is
+    /// the one place that check lives.
+    ///
+    /// Not yet wired to "after a sync" (the plan's third refresh trigger):
+    /// that event lives on `BuildToolsService`, a different `#[qobject]`
+    /// than `LanguageService`, and cross-service wiring is the same
+    /// deferred follow-up D5's own doc comment already names for sharing
+    /// `RepoIndex` — a sync's freshly-resolved versions do widen what a
+    /// hint can see, but open/save already recompute on the *declared*
+    /// side; the local disk index a hint compares against just is not
+    /// forced to reload until the process restarts (D3/D5's own
+    /// known limitation, inherited here).
+    pub(crate) fn refresh_version_hints(mut self: Pin<&mut Self>, path: &str) {
+        let Some(content) = self.session.borrow().content_for_path(Path::new(path)) else {
+            return;
+        };
+        let declared = context::declared_versions(Path::new(path), &content);
+        let uri = lsp_core::uri_from_path(path);
+        if declared.is_empty() {
+            self.store
+                .borrow_mut()
+                .replace(VERSION_HINTS_SOURCE, &uri, Vec::new());
+            self.as_mut().diagnostics_changed();
+            return;
+        }
+
+        let local_hints = local_only_hints(&declared);
+        self.store.borrow_mut().replace(
+            VERSION_HINTS_SOURCE,
+            &uri,
+            to_diagnostics(local_hints, &content),
+        );
+        self.as_mut().diagnostics_changed();
+
+        if is_offline_for(path) {
+            return;
+        }
+        let config_dir = app_core::resolve_config_dir();
+        let path_owned = path.to_string();
+        let content_for_thread = content.clone();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let client = central::CentralClient::new(&config_dir, false);
+            let hints = versions::hints(&declared, |group, artifact| {
+                let mut candidates = local_repo_index()
+                    .versions(group, artifact)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                candidates.extend(client.versions(group, artifact));
+                candidates
+            });
+            let uri = lsp_core::uri_from_path(&path_owned);
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+                // The file may have been closed while Central was
+                // answering; a closed file's diagnostics were already
+                // cleared and must stay cleared.
+                if !service.open_docs.borrow().contains_key(&path_owned) {
+                    return;
+                }
+                service.store.borrow_mut().replace(
+                    VERSION_HINTS_SOURCE,
+                    &uri,
+                    to_diagnostics(hints, &content_for_thread),
+                );
+                service.as_mut().diagnostics_changed();
+            });
+        });
+    }
+
+    /// D6: forget every version hint this source published for `path` —
+    /// `document_closed`'s counterpart to [`refresh_version_hints`],
+    /// mirroring how it already forgets the file's language-server rows.
+    pub(crate) fn clear_version_hints(mut self: Pin<&mut Self>, path: &str) {
+        let uri = lsp_core::uri_from_path(path);
+        self.store.borrow_mut().remove(VERSION_HINTS_SOURCE, &uri);
+        self.as_mut().diagnostics_changed();
+    }
+}
+
+fn local_only_hints(declared: &[DeclaredVersion]) -> Vec<VersionHint> {
+    versions::hints(declared, |group, artifact| {
+        local_repo_index()
+            .versions(group, artifact)
+            .into_iter()
+            .map(str::to_string)
+            .collect()
+    })
+}
+
+fn to_diagnostics(hints: Vec<VersionHint>, text: &str) -> Vec<diagnostics_core::Diagnostic> {
+    hints
+        .into_iter()
+        .map(|hint| {
+            let range = byte_range_to_diagnostics_range(text, hint.range.clone());
+            diagnostics_core::Diagnostic {
+                range,
+                severity: diagnostics_core::Severity::Hint,
+                message: hint.message(),
+                source: "build-tools".to_string(),
+                raw: None,
+            }
+        })
+        .collect()
+}
+
+fn byte_range_to_diagnostics_range(
+    text: &str,
+    range: std::ops::Range<usize>,
+) -> diagnostics_core::Range {
+    let starts = editor_core::offsets::utf16_line_starts(text);
+    let start = editor_core::offsets::utf16_offset(text, range.start);
+    let end = editor_core::offsets::utf16_offset(text, range.end);
+    let (start_line, start_character) = editor_core::offsets::utf16_position_at(&starts, start);
+    let (end_line, end_character) = editor_core::offsets::utf16_position_at(&starts, end);
+    diagnostics_core::Range {
+        start: diagnostics_core::Position {
+            line: start_line,
+            character: start_character,
+        },
+        end: Some(diagnostics_core::Position {
+            line: end_line,
+            character: end_character,
+        }),
     }
 }

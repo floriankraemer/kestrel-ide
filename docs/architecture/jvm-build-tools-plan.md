@@ -143,7 +143,7 @@ Update the row **in the same commit** that finishes the task.
 | D3 — local repository index (`~/.m2`, `~/.gradle/caches`) | done | `TBD` |
 | D4 — Maven Central client with disk cache; offline-aware | done | `TBD` |
 | D5 — completion merge in `completion_at` | done | `TBD` |
-| D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | open | |
+| D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | done | `TBD` |
 | D7 — "Update to X" quick fix via synthesised `CodeActionItem` | open | |
 | D8 — dependency analyzer | open | |
 

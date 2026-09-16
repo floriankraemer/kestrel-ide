@@ -72,6 +72,33 @@ fn is_version_context(ctx: &EditContext) -> bool {
     }
 }
 
+/// The trailing run of word characters (alphanumeric or `_`) in `typed` —
+/// deliberately the same rule `lsp_core::completion_prefix` uses, but
+/// reimplemented here rather than pulled in as a dependency (this crate
+/// stays free of `lsp-core`, the plan's core constraint).
+///
+/// A coordinate literal is not a bare word: `"org.springframework.boot"`,
+/// `"spring-boot-starter"`, `"5.10"` all contain `.`/`-` a bridge's own
+/// `CompletionTracker` — built for a single identifier-shaped prefix —
+/// cannot see past. Passing the *whole* literal to `begin`/`needs_request`
+/// stores it as the tracker's remembered prefix; the next keystroke's
+/// `still_typing` check then asks "does the new bare word start with the
+/// entire dotted literal", which is false for every keystroke after the
+/// first dot or hyphen, and the popup silently stays empty forever after.
+/// This is the piece of the literal that must go to the tracker instead —
+/// [`Completion::range`] (already the whole literal's own segment) is
+/// unaffected and still what an accepted item replaces.
+pub fn tracker_prefix(typed: &str) -> &str {
+    let start = typed
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_alphanumeric() || *c == '_')
+        .last()
+        .map(|(i, _)| i)
+        .unwrap_or(typed.len());
+    &typed[start..]
+}
+
 /// Rank `candidates` for the coordinate part `ctx` names, replacing
 /// exactly its value range. `text` is the buffer `ctx` was classified
 /// against — the already-typed prefix for ranking is read straight out of
@@ -259,5 +286,30 @@ mod tests {
                 version: Some(text.to_string()),
             },
         }
+    }
+
+    #[test]
+    fn tracker_prefix_stops_at_a_dot() {
+        assert_eq!(tracker_prefix("org.spring"), "spring");
+    }
+
+    #[test]
+    fn tracker_prefix_stops_at_a_hyphen() {
+        assert_eq!(tracker_prefix("spring-boot"), "boot");
+    }
+
+    #[test]
+    fn tracker_prefix_stops_at_a_dot_in_a_version() {
+        assert_eq!(tracker_prefix("5.10"), "10");
+    }
+
+    #[test]
+    fn tracker_prefix_of_a_bare_word_is_the_whole_word() {
+        assert_eq!(tracker_prefix("guava"), "guava");
+    }
+
+    #[test]
+    fn tracker_prefix_of_an_empty_literal_is_empty() {
+        assert_eq!(tracker_prefix(""), "");
     }
 }

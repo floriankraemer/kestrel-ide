@@ -318,16 +318,21 @@ impl ffi::LanguageService {
             | EditContext::TomlLibraryField { range, .. } => range.clone(),
         };
         let typed = content.get(range).unwrap_or_default();
+        // `CompletionTracker` (`still_typing`/`needs_request`) is built
+        // for a bare-word prefix — see `completion::tracker_prefix`'s own
+        // doc comment for why passing the whole dotted/hyphenated literal
+        // to it leaves the popup empty from the second character on.
+        let tracker_prefix = completion::tracker_prefix(typed);
         if !self
             .completion
             .borrow()
-            .needs_request(typed, explicit_request)
+            .needs_request(tracker_prefix, explicit_request)
         {
             return true;
         }
 
         *self.completion_language.borrow_mut() = None;
-        let token = self.completion.borrow_mut().begin(typed);
+        let token = self.completion.borrow_mut().begin(tracker_prefix);
 
         let local = local_candidates(&ctx);
         let items = completion::items(&ctx, &content, &local);

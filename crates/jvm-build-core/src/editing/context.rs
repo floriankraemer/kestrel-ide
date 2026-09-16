@@ -603,6 +603,71 @@ pub fn declared_versions(path: &Path, text: &str) -> Vec<DeclaredVersion> {
     }
 }
 
+/// Review fix #5: does `s` look like an actual version literal a hint can
+/// compare against, rather than a template reference no static scan can
+/// resolve on its own (`${property}`, Gradle/Kotlin's `${ext.foo}` or
+/// `$foo` string interpolation)? Treating an unresolved reference as a
+/// literal produced a "newer version" hint on almost every real Maven
+/// project (`${junit.version}` compares as a string no release is ever
+/// "newer" than) and a quick fix that would have replaced the property
+/// *reference* with a hardcoded literal, breaking the one place the
+/// version is meant to be governed from.
+fn is_resolvable_version(s: &str) -> bool {
+    !s.is_empty() && !s.contains(['$', '{', '}'])
+}
+
+/// Resolves a Maven `${x}` property reference against this same
+/// document's own `<properties>` table — never a parent POM's, which
+/// would need opening a second file (`maven::pom`'s own reader documents
+/// the identical limitation for the same reason). Returns the property's
+/// own text-content range, not the `${x}` reference's: a "newer version"
+/// fix must land on the declaration, not turn it into a hardcoded
+/// literal. `None` for anything that is not a bare `${name}` reference,
+/// a `project.*` built-in self-reference (`<properties>` cannot define
+/// those), or a property this file does not declare.
+fn resolve_pom_property(text: &str, reference: &str) -> Option<(String, Range<usize>)> {
+    let name = reference.strip_prefix("${")?.strip_suffix('}')?;
+    if name.starts_with("project.") {
+        return None;
+    }
+    let mut reader = Reader::from_str(text);
+    reader.config_mut().trim_text(false);
+    let mut buf = Vec::new();
+    let mut element_stack: Vec<String> = Vec::new();
+    while let Ok(event) = reader.read_event_into(&mut buf) {
+        let pos_after = reader.buffer_position() as usize;
+        match event {
+            Event::Eof => break,
+            Event::Start(tag) => element_stack.push(local_name(tag.name().as_ref())),
+            Event::Text(text_event) => {
+                let start = pos_after.saturating_sub(text_event.len());
+                let is_the_property = element_stack.len() >= 2
+                    && element_stack[element_stack.len() - 2] == "properties"
+                    && element_stack.last().is_some_and(|e| e == name);
+                if is_the_property {
+                    let value = text_event
+                        .decode()
+                        .ok()
+                        .and_then(|raw| {
+                            quick_xml::escape::unescape(&raw)
+                                .ok()
+                                .map(|s| s.into_owned())
+                        })
+                        .map(|s| s.trim().to_string())
+                        .unwrap_or_default();
+                    return Some((value, start..pos_after));
+                }
+            }
+            Event::End(_) => {
+                element_stack.pop();
+            }
+            _ => {}
+        }
+        buf.clear();
+    }
+    None
+}
+
 fn pom_declared_versions(text: &str) -> Vec<DeclaredVersion> {
     pom_blocks(text)
         .into_iter()
@@ -611,6 +676,14 @@ fn pom_declared_versions(text: &str) -> Vec<DeclaredVersion> {
             let (artifact_id, _) = block.artifact_id?;
             let (current, range) = block.version?;
             if group_id.is_empty() || artifact_id.is_empty() || current.is_empty() {
+                return None;
+            }
+            let (current, range) = if current.starts_with("${") {
+                resolve_pom_property(text, &current)?
+            } else {
+                (current, range)
+            };
+            if !is_resolvable_version(&current) {
                 return None;
             }
             Some(DeclaredVersion {
@@ -629,7 +702,7 @@ fn gradle_declared_versions(text: &str) -> Vec<DeclaredVersion> {
         .filter_map(|(range, coordinate)| {
             let group_id = coordinate.group_id.filter(|v| !v.is_empty())?;
             let artifact_id = coordinate.artifact_id.filter(|v| !v.is_empty())?;
-            let current = coordinate.version.filter(|v| !v.is_empty())?;
+            let current = coordinate.version.filter(|v| is_resolvable_version(v))?;
             Some(DeclaredVersion {
                 group_id,
                 artifact_id,
@@ -643,10 +716,14 @@ fn gradle_declared_versions(text: &str) -> Vec<DeclaredVersion> {
             .into_iter()
             .filter_map(|(range, plugin_id)| {
                 let id = plugin_id.filter(|v| !v.is_empty())?;
+                let current = text.get(range.clone())?.to_string();
+                if !is_resolvable_version(&current) {
+                    return None;
+                }
                 Some(DeclaredVersion {
                     artifact_id: format!("{id}.gradle.plugin"),
                     group_id: id,
-                    current: text.get(range.clone())?.to_string(),
+                    current,
                     range,
                 })
             }),
@@ -665,6 +742,9 @@ fn toml_declared_versions(text: &str) -> Vec<DeclaredVersion> {
         let Some((_, current, range)) = versions.iter().find(|(k, _, _)| k == key) else {
             continue;
         };
+        if !is_resolvable_version(current) {
+            continue;
+        }
         if !seen_ranges.insert(range.start) {
             continue;
         }
@@ -914,6 +994,52 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "guava
         assert!(!found.iter().any(|d| d.artifact_id == "managed-by-bom"));
     }
 
+    /// Review fix #5: a `${x}` version resolves through this same file's
+    /// own `<properties>`, and the hint's range lands on the property's
+    /// own declaration — not the `${x}` reference — since a fix must
+    /// update the governed value, not turn it into a hardcoded literal.
+    #[test]
+    fn pom_property_referenced_version_resolves_through_properties() {
+        let text = r#"<project>
+  <properties>
+    <junit.version>5.10.3</junit.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+"#;
+        let found = declared_versions(Path::new("/proj/pom.xml"), text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].current, "5.10.3");
+        // The range covers the <properties> entry's own value, not the
+        // dependency's `${junit.version}` reference.
+        assert_eq!(&text[found[0].range.clone()], "5.10.3");
+        assert!(text[..found[0].range.start].contains("<junit.version>"));
+    }
+
+    /// Review fix #5: a property this file does not declare (the common
+    /// case — it lives in a parent POM this reader cannot open) yields no
+    /// declared version rather than a bogus literal `"${x}"` string.
+    #[test]
+    fn pom_property_referenced_version_not_declared_here_is_skipped() {
+        let text = r#"<project>
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+"#;
+        assert_eq!(declared_versions(Path::new("/proj/pom.xml"), text), vec![]);
+    }
+
     /// Review fix #4: a `<dependency>`'s own `<exclusions>` carry a nested
     /// `<exclusion>` with its own `<groupId>`/`<artifactId>` — several
     /// levels deeper than the dependency's own coordinate — which must
@@ -998,6 +1124,21 @@ dependencies {
             .iter()
             .any(|d| d.artifact_id == "guava" && d.current == "32.1.3-jre"));
         assert!(!found.iter().any(|d| d.artifact_id == "no-version"));
+    }
+
+    /// Review fix #5: a Kotlin/Groovy string-interpolated version
+    /// (`${extraProperty}`) cannot be resolved by a static scan and must
+    /// not be treated as a literal to compare against Central.
+    #[test]
+    fn gradle_interpolated_version_is_skipped() {
+        let text = r#"dependencies {
+    implementation("com.google.guava:guava:${guavaVersion}")
+}
+"#;
+        assert_eq!(
+            declared_versions(Path::new("/proj/build.gradle.kts"), text),
+            vec![]
+        );
     }
 
     #[test]

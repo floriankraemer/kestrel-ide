@@ -195,23 +195,37 @@ fn pom_blocks(text: &str) -> Vec<PomBlock> {
                 let raw_len = text_event.len();
                 let start = pos_after.saturating_sub(raw_len);
                 let end = pos_after;
-                if let Some(parent) = element_stack.last() {
-                    if let Some(block) = container_stack.last_mut() {
-                        let value = text_event
-                            .decode()
-                            .ok()
-                            .and_then(|raw| {
-                                quick_xml::escape::unescape(&raw)
-                                    .ok()
-                                    .map(|s| s.into_owned())
-                            })
-                            .map(|s| s.trim().to_string())
-                            .unwrap_or_default();
-                        match parent.as_str() {
-                            "groupId" => block.group_id = Some((value, start..end)),
-                            "artifactId" => block.artifact_id = Some((value, start..end)),
-                            "version" => block.version = Some((value, start..end)),
-                            _ => {}
+                // Only a *direct* child of the container currently on top
+                // of the stack may set its coordinate — an `<exclusion>`'s
+                // own `<groupId>`/`<artifactId>` (nested inside
+                // `<dependency><exclusions><exclusion>`), or a plugin's
+                // `<configuration><artifactItems><artifactItem>`'s, sit
+                // several levels deeper and must never overwrite the
+                // enclosing `<dependency>`/`<plugin>`'s real coordinate.
+                let direct_child_of_container = element_stack
+                    .len()
+                    .checked_sub(2)
+                    .and_then(|i| element_stack.get(i))
+                    .is_some_and(|grandparent| POM_CONTAINERS.contains(&grandparent.as_str()));
+                if direct_child_of_container {
+                    if let Some(element_name) = element_stack.last() {
+                        if let Some(block) = container_stack.last_mut() {
+                            let value = text_event
+                                .decode()
+                                .ok()
+                                .and_then(|raw| {
+                                    quick_xml::escape::unescape(&raw)
+                                        .ok()
+                                        .map(|s| s.into_owned())
+                                })
+                                .map(|s| s.trim().to_string())
+                                .unwrap_or_default();
+                            match element_name.as_str() {
+                                "groupId" => block.group_id = Some((value, start..end)),
+                                "artifactId" => block.artifact_id = Some((value, start..end)),
+                                "version" => block.version = Some((value, start..end)),
+                                _ => {}
+                            }
                         }
                     }
                 }
@@ -898,6 +912,69 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "guava
             .any(|d| d.artifact_id == "guava" && d.current == "32.1.3-jre"));
         // No version at all (relying on a BOM) is not a declared version.
         assert!(!found.iter().any(|d| d.artifact_id == "managed-by-bom"));
+    }
+
+    /// Review fix #4: a `<dependency>`'s own `<exclusions>` carry a nested
+    /// `<exclusion>` with its own `<groupId>`/`<artifactId>` — several
+    /// levels deeper than the dependency's own coordinate — which must
+    /// not overwrite it.
+    #[test]
+    fn pom_exclusion_children_do_not_overwrite_the_enclosing_dependency() {
+        let text = r#"<project>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.guava</groupId>
+      <artifactId>guava</artifactId>
+      <version>32.1.3-jre</version>
+      <exclusions>
+        <exclusion>
+          <groupId>com.google.code.findbugs</groupId>
+          <artifactId>jsr305</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>
+</project>
+"#;
+        let found = declared_versions(Path::new("/proj/pom.xml"), text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].group_id, "com.google.guava");
+        assert_eq!(found[0].artifact_id, "guava");
+        assert_eq!(found[0].current, "32.1.3-jre");
+    }
+
+    /// Review fix #4: a plugin's `<configuration>` can carry its own
+    /// deeply-nested `<groupId>`/`<artifactId>` (the dependency plugin's
+    /// `<artifactItems><artifactItem>`, here), which must not overwrite
+    /// the plugin's own coordinate either.
+    #[test]
+    fn pom_plugin_configuration_children_do_not_overwrite_the_plugin() {
+        let text = r#"<project>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.6.1</version>
+        <configuration>
+          <artifactItems>
+            <artifactItem>
+              <groupId>com.example</groupId>
+              <artifactId>bundled-jar</artifactId>
+              <version>9.9.9</version>
+            </artifactItem>
+          </artifactItems>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+"#;
+        let found = declared_versions(Path::new("/proj/pom.xml"), text);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].group_id, "org.apache.maven.plugins");
+        assert_eq!(found[0].artifact_id, "maven-dependency-plugin");
+        assert_eq!(found[0].current, "3.6.1");
     }
 
     #[test]

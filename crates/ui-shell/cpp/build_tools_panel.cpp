@@ -133,6 +133,29 @@ QString titleFor(FfiBuildToolTitleKind kind)
     return QObject::tr("Build Tools");
 }
 
+// D8 (screenshot review): the tree is only ever empty for one of two
+// reasons — nothing detected at all, or something detected but not synced
+// yet (`BuildToolsService::rows()` is empty until a sync populates a
+// model) — and each needs its own explanation rather than one generic
+// message that fits neither well. `kind` is `titleFor`'s own
+// `FfiBuildToolTitleKind`, already detection-aware (D8's fix to
+// `title_kind`), so `None` is exactly "nothing detected" here too.
+QString emptyStateTextFor(FfiBuildToolTitleKind kind)
+{
+    switch (kind) {
+    case FfiBuildToolTitleKind::Gradle:
+        return QObject::tr("Gradle project detected — load it to see tasks and dependencies.");
+    case FfiBuildToolTitleKind::Maven:
+        return QObject::tr("Maven project detected — load it to see tasks and dependencies.");
+    case FfiBuildToolTitleKind::Both:
+        return QObject::tr(
+          "Gradle and Maven projects detected — load them to see tasks and dependencies.");
+    case FfiBuildToolTitleKind::None:
+        break;
+    }
+    return QObject::tr("No Gradle or Maven project detected.");
+}
+
 } // namespace
 
 BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunService *runService,
@@ -211,12 +234,22 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     statusLabel_ = new QLabel(this);
     statusLabel_->setWordWrap(true);
 
+    // D8 (screenshot review): centered/word-wrapped, `changes_panel.cpp`'s
+    // own `emptyStateLabel_` convention for "this view has nothing to show
+    // yet, here is why" — rather than inventing a second styling for the
+    // same idea.
+    emptyStateLabel_ = new QLabel(this);
+    emptyStateLabel_->setAlignment(Qt::AlignCenter);
+    emptyStateLabel_->setWordWrap(true);
+    emptyStateLabel_->setVisible(false);
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addLayout(toolbar);
     layout->addLayout(dependencyToolbar);
     layout->addWidget(statusLabel_);
     layout->addWidget(tree_, 1);
+    layout->addWidget(emptyStateLabel_, 1);
 
     connect(reloadButton, &QToolButton::clicked, this,
             [this]() { buildToolsService_->sync(); });
@@ -262,8 +295,15 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     });
     connect(buildToolsService_, &BuildToolsService::syncStateChanged, this,
             &BuildToolsPanel::refreshTitle);
-    connect(buildToolsService_, &BuildToolsService::bannerChanged, this,
-            &BuildToolsPanel::refreshBanner);
+    // D8 (screenshot review): detection alone (no sync yet) now changes
+    // `titleKind()` too, and an empty, detected-but-unsynced tree needs its
+    // own placeholder text — both react to the same signal `refresh_banner`
+    // already fires for the trust/reload banner.
+    connect(buildToolsService_, &BuildToolsService::bannerChanged, this, [this]() {
+        refreshBanner();
+        refreshTitle();
+        refreshTree();
+    });
 
     refreshDependencyScopes();
     refreshTree();
@@ -330,10 +370,16 @@ void BuildToolsPanel::refreshTree()
     tree_->clear();
 
     const ::rust::Vec<FfiBuildToolNode> rows = buildToolsService_->rows();
+    // D8 (screenshot review): an empty tree is not itself an error —
+    // `statusLabel_` stays reserved for a real sync failure
+    // (`refreshBanner`) — so this swaps the tree out for a centered
+    // placeholder explaining *why* it is empty (nothing detected yet, or
+    // detected but not synced) instead of leaving the dock's whole content
+    // area blank.
+    tree_->setVisible(!rows.empty());
+    emptyStateLabel_->setVisible(rows.empty());
     if (rows.empty()) {
-        statusLabel_->setText(
-          tr("No Gradle or Maven project detected, or it has not been loaded yet."));
-        statusLabel_->setVisible(buildToolsService_->syncStateKind() != FfiSyncStateKind::Failed);
+        emptyStateLabel_->setText(emptyStateTextFor(buildToolsService_->titleKind()));
         return;
     }
 
@@ -466,6 +512,14 @@ BuildToolsPanel *buildBuildToolsDock(ads::CDockManager *dockManager, DockRegistr
     updateTitle();
     QObject::connect(buildToolsService, &BuildToolsService::modelChanged, dock, updateTitle);
     QObject::connect(buildToolsService, &BuildToolsService::syncStateChanged, dock, updateTitle);
+    // D8 (screenshot review): `titleKind()` now also reflects detection
+    // alone (`refresh_banner`'s `detected_tools`, set before any sync), and
+    // `refresh_banner` signals that through `bannerChanged` — `project
+    // Opened` fires `modelChanged` *before* it calls `refresh_banner`, so
+    // without this connection the title would still show whatever
+    // yesterday's (or no) project last left it at until the next model
+    // change happened to come along.
+    QObject::connect(buildToolsService, &BuildToolsService::bannerChanged, dock, updateTitle);
 
     return panel;
 }

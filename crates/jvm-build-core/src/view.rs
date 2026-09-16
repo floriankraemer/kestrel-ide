@@ -106,6 +106,32 @@ fn conflict_detail(dependency: &Dependency) -> String {
     )
 }
 
+/// Which build tool(s) the dock's title (and, for an empty tree, its
+/// placeholder text) should name — from *detection* (a marker file found in
+/// the project root) or a synced model, whichever a caller has, combined the
+/// same way either source: the dock must never wait on a sync finishing
+/// before it can say "Gradle" (D8, screenshot review) when detection alone
+/// already knows that much.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolPresence {
+    Gradle,
+    Maven,
+    Both,
+    None,
+}
+
+/// [`ToolPresence`] from "is Gradle present" / "is Maven present" — detected,
+/// synced, or (typically) an OR of both, since a caller that has already
+/// synced still wants its title to keep agreeing with what got detected.
+pub fn tool_presence(has_gradle: bool, has_maven: bool) -> ToolPresence {
+    match (has_gradle, has_maven) {
+        (true, true) => ToolPresence::Both,
+        (true, false) => ToolPresence::Gradle,
+        (false, true) => ToolPresence::Maven,
+        (false, false) => ToolPresence::None,
+    }
+}
+
 /// The dock's whole tree for one synced model — see this module's own doc
 /// comment for why Gradle and Maven diverge past the root row.
 pub fn rows(model: &BuildModel, checked_profiles: &HashSet<String>) -> Vec<Node> {
@@ -448,6 +474,20 @@ mod tests {
     use crate::model::{Module, Plugin, SourceContent, SourceRoot, SourceRootKind, Task, Tool};
     use std::path::PathBuf;
     use std::time::SystemTime;
+
+    /// D8 (screenshot review — the dock stuck on "Build Tools" for a
+    /// detected-but-unsynced Gradle project): every combination of
+    /// "detected"/"synced" Gradle and Maven presence maps to the one
+    /// [`ToolPresence`] a caller needs regardless of which source it came
+    /// from — detection alone (no sync yet), a synced model alone, or both
+    /// ORed together.
+    #[test]
+    fn tool_presence_combines_gradle_and_maven_independently() {
+        assert_eq!(tool_presence(false, false), ToolPresence::None);
+        assert_eq!(tool_presence(true, false), ToolPresence::Gradle);
+        assert_eq!(tool_presence(false, true), ToolPresence::Maven);
+        assert_eq!(tool_presence(true, true), ToolPresence::Both);
+    }
 
     fn gradle_model() -> BuildModel {
         BuildModel {

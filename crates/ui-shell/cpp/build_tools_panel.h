@@ -68,6 +68,14 @@ private:
     QComboBox *dependencyScopeCombo_;
     QCheckBox *conflictsOnlyCheck_;
     QLabel *statusLabel_;
+    // D8 (screenshot review): shown centered in place of `tree_` for a
+    // project with nothing to show yet — either no Gradle/Maven marker
+    // found at all, or one found but not synced. A separate label from
+    // `statusLabel_`, which stays the sync-failure banner alone
+    // (`refreshBanner`'s own doc comment) — the two used to share one
+    // label and fight over its visibility every time both had something to
+    // say.
+    QLabel *emptyStateLabel_;
 };
 
 // `buildBuildToolsDock` (B2): copies `tests_panel.cpp`'s own

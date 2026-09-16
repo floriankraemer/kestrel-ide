@@ -164,6 +164,13 @@ pub struct BuildToolsServiceRust {
     /// `checked_profiles` lives here rather than in `jvm_build_core::view`.
     dependency_filter: RefCell<jvm_build_core::deps::DependencyFilter>,
     store: SharedDiagnostics,
+    /// D8 (screenshot review): which tool(s) `refresh_banner` last detected
+    /// by marker alone, independent of whether a sync ever ran — `(has_
+    /// gradle, has_maven)`. `title_kind`/`empty_state_kind` OR this with
+    /// `models`' own tool set, so the dock's title says "Gradle" (and an
+    /// empty tree explains itself) the moment a project opens rather than
+    /// only once a sync happens to finish.
+    detected_tools: Cell<(bool, bool)>,
 }
 
 fn to_ffi_node_kind(kind: jvm_build_core::view::NodeKind) -> ffi::FfiBuildToolNodeKind {
@@ -399,14 +406,23 @@ impl ffi::BuildToolsService {
         self.as_mut().model_changed();
     }
 
+    /// D8 (screenshot review): ORs the synced model's own tool set with
+    /// whatever `refresh_banner` last *detected* — a synced project keeps
+    /// naming every tool it has always named, and a project that has not
+    /// synced yet (or never will, still "Not Now"-dismissed) still gets a
+    /// real title instead of the generic "Build Tools" placeholder from the
+    /// moment its marker file is found.
     pub fn title_kind(&self) -> ffi::FfiBuildToolTitleKind {
-        let has_gradle = self.models.borrow().iter().any(|m| m.tool == Tool::Gradle);
-        let has_maven = self.models.borrow().iter().any(|m| m.tool == Tool::Maven);
-        match (has_gradle, has_maven) {
-            (true, true) => ffi::FfiBuildToolTitleKind::Both,
-            (true, false) => ffi::FfiBuildToolTitleKind::Gradle,
-            (false, true) => ffi::FfiBuildToolTitleKind::Maven,
-            (false, false) => ffi::FfiBuildToolTitleKind::None,
+        let (detected_gradle, detected_maven) = self.detected_tools.get();
+        let has_gradle =
+            detected_gradle || self.models.borrow().iter().any(|m| m.tool == Tool::Gradle);
+        let has_maven =
+            detected_maven || self.models.borrow().iter().any(|m| m.tool == Tool::Maven);
+        match jvm_build_core::view::tool_presence(has_gradle, has_maven) {
+            jvm_build_core::view::ToolPresence::Both => ffi::FfiBuildToolTitleKind::Both,
+            jvm_build_core::view::ToolPresence::Gradle => ffi::FfiBuildToolTitleKind::Gradle,
+            jvm_build_core::view::ToolPresence::Maven => ffi::FfiBuildToolTitleKind::Maven,
+            jvm_build_core::view::ToolPresence::None => ffi::FfiBuildToolTitleKind::None,
         }
     }
 
@@ -479,6 +495,15 @@ impl ffi::BuildToolsService {
 
     fn refresh_banner(mut self: Pin<&mut Self>, root: &Path) {
         let detected = detected_build_tools(root);
+        // D8: recorded unconditionally, before any of this function's early
+        // returns — `title_kind`/`empty_state_kind` must see today's
+        // detection result even for an untrusted or "Not Now"-dismissed
+        // root, which never reaches `sync()` and would otherwise leave
+        // yesterday's (or no) tool named.
+        self.detected_tools.set((
+            detected.iter().any(|(_, c)| c.toolchain == "gradle"),
+            detected.iter().any(|(_, c)| c.toolchain == "maven"),
+        ));
         if detected.is_empty() {
             *self.banner.borrow_mut() = BannerState::None;
             self.as_mut().banner_changed();

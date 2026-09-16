@@ -420,6 +420,9 @@ impl ffi::LanguageService {
 
         let index = local_index_snapshot();
         let local_hints = local_only_hints(&declared, index.as_ref());
+        self.version_hints
+            .borrow_mut()
+            .insert(path.to_string(), local_hints.clone());
         self.store.borrow_mut().replace(
             VERSION_HINTS_SOURCE,
             &uri,
@@ -477,6 +480,10 @@ impl ffi::LanguageService {
                 if !service.open_docs.borrow().contains_key(&path_owned) {
                     return;
                 }
+                service
+                    .version_hints
+                    .borrow_mut()
+                    .insert(path_owned.clone(), hints.clone());
                 service.store.borrow_mut().replace(
                     VERSION_HINTS_SOURCE,
                     &uri,
@@ -493,6 +500,7 @@ impl ffi::LanguageService {
     pub(crate) fn clear_version_hints(mut self: Pin<&mut Self>, path: &str) {
         let uri = lsp_core::uri_from_path(path);
         self.store.borrow_mut().remove(VERSION_HINTS_SOURCE, &uri);
+        self.version_hints.borrow_mut().remove(path);
         self.as_mut().diagnostics_changed();
     }
 
@@ -506,16 +514,14 @@ impl ffi::LanguageService {
     /// *does* exist), so the same computation backs both rather than two
     /// copies of it drifting apart.
     ///
-    /// Recomputed from the *local* index only, deliberately, the same
-    /// tradeoff `build_file_completion`'s first delivery makes: instant,
-    /// no network wait for an interactive Alt+Enter. This can disagree
-    /// with a squiggle D6's background Central pass already upgraded —
-    /// the fix would then offer an older "latest" than the diagnostic's
-    /// own message names. Narrow and rare (only in the few seconds between
-    /// a file opening and that pass finishing) and left as a known gap
-    /// alongside D5's completion's own Central-vs-local sync note, rather
-    /// than caching D6's last-published hints on this struct for one
-    /// caller.
+    /// Looks the caret up in `self.version_hints` — the exact set
+    /// `refresh_version_hints` last published as diagnostics for `path` —
+    /// rather than recomputing from the local index. Screenshot review
+    /// caught the earlier version recomputing local-only: with an empty
+    /// `~/.m2`, the squiggle (local *and* Central) said "Newer version X
+    /// available" while Alt+Enter, seeing only an empty local index,
+    /// offered nothing. The two must always agree, because a user reads
+    /// them as one fact, not two independent guesses at it.
     pub(crate) fn build_file_quick_fix(
         &self,
         path: &str,
@@ -540,24 +546,7 @@ impl ffi::LanguageService {
             .content_for_path(Path::new(path))
             .unwrap_or_default();
         let caret = caret_byte_offset(&content, line, character);
-        let declared = context::declared_versions(Path::new(path), &content);
-        let index = local_index_snapshot();
-        let hint = declared
-            .iter()
-            .find(|d| d.range.start <= caret && caret <= d.range.end)
-            .and_then(|d| {
-                let candidates = index
-                    .as_ref()
-                    .map(|index| {
-                        index
-                            .versions(&d.group_id, &d.artifact_id)
-                            .into_iter()
-                            .map(str::to_string)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                versions::hint_for(d, &candidates)
-            })?;
+        let hint = version_hint_at(&self.version_hints.borrow(), path, caret)?;
         Some(lsp_core::Intention {
             item: quick_fix_item(&hint, path, &content),
             group: lsp_core::IntentionGroup::QuickFix,
@@ -626,6 +615,22 @@ fn quick_fix_item(hint: &VersionHint, path: &str, text: &str) -> lsp_core::CodeA
     }
 }
 
+/// D7: finds the hint under `caret` in the exact set last published for
+/// `path` — `None` for a path `refresh_version_hints` never stored (not a
+/// build file, or opened but not yet processed) and for a caret outside
+/// every stored hint's range.
+fn version_hint_at(
+    hints_by_path: &std::collections::HashMap<String, Vec<VersionHint>>,
+    path: &str,
+    caret: usize,
+) -> Option<VersionHint> {
+    hints_by_path
+        .get(path)?
+        .iter()
+        .find(|hint| hint.range.start <= caret && caret <= hint.range.end)
+        .cloned()
+}
+
 fn local_only_hints(declared: &[DeclaredVersion], index: Option<&RepoIndex>) -> Vec<VersionHint> {
     versions::hints(declared, |group, artifact| {
         index
@@ -680,6 +685,38 @@ fn byte_range_to_diagnostics_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D7: `version_hint_at` must answer from the stored set alone —
+    /// caret inside a hint's range finds it, caret outside finds nothing
+    /// even though the file has a hint elsewhere, and a path the map
+    /// never saw (stale close, or never opened) finds nothing rather
+    /// than panicking or falling back to a recompute.
+    #[test]
+    fn version_hint_at_looks_up_the_caret_in_the_stored_set_only() {
+        let hint = VersionHint {
+            range: 10..20,
+            current: "1.0".to_string(),
+            latest: "2.0".to_string(),
+        };
+        let mut hints_by_path = std::collections::HashMap::new();
+        hints_by_path.insert("/proj/pom.xml".to_string(), vec![hint.clone()]);
+
+        // Caret inside the hint's range: found.
+        assert_eq!(
+            version_hint_at(&hints_by_path, "/proj/pom.xml", 15),
+            Some(hint.clone())
+        );
+
+        // Caret outside every hint's range in a known file: not found.
+        assert_eq!(version_hint_at(&hints_by_path, "/proj/pom.xml", 100), None);
+
+        // A path the map never stored (stale/unknown): not found, not a
+        // panic.
+        assert_eq!(
+            version_hint_at(&hints_by_path, "/proj/build.gradle", 15),
+            None
+        );
+    }
 
     /// D7: the synthesised quick fix's edit JSON is exactly what
     /// `lsp_core::parse_workspace_edit`'s `changes` branch already reads —

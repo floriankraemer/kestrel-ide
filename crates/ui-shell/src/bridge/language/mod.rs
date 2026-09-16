@@ -187,6 +187,15 @@ pub struct LanguageServiceRust {
     /// close together race, and whichever background thread happens to
     /// finish *last* wins even if it was answering the *earlier* save.
     pub(crate) version_hints_tracker: RefCell<lsp_core::RequestTracker>,
+    /// D6/D7 (screenshot review — the "diagnostic says one thing, quick
+    /// fix offers nothing" bug): the exact hints `refresh_version_hints`
+    /// last published for each open path, keyed by path. D7's quick fix
+    /// reads from here — never recomputes — so it can only ever agree
+    /// with the squiggle the user is actually looking at, including a
+    /// hint only Central (not the local index) found.
+    pub(crate) version_hints: RefCell<
+        std::collections::HashMap<String, Vec<jvm_build_core::editing::versions::VersionHint>>,
+    >,
     /// R3: which overload Up/Down has manually cycled to, overriding the
     /// server's own `activeSignature` until the next `signatureHelpReady` —
     /// a fresh answer means a different call, so it resets this rather than
@@ -279,6 +288,7 @@ impl Default for LanguageServiceRust {
             signature_help: RefCell::default(),
             signature_tracker: RefCell::default(),
             version_hints_tracker: RefCell::default(),
+            version_hints: RefCell::default(),
             signature_display_index: Cell::default(),
             highlights: RefCell::default(),
             highlights_tracker: RefCell::default(),

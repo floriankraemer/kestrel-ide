@@ -108,6 +108,17 @@ fn detect_framework(
     Some((plugin, framework, program))
 }
 
+/// What `start` was asked to rerun, carried from `run_failed`/`run_node`
+/// through to the point the framework (and so its filter dialect) is known
+/// — building the actual pattern has to wait until then (review finding 1),
+/// so this just carries the *un*-interpreted request. Translation-only, no
+/// rule of its own: `test_core::filter` decides what a `Failed`/`Node`
+/// selection turns into for a given dialect.
+enum RerunSelection {
+    Failed(Vec<test_core::TestId>),
+    Node(test_core::TestId),
+}
+
 fn to_ffi_kind(kind: test_core::NodeKind) -> ffi::FfiTestNodeKind {
     match kind {
         test_core::NodeKind::Suite => ffi::FfiTestNodeKind::Suite,
@@ -233,17 +244,15 @@ impl ffi::TestService {
         if ids.is_empty() {
             return errors::failure(errors::CODE_REFUSED, "no failed tests to rerun");
         }
-        let pattern = test_core::filter::for_many(&ids);
-        self.start(Some(pattern))
+        self.start(Some(RerunSelection::Failed(ids)))
     }
 
     pub fn run_node(self: Pin<&mut Self>, node_id: &QString) -> ffi::FfiResult {
         let id = test_core::TestId(node_id.to_string());
-        let pattern = test_core::filter::for_node(&self.tree.borrow(), &id);
-        self.start(Some(pattern))
+        self.start(Some(RerunSelection::Node(id)))
     }
 
-    fn start(mut self: Pin<&mut Self>, filter: Option<String>) -> ffi::FfiResult {
+    fn start(mut self: Pin<&mut Self>, selection: Option<RerunSelection>) -> ffi::FfiResult {
         if !self.runs.borrow().is_empty() {
             return errors::failure(errors::CODE_REFUSED, "a test run is already in progress");
         }
@@ -274,7 +283,7 @@ impl ffi::TestService {
         // filtered rerun updates only the nodes it touches, so the rest of
         // the previous run's results stay visible (D6's "reruns exactly
         // the failed node", not "clears the dock").
-        if filter.is_none() {
+        if selection.is_none() {
             self.tree.borrow_mut().reset();
         }
         *self.framework_name.borrow_mut() = framework.name.clone();
@@ -285,15 +294,43 @@ impl ffi::TestService {
             .borrow_mut()
             .clear_source(&source_key(&framework.name));
 
-        let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
-        if let Some(pattern) = filter {
-            if let Some(flag) = &framework.filter_flag {
-                args.push(flag.clone());
-                args.push(pattern);
-            } else if let Some(template) = &framework.filter_template {
-                args.push(template.replace("{pattern}", &pattern));
+        // Which target-selection syntax this framework's rerun flag/
+        // template actually speaks — PHPUnit's PCRE `--filter` is not the
+        // only dialect once a framework runs on the JVM (review finding 1):
+        // Surefire's `-Dtest=` and Gradle's `--tests` each need their own
+        // pattern shape built from the node being rerun, not a PHPUnit-
+        // shaped one that would compile fine and match nothing.
+        let Ok(dialect) =
+            test_core::filter::parse_filter_dialect(framework.filter_dialect.as_deref())
+        else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                "this test framework's filter-dialect is not one this build understands",
+            );
+        };
+        let patterns = match &selection {
+            None => Vec::new(),
+            Some(RerunSelection::Failed(ids)) => test_core::filter::for_many(ids, dialect),
+            Some(RerunSelection::Node(id)) => {
+                test_core::filter::for_node(&self.tree.borrow(), id, dialect)
             }
-        }
+        };
+
+        let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
+        args = test_core::filter::apply_filter(
+            &args,
+            framework.filter_flag.as_deref(),
+            framework.filter_template.as_deref(),
+            &patterns,
+        );
+
+        let Ok(output_format) = test_core::parse_output_format(&framework.output_format) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                "this test framework's output-format is not one this build understands",
+            );
+        };
+        let report_glob = framework.report_glob.clone();
 
         let run_id = self.next_id.get() + 1;
         self.next_id.set(run_id);
@@ -309,7 +346,15 @@ impl ffi::TestService {
                 ansi: run_core::AnsiStripper::default(),
             };
             let program_str = program.to_string_lossy().into_owned();
-            let result = test_core::run(&handle, &program_str, &args, &root, &mut sink);
+            let result = test_core::run(
+                &handle,
+                &program_str,
+                &args,
+                &root,
+                output_format,
+                report_glob.as_deref(),
+                &mut sink,
+            );
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
                 let (ok, message) = match result {
@@ -341,9 +386,17 @@ impl ffi::TestService {
 fn republish(service: &ffi::TestService) {
     let framework = service.framework_name.borrow().clone();
     let key = source_key(&framework);
-    let grouped = test_core::diagnostics_by_file(&service.tree.borrow(), &framework);
     let mut store = service.store.borrow_mut();
     store.clear_source(&key);
+    // Locating a JVM failure's real source file (test-core's `diagnostics`
+    // module, review finding 3) needs the project root to resolve a class
+    // name to a path; with no project open there is nothing to republish
+    // against in the first place, so clearing the stale source above is all
+    // this call does.
+    let Some(work_dir) = current_project_root() else {
+        return;
+    };
+    let grouped = test_core::diagnostics_by_file(&service.tree.borrow(), &framework, &work_dir);
     for (uri, diagnostics) in grouped {
         store.replace(&key, &uri, diagnostics);
     }
@@ -378,6 +431,16 @@ impl test_core::TestSink for QtSink {
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.tree.borrow_mut().apply(event);
+                republish(&service);
+                service.as_mut().test_tree_changed();
+            });
+    }
+
+    fn junit(&mut self, cases: Vec<test_core::JUnitTestCase>) {
+        let _ = self
+            .qt_thread
+            .queue(move |mut service: Pin<&mut ffi::TestService>| {
+                service.tree.borrow_mut().apply_junit(&cases);
                 republish(&service);
                 service.as_mut().test_tree_changed();
             });

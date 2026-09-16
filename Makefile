@@ -86,6 +86,7 @@ test-jvm: linux-jvm-image ## Run jvm-build-core's real-toolchain integration tes
 # `lsp-conformance-ci`'s split.
 jvm-ci: ## Inner half of `test-jvm` — run inside the image
 	cargo nextest run -p jvm-build-core --features jvm-integration
+	cargo nextest run -p test-core --features jvm-integration
 
 lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings

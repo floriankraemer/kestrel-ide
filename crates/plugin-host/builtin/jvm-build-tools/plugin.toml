@@ -60,6 +60,11 @@ program-candidates = ["./gradlew", "gradle"]
 # tests" rather than "nothing changed".
 args = ["--init-script", "${asset_dir}/ide-model.init.gradle", "-Pide.teamcity=true", "--console=plain", "cleanTest", "test"]
 filter-flag = "--tests"
+# Gradle's `--tests` takes a dotted `pkg.Class.method` pattern (`*` is its
+# only wildcard) — not PHPUnit's PCRE dialect, which this row's
+# `filter-flag` shape alone would default to (review finding: a rerun built
+# in the wrong dialect compiles fine and matches nothing at runtime).
+filter-dialect = "gradle"
 output-format = "teamcity"
 requires-toolchain = "gradle"
 
@@ -67,11 +72,21 @@ requires-toolchain = "gradle"
 id = "junit-maven"
 name = "JUnit (Maven)"
 program-candidates = ["./mvnw", "mvn"]
-args = ["-B", "test"]
+# `-Dsurefire.failIfNoSpecifiedTests=false`: without it, a `-Dtest=`
+# filtered rerun (D6's "rerun this one node") whose pattern matches no test
+# class in a given module fails the whole multi-module build instead of
+# just running zero tests there — the same "some modules legitimately have
+# none" case Surefire's own default assumes is a mistake.
+args = ["-B", "test", "-Dsurefire.failIfNoSpecifiedTests=false"]
 # Maven's own `-Dtest=` takes the pattern spliced into one argument, unlike
 # Gradle's/PHPUnit's separate flag+pattern shape — this is exactly the case
 # `filter-template` exists for (A1).
 filter-template = "-Dtest={pattern}"
+# Surefire's `-Dtest=` wants `Class#method` (comma-joined for several), or a
+# bare `Class` for a whole suite — not PHPUnit's PCRE dialect. Combined with
+# `-Dsurefire.failIfNoSpecifiedTests=false` above, a rerun built in the
+# wrong dialect used to fail silently: it matched zero tests and "passed".
+filter-dialect = "surefire"
 output-format = "junit-xml"
 # Surefire (and Failsafe, for integration tests) write one report per test
 # class, never streamed — `test_core::runner::run` reads every matching file

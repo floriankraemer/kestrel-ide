@@ -9,3 +9,4 @@
 //! into `lsp_core::CompletionItem`, not this crate.
 
 pub mod context;
+pub mod repo_index;

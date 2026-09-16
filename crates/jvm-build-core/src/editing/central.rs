@@ -10,11 +10,18 @@
 //! * A disk cache under `<config_dir>/cache/maven-central/` with a 24h
 //!   TTL, keyed by request URL, so a completion popup does not refetch on
 //!   every keystroke and a stale entry ages out rather than growing
-//!   forever.
+//!   forever. A failed or empty answer is cached too (review fix #10),
+//!   with its own much shorter 1h TTL — a coordinate that genuinely has
+//!   no Central listing (a corporate-internal group, a typo) would
+//!   otherwise be retried over the network on every single save.
 //! * `offline: true` skips the client entirely — no network attempt and
 //!   no cache read either. A stale cached answer is still a *remote*
 //!   answer; "offline" means "do not use the network for this", not
 //!   "prefer a network answer that happens to be sitting on disk".
+//! * One `reqwest::blocking::Client` per `CentralClient` (review fix
+//!   #10), not one per request — building a client is not free (its own
+//!   connection pool, TLS config), and this client already lives exactly
+//!   as long as the caller's own sync/session does.
 //!
 //! The two response parsers ([`parse_search_response`],
 //! [`parse_metadata_versions`]) take plain strings and are fixture-tested
@@ -35,6 +42,11 @@ const SEARCH_URL: &str = "https://search.maven.org/solrsearch/select";
 const CENTRAL_REPO_URL: &str = "https://repo1.maven.org/maven2";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+/// Review fix #10: how long a *failed or empty* answer is trusted not to
+/// have changed — much shorter than a real answer's, since a transient
+/// network blip should not keep looking like "this coordinate does not
+/// exist" for a whole day.
+const NEGATIVE_CACHE_TTL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug)]
 pub struct CentralError(pub String);
@@ -62,6 +74,7 @@ pub struct CentralArtifact {
 pub struct CentralClient {
     cache_dir: PathBuf,
     offline: bool,
+    client: reqwest::blocking::Client,
 }
 
 impl CentralClient {
@@ -69,6 +82,15 @@ impl CentralClient {
         Self {
             cache_dir: config_dir.join("cache").join("maven-central"),
             offline,
+            // `.expect`: the only ways `ClientBuilder::build` fails are a
+            // TLS backend that failed to initialize or a malformed default
+            // header — neither depends on anything this call site controls,
+            // so a failure here means the process's TLS/network stack is
+            // broken in a way nothing downstream could work around either.
+            client: reqwest::blocking::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .build()
+                .expect("reqwest client with only a timeout set never fails to build"),
         }
     }
 
@@ -104,31 +126,39 @@ impl CentralClient {
 
     fn get_cached(&self, url: &str) -> Option<String> {
         let cache_path = cache_path(&self.cache_dir, url);
-        if let Some(body) = read_cache(&cache_path, CACHE_TTL) {
-            return Some(body);
+        if let Some(entry) = read_cache(&cache_path) {
+            return entry.body;
         }
-        let body = fetch(url).ok()?;
-        write_cache(&cache_path, &body);
-        Some(body)
+        match self.fetch(url) {
+            Ok(body) => {
+                write_cache(&cache_path, Some(&body));
+                Some(body)
+            }
+            Err(_) => {
+                // Review fix #10: a failure is cached too, briefly — a
+                // corporate-internal coordinate Central genuinely has no
+                // listing for must not be retried on every save.
+                write_cache(&cache_path, None);
+                None
+            }
+        }
     }
-}
 
-/// The one network call in this module — a blocking GET with a 3s
-/// timeout. Kept thin deliberately: everything worth unit-testing
-/// (parsing, cache freshness, the offline short-circuit) sits above or
-/// below it in functions that never open a socket.
-fn fetch(url: &str) -> Result<String, CentralError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        .map_err(|err| CentralError(err.to_string()))?;
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|err| CentralError(err.to_string()))?
-        .error_for_status()
-        .map_err(|err| CentralError(err.to_string()))?;
-    response.text().map_err(|err| CentralError(err.to_string()))
+    /// The one network call in this module — a blocking GET through this
+    /// client's own (single, review fix #10) connection pool. Kept thin
+    /// deliberately: everything worth unit-testing (parsing, cache
+    /// freshness, the offline short-circuit) sits above or below it in
+    /// functions that never open a socket.
+    fn fetch(&self, url: &str) -> Result<String, CentralError> {
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .map_err(|err| CentralError(err.to_string()))?
+            .error_for_status()
+            .map_err(|err| CentralError(err.to_string()))?;
+        response.text().map_err(|err| CentralError(err.to_string()))
+    }
 }
 
 /// A conservative percent-encoder for a Solr query string embedded in a
@@ -148,10 +178,13 @@ fn percent_encode(value: &str) -> String {
     out
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct CacheEntry {
     fetched_at_epoch_secs: u64,
-    body: String,
+    /// `None` is a negative cache entry (review fix #10) — "we asked and
+    /// got nothing", valid for [`NEGATIVE_CACHE_TTL`] rather than
+    /// [`CACHE_TTL`].
+    body: Option<String>,
 }
 
 fn cache_path(cache_dir: &Path, url: &str) -> PathBuf {
@@ -167,17 +200,22 @@ fn now_epoch_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn read_cache(path: &Path, ttl: Duration) -> Option<String> {
+fn read_cache(path: &Path) -> Option<CacheEntry> {
     let raw = std::fs::read_to_string(path).ok()?;
     let entry: CacheEntry = serde_json::from_str(&raw).ok()?;
+    let ttl = if entry.body.is_some() {
+        CACHE_TTL
+    } else {
+        NEGATIVE_CACHE_TTL
+    };
     let age = now_epoch_secs().saturating_sub(entry.fetched_at_epoch_secs);
-    (age <= ttl.as_secs()).then_some(entry.body)
+    (age <= ttl.as_secs()).then_some(entry)
 }
 
-fn write_cache(path: &Path, body: &str) {
+fn write_cache(path: &Path, body: Option<&str>) {
     let entry = CacheEntry {
         fetched_at_epoch_secs: now_epoch_secs(),
-        body: body.to_string(),
+        body: body.map(str::to_string),
     };
     let Ok(serialized) = serde_json::to_string(&entry) else {
         return;
@@ -326,23 +364,47 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = cache_path(dir.path(), "https://example.test/x");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        write_cache(&path, "hello");
+        write_cache(&path, Some("hello"));
 
         assert_eq!(
-            read_cache(&path, Duration::from_secs(60)),
+            read_cache(&path).and_then(|e| e.body),
             Some("hello".to_string())
         );
 
         // An entry written far enough in the past (the Unix epoch) is
-        // expired under a normal TTL — written directly rather than via
-        // `write_cache`, so the assertion does not depend on real-clock
-        // timing at second resolution.
+        // expired under the normal (positive) TTL — written directly
+        // rather than via `write_cache`, so the assertion does not
+        // depend on real-clock timing at second resolution.
         let stale = CacheEntry {
             fetched_at_epoch_secs: 0,
-            body: "old".to_string(),
+            body: Some("old".to_string()),
         };
         std::fs::write(&path, serde_json::to_string(&stale).unwrap()).unwrap();
-        assert_eq!(read_cache(&path, Duration::from_secs(60)), None);
+        assert_eq!(read_cache(&path), None);
+    }
+
+    /// Review fix #10: a negative entry (no body) round-trips within its
+    /// own, much shorter TTL — and is still expired once even that has
+    /// passed, the same as a positive entry.
+    #[test]
+    fn negative_cache_entry_round_trips_within_its_own_shorter_ttl() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = cache_path(dir.path(), "https://example.test/nothing-here");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write_cache(&path, None);
+
+        let entry = read_cache(&path).expect("fresh negative entry still valid");
+        assert_eq!(entry.body, None);
+
+        // Older than the negative TTL (1h) but well inside the positive
+        // one (24h) — must still read as expired, proving the negative
+        // entry really is on its own shorter clock.
+        let stale = CacheEntry {
+            fetched_at_epoch_secs: now_epoch_secs().saturating_sub(2 * 60 * 60),
+            body: None,
+        };
+        std::fs::write(&path, serde_json::to_string(&stale).unwrap()).unwrap();
+        assert_eq!(read_cache(&path), None);
     }
 
     #[test]

@@ -182,6 +182,11 @@ pub struct LanguageServiceRust {
         RefCell<std::collections::HashMap<String, lsp_core::SignatureTriggers>>,
     pub(crate) signature_help: RefCell<Option<lsp_core::SignatureHelp>>,
     pub(crate) signature_tracker: RefCell<lsp_core::RequestTracker>,
+    /// D6 (review fix #10): guards `refresh_version_hints`'s
+    /// Central-augmented background delivery — without it, two saves
+    /// close together race, and whichever background thread happens to
+    /// finish *last* wins even if it was answering the *earlier* save.
+    pub(crate) version_hints_tracker: RefCell<lsp_core::RequestTracker>,
     /// R3: which overload Up/Down has manually cycled to, overriding the
     /// server's own `activeSignature` until the next `signatureHelpReady` —
     /// a fresh answer means a different call, so it resets this rather than
@@ -273,6 +278,7 @@ impl Default for LanguageServiceRust {
             signature_triggers: RefCell::default(),
             signature_help: RefCell::default(),
             signature_tracker: RefCell::default(),
+            version_hints_tracker: RefCell::default(),
             signature_display_index: Cell::default(),
             highlights: RefCell::default(),
             highlights_tracker: RefCell::default(),

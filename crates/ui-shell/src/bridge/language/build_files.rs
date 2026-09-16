@@ -68,6 +68,12 @@ use crate::bridge::ffi;
 /// language server's own rows for the same file.
 const VERSION_HINTS_SOURCE: &str = "build-tools:versions";
 
+/// Review fix #10: the most Central round trips one `refresh_version_hints`
+/// background pass will make — bounds worst-case latency for a project
+/// with many declared dependencies and a still-cold disk cache (D4's own
+/// cache already bounds every *repeat* save regardless).
+const MAX_CENTRAL_LOOKUPS_PER_SAVE: usize = 25;
+
 /// An owned copy of whatever `BuildToolsService` has published so far —
 /// safe to move into a background thread, unlike the `thread_local!` this
 /// clones out of. Qt-thread-only to call (the thread-local itself is).
@@ -424,12 +430,25 @@ impl ffi::LanguageService {
         if is_offline_for(path) {
             return;
         }
+        // Review fix #10: guards against a stale background delivery
+        // (an earlier save's) landing after a newer one already has.
+        let token = self.version_hints_tracker.borrow_mut().begin();
         let config_dir = app_core::resolve_config_dir();
         let path_owned = path.to_string();
         let content_for_thread = content.clone();
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
             let client = central::CentralClient::new(&config_dir, false);
+            // Review fix #10: bounds how many blocking Central round trips
+            // one save can trigger — a project with hundreds of
+            // dependencies must not turn every save into hundreds of
+            // sequential network calls (each already cache-backed on its
+            // own, but a *cold* cache is exactly the case that would make
+            // the very first open of a large project feel frozen). Past
+            // the cap, a dependency's hint falls back to the local index
+            // alone for this pass; a later save (or the cache warming up
+            // from other dependencies already queried) picks it up.
+            let mut central_lookups_remaining = MAX_CENTRAL_LOOKUPS_PER_SAVE;
             let hints = versions::hints(&declared, |group, artifact| {
                 let mut candidates = index
                     .as_ref()
@@ -441,11 +460,17 @@ impl ffi::LanguageService {
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                candidates.extend(client.versions(group, artifact));
+                if central_lookups_remaining > 0 {
+                    central_lookups_remaining -= 1;
+                    candidates.extend(client.versions(group, artifact));
+                }
                 candidates
             });
             let uri = lsp_core::uri_from_path(&path_owned);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+                if !service.version_hints_tracker.borrow().accept(token) {
+                    return;
+                }
                 // The file may have been closed while Central was
                 // answering; a closed file's diagnostics were already
                 // cleared and must stay cleared.

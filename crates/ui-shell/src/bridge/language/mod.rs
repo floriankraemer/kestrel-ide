@@ -581,6 +581,7 @@ impl ffi::LanguageService {
     pub fn document_opened(mut self: Pin<&mut Self>, path: &QString, text: &QString) {
         let path_str = path.to_string();
         let Some(config) = self.config_for_path(&path_str) else {
+            self.as_mut().open_build_file_document(&path_str, text);
             return;
         };
         let language_id = config.language_id.clone();
@@ -606,6 +607,44 @@ impl ffi::LanguageService {
         self.as_mut().request_semantic_tokens(path, text);
         // C10: same fire-and-forget convention, immediately above.
         self.as_mut().request_code_lenses(path);
+    }
+
+    /// D0: a build file (`pom.xml`, `build.gradle(.kts)`, `libs.versions.toml`, …)
+    /// has no language server, so `document_opened`'s ordinary path bails
+    /// out before the file ever enters `open_docs` — leaving D7's quick fix
+    /// (`refactor::plan_changes`, off `open_document_paths()`) to write
+    /// straight to disk under a dirty tab instead of splicing into the open
+    /// buffer. Registering it here, with no server started, gives it the
+    /// same `open_docs` membership as a served document.
+    ///
+    /// Queuing `did_open`/`did_change`/`did_close` for a language with no
+    /// server is already harmless: every `LspManager::notify` call returns
+    /// `Err(LspError::NoServer(..))`, and every caller in this file already
+    /// swallows that with `let _ =` — see
+    /// `lsp_core::manager::no_server_document_lifecycle_tests`.
+    fn open_build_file_document(self: Pin<&mut Self>, path_str: &str, text: &QString) {
+        let Some(root) = crate::bridge::convert::current_project_root() else {
+            return;
+        };
+        let Ok(relative) = Path::new(path_str).strip_prefix(&root) else {
+            return;
+        };
+        let patterns: Vec<String> = plugin_host::registry()
+            .build_tools()
+            .flat_map(|(_, contribution)| contribution.build_files.iter().cloned())
+            .collect();
+        if !jvm_build_core::sync::is_build_file(relative, &patterns) {
+            return;
+        }
+        let language_id = syntax_core::language_for_path(Path::new(path_str)).id();
+        self.open_docs
+            .borrow_mut()
+            .insert(path_str.to_string(), language_id.clone());
+        let uri = lsp_core::uri_from_path(path_str);
+        let text_str = text.to_string();
+        self.push_job(move |manager| {
+            let _ = manager.did_open(&uri, &language_id, &text_str);
+        });
     }
 
     pub fn document_changed(self: Pin<&mut Self>, path: &QString, text: &QString) {

@@ -1531,6 +1531,54 @@ fn client_capabilities() -> Value {
     })
 }
 
+/// D0 (jvm-build-tools plan): build files (`pom.xml`, `build.gradle`, …)
+/// are registered as open documents with no server configured for their
+/// language, so `did_open`/`did_change`/`did_close` must tolerate that
+/// without panicking or corrupting the manager's document map — the
+/// bridge's `open_build_file_document` (`ui-shell/src/bridge/language/
+/// mod.rs`) relies on exactly this.
+#[cfg(test)]
+mod no_server_document_lifecycle_tests {
+    use super::*;
+
+    fn manager() -> LspManager {
+        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/tmp/proj"));
+        manager
+    }
+
+    #[test]
+    fn did_open_with_no_server_records_the_document_and_returns_no_server() {
+        let manager = manager();
+        let uri = "file:///tmp/proj/pom.xml";
+        let err = manager.did_open(uri, "xml", "<project/>").unwrap_err();
+        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
+        // The document is still tracked, even though no server was
+        // notified — did_change below depends on this.
+        assert!(manager.documents.lock().unwrap().contains_key(uri));
+    }
+
+    #[test]
+    fn did_change_with_no_server_bumps_the_version_and_returns_no_server() {
+        let manager = manager();
+        let uri = "file:///tmp/proj/pom.xml";
+        manager.did_open(uri, "xml", "<project/>").unwrap_err();
+        let err = manager
+            .did_change(uri, "<project><x/></project>")
+            .unwrap_err();
+        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
+    }
+
+    #[test]
+    fn did_close_with_no_server_forgets_the_document_and_returns_no_server() {
+        let manager = manager();
+        let uri = "file:///tmp/proj/pom.xml";
+        manager.did_open(uri, "xml", "<project/>").unwrap_err();
+        let err = manager.did_close(uri).unwrap_err();
+        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
+        assert!(!manager.documents.lock().unwrap().contains_key(uri));
+    }
+}
+
 #[cfg(test)]
 mod host_translation_tests {
     use super::*;

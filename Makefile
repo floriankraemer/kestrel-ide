@@ -79,7 +79,7 @@ lsp-conformance-ci: ## Inner half of `lsp-conformance` — run inside the image
 linux-jvm-image: ## Build the linux-jvm image (linux-builder + Temurin 21 + Gradle + Maven)
 	$(DOCKER) build --target linux-jvm -t $(JVM_IMAGE) -f $(DOCKERFILE) .
 
-test-jvm: linux-jvm-image ## Run jvm-build-core's real-toolchain integration tests
+test-jvm: linux-jvm-image ## Run the real-toolchain integration tests and Gradle/Maven E2E flows
 	$(RUN_JVM) $(MAKE) jvm-ci
 
 # Inner target: the command line itself, with no Docker wrapper, mirroring

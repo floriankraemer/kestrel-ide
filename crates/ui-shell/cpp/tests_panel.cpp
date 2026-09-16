@@ -21,6 +21,7 @@
 #include <QScrollBar>
 #include <QSplitter>
 #include <QTextCursor>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -52,6 +53,27 @@ QString statusText(FfiTestStatusKind status)
         return QObject::tr("Skipped");
     }
     return QString();
+}
+
+// A stable, English, machine-readable name for a status — never
+// `statusText`'s `tr()`-wrapped display string, which a non-English UI
+// locale would translate out from under anything reading the marker
+// stream (ADR-0049).
+const char *statusName(FfiTestStatusKind status)
+{
+    switch (status) {
+    case FfiTestStatusKind::Failed:
+        return "failed";
+    case FfiTestStatusKind::Running:
+        return "running";
+    case FfiTestStatusKind::Pending:
+        return "pending";
+    case FfiTestStatusKind::Passed:
+        return "passed";
+    case FfiTestStatusKind::Skipped:
+        return "skipped";
+    }
+    return "";
 }
 
 QColor statusColor(FfiTestStatusKind status)
@@ -291,6 +313,9 @@ void TestsPanel::onTestTreeChanged()
         item->setData(0, kKindRole, static_cast<int>(node.kind));
         item->setExpanded(expandedById.value(id, true));
         itemsById_.insert(id, item);
+        e2eMark(QStringLiteral("{\"ev\":\"test_tree_row\",\"id\":%1,\"name\":%2,\"status\":%3}")
+                  .arg(e2eJson(id), e2eJson(QString(node.name)),
+                        e2eJson(QString::fromUtf8(statusName(node.status)))));
     }
 
     if (!selectedNodeId_.isEmpty()) {
@@ -303,6 +328,33 @@ void TestsPanel::onTestTreeChanged()
     const int total = itemsById_.size();
     statusLabel_->setText(tr("%n test node(s).", nullptr, total));
     e2eMark(QStringLiteral("{\"ev\":\"test_tree_changed\",\"nodes\":%1}").arg(total));
+}
+
+void TestsPanel::markE2eToolbar() const
+{
+    struct ButtonEntry
+    {
+        const char *name;
+        QToolButton *button;
+    };
+    const ButtonEntry entries[] = {
+        { "run_all", runAllButton_ },
+        { "run_failed", runFailedButton_ },
+        { "stop", stopButton_ },
+    };
+    QStringList buttons;
+    for (const ButtonEntry &entry : entries) {
+        const QPoint origin = entry.button->mapToGlobal(QPoint(0, 0));
+        const QSize size = entry.button->size();
+        buttons << QStringLiteral("{\"name\":%1,\"rect\":[%2,%3,%4,%5]}")
+                      .arg(e2eJson(QString::fromUtf8(entry.name)))
+                      .arg(origin.x())
+                      .arg(origin.y())
+                      .arg(size.width())
+                      .arg(size.height());
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"tests_toolbar_rects\",\"buttons\":[%1]}")
+              .arg(buttons.join(QLatin1Char(','))));
 }
 
 void TestsPanel::onTestOutputAppended(const QString &text)
@@ -379,6 +431,14 @@ TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("tests"), dock, ads::CenterDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("tests"));
+    // E2E only: same reasoning as `containers_panel.cpp`'s identical
+    // `visibilityChanged` connect on its own dock — the toolbar has no
+    // real geometry until this dock is actually on screen and laid out.
+    QObject::connect(dock, &ads::CDockWidget::visibilityChanged, panel, [panel](bool visible) {
+        if (visible) {
+            QTimer::singleShot(0, panel, [panel]() { panel->markE2eToolbar(); });
+        }
+    });
     return panel;
 }
 

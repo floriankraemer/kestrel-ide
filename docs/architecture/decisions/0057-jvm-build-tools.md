@@ -2,8 +2,9 @@
 
 ## Status
 
-Proposed.
+Accepted.
 Implemented by [the jvm-build-tools plan](../jvm-build-tools-plan.md); this ADR covers the plan's P0 and A-phase (`jvm-build-core`, the `build-tools` contribution point, the `jvm-build-tools` built-in plugin, and the `[build_tools]` settings sections).
+The plan's later B–E phases (tool window, run/reload/settings, Tests dock integration, build-file editing, and this record's own verification) landed as follow-up PRs on the same crate and contribution point; see the amendment below for what they delivered against what this ADR and the plan originally described.
 Amends [ADR-0026](0026-plugin-host.md) (asset materialisation for a built-in plugin's text assets), [ADR-0039](0039-typed-run-configurations.md) (detection-only vs. invoking a build tool), [ADR-0040](0040-build-core.md) (delegate-and-never-model, extended from building to sync), and [ADR-0048](0048-test-runner.md) (a second `junit-xml` output-format consumer, the one the format was generalised for but never had until now).
 
 ## Context
@@ -85,6 +86,21 @@ The plan's later E2 flow (`e2e_build_tools`, phase E) is gated `IDE_E2E_JVM=1` a
 - A sync is the one place in the codebase (besides an explicit Run) that executes project-authored code, and it is gated exactly like that fact deserves: an explicit first click, trust recorded where only the user can write it, and never inferred from anything the project itself ships.
 - `jvm-build-core`'s dependency-graph and task-tree types have no IDE-owned interpretation layered on top of what the tool reported, so a "why does the IDE disagree with `gradle dependencies`" support question cannot arise by construction.
 - CI's per-PR gate stays exactly as fast as it was: nothing in this PR touches `linux-builder`, `make test`, or `make lint`'s toolset, and the new `linux-jvm` image is built and run only nightly or on demand.
+
+## Amendment: what was delivered vs. planned (phase E)
+
+The B–D phases (tool window, run/reload/settings, Tests dock integration, build-file editing) and this E phase's own docs/verification pass landed after this ADR's original text above, which is left unedited per this repo's ADR-immutability rule.
+The deviations below were verified against the shipped code, not transcribed from the plan's own wording, which had drifted from the code in a few places.
+
+- `buildTools.reload` ships with no default keybinding: it is reachable only from the Build menu's "Reload Build Tool Project" action (`crates/ui-shell/cpp/build_menu.cpp`), because `Ctrl+Shift+O` — IntelliJ's own binding for this action — collides in this IDE with the pre-existing `view.goToSymbol` action and failed a keymap uniqueness test (recorded already in the plan's B4 row).
+- Output-directory greying in the project tree was deferred, not shipped: `app_core::build_tools_tree::folder_role` (B7) joins a synced `BuildModel`'s source roots and output directories onto tree paths and drives the folder *icon*, but nothing paints an output directory in a dimmed foreground — `ProjectTreeModel` has no per-row style/foreground role to extend for it, and none was added in this delivery (recorded already in the plan's B7 row).
+- The Build Tools settings page (B5) is project-scoped like `analysis`/`containers` (`ScopedField::BuildTools`, `settings_model::scope`), with one deliberate exception: `trusted_roots` is not a `ScopedField` at all and is read only from the global settings file, exactly as this ADR's §3 requires — a project has no field to carry its own trust flag in, structurally, not just by convention.
+- The Groovy grammar (D1) shipped exactly as planned: `tree-sitter-groovy` is pinned from crates.io (`0.1.2`, `crates/syntax-core/Cargo.toml`), not vendored from git; its highlight query is hand-written off `build.gradle`'s node shape, the same way `kotlin`'s already was.
+- `${property}` resolution (D6) is real but narrower than a naive reading of "version hints" would suggest, and the limitation differs by build tool.
+  For Maven, `resolve_pom_property` resolves a `${x}` reference against the *same file's own* `<properties>` table only — never a parent POM's, which `maven::pom`'s own reader already documents as a limitation for the identical reason (it would need opening a second file).
+  For Gradle, `is_resolvable_version` treats any version string containing `$`, `{` or `}` as unresolvable and silently skips it — a Gradle/Kotlin-DSL `${ext.foo}` or `$foo` interpolation never produces a version hint at all, not even a same-file-only one, a wider gap than Maven's that was not closed in this delivery.
+- `filter-dialect` shipped as designed, not as a gap: `TestFrameworkContribution` carries `filter_flag`/`filter_template` exactly as this ADR's §1 describes, *and* the `filter-dialect` field the plan's D-phase notes mention (`gradle`/`surefire`, validated against an unknown-dialect load error) is present in `plugin-api`'s manifest and the shipped `jvm-build-tools/plugin.toml` rows — there is no shortfall here to record.
+- The E2E flow (E2, `crates/app/tests/e2e_build_tools.rs`) being nightly-only, gated `IDE_E2E_JVM=1` and run inside `linux-jvm` alongside `test-jvm` rather than in the per-PR `e2e-ci` budget, is not a deviation: it is exactly what this ADR's §6 already decided, restated here because E2 is the phase that actually built the flow the decision described.
 
 ## Related
 

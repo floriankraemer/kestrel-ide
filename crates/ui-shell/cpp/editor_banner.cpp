@@ -1,11 +1,35 @@
 #include "editor_banner.h"
+#include "e2e_mark.h"
 #include "theme.h"
 
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QTimer>
 
 namespace ui_shell {
+
+namespace {
+
+// The mark's own vocabulary for `FfiBannerKind` — never the enum's numeric
+// value, which would make the mark meaningless without also shipping the
+// bridge header to whoever reads the marker stream.
+const char *bannerKindName(FfiBannerKind kind)
+{
+    switch (kind) {
+    case FfiBannerKind::TrustGradle:
+        return "trust_gradle";
+    case FfiBannerKind::TrustMaven:
+        return "trust_maven";
+    case FfiBannerKind::ReloadNeeded:
+        return "reload_needed";
+    case FfiBannerKind::None:
+        break;
+    }
+    return "none";
+}
+
+} // namespace
 
 EditorBanner::EditorBanner(BuildToolsService *buildToolsService, QWidget *parent)
   : QWidget(parent)
@@ -84,6 +108,29 @@ void EditorBanner::refresh()
         break;
     }
     setVisible(true);
+
+    // Deferred a turn, the same "not laid out yet" reason
+    // `BuildToolsPanel::markE2eRows` defers its own rects: `setVisible`
+    // above does not guarantee the buttons have a real geometry the
+    // instant this call returns.
+    QTimer::singleShot(0, this, [this, kind]() {
+        const QPoint primaryOrigin = primaryButton_->mapToGlobal(QPoint(0, 0));
+        const QSize primarySize = primaryButton_->size();
+        const QPoint secondaryOrigin = secondaryButton_->mapToGlobal(QPoint(0, 0));
+        const QSize secondarySize = secondaryButton_->size();
+        e2eMark(QStringLiteral("{\"ev\":\"build_tools_banner\",\"kind\":%1,"
+                                "\"primary_rect\":[%2,%3,%4,%5],"
+                                "\"secondary_rect\":[%6,%7,%8,%9]}")
+                  .arg(e2eJson(QString::fromUtf8(bannerKindName(kind))))
+                  .arg(primaryOrigin.x())
+                  .arg(primaryOrigin.y())
+                  .arg(primarySize.width())
+                  .arg(primarySize.height())
+                  .arg(secondaryOrigin.x())
+                  .arg(secondaryOrigin.y())
+                  .arg(secondarySize.width())
+                  .arg(secondarySize.height()));
+    });
 }
 
 } // namespace ui_shell

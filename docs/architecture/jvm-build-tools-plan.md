@@ -153,9 +153,9 @@ Review fix #8 (`d9a9563`, docs/CI only — the layering doc's stale tokio check 
 
 | Task | Status | Commit |
 |---|---|---|
-| E1 — `overview.md`, `project-structure.md` truthful; ADR status Accepted | open | |
-| E2 — E2E (nightly, gated `IDE_E2E_JVM=1`): Gradle fixture sync → banner → Load → dock → run → Tests dock → pom completion | open | |
-| E3 — manual matrix: Windows `gradlew.bat`/`mvnw.cmd`, WSL root | open | |
+| E1 — `overview.md`, `project-structure.md` truthful; ADR status Accepted | done | `57f649b` |
+| E2 — E2E (nightly, gated `IDE_E2E_JVM=1`): Gradle fixture sync → banner → Load → dock → run → Tests dock → pom completion | done | `41face6` |
+| E3 — manual matrix: Windows `gradlew.bat`/`mvnw.cmd`, WSL root | done (manual matrix below: documented, awaiting a manual Windows pass — no Windows machine available to this session) | `a91de42` |
 
 ## Delivery
 
@@ -171,3 +171,19 @@ One branch off `main` in an agent worktree; `./mk test` + `./mk lint` green befo
 ## Out of scope (stated once)
 
 Debug launch body with `mainClass`/classpath from the model (follow-up plan); run-from-context for a JVM `main` class; Gradle composite builds beyond listing included-build names; Maven daemon (`mvnd`); Gradle Kotlin-DSL script classpath for kotlin-language-server; vulnerable-dependency scanning; archetype/project wizards; download-sources action.
+
+## Manual verification matrix (E3)
+
+This doc has no numbered `§` headers elsewhere (unlike `run-build-debug-parity-plan.md`'s `## 6`), so this section is named rather than numbered — same table shape as that plan's own manual debug matrix.
+Nobody on this delivery has a Windows machine, so nothing below is automated; CI stays Linux-only (`linux-builder`, `linux-jvm`), and this row is **documented, awaiting a manual pass** — the same status `containers-plan.md`'s C10 row and `changes-panel-plan.md`'s G11 row already use for an identical gap (no Windows box available to the implementing session).
+
+Run this before a release, and after any change to `jvm-build-core`'s `gradle`/`maven`/`sync`/`editing` modules or `run_core::toolchain`'s wrapper resolution.
+
+| Check | What to verify | Last walked | Result |
+|---|---|---|---|
+| Windows `gradlew.bat` / `mvnw.cmd` launch | `run_core::toolchain::wrapper_or` (`gradle_program`/`maven_program`, `crates/run-core/src/toolchain.rs`) looks for `gradlew.bat` — the actual Gradle-wrapper convention — but for Maven it builds the same `{wrapper}.bat` pattern against `mvnw`, i.e. `mvnw.bat`, never the file Maven's own wrapper generator actually writes, `mvnw.cmd`. Confirm on a real Windows checkout whether a project's `mvnw.cmd` is found at all, or whether Maven sync silently falls back to a bare `mvn` on `PATH` instead of the pinned wrapper version — a real gap this table exists to catch, not a hypothetical one. | not yet | — |
+| WSL root (`\\wsl.localhost\…`) path translation | Verified absent, not merely unverified: `crates/jvm-build-core/src` and `crates/test-core/src` contain no reference to `process_exec::host::ExecHost` at all (grepped, zero hits), unlike `lsp-core`/`dap-core`/`build-core`, which ADR-0052 already threads it through. Every Gradle/Maven sync, run and JUnit report-glob read spawns on the local host directly. Confirm on Windows whether opening a `\\wsl.localhost\...` Gradle/Maven project even resolves the init-script path and the Surefire/Failsafe report glob correctly by accident (WSL's own UNC path handling) or whether it needs the same `ExecHost` treatment as a follow-up ADR. | not yet | — |
+| Trust prompt on Windows | The editor banner ("Gradle/Maven project detected. Load it?") and `[build_tools] trusted_roots` round-trip through `app-config`'s TOML file — no Windows-specific code path exists, so this is confirming absence of a platform-specific bug, not a missing feature. | not yet | — |
+| Reload banner on an external change (non-IDE tool) | `jvm_build_core::sync::decide`'s three-mode policy is unit-tested against synthetic watcher/save events on Linux; confirm a real `git checkout` of a build file on Windows reaches `ProjectTreeModel`'s watcher and shows the reload banner (`external`/`any` modes) the same way it does under Linux's `notify` backend. | not yet | — |
+| JUnit results landing in the Tests dock | Gradle's TeamCity `TestListener` path is exercised by C2's `linux-jvm` integration tests; Maven's `junit-xml` post-run report-glob read (`test-core`) has no Windows-specific code either, but has never run against a real `mvn.cmd`/Surefire report path with backslash separators — confirm the glob still matches. | not yet | — |
+| `pom.xml` completion fully offline | D4's Maven Central client is offline-aware (`editing::central`, skipped when `[build_tools.maven].offline` is set or no network answers); `editing::repo_index`'s local-repository scan is pure filesystem code with no OS-specific path assumptions beyond `PathBuf` itself. Confirm on Windows that completion still offers local-repo candidates with no network and no exception dialog. | not yet | — |

@@ -779,6 +779,18 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // The PHP tooling plan's D5 dock. `tests_menu.cpp` has registered it
+    // since that phase, but it never had a row here, so — unlike every
+    // other `view.*` dock action — Search Everywhere/Find Action could not
+    // find it and the Keymap page could not rebind it (found by the
+    // jvm-build-tools plan's E2 flow, which opens the dock that way).
+    // Unbound like `view.build`.
+    ActionDef {
+        id: "view.tests",
+        label: "Tests",
+        category: "View",
+        default_shortcut: "",
+    },
     // The PHP tooling plan's B9: runs every enabled, installed analyzer
     // against the whole open project via `AnalysisService::inspectProject`.
     ActionDef {

@@ -49,6 +49,12 @@ public:
     void runFailedTests();
     void stopTests();
 
+    // E2E only: the toolbar's button rects, the same
+    // `containers_panel.cpp`'s `refreshE2eRects` shape — `buildTestsDock`
+    // calls this once per `visibilityChanged(true)`, since neither button
+    // has a real screen geometry before the dock is actually shown.
+    void markE2eToolbar() const;
+
 private:
     void onTestRunStarted();
     void onTestTreeChanged();

@@ -65,6 +65,7 @@ Support (Qt-free):
 - `crates/mcp-server` — local Streamable-HTTP JSON-RPC MCP server over the shared index.
 - `crates/container-core` — CLI-driven Docker/Podman integration (ADR-0055): connections, discovery, engine probing, `inspect` models, snapshot + compose grouping, `events` watcher, dock tree rows, ops, run configurations, compose-file/image-reference editor assistance.
 - `crates/container-registry` — the container integration's HTTP clients (Docker Hub search/tags; C7's registry catalog + keyring): split from `container-core` so reqwest's private tokio runtime never enters the tree beneath `run-core`.
+- `crates/jvm-build-core` — Gradle/Maven support (ADR-0057): an init-script/effective-pom project sync, a trust-gated reload policy, task/goal run configs, and build-file editing (coordinate completion, version hints, dependency analyzer) for `pom.xml`/`build.gradle(.kts)`/`libs.versions.toml`.
 
 Adapter + view:
 - `crates/ui-shell` — adapter (`src/bridge.rs` cxx-qt QObjects) + view (`cpp/` Qt Widgets).

@@ -83,10 +83,17 @@ test-jvm: linux-jvm-image ## Run jvm-build-core's real-toolchain integration tes
 	$(RUN_JVM) $(MAKE) jvm-ci
 
 # Inner target: the command line itself, with no Docker wrapper, mirroring
-# `lsp-conformance-ci`'s split.
+# `lsp-conformance-ci`'s split. `e2e_build_tools` (E2, ADR-0057 §6) rides
+# along here rather than `e2e-ci`'s per-PR budget — it is gated
+# `IDE_E2E_JVM=1` at runtime (`app`'s own test binary has no
+# `jvm-integration` feature to gate it at compile time the way the two
+# `nextest run` lines above do), so it is a silent no-op skip everywhere
+# except here and `make test-jvm`.
 jvm-ci: ## Inner half of `test-jvm` — run inside the image
 	cargo nextest run -p jvm-build-core --features jvm-integration
 	cargo nextest run -p test-core --features jvm-integration
+	cargo build -p app
+	IDE_E2E_JVM=1 $(E2E_XVFB) cargo test -p app --test e2e_build_tools -- --ignored --test-threads=1 --nocapture
 
 lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings

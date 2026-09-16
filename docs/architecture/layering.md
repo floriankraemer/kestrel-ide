@@ -205,7 +205,7 @@ cargo tree -p test-core -e normal | grep -i tokio       # must be empty
 cargo tree -p container-core -e normal | grep -iE 'qt|tokio'   # must be empty
 cargo tree -p container-registry -e normal | grep -i qt          # must be empty (tokio is tolerated, see the ai-chat-core note above)
 cargo tree -p jvm-build-core -e normal | grep -i qt     # must be empty
-cargo tree -p jvm-build-core -e normal | grep -i tokio  # must be empty
+cargo tree -p run-core -e normal | grep -i tokio        # must be empty (D4's reqwest lives in jvm-build-core, which sits *above* run-core, not beneath it — see that row above for why no jvm-build-registry split was needed, unlike container-registry's)
 ```
 
 ## Known debt at time of writing

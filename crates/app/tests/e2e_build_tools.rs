@@ -28,6 +28,7 @@
 //! once, before its own `ctrl+space`.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use e2e::{Ide, Mark};
 use serde_json::Value;
@@ -96,6 +97,32 @@ fn rect_centre(rect: &Value) -> (i32, i32) {
 /// shares.
 fn rect_zero() -> Value {
     serde_json::json!([0, 0, 0, 0])
+}
+
+/// Review fix #2: a short, bounded, non-panicking probe for a
+/// `completion_shown` marker since `mark` — every other wait in this file
+/// goes through `Ide::wait_for_ev`, which panics past its (60s) deadline,
+/// so calling it from *inside* an outer retry loop (as this test's Maven
+/// scenario poll used to) leaves that loop unable to actually retry: the
+/// very first not-ready-yet attempt eats the whole budget and the test
+/// fails before a second `ctrl+space` is ever sent. This one returns
+/// `None` on its own short timeout instead, handing control back to the
+/// caller's loop.
+fn probe_completion_shown(ide: &Ide, mark: Mark, timeout: Duration) -> Option<Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(shown) = ide
+            .events_since_of(mark, "completion_shown")
+            .into_iter()
+            .next()
+        {
+            return Some(shown);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
 }
 
 /// Open Search Everywhere, type `query`, accept the top hit — `e2e.rs`'s
@@ -366,13 +393,16 @@ fn e2e_maven_pom_completion() {
     // #2) — nothing marks "the index is ready" on its own, so this polls
     // `ctrl+space` itself rather than assuming the first press lands
     // after that delivery. Each retry is a real transition check (a fresh
-    // `completion_shown` marker), never a bare sleep.
+    // `completion_shown` marker, `probe_completion_shown`'s own short,
+    // bounded, non-panicking wait — never `Ide::wait_for_ev`, whose 60s
+    // panic-on-timeout would eat the outer loop's entire budget on the
+    // first not-ready-yet attempt and leave nothing to retry with).
     let labels = e2e::wait_for(
         "`junit-jupiter-api` to appear in pom.xml completion",
         || {
             let mark = ide.mark();
             ide.key("ctrl+space");
-            let shown = ide.wait_for_ev(mark, "completion_shown");
+            let shown = probe_completion_shown(&ide, mark, Duration::from_secs(5))?;
             let labels: Vec<String> = shown["labels"]
                 .as_array()
                 .into_iter()

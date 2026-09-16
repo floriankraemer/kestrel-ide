@@ -166,6 +166,19 @@ void CodeEditor::showCompletions(const QVector<CompletionEntry> &items)
 {
     completionEntries_ = items;
     completionModel_->clear();
+    // Review fix #2: emitted before the empty-list early return, not after
+    // — an E2E poll waiting on `completion_shown` to tell "the completion
+    // request hasn't come back yet" apart from "it came back with zero
+    // results" needs a marker for the second case too, and this one used
+    // to fire only once `items` had something in it.
+    QStringList labels;
+    labels.reserve(items.size());
+    for (const CompletionEntry &entry : items) {
+        labels << e2eJson(entry.label);
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"completion_shown\",\"count\":%1,\"labels\":[%2]}")
+              .arg(items.size())
+              .arg(labels.join(QLatin1Char(','))));
     if (items.isEmpty()) {
         hideCompletionPopup();
         return;
@@ -197,19 +210,6 @@ void CodeEditor::showCompletions(const QVector<CompletionEntry> &items)
                     + kPopupWidthPadding);
     completer_->complete(anchor);
     completionDocsPanel_->showBeside(items.first().documentation, popup->geometry());
-    // `labels`, alongside the pre-existing `count`: a test asserting a
-    // specific candidate is present (e.g. the jvm-build-tools plan's D5,
-    // a Maven coordinate) needs more than a count to tell one completion
-    // list from another — every existing reader keys off `count` alone, so
-    // this is purely additive.
-    QStringList labels;
-    labels.reserve(items.size());
-    for (const CompletionEntry &entry : items) {
-        labels << e2eJson(entry.label);
-    }
-    e2eMark(QStringLiteral("{\"ev\":\"completion_shown\",\"count\":%1,\"labels\":[%2]}")
-              .arg(items.size())
-              .arg(labels.join(QLatin1Char(','))));
 }
 
 void CodeEditor::updateCompletionPreview(const QString &detail, const QString &documentation)

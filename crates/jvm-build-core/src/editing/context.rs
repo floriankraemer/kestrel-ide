@@ -786,6 +786,41 @@ fn toml_declared_versions(text: &str) -> Vec<DeclaredVersion> {
     found
 }
 
+/// Review fix #9: where `group:artifact` is declared in `text`, *without*
+/// requiring a resolvable version next to it — `declared_versions` alone
+/// finds nothing for a dependency whose version is managed elsewhere
+/// (Maven's `<dependencyManagement>`/an imported BOM, Gradle's own
+/// `platform(...)` constraint), so "Go to Declaration" landed nowhere for
+/// exactly the shape of dependency a real project uses most. Points at
+/// the artifact id's own range (pom.xml) or the coordinate literal's
+/// version-segment range (Gradle, close enough — the whole coordinate
+/// sits on one line); `libs.versions.toml` reuses `declared_versions`
+/// unchanged (an alias with no resolvable `version.ref` has no line of
+/// its own to distinguish from its `[libraries]` entry, which
+/// `declared_versions` already reaches).
+pub fn declaration_range(
+    path: &Path,
+    text: &str,
+    group: &str,
+    artifact: &str,
+) -> Option<Range<usize>> {
+    match classify(path)? {
+        FileKind::Pom => pom_blocks(text).into_iter().find_map(|block| {
+            let (g, _) = block.group_id?;
+            let (a, a_range) = block.artifact_id?;
+            (g == group && a == artifact).then_some(a_range)
+        }),
+        FileKind::Gradle => all_gradle_coordinates(text)
+            .into_iter()
+            .find(|(_, coordinate)| {
+                coordinate.group_id.as_deref() == Some(group)
+                    && coordinate.artifact_id.as_deref() == Some(artifact)
+            })
+            .map(|(range, _)| range),
+        FileKind::VersionCatalog => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -58,15 +58,28 @@ fn filter_one(dep: &Dependency, filter: &DependencyFilter) -> Option<Dependency>
 /// The 1-based line `dep` is declared on in `build_file_text` (the file
 /// named by `path` — `dep.file` when a caller has a `Dependency` from a
 /// synced model, which is where this is normally read from). `None` when
-/// D2's scanner finds no matching `group:artifact` — the ordinary case
-/// for a transitive dependency, which never appears in the build file at
-/// all, only in the resolved graph.
+/// D2's scanner finds no matching `group:artifact` at all — the ordinary
+/// case for a transitive dependency, which never appears in the build
+/// file itself, only in the resolved graph.
+///
+/// Two passes (review fix #9): `declared_versions` first, which lands on
+/// the version literal itself when there is one; `declaration_range`
+/// (broader, no version required) when there is not — a dependency whose
+/// version comes from `<dependencyManagement>`/an imported BOM, or a
+/// Gradle `platform(...)` constraint, still has a real `group:artifact`
+/// declaration to jump to even though nothing here can resolve its
+/// version.
 pub fn declaration_site(dep: &Dependency, path: &Path, build_file_text: &str) -> Option<u32> {
     let declared = context::declared_versions(path, build_file_text);
-    let found = declared
+    let start = declared
         .iter()
-        .find(|d| d.group_id == dep.group && d.artifact_id == dep.artifact)?;
-    Some(line_of(build_file_text, found.range.start))
+        .find(|d| d.group_id == dep.group && d.artifact_id == dep.artifact)
+        .map(|d| d.range.start)
+        .or_else(|| {
+            context::declaration_range(path, build_file_text, &dep.group, &dep.artifact)
+                .map(|r| r.start)
+        })?;
+    Some(line_of(build_file_text, start))
 }
 
 fn line_of(text: &str, byte_offset: usize) -> u32 {
@@ -211,5 +224,53 @@ mod tests {
         let text = "<project><dependencies><dependency><groupId>a</groupId><artifactId>a</artifactId><version>1.0</version></dependency></dependencies></project>";
         let d = dep("com.transitive", "nowhere", "compile", None);
         assert_eq!(declaration_site(&d, Path::new("/proj/pom.xml"), text), None);
+    }
+
+    /// Review fix #9: a dependency managed by an imported BOM (no
+    /// `<version>` next to its own coordinate at all) still has a real
+    /// `<artifactId>` declaration to jump to, via `declaration_range`'s
+    /// fallback.
+    #[test]
+    fn declaration_site_falls_back_to_the_artifact_line_for_a_bom_managed_dependency() {
+        let text = "<project>\n  <dependencies>\n    <dependency>\n      <groupId>org.springframework.boot</groupId>\n      <artifactId>spring-boot-starter-web</artifactId>\n    </dependency>\n  </dependencies>\n</project>\n";
+        let d = dep(
+            "org.springframework.boot",
+            "spring-boot-starter-web",
+            "compile",
+            None,
+        );
+        let line = declaration_site(&d, Path::new("/proj/pom.xml"), text).expect("found");
+        // The <artifactId> line — line 5 (1-based).
+        assert_eq!(line, 5);
+    }
+
+    /// Review fix #9: a two-module POM — the same `group:artifact` is
+    /// declared once at each module's own `pom.xml`, and a caller passing
+    /// module A's own text must find module A's line, not be confused by
+    /// module B's identical dependency existing elsewhere.
+    #[test]
+    fn declaration_site_scoped_to_the_module_whose_text_was_passed() {
+        let module_a = "<project>\n  <dependencies>\n    <dependency>\n      <groupId>com.google.guava</groupId>\n      <artifactId>guava</artifactId>\n      <version>32.1.3-jre</version>\n    </dependency>\n  </dependencies>\n</project>\n";
+        let module_b = "<project>\n\n\n\n\n\n  <dependencies>\n    <dependency>\n      <groupId>com.google.guava</groupId>\n      <artifactId>guava</artifactId>\n      <version>33.0.0-jre</version>\n    </dependency>\n  </dependencies>\n</project>\n";
+        let d = dep("com.google.guava", "guava", "compile", None);
+        assert_eq!(
+            declaration_site(&d, Path::new("/proj/app/pom.xml"), module_a),
+            Some(6)
+        );
+        assert_eq!(
+            declaration_site(&d, Path::new("/proj/lib/pom.xml"), module_b),
+            Some(11)
+        );
+    }
+
+    /// Review fix #9: a Gradle dependency managed through a version
+    /// catalog / platform BOM (no literal version segment at all) also
+    /// falls back to the coordinate's own line.
+    #[test]
+    fn declaration_site_finds_the_line_in_gradle() {
+        let text = "dependencies {\n    implementation(\"com.google.guava:guava:32.1.3-jre\")\n}\n";
+        let d = dep("com.google.guava", "guava", "implementation", None);
+        let line = declaration_site(&d, Path::new("/proj/build.gradle.kts"), text).expect("found");
+        assert_eq!(line, 2);
     }
 }

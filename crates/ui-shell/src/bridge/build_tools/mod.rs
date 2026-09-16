@@ -327,11 +327,19 @@ impl ffi::BuildToolsService {
     /// D8: "Go to Declaration" for a Dependency row (`node_id`, the same
     /// id `rows()` gave the row — `"{scope_id}:{group}:{artifact}:
     /// {resolved}"`, `view::push_dependency_rows`'s own shape). The
-    /// 1-based line to open the row's `build_file` at, or `-1` when
+    /// 1-based line to open `build_file` at, or `-1` when
     /// `deps::declaration_site` finds no match (a transitive dependency,
     /// which by definition never appears in the build file itself).
-    pub fn dependency_declaration_line(&self, node_id: &QString) -> i32 {
+    ///
+    /// `build_file` is the row's own `FfiBuildToolNode::buildFile` — the
+    /// caller already has it from `rows()`, and it names the *exact*
+    /// module unambiguously (review fix #9): a `node_id`'s module-path
+    /// segment is not safely reversible by splitting on `:`, since a
+    /// Gradle project path (`:lib:core`) embeds the same separator the
+    /// id itself uses.
+    pub fn dependency_declaration_line(&self, node_id: &QString, build_file: &QString) -> i32 {
         let node_id = node_id.to_string();
+        let build_file = PathBuf::from(build_file.to_string());
         // The id's last two colon-separated segments before the trailing
         // resolved-version segment are `group:artifact` — reconstructing
         // this from the id (rather than looking the row up by identity)
@@ -347,6 +355,9 @@ impl ffi::BuildToolsService {
 
         for model in self.models.borrow().iter() {
             for module in &model.modules {
+                if module.build_file != build_file {
+                    continue;
+                }
                 let Some(dep) = module
                     .dependencies
                     .iter()

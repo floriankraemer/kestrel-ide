@@ -426,7 +426,7 @@ void BuildToolsPanel::showContextMenu(const QPoint &pos)
             openAt_(buildFile, 1, 0);
         }
     } else if (chosen == goToDeclaration) {
-        const int line = buildToolsService_->dependencyDeclarationLine(nodeId);
+        const int line = buildToolsService_->dependencyDeclarationLine(nodeId, buildFile);
         if (openAt_ && line >= 1) {
             openAt_(buildFile, line, 0);
         }

@@ -10,9 +10,13 @@
 //! ([`sync`]), a temporary run-config builder ([`run`]), the
 //! process-invoking Gradle and Maven providers ([`gradle`], [`maven`]) and
 //! the dock's tree shaping ([`view`]) are phases A/B; phase D adds
-//! build-file editing assistance ([`editing`]) — see
-//! `docs/architecture/jvm-build-tools-plan.md` for the Progress table.
+//! build-file editing assistance ([`editing`]) and the dependency
+//! analyzer ([`deps`]) — see `docs/architecture/jvm-build-tools-plan.md`
+//! for the Progress table.
 
+/// The dependency analyzer (D8): the Dependencies subtree's scope filter
+/// and "Conflicts only" toggle, and "Go to declaration".
+pub mod deps;
 /// Build-file editing assistance (phase D): caret-context classification,
 /// the local repository index, a Maven Central client, completion and
 /// "newer version" hints.

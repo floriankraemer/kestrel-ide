@@ -3473,6 +3473,7 @@ dependencies = [
  "globset",
  "process-exec",
  "quick-xml",
+ "regex",
  "run-core",
  "serde",
  "serde_json",

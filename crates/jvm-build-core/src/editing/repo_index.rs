@@ -94,14 +94,23 @@ fn is_dot_named(path: &Path) -> bool {
         .is_some_and(|n| n.starts_with('.'))
 }
 
+/// Review fix #11: `DirEntry::file_type()`, not `Path::is_dir()` — the
+/// latter is `fs::metadata` under the hood, which *follows* a symlink.
+/// A symlink inside `~/.gradle`/`~/.m2` pointing back at an ancestor
+/// directory (real repository caches accumulate a few, deliberately or
+/// not) would otherwise have this walk follow it and recurse forever;
+/// `file_type()` reports what the directory entry itself is, so a
+/// symlink — even one that points at a real directory — is simply
+/// skipped rather than walked into.
 fn read_subdirs(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     entries
         .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
         .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && !is_dot_named(path))
+        .filter(|path| !is_dot_named(path))
         .collect()
 }
 
@@ -244,6 +253,26 @@ mod tests {
 
         let index = build(repo, Path::new("/nonexistent/gradle-modules"));
         assert!(index.groups().all(|g| g != ".cache"));
+        assert_eq!(index.versions("com.example", "lib"), vec!["1.0"]);
+    }
+
+    /// Review fix #11: a symlinked directory — even a loop pointing back
+    /// at an ancestor, the pathological case this rule exists for — is
+    /// never followed. `Path::is_dir()` would recurse into it forever;
+    /// `DirEntry::file_type()` reports the symlink for what it is.
+    #[test]
+    fn read_subdirs_does_not_follow_a_symlinked_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path();
+        touch(&repo.join("com/example/lib/1.0/lib-1.0.jar"));
+        // A loop: com/example/loop -> com/example (an ancestor).
+        std::os::unix::fs::symlink(repo.join("com/example"), repo.join("com/example/loop"))
+            .unwrap();
+
+        // If the symlink were followed, this would recurse without bound
+        // and the test would hang rather than fail — the walk finishing
+        // at all, quickly, is itself part of what this proves.
+        let index = build(repo, Path::new("/nonexistent/gradle-modules"));
         assert_eq!(index.versions("com.example", "lib"), vec!["1.0"]);
     }
 

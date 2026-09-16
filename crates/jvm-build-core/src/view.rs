@@ -81,15 +81,29 @@ fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -
 /// A dependency's conflict, as one line for the row's `detail` column — the
 /// same "carried through, never re-derived" rule [`crate::model::Conflict`]
 /// itself follows.
+/// Review fix #11: `requested → resolved (reason)`, not the reason alone
+/// — the row's `detail` (its tooltip; there is no separate Detail
+/// column, review fix round 6) previously never showed what was actually
+/// *requested*, only the tool's own free-text reason. A "Conflicts only"
+/// row is exactly the row a user opened this dock to understand, and
+/// "omitted for conflict" alone answers "what happened" but not "from
+/// what to what".
 fn conflict_detail(dependency: &Dependency) -> String {
-    match &dependency.conflict {
-        Some(Conflict::OmittedForConflict { winner }) => {
-            format!("omitted for conflict, resolved to {winner}")
+    let reason = match &dependency.conflict {
+        Some(Conflict::OmittedForConflict { .. }) => "omitted for conflict",
+        Some(Conflict::OmittedForDuplicate) => "omitted for duplicate",
+        Some(Conflict::VersionManagedFrom { from }) => {
+            return format!(
+                "{} → {} (version managed from {from})",
+                dependency.requested, dependency.resolved
+            )
         }
-        Some(Conflict::OmittedForDuplicate) => "omitted for duplicate".to_string(),
-        Some(Conflict::VersionManagedFrom { from }) => format!("version managed from {from}"),
-        None => String::new(),
-    }
+        None => return String::new(),
+    };
+    format!(
+        "{} → {} ({reason})",
+        dependency.requested, dependency.resolved
+    )
 }
 
 /// The dock's whole tree for one synced model — see this module's own doc
@@ -651,7 +665,30 @@ mod tests {
             .iter()
             .find(|n| n.kind == NodeKind::Dependency)
             .unwrap();
-        assert_eq!(dep.detail, "omitted for conflict, resolved to 32.0");
+        assert_eq!(dep.detail, "31.0 → 32.0 (omitted for conflict)");
+    }
+
+    /// Review fix #11: `VersionManagedFrom` gets the same `requested →
+    /// resolved (reason)` shape as every other conflict kind.
+    #[test]
+    fn a_version_managed_dependency_row_shows_requested_and_resolved() {
+        let dep = Dependency {
+            group: "org.example".to_string(),
+            artifact: "lib".to_string(),
+            requested: "1.0".to_string(),
+            resolved: "2.0".to_string(),
+            scope: "implementation".to_string(),
+            transitive: true,
+            file: None,
+            conflict: Some(Conflict::VersionManagedFrom {
+                from: "1.0".to_string(),
+            }),
+            children: vec![],
+        };
+        assert_eq!(
+            conflict_detail(&dep),
+            "1.0 → 2.0 (version managed from 1.0)"
+        );
     }
 
     #[test]

@@ -32,30 +32,34 @@
 //! for a *key-name* field would show entirely wrong suggestions Whatever
 //! way this gets built, D2 is where the scan belongs, not this bridge.
 //!
-//! Also deliberately not sharing `BuildToolsService`'s own synced index:
-//! `editing::repo_index`'s doc comment says that index belongs to "the
-//! service that owns the synced `BuildModel`" (B1's `BuildToolsService`),
-//! rebuilt once per sync. Wiring that here would mean threading
-//! `BuildToolsService` state into a different `#[qobject]`, a bigger
-//! change than a first cut of D5 warrants — this module builds and caches
-//! its own index instead, off the OS home directory's default cache
-//! locations (not the project's `[build_tools.maven].local_repository`/
-//! `GRADLE_USER_HOME` override), once per process and never refreshed.
-//! Centralising the two is a reasonable follow-up once this path is
-//! exercised for real.
+//! D3's local repository index is `BuildToolsService`'s (review fix #2):
+//! built off the Qt thread, on its own background sync thread — once at
+//! `projectOpened` and again after every sync — and shared here through
+//! `registry::shared_repo_index`, a `thread_local!` `Rc<RefCell<..>>` the
+//! same shape `shared_build_models` already uses (both QObjects live on
+//! the one Qt thread, so a thread-local is enough; nothing here ever
+//! walks `~/.m2`/`~/.gradle` itself). `None` until the first background
+//! build finishes — every reader treats that as "answer from Central
+//! only", never as a reason to block or fall back to walking the
+//! filesystem synchronously.
+//!
+//! The thread-local only reads correctly *on* the Qt thread, so every
+//! background thread this file itself spawns (Central's network calls)
+//! takes an owned snapshot — [`local_index_snapshot`] — before spawning,
+//! rather than reaching into the thread-local from the worker thread.
 
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::OnceLock;
 
 use cxx_qt::Threading;
 
+use jvm_build_core::editing::central;
 use jvm_build_core::editing::completion::{self, Completion};
 use jvm_build_core::editing::context::{
     self, CoordinatePart, DeclaredVersion, EditContext, TomlLibraryField,
 };
+use jvm_build_core::editing::repo_index::RepoIndex;
 use jvm_build_core::editing::versions::{self, VersionHint};
-use jvm_build_core::editing::{central, repo_index};
 
 use crate::bridge::ffi;
 
@@ -64,16 +68,13 @@ use crate::bridge::ffi;
 /// language server's own rows for the same file.
 const VERSION_HINTS_SOURCE: &str = "build-tools:versions";
 
-static REPO_INDEX: OnceLock<repo_index::RepoIndex> = OnceLock::new();
-
-fn local_repo_index() -> &'static repo_index::RepoIndex {
-    REPO_INDEX.get_or_init(|| {
-        let home = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
-        let gradle_user_home = std::env::var("GRADLE_USER_HOME").ok();
-        let maven_repo = repo_index::default_maven_repository(None, &home);
-        let gradle_modules = repo_index::default_gradle_modules(gradle_user_home.as_deref(), &home);
-        repo_index::build(&maven_repo, &gradle_modules)
-    })
+/// An owned copy of whatever `BuildToolsService` has published so far —
+/// safe to move into a background thread, unlike the `thread_local!` this
+/// clones out of. Qt-thread-only to call (the thread-local itself is).
+fn local_index_snapshot() -> Option<RepoIndex> {
+    crate::bridge::registry::shared_repo_index()
+        .borrow()
+        .clone()
 }
 
 /// A UTF-16 `(line, character)` caret position (the shape `completion_at`
@@ -129,8 +130,7 @@ fn to_completion_list(items: Vec<Completion>, text: &str) -> lsp_core::Completio
 /// Every artifact id under every known group — used when a group has not
 /// been typed yet (a bare `implementation("`) and there is nothing to
 /// scope the artifact search to.
-fn all_artifacts() -> Vec<String> {
-    let index = local_repo_index();
+fn all_artifacts(index: &RepoIndex) -> Vec<String> {
     index
         .groups()
         .flat_map(|group| index.artifacts(group).map(str::to_string))
@@ -141,12 +141,15 @@ fn non_empty(value: &Option<String>) -> Option<&str> {
     value.as_deref().filter(|v| !v.is_empty())
 }
 
-/// The local index's candidates for whichever part `ctx` names. Provider-
-/// agnostic beyond this: `jvm_build_core::editing::completion::items` does
-/// the actual ranking against whatever list this (or [`central_candidates`])
-/// hands it.
-fn local_candidates(ctx: &EditContext) -> Vec<String> {
-    let index = local_repo_index();
+/// The local index's candidates for whichever part `ctx` names — empty
+/// when `index` is `None` (nothing built yet; review fix #2's "answer
+/// from Central only" rule). Provider-agnostic beyond this:
+/// `jvm_build_core::editing::completion::items` does the actual ranking
+/// against whatever list this (or [`central_candidates`]) hands it.
+fn local_candidates(ctx: &EditContext, index: Option<&RepoIndex>) -> Vec<String> {
+    let Some(index) = index else {
+        return Vec::new();
+    };
     match ctx {
         EditContext::PomCoordinate {
             part, coordinate, ..
@@ -157,7 +160,7 @@ fn local_candidates(ctx: &EditContext) -> Vec<String> {
             CoordinatePart::GroupId => index.groups().map(str::to_string).collect(),
             CoordinatePart::ArtifactId => match non_empty(&coordinate.group_id) {
                 Some(group) => index.artifacts(group).map(str::to_string).collect(),
-                None => all_artifacts(),
+                None => all_artifacts(index),
             },
             CoordinatePart::Version => {
                 match (
@@ -192,7 +195,7 @@ fn local_candidates(ctx: &EditContext) -> Vec<String> {
             TomlLibraryField::Group => index.groups().map(str::to_string).collect(),
             TomlLibraryField::Name => match non_empty(&entry.group) {
                 Some(group) => index.artifacts(group).map(str::to_string).collect(),
-                None => all_artifacts(),
+                None => all_artifacts(index),
             },
             TomlLibraryField::VersionRef => Vec::new(),
         },
@@ -334,7 +337,8 @@ impl ffi::LanguageService {
         *self.completion_language.borrow_mut() = None;
         let token = self.completion.borrow_mut().begin(tracker_prefix);
 
-        let local = local_candidates(&ctx);
+        let index = local_index_snapshot();
+        let local = local_candidates(&ctx, index.as_ref());
         let items = completion::items(&ctx, &content, &local);
         *self.completions.borrow_mut() = to_completion_list(items, &content);
         self.as_mut().completion_ready();
@@ -344,6 +348,7 @@ impl ffi::LanguageService {
             let config_dir = app_core::resolve_config_dir();
             let ctx_for_thread = ctx.clone();
             let content_for_thread = content.clone();
+            let index_for_thread = index;
             let qt_thread = self.as_mut().qt_thread();
             std::thread::spawn(move || {
                 let client = central::CentralClient::new(&config_dir, false);
@@ -351,10 +356,11 @@ impl ffi::LanguageService {
                 if remote.is_empty() {
                     return;
                 }
-                let merged: Vec<String> = local_candidates(&ctx_for_thread)
-                    .into_iter()
-                    .chain(remote)
-                    .collect();
+                let merged: Vec<String> =
+                    local_candidates(&ctx_for_thread, index_for_thread.as_ref())
+                        .into_iter()
+                        .chain(remote)
+                        .collect();
                 let items = completion::items(&ctx_for_thread, &content_for_thread, &merged);
                 let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
                     if !service.completion.borrow_mut().deliver(token, false) {
@@ -406,7 +412,8 @@ impl ffi::LanguageService {
             return;
         }
 
-        let local_hints = local_only_hints(&declared);
+        let index = local_index_snapshot();
+        let local_hints = local_only_hints(&declared, index.as_ref());
         self.store.borrow_mut().replace(
             VERSION_HINTS_SOURCE,
             &uri,
@@ -424,11 +431,16 @@ impl ffi::LanguageService {
         std::thread::spawn(move || {
             let client = central::CentralClient::new(&config_dir, false);
             let hints = versions::hints(&declared, |group, artifact| {
-                let mut candidates = local_repo_index()
-                    .versions(group, artifact)
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
+                let mut candidates = index
+                    .as_ref()
+                    .map(|index| {
+                        index
+                            .versions(group, artifact)
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 candidates.extend(client.versions(group, artifact));
                 candidates
             });
@@ -496,15 +508,21 @@ impl ffi::LanguageService {
             .unwrap_or_default();
         let caret = caret_byte_offset(&content, line, character);
         let declared = context::declared_versions(Path::new(path), &content);
+        let index = local_index_snapshot();
         let hint = declared
             .iter()
             .find(|d| d.range.start <= caret && caret <= d.range.end)
             .and_then(|d| {
-                let candidates = local_repo_index()
-                    .versions(&d.group_id, &d.artifact_id)
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect::<Vec<_>>();
+                let candidates = index
+                    .as_ref()
+                    .map(|index| {
+                        index
+                            .versions(&d.group_id, &d.artifact_id)
+                            .into_iter()
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
                 versions::hint_for(d, &candidates)
             });
 
@@ -570,13 +588,17 @@ fn quick_fix_item(hint: &VersionHint, path: &str, text: &str) -> lsp_core::CodeA
     }
 }
 
-fn local_only_hints(declared: &[DeclaredVersion]) -> Vec<VersionHint> {
+fn local_only_hints(declared: &[DeclaredVersion], index: Option<&RepoIndex>) -> Vec<VersionHint> {
     versions::hints(declared, |group, artifact| {
-        local_repo_index()
-            .versions(group, artifact)
-            .into_iter()
-            .map(str::to_string)
-            .collect()
+        index
+            .map(|index| {
+                index
+                    .versions(group, artifact)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
     })
 }
 

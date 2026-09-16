@@ -46,6 +46,20 @@ use crate::bridge::registry::SharedDiagnostics;
 /// language server's.
 const SOURCE_KEY: &str = "build-tools:sync";
 
+/// D3's local repository index, built off the OS home directory's default
+/// `~/.m2`/`~/.gradle` locations — always called off the Qt thread (review
+/// fix #2): once from `project_opened`'s own background thread, and again
+/// from `sync`'s, so a later sync's freshly-downloaded dependencies show
+/// up without needing a restart.
+fn build_local_repo_index() -> jvm_build_core::editing::repo_index::RepoIndex {
+    use jvm_build_core::editing::repo_index;
+    let home = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+    let gradle_user_home = std::env::var("GRADLE_USER_HOME").ok();
+    let maven_repo = repo_index::default_maven_repository(None, &home);
+    let gradle_modules = repo_index::default_gradle_modules(gradle_user_home.as_deref(), &home);
+    repo_index::build(&maven_repo, &gradle_modules)
+}
+
 fn current_project_root() -> Option<PathBuf> {
     crate::bridge::convert::current_project_root()
 }
@@ -438,6 +452,18 @@ impl ffi::BuildToolsService {
         *self.sync_error.borrow_mut() = None;
         self.as_mut().model_changed();
         self.as_mut().refresh_banner(&root);
+
+        // Review fix #2: build the local repository index once per
+        // project open, off the Qt thread, regardless of whether this
+        // root ever gets trusted/synced — D5/D6 want *some* local answer
+        // as soon as possible rather than only after a sync.
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let index = build_local_repo_index();
+            let _ = qt_thread.queue(move |_: Pin<&mut ffi::BuildToolsService>| {
+                *crate::bridge::registry::shared_repo_index().borrow_mut() = Some(index);
+            });
+        });
     }
 
     fn refresh_banner(mut self: Pin<&mut Self>, root: &Path) {
@@ -626,6 +652,11 @@ impl ffi::BuildToolsService {
                 }
             }
             let cancelled = cancel.load(Ordering::Relaxed);
+            // Review fix #2: rebuilt here, off the Qt thread, not lazily
+            // the first time a build-file completion/hint needs it — a
+            // sync is exactly the moment newly-resolved dependencies may
+            // have landed in the local cache.
+            let repo_index = (!cancelled).then(build_local_repo_index);
             let root_for_queue = root_for_thread.clone();
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::BuildToolsService>| {
                 service.syncing.set(false);
@@ -633,6 +664,9 @@ impl ffi::BuildToolsService {
                 if cancelled {
                     service.as_mut().sync_state_changed();
                     return;
+                }
+                if let Some(index) = repo_index {
+                    *crate::bridge::registry::shared_repo_index().borrow_mut() = Some(index);
                 }
                 *service.models.borrow_mut() = models.clone();
                 *crate::bridge::registry::shared_build_models().borrow_mut() = models;

@@ -113,6 +113,26 @@ pub(crate) fn shared_build_models() -> Rc<RefCell<Vec<jvm_build_core::model::Bui
     BUILD_MODELS.with(Rc::clone)
 }
 
+thread_local! {
+    /// D5/D6's local repository index (review fix #2): built off the
+    /// filesystem on `BuildToolsService`'s own background sync thread —
+    /// once at `projectOpened` and again after every sync — then posted
+    /// back here via `qt_thread.queue`, the same "no injection point"
+    /// reasoning [`APP_SESSION`] documents. `LanguageService`'s
+    /// `bridge/language/build_files.rs` only ever reads it, on the Qt
+    /// thread, where both QObjects already live — never walks `~/.m2`/
+    /// `~/.gradle` itself. `None` until the first background build
+    /// finishes; every reader treats that as "nothing local yet, answer
+    /// from Central only" rather than blocking on it.
+    static REPO_INDEX: Rc<RefCell<Option<jvm_build_core::editing::repo_index::RepoIndex>>> =
+        Rc::new(RefCell::new(None));
+}
+
+pub(crate) fn shared_repo_index(
+) -> Rc<RefCell<Option<jvm_build_core::editing::repo_index::RepoIndex>>> {
+    REPO_INDEX.with(Rc::clone)
+}
+
 pub(crate) fn shared_icons() -> Rc<SharedIcons> {
     ICONS.with(Rc::clone)
 }

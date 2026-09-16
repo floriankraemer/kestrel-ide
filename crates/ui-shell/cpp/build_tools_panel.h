@@ -43,6 +43,14 @@ public:
 
     void setOpenSettingsHandler(OpenSettingsHandler handler) { openSettings_ = std::move(handler); }
 
+    // E2E only: re-report every row's label/rect once `tree_` is actually
+    // shown and laid out — `buildBuildToolsDock` calls this once per
+    // `visibilityChanged(true)`, the same reason `containers_panel.cpp`'s
+    // `refreshE2eRects` and `tests_panel.cpp`'s `markE2eToolbar` are public
+    // rather than called from inside the data-driven refresh alone: a sync
+    // routinely finishes while this dock is still hidden.
+    void markE2eRows() const;
+
 private:
     void refreshTree();
     void refreshTitle();

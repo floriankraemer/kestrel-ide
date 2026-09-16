@@ -24,8 +24,10 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
+#include <QTreeWidgetItemIterator>
 #include <QVBoxLayout>
 
 namespace ui_shell {
@@ -263,6 +265,13 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
             runNode(item->data(0, kIdRole).toString(), QString());
         }
     });
+    // E2E only: a group's newly-visible children have no rect until Qt
+    // lays them out one turn of the event loop later — the identical
+    // problem, and fix, `containers_panel.cpp`'s own `itemExpanded`
+    // connect already has for its tree.
+    connect(tree_, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem *) {
+        QTimer::singleShot(0, this, [this]() { markE2eRows(); });
+    });
     connect(tree_, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem *item, int column) {
         if (column != 0 || !item->data(0, kIsProfileRole).toBool()) {
             return;
@@ -293,8 +302,19 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
         refreshTree();
         refreshTitle();
     });
-    connect(buildToolsService_, &BuildToolsService::syncStateChanged, this,
-            &BuildToolsPanel::refreshTitle);
+    connect(buildToolsService_, &BuildToolsService::syncStateChanged, this, [this]() {
+        refreshTitle();
+        // E2E only: a sync-idle mark once the sync this signal reports is
+        // no longer in flight — `BuildToolsService::syncStateKind` already
+        // answers `Idle` for "finished, no error" and `Failed` for
+        // "finished, with one"; either is "no longer syncing" to a test
+        // waiting on this, so both fire it and carry which.
+        const FfiSyncStateKind state = buildToolsService_->syncStateKind();
+        if (state != FfiSyncStateKind::Syncing) {
+            e2eMark(QStringLiteral("{\"ev\":\"build_tools_synced\",\"failed\":%1}")
+                      .arg(state == FfiSyncStateKind::Failed ? "true" : "false"));
+        }
+    });
     // D8 (screenshot review): detection alone (no sync yet) now changes
     // `titleKind()` too, and an empty, detected-but-unsynced tree needs its
     // own placeholder text — both react to the same signal `refresh_banner`
@@ -415,6 +435,42 @@ void BuildToolsPanel::refreshTree()
     }
     e2eMark(QStringLiteral("{\"ev\":\"build_tools_model_changed\",\"nodes\":%1}")
               .arg(static_cast<int>(rows.size())));
+    // Row labels/rects are *not* re-marked from here: this dock routinely
+    // rebuilds while still hidden (a sync started from the trust banner,
+    // not from opening the dock), and `tree_` has no real layout — hence
+    // no real rects — until it is actually shown. `markE2eRows` (public) is
+    // called instead from `buildBuildToolsDock`'s `visibilityChanged`
+    // connect, the same "only re-mark rects once the dock is actually on
+    // screen" trade-off `containers_panel.cpp`'s `refreshE2eRects` already
+    // makes (fired from `visibilityChanged`/`itemExpanded`, never from its
+    // own data-driven tree rebuild).
+}
+
+void BuildToolsPanel::markE2eRows() const
+{
+    int count = 0;
+    for (QTreeWidgetItemIterator it(tree_); *it != nullptr; ++it) {
+        QTreeWidgetItem *item = *it;
+        const QRect rect = tree_->visualItemRect(item);
+        const QPoint origin =
+          rect.isEmpty() ? QPoint() : tree_->viewport()->mapToGlobal(rect.topLeft());
+        // `runnable` (kRunnableRole, true only for a `Task`/`Goal` row)
+        // disambiguates a task row from a same-named group header — Gradle
+        // has both a "Tasks" group and, inside it, a "build" *group* as
+        // well as the "build" *task* nested under it, and only the task
+        // row is what a double-click should run.
+        e2eMark(QStringLiteral("{\"ev\":\"build_tools_row\",\"id\":%1,\"label\":%2,"
+                                "\"runnable\":%3,\"rect\":[%4,%5,%6,%7]}")
+                  .arg(e2eJson(item->data(0, kIdRole).toString()),
+                        e2eJson(item->text(0)),
+                        item->data(0, kRunnableRole).toBool() ? "true" : "false")
+                  .arg(origin.x())
+                  .arg(origin.y())
+                  .arg(rect.width())
+                  .arg(rect.height()));
+        ++count;
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"build_tools_rows\",\"count\":%1}").arg(count));
 }
 
 void BuildToolsPanel::runNode(const QString &nodeId, const QString &extraArgs)
@@ -520,6 +576,19 @@ BuildToolsPanel *buildBuildToolsDock(ads::CDockManager *dockManager, DockRegistr
     // yesterday's (or no) project last left it at until the next model
     // change happened to come along.
     QObject::connect(buildToolsService, &BuildToolsService::bannerChanged, dock, updateTitle);
+
+    // E2E only, same reasoning as `containers_panel.cpp`/`tests_panel.cpp`'s
+    // identical `visibilityChanged` connects on their own docks: a sync
+    // routinely finishes — and `refreshTree` rebuilds `tree_` — while this
+    // dock is still hidden (the trust banner's "Load" click, not a dock
+    // open, is what starts most syncs), so the rects `markE2eRows` reports
+    // from inside `refreshTree` at that point are worthless; re-report them
+    // once the dock is actually shown and laid out.
+    QObject::connect(dock, &ads::CDockWidget::visibilityChanged, panel, [panel](bool visible) {
+        if (visible) {
+            QTimer::singleShot(0, panel, [panel]() { panel->markE2eRows(); });
+        }
+    });
 
     return panel;
 }

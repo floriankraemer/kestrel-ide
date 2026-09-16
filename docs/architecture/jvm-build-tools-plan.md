@@ -154,7 +154,7 @@ Review fix #8 (`d9a9563`, docs/CI only — the layering doc's stale tokio check 
 | Task | Status | Commit |
 |---|---|---|
 | E1 — `overview.md`, `project-structure.md` truthful; ADR status Accepted | done | `ebe552e` |
-| E2 — E2E (nightly, gated `IDE_E2E_JVM=1`): Gradle fixture sync → banner → Load → dock → run → Tests dock → pom completion | open | |
+| E2 — E2E (nightly, gated `IDE_E2E_JVM=1`): Gradle fixture sync → banner → Load → dock → run → Tests dock → pom completion | done | `2dbdeef` |
 | E3 — manual matrix: Windows `gradlew.bat`/`mvnw.cmd`, WSL root | open | |
 
 ## Delivery

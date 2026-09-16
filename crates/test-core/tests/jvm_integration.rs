@@ -36,6 +36,51 @@ fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
+/// Directories a fixture project regenerates on every real `gradle`/`mvn`
+/// run and never commits (`jvm-build-core`'s own `tests/fixtures/.gitignore`
+/// lists the same three) — skipped on copy rather than dragged along stale
+/// or, for `.gradle`, simply large.
+const REGENERATED_DIRS: &[&str] = &[".gradle", "build", "target"];
+
+/// A fresh, private copy of fixture `name` under its own `tempfile::tempdir()`
+/// (review finding 5): `cargo-nextest` runs each test in its own process, so
+/// two tests both running a real build tool directly in the *same* checked-
+/// in fixture directory is a genuine race — build output collisions, Gradle
+/// daemon lock contention on the same project, one test's `cleanTest`
+/// wiping another's in-flight results. Copying first means concurrent tests
+/// never share a working directory at all.
+fn isolated_copy_of(fixture_name: &str) -> tempfile::TempDir {
+    let dest = tempfile::tempdir().expect("temp dir for isolated fixture copy");
+    copy_dir_contents(&fixture(fixture_name), dest.path());
+    dest
+}
+
+/// `std::fs`-based recursive copy — this is test code, and a handful of
+/// `read_dir` lines are simpler than adding a crate dependency for it.
+/// Symlinks are skipped rather than followed, the same rule `runner.rs`'s
+/// own walker now applies (review finding 2): none of these fixtures ship
+/// one, but a copy helper that would follow one into a loop is not a trap
+/// worth leaving for the next fixture that does.
+fn copy_dir_contents(src: &Path, dest: &Path) {
+    for entry in std::fs::read_dir(src).expect("read fixture dir") {
+        let entry = entry.expect("read fixture dir entry");
+        let file_type = entry.file_type().expect("read fixture entry file type");
+        if file_type.is_symlink() {
+            continue;
+        }
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            if REGENERATED_DIRS.contains(&entry.file_name().to_string_lossy().as_ref()) {
+                continue;
+            }
+            std::fs::create_dir_all(&dest_path).expect("create dir in fixture copy");
+            copy_dir_contents(&entry.path(), &dest_path);
+        } else {
+            std::fs::copy(entry.path(), &dest_path).expect("copy file into fixture copy");
+        }
+    }
+}
+
 #[derive(Default)]
 struct Collected {
     output: String,
@@ -110,8 +155,8 @@ fn run_gradle_test(work_dir: &Path) -> Collected {
 
 #[test]
 fn gradle_single_streams_one_pass_and_one_fail_via_teamcity() {
-    let work_dir = fixture("gradle-single");
-    let collected = run_gradle_test(&work_dir);
+    let project = isolated_copy_of("gradle-single");
+    let collected = run_gradle_test(project.path());
 
     let mut tree = TestTree::new();
     for event in collected.events {
@@ -135,9 +180,9 @@ fn gradle_single_streams_one_pass_and_one_fail_via_teamcity() {
 /// changed". This proves the guard still holds after C1's changes.
 #[test]
 fn a_second_gradle_test_run_is_not_empty() {
-    let work_dir = fixture("gradle-single");
-    let first = run_gradle_test(&work_dir);
-    let second = run_gradle_test(&work_dir);
+    let project = isolated_copy_of("gradle-single");
+    let first = run_gradle_test(project.path());
+    let second = run_gradle_test(project.path());
     assert!(!first.events.is_empty());
     assert!(
         !second.events.is_empty(),
@@ -153,11 +198,8 @@ fn a_second_gradle_test_run_is_not_empty() {
 /// rather than `teamcity`.
 #[test]
 fn maven_single_fills_the_tree_from_surefire_xml_and_the_failure_carries_a_message() {
-    let work_dir = fixture("maven-single");
-    // A previous local run (or a previous test in this same process, if
-    // ever parallelised) can leave a `target/` behind; start clean so the
-    // stale-report filter is never what makes this pass.
-    let _ = std::fs::remove_dir_all(work_dir.join("target"));
+    let project = isolated_copy_of("maven-single");
+    let work_dir = project.path();
 
     let handle = TestRunHandle::new();
     let mut collected = Collected::default();
@@ -170,7 +212,7 @@ fn maven_single_fills_the_tree_from_surefire_xml_and_the_failure_carries_a_messa
         &handle,
         "mvn",
         &args,
-        &work_dir,
+        work_dir,
         OutputFormat::JunitXml,
         Some("**/target/{surefire,failsafe}-reports/TEST-*.xml"),
         &mut collected,
@@ -226,7 +268,7 @@ fn maven_single_fills_the_tree_from_surefire_xml_and_the_failure_carries_a_messa
 /// `greetsByName` (still run, since `cleanTest` always re-runs) excluded.
 #[test]
 fn rerunning_one_failing_gradle_node_runs_exactly_that_one_test() {
-    let work_dir = fixture("gradle-single");
+    let project = isolated_copy_of("gradle-single");
     let asset_dir = write_init_script();
 
     let id = TestId("com.example.GreeterTest::deliberatelyFails".to_string());
@@ -240,7 +282,7 @@ fn rerunning_one_failing_gradle_node_runs_exactly_that_one_test() {
         &handle,
         "gradle",
         &args,
-        &work_dir,
+        project.path(),
         OutputFormat::TeamCity,
         None,
         &mut collected,
@@ -270,8 +312,7 @@ fn rerunning_one_failing_gradle_node_runs_exactly_that_one_test() {
 /// the one failing node.
 #[test]
 fn rerunning_one_failing_maven_node_runs_exactly_that_one_test() {
-    let work_dir = fixture("maven-single");
-    let _ = std::fs::remove_dir_all(work_dir.join("target"));
+    let project = isolated_copy_of("maven-single");
 
     let id = TestId("com.example.GreeterTest::deliberatelyFails".to_string());
     let patterns = filter::for_node(&TestTree::new(), &id, filter::FilterDialect::Surefire);
@@ -288,7 +329,7 @@ fn rerunning_one_failing_maven_node_runs_exactly_that_one_test() {
         &handle,
         "mvn",
         &args,
-        &work_dir,
+        project.path(),
         OutputFormat::JunitXml,
         Some("**/target/{surefire,failsafe}-reports/TEST-*.xml"),
         &mut collected,

@@ -636,17 +636,15 @@ impl ffi::LanguageService {
     /// swallows that with `let _ =` — see
     /// `lsp_core::manager::no_server_document_lifecycle_tests`.
     fn open_build_file_document(mut self: Pin<&mut Self>, path_str: &str, text: &QString) {
-        let Some(root) = crate::bridge::convert::current_project_root() else {
-            return;
-        };
-        let Ok(relative) = Path::new(path_str).strip_prefix(&root) else {
-            return;
-        };
-        let patterns: Vec<String> = plugin_host::registry()
-            .build_tools()
-            .flat_map(|(_, contribution)| contribution.build_files.iter().cloned())
-            .collect();
-        if !jvm_build_core::sync::is_build_file(relative, &patterns) {
+        // Review fix #7: a basename-only rule, not the plugin's
+        // root-relative sync globs (`jvm_build_core::sync::is_build_file`)
+        // — those exist to answer "does this project have a Gradle/Maven
+        // root at all" for trust/sync, and a literal `"build.gradle"`
+        // pattern never matches a module's own `app/build.gradle`. D0
+        // must register *every* build file this module can edit, at any
+        // depth, or a non-root module's file never enters `open_docs` and
+        // D7's quick fix falls back to writing straight to disk.
+        if !jvm_build_core::editing::context::is_build_file(Path::new(path_str)) {
             return;
         }
         let language_id = syntax_core::language_for_path(Path::new(path_str)).id();

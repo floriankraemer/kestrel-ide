@@ -130,6 +130,24 @@ fn classify(path: &Path) -> Option<FileKind> {
     None
 }
 
+/// Is `path` a build file this module can classify at all — `pom.xml`,
+/// `build.gradle(.kts)` (any module's, anywhere in the tree), or
+/// `libs.versions.toml`? A basename-only rule (review fix #7),
+/// deliberately independent of a plugin's `BuildToolContribution::
+/// build_files` globs: those are root-relative, meant for "does this
+/// project have a Gradle/Maven root at all" detection
+/// (`jvm_build_core::sync::is_build_file`), and a literal `"build.gradle"`
+/// pattern with no `**/` prefix never matches a module's own
+/// `app/build.gradle` — which left a multi-module project's non-root
+/// build files out of `open_docs` (D0) entirely, so D7's quick fix wrote
+/// straight to disk under a dirty tab instead of splicing into the open
+/// buffer. This is the one rule every reader of "is this a build file"
+/// (`context`, D0's registration, D5/D7's own file-kind checks) now
+/// shares.
+pub fn is_build_file(path: &Path) -> bool {
+    classify(path).is_some()
+}
+
 /// `caret` is inside `range`, inclusive of both ends — a completion or fix
 /// must trigger while the caret sits right after the last typed character
 /// too, which a half-open `Range::contains` would miss.
@@ -957,6 +975,23 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "guava
     #[test]
     fn non_build_file_path_is_no_context() {
         assert_eq!(ctx("/proj/src/Main.java", "class Main {}", 0), None);
+    }
+
+    // ---- is_build_file (review fix #7) -----------------------------
+
+    #[test]
+    fn is_build_file_recognises_every_format_at_any_depth() {
+        assert!(is_build_file(Path::new("/proj/pom.xml")));
+        // The regression review fix #7 exists for: a module's own build
+        // file, not just the project root's — a literal root-relative
+        // glob (`jvm_build_core::sync::is_build_file`'s own job) would
+        // miss this entirely.
+        assert!(is_build_file(Path::new("/proj/app/build.gradle")));
+        assert!(is_build_file(Path::new(
+            "/proj/lib/nested/build.gradle.kts"
+        )));
+        assert!(is_build_file(Path::new("/proj/gradle/libs.versions.toml")));
+        assert!(!is_build_file(Path::new("/proj/src/Main.java")));
     }
 
     // ---- declared_versions (D6) ------------------------------------

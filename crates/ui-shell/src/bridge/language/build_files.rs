@@ -497,7 +497,16 @@ impl ffi::LanguageService {
         line: u32,
         character: u32,
     ) -> Option<lsp_core::Intention> {
-        if !is_build_file_path(path) {
+        if !context::is_build_file(Path::new(path)) {
+            return None;
+        }
+        // Review fix #7: a file this module recognises by name but that
+        // D0 never actually registered (the project isn't open yet, or
+        // the path fell through some other gate) must not offer a fix —
+        // `run_action`'s buffer-vs-disk split (`open_document_paths`)
+        // reads `open_docs` directly, so offering one here that D0 never
+        // saw would splice nowhere and silently fall back to disk.
+        if !self.open_docs.borrow().contains_key(path) {
             return None;
         }
         let content = self
@@ -560,23 +569,6 @@ impl ffi::LanguageService {
         self.as_mut().intentions_ready();
         true
     }
-}
-
-/// `pom.xml`, `build.gradle(.kts)` or `libs.versions.toml` — the same
-/// three filename rules `editing::context::context`'s own (private)
-/// `classify` uses, duplicated here rather than exported across the
-/// crate boundary for one boolean this bridge needs and `context()`
-/// itself does not: "is this a build file at all" (regardless of whether
-/// the caret sits inside anything it recognises).
-fn is_build_file_path(path: &str) -> bool {
-    let name = Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default();
-    name == "pom.xml"
-        || name == "libs.versions.toml"
-        || name.ends_with(".gradle")
-        || name.ends_with(".gradle.kts")
 }
 
 /// The synthesised "Update to `latest`" quick fix's `CodeActionItem`
@@ -693,14 +685,5 @@ mod tests {
         // surrounding `<version>...</version>` tags.
         assert_eq!(docs[0].edits[0].start_character, 21);
         assert_eq!(docs[0].edits[0].end_character, 31);
-    }
-
-    #[test]
-    fn is_build_file_path_recognises_every_format_d7_and_d5_share() {
-        assert!(is_build_file_path("/proj/pom.xml"));
-        assert!(is_build_file_path("/proj/build.gradle"));
-        assert!(is_build_file_path("/proj/build.gradle.kts"));
-        assert!(is_build_file_path("/proj/gradle/libs.versions.toml"));
-        assert!(!is_build_file_path("/proj/src/Main.java"));
     }
 }

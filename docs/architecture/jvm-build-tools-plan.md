@@ -144,7 +144,7 @@ Update the row **in the same commit** that finishes the task.
 | D4 — Maven Central client with disk cache; offline-aware | done | `TBD` |
 | D5 — completion merge in `completion_at` | done | `TBD` |
 | D6 — `versions.rs` hints → diagnostics source `build-tools:versions` | done | `TBD` |
-| D7 — "Update to X" quick fix via synthesised `CodeActionItem` | open | |
+| D7 — "Update to X" quick fix via synthesised `CodeActionItem` | done | `TBD` |
 | D8 — dependency analyzer | open | |
 
 ### E — docs & verification (later PR)

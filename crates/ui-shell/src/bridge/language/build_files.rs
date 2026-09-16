@@ -453,6 +453,116 @@ impl ffi::LanguageService {
         self.store.borrow_mut().remove(VERSION_HINTS_SOURCE, &uri);
         self.as_mut().diagnostics_changed();
     }
+
+    /// D7: the "Update to `latest`" quick fix, synthesised — there is no
+    /// server here to ask for one. Injected the same way
+    /// `container_intentions` (C6) is: a synchronous branch
+    /// `request_intentions` tries *before* the language-server path,
+    /// short-circuiting it entirely (unlike the plan's original sketch of
+    /// merging the item into the queued `push_job` closure — this file's
+    /// two other branches already establish "handle a build file
+    /// synchronously, never touch `push_job`" as the convention, and a
+    /// caret's fix does not need the extra hop through the LSP worker
+    /// thread's queue for an answer that never involved a server).
+    ///
+    /// Recomputed from the *local* index only, deliberately, the same
+    /// tradeoff `build_file_completion`'s first delivery makes: instant,
+    /// no network wait for an interactive Alt+Enter. This can disagree
+    /// with a squiggle D6's background Central pass already upgraded —
+    /// the fix would then offer an older "latest" than the diagnostic's
+    /// own message names. Narrow and rare (only in the few seconds between
+    /// a file opening and that pass finishing) and left as a known gap
+    /// alongside D5's completion's own Central-vs-local sync note, rather
+    /// than caching D6's last-published hints on this struct for one
+    /// caller.
+    pub(crate) fn build_file_intentions(
+        mut self: Pin<&mut Self>,
+        path: &str,
+        line: u32,
+        character: u32,
+    ) -> bool {
+        if !is_build_file_path(path) {
+            return false;
+        }
+        let content = self
+            .session
+            .borrow()
+            .content_for_path(Path::new(path))
+            .unwrap_or_default();
+        let caret = caret_byte_offset(&content, line, character);
+        let declared = context::declared_versions(Path::new(path), &content);
+        let hint = declared
+            .iter()
+            .find(|d| d.range.start <= caret && caret <= d.range.end)
+            .and_then(|d| {
+                let candidates = local_repo_index()
+                    .versions(&d.group_id, &d.artifact_id)
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                versions::hint_for(d, &candidates)
+            });
+
+        self.intentions_tracker.borrow_mut().begin();
+        *self.intentions.borrow_mut() = match hint {
+            Some(hint) => vec![lsp_core::Intention {
+                item: quick_fix_item(&hint, path, &content),
+                group: lsp_core::IntentionGroup::QuickFix,
+                preferred: true,
+            }],
+            None => Vec::new(),
+        };
+        self.intentions_language.borrow_mut().clear();
+        self.as_mut().intentions_ready();
+        true
+    }
+}
+
+/// `pom.xml`, `build.gradle(.kts)` or `libs.versions.toml` — the same
+/// three filename rules `editing::context::context`'s own (private)
+/// `classify` uses, duplicated here rather than exported across the
+/// crate boundary for one boolean this bridge needs and `context()`
+/// itself does not: "is this a build file at all" (regardless of whether
+/// the caret sits inside anything it recognises).
+fn is_build_file_path(path: &str) -> bool {
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    name == "pom.xml"
+        || name == "libs.versions.toml"
+        || name.ends_with(".gradle")
+        || name.ends_with(".gradle.kts")
+}
+
+/// The synthesised "Update to `latest`" quick fix's `CodeActionItem`
+/// (D7): a `WorkspaceEdit` JSON replacing exactly `hint.range` with the
+/// new version, in the shape `lsp_core::parse_workspace_edit`'s `changes`
+/// branch already reads — `run_action` applies it through the ordinary
+/// code-action path, unchanged, since a `CodeActionItem` carrying an
+/// `edit` needs no resolve and no server.
+fn quick_fix_item(hint: &VersionHint, path: &str, text: &str) -> lsp_core::CodeActionItem {
+    let uri = lsp_core::uri_from_path(path);
+    let range = byte_range_to_text_range(text, hint.range.clone());
+    let edit = serde_json::json!({
+        "changes": {
+            uri: [{
+                "range": {
+                    "start": { "line": range.start_line, "character": range.start_character },
+                    "end": { "line": range.end_line, "character": range.end_character },
+                },
+                "newText": hint.latest,
+            }]
+        }
+    });
+    lsp_core::CodeActionItem {
+        title: format!("Update to {}", hint.latest),
+        kind: Some("quickfix".to_string()),
+        edit: Some(edit),
+        command: None,
+        disabled: None,
+        raw: serde_json::json!({}),
+    }
 }
 
 fn local_only_hints(declared: &[DeclaredVersion]) -> Vec<VersionHint> {
@@ -499,5 +609,50 @@ fn byte_range_to_diagnostics_range(
             line: end_line,
             character: end_character,
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// D7: the synthesised quick fix's edit JSON is exactly what
+    /// `lsp_core::parse_workspace_edit`'s `changes` branch already reads —
+    /// the same shape `run_action` uses for a real server's edit, proving
+    /// this item needs no special-casing anywhere past this point.
+    #[test]
+    fn quick_fix_item_edit_round_trips_through_parse_workspace_edit() {
+        let text = r#"<dependency><version>32.1.3-jre</version></dependency>"#;
+        let range = text.find("32.1.3-jre").unwrap()..(text.find("32.1.3-jre").unwrap() + 10);
+        let hint = VersionHint {
+            range,
+            current: "32.1.3-jre".to_string(),
+            latest: "33.0.0-jre".to_string(),
+        };
+
+        let item = quick_fix_item(&hint, "/proj/pom.xml", text);
+        assert_eq!(item.title, "Update to 33.0.0-jre");
+        assert_eq!(item.kind.as_deref(), Some("quickfix"));
+        assert!(!item.needs_resolve(), "an edit-bearing item never resolves");
+
+        let edit = item.edit.expect("edit present");
+        let docs = lsp_core::parse_workspace_edit(&edit).expect("valid WorkspaceEdit JSON");
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0].path, "/proj/pom.xml");
+        assert_eq!(docs[0].edits.len(), 1);
+        assert_eq!(docs[0].edits[0].new_text, "33.0.0-jre");
+        // The replaced span covers exactly "32.1.3-jre", not the
+        // surrounding `<version>...</version>` tags.
+        assert_eq!(docs[0].edits[0].start_character, 21);
+        assert_eq!(docs[0].edits[0].end_character, 31);
+    }
+
+    #[test]
+    fn is_build_file_path_recognises_every_format_d7_and_d5_share() {
+        assert!(is_build_file_path("/proj/pom.xml"));
+        assert!(is_build_file_path("/proj/build.gradle"));
+        assert!(is_build_file_path("/proj/build.gradle.kts"));
+        assert!(is_build_file_path("/proj/gradle/libs.versions.toml"));
+        assert!(!is_build_file_path("/proj/src/Main.java"));
     }
 }

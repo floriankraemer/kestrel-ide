@@ -29,6 +29,11 @@ impl ffi::LanguageService {
         if self.as_mut().container_intentions(&path, line, character) {
             return;
         }
+        // D7: "Update to X" on a build-file dependency needs no server
+        // either.
+        if self.as_mut().build_file_intentions(&path, line, character) {
+            return;
+        }
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
             return;
         };

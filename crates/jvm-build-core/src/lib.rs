@@ -6,13 +6,21 @@
 //! no IDE-owned notion of an output path, an artifact, or a "correct"
 //! dependency version.
 //!
-//! This crate's A-phase scope (this PR) is the foundation: the model types
-//! ([`model`]), the reload policy and trust gate ([`sync`]), and a
-//! temporary run-config builder ([`run`]). The process-invoking Gradle and
-//! Maven providers (`gradle::*`, `maven::*`, the plan's A4/A5) and the
-//! editing-assistance modules (`deps`, `editing::*`, phase D) are later
-//! work and are not present yet — see `docs/architecture/jvm-build-tools-plan.md`.
+//! The model types ([`model`]), the reload policy and trust gate
+//! ([`sync`]), a temporary run-config builder ([`run`]), the
+//! process-invoking Gradle and Maven providers ([`gradle`], [`maven`]) and
+//! the dock's tree shaping ([`view`]) are phases A/B; phase D adds
+//! build-file editing assistance ([`editing`]) and the dependency
+//! analyzer ([`deps`]) — see `docs/architecture/jvm-build-tools-plan.md`
+//! for the Progress table.
 
+/// The dependency analyzer (D8): the Dependencies subtree's scope filter
+/// and "Conflicts only" toggle, and "Go to declaration".
+pub mod deps;
+/// Build-file editing assistance (phase D): caret-context classification,
+/// the local repository index, a Maven Central client, completion and
+/// "newer version" hints.
+pub mod editing;
 pub mod gradle;
 pub mod maven;
 pub mod model;

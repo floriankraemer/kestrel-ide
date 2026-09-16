@@ -51,12 +51,18 @@ jobs:
           for crate in editor-core project-model app-core pty-core terminal-core \
                        app-config index-core diagnostics-core mcp-server lsp-core ai-chat-core \
                        plugin-api icon-theme plugin-host run-core build-core dap-core \
-                       stdio-framing process-exec; do
+                       stdio-framing process-exec jvm-build-core; do
             check "$crate" qt
           done
+          # jvm-build-core deliberately excluded here: D4's reqwest gives it
+          # a private tokio runtime, tolerated the same way ai-chat-core's
+          # and container-registry's are (docs/architecture/layering.md) —
+          # it sits *above* run-core, not beneath it, so the crate that
+          # actually must stay clean is checked instead, below.
           for crate in pty-core terminal-core index-core lsp-core build-core dap-core; do
             check "$crate" tokio
           done
+          check run-core tokio
 
       - name: File-size gate
         run: scripts/check-file-size.sh

@@ -14,6 +14,11 @@ use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 /// file-size ceiling, the way `ai/agent.rs` splits out of `ai/chat.rs`.
 /// C6: image-name completion and the "Pull image" intention, injected
 /// before the language-server gate.
+/// D5 (jvm-build-tools plan): pom.xml/build.gradle(.kts)/
+/// libs.versions.toml coordinate completion, injected before the
+/// language-server path the same way `containers.rs` injects image-name
+/// completion — split out for the same file-size-ceiling reason.
+mod build_files;
 mod containers;
 mod lsp_surface;
 
@@ -177,6 +182,20 @@ pub struct LanguageServiceRust {
         RefCell<std::collections::HashMap<String, lsp_core::SignatureTriggers>>,
     pub(crate) signature_help: RefCell<Option<lsp_core::SignatureHelp>>,
     pub(crate) signature_tracker: RefCell<lsp_core::RequestTracker>,
+    /// D6 (review fix #10): guards `refresh_version_hints`'s
+    /// Central-augmented background delivery — without it, two saves
+    /// close together race, and whichever background thread happens to
+    /// finish *last* wins even if it was answering the *earlier* save.
+    pub(crate) version_hints_tracker: RefCell<lsp_core::RequestTracker>,
+    /// D6/D7 (screenshot review — the "diagnostic says one thing, quick
+    /// fix offers nothing" bug): the exact hints `refresh_version_hints`
+    /// last published for each open path, keyed by path. D7's quick fix
+    /// reads from here — never recomputes — so it can only ever agree
+    /// with the squiggle the user is actually looking at, including a
+    /// hint only Central (not the local index) found.
+    pub(crate) version_hints: RefCell<
+        std::collections::HashMap<String, Vec<jvm_build_core::editing::versions::VersionHint>>,
+    >,
     /// R3: which overload Up/Down has manually cycled to, overriding the
     /// server's own `activeSignature` until the next `signatureHelpReady` —
     /// a fresh answer means a different call, so it resets this rather than
@@ -268,6 +287,8 @@ impl Default for LanguageServiceRust {
             signature_triggers: RefCell::default(),
             signature_help: RefCell::default(),
             signature_tracker: RefCell::default(),
+            version_hints_tracker: RefCell::default(),
+            version_hints: RefCell::default(),
             signature_display_index: Cell::default(),
             highlights: RefCell::default(),
             highlights_tracker: RefCell::default(),
@@ -581,6 +602,7 @@ impl ffi::LanguageService {
     pub fn document_opened(mut self: Pin<&mut Self>, path: &QString, text: &QString) {
         let path_str = path.to_string();
         let Some(config) = self.config_for_path(&path_str) else {
+            self.as_mut().open_build_file_document(&path_str, text);
             return;
         };
         let language_id = config.language_id.clone();
@@ -606,6 +628,53 @@ impl ffi::LanguageService {
         self.as_mut().request_semantic_tokens(path, text);
         // C10: same fire-and-forget convention, immediately above.
         self.as_mut().request_code_lenses(path);
+        // D6 (review fix #6): a build file can have a real language
+        // server configured too (lemminx for `pom.xml`,
+        // kotlin-language-server for `build.gradle.kts`) — that branch
+        // returned before this point instead of falling through to
+        // `open_build_file_document`, so version hints were only ever
+        // computed when *no* server existed. Cheap no-op for any other
+        // file, same as every other `refresh_version_hints` call site.
+        self.as_mut().refresh_version_hints(&path.to_string());
+    }
+
+    /// D0: a build file (`pom.xml`, `build.gradle(.kts)`, `libs.versions.toml`, …)
+    /// has no language server, so `document_opened`'s ordinary path bails
+    /// out before the file ever enters `open_docs` — leaving D7's quick fix
+    /// (`refactor::plan_changes`, off `open_document_paths()`) to write
+    /// straight to disk under a dirty tab instead of splicing into the open
+    /// buffer. Registering it here, with no server started, gives it the
+    /// same `open_docs` membership as a served document.
+    ///
+    /// Queuing `did_open`/`did_change`/`did_close` for a language with no
+    /// server is already harmless: every `LspManager::notify` call returns
+    /// `Err(LspError::NoServer(..))`, and every caller in this file already
+    /// swallows that with `let _ =` — see
+    /// `lsp_core::manager::no_server_document_lifecycle_tests`.
+    fn open_build_file_document(mut self: Pin<&mut Self>, path_str: &str, text: &QString) {
+        // Review fix #7: a basename-only rule, not the plugin's
+        // root-relative sync globs (`jvm_build_core::sync::is_build_file`)
+        // — those exist to answer "does this project have a Gradle/Maven
+        // root at all" for trust/sync, and a literal `"build.gradle"`
+        // pattern never matches a module's own `app/build.gradle`. D0
+        // must register *every* build file this module can edit, at any
+        // depth, or a non-root module's file never enters `open_docs` and
+        // D7's quick fix falls back to writing straight to disk.
+        if !jvm_build_core::editing::context::is_build_file(Path::new(path_str)) {
+            return;
+        }
+        let language_id = syntax_core::language_for_path(Path::new(path_str)).id();
+        self.open_docs
+            .borrow_mut()
+            .insert(path_str.to_string(), language_id.clone());
+        let uri = lsp_core::uri_from_path(path_str);
+        let text_str = text.to_string();
+        self.push_job(move |manager| {
+            let _ = manager.did_open(&uri, &language_id, &text_str);
+        });
+        // D6: the file just entered `open_docs`, so its version hints
+        // (if any) have never been computed.
+        self.as_mut().refresh_version_hints(path_str);
     }
 
     pub fn document_changed(self: Pin<&mut Self>, path: &QString, text: &QString) {
@@ -620,7 +689,7 @@ impl ffi::LanguageService {
         });
     }
 
-    pub fn document_saved(self: Pin<&mut Self>, path: &QString) {
+    pub fn document_saved(mut self: Pin<&mut Self>, path: &QString) {
         let path = path.to_string();
         if !self.open_docs.borrow().contains_key(&path) {
             return;
@@ -629,6 +698,11 @@ impl ffi::LanguageService {
         self.push_job(move |manager| {
             let _ = manager.did_save(&uri);
         });
+        // D6: a saved build file may have changed the declared versions
+        // (or their coordinates) — recompute. Cheap no-op for any other
+        // file: `refresh_version_hints` only does real work once
+        // `editing::context::declared_versions` recognises the path.
+        self.as_mut().refresh_version_hints(&path);
     }
 
     pub fn document_closed(mut self: Pin<&mut Self>, path: &QString) {
@@ -644,6 +718,9 @@ impl ffi::LanguageService {
         self.push_job(move |manager| {
             let _ = manager.did_close(&closed);
         });
+        // D6: a closed build file's version hints must go with it, the
+        // same way its language-server rows just did above.
+        self.as_mut().clear_version_hints(&path);
         self.as_mut().diagnostics_changed();
     }
 
@@ -964,6 +1041,15 @@ impl ffi::LanguageService {
             character,
             &text_before_cursor.to_string(),
         ) {
+            return;
+        }
+        // D5: a build file has no server (D0 registers it in `open_docs`
+        // anyway, for D7's quick fix), so without this the LSP branch
+        // below would silently answer nothing for it.
+        if self
+            .as_mut()
+            .build_file_completion(&path, line, character, explicit_request)
+        {
             return;
         }
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {

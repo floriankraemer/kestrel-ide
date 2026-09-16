@@ -1,0 +1,6 @@
+// Harness fixture (X1): must contain a keyword, a string and a comment.
+class Greeter {
+    String greet(String name) {
+        return "hello, " + name
+    }
+}

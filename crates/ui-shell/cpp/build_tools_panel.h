@@ -6,6 +6,8 @@
 #include <functional>
 
 class QAction;
+class QCheckBox;
+class QComboBox;
 class QLabel;
 class QLineEdit;
 class QPoint;
@@ -45,6 +47,7 @@ private:
     void refreshTree();
     void refreshTitle();
     void refreshBanner();
+    void refreshDependencyScopes();
     void runNode(const QString &nodeId, const QString &extraArgs);
     void showContextMenu(const QPoint &pos);
 
@@ -57,7 +60,22 @@ private:
     QLineEdit *executeEdit_;
     QToolButton *offlineButton_;
     QToolButton *skipTestsButton_;
+    // D8's dependency analyzer: the Dependencies subtree's scope filter
+    // and "Conflicts only" toggle. A second toolbar row rather than
+    // crowding the first (review-fix-round-6's own reasoning: the first
+    // row is already tight on a right-side dock's width, and these two
+    // controls matter only while looking at Dependencies).
+    QComboBox *dependencyScopeCombo_;
+    QCheckBox *conflictsOnlyCheck_;
     QLabel *statusLabel_;
+    // D8 (screenshot review): shown centered in place of `tree_` for a
+    // project with nothing to show yet — either no Gradle/Maven marker
+    // found at all, or one found but not synced. A separate label from
+    // `statusLabel_`, which stays the sync-failure banner alone
+    // (`refreshBanner`'s own doc comment) — the two used to share one
+    // label and fight over its visibility every time both had something to
+    // say.
+    QLabel *emptyStateLabel_;
 };
 
 // `buildBuildToolsDock` (B2): copies `tests_panel.cpp`'s own

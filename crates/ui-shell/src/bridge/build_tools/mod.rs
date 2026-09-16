@@ -46,6 +46,20 @@ use crate::bridge::registry::SharedDiagnostics;
 /// language server's.
 const SOURCE_KEY: &str = "build-tools:sync";
 
+/// D3's local repository index, built off the OS home directory's default
+/// `~/.m2`/`~/.gradle` locations — always called off the Qt thread (review
+/// fix #2): once from `project_opened`'s own background thread, and again
+/// from `sync`'s, so a later sync's freshly-downloaded dependencies show
+/// up without needing a restart.
+fn build_local_repo_index() -> jvm_build_core::editing::repo_index::RepoIndex {
+    use jvm_build_core::editing::repo_index;
+    let home = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+    let gradle_user_home = std::env::var("GRADLE_USER_HOME").ok();
+    let maven_repo = repo_index::default_maven_repository(None, &home);
+    let gradle_modules = repo_index::default_gradle_modules(gradle_user_home.as_deref(), &home);
+    repo_index::build(&maven_repo, &gradle_modules)
+}
+
 fn current_project_root() -> Option<PathBuf> {
     crate::bridge::convert::current_project_root()
 }
@@ -145,7 +159,18 @@ pub struct BuildToolsServiceRust {
     /// in `jvm_build_core::view`, which shapes rows from a model and knows
     /// nothing about UI-held check state.
     checked_profiles: RefCell<std::collections::HashSet<String>>,
+    /// D8: the Dependencies subtree's scope/configuration filter and
+    /// "Conflicts only" toggle — dock-held view state, the same reason
+    /// `checked_profiles` lives here rather than in `jvm_build_core::view`.
+    dependency_filter: RefCell<jvm_build_core::deps::DependencyFilter>,
     store: SharedDiagnostics,
+    /// D8 (screenshot review): which tool(s) `refresh_banner` last detected
+    /// by marker alone, independent of whether a sync ever ran — `(has_
+    /// gradle, has_maven)`. `title_kind`/`empty_state_kind` OR this with
+    /// `models`' own tool set, so the dock's title says "Gradle" (and an
+    /// empty tree explains itself) the moment a project opens rather than
+    /// only once a sync happens to finish.
+    detected_tools: Cell<(bool, bool)>,
 }
 
 fn to_ffi_node_kind(kind: jvm_build_core::view::NodeKind) -> ffi::FfiBuildToolNodeKind {
@@ -239,19 +264,132 @@ fn publish_sync_error(store: &SharedDiagnostics, root: &Path, message: &str) {
     store.replace(SOURCE_KEY, &uri, vec![core_diagnostic]);
 }
 
+/// A model with `deps::filter` applied to every module's own dependency
+/// list — `view::rows` groups dependencies by their own `scope` field, so
+/// filtering *before* it, rather than teaching it a filter parameter, is
+/// what makes a scope with nothing left after filtering simply not
+/// produce a subtree at all (the "distinct scopes" scan it does is over
+/// this same already-filtered list).
+fn filtered_model(
+    model: &BuildModel,
+    filter: &jvm_build_core::deps::DependencyFilter,
+) -> BuildModel {
+    let mut filtered = model.clone();
+    for module in &mut filtered.modules {
+        module.dependencies = jvm_build_core::deps::filter(&module.dependencies, filter);
+    }
+    filtered
+}
+
 impl ffi::BuildToolsService {
     pub fn rows(&self) -> Vec<ffi::FfiBuildToolNode> {
         let checked = self.checked_profiles.borrow();
+        let filter = self.dependency_filter.borrow();
         self.models
             .borrow()
             .iter()
+            .map(|model| filtered_model(model, &filter))
             .flat_map(|model| {
-                jvm_build_core::view::rows(model, &checked)
+                jvm_build_core::view::rows(&model, &checked)
                     .into_iter()
                     .map(|node| to_ffi_node(&node, model.tool))
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    /// D8: every distinct scope/configuration the synced model(s) declare
+    /// a dependency under — the dock combo's own item list, built fresh
+    /// from the *unfiltered* models (a scope the current filter already
+    /// hides must stay selectable, to switch back to it).
+    pub fn dependency_scopes(&self) -> ffi::QStringList {
+        let mut scopes: Vec<String> = self
+            .models
+            .borrow()
+            .iter()
+            .flat_map(|model| model.modules.iter())
+            .flat_map(|module| module.dependencies.iter())
+            .map(|dep| dep.scope.clone())
+            .collect();
+        scopes.sort_unstable();
+        scopes.dedup();
+        scopes.iter().map(|s| QString::from(s.as_str())).collect()
+    }
+
+    /// D8: the scope combo changed. An empty `scope` means "every scope" —
+    /// the combo's own "All" entry, translated to `None` here rather than
+    /// carrying a sentinel string through `jvm_build_core::deps`.
+    pub fn set_dependency_scope(mut self: Pin<&mut Self>, scope: &QString) {
+        let scope = scope.to_string();
+        self.dependency_filter.borrow_mut().scope = (!scope.is_empty()).then_some(scope);
+        self.as_mut().model_changed();
+    }
+
+    /// D8: the "Conflicts only" toggle changed.
+    pub fn set_conflicts_only(mut self: Pin<&mut Self>, conflicts_only: bool) {
+        self.dependency_filter.borrow_mut().conflicts_only = conflicts_only;
+        self.as_mut().model_changed();
+    }
+
+    /// D8: "Go to Declaration" for a Dependency row (`node_id`, the same
+    /// id `rows()` gave the row — `"{scope_id}:{group}:{artifact}:
+    /// {resolved}"`, `view::push_dependency_rows`'s own shape). The
+    /// 1-based line to open `build_file` at, or `-1` when
+    /// `deps::declaration_site` finds no match (a transitive dependency,
+    /// which by definition never appears in the build file itself).
+    ///
+    /// `build_file` is the row's own `FfiBuildToolNode::buildFile` — the
+    /// caller already has it from `rows()`, and it names the *exact*
+    /// module unambiguously (review fix #9): a `node_id`'s module-path
+    /// segment is not safely reversible by splitting on `:`, since a
+    /// Gradle project path (`:lib:core`) embeds the same separator the
+    /// id itself uses.
+    pub fn dependency_declaration_line(&self, node_id: &QString, build_file: &QString) -> i32 {
+        let node_id = node_id.to_string();
+        let build_file = PathBuf::from(build_file.to_string());
+        // The id's last two colon-separated segments before the trailing
+        // resolved-version segment are `group:artifact` — reconstructing
+        // this from the id (rather than looking the row up by identity)
+        // keeps this a stateless query, the same as `task_config`'s own
+        // node-id lookup pattern below.
+        let mut segments: Vec<&str> = node_id.split(':').collect();
+        if segments.len() < 3 {
+            return -1;
+        }
+        segments.pop(); // resolved version, unused here
+        let artifact = segments.pop().unwrap_or_default();
+        let group = segments.pop().unwrap_or_default();
+
+        for model in self.models.borrow().iter() {
+            for module in &model.modules {
+                if module.build_file != build_file {
+                    continue;
+                }
+                let Some(dep) = module
+                    .dependencies
+                    .iter()
+                    .find(|d| d.group == group && d.artifact == artifact)
+                else {
+                    continue;
+                };
+                // The live buffer when the build file is open (unsaved
+                // edits included, the same "the buffer wins" rule D5/D6
+                // already follow), disk otherwise.
+                let text = crate::bridge::registry::shared_session()
+                    .borrow()
+                    .content_for_path(&module.build_file)
+                    .or_else(|| std::fs::read_to_string(&module.build_file).ok());
+                let Some(text) = text else {
+                    continue;
+                };
+                if let Some(line) =
+                    jvm_build_core::deps::declaration_site(dep, &module.build_file, &text)
+                {
+                    return line as i32;
+                }
+            }
+        }
+        -1
     }
 
     /// A profile checkbox in the dock was toggled (B3). `modelChanged` is
@@ -268,14 +406,23 @@ impl ffi::BuildToolsService {
         self.as_mut().model_changed();
     }
 
+    /// D8 (screenshot review): ORs the synced model's own tool set with
+    /// whatever `refresh_banner` last *detected* — a synced project keeps
+    /// naming every tool it has always named, and a project that has not
+    /// synced yet (or never will, still "Not Now"-dismissed) still gets a
+    /// real title instead of the generic "Build Tools" placeholder from the
+    /// moment its marker file is found.
     pub fn title_kind(&self) -> ffi::FfiBuildToolTitleKind {
-        let has_gradle = self.models.borrow().iter().any(|m| m.tool == Tool::Gradle);
-        let has_maven = self.models.borrow().iter().any(|m| m.tool == Tool::Maven);
-        match (has_gradle, has_maven) {
-            (true, true) => ffi::FfiBuildToolTitleKind::Both,
-            (true, false) => ffi::FfiBuildToolTitleKind::Gradle,
-            (false, true) => ffi::FfiBuildToolTitleKind::Maven,
-            (false, false) => ffi::FfiBuildToolTitleKind::None,
+        let (detected_gradle, detected_maven) = self.detected_tools.get();
+        let has_gradle =
+            detected_gradle || self.models.borrow().iter().any(|m| m.tool == Tool::Gradle);
+        let has_maven =
+            detected_maven || self.models.borrow().iter().any(|m| m.tool == Tool::Maven);
+        match jvm_build_core::view::tool_presence(has_gradle, has_maven) {
+            jvm_build_core::view::ToolPresence::Both => ffi::FfiBuildToolTitleKind::Both,
+            jvm_build_core::view::ToolPresence::Gradle => ffi::FfiBuildToolTitleKind::Gradle,
+            jvm_build_core::view::ToolPresence::Maven => ffi::FfiBuildToolTitleKind::Maven,
+            jvm_build_core::view::ToolPresence::None => ffi::FfiBuildToolTitleKind::None,
         }
     }
 
@@ -332,10 +479,31 @@ impl ffi::BuildToolsService {
         *self.sync_error.borrow_mut() = None;
         self.as_mut().model_changed();
         self.as_mut().refresh_banner(&root);
+
+        // Review fix #2: build the local repository index once per
+        // project open, off the Qt thread, regardless of whether this
+        // root ever gets trusted/synced — D5/D6 want *some* local answer
+        // as soon as possible rather than only after a sync.
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let index = build_local_repo_index();
+            let _ = qt_thread.queue(move |_: Pin<&mut ffi::BuildToolsService>| {
+                *crate::bridge::registry::shared_repo_index().borrow_mut() = Some(index);
+            });
+        });
     }
 
     fn refresh_banner(mut self: Pin<&mut Self>, root: &Path) {
         let detected = detected_build_tools(root);
+        // D8: recorded unconditionally, before any of this function's early
+        // returns — `title_kind`/`empty_state_kind` must see today's
+        // detection result even for an untrusted or "Not Now"-dismissed
+        // root, which never reaches `sync()` and would otherwise leave
+        // yesterday's (or no) tool named.
+        self.detected_tools.set((
+            detected.iter().any(|(_, c)| c.toolchain == "gradle"),
+            detected.iter().any(|(_, c)| c.toolchain == "maven"),
+        ));
         if detected.is_empty() {
             *self.banner.borrow_mut() = BannerState::None;
             self.as_mut().banner_changed();
@@ -520,6 +688,11 @@ impl ffi::BuildToolsService {
                 }
             }
             let cancelled = cancel.load(Ordering::Relaxed);
+            // Review fix #2: rebuilt here, off the Qt thread, not lazily
+            // the first time a build-file completion/hint needs it — a
+            // sync is exactly the moment newly-resolved dependencies may
+            // have landed in the local cache.
+            let repo_index = (!cancelled).then(build_local_repo_index);
             let root_for_queue = root_for_thread.clone();
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::BuildToolsService>| {
                 service.syncing.set(false);
@@ -527,6 +700,9 @@ impl ffi::BuildToolsService {
                 if cancelled {
                     service.as_mut().sync_state_changed();
                     return;
+                }
+                if let Some(index) = repo_index {
+                    *crate::bridge::registry::shared_repo_index().borrow_mut() = Some(index);
                 }
                 *service.models.borrow_mut() = models.clone();
                 *crate::bridge::registry::shared_build_models().borrow_mut() = models;

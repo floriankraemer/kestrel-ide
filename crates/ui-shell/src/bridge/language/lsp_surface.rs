@@ -29,6 +29,15 @@ impl ffi::LanguageService {
         if self.as_mut().container_intentions(&path, line, character) {
             return;
         }
+        // D7: "Update to X" on a build-file dependency needs no server —
+        // short-circuits here only when no real server is also configured
+        // for this file (review fix #3). When one is, it returns `false`
+        // and the quick fix — recomputed just below — is merged into the
+        // server's own answer instead of replacing it.
+        if self.as_mut().build_file_intentions(&path, line, character) {
+            return;
+        }
+        let build_file_quick_fix = self.build_file_quick_fix(&path, line, character);
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
             return;
         };
@@ -46,7 +55,11 @@ impl ffi::LanguageService {
                     // has already left.
                     return;
                 }
-                *service.intentions.borrow_mut() = result.unwrap_or_default();
+                let mut intentions = result.unwrap_or_default();
+                if let Some(quick_fix) = build_file_quick_fix {
+                    intentions.push(quick_fix);
+                }
+                *service.intentions.borrow_mut() = intentions;
                 *service.intentions_language.borrow_mut() = language_id;
                 service.as_mut().intentions_ready();
             });

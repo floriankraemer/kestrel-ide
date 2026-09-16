@@ -10,7 +10,9 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
+#include <QComboBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
@@ -35,6 +37,13 @@ constexpr int kToolRole = Qt::UserRole + 1;
 constexpr int kRunnableRole = Qt::UserRole + 2;
 constexpr int kBuildFileRole = Qt::UserRole + 3;
 constexpr int kIsProfileRole = Qt::UserRole + 4;
+// D8: which rows "Go to Declaration" applies to.
+constexpr int kIsDependencyRole = Qt::UserRole + 5;
+
+// D8: the dependency scope combo's "every scope" entry — translated to an
+// empty string at the seam (`BuildToolsService::setDependencyScope`'s own
+// doc comment), never carried through as a sentinel string past this file.
+const int kAllScopesIndex = 0;
 
 // A row icon per kind (review fix 3, pixel scrutiny): plain platform-style
 // icons, the same "no vendored asset for a handful of kinds" call
@@ -124,6 +133,29 @@ QString titleFor(FfiBuildToolTitleKind kind)
     return QObject::tr("Build Tools");
 }
 
+// D8 (screenshot review): the tree is only ever empty for one of two
+// reasons — nothing detected at all, or something detected but not synced
+// yet (`BuildToolsService::rows()` is empty until a sync populates a
+// model) — and each needs its own explanation rather than one generic
+// message that fits neither well. `kind` is `titleFor`'s own
+// `FfiBuildToolTitleKind`, already detection-aware (D8's fix to
+// `title_kind`), so `None` is exactly "nothing detected" here too.
+QString emptyStateTextFor(FfiBuildToolTitleKind kind)
+{
+    switch (kind) {
+    case FfiBuildToolTitleKind::Gradle:
+        return QObject::tr("Gradle project detected — load it to see tasks and dependencies.");
+    case FfiBuildToolTitleKind::Maven:
+        return QObject::tr("Maven project detected — load it to see tasks and dependencies.");
+    case FfiBuildToolTitleKind::Both:
+        return QObject::tr(
+          "Gradle and Maven projects detected — load them to see tasks and dependencies.");
+    case FfiBuildToolTitleKind::None:
+        break;
+    }
+    return QObject::tr("No Gradle or Maven project detected.");
+}
+
 } // namespace
 
 BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunService *runService,
@@ -165,6 +197,18 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     toolbar->addWidget(skipTestsButton_);
     toolbar->addWidget(settingsButton);
 
+    // D8: the dependency analyzer's own row, under the main toolbar — a
+    // combo needs its selected text on screen (unlike every icon-only
+    // toggle above it), so it cannot fold into that row without either
+    // losing its label or pushing Execute… below its usable-width floor.
+    dependencyScopeCombo_ = new QComboBox(this);
+    dependencyScopeCombo_->addItem(tr("All Scopes"));
+    dependencyScopeCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    conflictsOnlyCheck_ = new QCheckBox(tr("Conflicts Only"), this);
+    auto *dependencyToolbar = new QHBoxLayout();
+    dependencyToolbar->addWidget(dependencyScopeCombo_, 1);
+    dependencyToolbar->addWidget(conflictsOnlyCheck_);
+
     tree_ = new QTreeWidget(this);
     tree_->setColumnCount(1);
     // Review fix (round 6): a second "Detail" column cost every row's Name
@@ -190,11 +234,22 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     statusLabel_ = new QLabel(this);
     statusLabel_->setWordWrap(true);
 
+    // D8 (screenshot review): centered/word-wrapped, `changes_panel.cpp`'s
+    // own `emptyStateLabel_` convention for "this view has nothing to show
+    // yet, here is why" — rather than inventing a second styling for the
+    // same idea.
+    emptyStateLabel_ = new QLabel(this);
+    emptyStateLabel_->setAlignment(Qt::AlignCenter);
+    emptyStateLabel_->setWordWrap(true);
+    emptyStateLabel_->setVisible(false);
+
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addLayout(toolbar);
+    layout->addLayout(dependencyToolbar);
     layout->addWidget(statusLabel_);
     layout->addWidget(tree_, 1);
+    layout->addWidget(emptyStateLabel_, 1);
 
     connect(reloadButton, &QToolButton::clicked, this,
             [this]() { buildToolsService_->sync(); });
@@ -225,16 +280,32 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
             openSettings_();
         }
     });
+    connect(dependencyScopeCombo_, &QComboBox::currentIndexChanged, this, [this](int index) {
+        buildToolsService_->setDependencyScope(index == kAllScopesIndex
+                                                  ? QString()
+                                                  : dependencyScopeCombo_->itemText(index));
+    });
+    connect(conflictsOnlyCheck_, &QCheckBox::toggled, this,
+            [this](bool on) { buildToolsService_->setConflictsOnly(on); });
 
     connect(buildToolsService_, &BuildToolsService::modelChanged, this, [this]() {
+        refreshDependencyScopes();
         refreshTree();
         refreshTitle();
     });
     connect(buildToolsService_, &BuildToolsService::syncStateChanged, this,
             &BuildToolsPanel::refreshTitle);
-    connect(buildToolsService_, &BuildToolsService::bannerChanged, this,
-            &BuildToolsPanel::refreshBanner);
+    // D8 (screenshot review): detection alone (no sync yet) now changes
+    // `titleKind()` too, and an empty, detected-but-unsynced tree needs its
+    // own placeholder text — both react to the same signal `refresh_banner`
+    // already fires for the trust/reload banner.
+    connect(buildToolsService_, &BuildToolsService::bannerChanged, this, [this]() {
+        refreshBanner();
+        refreshTitle();
+        refreshTree();
+    });
 
+    refreshDependencyScopes();
     refreshTree();
     refreshTitle();
     refreshBanner();
@@ -264,6 +335,26 @@ void BuildToolsPanel::refreshBanner()
     }
 }
 
+void BuildToolsPanel::refreshDependencyScopes()
+{
+    // Blocked the same way `refreshTree`'s own `QSignalBlocker` is:
+    // repopulating fires `currentIndexChanged` on every `addItem` call
+    // otherwise, which would re-enter `setDependencyScope` for a
+    // selection nothing actually chose.
+    const QSignalBlocker blocker(dependencyScopeCombo_);
+    const QString selected = dependencyScopeCombo_->currentIndex() > kAllScopesIndex
+                                ? dependencyScopeCombo_->currentText()
+                                : QString();
+    dependencyScopeCombo_->clear();
+    dependencyScopeCombo_->addItem(tr("All Scopes"));
+    for (const QString &scope : buildToolsService_->dependencyScopes()) {
+        dependencyScopeCombo_->addItem(scope);
+    }
+    const int index = selected.isEmpty() ? kAllScopesIndex
+                                          : dependencyScopeCombo_->findText(selected);
+    dependencyScopeCombo_->setCurrentIndex(index >= 0 ? index : kAllScopesIndex);
+}
+
 void BuildToolsPanel::refreshTree()
 {
     // Rebuilding sets every profile row's check state from the model, which
@@ -279,10 +370,16 @@ void BuildToolsPanel::refreshTree()
     tree_->clear();
 
     const ::rust::Vec<FfiBuildToolNode> rows = buildToolsService_->rows();
+    // D8 (screenshot review): an empty tree is not itself an error —
+    // `statusLabel_` stays reserved for a real sync failure
+    // (`refreshBanner`) — so this swaps the tree out for a centered
+    // placeholder explaining *why* it is empty (nothing detected yet, or
+    // detected but not synced) instead of leaving the dock's whole content
+    // area blank.
+    tree_->setVisible(!rows.empty());
+    emptyStateLabel_->setVisible(rows.empty());
     if (rows.empty()) {
-        statusLabel_->setText(
-          tr("No Gradle or Maven project detected, or it has not been loaded yet."));
-        statusLabel_->setVisible(buildToolsService_->syncStateKind() != FfiSyncStateKind::Failed);
+        emptyStateLabel_->setText(emptyStateTextFor(buildToolsService_->titleKind()));
         return;
     }
 
@@ -307,6 +404,7 @@ void BuildToolsPanel::refreshTree()
         item->setData(0, kToolRole, QString(node.tool));
         item->setData(0, kRunnableRole, node.kind == FfiBuildToolNodeKind::Task);
         item->setData(0, kBuildFileRole, QString(node.buildFile));
+        item->setData(0, kIsDependencyRole, node.kind == FfiBuildToolNodeKind::Dependency);
         if (node.kind == FfiBuildToolNodeKind::Profile) {
             item->setData(0, kIsProfileRole, true);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
@@ -341,6 +439,7 @@ void BuildToolsPanel::showContextMenu(const QPoint &pos)
     }
     const QString nodeId = item->data(0, kIdRole).toString();
     const bool runnable = item->data(0, kRunnableRole).toBool();
+    const bool isDependency = item->data(0, kIsDependencyRole).toBool();
     const QString buildFile = item->data(0, kBuildFileRole).toString();
     if (!runnable && buildFile.isEmpty()) {
         return;
@@ -352,8 +451,16 @@ void BuildToolsPanel::showContextMenu(const QPoint &pos)
     if (runnable) {
         menu.addSeparator();
     }
-    QAction *openBuildFile =
-      !buildFile.isEmpty() ? menu.addAction(tr("Open Build File")) : nullptr;
+    // D8: "Go to Declaration" (a specific line, via `deps::declaration_site`)
+    // replaces the generic "Open Build File" (line 1) for a Dependency row —
+    // offering both would be two menu entries for "open the same file",
+    // differing only in which line, which is not a real choice.
+    QAction *openBuildFile = (!isDependency && !buildFile.isEmpty())
+                                ? menu.addAction(tr("Open Build File"))
+                                : nullptr;
+    QAction *goToDeclaration = (isDependency && !buildFile.isEmpty())
+                                  ? menu.addAction(tr("Go to Declaration"))
+                                  : nullptr;
     QAction *copy = menu.addAction(tr("Copy Coordinate"));
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
     if (chosen == run) {
@@ -363,6 +470,11 @@ void BuildToolsPanel::showContextMenu(const QPoint &pos)
     } else if (chosen == openBuildFile) {
         if (openAt_) {
             openAt_(buildFile, 1, 0);
+        }
+    } else if (chosen == goToDeclaration) {
+        const int line = buildToolsService_->dependencyDeclarationLine(nodeId, buildFile);
+        if (openAt_ && line >= 1) {
+            openAt_(buildFile, line, 0);
         }
     } else if (chosen == copy) {
         QGuiApplication::clipboard()->setText(item->text(0));
@@ -400,6 +512,14 @@ BuildToolsPanel *buildBuildToolsDock(ads::CDockManager *dockManager, DockRegistr
     updateTitle();
     QObject::connect(buildToolsService, &BuildToolsService::modelChanged, dock, updateTitle);
     QObject::connect(buildToolsService, &BuildToolsService::syncStateChanged, dock, updateTitle);
+    // D8 (screenshot review): `titleKind()` now also reflects detection
+    // alone (`refresh_banner`'s `detected_tools`, set before any sync), and
+    // `refresh_banner` signals that through `bannerChanged` — `project
+    // Opened` fires `modelChanged` *before* it calls `refresh_banner`, so
+    // without this connection the title would still show whatever
+    // yesterday's (or no) project last left it at until the next model
+    // change happened to come along.
+    QObject::connect(buildToolsService, &BuildToolsService::bannerChanged, dock, updateTitle);
 
     return panel;
 }

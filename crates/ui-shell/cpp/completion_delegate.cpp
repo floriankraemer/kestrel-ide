@@ -2,6 +2,7 @@
 
 #include "symbol_icon.h"
 
+#include <QApplication>
 #include <QFont>
 #include <QFontMetrics>
 #include <QIcon>
@@ -73,10 +74,31 @@ void CompletionItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
     // The label is painted by hand below (for the bold-highlight runs), so
-    // strip it from the option before the base class paints the
-    // background/selection/icon frame.
+    // it must not also be painted by the base class's own text pass.
+    // `QStyledItemDelegate::paint(painter, opt, index)` cannot be used for
+    // that background/selection/icon-frame pass: it calls `initStyleOption`
+    // *again* on its own copy of the option, straight from
+    // `index.data(Qt::DisplayRole)` — clearing `opt.text` (and even the
+    // `HasDisplay` feature bit) here has no effect on that second, internal
+    // copy, so the base class painted the plain label a second time, right
+    // under our own per-character run, every time this delegate has ever
+    // run. Invisible for a plain left-anchored prefix match (both copies
+    // land on the same pixels in the same font), it became an obvious
+    // smear the moment a highlighted run does not start at character 0 in
+    // a plain font: D5's hyphenated Maven/Gradle coordinates score as a
+    // CamelHump match (`lsp_core::completion::camel_hump`), which bolds a
+    // run in the *middle* of the label (e.g. "jupiter" inside
+    // "junit-jupiter") — the hand-drawn bold run then drifts wider than
+    // the base class's still-plain copy of the same characters underneath
+    // it, and the two no longer line up. Driving the style directly with
+    // our own already-cleared `opt` — the same primitive
+    // `QStyledItemDelegate::paint` itself calls once it is done deriving —
+    // paints the background/selection/icon frame without that second,
+    // uncontrollable text derivation.
     opt.text.clear();
-    QStyledItemDelegate::paint(painter, opt, index);
+    opt.features &= ~QStyleOptionViewItem::HasDisplay;
+    QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
+    style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, opt.widget);
 
     painter->save();
     const QRect rect = option.rect;

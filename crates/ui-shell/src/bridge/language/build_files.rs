@@ -748,4 +748,70 @@ mod tests {
         assert_eq!(docs[0].edits[0].start_character, 21);
         assert_eq!(docs[0].edits[0].end_character, 31);
     }
+
+    /// D5 (screenshot review — the completion popup's "double-paints text"
+    /// bug): a build-file item's hyphenated label (this module's own
+    /// [`to_completion_item`] shape — `label`/`insert` equal, an explicit
+    /// `range`, no `filter_text`) scores as a CamelHump match against a
+    /// bare trailing-word prefix, same as any other candidate
+    /// `lsp_core::filter` ranks — so the highlighted run this maps to
+    /// `match_positions` lands in the *middle* of the label, not at the
+    /// start. That in itself was always correct (verified against
+    /// `lsp_core::score` directly); the bug the screenshot caught was in
+    /// `completion_delegate.cpp`'s rendering of exactly this shape, not
+    /// here — this test is the regression guard for the FFI mapping
+    /// `super::super::to_ffi_completion` is responsible for, so a future
+    /// change there cannot silently drop `match_positions`, `has_range`, or
+    /// the prefix-relative range the delegate now depends on to draw the
+    /// label exactly once.
+    #[test]
+    fn build_file_item_maps_with_an_explicit_range_and_mid_label_match_positions() {
+        let item = lsp_core::CompletionItem {
+            label: "junit-jupiter-api".to_string(),
+            insert: "junit-jupiter-api".to_string(),
+            kind: None,
+            detail: String::new(),
+            documentation: String::new(),
+            sort_text: None,
+            filter_text: None,
+            is_snippet: false,
+            deprecated: false,
+            range: Some(lsp_core::TextRange {
+                start_line: 21,
+                start_character: 25,
+                end_line: 21,
+                end_character: 38,
+            }),
+            raw: serde_json::Value::Null,
+        };
+        let matches = lsp_core::filter_completions(std::slice::from_ref(&item), "jupiter");
+        assert_eq!(
+            matches.len(),
+            1,
+            "the candidate must survive its own filter"
+        );
+        let prefix_length = "jupiter".encode_utf16().count() as u32;
+
+        let ffi_item =
+            super::super::to_ffi_completion(matches.into_iter().next().unwrap(), prefix_length);
+
+        assert_eq!(ffi_item.label.to_string(), "junit-jupiter-api");
+        assert_eq!(ffi_item.insert.to_string(), "junit-jupiter-api");
+        // Same convention `containers.rs`'s Hub items and every LSP item
+        // with a server-given range use: an explicit range wins over
+        // `prefix_length`, so accepting replaces exactly the coordinate's
+        // own span (`to_completion_item`'s whole point) — never a
+        // caret-relative guess built from `prefix_length` alone.
+        assert!(ffi_item.has_range);
+        assert_eq!(ffi_item.start_character, 25);
+        assert_eq!(ffi_item.end_character, 38);
+        // The match lands on "jupiter" inside "junit-jupiter-api" — chars
+        // 6..=12 — not at the label's own start. This is exactly the
+        // shape the delegate double-painted under before the C++ fix; the
+        // rendering itself is out of this crate's reach to test (CLAUDE.md:
+        // C++ stays thin and untested by design), but the data this crate
+        // hands it must keep landing mid-label rather than silently
+        // collapsing to an empty or start-anchored run.
+        assert_eq!(ffi_item.match_positions, vec![6, 7, 8, 9, 10, 11, 12]);
+    }
 }

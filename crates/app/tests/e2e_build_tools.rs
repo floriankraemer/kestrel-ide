@@ -35,6 +35,13 @@ use serde_json::Value;
 
 const APP: &str = env!("CARGO_BIN_EXE_app");
 
+/// Review fix #6: `e2e::wait::DEFAULT_TIMEOUT` (60s) is tight for a real
+/// Gradle/Maven sync, build or test run in Docker — every wait in this
+/// file for one of those three (never for anything the harness itself
+/// drives, which stays on the default) gets this ceiling instead via
+/// `Ide::wait_for_event_within`.
+const REAL_TOOLCHAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
 /// Skip (never fail) unless `IDE_E2E_JVM=1` — set by `make jvm-ci` inside
 /// the `linux-jvm` image, the only place a real `gradle`/`mvn`/JDK are on
 /// `PATH`. Called first thing in every `#[test]` below.
@@ -178,10 +185,15 @@ fn e2e_gradle_sync_run_and_test() {
     // — the `linux-jvm` image's own PATH entry, A2) against the init
     // script's `ideModel` task; `build_tools_synced` fires once it is no
     // longer in flight either way, so a real failure reads as a readable
-    // assertion failure rather than a 60-second timeout.
-    let synced = ide.wait_for_event(mark, "the sync to finish", |e| {
-        e["ev"] == "build_tools_synced"
-    });
+    // assertion failure rather than a timeout. Review fix #6: 180s, not
+    // the harness's 60s default — a real Gradle sync in Docker is not
+    // this harness's own UI driving itself.
+    let synced = ide.wait_for_event_within(
+        mark,
+        REAL_TOOLCHAIN_TIMEOUT,
+        "the sync to finish",
+        |e| e["ev"] == "build_tools_synced",
+    );
     assert_eq!(
         synced["failed"], false,
         "Gradle sync failed against the real toolchain"
@@ -250,9 +262,14 @@ fn e2e_gradle_sync_run_and_test() {
         e["ev"] == "run_console_tab_added"
     });
     let console_id = started["console_id"].as_u64().expect("console_id");
-    ide.wait_for_event(mark, "the `build` task to finish", |e| {
-        e["ev"] == "run_console_finished" && e["console_id"].as_u64() == Some(console_id)
-    });
+    // Review fix #6: a real `gradle build` task, not this harness's own UI —
+    // 180s, not the harness's 60s default.
+    ide.wait_for_event_within(
+        mark,
+        REAL_TOOLCHAIN_TIMEOUT,
+        "the `build` task to finish",
+        |e| e["ev"] == "run_console_finished" && e["console_id"].as_u64() == Some(console_id),
+    );
 
     // 5. Open the Tests dock the same way, and click its "Run All" button
     // (a toolbar `QToolButton`, not a menu action — `tests_panel.cpp` has
@@ -273,9 +290,14 @@ fn e2e_gradle_sync_run_and_test() {
 
     let mark = ide.mark();
     ide.click_at(x, y, 1);
-    ide.wait_for_event(mark, "the test run to finish", |e| {
-        e["ev"] == "test_run_finished"
-    });
+    // Review fix #6: a real `gradle test` run, not this harness's own UI —
+    // 180s, not the harness's 60s default.
+    ide.wait_for_event_within(
+        mark,
+        REAL_TOOLCHAIN_TIMEOUT,
+        "the test run to finish",
+        |e| e["ev"] == "test_run_finished",
+    );
 
     // 6. `GreeterTest::deliberatelyFails` (A4's own fixture) landed in the
     // tree with a failed status. JUnit 5 reports the method as

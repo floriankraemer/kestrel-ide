@@ -273,6 +273,27 @@ impl Ide {
         self.wait_for_event(mark, &format!("a `{kind}` marker"), |e| e["ev"] == kind)
     }
 
+    /// [`Ide::wait_for_event`] with an explicit ceiling instead of
+    /// [`wait::DEFAULT_TIMEOUT`]'s 60s — for a wait that is genuinely
+    /// expected to take longer, such as a real Gradle/Maven sync, build or
+    /// test run against an actual toolchain in Docker (the jvm-build-tools
+    /// plan's E2 flow), rather than anything this harness itself drives.
+    pub fn wait_for_event_within(
+        &self,
+        mark: Mark,
+        timeout: Duration,
+        what: &str,
+        predicate: impl Fn(&Value) -> bool,
+    ) -> Value {
+        let events = self.events_path.clone();
+        wait_for_within(what, timeout, || {
+            read_events(&events)
+                .into_iter()
+                .skip(mark.0)
+                .find(|e| predicate(e))
+        })
+    }
+
     /// Assert that the diff tab `tab_id` was built over panes of exactly
     /// `left` and `right` characters.
     ///

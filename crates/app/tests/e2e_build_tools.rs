@@ -293,17 +293,48 @@ fn e2e_maven_pom_completion() {
     // `HOME`), so this project-scoped `.ide/settings.toml` points it at
     // that already-warm cache; `offline = true` keeps the flow
     // deterministic by skipping D5's Maven Central fallback entirely —
-    // the local-repo answer alone is what this test asserts.
+    // the local-repo answer alone is what this test asserts. Written
+    // through `app_config::project_settings` rather than a hand-rolled
+    // TOML string, the same reason every other seeded-settings E2E test
+    // does, so a future field rename here fails to compile instead of
+    // silently writing a key nothing reads any more.
     let staged = tempfile::tempdir().expect("staging dir");
     copy_dir_all(&jvm_fixture("maven-single"), staged.path());
-    std::fs::create_dir_all(staged.path().join(".ide")).expect(".ide dir");
-    std::fs::write(
-        staged.path().join(".ide/settings.toml"),
-        "version = 1\n\n[build_tools.maven]\nlocal_repository = \"/opt/jvm-cache/m2\"\noffline = true\n",
-    )
-    .expect("seed .ide/settings.toml");
+    let project_settings = app_config::project_settings::ProjectSettings {
+        build_tools: Some(app_config::BuildToolsProjectSettings {
+            maven: app_config::MavenToolSettings {
+                local_repository: Some(PathBuf::from("/opt/jvm-cache/m2")),
+                offline: Some(true),
+                ..app_config::MavenToolSettings::default()
+            },
+            ..app_config::BuildToolsProjectSettings::default()
+        }),
+        ..app_config::project_settings::ProjectSettings::default()
+    };
+    app_config::project_settings::save(staged.path(), &project_settings)
+        .expect("seed .ide/settings.toml");
 
-    let mut ide = Ide::launch(name, APP, staged.path());
+    // Review fix #1: this scenario claims to exercise the Maven local
+    // repository, but the `linux-jvm` image also exports a *global*
+    // `GRADLE_USER_HOME=/opt/jvm-cache/gradle` (`docker/Dockerfile`'s
+    // fixture-prewarm), which `Command::new` inherits into the launched
+    // app same as any other environment variable `Ide::launch` does not
+    // explicitly override. `maven-single`'s own dependencies happen to
+    // also be resolvable out of that prewarmed Gradle module cache, so
+    // without pointing `GRADLE_USER_HOME` somewhere empty for *this*
+    // process, `junit-jupiter-api` could appear in completion via the
+    // Gradle path and the assertion below would pass for the wrong
+    // reason, exercising nothing this fix actually changed.
+    let empty_gradle_home = tempfile::tempdir().expect("empty GRADLE_USER_HOME");
+    let mut ide = Ide::launch_with_env(
+        name,
+        APP,
+        staged.path(),
+        &[(
+            "GRADLE_USER_HOME",
+            empty_gradle_home.path().to_str().expect("utf-8 path"),
+        )],
+    );
     ide.wait_for_ev(Mark::start(), "project_opened");
 
     // Open pom.xml through Go to File — the one Search Everywhere use in

@@ -616,6 +616,22 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Git",
         default_shortcut: "",
     },
+    // `vcs_menu.cpp` has registered these two since F3-19, but they never
+    // had a row here — the same `view.tests` gap (found by this file's own
+    // `every_registered_cpp_action_has_a_keymap_row` invariant test).
+    // Unbound like `vcs.pull`/`vcs.fetch`.
+    ActionDef {
+        id: "vcs.stash",
+        label: "Stash Changes...",
+        category: "Git",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "vcs.unstash",
+        label: "Unstash...",
+        category: "Git",
+        default_shortcut: "",
+    },
     ActionDef {
         id: "view.changes",
         label: "Changes",
@@ -1184,5 +1200,79 @@ mod tests {
         assert_eq!(search_actions("", &keymap(), 3).len(), 3);
         assert_eq!(search_actions("", &keymap(), 3)[0].action.id, ACTIONS[0].id);
         assert!(search_actions("zzzznotacommand", &keymap(), 10).is_empty());
+    }
+
+    /// The gap that let `view.tests` (the PHP tooling plan's D5 dock) go
+    /// years without a row here: `tests_menu.cpp` called `registerAction`
+    /// with an id no `ACTIONS` entry named, so Search Everywhere/Find
+    /// Action could never find it and the Keymap page could never rebind
+    /// it, and nothing failed — the mismatch was silent in both
+    /// directions. This is the direction that caught nothing: every id a
+    /// `registerAction(menu, QStringLiteral("<id>"), ...)` call in
+    /// `ui-shell/cpp` names must have a matching `ACTIONS` row. Walks the
+    /// tree by relative path from this crate the same way every other
+    /// `CARGO_MANIFEST_DIR`-based fixture lookup in this workspace does,
+    /// scanning source text rather than parsing C++ — this crate has no
+    /// C++ toolchain to parse it with, and the call shape is uniform
+    /// enough across `ui-shell/cpp` for a plain substring scan to be
+    /// exact.
+    #[test]
+    fn every_registered_cpp_action_has_a_keymap_row() {
+        let cpp_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui-shell/cpp");
+        let known: std::collections::HashSet<&str> = ACTIONS.iter().map(|a| a.id).collect();
+
+        let mut missing = Vec::new();
+        let mut files_scanned = 0;
+        for entry in std::fs::read_dir(&cpp_dir)
+            .unwrap_or_else(|e| panic!("reading {}: {e}", cpp_dir.display()))
+        {
+            let path = entry.expect("readable ui-shell/cpp entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("cpp") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+            files_scanned += 1;
+            for id in registered_action_ids(&text) {
+                if !known.contains(id.as_str()) {
+                    missing.push(format!("{}: {id:?}", path.display()));
+                }
+            }
+        }
+        // A directory that failed to glob any `.cpp` file would make this
+        // test vacuously pass — assert it actually walked something.
+        assert!(
+            files_scanned > 10,
+            "found suspiciously few .cpp files under {}",
+            cpp_dir.display()
+        );
+        assert!(
+            missing.is_empty(),
+            "registerAction() call(s) with no ACTIONS row in keymap.rs — Search Everywhere/Find \
+             Action and the Keymap page cannot find or rebind these: {missing:#?}"
+        );
+    }
+
+    /// Every `id` a `registerAction(menu, QStringLiteral("id"), ...)` call
+    /// in `text` names, in source order (duplicates included — the
+    /// invariant test above only needs membership, not uniqueness).
+    fn registered_action_ids(text: &str) -> Vec<String> {
+        const CALL: &str = "registerAction(";
+        const LITERAL: &str = "QStringLiteral(\"";
+        let mut ids = Vec::new();
+        let mut rest = text;
+        while let Some(call_at) = rest.find(CALL) {
+            rest = &rest[call_at + CALL.len()..];
+            let Some(literal_at) = rest.find(LITERAL) else {
+                break;
+            };
+            let after_literal = &rest[literal_at + LITERAL.len()..];
+            let Some(id_end) = after_literal.find('"') else {
+                break;
+            };
+            ids.push(after_literal[..id_end].to_string());
+            rest = &after_literal[id_end..];
+        }
+        ids
     }
 }

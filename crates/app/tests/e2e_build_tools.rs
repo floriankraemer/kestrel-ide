@@ -28,11 +28,19 @@
 //! once, before its own `ctrl+space`.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use e2e::{Ide, Mark};
 use serde_json::Value;
 
 const APP: &str = env!("CARGO_BIN_EXE_app");
+
+/// Review fix #6: `e2e::wait::DEFAULT_TIMEOUT` (60s) is tight for a real
+/// Gradle/Maven sync, build or test run in Docker — every wait in this
+/// file for one of those three (never for anything the harness itself
+/// drives, which stays on the default) gets this ceiling instead via
+/// `Ide::wait_for_event_within`.
+const REAL_TOOLCHAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Skip (never fail) unless `IDE_E2E_JVM=1` — set by `make jvm-ci` inside
 /// the `linux-jvm` image, the only place a real `gradle`/`mvn`/JDK are on
@@ -98,6 +106,32 @@ fn rect_zero() -> Value {
     serde_json::json!([0, 0, 0, 0])
 }
 
+/// Review fix #2: a short, bounded, non-panicking probe for a
+/// `completion_shown` marker since `mark` — every other wait in this file
+/// goes through `Ide::wait_for_ev`, which panics past its (60s) deadline,
+/// so calling it from *inside* an outer retry loop (as this test's Maven
+/// scenario poll used to) leaves that loop unable to actually retry: the
+/// very first not-ready-yet attempt eats the whole budget and the test
+/// fails before a second `ctrl+space` is ever sent. This one returns
+/// `None` on its own short timeout instead, handing control back to the
+/// caller's loop.
+fn probe_completion_shown(ide: &Ide, mark: Mark, timeout: Duration) -> Option<Value> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(shown) = ide
+            .events_since_of(mark, "completion_shown")
+            .into_iter()
+            .next()
+        {
+            return Some(shown);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Open Search Everywhere, type `query`, accept the top hit — `e2e.rs`'s
 /// own `open_search_popup`/`accept_top_hit`, collapsed into one call since
 /// neither scenario below needs the two halves separately.
@@ -151,10 +185,13 @@ fn e2e_gradle_sync_run_and_test() {
     // — the `linux-jvm` image's own PATH entry, A2) against the init
     // script's `ideModel` task; `build_tools_synced` fires once it is no
     // longer in flight either way, so a real failure reads as a readable
-    // assertion failure rather than a 60-second timeout.
-    let synced = ide.wait_for_event(mark, "the sync to finish", |e| {
-        e["ev"] == "build_tools_synced"
-    });
+    // assertion failure rather than a timeout. Review fix #6: 180s, not
+    // the harness's 60s default — a real Gradle sync in Docker is not
+    // this harness's own UI driving itself.
+    let synced =
+        ide.wait_for_event_within(mark, REAL_TOOLCHAIN_TIMEOUT, "the sync to finish", |e| {
+            e["ev"] == "build_tools_synced"
+        });
     assert_eq!(
         synced["failed"], false,
         "Gradle sync failed against the real toolchain"
@@ -223,9 +260,14 @@ fn e2e_gradle_sync_run_and_test() {
         e["ev"] == "run_console_tab_added"
     });
     let console_id = started["console_id"].as_u64().expect("console_id");
-    ide.wait_for_event(mark, "the `build` task to finish", |e| {
-        e["ev"] == "run_console_finished" && e["console_id"].as_u64() == Some(console_id)
-    });
+    // Review fix #6: a real `gradle build` task, not this harness's own UI —
+    // 180s, not the harness's 60s default.
+    ide.wait_for_event_within(
+        mark,
+        REAL_TOOLCHAIN_TIMEOUT,
+        "the `build` task to finish",
+        |e| e["ev"] == "run_console_finished" && e["console_id"].as_u64() == Some(console_id),
+    );
 
     // 5. Open the Tests dock the same way, and click its "Run All" button
     // (a toolbar `QToolButton`, not a menu action — `tests_panel.cpp` has
@@ -246,9 +288,14 @@ fn e2e_gradle_sync_run_and_test() {
 
     let mark = ide.mark();
     ide.click_at(x, y, 1);
-    ide.wait_for_event(mark, "the test run to finish", |e| {
-        e["ev"] == "test_run_finished"
-    });
+    // Review fix #6: a real `gradle test` run, not this harness's own UI —
+    // 180s, not the harness's 60s default.
+    ide.wait_for_event_within(
+        mark,
+        REAL_TOOLCHAIN_TIMEOUT,
+        "the test run to finish",
+        |e| e["ev"] == "test_run_finished",
+    );
 
     // 6. `GreeterTest::deliberatelyFails` (A4's own fixture) landed in the
     // tree with a failed status. JUnit 5 reports the method as
@@ -293,17 +340,48 @@ fn e2e_maven_pom_completion() {
     // `HOME`), so this project-scoped `.ide/settings.toml` points it at
     // that already-warm cache; `offline = true` keeps the flow
     // deterministic by skipping D5's Maven Central fallback entirely —
-    // the local-repo answer alone is what this test asserts.
+    // the local-repo answer alone is what this test asserts. Written
+    // through `app_config::project_settings` rather than a hand-rolled
+    // TOML string, the same reason every other seeded-settings E2E test
+    // does, so a future field rename here fails to compile instead of
+    // silently writing a key nothing reads any more.
     let staged = tempfile::tempdir().expect("staging dir");
     copy_dir_all(&jvm_fixture("maven-single"), staged.path());
-    std::fs::create_dir_all(staged.path().join(".ide")).expect(".ide dir");
-    std::fs::write(
-        staged.path().join(".ide/settings.toml"),
-        "version = 1\n\n[build_tools.maven]\nlocal_repository = \"/opt/jvm-cache/m2\"\noffline = true\n",
-    )
-    .expect("seed .ide/settings.toml");
+    let project_settings = app_config::project_settings::ProjectSettings {
+        build_tools: Some(app_config::BuildToolsProjectSettings {
+            maven: app_config::MavenToolSettings {
+                local_repository: Some(PathBuf::from("/opt/jvm-cache/m2")),
+                offline: Some(true),
+                ..app_config::MavenToolSettings::default()
+            },
+            ..app_config::BuildToolsProjectSettings::default()
+        }),
+        ..app_config::project_settings::ProjectSettings::default()
+    };
+    app_config::project_settings::save(staged.path(), &project_settings)
+        .expect("seed .ide/settings.toml");
 
-    let mut ide = Ide::launch(name, APP, staged.path());
+    // Review fix #1: this scenario claims to exercise the Maven local
+    // repository, but the `linux-jvm` image also exports a *global*
+    // `GRADLE_USER_HOME=/opt/jvm-cache/gradle` (`docker/Dockerfile`'s
+    // fixture-prewarm), which `Command::new` inherits into the launched
+    // app same as any other environment variable `Ide::launch` does not
+    // explicitly override. `maven-single`'s own dependencies happen to
+    // also be resolvable out of that prewarmed Gradle module cache, so
+    // without pointing `GRADLE_USER_HOME` somewhere empty for *this*
+    // process, `junit-jupiter-api` could appear in completion via the
+    // Gradle path and the assertion below would pass for the wrong
+    // reason, exercising nothing this fix actually changed.
+    let empty_gradle_home = tempfile::tempdir().expect("empty GRADLE_USER_HOME");
+    let mut ide = Ide::launch_with_env(
+        name,
+        APP,
+        staged.path(),
+        &[(
+            "GRADLE_USER_HOME",
+            empty_gradle_home.path().to_str().expect("utf-8 path"),
+        )],
+    );
     ide.wait_for_ev(Mark::start(), "project_opened");
 
     // Open pom.xml through Go to File — the one Search Everywhere use in
@@ -335,13 +413,16 @@ fn e2e_maven_pom_completion() {
     // #2) — nothing marks "the index is ready" on its own, so this polls
     // `ctrl+space` itself rather than assuming the first press lands
     // after that delivery. Each retry is a real transition check (a fresh
-    // `completion_shown` marker), never a bare sleep.
+    // `completion_shown` marker, `probe_completion_shown`'s own short,
+    // bounded, non-panicking wait — never `Ide::wait_for_ev`, whose 60s
+    // panic-on-timeout would eat the outer loop's entire budget on the
+    // first not-ready-yet attempt and leave nothing to retry with).
     let labels = e2e::wait_for(
         "`junit-jupiter-api` to appear in pom.xml completion",
         || {
             let mark = ide.mark();
             ide.key("ctrl+space");
-            let shown = ide.wait_for_ev(mark, "completion_shown");
+            let shown = probe_completion_shown(&ide, mark, Duration::from_secs(5))?;
             let labels: Vec<String> = shown["labels"]
                 .as_array()
                 .into_iter()

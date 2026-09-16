@@ -846,4 +846,64 @@ mod tests {
             "a project override must never change which roots are trusted"
         );
     }
+
+    /// Bridge-free coverage of the project-over-global merge
+    /// `ui-shell::bridge::build_tools::build_local_repo_index` relies on
+    /// for `[build_tools.maven].local_repository`: a project override wins,
+    /// a global-only value survives when the project says nothing about
+    /// Maven at all, and neither layer setting it resolves to `None` (D3's
+    /// default `~/.m2/repository` is then `jvm_build_core`'s to supply).
+    #[test]
+    fn maven_local_repository_resolves_project_over_global_over_none() {
+        use app_config::{BuildToolsProjectSettings, BuildToolsSettings, MavenToolSettings};
+        use std::path::PathBuf;
+
+        let global_only = Settings {
+            build_tools: BuildToolsSettings {
+                maven: MavenToolSettings {
+                    local_repository: Some(PathBuf::from("/global/repo")),
+                    ..MavenToolSettings::default()
+                },
+                ..BuildToolsSettings::default()
+            },
+            ..Settings::default()
+        };
+
+        // Neither layer sets it: resolves to `None`.
+        assert_eq!(
+            resolve(&Settings::default(), &ProjectSettings::default())
+                .build_tools
+                .maven
+                .local_repository,
+            None
+        );
+
+        // Global-only: the project is silent, so the global value survives.
+        assert_eq!(
+            resolve(&global_only, &ProjectSettings::default())
+                .build_tools
+                .maven
+                .local_repository,
+            Some(PathBuf::from("/global/repo"))
+        );
+
+        // Project overrides the global value.
+        let project = ProjectSettings {
+            build_tools: Some(BuildToolsProjectSettings {
+                maven: MavenToolSettings {
+                    local_repository: Some(PathBuf::from("/project/repo")),
+                    ..MavenToolSettings::default()
+                },
+                ..BuildToolsProjectSettings::default()
+            }),
+            ..ProjectSettings::default()
+        };
+        assert_eq!(
+            resolve(&global_only, &project)
+                .build_tools
+                .maven
+                .local_repository,
+            Some(PathBuf::from("/project/repo"))
+        );
+    }
 }

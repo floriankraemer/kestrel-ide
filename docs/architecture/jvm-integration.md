@@ -12,8 +12,8 @@ This suite closes that gap, the same way `docs/architecture/lsp-conformance.md` 
 make test-jvm
 ```
 
-It builds the `linux-jvm` Docker stage (`linux-builder` plus pinned Temurin 21, Gradle and Maven binary distributions) and runs `jvm-build-core`'s `jvm-integration`-feature tests: `cargo nextest run -p jvm-build-core --features jvm-integration`.
-Those tests are gated behind the `jvm-integration` Cargo feature, not `#[ignore]`, so `cargo test --workspace`/`make test` never builds or runs them — the feature simply is not enabled there.
+It builds the `linux-jvm` Docker stage (`linux-builder` plus pinned Temurin 21, Gradle and Maven binary distributions) and runs, in order (`jvm-ci`, the Makefile's inner half of `test-jvm`): `jvm-build-core`'s and `test-core`'s `jvm-integration`-feature tests, then builds `app` and runs the Gradle/Maven E2E flows (`e2e_build_tools.rs`, the jvm-build-tools plan's E2) under Xvfb.
+The two `jvm-integration`-feature test runs are gated behind that Cargo feature, not `#[ignore]`, so `cargo test --workspace`/`make test` never builds or runs them — the feature simply is not enabled there; the E2E flows are gated instead at runtime on `IDE_E2E_JVM=1`, which only `make test-jvm`/`make jvm-ci` and the nightly `jvm-integration` CI job set, for the same "no JDK/Gradle/Maven outside this image" reason.
 
 ## Why it is not a per-PR gate
 
@@ -33,7 +33,7 @@ The nightly GitHub Actions job runs this same image inside a `container:` with i
 
 `gradle_integration.rs`/`maven_integration.rs`'s own `SyncOptions` still set `offline: false`: the fixtures' JUnit 5 resolution needs a first online pass the same way a real project's first sync would, and nothing here asserts the prewarm made every single artifact those tests touch already cache-resolvable — `--offline` is `jvm_build_core::gradle::sync`/`maven::sync`'s own option or an IDE user's, not something this suite forces on itself. The image build has network access to populate the cache; the nightly job's container step does too, so an occasional cache-miss re-download is a slower run, not a failure.
 
-**Status:** 67 tests pass inside `linux-jvm` (60 unit + 4 Gradle + 3 Maven integration), verified by building the image and running `make test-jvm` directly (as the non-root `RUN_JVM` invocation, the same path CI takes).
+**Status:** `make test-jvm` passes inside `linux-jvm` — however many unit and integration tests `cargo nextest` currently collects for `jvm-build-core`/`test-core`'s `jvm-integration` feature, plus both Gradle/Maven E2E flows — verified by building the image and running it directly (as the non-root `RUN_JVM` invocation, the same path CI takes). A hardcoded count drifts the moment a test is added; run `make test-jvm` itself for today's number rather than trusting one written down here.
 
 ## A caveat in the published image's tag
 

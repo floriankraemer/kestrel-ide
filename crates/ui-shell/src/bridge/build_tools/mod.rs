@@ -7,11 +7,11 @@
 //! draft over `settings_model::build_tools::BuildToolsDraft`, following
 //! `AnalysisEditor`'s begin_edit/rows/set_*/is_dirty/commit shape — except
 //! it edits the **global** file only. `trusted_roots` is deliberately
-//! global-only (ADR-0057 §3), and the project-scoped override plumbing
-//! `settings_model::scope::resolve` would need for the Gradle/Maven
-//! sub-tables (à la `[containers]`) was never built in phase A — extending
-//! `scope::resolve` to overlay only *part* of a section (never
-//! `trusted_roots`) is a real follow-up, not attempted here.
+//! global-only (ADR-0057 §3); the Gradle/Maven sub-tables a project *can*
+//! override are read through `settings_model::scope::resolve` (à la
+//! `[containers]`) wherever this module needs the settings actually in
+//! force for a project — `build_local_repo_index`'s `local_repository`
+//! included — rather than through the global-only draft this page edits.
 //!
 //! # Threading
 //!
@@ -51,11 +51,21 @@ const SOURCE_KEY: &str = "build-tools:sync";
 /// fix #2): once from `project_opened`'s own background thread, and again
 /// from `sync`'s, so a later sync's freshly-downloaded dependencies show
 /// up without needing a restart.
-fn build_local_repo_index() -> jvm_build_core::editing::repo_index::RepoIndex {
+///
+/// `local_repository` is the resolved (project-over-global,
+/// `settings_model::scope::resolve`) `[build_tools.maven].local_repository`
+/// setting for the project this index is being built for, or `None` when
+/// neither layer sets one — the caller resolves it on the Qt thread, since
+/// resolution reads settings files by project root, and hands the answer
+/// in rather than this function reaching for a hard-coded default.
+fn build_local_repo_index(
+    local_repository: Option<&Path>,
+) -> jvm_build_core::editing::repo_index::RepoIndex {
     use jvm_build_core::editing::repo_index;
     let home = dirs::home_dir().unwrap_or_else(std::env::temp_dir);
     let gradle_user_home = std::env::var("GRADLE_USER_HOME").ok();
-    let maven_repo = repo_index::default_maven_repository(None, &home);
+    let maven_repo =
+        repo_index::default_maven_repository(local_repository.and_then(Path::to_str), &home);
     let gradle_modules = repo_index::default_gradle_modules(gradle_user_home.as_deref(), &home);
     repo_index::build(&maven_repo, &gradle_modules)
 }
@@ -484,9 +494,13 @@ impl ffi::BuildToolsService {
         // project open, off the Qt thread, regardless of whether this
         // root ever gets trusted/synced — D5/D6 want *some* local answer
         // as soon as possible rather than only after a sync.
+        let local_repository = crate::bridge::convert::load_resolved_settings_for(&root)
+            .build_tools
+            .maven
+            .local_repository;
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
-            let index = build_local_repo_index();
+            let index = build_local_repo_index(local_repository.as_deref());
             let _ = qt_thread.queue(move |_: Pin<&mut ffi::BuildToolsService>| {
                 *crate::bridge::registry::shared_repo_index().borrow_mut() = Some(index);
             });
@@ -645,6 +659,7 @@ impl ffi::BuildToolsService {
         let maven_offline = offline || settings.build_tools.maven.offline.unwrap_or(false);
         let qt_thread = self.as_mut().qt_thread();
         let root_for_thread = root.clone();
+        let local_repository = settings.build_tools.maven.local_repository.clone();
 
         std::thread::spawn(move || {
             let mut models = Vec::new();
@@ -692,7 +707,8 @@ impl ffi::BuildToolsService {
             // the first time a build-file completion/hint needs it — a
             // sync is exactly the moment newly-resolved dependencies may
             // have landed in the local cache.
-            let repo_index = (!cancelled).then(build_local_repo_index);
+            let repo_index =
+                (!cancelled).then(|| build_local_repo_index(local_repository.as_deref()));
             let root_for_queue = root_for_thread.clone();
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::BuildToolsService>| {
                 service.syncing.set(false);

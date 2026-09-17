@@ -65,6 +65,9 @@ QIcon iconForKind(const QString &kind)
 constexpr int kIconSize = 16;
 constexpr int kPadding = 4;
 constexpr int kDetailGap = 12;
+// A detail longer than this (a full Java signature, a Rust generic soup)
+// elides on the left rather than widening the popup for every row.
+constexpr int kDetailMaxWidth = 240;
 
 } // namespace
 
@@ -157,11 +160,33 @@ void CompletionItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem
     painter->restore();
 }
 
+// The base class measures the display text alone, but `paint` above draws
+// an icon column, per-glyph bold for the matched positions and a detail on
+// the right — so a popup sized from the base hint clipped every label it
+// then painted (#322). Measure exactly what `paint` lays out; the detail is
+// capped so one long signature cannot push the popup off the editor.
 QSize CompletionItemDelegate::sizeHint(const QStyleOptionViewItem &option,
                                         const QModelIndex &index) const
 {
     QSize hint = QStyledItemDelegate::sizeHint(option, index);
     hint.setHeight(std::max(hint.height(), kIconSize + kPadding));
+
+    const QString label = index.data(Qt::DisplayRole).toString();
+    const QString detail = index.data(DetailRole).toString();
+    const QVariantList positions = index.data(MatchPositionsRole).toList();
+    QFont boldFont = option.font;
+    boldFont.setBold(true);
+    const QFontMetrics plain(option.font);
+    const QFontMetrics bold(boldFont);
+    int width = kPadding + kIconSize + kPadding;
+    for (int i = 0; i < label.length(); ++i) {
+        width += (positions.contains(i) ? bold : plain).horizontalAdvance(label.mid(i, 1));
+    }
+    if (!detail.isEmpty()) {
+        width += kDetailGap + std::min(plain.horizontalAdvance(detail), kDetailMaxWidth);
+    }
+    width += kPadding;
+    hint.setWidth(std::max(hint.width(), width));
     return hint;
 }
 

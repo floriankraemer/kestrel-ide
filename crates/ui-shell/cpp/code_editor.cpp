@@ -206,8 +206,12 @@ void CodeEditor::showCompletions(const QVector<CompletionEntry> &items)
     QAbstractItemView *popup = completer_->popup();
     popup->setCurrentIndex(completer_->completionModel()->index(0, 0));
     QRect anchor = cursorRect();
-    anchor.setWidth(popup->sizeHintForColumn(0) + popup->verticalScrollBar()->sizeHint().width()
-                    + kPopupWidthPadding);
+    // The widest row, bounded by the viewport: a popup wider than the editor
+    // would be pushed off its anchor by QCompleter to stay on screen (#322).
+    anchor.setWidth(std::min(popup->sizeHintForColumn(0)
+                                 + popup->verticalScrollBar()->sizeHint().width()
+                                 + kPopupWidthPadding,
+                             viewport()->width()));
     completer_->complete(anchor);
     completionDocsPanel_->showBeside(items.first().documentation, popup->geometry());
 }

@@ -23,8 +23,18 @@ class EditorBanner : public QWidget
 public:
     explicit EditorBanner(BuildToolsService *buildToolsService, QWidget *parent);
 
+protected:
+    // The E2E rect mark is re-emitted whenever the buttons can have moved:
+    // a mark taken the turn after `setVisible(true)` describes a banner
+    // that may not be mapped yet (a 20px-wide "Load" at (40, 8) when the
+    // window itself is still unshown), and the flow that clicks it must see
+    // the geometry that is actually on screen.
+    void showEvent(QShowEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+
 private:
     void refresh();
+    void markGeometry();
 
     BuildToolsService *buildToolsService_;
     QLabel *label_;

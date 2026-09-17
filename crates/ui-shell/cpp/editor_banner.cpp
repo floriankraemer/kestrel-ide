@@ -5,6 +5,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
+#include <QResizeEvent>
+#include <QShowEvent>
 #include <QTimer>
 
 namespace ui_shell {
@@ -108,12 +110,37 @@ void EditorBanner::refresh()
         break;
     }
     setVisible(true);
+    markGeometry();
+}
 
-    // Deferred a turn, the same "not laid out yet" reason
-    // `BuildToolsPanel::markE2eRows` defers its own rects: `setVisible`
-    // above does not guarantee the buttons have a real geometry the
-    // instant this call returns.
-    QTimer::singleShot(0, this, [this, kind]() {
+void EditorBanner::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    markGeometry();
+}
+
+void EditorBanner::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    markGeometry();
+}
+
+// Deferred a turn, the same "not laid out yet" reason
+// `BuildToolsPanel::markE2eRows` defers its own rects: neither
+// `setVisible` nor a show/resize event guarantees the buttons have their
+// final geometry the instant the call returns. Only a mapped banner is
+// reported — an unmapped one's `mapToGlobal` is meaningless, and a flow
+// reading the *last* mark would otherwise click where nothing is.
+void EditorBanner::markGeometry()
+{
+    QTimer::singleShot(0, this, [this]() {
+        if (!isVisible() || window() == nullptr || !window()->isVisible()) {
+            return;
+        }
+        const FfiBannerKind kind = buildToolsService_->bannerKind();
+        if (kind == FfiBannerKind::None) {
+            return;
+        }
         const QPoint primaryOrigin = primaryButton_->mapToGlobal(QPoint(0, 0));
         const QSize primarySize = primaryButton_->size();
         const QPoint secondaryOrigin = secondaryButton_->mapToGlobal(QPoint(0, 0));

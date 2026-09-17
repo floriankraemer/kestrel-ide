@@ -172,9 +172,20 @@ fn e2e_gradle_sync_run_and_test() {
     // 1. The trust banner (B4): a Gradle marker file with nothing in
     // `[build_tools] trusted_roots` yet shows "Gradle project detected.
     // Load it?" above the editor — never auto-synced, ADR-0057 §3.
-    let banner = ide.wait_for_event(Mark::start(), "the Gradle trust banner", |e| {
+    // The banner re-marks its rects on every show/resize and only once the
+    // window is mapped, so the *last* mark after `main_window_shown` is the
+    // geometry on screen — an earlier one can describe an unlaid-out banner.
+    ide.wait_for_ev(Mark::start(), "main_window_shown");
+    ide.wait_for_event(Mark::start(), "the Gradle trust banner", |e| {
         e["ev"] == "build_tools_banner" && e["kind"] == "trust_gradle"
     });
+    std::thread::sleep(Duration::from_millis(500));
+    let banners = ide.events_since_of(Mark::start(), "build_tools_banner");
+    let banner = banners
+        .iter()
+        .rev()
+        .find(|e| e["kind"] == "trust_gradle")
+        .expect("a trust banner mark");
     let (x, y) = rect_centre(&banner["primary_rect"]);
 
     let mark = ide.mark();

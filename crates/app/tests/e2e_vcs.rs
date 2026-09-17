@@ -356,15 +356,20 @@ fn e2e_commit_log_expand_and_open_commit_detail() {
     ide.wait_for_ev(Mark::start(), "project_opened");
 
     let popup_mark = open_search_popup(&ide, "ctrl+shift+a");
-    accept_top_hit(&ide, popup_mark, "Commit Log");
-    // Fresh mark: the dock's own construction (while still hidden, tabbed
-    // behind Terminal/Run/etc.) already emitted `commit_log_row` once at
-    // geometry nobody could click — `showEvent` re-asks once actually
-    // raised, and this mark is what isolates that second, real answer.
+    // Mark before accepting: the dock's `showEvent` re-emits its rows the
+    // moment it is raised, which can land before a mark taken afterwards
+    // (it did once the bottom area stopped being resized after show, #321).
+    // The dock's own construction (hidden, tabbed behind Terminal/Run/etc.)
+    // also emitted rows at geometry nobody could click, so the on-screen
+    // answer is the row whose rect has a real position and size.
     let mark = ide.mark();
+    accept_top_hit(&ide, popup_mark, "Commit Log");
 
     let row0 = ide.wait_for_event(mark, "commit_log_row 0", |e| {
-        e["ev"] == "commit_log_row" && e["row"] == 0
+        e["ev"] == "commit_log_row"
+            && e["row"] == 0
+            && e["rect"][1].as_i64().unwrap_or(0) > 0
+            && e["rect"][2].as_i64().unwrap_or(0) > 0
     });
     let (row_x, row_y) = rect_centre(&row0["rect"]);
     let rect: Vec<i64> = row0["rect"]

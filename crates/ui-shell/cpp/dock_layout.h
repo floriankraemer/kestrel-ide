@@ -60,6 +60,21 @@ public:
     // through here means no call site has to remember that.
     void restoreState(const QString &base64State);
 
+    // The default splits once the window is up, unless `base64State` names
+    // a saved layout, whose own splits then stand: the bottom area at 30% of
+    // the column (about IntelliJ's default), the right column re-applied
+    // alongside it. Deferred a turn because the same weights set before the
+    // first layout change how ADS splits the editor from the right column
+    // (#321).
+    void seedDefaultSplits(ads::CDockAreaWidget *bottomArea, ads::CDockAreaWidget *rightArea,
+                           const QString &base64State);
+
+    // The editor/right-column row's default weights (editor ~65%, right
+    // column ~35%), spelled out for every child of that row's splitter —
+    // a two-entry list is silently ignored once a third, closed dock area
+    // sits in the row.
+    void applyRowSplit(ads::CDockAreaWidget *rightArea);
+
     // `toggleView(false)` on dock `id`.
     void hide(const QString &id);
 

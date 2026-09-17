@@ -503,20 +503,19 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                       });
 
     // Initial bottom-panel height: without it the area is sized from the
-    // terminal's tiny size hint (~60px), which is unusable for every panel
-    // tabbed there. Overridden by restoreState() below once a layout has
-    // been saved.
+    // terminal's tiny size hint (~60px), unusable for every panel tabbed
+    // there. Overridden by restoreState() below once a layout has been saved.
     dockManager->setSplitterSizes(bottomArea, {520, 200});
-    // Likewise the right-hand column, which shares a splitter with the
-    // editor only (the tree is one level up): sized from its panels' hints
-    // it comes up narrower than the Changes panel's button row.
-    dockManager->setSplitterSizes(rightArea, {680, 360});
+    // Likewise the right-hand column (the tree is one level up): sized from
+    // its panels' hints it comes up narrower than the Changes panel's row.
+    docks->applyRowSplit(rightArea);
 
     // D4: restored after both dock widgets exist for this layout to apply
     // to (ADS matches saved widgets by their title/object name). Empty
     // means nothing was ever saved — first launch, or window_state predates
     // D4 — so the layout built above (tree left of editor) stands as-is.
     docks->restoreState(appSettings->windowState());
+    docks->seedDefaultSplits(bottomArea, rightArea, appSettings->windowState()); // #321
 
     // Filesystem-watcher plumbing: ProjectTreeModel's watcher-driven signal
     // already carries the changed path and already runs on the Qt thread

@@ -231,6 +231,10 @@ TestsPanel::TestsPanel(TestService *testService, OpenAt openAt, QWidget *parent)
     splitter->addWidget(bottomTabs);
     splitter->setStretchFactor(0, 2);
     splitter->setStretchFactor(1, 1);
+    // Stretch factors only govern *extra* space; the first layout still
+    // comes from size hints, which split the panel about evenly and left
+    // one visible tree row (#321). Seed the same 2:1 as the initial split.
+    splitter->setSizes({200, 100});
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

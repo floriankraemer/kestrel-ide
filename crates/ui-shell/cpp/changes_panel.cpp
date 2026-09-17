@@ -294,6 +294,11 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     messageEdit_ = new QPlainTextEdit(this);
     messageEdit_->setPlaceholderText(tr("Commit message"));
     messageEdit_->setMaximumHeight(80);
+    // Two lines is enough of a floor: `QPlainTextEdit`'s own minimum hint
+    // (~76px) made this panel's minimum height a near miss for the right
+    // column above a 30% bottom area, at which point ADS wraps the panel in
+    // its scroll area and re-splits the editor column with it (#321).
+    messageEdit_->setMinimumHeight(48);
 
     // Collapsed by default behind a small disclosure button: the two
     // options are rare enough that a permanently visible row would cost

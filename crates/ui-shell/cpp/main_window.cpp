@@ -150,7 +150,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    TestService *testService, PreviewProvider *previewProvider,
                                    AnalysisService *analysisService,
                                    ContainerService *containerService,
-                                   BuildToolsService *buildToolsService, DatabaseService *databaseService)
+                                   BuildToolsService *buildToolsService, DatabaseService *databaseService,
+                                   ConsoleService *consoleService, ResultProvider *resultProvider)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -384,7 +385,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
     auto [buildToolsPanel, containersPanel, databasePanel] = buildContributedToolWindows(
-      appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService);
+      appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService, consoleService, resultProvider);
 
     // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -694,20 +695,15 @@ void buildMainWindow(AppSettings *appSettings,
     // per-window QObjects. It launches nothing until a project is opened and
     // a file of a configured language is opened in it.
     auto *languageService = new LanguageService(window);
-    // F3-12/F3-16: one Git adapter per window, discovering nothing until a
-    // project is opened, same as LanguageService.
-    auto *vcsService = new VcsService(window);
+    auto *vcsService = new VcsService(window); // F3-12/F3-16: discovers nothing until opened.
     auto *runService = new RunService(window);
-    // B1-6: one build adapter per window, like the others; it runs nothing
-    // until asked and knows no project until one is open.
-    auto *buildService = new BuildService(window);
-    // The PHP tooling plan's B8: one analysis adapter per window, the same
-    // "nothing runs until asked" rule as BuildService.
-    auto *analysisService = new AnalysisService(window);
-    // The PHP tooling plan's D4: one test-run adapter per window, same rule.
-    auto *testService = new TestService(window);
+    auto *buildService = new BuildService(window); // B1-6: runs nothing until asked.
+    auto *analysisService = new AnalysisService(window); // PHP tooling B8: same rule.
+    auto *testService = new TestService(window); // PHP tooling D4: same rule.
     auto *containerService = new ContainerService(window); // C2: connects nothing until asked.
     auto *databaseService = new DatabaseService(window); // F2.5: connects nothing until asked.
+    auto *consoleService = new ConsoleService(window); // F3.1: console execution.
+    auto *resultProvider = new ResultProvider(window);  // F3.4: its result grid.
     auto *buildToolsService = new BuildToolsService(window); // B1: nothing runs until asked.
     auto *buildToolsEditor = new BuildToolsEditor(window); // B5: the Build Tools settings draft.
     // D3-1: one debug adapter per window. It owns the breakpoints, which
@@ -737,7 +733,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
                           buildService, debugService, testService, previewProvider,
-                          analysisService, containerService, buildToolsService, databaseService);
+                          analysisService, containerService, buildToolsService, databaseService, consoleService, resultProvider);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5

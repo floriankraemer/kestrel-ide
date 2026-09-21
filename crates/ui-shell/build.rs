@@ -733,6 +733,12 @@ fn main() {
         .cpp_file("cpp/ai_menu.cpp")
         // database-tools-plan F2.5: the Database dock.
         .cpp_file("cpp/database_panel.cpp")
+        // database-tools-plan F3.1/F3.3-F3.5: the console bar and the
+        // Output/Result grid dock.
+        .cpp_file("cpp/database_console_bar.cpp")
+        .cpp_file("cpp/result_table_model.cpp")
+        .cpp_file("cpp/result_grid_view.cpp")
+        .cpp_file("cpp/database_results_panel.cpp")
         .include_dir("cpp")
         .include_dir(ads_dir)
         .cpp_file(compile_ads_qrc(ads_dir, &tool_dirs))

@@ -64,3 +64,10 @@ scope = "project"
 id = "database"
 title = "Database"
 area = "right"
+
+# F3.4/F3.5: the console's Output/Result tabs, one native factory
+# (`buildDatabaseResultsDock`, `tool_window_factories.cpp`).
+[[contributes.tool-windows]]
+id = "databaseResults"
+title = "Database Results"
+area = "bottom"

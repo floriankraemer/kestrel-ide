@@ -4,6 +4,7 @@
 #include "build_tools_wiring.h"
 #include "containers_panel.h"
 #include "database_panel.h"
+#include "database_results_panel.h"
 #include "dock_layout.h"
 #include "keymap_page.h"
 
@@ -35,7 +36,8 @@ ContributedToolWindows buildContributedToolWindows(
     ads::CDockWidget *editorDock, BuildToolsService *buildToolsService, RunService *runService,
     ProjectTreeModel *treeModel, EditorTabs *editorTabs, ContainerService *containerService,
     TerminalSupervisor *terminalSupervisor, ContainersPanel::OpenAt containersOpenAt,
-    DatabaseService *databaseService)
+    DatabaseService *databaseService, ConsoleService *consoleService,
+    ResultProvider *resultProvider)
 {
     QHash<QString, DockFactory> factories;
     factories.insert(
@@ -57,6 +59,13 @@ ContributedToolWindows buildContributedToolWindows(
                        -> QWidget * {
                          return buildDatabaseDock(dockManager, docks, relativeTo, databaseService);
                      });
+    factories.insert(
+      QStringLiteral("databaseResults"),
+      [dockManager, docks, editorTabs, consoleService,
+       resultProvider](ads::CDockAreaWidget *relativeTo) -> QWidget * {
+          return buildDatabaseResultsDock(dockManager, docks, relativeTo, editorTabs,
+                                          consoleService, resultProvider);
+      });
 
     ContributedToolWindows built;
     for (const FfiToolWindow &row : appSettings->contributedToolWindows()) {
@@ -97,6 +106,9 @@ void wireContributedToolWindowMenus(AppSettings *appSettings, QHash<QString, QAc
                                     appSettings, actions);
         } else if (row.id == QStringLiteral("database")) {
             action = registerAction(viewMenu, QStringLiteral("view.database"), row.title,
+                                    appSettings, actions);
+        } else if (row.id == QStringLiteral("databaseResults")) {
+            action = registerAction(viewMenu, QStringLiteral("view.databaseResults"), row.title,
                                     appSettings, actions);
         } else {
             qWarning().noquote() << QStringLiteral("tool window %1 from %2 has no View-menu action registered")

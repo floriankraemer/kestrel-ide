@@ -139,12 +139,11 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
     // C3/F2.3: `ContainerService`'s and `DatabaseService`'s virtual-document
     // tabs (Inspect/Files-open, Go to DDL), same signal/handling as
     // `languageService_`'s own decompiled-source ones just below.
-    if (containerService != nullptr) {
-        connect(containerService, &ContainerService::virtualDocumentOpened, this, [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
-    }
-    if (databaseService != nullptr) {
-        connect(databaseService, &DatabaseService::virtualDocumentOpened, this, [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
-    }
+    if (containerService != nullptr) connect(containerService, &ContainerService::virtualDocumentOpened, this, [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
+    if (databaseService != nullptr) connect(databaseService, &DatabaseService::virtualDocumentOpened, this, [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
+    // F3.1/F3.3: "Open Console"/"Jump to console" open a real `.sql` file
+    // the same way any other file opens — no virtual-document tab needed.
+    if (databaseService != nullptr) connect(databaseService, &DatabaseService::consoleFileReady, this, [this](const QString &path, const QString &) { openFile(path); });
     connect(docManager_, &DocumentManager::tabClosed, this, &EditorTabs::onTabClosed);
     connect(docManager_, &DocumentManager::tabModifiedChanged, this, &EditorTabs::onTabModifiedChanged);
 

@@ -20,6 +20,7 @@ use crate::bridge::build::BuildServiceRust;
 use crate::bridge::build_tools::{BuildToolsEditorRust, BuildToolsServiceRust};
 use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
+use crate::bridge::database::settings::DataSourceEditorRust;
 use crate::bridge::debug::DebugServiceRust;
 use crate::bridge::diagnostics::DiagnosticsServiceRust;
 use crate::bridge::editor::DocumentManagerRust;
@@ -9764,6 +9765,224 @@ mod ffi {
         #[cxx_name = "projectUrl"]
         fn project_url(self: &AppInfo) -> QString;
     }
+
+    // ---- database: F1 ----
+
+    /// One row the Settings > Database list shows — id/name/driver/group/
+    /// color plus which layer (`"global"`/`"project"`) it lives in
+    /// (Database Tools plan F1.6).
+    #[derive(Default)]
+    struct FfiDataSourceRow {
+        id: QString,
+        name: QString,
+        driver: QString,
+        group: QString,
+        color: QString,
+        scope: QString,
+    }
+
+    /// One driver `plugin_host::registry().database_drivers()` contributes,
+    /// for the dialog's driver combo box.
+    #[derive(Default)]
+    struct FfiDriverOption {
+        id: QString,
+        name: QString,
+    }
+
+    /// Every field `DataSourceEditor` edits — one struct rather than
+    /// nineteen separate getters, the same convention `FfiBuildToolsFields`
+    /// uses.
+    #[derive(Default)]
+    struct FfiDataSourceFields {
+        id: QString,
+        name: QString,
+        driver: QString,
+        group: QString,
+        color: QString,
+        host: QString,
+        port: QString,
+        database: QString,
+        user: QString,
+        auth: QString,
+        #[cxx_name = "readOnly"]
+        read_only: bool,
+        history: bool,
+        url: QString,
+        #[cxx_name = "sslMode"]
+        ssl_mode: QString,
+        #[cxx_name = "sslCaFile"]
+        ssl_ca_file: QString,
+        #[cxx_name = "sshHost"]
+        ssh_host: QString,
+        #[cxx_name = "sshPort"]
+        ssh_port: QString,
+        #[cxx_name = "sshUser"]
+        ssh_user: QString,
+        #[cxx_name = "sshAuth"]
+        ssh_auth: QString,
+        #[cxx_name = "sshKeyFile"]
+        ssh_key_file: QString,
+    }
+
+    /// Which field a `FfiDataSourceProblem` is about, for the dialog to
+    /// highlight — `settings_model::database::DataSourceField` crossed.
+    enum FfiDataSourceField {
+        Name,
+        Id,
+        Port,
+        Color,
+        SshUser,
+        FileSourcePath,
+    }
+
+    struct FfiDataSourceProblem {
+        field: FfiDataSourceField,
+        sentence: QString,
+    }
+
+    extern "RustQt" {
+        /// Every data source, global and project merged by id
+        /// (Database Tools plan F1.6).
+        #[qinvokable]
+        #[cxx_name = "databaseSources"]
+        fn database_sources(self: &AppSettings) -> Vec<FfiDataSourceRow>;
+
+        #[qinvokable]
+        #[cxx_name = "removeDatabaseSource"]
+        fn remove_database_source(self: &AppSettings, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "duplicateDatabaseSource"]
+        fn duplicate_database_source(self: &AppSettings, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "databaseDrivers"]
+        fn database_drivers(self: &AppSettings) -> Vec<FfiDriverOption>;
+    }
+
+    extern "RustQt" {
+        /// The Add/Edit Data Source dialog's draft (Database Tools plan
+        /// F1.6), shaped after `BuildToolsEditor` but per-item.
+        #[qobject]
+        type DataSourceEditor = super::DataSourceEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &DataSourceEditor, id: &QString, scope: &QString);
+
+        #[qinvokable]
+        fn fields(self: &DataSourceEditor) -> FfiDataSourceFields;
+
+        #[qinvokable]
+        fn problems(self: &DataSourceEditor) -> Vec<FfiDataSourceProblem>;
+
+        #[qinvokable]
+        #[cxx_name = "setName"]
+        fn set_name(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setDriver"]
+        fn set_driver(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setGroup"]
+        fn set_group(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setColor"]
+        fn set_color(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setHost"]
+        fn set_host(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setPort"]
+        fn set_port(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setDatabase"]
+        fn set_database(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setUser"]
+        fn set_user(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setAuth"]
+        fn set_auth(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setReadOnly"]
+        fn set_read_only(self: &DataSourceEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setHistory"]
+        fn set_history(self: &DataSourceEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setUrl"]
+        fn set_url(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSslMode"]
+        fn set_ssl_mode(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSslCaFile"]
+        fn set_ssl_ca_file(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshHost"]
+        fn set_ssh_host(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshPort"]
+        fn set_ssh_port(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshUser"]
+        fn set_ssh_user(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshAuth"]
+        fn set_ssh_auth(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshKeyFile"]
+        fn set_ssh_key_file(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "isDirty"]
+        fn is_dirty(self: &DataSourceEditor) -> bool;
+
+        #[qinvokable]
+        fn commit(self: &DataSourceEditor) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "hasPassword"]
+        fn has_password(self: &DataSourceEditor) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setPassword"]
+        fn set_password(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "passwordHint"]
+        fn password_hint(self: &DataSourceEditor) -> QString;
+
+        /// Attempt a real connection off the UI thread; reports through
+        /// `testConnectionFinished`.
+        #[qinvokable]
+        #[cxx_name = "testConnection"]
+        fn test_connection(self: Pin<&mut DataSourceEditor>);
+
+        #[qsignal]
+        #[cxx_name = "testConnectionFinished"]
+        fn test_connection_finished(self: Pin<&mut DataSourceEditor>, ok: bool, message: QString);
+    }
+
+    impl cxx_qt::Threading for DataSourceEditor {}
 
     unsafe extern "C++" {
         include!("main_window.h");

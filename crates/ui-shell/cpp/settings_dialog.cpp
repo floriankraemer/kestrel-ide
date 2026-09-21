@@ -5,6 +5,7 @@
 #include "build_tools_settings_page.h"
 #include "appearance_page.h"
 #include "containers_page.h"
+#include "database_settings_page.h"
 #include "language_page.h"
 #include "e2e_mark.h"
 #include "editor_page.h"
@@ -93,6 +94,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
     categoryList->addItem(QObject::tr("Build Tools"));
+    categoryList->addItem(QObject::tr("Database"));
     categoryList->addItem(QObject::tr("Containers"));
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
@@ -313,6 +315,17 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
           return scopedPage(QStringLiteral("buildTools"),
                             buildBuildToolsSettingsPage(&dialog, buildToolsEditor));
       });
+
+    // Database Tools plan F1.6: global only, like Build Tools above — no
+    // dock or console exists yet to give a `DataSourceEditor` a longer
+    // lifetime than this dialog's own, so it is owned by the dialog
+    // itself rather than threaded through `SettingsDialogContext`
+    // (unlike `BuildToolsEditor`, which the Build Tools dock also needs).
+    auto *dataSourceEditor = new DataSourceEditor(&dialog);
+    const int databaseIndex = deferPage([&dialog, appSettings, dataSourceEditor, scopedPage]() {
+        return scopedPage(QStringLiteral("database"),
+                          buildDatabaseSettingsPage(&dialog, appSettings, dataSourceEditor));
+    });
 
     // Containers is project-scoped for the same reason Terminal/Tabs are:
     // which daemon a checkout talks to is a property of the project at

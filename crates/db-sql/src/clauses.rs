@@ -202,12 +202,7 @@ mod tests {
     #[test]
     fn inserts_where_before_order_by_when_only_where_is_requested() {
         assert_eq!(
-            apply(
-                "SELECT * FROM t ORDER BY a",
-                "a > 1",
-                "",
-                Dialect::Postgres
-            ),
+            apply("SELECT * FROM t ORDER BY a", "a > 1", "", Dialect::Postgres),
             "SELECT * FROM t WHERE (a > 1) ORDER BY a"
         );
     }
@@ -250,7 +245,7 @@ mod tests {
             "WITH c AS (SELECT 1) SELECT * FROM c",
             "1 = 1",
             "",
-            Dialect::Postgres
+            Dialect::Postgres,
         );
         assert!(result.starts_with("SELECT * FROM (WITH c AS"));
     }

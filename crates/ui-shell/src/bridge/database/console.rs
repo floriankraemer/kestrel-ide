@@ -750,7 +750,14 @@ impl ffi::ConsoleService {
                     (0, to_ffi_error(error), false, error.message.clone())
                 }
             };
-            (result.tab_id, affected, elapsed_ms, ffi_error, ok, error_text)
+            (
+                result.tab_id,
+                affected,
+                elapsed_ms,
+                ffi_error,
+                ok,
+                error_text,
+            )
         };
         self.as_mut()
             .execution_finished(result_id, ok, affected, elapsed_ms, ffi_error);

@@ -418,7 +418,8 @@ void ContainerOptionsPage::setKind(const QString &kind)
     imageEdit_->setVisible(kind == QLatin1String("container-image"));
     containerfileOnlySection_->setVisible(kind == QLatin1String("containerfile"));
     composeSection_->setVisible(kind == QLatin1String("compose"));
-    setVisible(!kind.isEmpty());
+    setVisible(kind == QLatin1String("container-image") || kind == QLatin1String("containerfile")
+              || kind == QLatin1String("compose"));
 }
 
 void ContainerOptionsPage::requestServices()

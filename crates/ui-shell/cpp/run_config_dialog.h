@@ -29,6 +29,7 @@ namespace ui_shell {
 // already pointed at it.
 void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
                          ContainerService *containerService,
-                         const QString &selectConfigId = QString());
+                         const QString &selectConfigId = QString(),
+                         ConsoleService *consoleService = nullptr);
 
 } // namespace ui_shell

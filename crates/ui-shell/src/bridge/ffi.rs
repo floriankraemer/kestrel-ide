@@ -1399,11 +1399,28 @@ mod ffi {
         /// The container-kind sub-table's fields — meaningless (and left at
         /// its default) for a plain process (`kind` empty).
         container: FfiContainerOptions,
+        /// The `sql-script` kind's own sub-table (F3.6) — meaningless (and
+        /// left at its default) unless `kind == "sql-script"`.
+        sql_script: FfiSqlScriptOptions,
         /// Run targets (C8): empty for "Local" (run on this machine, as
         /// always), else `"container:<target-id>"` — the "Run on" combo's
         /// selection. Meaningless for a container-kind configuration
         /// (`kind` non-empty); the dialog's Run on combo is hidden for one.
         run_on: QString,
+    }
+
+    /// The `sql-script` run configuration's own page (database-tools-plan
+    /// F3.6): which data source, which file, and its error policy —
+    /// `app_config::SqlScriptRunSetting`'s exact fields, crossing the seam
+    /// the same structured way `FfiContainerOptions` does.
+    #[derive(Default)]
+    struct FfiSqlScriptOptions {
+        source_id: QString,
+        file: QString,
+        /// `"single_transaction"` or empty (auto-commit) — see
+        /// `app_config::SqlScriptRunSetting::tx_mode`'s own doc comment.
+        tx_mode: QString,
+        stop_on_error: bool,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with

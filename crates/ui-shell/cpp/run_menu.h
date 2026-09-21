@@ -32,6 +32,7 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
                    AppSettings *appSettings, QHash<QString, QAction *> &actions,
                    DockRegistry *docks, RunConsolePanel *runConsolePanel,
                    ProjectTreeModel *treeModel, EditorTabs *editorTabs, BuildPanel *buildPanel,
-                   QMenu *viewMenu, ContainerService *containerService);
+                   QMenu *viewMenu, ContainerService *containerService,
+                   ConsoleService *consoleService);
 
 } // namespace ui_shell

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::container_run::{ComposeRunSetting, ContainerImageRunSetting, ContainerfileRunSetting};
 use crate::is_false;
+use crate::sql_script_run::SqlScriptRunSetting;
 
 /// One entry in a run configuration's `before_launch` list (B2-1).
 ///
@@ -102,6 +103,11 @@ pub struct RunConfigSetting {
     pub containerfile: Option<ContainerfileRunSetting>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compose: Option<ComposeRunSetting>,
+    /// `[run_configs.sql_script]`, present iff `kind == Some("sql-script")`
+    /// (database-tools-plan F3.6) — a run configuration that executes a
+    /// `.sql` file against a data source rather than launching a process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sql_script: Option<SqlScriptRunSetting>,
     /// Run targets (C8): where a *plain-process* configuration's launch
     /// actually runs. `None` means "local, as always". `Some("container:<id>")`
     /// names a `[containers.target]` row this configuration's program/args

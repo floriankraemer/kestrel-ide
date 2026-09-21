@@ -48,10 +48,16 @@ use crate::bridge::ffi;
 mod container_form;
 mod editor;
 mod gutter;
+/// `RunConfig` <-> `FfiRunConfig`, split out under the file-size ratchet.
+mod run_config_form;
+mod sql_script; // `sql-script` configs (F3.6) — see that module's own doc comment.
+/// `FfiSqlScriptOptions` <-> `RunConfig`'s `sql_script` sub-table (F3.6).
+mod sql_script_form;
 /// `FfiContainerTarget` <-> `ContainerTargetSetting` (C8): structured, no
 /// JSON, split out of this module under the file-size ratchet.
 mod target_form;
 pub use editor::RunConfigEditorRust;
+pub(crate) use run_config_form::{from_ffi_run_config, to_ffi_run_config};
 pub(crate) use target_form::{from_ffi_target, to_ffi_target};
 
 /// One unit of work for the worker thread that owns the `Supervisor`.
@@ -228,64 +234,6 @@ fn tasks_from_string(text: &str) -> Vec<app_config::BeforeLaunchSetting> {
             Some(task.to_setting())
         })
         .collect()
-}
-
-pub(crate) fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConfig {
-    ffi::FfiRunConfig {
-        id: QString::from(config.id.as_str()),
-        name: QString::from(config.name.as_str()),
-        program: QString::from(config.program.as_str()),
-        args: QString::from(config.args.join(" ").as_str()),
-        cwd: QString::from(config.cwd.clone().unwrap_or_default().as_str()),
-        env: QString::from(env_to_string(&config.env).as_str()),
-        toolchain: QString::from(config.toolchain.clone().unwrap_or_default().as_str()),
-        target: QString::from(config.target.clone().unwrap_or_default().as_str()),
-        temporary: config.temporary,
-        allow_parallel: config.allow_parallel,
-        before_launch: QString::from(tasks_to_string(config).as_str()),
-        kind: QString::from(config.kind.clone().unwrap_or_default().as_str()),
-        container: container_form::to_ffi_options(config),
-        run_on: QString::from(config.run_on.clone().unwrap_or_default().as_str()),
-    }
-}
-
-/// The inverse of [`to_ffi_run_config`] — a fresh [`run_core::RunConfig`]
-/// from a form the caller built rather than one drawn from the draft, the
-/// same shape `RunConfigEditor::command_preview`'s own "scratch" config
-/// uses. `BuildToolsService::runTemporary` (the jvm-build-tools plan's B1)
-/// is this function's only caller: it already has a full `FfiRunConfig`
-/// from `BuildToolsService::taskConfig` and needs it back as a
-/// `RunConfig` to launch.
-pub(crate) fn from_ffi_run_config(form: &ffi::FfiRunConfig) -> run_core::RunConfig {
-    let mut config = run_core::RunConfig {
-        id: form.id.to_string(),
-        name: form.name.to_string(),
-        program: form.program.to_string(),
-        args: form
-            .args
-            .to_string()
-            .split_whitespace()
-            .map(str::to_string)
-            .collect(),
-        toolchain: (!form.toolchain.to_string().is_empty()).then(|| form.toolchain.to_string()),
-        target: (!form.target.to_string().is_empty()).then(|| form.target.to_string()),
-        temporary: true,
-        allow_parallel: form.allow_parallel,
-        before_launch: tasks_from_string(&form.before_launch.to_string()),
-        kind: (!form.kind.to_string().is_empty()).then(|| form.kind.to_string()),
-        ..run_core::RunConfig::default()
-    };
-    let cwd = form.cwd.to_string();
-    config.cwd = if cwd.trim().is_empty() {
-        None
-    } else {
-        Some(cwd)
-    };
-    config.env = env_from_string(&form.env.to_string());
-    container_form::apply_options(&mut config, &form.kind.to_string(), &form.container);
-    let run_on = form.run_on.to_string();
-    config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
-    config
 }
 
 /// The `[containers]` section actually in force — the global layer with the
@@ -926,11 +874,10 @@ impl ffi::RunService {
         QString::from(id.as_str())
     }
 
-    /// Launch `config`, honouring its parallel-run policy: unless the
-    /// configuration allows parallel runs, its still-running consoles are
-    /// stopped first, which is IntelliJ's default ("Allow multiple
-    /// instances" off) and the reason a second Run does not quietly leave
-    /// two servers holding the same port.
+    /// Launch `config`, honouring its parallel-run policy: unless it
+    /// allows parallel runs, its still-running consoles are stopped first
+    /// (IntelliJ's "Allow multiple instances" off by default), so a
+    /// second Run never quietly leaves two servers on the same port.
     fn launch(
         mut self: Pin<&mut Self>,
         config: run_core::RunConfig,
@@ -938,6 +885,9 @@ impl ffi::RunService {
         context: &run_core::MacroContext,
     ) -> ffi::FfiResult {
         let config_id = config.id.clone();
+        if config.kind.as_deref() == Some("sql-script") {
+            return sql_script::launch(self, &config, root);
+        }
         if !config.allow_parallel {
             let running: Vec<u64> = self
                 .consoles

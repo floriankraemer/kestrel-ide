@@ -48,8 +48,9 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
     AnalyzerContribution, BuildToolContribution, ColorThemeContribution, CommandContribution,
-    IconThemeContribution, LanguageServerContribution, LoadErrorKind, PluginLoadError,
-    PluginManifest, PreviewContribution, TestFrameworkContribution, MANIFEST_FILE, QUARANTINE_DIR,
+    ContributionPoint, IconThemeContribution, LanguageServerContribution, LoadErrorKind,
+    PluginLoadError, PluginManifest, PreviewContribution, SettingsPageContribution,
+    TestFrameworkContribution, ToolWindowContribution, MANIFEST_FILE, QUARANTINE_DIR,
 };
 
 pub use plugin::{expand_asset_dir, BuiltinPlugin, LoadedPlugin, PluginSource};
@@ -76,6 +77,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::CORE_THEMES,
     builtins::GITHUB_VSCODE_THEME,
     builtins::JVM_BUILD_TOOLS,
+    builtins::CONTAINERS,
 ];
 
 /// Every plugin that loaded, and every one that did not.
@@ -215,6 +217,34 @@ impl PluginRegistry {
         })
     }
 
+    /// Every `tool-windows` contribution, with the plugin that offers it
+    /// (the database-tools plan's G1).
+    pub fn tool_windows(&self) -> impl Iterator<Item = (&LoadedPlugin, &ToolWindowContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .tool_windows
+                .iter()
+                .map(move |window| (plugin, window))
+        })
+    }
+
+    /// Every `settings-pages` contribution, with the plugin that offers it
+    /// (the database-tools plan's G1).
+    pub fn settings_pages(
+        &self,
+    ) -> impl Iterator<Item = (&LoadedPlugin, &SettingsPageContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .settings_pages
+                .iter()
+                .map(move |page| (plugin, page))
+        })
+    }
+
     /// Take an id, or record why it cannot be taken twice.
     ///
     /// Installed beats built-in, and the built-in is recorded as the
@@ -289,7 +319,78 @@ pub fn load(config_dir: &Path, builtins: &[BuiltinPlugin], disabled: &[String]) 
         }
     }
 
+    reject_cross_plugin_duplicates(&mut registry);
     registry
+}
+
+/// A `tool-windows`/`settings-pages` id is a dock id or a settings-page key,
+/// and both are process-wide: unlike an icon or colour theme's id, which is
+/// only ever looked up within the plugin that owns it, two plugins racing
+/// for the same dock or page id would be a silent "one hides the other" bug
+/// with no error row to explain it. `plugin-api` already refuses a
+/// *manifest* that claims one id twice; this is that same rule extended
+/// across plugins, at the one point — the finished registry — that can see
+/// every plugin at once.
+///
+/// The whole later plugin is rejected rather than just the clashing
+/// contribution: a manifest has no way to drop one row from itself, and the
+/// rule this crate already has for a plugin id collision ([`PluginRegistry::claim`])
+/// makes the same call for the same reason — first claim wins, the loser
+/// gets an error row instead of silently losing one feature.
+fn reject_cross_plugin_duplicates(registry: &mut PluginRegistry) {
+    let mut losers: Vec<(usize, ContributionPoint, String)> = Vec::new();
+    for point in [ContributionPoint::ToolWindows, ContributionPoint::SettingsPages] {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (index, plugin) in registry.plugins.iter().enumerate() {
+            let ids: Box<dyn Iterator<Item = &str>> = match point {
+                ContributionPoint::ToolWindows => Box::new(
+                    plugin
+                        .manifest()
+                        .contributes
+                        .tool_windows
+                        .iter()
+                        .map(|window| window.id.as_str()),
+                ),
+                ContributionPoint::SettingsPages => Box::new(
+                    plugin
+                        .manifest()
+                        .contributes
+                        .settings_pages
+                        .iter()
+                        .map(|page| page.id.as_str()),
+                ),
+                _ => unreachable!("only these two points are cross-plugin checked"),
+            };
+            for id in ids {
+                if !seen.insert(id) {
+                    losers.push((index, point, id.to_string()));
+                }
+            }
+        }
+    }
+    // Highest index first, so removing a loser never shifts the index of
+    // one not yet removed.
+    losers.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut rejected: Vec<usize> = Vec::new();
+    for (index, point, id) in losers {
+        if rejected.contains(&index) {
+            continue;
+        }
+        rejected.push(index);
+        let plugin = registry.plugins.remove(index);
+        let dir = plugin
+            .dir()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("<built-in>"));
+        registry.errors.push(PluginLoadError {
+            id: plugin.id().to_string(),
+            dir,
+            kind: LoadErrorKind::DuplicateContributionId {
+                point: point.key(),
+                id,
+            },
+        });
+    }
 }
 
 /// The plugin directories under `root`, in a stable order.

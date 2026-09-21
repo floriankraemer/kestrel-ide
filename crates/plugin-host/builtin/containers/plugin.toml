@@ -1,0 +1,33 @@
+# Manifest-only, unlike every other builtin in this directory: the
+# container integration's own code (`container-core`, `container-registry`,
+# `ui-shell::bridge::containers`, `cpp/containers_panel.cpp`) is not moving —
+# ADR-0055 stands. This plugin exists only to migrate its dock and settings
+# page onto the generic `tool-windows`/`settings-pages` contribution points
+# (database-tools plan G1), so disabling it hides both the same way
+# disabling `jvm-build-tools` now hides Build Tools. No `[wasm]` component:
+# neither point needs one (`ToolWindowContribution`'s own doc comment).
+id = "containers"
+name = "Containers"
+version = "1.0.0"
+api_version = 1
+license = "MIT"
+description = "Docker/Podman connections, the Containers dock and its settings page."
+
+# `buildContainersDock` (`containers_panel.cpp`) registers this dock tabbed
+# into the bottom area alongside Find in Files/Terminal — `area = "bottom"`
+# names that, even though the ADS call underneath is `CenterDockWidgetArea`
+# relative to `bottomArea` (the C++ term for "tab into", not "split
+# against"; `build_tools_wiring.cpp`'s `buildTools` dock is the contrasting
+# case, actually splitting the right column).
+[[contributes.tool-windows]]
+id = "containers"
+title = "Containers"
+area = "bottom"
+
+# Project-scoped in `settings_dialog.cpp` today (`ScopedField::Containers`,
+# ADR-0055): which daemon a checkout talks to is a property of the project
+# at least as often as of the person.
+[[contributes.settings-pages]]
+id = "containers"
+title = "Containers"
+scope = "project"

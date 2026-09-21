@@ -757,3 +757,192 @@ fn the_jvm_build_tools_init_script_is_materialised_on_demand() {
     assert!(contents.contains("ideModel"));
     assert!(contents.contains("IdeTeamCityListener"));
 }
+
+#[test]
+fn a_tool_window_and_settings_page_contribution_are_readable_from_the_registry() {
+    let fixture = Fixture::new();
+    fixture.install(
+        "acme.tools",
+        r#"
+        id = "acme.tools"
+        name = "Acme Tools"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.tool-windows]]
+        id = "acmeTree"
+        title = "Acme Tree"
+        area = "left"
+
+        [[contributes.settings-pages]]
+        id = "acmeSettings"
+        title = "Acme"
+        scope = "global"
+        "#,
+    );
+
+    let registry = fixture.load(&[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let windows: Vec<_> = registry.tool_windows().collect();
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0].0.id(), "acme.tools");
+    assert_eq!(windows[0].1.id, "acmeTree");
+    assert_eq!(windows[0].1.area, plugin_api::ToolWindowArea::Left);
+
+    let pages: Vec<_> = registry.settings_pages().collect();
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0].1.id, "acmeSettings");
+    assert_eq!(pages[0].1.scope, plugin_api::SettingsPageScope::Global);
+}
+
+/// The rule `PluginRegistry::claim` already enforces for a plugin id
+/// collision, extended to a dock/settings-page id: first claim wins, and
+/// the second plugin — the whole plugin, since a manifest cannot drop one
+/// row from itself — is rejected with an error row rather than silently
+/// hiding the first one's dock.
+#[test]
+fn two_plugins_racing_for_one_tool_window_id_rejects_the_second() {
+    let fixture = Fixture::new();
+    fixture.install(
+        "first",
+        r#"
+        id = "first"
+        name = "First"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.tool-windows]]
+        id = "database"
+        title = "Database"
+        area = "right"
+        "#,
+    );
+    fixture.install(
+        "second",
+        r#"
+        id = "second"
+        name = "Second"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.tool-windows]]
+        id = "database"
+        title = "Database, again"
+        area = "bottom"
+        "#,
+    );
+
+    let registry = fixture.load(&[]);
+    assert_eq!(registry.plugins().len(), 1);
+    assert!(registry.by_id("first").is_some());
+    assert!(registry.by_id("second").is_none());
+    assert_eq!(registry.tool_windows().count(), 1);
+
+    let error = &registry.errors()[0];
+    assert_eq!(error.id, "second");
+    assert_eq!(
+        error.kind,
+        LoadErrorKind::DuplicateContributionId {
+            point: "tool-windows",
+            id: "database".to_string(),
+        }
+    );
+}
+
+#[test]
+fn two_plugins_racing_for_one_settings_page_id_rejects_the_second() {
+    let fixture = Fixture::new();
+    fixture.install(
+        "first",
+        r#"
+        id = "first"
+        name = "First"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.settings-pages]]
+        id = "shared"
+        title = "Shared"
+        scope = "global"
+        "#,
+    );
+    fixture.install(
+        "second",
+        r#"
+        id = "second"
+        name = "Second"
+        version = "1.0.0"
+        api_version = 1
+
+        [[contributes.settings-pages]]
+        id = "shared"
+        title = "Shared, again"
+        scope = "project"
+        "#,
+    );
+
+    let registry = fixture.load(&[]);
+    assert_eq!(registry.plugins().len(), 1);
+    assert!(registry.by_id("first").is_some());
+    assert_eq!(
+        registry.errors()[0].kind,
+        LoadErrorKind::DuplicateContributionId {
+            point: "settings-pages",
+            id: "shared".to_string(),
+        }
+    );
+}
+
+#[test]
+fn the_containers_builtin_loads_through_the_real_path() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::CONTAINERS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let plugin = registry.by_id("containers").expect("the built-in loaded");
+    assert_eq!(plugin.source(), PluginSource::Builtin);
+
+    let windows: Vec<_> = registry
+        .tool_windows()
+        .filter(|(owner, _)| owner.id() == "containers")
+        .collect();
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert_eq!(windows[0].1.id, "containers");
+
+    let pages: Vec<_> = registry
+        .settings_pages()
+        .filter(|(owner, _)| owner.id() == "containers")
+        .collect();
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert_eq!(pages[0].1.id, "containers");
+}
+
+#[test]
+fn a_disabled_containers_builtin_is_filtered_like_any_other() {
+    let fixture = Fixture::new();
+    let registry = load(
+        fixture.config_dir(),
+        &[builtins::CONTAINERS],
+        &["containers".to_string()],
+    );
+    assert!(registry.by_id("containers").is_none());
+    assert!(registry.errors().is_empty());
+}
+
+#[test]
+fn the_jvm_build_tools_builtin_contributes_its_tool_window_and_settings_page() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::JVM_BUILD_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let windows: Vec<_> = registry.tool_windows().collect();
+    assert_eq!(windows.len(), 1, "{windows:?}");
+    assert_eq!(windows[0].1.id, "buildTools");
+    assert_eq!(windows[0].1.area, plugin_api::ToolWindowArea::Right);
+
+    let pages: Vec<_> = registry.settings_pages().collect();
+    assert_eq!(pages.len(), 1, "{pages:?}");
+    assert_eq!(pages[0].1.id, "buildTools");
+    assert_eq!(pages[0].1.scope, plugin_api::SettingsPageScope::Project);
+}

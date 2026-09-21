@@ -70,6 +70,7 @@ pub mod tab_padding;
 pub mod terminal;
 pub mod testing;
 pub mod theme;
+pub mod tool_windows;
 pub mod tree;
 pub mod vcs;
 pub mod window_state;

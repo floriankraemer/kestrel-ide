@@ -265,6 +265,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "atoi"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7a8bbe9949e43a1edaa043038c68703b04774156afdfb62ba2cef5bf93d67be"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1304,6 +1313,16 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "db-driver-odbc"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "db-core",
+ "odbc-api",
+ "tempfile",
 ]
 
 [[package]]
@@ -4457,6 +4476,25 @@ dependencies = [
  "indexmap",
  "memchr",
 ]
+
+[[package]]
+name = "odbc-api"
+version = "29.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdd11ce3c3b073577b4083a6d5f947ea19ddee7cd859ba90d045ad622d10eba7"
+dependencies = [
+ "atoi",
+ "log",
+ "odbc-sys",
+ "thiserror 2.0.20",
+ "widestring",
+]
+
+[[package]]
+name = "odbc-sys"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "245cb4fe8236df4fd352ba96075d754233c6509d654d9f1c1482158b7d6c083d"
 
 [[package]]
 name = "once_cell"
@@ -8038,6 +8076,12 @@ dependencies = [
  "bytemuck",
  "safe_arch",
 ]
+
+[[package]]
+name = "widestring"
+version = "1.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72069c3113ab32ab29e5584db3c6ec55d416895e60715417b5b883a357c3e471"
 
 [[package]]
 name = "winapi"

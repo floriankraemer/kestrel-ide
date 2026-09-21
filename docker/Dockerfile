@@ -53,6 +53,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         imagemagick \
         xdotool \
         python3-debugpy \
+        # unixodbc-dev/unixodbc/libsqliteodbc: db-driver-odbc links libodbc.so.2
+        # (ADR-0058, database-tools-plan.md §13 spike result); libsqliteodbc
+        # gives its db-integration tests a real ODBC driver to run against.
+        unixodbc-dev \
+        unixodbc \
+        libsqliteodbc \
     && rm -rf /var/lib/apt/lists/*
 
 # `python3-debugpy` is the one debug adapter the E2E suite needs (D3-9).
@@ -365,6 +371,10 @@ RUN cargo build --release -p app
 # drivers and are the ones most often missing on a minimal system. Qt loads its platform plugin
 # dynamically (not via the import table), so libqxcb.so is copied in
 # explicitly and fed through the same closure walk.
+# db-driver-odbc links libodbc.so.2 into `app` itself (an import-table
+# dependency, unlike libqxcb.so above), so the generic `ldd /out/bin/ide`
+# walk below already discovers and copies it (and any ODBC driver-manager
+# transitive libs) with no dedicated rule needed.
 # ---------------------------------------------------------------------------
 FROM linux-artifact-builder AS linux-artifact-bundle
 

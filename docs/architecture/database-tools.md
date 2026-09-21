@@ -116,8 +116,8 @@ Three backends implement it (ADR-0058):
 | Backend | Crate | Serves |
 |---|---|---|
 | native | `db-drivers` | PostgreSQL, MySQL/MariaDB, SQLite, MongoDB, Redis, Cassandra/Scylla |
-| adbc | `db-driver-adbc` | SQL Server (foundry `mssql`), DuckDB, Oracle, Snowflake, BigQuery, ClickHouse, Databricks, Trino, Presto, HANA, Teradata, Redshift, Spark, SingleStore, Exasol, Druid, Flight SQL |
-| odbc | `db-driver-odbc` | anything with a system DSN |
+| adbc | `db-driver-adbc` (F8.1, implemented) | any driver `adbc_driver_manager::ManagedDriver` can load; the F8.3 spike found a pinnable artifact for DuckDB, Snowflake and BigQuery only (`catalogue.toml`) — mssql/clickhouse/trino have no pinnable ADBC artifact today and fall back to `db-driver-odbc` |
+| odbc | `db-driver-odbc` (F8.2, implemented) | anything with a system DSN or ODBC driver entry, e.g. SQL Server, ClickHouse, Trino, SQLite |
 
 `db_core::value::Value` is the one row/document shape every backend converts into: `Null, Bool, Int, Float, Decimal(String), Text, Bytes, Date, Time, DateTime, DateTimeTz, Uuid, Json, Array, Document(Vec<(String,Value)>), Other{type_name,display}`.
 Per-driver type mapping tables (e.g. PostgreSQL `numeric` → `Decimal(String)`, MongoDB `ObjectId` → `Other`, Redis's typed keys → `Value` variants keyed by `RedisType`) live beside each driver's own module and are fixture-tested against real wire samples, not hand-derived.
@@ -294,7 +294,7 @@ host = "db.internal"  port = 5432  database = "shop"  user = "florian"  auth = "
 Secrets: keychain service `ide.database`, keys `<id>`, `<id>/ssh`, `<id>/ssl-key` (never in TOML, structurally).
 Consoles: `<config_dir>/consoles/<source-id>/console*.sql`.
 History: `<config_dir>/database/history/<id>.jsonl`, capped at `history_cap` entries.
-Drivers: `<config_dir>/database/drivers/<id>/<version>/{manifest.toml,<lib>,.sha256}` (ADBC manifest format).
+Drivers: `<config_dir>/database/drivers/<id>/<version>/{manifest.toml,<lib>}` (ADBC manifest format; implemented, F8.1's `crate::locate`/`crate::install` — the sha256 is verified once at install time rather than persisted alongside the library, so there is no separate `.sha256` file on disk).
 Dock state: ADS `saveState`, unchanged from every other dock.
 
 ## 9. Security posture
@@ -304,7 +304,7 @@ Dock state: ADS `saveState`, unchanged from every other dock.
 Secrets only in the OS keychain, never in `settings.toml` or history.
 TLS defaults `Prefer`, tightens to `VerifyFull` once a CA is configured, no verification-skip flag exists.
 Read-only enforced twice (client classifier + server session flag); the data editor is hidden, not merely disabled, on a read-only source.
-ADBC/ODBC drivers are quarantined on first load, downloaded only from a pinned `https://` URL with a manifest-shipped sha256, gated by a consent dialog and `allow_third_party_drivers = false` by default.
+ADBC/ODBC drivers are quarantined on first load, downloaded only from a pinned `https://` URL with a manifest-shipped sha256, gated by a consent dialog and `allow_third_party_drivers = false` by default (quarantine marker + install verification implemented in F8.1's `db-driver-adbc::quarantine`/`::install`; the consent dialog itself is F8.5/F8b, not yet built).
 SSH tunnels prefer the CLI (the user's own config/agent/ProxyJump for free) and fall back to in-process `russh` only where the CLI cannot do the job.
 Dump tools receive credentials via environment or a mode-restricted file, never argv.
 Imports are parameterised and batched; XLSX reads cached values only.
@@ -332,3 +332,19 @@ The `containers` built-in plugin manifest (ADR-0059) is manifest-only — no cod
 A wasm plugin cannot yet render a tool window it declares (deferred to `api_version` 2).
 `mongodb` 3.9.1's build failure under this repo's pinned rustc (R11, found by the P0 spike) blocks F7 until resolved.
 `aws-lc-rs` exclusion is not automatic and needs a per-driver-crate audit (R2, corrected by the P0 spike) before the `cargo tree -i aws-lc-rs` gate can be added to `make lint`.
+`db-driver-adbc` (F8.1) does not yet bind statement parameters (every query it runs today is parameter-free) and its `get_objects`-based introspection stops at columns, not constraints — revisit once F8b's UI needs either.
+`db-driver-adbc`'s `cancel_handle` returns `None`: a real server-side cancel needs the same worker-thread-plus-channel restructuring `db-driver-odbc` uses, not yet justified by a caller.
+`db_core::error::DbErrorCode` has no `DriverQuarantined` variant; `db-driver-adbc`'s quarantine module uses `ConnectionFailed` as the closest existing code until F1 (or a later phase) appends one — the enum is append-only, so this is additive, not a rename.
+
+**F8.3 asset-enumeration spike result** (database-tools-plan.md F8.3; full data in `crates/db-driver-adbc/catalogue.toml`): of the six drivers looked at, three have a stable `https://` artifact with a computed sha256 and three do not.
+
+| Driver | Pinnable artifact? | Source |
+|---|---|---|
+| DuckDB | yes (linux_amd64, windows_amd64) | GitHub Releases `libduckdb-<platform>.zip` (DuckDB's own C API is the ADBC entrypoint, `duckdb_adbc_init`; no checksum published upstream, so this repo computed and pins its own) |
+| Snowflake | yes (linux_amd64, windows_amd64) | official `apache/arrow-adbc` driver, PyPI wheel (`adbc-driver-snowflake`), sha256 published by PyPI itself |
+| BigQuery | yes (linux_amd64, windows_amd64) | official `apache/arrow-adbc` driver, PyPI wheel (`adbc-driver-bigquery`), sha256 published by PyPI itself |
+| SQL Server (mssql) | no | no ADBC driver published anywhere; `db-driver-odbc` + "ODBC Driver 18 for SQL Server" is the supported path |
+| ClickHouse | no | only unofficial/unmaintained third-party PyPI packages found, no reproducible release; ClickHouse's own ODBC driver via `db-driver-odbc` is the supported path |
+| Trino | no | no ADBC driver published; `apache/arrow-adbc`'s Flight SQL driver only helps behind a Flight SQL gateway, which is not a given deployment |
+
+Every pinned artifact was verified (via `nm`/string-scan on the extracted shared library) to export the ADBC-standard `AdbcDriverInit` entrypoint symbol except DuckDB, which exports its own `duckdb_adbc_init`.

@@ -387,12 +387,12 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F8.1 — `db-driver-adbc`: locate, install, quarantine marker, Arrow conversion | open | |
-| F8.2 — `db-driver-odbc`: introspection via `SQLTables`/`SQLColumns`/`SQLPrimaryKeys`/`SQLForeignKeys` | open | |
-| F8.3 — R1 one-day asset-enumeration spike (mssql/snowflake/bigquery/clickhouse/trino) | open | |
-| F8.4 — DuckDB + SQL Server + foundry rows | open | |
-| F8.5 — install UI + consent dialog | open | |
-| F8.6 — `unixodbc-dev` in `linux-builder` (image change; confirmed necessary by the P0 spike, §13); bundle `ldd`-closure check | open | |
+| F8.1 — `db-driver-adbc`: locate, install, quarantine marker, Arrow conversion | done | 08d749e |
+| F8.2 — `db-driver-odbc`: introspection via `SQLTables`/`SQLColumns`/`SQLPrimaryKeys`/`SQLForeignKeys` | done | 94b01f2 |
+| F8.3 — R1 one-day asset-enumeration spike (mssql/snowflake/bigquery/clickhouse/trino) | done | 08d749e |
+| F8.4 — DuckDB + SQL Server + foundry rows | partial (data only — `catalogue.toml`; plugin-manifest wiring is F8b) | 08d749e |
+| F8.5 — install UI + consent dialog | open (F8b) | |
+| F8.6 — `unixodbc-dev` in `linux-builder` (image change; confirmed necessary by the P0 spike, §13); bundle `ldd`-closure check | done | afa16d6 |
 
 ### F9 — docs + polish
 

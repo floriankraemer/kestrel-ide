@@ -21,6 +21,7 @@ use crate::bridge::build_tools::{BuildToolsEditorRust, BuildToolsServiceRust};
 use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::database::console::{ConsoleServiceRust, ResultProviderRust};
+use crate::bridge::database::drivers::DriverInstallServiceRust;
 use crate::bridge::database::settings::DataSourceEditorRust;
 use crate::bridge::database::DatabaseServiceRust;
 use crate::bridge::debug::DebugServiceRust;
@@ -10543,6 +10544,79 @@ mod ffi {
     }
 
     impl cxx_qt::Threading for ResultProvider {}
+
+    // ---- database: F8b ----
+
+    /// One `adbc`-backend `database-drivers` row's install status (F8.5,
+    /// `database-tools.md` §9) — plain text plus two booleans the dialog
+    /// needs to pick which button (if any) to show.
+    #[derive(Default)]
+    struct FfiDriverStatus {
+        text: QString,
+        installable: bool,
+        #[cxx_name = "canReenable"]
+        can_reenable: bool,
+    }
+
+    /// What the consent dialog names before an install: the pinned
+    /// artifact's own URL/sha256/publisher (domain), empty when this row
+    /// has no artifact for the current platform.
+    #[derive(Default)]
+    struct FfiDriverConsent {
+        url: QString,
+        sha256: QString,
+        publisher: QString,
+    }
+
+    extern "RustQt" {
+        /// Whether installing a driver contributed by a plugin other than
+        /// the built-in `database-tools` one is allowed (ADR-0061 §4,
+        /// `[database] allow_third_party_drivers`, default off).
+        #[qinvokable]
+        #[cxx_name = "allowThirdPartyDrivers"]
+        fn allow_third_party_drivers(self: &AppSettings) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setAllowThirdPartyDrivers"]
+        fn set_allow_third_party_drivers(self: &AppSettings, value: bool) -> FfiResult;
+    }
+
+    extern "RustQt" {
+        /// Drives `db_driver_adbc::{install,quarantine}` for one `adbc`
+        /// row at a time (F8.5): a status line, a consent-dialog summary,
+        /// installing off the UI thread, and re-enabling a quarantined
+        /// driver.
+        #[qobject]
+        type DriverInstallService = super::DriverInstallServiceRust;
+
+        #[qinvokable]
+        fn status(self: &DriverInstallService, driver_id: &QString) -> FfiDriverStatus;
+
+        #[qinvokable]
+        fn consent(self: &DriverInstallService, driver_id: &QString) -> FfiDriverConsent;
+
+        /// Downloads, verifies and installs this row's pinned artifact for
+        /// this platform, off the UI thread; reports through
+        /// `installFinished`. Refused immediately (no thread spawned) when
+        /// third-party installs are off for a non-builtin row, or when
+        /// this row has no artifact for this platform.
+        #[qinvokable]
+        fn install(self: Pin<&mut DriverInstallService>, driver_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        fn reenable(self: &DriverInstallService, driver_id: &QString) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "installFinished"]
+        fn install_finished(
+            self: Pin<&mut DriverInstallService>,
+            driver_id: QString,
+            ok: bool,
+            message: QString,
+        );
+    }
+
+    impl cxx_qt::Threading for DriverInstallService {}
 
     unsafe extern "C++" {
         include!("main_window.h");

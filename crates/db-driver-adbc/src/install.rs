@@ -16,7 +16,8 @@ use sha2::{Digest, Sha256};
 
 use crate::locate::managed_dir;
 
-/// What the catalogue (`crate::catalogue`) records for one platform's
+/// What a `database-drivers` plugin contribution's `adbc.artifacts` row
+/// (`plugin_api::manifest::AdbcArtifact`) records for one platform's
 /// artifact: where to download it, its expected hash, and the one file
 /// inside the archive that is the actual shared library.
 #[derive(Debug, Clone, PartialEq, Eq)]

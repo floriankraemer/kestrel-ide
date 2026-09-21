@@ -401,12 +401,27 @@ pub struct SettingsPageContribution {
     pub scope: SettingsPageScope,
 }
 
+/// One platform's pinned ADBC artifact (F8b, additive over F1's single
+/// `url`/`sha256` pair): a driver whose install differs per platform — a
+/// different archive, a different library path inside it — lists one of
+/// these per platform key (`"linux_amd64"`, `"windows_amd64"`) under
+/// [`AdbcDriverSection::artifacts`] instead.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdbcArtifact {
+    pub url: String,
+    pub sha256: String,
+    /// The shared library's exact path inside the downloaded archive.
+    pub library: String,
+}
+
 /// The ADBC-specific half of a [`DatabaseDriverContribution`] whose
 /// `backend` is `"adbc"`: either a driver manager can resolve
 /// `manifest-name` on its own (a system-installed driver), or `url`/
-/// `sha256` name a pinned, hash-verified download (ADR-0061 §4) —
+/// `sha256` (single-platform) or `artifacts` (per-platform, F8b) name a
+/// pinned, hash-verified download (ADR-0061 §4) —
 /// [`ContributionPoint::DatabaseDrivers`]'s validation requires at least
-/// one of the two.
+/// one of `manifest-name`, `url`, or a non-empty `artifacts`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdbcDriverSection {
@@ -416,6 +431,20 @@ pub struct AdbcDriverSection {
     pub url: Option<String>,
     #[serde(default)]
     pub sha256: Option<String>,
+    /// The C entrypoint symbol this driver's shared library exports, when
+    /// it is not the ADBC-standard `AdbcDriverInit` (e.g. DuckDB's own
+    /// `duckdb_adbc_init`). Additive over F1, F8b.
+    #[serde(default)]
+    pub entrypoint: Option<String>,
+    /// Per-platform pinned artifacts, keyed by platform. Additive over
+    /// F1's single `url`/`sha256` pair, F8b.
+    #[serde(default)]
+    pub artifacts: BTreeMap<String, AdbcArtifact>,
+    /// What to tell the user when no pinnable artifact exists for this
+    /// driver at all (F8.5's install dialog shows this text verbatim).
+    /// Additive over F1, F8b.
+    #[serde(default, rename = "install-hint")]
+    pub install_hint: Option<String>,
 }
 
 /// One database backend a plugin makes connectable — joined to a
@@ -857,30 +886,32 @@ impl PluginManifest {
                     .as_ref()
                     .and_then(|adbc| adbc.url.as_deref())
                     .is_some();
-                if !has_manifest_name && !has_artifact {
+                let has_artifacts_map = driver
+                    .adbc
+                    .as_ref()
+                    .is_some_and(|adbc| !adbc.artifacts.is_empty());
+                if !has_manifest_name && !has_artifact && !has_artifacts_map {
                     return Err(LoadErrorKind::MalformedManifest(
                         "contributes.database-drivers with backend `adbc` needs \
-                         `adbc.manifest-name` or `adbc.url`"
+                         `adbc.manifest-name`, `adbc.url`, or `adbc.artifacts`"
                             .to_string(),
                     ));
                 }
                 if let Some(adbc) = &driver.adbc {
                     if let Some(url) = &adbc.url {
-                        if !url.starts_with("https://") {
-                            return Err(LoadErrorKind::MalformedManifest(format!(
-                                "contributes.database-drivers.adbc.url `{url}` must start with `https://`"
-                            )));
-                        }
-                        let sha256 = adbc.sha256.as_deref().unwrap_or_default();
-                        let valid_sha256 =
-                            sha256.len() == 64 && sha256.chars().all(|c| c.is_ascii_hexdigit());
-                        if !valid_sha256 {
-                            return Err(LoadErrorKind::MalformedManifest(
-                                "contributes.database-drivers.adbc with a url needs a 64-character \
-                                 hex sha256"
-                                    .to_string(),
-                            ));
-                        }
+                        check_adbc_artifact("contributes.database-drivers.adbc", url, &adbc.sha256)?;
+                    }
+                    for (platform, artifact) in &adbc.artifacts {
+                        non_empty("contributes.database-drivers.adbc.artifacts platform", platform)?;
+                        non_empty(
+                            "contributes.database-drivers.adbc.artifacts.library",
+                            &artifact.library,
+                        )?;
+                        check_adbc_artifact(
+                            "contributes.database-drivers.adbc.artifacts",
+                            &artifact.url,
+                            &Some(artifact.sha256.clone()),
+                        )?;
                     }
                 }
             }
@@ -1053,6 +1084,29 @@ fn non_empty(field: &'static str, value: &str) -> Result<(), LoadErrorKind> {
     } else {
         Ok(())
     }
+}
+
+/// One pinned ADBC artifact's `url`/`sha256` pair, shared by both the F1
+/// single-field form and F8b's per-platform `artifacts` map: `url` must be
+/// `https://`-only, and `sha256` a 64-character hex string.
+fn check_adbc_artifact(
+    field: &'static str,
+    url: &str,
+    sha256: &Option<String>,
+) -> Result<(), LoadErrorKind> {
+    if !url.starts_with("https://") {
+        return Err(LoadErrorKind::MalformedManifest(format!(
+            "{field}.url `{url}` must start with `https://`"
+        )));
+    }
+    let sha256 = sha256.as_deref().unwrap_or_default();
+    let valid_sha256 = sha256.len() == 64 && sha256.chars().all(|c| c.is_ascii_hexdigit());
+    if !valid_sha256 {
+        return Err(LoadErrorKind::MalformedManifest(format!(
+            "{field} with a url needs a 64-character hex sha256"
+        )));
+    }
+    Ok(())
 }
 
 /// A manifest may only ever point at files inside its own directory.

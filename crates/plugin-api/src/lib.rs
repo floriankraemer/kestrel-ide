@@ -46,8 +46,8 @@ mod manifest;
 pub use error::{LoadErrorKind, PluginLoadError};
 pub use manifest::{
     check_api_version, expand_capability_path, AdbcDriverSection, AnalyzerContribution,
-    BuildToolContribution, Capabilities, ColorThemeContribution, CommandContribution,
-    Contributes, ContributionPoint, DatabaseDriverContribution, IconThemeContribution,
+    BuildToolContribution, Capabilities, ColorThemeContribution, CommandContribution, Contributes,
+    ContributionPoint, DatabaseDriverContribution, IconThemeContribution,
     LanguageServerContribution, PluginManifest, PreviewContribution, SettingsPageContribution,
     SettingsPageScope, SqlDialectContribution, TestFrameworkContribution, ToolWindowArea,
     ToolWindowContribution, WasmSection, ID_MAX_LEN, MANIFEST_FILE, PLUGIN_DIR_TOKEN,

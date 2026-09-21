@@ -1,0 +1,59 @@
+# Hand-written, like builtin/php-tools/plugin.toml: no upstream package to
+# import here either. Contributes two `database-drivers` rows and two
+# `sql-dialects` rows rather than a `[wasm]` component — a database driver
+# and a dialect's keyword list are both metadata a native crate
+# (`db-drivers`/`db-sql`) reads by id, matching
+# `DatabaseDriverContribution`'s/`SqlDialectContribution`'s own doc
+# comments (database-tools.md §7).
+#
+# F1 lands sqlite and postgresql only; F7/F8 add a row per new backend
+# alongside its driver crate, per database-tools-plan.md's task list.
+id = "database-tools"
+name = "Database Tools"
+version = "1.0.0"
+api_version = 1
+license = "MIT"
+description = "Data sources, query consoles and a result grid for PostgreSQL, SQLite and more."
+
+[[contributes.database-drivers]]
+id = "sqlite"
+name = "SQLite"
+family = "sqlite"
+backend = "native"
+native-id = "sqlite"
+url-template = "sqlite://{database}"
+
+[[contributes.database-drivers]]
+id = "postgresql"
+name = "PostgreSQL"
+family = "postgresql"
+backend = "native"
+native-id = "postgresql"
+default-port = 5432
+dump-tool = "pg_dump"
+url-template = "postgresql://{user}@{host}:{port}/{database}"
+
+[[contributes.sql-dialects]]
+id = "sqlite"
+name = "SQLite"
+parser = "sql"
+identifier-quote = "double"
+param-style = "question"
+keywords = "dialects/sqlite.keywords"
+
+[[contributes.sql-dialects]]
+id = "postgresql"
+name = "PostgreSQL"
+parser = "sql"
+identifier-quote = "double"
+param-style = "dollar"
+keywords = "dialects/postgresql.keywords"
+
+# G1's generic point: the Settings > Database page is contributed, not
+# hard-wired, so disabling this plugin hides it the way disabling
+# `containers` hides Containers. The `database`/`databaseResults` docks join
+# as `tool-windows` rows once their native factories exist (F2/F3).
+[[contributes.settings-pages]]
+id = "database"
+title = "Database"
+scope = "project"

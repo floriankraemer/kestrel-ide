@@ -5,6 +5,7 @@
 #include "build_tools_settings_page.h"
 #include "appearance_page.h"
 #include "containers_page.h"
+#include "database_settings_page.h"
 #include "language_page.h"
 #include "e2e_mark.h"
 #include "editor_page.h"
@@ -76,12 +77,14 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         return false;
     };
     for (const auto &page : contributedPages) {
-        if (page.id != QStringLiteral("buildTools") && page.id != QStringLiteral("containers")) {
+        if (page.id != QStringLiteral("buildTools") && page.id != QStringLiteral("database")
+            && page.id != QStringLiteral("containers")) {
             qWarning().noquote() << QStringLiteral("settings page %1 from %2 needs a native host")
                                         .arg(page.id, page.plugin_id);
         }
     }
     const bool hasBuildToolsPage = hasSettingsPage(QStringLiteral("buildTools"));
+    const bool hasDatabasePage = hasSettingsPage(QStringLiteral("database"));
     const bool hasContainersPage = hasSettingsPage(QStringLiteral("containers"));
 
     QDialog dialog(parent);
@@ -118,6 +121,9 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("Analysis"));
     if (hasBuildToolsPage) {
         categoryList->addItem(QObject::tr("Build Tools"));
+    }
+    if (hasDatabasePage) {
+        categoryList->addItem(QObject::tr("Database"));
     }
     if (hasContainersPage) {
         categoryList->addItem(QObject::tr("Containers"));
@@ -343,6 +349,20 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
               return scopedPage(QStringLiteral("buildTools"),
                                 buildBuildToolsSettingsPage(&dialog, buildToolsEditor));
           });
+    }
+
+    // Database Tools plan F1.6: global only, like Build Tools above — no
+    // dock or console exists yet to give a `DataSourceEditor` a longer
+    // lifetime than this dialog's own, so it is owned by the dialog
+    // itself rather than threaded through `SettingsDialogContext`
+    // (unlike `BuildToolsEditor`, which the Build Tools dock also needs).
+    int databaseIndex = -1;
+    if (hasDatabasePage) {
+        auto *dataSourceEditor = new DataSourceEditor(&dialog);
+        databaseIndex = deferPage([&dialog, appSettings, dataSourceEditor, scopedPage]() {
+            return scopedPage(QStringLiteral("database"),
+                              buildDatabaseSettingsPage(&dialog, appSettings, dataSourceEditor));
+        });
     }
 
     // Containers is project-scoped for the same reason Terminal/Tabs are:

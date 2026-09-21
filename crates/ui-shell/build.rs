@@ -547,6 +547,12 @@ fn main() {
         // The jvm-build-tools plan's B5: the Build Tools settings page,
         // Q_OBJECT-free like the Analysis page above.
         .cpp_file("cpp/build_tools_settings_page.cpp")
+        // Database Tools plan F1.6: the Add/Edit Data Source dialog and
+        // the Settings > Database list. Q_OBJECT-free (plain QDialog/
+        // QWidget builder functions, lambdas and pointer-to-member
+        // connects), so only the sources are listed.
+        .cpp_file("cpp/data_source_dialog.cpp")
+        .cpp_file("cpp/database_settings_page.cpp")
         // The settings dialog and the last two pages that were still built
         // inline inside it. Q_OBJECT-free like the pages above — the dialog
         // is a stack-allocated QDialog and the pages are plain QWidgets

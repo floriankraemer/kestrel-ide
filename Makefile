@@ -37,7 +37,7 @@ RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IM
 RUN_JVM = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(JVM_IMAGE)
 
 .PHONY: help all test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
-	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci
+	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci test-db db-ci
 
 .DEFAULT_GOAL := help
 
@@ -95,10 +95,29 @@ jvm-ci: ## Inner half of `test-jvm` — run inside the image
 	cargo build -p app
 	IDE_E2E_JVM=1 $(E2E_XVFB) cargo test -p app --test e2e_build_tools -- --ignored --test-threads=1 --nocapture
 
+# Database Tools' real-server suite (docs/architecture/db-integration.md).
+# F1 lands PostgreSQL only, in `linux-builder` itself (no `linux-db` image
+# stage yet — that lands in F8.6 alongside the ODBC client-tools install;
+# for now the compose service is reached over `--network host`, the same
+# loopback-only posture `docker/db-compose.yml` publishes it under).
+test-db: linux-image ## Bring up docker/db-compose.yml and run the real-Postgres integration tests
+	docker compose -f docker/db-compose.yml up -d --wait
+	$(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) --network host \
+		-e IDE_DB_POSTGRES_URL=postgres://ide:ide@127.0.0.1:55432/ide_test \
+		$(LINUX_IMAGE) $(MAKE) db-ci; \
+		status=$$?; \
+		docker compose -f docker/db-compose.yml down -v; \
+		exit $$status
+
+db-ci: ## Inner half of `test-db` — run inside the image
+	cargo nextest run -p db-drivers --features db-integration
+
 lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings
 	$(RUN_LINUX) cargo fmt --all -- --check
 	$(RUN_LINUX) scripts/check-file-size.sh
+	# aws-lc-rs must never enter the tree (R2, database-tools-plan.md §13/§7): every rustls-using crate is audited to keep the `ring` provider only.
+	$(RUN_LINUX) sh -c '! cargo tree --workspace --all-features -i aws-lc-rs >/dev/null 2>&1'
 
 # Coverage measures the Qt-free crates only. `ui-shell` is a humble view and
 # `app` is a main(); both are untested by design (CLAUDE.md), and folding

@@ -48,8 +48,9 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
     AnalyzerContribution, BuildToolContribution, ColorThemeContribution, CommandContribution,
-    ContributionPoint, IconThemeContribution, LanguageServerContribution, LoadErrorKind,
-    PluginLoadError, PluginManifest, PreviewContribution, SettingsPageContribution,
+    ContributionPoint, DatabaseDriverContribution, IconThemeContribution,
+    LanguageServerContribution, LoadErrorKind, PluginLoadError, PluginManifest,
+    PreviewContribution, SettingsPageContribution, SqlDialectContribution,
     TestFrameworkContribution, ToolWindowContribution, MANIFEST_FILE, QUARANTINE_DIR,
 };
 
@@ -78,6 +79,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::GITHUB_VSCODE_THEME,
     builtins::JVM_BUILD_TOOLS,
     builtins::CONTAINERS,
+    builtins::DATABASE_TOOLS,
 ];
 
 /// Every plugin that loaded, and every one that did not.
@@ -242,6 +244,34 @@ impl PluginRegistry {
                 .settings_pages
                 .iter()
                 .map(move |page| (plugin, page))
+        })
+    }
+
+    /// Every `database-drivers` contribution, with the plugin that offers
+    /// it (Database Tools plan F1.5).
+    pub fn database_drivers(
+        &self,
+    ) -> impl Iterator<Item = (&LoadedPlugin, &DatabaseDriverContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .database_drivers
+                .iter()
+                .map(move |driver| (plugin, driver))
+        })
+    }
+
+    /// Every `sql-dialects` contribution, with the plugin that offers it
+    /// (Database Tools plan F1.5).
+    pub fn sql_dialects(&self) -> impl Iterator<Item = (&LoadedPlugin, &SqlDialectContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .sql_dialects
+                .iter()
+                .map(move |dialect| (plugin, dialect))
         })
     }
 

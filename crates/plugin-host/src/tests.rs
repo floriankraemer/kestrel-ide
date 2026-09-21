@@ -759,6 +759,62 @@ fn the_jvm_build_tools_init_script_is_materialised_on_demand() {
 }
 
 #[test]
+fn the_database_tools_builtin_loads_through_the_real_path() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::DATABASE_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+
+    let plugin = registry
+        .by_id("database-tools")
+        .expect("the built-in loaded");
+    assert_eq!(plugin.source(), PluginSource::Builtin);
+
+    let drivers: Vec<_> = registry.database_drivers().collect();
+    assert_eq!(drivers.len(), 2, "{drivers:?}");
+    let sqlite = drivers
+        .iter()
+        .find(|(_, d)| d.id == "sqlite")
+        .expect("sqlite contributed")
+        .1;
+    assert_eq!(sqlite.native_id.as_deref(), Some("sqlite"));
+    let postgresql = drivers
+        .iter()
+        .find(|(_, d)| d.id == "postgresql")
+        .expect("postgresql contributed")
+        .1;
+    assert_eq!(postgresql.default_port, Some(5432));
+
+    let dialects: Vec<_> = registry.sql_dialects().collect();
+    assert_eq!(dialects.len(), 2, "{dialects:?}");
+}
+
+/// Every `keywords` path a `database-tools` `sql-dialects` row names must
+/// actually be one of this plugin's embedded `files`, the same "would
+/// validate cleanly and then fail the first real use" requirement
+/// `every_asset_the_jvm_build_tools_manifest_names_exists_in_its_files`
+/// already states for that plugin's own assets.
+#[test]
+fn every_asset_the_database_tools_manifest_names_exists_in_its_files() {
+    let manifest = PluginManifest::from_toml_str(builtins::DATABASE_TOOLS.manifest).expect("valid");
+    let file_names: Vec<&str> = builtins::DATABASE_TOOLS
+        .files
+        .iter()
+        .map(|(name, _)| *name)
+        .collect();
+
+    for dialect in &manifest.contributes.sql_dialects {
+        if let Some(keywords) = &dialect.keywords {
+            let name = keywords.to_str().expect("utf-8 path");
+            assert!(
+                file_names.contains(&name),
+                "sql-dialects.{} names keywords `{name}`, which is not in `files`",
+                dialect.id
+            );
+        }
+    }
+}
+
+#[test]
 fn a_tool_window_and_settings_page_contribution_are_readable_from_the_registry() {
     let fixture = Fixture::new();
     fixture.install(

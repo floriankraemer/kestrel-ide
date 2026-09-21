@@ -43,6 +43,14 @@ jvm-build-core = { path = "../jvm-build-core" }
 container-core = { path = "../container-core" }
 # C6: the Docker Hub worker behind image-name completion (`bridge/language/containers.rs`).
 container-registry = { path = "../container-registry" }
+# Database Tools plan F1.6: DatabaseService/DataSourceEditor drive
+# db_core::datasource/dml directly, and db_drivers::DriverRegistry for
+# Test Connection, the same seam ContainerService/BuildToolsService use
+# for container-core/jvm-build-core.
+db-core = { path = "../db-core" }
+db-drivers = { path = "../db-drivers" }
+# The OS-keychain password store, service `ide.database` (ADR-0058 §5).
+secret-store = { path = "../secret-store" }
 process-exec = { path = "../process-exec" }
 mcp-server = { path = "../mcp-server" }
 ai-chat-core = { path = "../ai-chat-core" }

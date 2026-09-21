@@ -1,6 +1,7 @@
 # DB integration: checking the database drivers against real engines
 
-*Target design; the `linux-db` image, `docker/db-compose.yml`, `make test-db`/`make e2e-db` and the `db-integration` feature themselves land in F1 and grow per phase (F7 adds Mongo/Redis/Scylla, F8 adds MSSQL). This document describes the target shape now, the same way `docs/architecture/database-tools.md` describes not-yet-built code elsewhere, so the shape is agreed before the Dockerfile/Makefile changes land.*
+`docker/db-compose.yml`, `make test-db`/`db-ci` and the `db-integration` feature landed in F1 for PostgreSQL; the rest of this document (Mongo/Redis/Scylla in F7, MSSQL in F8, `make e2e-db`) is still target design, grown per phase.
+F1's `db-ci` deliberately does **not** get its own `linux-db` Docker stage yet — it runs `db-drivers`' PostgreSQL integration tests inside the existing `linux-builder` image over `--network host`, reaching `docker/db-compose.yml`'s `postgres` service on its published loopback port. The `linux-db` stage (client tools: `postgresql-client`, `default-mysql-client`, `mongodb-database-tools`, `unixodbc` + `libsqliteodbc`) lands in F8.6 alongside the ODBC driver's own Dockerfile change, once a real client-tool binary (`pg_dump`, `mysqldump`, …) is actually exercised by a test — nothing in F1's PostgreSQL suite needs one.
 
 Every unit test in `db-drivers`/`db-driver-adbc`/`db-driver-odbc` runs against SQLite (in-process, no server needed) or a fixture-recorded wire response.
 That proves the row-mapping and SQL-generation code is right about a snapshot of what an engine once returned.
@@ -15,7 +16,7 @@ make test-db
 make e2e-db
 ```
 
-`make test-db` builds the `linux-db` Docker stage (`linux-builder` plus client tools: `postgresql-client`, `default-mysql-client`, `mongodb-database-tools`, `unixodbc` + `libsqliteodbc`), brings up `docker/db-compose.yml`'s services, and runs `cargo nextest run -p db-drivers -p db-driver-adbc -p db-driver-odbc --features db-integration` against them.
+`make test-db` brings up `docker/db-compose.yml`'s services (F1: `postgres:17` only), then runs `db-ci` (`cargo nextest run -p db-drivers --features db-integration`, growing to `-p db-driver-adbc -p db-driver-odbc` once those crates exist) inside `linux-builder` over `--network host`, and tears the compose stack down whether or not the tests passed.
 `make e2e-db` runs the `IDE_E2E_DB=1`-gated E2E flows (connect/introspect/execute against a real engine, one flow per backend family) under Xvfb, the same shape `e2e_build_tools.rs` already uses for `IDE_E2E_JVM=1`.
 
 The `db-integration`-feature tests are gated behind that Cargo feature, not `#[ignore]`, so `cargo test --workspace`/`make test` never builds or runs them — the feature simply is not enabled there, exactly `jvm-integration`'s own shape.
@@ -40,5 +41,5 @@ Bumping a pin (an engine's major version, a client-tool version) is a deliberate
 
 ## Status
 
-Not yet built.
-F1 lands `linux-db`, `db-compose.yml`, `make test-db`, and PostgreSQL's own integration tests; later phases add each new backend's services and tests as that backend's driver crate lands, per `database-tools-plan.md`'s task list.
+F1 landed `db-compose.yml` (PostgreSQL only), `make test-db`/`db-ci`, `db-drivers`' `db-integration` feature, and the `sqlite`/`postgres` unit-tested backends themselves; `make e2e-db` and the `linux-db` image are still not built.
+Later phases add each new backend's service, driver crate and tests, per `database-tools-plan.md`'s task list.

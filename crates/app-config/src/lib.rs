@@ -22,6 +22,7 @@ pub mod build_tools;
 pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0056).
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
 pub mod containers;
+pub mod database; // Data sources, no secrets (ADR-0061 §1).
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
 /// The `[file_associations]` section: which handler a file pattern opens
@@ -116,7 +117,6 @@ pub struct LanguageServerSetting {
 pub(crate) fn is_false(b: &bool) -> bool {
     !*b
 }
-
 fn is_default_build_tools(value: &BuildToolsSettings) -> bool {
     value == &BuildToolsSettings::default()
 }
@@ -376,16 +376,15 @@ pub struct Settings {
     /// — see [`analysis`] for the sparse per-row rule.
     #[serde(default)]
     pub analysis: AnalysisSettings,
-    /// The `[containers]` section (ADR-0055), project-scoped like
-    /// [`Settings::terminal`] — see [`containers`].
+    /// The `[containers]` section (ADR-0055) — see [`containers`].
     #[serde(default)]
     pub containers: ContainerSettings,
-    /// The `[build_tools]` section (ADR-0057): trusted sync roots plus
-    /// Gradle/Maven overrides. `trusted_roots` is global only — see
-    /// [`build_tools`]'s doc comment; the `gradle`/`maven` sub-tables are
-    /// project-scoped like [`Settings::terminal`].
+    /// The `[build_tools]` section (ADR-0057) — `trusted_roots` is global
+    /// only, see [`build_tools`]'s doc comment.
     #[serde(default, skip_serializing_if = "is_default_build_tools")]
     pub build_tools: BuildToolsSettings,
+    #[serde(default, skip_serializing_if = "database::is_default")]
+    pub database: database::DatabaseSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
     ///
@@ -989,6 +988,7 @@ mod tests {
             containers: ContainerSettings::default(),
             analysis: AnalysisSettings::default(),
             build_tools: BuildToolsSettings::default(),
+            database: database::DatabaseSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),

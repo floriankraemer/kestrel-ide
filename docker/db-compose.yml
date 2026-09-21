@@ -1,0 +1,29 @@
+# Real database servers for `make test-db`/`make e2e-db`
+# (docs/architecture/db-integration.md). Nightly/on-demand only — never a
+# per-PR gate, the same `lsp-conformance`/`jvm-integration` reasoning.
+#
+# F1 lands PostgreSQL only; later phases add MySQL/MariaDB/Mongo/Redis/
+# Scylla (F7) and SQL Server (F8) services here, one at a time, alongside
+# the driver crate that first needs them.
+#
+# Every version is pinned (docs/architecture/db-integration.md's "why every
+# version is pinned"): bumping one is a deliberate commit with its own
+# fixture updates, never a background `apt-get upgrade`-shaped drift.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ide
+      POSTGRES_PASSWORD: ide
+      POSTGRES_DB: ide_test
+    ports:
+      # Bound to loopback only, the same "never a wildcard address"
+      # posture ADR-0061 §5 states for the SSH tunnel's forwarded port —
+      # this is a throwaway nightly/on-demand fixture database, not a
+      # network service.
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ide -d ide_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

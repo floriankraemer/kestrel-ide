@@ -30,7 +30,7 @@ flowchart LR
 
 ## 2. Building blocks
 
-*Target design; updated by phase F1-F8.*
+*Target design; updated by phase F1-F8. F1 landed `secret-store`, `db-core`, `db-drivers` (sqlite+postgres), the `plugin-api`/`plugin-host` contribution points, and the `ui-shell::bridge::database` slice this phase needs (`AppSettings` source-list accessors, `DataSourceEditor`, `data_source_dialog.cpp`, `database_settings_page.cpp`) — no dock/console/result-grid yet (F3/F4), so `DatabaseService`, `SessionWorker`, `ConsoleService`, `ResultProvider`, `DriverInstallService`, `ExchangeService` and every other `cpp/` view below remain target design.*
 
 Seven new Qt-free crates, additions to `plugin-api`/`plugin-host`, and a `ui-shell::bridge::database` module tree plus `database_*.cpp` views.
 The component diagram mirrors `layering.md`'s rows exactly — the same dependency edges, drawn once here for orientation:

@@ -4,14 +4,10 @@
 #include "dock_layout.h"
 #include "editor_banner.h"
 #include "editor_tabs.h"
-#include "keymap_page.h"
 
 #include "DockAreaWidget.h"
 #include "DockWidget.h"
 
-#include <QAction>
-#include <QMainWindow>
-#include <QMenu>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -90,17 +86,9 @@ BuildToolsPanel *wireBuildToolsDock(ads::CDockManager *dockManager, DockRegistry
     return panel;
 }
 
-void wireBuildToolsMenuAndSettings(QMainWindow *window, AppSettings *appSettings,
-                                    QHash<QString, QAction *> &actions, DockRegistry *docks,
-                                    QMenu *viewMenu, BuildToolsPanel *panel,
-                                    std::function<void()> openSettings)
+void wireBuildToolsSettings(BuildToolsPanel *panel, std::function<void()> openSettings)
 {
     panel->setOpenSettingsHandler(std::move(openSettings));
-
-    QAction *viewAction = registerAction(viewMenu, QStringLiteral("view.buildTools"),
-                                         QObject::tr("Build Tools"), appSettings, actions);
-    QObject::connect(viewAction, &QAction::triggered, window,
-                      [docks]() { docks->show(QStringLiteral("buildTools")); });
 }
 
 } // namespace ui_shell

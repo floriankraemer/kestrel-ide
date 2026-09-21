@@ -41,6 +41,8 @@ pub enum ContributionPoint {
     Analyzers,
     TestFrameworks,
     BuildTools,
+    ToolWindows,
+    SettingsPages,
 }
 
 impl ContributionPoint {
@@ -55,6 +57,8 @@ impl ContributionPoint {
             Self::Analyzers => "analyzers",
             Self::TestFrameworks => "test-frameworks",
             Self::BuildTools => "build-tools",
+            Self::ToolWindows => "tool-windows",
+            Self::SettingsPages => "settings-pages",
         }
     }
 }
@@ -323,6 +327,76 @@ pub struct BuildToolContribution {
     pub init_script: Option<PathBuf>,
 }
 
+/// Where a tool window docks by default (the database-tools plan's G1).
+///
+/// Free-standing rather than reusing some ADS-specific type: this crate
+/// never depends on cxx-qt or ADS (it must stay a leaf), so the four areas
+/// a dock can occupy are spelled out here as the neutral vocabulary the
+/// `ui-shell` seam translates into `ads::DockWidgetArea`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolWindowArea {
+    Left,
+    Right,
+    Bottom,
+    Center,
+}
+
+/// One tool window (dock) a plugin offers (the database-tools plan's G1).
+///
+/// Unlike [`CommandContribution`], this needs no `[wasm]` component: a wasm
+/// guest cannot draw a Qt widget (`wit/plugin.wit`), so a tool window is
+/// always rendered by a native factory the host already ships — a wasm
+/// plugin may still *declare* one, and is skipped with a Plugins-page
+/// warning until a `render-tool-window` WIT export exists (a later,
+/// `api_version` 2 change, deliberately deferred).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolWindowContribution {
+    /// Stable id: the dock id `DockRegistry` registers under, the View-menu
+    /// action's `view.<id>`, and the key `ui-shell`'s native factory table
+    /// looks the dock up by.
+    pub id: String,
+    /// What the View menu and the dock's own title bar show.
+    pub title: String,
+    pub area: ToolWindowArea,
+}
+
+/// Which settings layer a page's contributed section may live in (the
+/// database-tools plan's G1).
+///
+/// Mirrors [`ScopedField`]'s two real origins (`settings_model::Scope`) —
+/// this crate stays a leaf and does not depend on `settings-model`, so the
+/// join is a plain string both sides agree on, the same pattern
+/// [`BuildToolContribution::toolchain`] already uses for `run-core`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingsPageScope {
+    Global,
+    Project,
+}
+
+/// One settings page a plugin offers (the database-tools plan's G1).
+///
+/// Needs no `[wasm]` component either, for the same reason
+/// [`ToolWindowContribution`] doesn't: the page itself is a native Qt
+/// widget a wasm guest cannot draw.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsPageContribution {
+    /// Stable id: the key `ui-shell`'s native page-factory table looks the
+    /// page up by.
+    pub id: String,
+    /// What the settings dialog's page list shows.
+    pub title: String,
+    /// `scope = "project"` must join to an existing `ScopedField::from_id`
+    /// at the seam, or the page registers global-only with a log line —
+    /// the set of scoped fields can grow without a manifest format change,
+    /// so an id this build does not (yet) recognise is a seam-time
+    /// decision, not a load error.
+    pub scope: SettingsPageScope,
+}
+
 /// Everything a plugin contributes, by point.
 ///
 /// Deliberately *not* `deny_unknown_fields`: [`API_VERSION`]'s doc comment
@@ -331,6 +405,12 @@ pub struct BuildToolContribution {
 /// struct in this module enforces the opposite rule — a typo in a *known*
 /// field is still a load error. `unknown` is where a point this build has
 /// never heard of goes to be silently dropped; nothing reads it.
+///
+/// [`ToolWindows`](ContributionPoint::ToolWindows) and
+/// [`SettingsPages`](ContributionPoint::SettingsPages) below are additive
+/// like every point before them: an older host that does not know either
+/// key simply drops it into `unknown` above, so `api_version` stays `1`
+/// (the database-tools plan's decision 11).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Contributes {
     #[serde(default, rename = "icon-themes")]
@@ -349,6 +429,10 @@ pub struct Contributes {
     pub test_frameworks: Vec<TestFrameworkContribution>,
     #[serde(default, rename = "build-tools")]
     pub build_tools: Vec<BuildToolContribution>,
+    #[serde(default, rename = "tool-windows")]
+    pub tool_windows: Vec<ToolWindowContribution>,
+    #[serde(default, rename = "settings-pages")]
+    pub settings_pages: Vec<SettingsPageContribution>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -366,6 +450,8 @@ impl Contributes {
             && self.analyzers.is_empty()
             && self.test_frameworks.is_empty()
             && self.build_tools.is_empty()
+            && self.tool_windows.is_empty()
+            && self.settings_pages.is_empty()
     }
 }
 
@@ -624,6 +710,31 @@ impl PluginManifest {
 
         // A build tool is a native process too — no `[wasm]` component.
 
+        for window in &self.contributes.tool_windows {
+            check_camel_id("contributes.tool-windows.id", &window.id)?;
+            non_empty("contributes.tool-windows.title", &window.title)?;
+        }
+        check_unique(
+            ContributionPoint::ToolWindows,
+            self.contributes.tool_windows.iter().map(|w| w.id.as_str()),
+        )?;
+
+        for page in &self.contributes.settings_pages {
+            check_camel_id("contributes.settings-pages.id", &page.id)?;
+            non_empty("contributes.settings-pages.title", &page.title)?;
+        }
+        check_unique(
+            ContributionPoint::SettingsPages,
+            self.contributes
+                .settings_pages
+                .iter()
+                .map(|p| p.id.as_str()),
+        )?;
+
+        // Neither a tool window nor a settings page needs a `[wasm]`
+        // component: both are native Qt widgets a wasm guest cannot draw
+        // (`ToolWindowContribution`'s own doc comment).
+
         if let Some(wasm) = &self.wasm {
             check_relative("wasm.component", &wasm.component)?;
         } else if !self.contributes.commands.is_empty() {
@@ -688,6 +799,29 @@ fn check_id(field: &'static str, value: &str) -> Result<(), LoadErrorKind> {
     if chars
         .any(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-')))
     {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
+/// Tool-window and settings-page ids are dock ids and `ScopedField` keys,
+/// not directory names, so they follow the camelCase convention those
+/// already use (`"buildTools"`, `"tabPadding"`) rather than [`check_id`]'s
+/// kebab-case, directory-safe charset.
+fn check_camel_id(field: &'static str, value: &str) -> Result<(), LoadErrorKind> {
+    let malformed = || LoadErrorKind::MalformedId {
+        field,
+        value: value.to_string(),
+    };
+    if value.is_empty() || value.len() > ID_MAX_LEN {
+        return Err(malformed());
+    }
+    let mut chars = value.chars();
+    let first = chars.next().expect("id is not empty");
+    if !first.is_ascii_lowercase() {
+        return Err(malformed());
+    }
+    if chars.any(|c| !c.is_ascii_alphanumeric()) {
         return Err(malformed());
     }
     Ok(())

@@ -2,13 +2,8 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
-#include <QHash>
-#include <QString>
 #include <functional>
 
-class QAction;
-class QMainWindow;
-class QMenu;
 class QWidget;
 
 namespace ads {
@@ -39,20 +34,19 @@ QWidget *wrapEditorDockContent(QWidget *editorRoot);
 // `buildContainersDock` is (`main_window.cpp`'s own footprint stays one
 // call plus one `CentralWidgets` field, `buildToolsPanel`, the same shape
 // `containersPanel` already has). Returns the panel so
-// `wireBuildToolsMenuAndSettings` (below) can reach it once the View menu
-// and `SettingsContext` exist, which `buildCentralWidget` does not have.
+// `wireBuildToolsSettings` (below) can reach it once `SettingsContext`
+// exists, which `buildCentralWidget` does not have.
 BuildToolsPanel *wireBuildToolsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                                      ads::CDockAreaWidget *rightArea, ads::CDockWidget *editorDock,
                                      BuildToolsService *buildToolsService, RunService *runService,
                                      ProjectTreeModel *treeModel, EditorTabs *editorTabs);
 
-// The View menu's `view.buildTools` entry and the dock's Settings button
-// handler — called once from the View-menu section, the same place
-// `buildContainersMenu`/`central.containersPanel->setOpenSettingsHandler`
-// already are.
-void wireBuildToolsMenuAndSettings(QMainWindow *window, AppSettings *appSettings,
-                                    QHash<QString, QAction *> &actions, DockRegistry *docks,
-                                    QMenu *viewMenu, BuildToolsPanel *panel,
-                                    std::function<void()> openSettings);
+// The dock's Settings button handler — called once from the View-menu
+// section, the same place `central.containersPanel->setOpenSettingsHandler`
+// already is. The `view.buildTools` action itself is no longer created
+// here: `tool_window_factories.cpp`'s `wireContributedToolWindowMenus`
+// covers every contributed tool window generically now (database-tools
+// plan G1).
+void wireBuildToolsSettings(BuildToolsPanel *panel, std::function<void()> openSettings);
 
 } // namespace ui_shell

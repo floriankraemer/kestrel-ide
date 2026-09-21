@@ -2762,6 +2762,44 @@ mod ffi {
 
     impl cxx_qt::Threading for PreviewProvider {}
 
+    /// Where a contributed tool window docks by default — mirrors
+    /// `plugin_api::ToolWindowArea`, this crate's own copy because a shared
+    /// type would put cxx-qt in `plugin-api`'s dependency tree.
+    enum FfiToolWindowArea {
+        Left,
+        Right,
+        Bottom,
+        Center,
+    }
+
+    /// One `tool-windows` contribution (the database-tools plan's G1):
+    /// `tool_window_factories.cpp`'s table looks a dock factory up by `id`,
+    /// and the View-menu action it wires carries `title` as-is (contributed
+    /// text, not a `tr()` literal).
+    struct FfiToolWindow {
+        /// The plugin that contributed it, for the "no native host" log
+        /// line when nothing in the factory table answers to `id`.
+        plugin_id: QString,
+        id: QString,
+        title: QString,
+        area: FfiToolWindowArea,
+    }
+
+    /// Mirrors `plugin_api::SettingsPageScope`, for the same reason
+    /// `FfiToolWindowArea` mirrors `ToolWindowArea`.
+    enum FfiSettingsPageScope {
+        Global,
+        Project,
+    }
+
+    /// One `settings-pages` contribution (the database-tools plan's G1).
+    struct FfiSettingsPage {
+        plugin_id: QString,
+        id: QString,
+        title: QString,
+        scope: FfiSettingsPageScope,
+    }
+
     extern "RustQt" {
         /// Settings-I/O adapter (L1 window geometry/state, C2 recent
         /// projects) — wraps `app_config::{load,save}` the same way
@@ -3229,6 +3267,23 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "removeRegistry"]
         fn remove_registry(self: &AppSettings, id: &QString) -> FfiResult;
+
+        /// Every enabled plugin's `tool-windows` contribution (the
+        /// database-tools plan's G1), in registry (load) order — what used
+        /// to be the literal `wireBuildToolsDock`/`buildContainersDock`
+        /// calls in `main_window.cpp` before both migrated onto this point.
+        /// A disabled plugin's rows are absent, which is what makes
+        /// disabling one hide its dock and View-menu entry.
+        #[qinvokable]
+        #[cxx_name = "contributedToolWindows"]
+        fn contributed_tool_windows(self: &AppSettings) -> Vec<FfiToolWindow>;
+
+        /// Every enabled plugin's `settings-pages` contribution, same
+        /// ordering and disabled-filtering rule as
+        /// [`contributed_tool_windows`](Self::contributed_tool_windows).
+        #[qinvokable]
+        #[cxx_name = "contributedSettingsPages"]
+        fn contributed_settings_pages(self: &AppSettings) -> Vec<FfiSettingsPage>;
     }
 
     unsafe extern "RustQt" {

@@ -85,6 +85,16 @@ pub(crate) const JVM_BUILD_TOOLS: BuiltinPlugin = BuiltinPlugin {
     )],
 };
 
+/// Migrates the Containers dock and settings page onto the generic
+/// `tool-windows`/`settings-pages` contribution points (database-tools plan
+/// G1) — first-party like the built-ins above, and contributing no files at
+/// all: unlike `JVM_BUILD_TOOLS`, neither point needs an asset, and the
+/// container integration's own code is not moving (ADR-0055 stands).
+pub(crate) const CONTAINERS: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/containers/plugin.toml"),
+    files: &[],
+};
+
 /// The three colour themes that used to be hardcoded in `ui-shell`'s
 /// `theme.cpp` and `syntax-core`'s `theme.rs`, first-party like the
 /// Markdown preview above: a `color-themes` contribution needs no `[wasm]`

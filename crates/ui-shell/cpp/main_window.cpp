@@ -53,6 +53,7 @@
 #include "containers_panel.h"
 #include "tests_menu.h"
 #include "tests_panel.h"
+#include "tool_window_factories.h"
 #include "syntax_highlighter.h"
 #include "terminal_sessions_panel.h"
 #include "theme.h"
@@ -380,8 +381,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
-    auto *containersPanel = buildContainersDock(dockManager, docks, bottomArea, containerService, terminalSupervisor, appSettings, openAt);
-    auto *buildToolsPanel = wireBuildToolsDock(dockManager, docks, rightArea, editorDock, buildToolsService, runService, treeModel, editorTabs);
+    auto [buildToolsPanel, containersPanel] = buildContributedToolWindows(
+      appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt);
 
     // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -1085,13 +1086,13 @@ void buildMainWindow(AppSettings *appSettings,
                  central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu,
                    buildToolsService);
-    wireBuildToolsMenuAndSettings(window, appSettings, *actions, central.docks, viewMenu, central.buildToolsPanel,
-                                  [window, settingsContext, appSettings]() {
-                                      appSettings->setSettingsScope(QStringLiteral("global"));
-                                      showSettingsDialog(window, settingsContext, QObject::tr("Build Tools"));
-                                  });
+    wireContributedToolWindowMenus(appSettings, *actions, central.docks, viewMenu); // G1
+    wireBuildToolsSettings(central.buildToolsPanel, [window, settingsContext, appSettings]() {
+        appSettings->setSettingsScope(QStringLiteral("global"));
+        showSettingsDialog(window, settingsContext, QObject::tr("Build Tools"));
+    });
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
-    buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu, treeModel, containerService);
+    wireContainersProjectHook(treeModel, containerService);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);
     // Last of the View entries, under everything it can rearrange.
     buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,

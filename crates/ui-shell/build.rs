@@ -579,6 +579,9 @@ fn main() {
         .cpp_file("cpp/editor_banner.h")
         .cpp_file("cpp/editor_banner.cpp")
         .cpp_file("cpp/build_tools_wiring.cpp")
+        // Database-tools plan G1: the dock/settings-page factory table,
+        // same Q_OBJECT-free shape as build_tools_wiring.cpp above.
+        .cpp_file("cpp/tool_window_factories.cpp")
         // Containers plan C2: the Containers dock, same Q_OBJECT-free shape.
         .cpp_file("cpp/containers_panel.cpp")
         .cpp_file("cpp/containers_menu.cpp")

@@ -725,7 +725,10 @@ impl PluginManifest {
         }
         check_unique(
             ContributionPoint::SettingsPages,
-            self.contributes.settings_pages.iter().map(|p| p.id.as_str()),
+            self.contributes
+                .settings_pages
+                .iter()
+                .map(|p| p.id.as_str()),
         )?;
 
         // Neither a tool window nor a settings page needs a `[wasm]`

@@ -339,7 +339,10 @@ pub fn load(config_dir: &Path, builtins: &[BuiltinPlugin], disabled: &[String]) 
 /// gets an error row instead of silently losing one feature.
 fn reject_cross_plugin_duplicates(registry: &mut PluginRegistry) {
     let mut losers: Vec<(usize, ContributionPoint, String)> = Vec::new();
-    for point in [ContributionPoint::ToolWindows, ContributionPoint::SettingsPages] {
+    for point in [
+        ContributionPoint::ToolWindows,
+        ContributionPoint::SettingsPages,
+    ] {
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
         for (index, plugin) in registry.plugins.iter().enumerate() {
             let ids: Box<dyn Iterator<Item = &str>> = match point {
@@ -370,7 +373,7 @@ fn reject_cross_plugin_duplicates(registry: &mut PluginRegistry) {
     }
     // Highest index first, so removing a loser never shifts the index of
     // one not yet removed.
-    losers.sort_by(|a, b| b.0.cmp(&a.0));
+    losers.sort_by_key(|(index, ..)| std::cmp::Reverse(*index));
     let mut rejected: Vec<usize> = Vec::new();
     for (index, point, id) in losers {
         if rejected.contains(&index) {

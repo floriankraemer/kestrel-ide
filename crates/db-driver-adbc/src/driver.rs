@@ -37,7 +37,7 @@ use db_core::driver::{
     Execution, RowStream, Statement,
 };
 use db_core::error::{DbError, DbErrorCode};
-use db_core::schema::{IntrospectScope, SchemaSnapshot};
+use db_core::schema::{IntrospectLevel, IntrospectScope, SchemaSnapshot};
 
 use crate::locate::DriverLocation;
 use crate::quarantine::{guarded_load, Quarantine};
@@ -196,7 +196,15 @@ impl DbConnection for AdbcConnection {
         "ADBC".to_string()
     }
 
-    fn introspect(&mut self, scope: &IntrospectScope) -> Result<SchemaSnapshot, DbError> {
+    // ponytail: `level` is not yet honoured — ADBC's `get_objects` always
+    // fetches at `ObjectDepth::All`, so `Names`-level requests pay a
+    // `Full`-level cost until F2's per-level depth mapping lands here too
+    // (tracked as a database-tools-plan.md follow-up).
+    fn introspect(
+        &mut self,
+        scope: &IntrospectScope,
+        _level: IntrospectLevel,
+    ) -> Result<SchemaSnapshot, DbError> {
         let reader = self
             .connection
             .get_objects(

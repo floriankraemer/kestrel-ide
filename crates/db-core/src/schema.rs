@@ -95,12 +95,31 @@ pub enum Children {
     Loaded(Vec<Node>),
 }
 
+/// Extra detail a column-shaped node carries once introspected at
+/// [`IntrospectLevel::Columns`] or deeper — a column's type/nullability/
+/// default, or a table's own primary-key column names, both of which
+/// `db_core::ddl::synthesize` needs to produce a usable `CREATE TABLE`
+/// fallback for a backend whose engine cannot hand back its own DDL text.
+/// Every other kind's node carries the all-`None`/empty default.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NodeDetail {
+    /// A column's declared type, verbatim from the backend (`"INTEGER"`,
+    /// `"varchar(255)"`, …).
+    pub type_name: Option<String>,
+    pub nullable: Option<bool>,
+    /// A column's default expression, verbatim (never evaluated).
+    pub default: Option<String>,
+    /// Whether a column is (part of) its table's primary key.
+    pub primary_key: bool,
+}
+
 /// One row the Database dock renders.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub name: String,
     pub kind: ObjectKind,
     pub children: Children,
+    pub detail: NodeDetail,
 }
 
 impl Node {
@@ -109,6 +128,7 @@ impl Node {
             name: name.into(),
             kind,
             children: Children::NotLoaded,
+            detail: NodeDetail::default(),
         }
     }
 
@@ -117,7 +137,13 @@ impl Node {
             name: name.into(),
             kind,
             children: Children::Loaded(children),
+            detail: NodeDetail::default(),
         }
+    }
+
+    pub fn with_detail(mut self, detail: NodeDetail) -> Self {
+        self.detail = detail;
+        self
     }
 }
 
@@ -138,10 +164,32 @@ pub enum IntrospectLevel {
 }
 
 /// One introspection request: where to look, and how deep.
+///
+/// `object` narrows the request to one object's own subtree (a table's
+/// columns/indexes/triggers) — the shape a tree's lazy expand asks for
+/// once the user opens a single node, as opposed to `catalog`/`schema`
+/// alone which ask for every object *within* that schema.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IntrospectScope {
     pub catalog: Option<String>,
     pub schema: Option<String>,
+    pub object: Option<String>,
+}
+
+impl IntrospectScope {
+    pub fn for_object(name: impl Into<String>) -> Self {
+        Self {
+            object: Some(name.into()),
+            ..Default::default()
+        }
+    }
+
+    pub fn for_schema(schema: impl Into<String>) -> Self {
+        Self {
+            schema: Some(schema.into()),
+            ..Default::default()
+        }
+    }
 }
 
 /// One introspection call's result: the roots the query covered, at the
@@ -202,6 +250,21 @@ mod tests {
             ObjectKind::Key(RedisType::List),
             ObjectKind::Key(RedisType::List)
         );
+    }
+
+    #[test]
+    fn for_object_scope_carries_only_the_object_name() {
+        let scope = IntrospectScope::for_object("users");
+        assert_eq!(scope.object.as_deref(), Some("users"));
+        assert_eq!(scope.schema, None);
+        assert_eq!(scope.catalog, None);
+    }
+
+    #[test]
+    fn for_schema_scope_carries_only_the_schema_name() {
+        let scope = IntrospectScope::for_schema("public");
+        assert_eq!(scope.schema.as_deref(), Some("public"));
+        assert_eq!(scope.object, None);
     }
 
     #[test]

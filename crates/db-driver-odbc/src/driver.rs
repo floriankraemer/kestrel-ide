@@ -35,7 +35,7 @@ use db_core::driver::{
     Execution, RowStream, Statement,
 };
 use db_core::error::{DbError, DbErrorCode};
-use db_core::schema::{IntrospectScope, ObjectRef, SchemaSnapshot};
+use db_core::schema::{IntrospectLevel, IntrospectScope, ObjectRef, SchemaSnapshot};
 use db_core::value::{ColumnMeta, RowBatch};
 
 use odbc_api::buffers::ColumnarDynBuffer;
@@ -366,7 +366,16 @@ impl DbConnection for OdbcConnection {
             .unwrap_or_else(|| "ODBC".to_string())
     }
 
-    fn introspect(&mut self, scope: &IntrospectScope) -> Result<SchemaSnapshot, DbError> {
+    // ponytail: `level` is not yet honoured — `introspect::introspect`
+    // always fetches columns for every table it lists; upgrade to skip
+    // that at `Names` level once the ODBC backend needs the same
+    // 5 000-table NFR the native drivers meet (database-tools-plan.md
+    // follow-up).
+    fn introspect(
+        &mut self,
+        scope: &IntrospectScope,
+        _level: IntrospectLevel,
+    ) -> Result<SchemaSnapshot, DbError> {
         crate::introspect::introspect(&self.shared, scope)
     }
 

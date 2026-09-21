@@ -113,6 +113,47 @@ impl Session {
         Ok(())
     }
 
+    /// A clone of this session's own generation counter — `ui-shell`'s
+    /// `SessionWorker` (bridge/database/sessions.rs) hands this to its
+    /// caller before moving the session into its own thread, so the Qt
+    /// side can read/bump the very same counter this session's cancel
+    /// logic already uses, rather than inventing a second one.
+    pub fn generation_handle(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.generation)
+    }
+
+    pub fn dialect(&self) -> crate::dialect::Dialect {
+        self.connection.dialect()
+    }
+
+    pub fn introspect(
+        &mut self,
+        scope: &crate::schema::IntrospectScope,
+        level: crate::schema::IntrospectLevel,
+    ) -> Result<crate::schema::SchemaSnapshot, DbError> {
+        self.connection.introspect(scope, level)
+    }
+
+    pub fn ddl_of(&mut self, object: &crate::schema::ObjectRef) -> Result<String, DbError> {
+        self.connection.ddl_of(object)
+    }
+
+    pub fn execute(
+        &mut self,
+        statement: &Statement,
+        options: &ExecOptions,
+    ) -> Result<crate::driver::Execution, DbError> {
+        self.connection.execute(statement, options)
+    }
+
+    pub fn apply(&mut self, statements: &[Statement]) -> Result<u64, DbError> {
+        self.connection.apply(statements)
+    }
+
+    pub fn close(&mut self) -> Result<(), DbError> {
+        self.connection.close()
+    }
+
     pub fn execute_script(
         &mut self,
         script: &str,
@@ -219,7 +260,11 @@ pub(crate) mod testsupport {
             "fake".to_string()
         }
 
-        fn introspect(&mut self, _scope: &IntrospectScope) -> Result<SchemaSnapshot, DbError> {
+        fn introspect(
+            &mut self,
+            _scope: &IntrospectScope,
+            _level: crate::schema::IntrospectLevel,
+        ) -> Result<SchemaSnapshot, DbError> {
             unimplemented!("not exercised by Session's own tests")
         }
 

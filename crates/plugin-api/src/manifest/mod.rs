@@ -899,10 +899,17 @@ impl PluginManifest {
                 }
                 if let Some(adbc) = &driver.adbc {
                     if let Some(url) = &adbc.url {
-                        check_adbc_artifact("contributes.database-drivers.adbc", url, &adbc.sha256)?;
+                        check_adbc_artifact(
+                            "contributes.database-drivers.adbc",
+                            url,
+                            &adbc.sha256,
+                        )?;
                     }
                     for (platform, artifact) in &adbc.artifacts {
-                        non_empty("contributes.database-drivers.adbc.artifacts platform", platform)?;
+                        non_empty(
+                            "contributes.database-drivers.adbc.artifacts platform",
+                            platform,
+                        )?;
                         non_empty(
                             "contributes.database-drivers.adbc.artifacts.library",
                             &artifact.library,

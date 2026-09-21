@@ -115,7 +115,8 @@ pub fn status_for(
         return DriverStatus::Quarantined;
     }
 
-    let managed = db_driver_adbc::locate::managed_dir(config_dir, manifest_name, ADBC_INSTALLED_SLOT);
+    let managed =
+        db_driver_adbc::locate::managed_dir(config_dir, manifest_name, ADBC_INSTALLED_SLOT);
     if managed.join("manifest.toml").is_file() {
         return DriverStatus::Installed;
     }
@@ -123,7 +124,11 @@ pub fn status_for(
     if adbc_artifact_for_platform(contribution, current_platform()).is_some() {
         return DriverStatus::Installable;
     }
-    if let Some(hint) = contribution.adbc.as_ref().and_then(|a| a.install_hint.clone()) {
+    if let Some(hint) = contribution
+        .adbc
+        .as_ref()
+        .and_then(|a| a.install_hint.clone())
+    {
         return DriverStatus::InstallHint(hint);
     }
     DriverStatus::SystemSearch
@@ -240,7 +245,10 @@ impl ffi::DriverInstallService {
                 library: artifact.library.clone(),
             })
         else {
-            return errors::failure(CODE_REFUSED, "this driver has no artifact for this platform");
+            return errors::failure(
+                CODE_REFUSED,
+                "this driver has no artifact for this platform",
+            );
         };
 
         let qt_thread = self.qt_thread();
@@ -401,7 +409,8 @@ mod tests {
     fn an_installed_manifest_is_reported_installed() {
         let row = adbc_row("duckdb");
         let dir = tempfile::tempdir().unwrap();
-        let managed = db_driver_adbc::locate::managed_dir(dir.path(), "duckdb", ADBC_INSTALLED_SLOT);
+        let managed =
+            db_driver_adbc::locate::managed_dir(dir.path(), "duckdb", ADBC_INSTALLED_SLOT);
         std::fs::create_dir_all(&managed).unwrap();
         std::fs::write(managed.join("manifest.toml"), "manifest_version = 1").unwrap();
         assert_eq!(

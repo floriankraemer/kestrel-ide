@@ -110,7 +110,10 @@ impl AdbcDriver {
     }
 }
 
-fn load_driver(location: &DriverLocation, entrypoint: Option<&str>) -> Result<ManagedDriver, DbError> {
+fn load_driver(
+    location: &DriverLocation,
+    entrypoint: Option<&str>,
+) -> Result<ManagedDriver, DbError> {
     let flags = LOAD_FLAG_ALLOW_RELATIVE_PATHS
         | LOAD_FLAG_SEARCH_ENV
         | LOAD_FLAG_SEARCH_SYSTEM

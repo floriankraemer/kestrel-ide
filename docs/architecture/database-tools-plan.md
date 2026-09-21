@@ -347,7 +347,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F3.4 — `ResultTableModel` + paging (500/page) + memory cap | done | d507d9f |
 | F3.5 — `databaseResults` dock, per-console tabs | done (one active console/result shown at a time, not a tab per console; see database-tools.md §11) | d507d9f |
 | F3.6 — `sql-script` run-configuration kind | open — not started this phase | |
-| F3.7 — completion/inspections seam (`database_completion`, source `database:inspections`) | open — not started this phase | |
+| F3.7 — completion/inspections seam (`database_completion`, source `database:inspections`) | done (selection-scoped "Format SQL" not wired — `requestIntentions` carries no selection range yet; see database-tools.md §4) | 5e87280 |
 | F3 follow-up — `db-drivers`' `SqliteConnection`/`PgConnection::execute` eagerly drain the whole `Rows` result before returning instead of streaming (found this phase, out of its file list — see database-tools.md §4/§11) | done — F3c (`SqliteConnection`, live cursor over a second read-only connection) + F3d (`PgConnection`, live `Client::query_raw` stream) | 83e925b, 95a22ad |
 | F3 follow-up — `e2e_database` part 2 (console → run → grid → 1M rows → cancel) and the first-row/1M-row-paging/cancel NFR bench numbers in §10 — no longer blocked on the eager-materialisation fix above (both drivers stream as of F3c/F3d), but `e2e_database_console.rs` itself still needs writing | open | |
 | F3 follow-up — caret-based "run statement at caret" (`EditorTabs` has no caret byte-offset accessor yet; `console.rs`'s `statement_at_caret`/`FfiDbExecWhat::Statement` are implemented and unit-tested, just unreachable from the console bar) | open | |

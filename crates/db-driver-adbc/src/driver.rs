@@ -309,3 +309,58 @@ impl DbConnection for AdbcConnection {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adbc_status_maps_to_the_closest_db_error_code() {
+        let cases = [
+            (Status::NotFound, DbErrorCode::ConnectionFailed),
+            (Status::Cancelled, DbErrorCode::Cancelled),
+            (Status::Timeout, DbErrorCode::Cancelled),
+            (Status::Unauthenticated, DbErrorCode::ConnectionFailed),
+            (Status::Unauthorized, DbErrorCode::ConnectionFailed),
+            (Status::InvalidArguments, DbErrorCode::InvalidStatement),
+            (Status::InvalidState, DbErrorCode::InvalidStatement),
+            (Status::InvalidData, DbErrorCode::InvalidStatement),
+            (Status::NotImplemented, DbErrorCode::NotSupported),
+            (Status::Internal, DbErrorCode::Unknown),
+        ];
+        for (status, expected) in cases {
+            let error = AdbcError {
+                message: "boom".to_string(),
+                status,
+                vendor_code: 0,
+                sqlstate: [0; 5],
+                details: None,
+            };
+            assert_eq!(adbc_err(error).code, expected, "status {status:?}");
+        }
+    }
+
+    #[test]
+    fn adbc_err_keeps_the_original_message() {
+        let error = AdbcError {
+            message: "connection refused".to_string(),
+            status: Status::IO,
+            vendor_code: 0,
+            sqlstate: [0; 5],
+            details: None,
+        };
+        assert_eq!(adbc_err(error).message, "connection refused");
+    }
+
+    #[test]
+    fn detect_dialect_recognises_known_driver_ids() {
+        assert_eq!(detect_dialect("duckdb"), Dialect::Sqlite);
+        assert_eq!(detect_dialect("postgresql"), Dialect::Postgres);
+        assert_eq!(detect_dialect("snowflake"), Dialect::Postgres);
+    }
+
+    #[test]
+    fn detect_dialect_falls_back_to_sqlite_for_an_unknown_id() {
+        assert_eq!(detect_dialect("some-future-driver"), Dialect::Sqlite);
+    }
+}

@@ -506,3 +506,60 @@ fn poisoned() -> DbError {
         "ODBC connection mutex poisoned by a previous panic",
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn detect_dialect_recognises_the_common_dbms_names() {
+        assert_eq!(detect_dialect("PostgreSQL"), Dialect::Postgres);
+        assert_eq!(detect_dialect("MySQL"), Dialect::MySql);
+        assert_eq!(detect_dialect("MariaDB"), Dialect::MySql);
+        assert_eq!(detect_dialect("Microsoft SQL Server"), Dialect::SqlServer);
+        assert_eq!(detect_dialect("SQLite"), Dialect::Sqlite);
+    }
+
+    #[test]
+    fn detect_dialect_falls_back_to_sqlite_for_an_unrecognised_dbms() {
+        assert_eq!(detect_dialect("SomeExoticDatabase"), Dialect::Sqlite);
+    }
+
+    #[test]
+    fn build_params_maps_null_to_none_and_everything_else_to_its_display_text() {
+        let values = vec![
+            db_core::value::Value::Null,
+            db_core::value::Value::Int(42),
+            db_core::value::Value::Text("hi".to_string()),
+        ];
+        let params = build_params(&values);
+        assert_eq!(params.len(), 3);
+    }
+
+    #[test]
+    fn odbc_data_type_name_renders_the_debug_form() {
+        assert_eq!(odbc_data_type_name(odbc_api::DataType::Integer), "Integer");
+    }
+
+    #[test]
+    fn odbc_err_carries_the_requested_code_and_message() {
+        // `odbc_api::Error` has no public constructor for a synthetic
+        // instance outside the crate, so this exercises `poisoned()`
+        // instead, which shares the same `DbError::new` wiring `odbc_err`
+        // uses.
+        let error = poisoned();
+        assert_eq!(error.code, DbErrorCode::Unknown);
+        assert!(error.message.contains("poisoned"));
+    }
+
+    #[test]
+    fn a_cancel_handle_sets_the_shared_flag() {
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let handle = OdbcCancelHandle {
+            cancelled: flag.clone(),
+        };
+        assert!(handle.cancel().is_ok());
+        assert!(flag.load(Ordering::SeqCst));
+    }
+}

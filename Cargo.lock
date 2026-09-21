@@ -1311,6 +1311,7 @@ name = "db-drivers"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "chrono",
  "db-core",
  "rusqlite",
  "rustls",

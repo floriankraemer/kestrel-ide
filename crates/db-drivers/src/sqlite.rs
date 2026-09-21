@@ -544,4 +544,78 @@ mod tests {
         let mut conn = connect();
         assert!(conn.execute(&statement, &ExecOptions::default()).is_ok());
     }
+
+    /// Every `Value` variant `dml::EditBuffer`/a data-editor submit could
+    /// bind as a parameter round-trips through SQLite's dynamic typing —
+    /// `to_rusqlite`'s whole match, exercised for real rather than by
+    /// inspection.
+    #[test]
+    fn every_value_variant_binds_and_reads_back() {
+        let mut conn = connect();
+        conn.execute(
+            &Statement::sql("CREATE TABLE t (v)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+
+        let uuid = uuid::Uuid::nil();
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 9, 21).unwrap();
+        let time = chrono::NaiveTime::from_hms_opt(1, 2, 3).unwrap();
+        let datetime = date.and_time(time);
+        let datetime_tz =
+            chrono::DateTime::parse_from_rfc3339("2026-09-21T01:02:03+02:00").unwrap();
+
+        let values = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Bool(false),
+            Value::Int(42),
+            Value::Float(1.5),
+            Value::Decimal("12.34".to_string()),
+            Value::Json("{}".to_string()),
+            Value::Date(date),
+            Value::Time(time),
+            Value::DateTime(datetime),
+            Value::DateTimeTz(datetime_tz),
+            Value::Uuid(uuid),
+            Value::Array(vec![Value::Int(1)]),
+            Value::Document(vec![("a".to_string(), Value::Int(1))]),
+            Value::Other {
+                type_name: "custom".to_string(),
+                display: "custom-value".to_string(),
+            },
+        ];
+
+        for value in values {
+            conn.execute(
+                &Statement::sql("INSERT INTO t VALUES (?)").with_params(vec![value.clone()]),
+                &ExecOptions::default(),
+            )
+            .unwrap();
+        }
+
+        let Execution::Rows(mut stream) = conn
+            .execute(
+                &Statement::sql("SELECT COUNT(*) FROM t"),
+                &ExecOptions::default(),
+            )
+            .unwrap()
+        else {
+            panic!("expected rows");
+        };
+        let batch = stream.next_batch().unwrap().unwrap();
+        assert_eq!(batch.rows, vec![vec![Value::Int(15)]]);
+    }
+
+    #[test]
+    fn map_err_carries_the_underlying_message() {
+        let mut conn = connect();
+        match conn.execute(&Statement::sql("NOT VALID SQL"), &ExecOptions::default()) {
+            Err(error) => {
+                assert_eq!(error.code, DbErrorCode::Unknown);
+                assert!(!error.message.is_empty());
+            }
+            Ok(_) => panic!("expected an error"),
+        }
+    }
 }

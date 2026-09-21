@@ -17,6 +17,8 @@ pub mod settings;
 pub mod tree;
 // ---- database: F3 ----
 pub mod console;
+// ---- database: F4 ----
+pub mod edit;
 
 pub use service::DatabaseServiceRust;
 

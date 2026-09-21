@@ -240,6 +240,25 @@ impl EditBuffer {
         self.inserted_edits.clear();
     }
 
+    /// Replaces the "original fetched rows" this buffer reads from — a
+    /// grid pages rows in lazily (`ResultProvider::fetchMore`), which can
+    /// land *after* this buffer was first built for an already-editable
+    /// result; every mutating call re-syncs from the current full row
+    /// list first so `self.rows[row]` never indexes past what has
+    /// actually been fetched. Staged edits/adds/deletes are untouched —
+    /// only the "what was originally there" baseline moves.
+    pub fn sync_rows(&mut self, rows: Vec<Vec<Value>>) {
+        self.rows = rows;
+    }
+
+    /// How many original (fetched) rows this buffer currently knows
+    /// about — the boundary between an existing row's grid index and an
+    /// inserted row's (this module's own doc comment on grid row
+    /// addressing).
+    pub fn fetched_row_count(&self) -> usize {
+        self.rows.len()
+    }
+
     /// The `WHERE`-clause fragment (text + params, appended to `params`)
     /// identifying `row` — the primary-key columns if there are any,
     /// otherwise every original column (the `NoPrimaryKey` policy above).
@@ -679,5 +698,28 @@ mod tests {
         assert_eq!(plan.statements.len(), 2);
         assert!(plan.statements[0].text.starts_with("DELETE"));
         assert!(plan.statements[1].text.starts_with("INSERT"));
+    }
+
+    #[test]
+    fn sync_rows_lets_a_later_fetched_row_be_edited_without_panicking() {
+        let mut buffer = buffer_with_key();
+        assert_eq!(buffer.fetched_row_count(), 1);
+        buffer.sync_rows(vec![
+            vec![
+                Value::Int(1),
+                Value::Text("alice".to_string()),
+                Value::Text("alice@example.com".to_string()),
+            ],
+            vec![
+                Value::Int(2),
+                Value::Text("bob".to_string()),
+                Value::Text("bob@example.com".to_string()),
+            ],
+        ]);
+        assert_eq!(buffer.fetched_row_count(), 2);
+        buffer.stage(1, "name", Value::Text("bobby".to_string()));
+        let plan = buffer.to_dml_plan(Dialect::Postgres);
+        assert_eq!(plan.statements.len(), 1);
+        assert!(plan.statements[0].params.contains(&Value::Int(2)));
     }
 }

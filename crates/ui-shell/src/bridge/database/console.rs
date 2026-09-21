@@ -32,6 +32,7 @@ use crate::bridge::ffi::{
     FfiResult,
 };
 
+use super::edit::{apply_edit_lookup, apply_submit_outcome, EditState};
 use super::sessions::{BatchOutcome, SessionCommand, SessionEvent, SessionWorker};
 
 const CELL_SEP: char = '\u{1f}'; // unit separator — no `Value::display` text contains it.
@@ -65,32 +66,49 @@ fn policy_to_setting(policy: FfiDbScriptPolicy) -> &'static str {
 }
 
 /// One console tab's live state.
-struct ConsoleState {
-    source_id: String,
-    worker: SessionWorker,
-    dialect: Dialect,
-    guard: Guard,
-    tx_mode: FfiDbTxMode,
-    script_policy: FfiDbScriptPolicy,
-    page_size: u32,
-    history: bool,
+///
+/// `pub(crate)` throughout: `bridge::database::edit` (F4.1/F4.2, split out
+/// once this module hit the file-size ceiling) reads/mutates this from a
+/// sibling file, the same "internal to the crate, not to this one module"
+/// visibility `Shared` below already needed for `ConsoleService`/
+/// `ResultProvider` to share it.
+pub(crate) struct ConsoleState {
+    pub(crate) source_id: String,
+    pub(crate) worker: SessionWorker,
+    pub(crate) dialect: Dialect,
+    pub(crate) guard: Guard,
+    pub(crate) tx_mode: FfiDbTxMode,
+    pub(crate) script_policy: FfiDbScriptPolicy,
+    pub(crate) page_size: u32,
+    pub(crate) history: bool,
     /// The result this console's *last* execute started, if it is still
     /// the active one — a fresh `execute` on the same console drops
     /// whatever the previous one had parked (this module's own doc
     /// comment's "closes it first" rule).
-    current_result: Option<u64>,
+    pub(crate) current_result: Option<u64>,
     /// A multi-statement run still in progress: the statements not yet
     /// dispatched, plus the policy governing what happens on a failure.
-    pending: Option<PendingScript>,
+    pub(crate) pending: Option<PendingScript>,
     /// Schema names from the source's own `Names`-level snapshot, for the
     /// console bar's schema picker (database-tools-plan F3e) — empty
     /// until the background `Introspect` this console kicks off at
     /// `attach` time lands, and always empty for a dialect with no schema
     /// concept (SQLite).
-    schemas: Vec<String>,
+    pub(crate) schemas: Vec<String>,
+    /// Result ids awaiting a `Full`-level introspect's answer to F4.1's
+    /// editability question, oldest first — the worker runs commands in
+    /// order, so the front of this queue is always the one the next
+    /// `Full`-level `Introspected` reply answers.
+    pub(crate) pending_edit_lookups:
+        std::collections::VecDeque<(u64, db_sql::single_table::TableRef)>,
+    /// The one result a `submit` (F4.2) is waiting on an `Applied` reply
+    /// for — `None` once answered. A console only ever has one submit in
+    /// flight at a time (the grid disables Submit while one is pending),
+    /// so a single slot (not a queue) is enough.
+    pub(crate) submitting: Option<u64>,
 }
 
-struct PendingScript {
+pub(crate) struct PendingScript {
     remaining: std::collections::VecDeque<String>,
     index: u32,
     total: u32,
@@ -102,42 +120,48 @@ struct PendingScript {
 
 /// One execution's accumulated rows and outcome — what `ResultProvider`
 /// reads from, and what `rowsAppended`/`executionFinished` describe.
-struct ResultState {
-    tab_id: u64,
-    columns: Vec<ColumnMeta>,
-    set: ResultSet,
+/// `pub(crate)`: see `ConsoleState`'s own doc comment.
+pub(crate) struct ResultState {
+    pub(crate) tab_id: u64,
+    pub(crate) columns: Vec<ColumnMeta>,
+    pub(crate) set: ResultSet,
     /// The underlying stream is exhausted (or the statement was not a
     /// `Rows` shape at all) — nothing further to page. Distinct from
     /// `reported`: a `Rows` result reports `executionFinished` on its
     /// *first* batch, long before this is ever `true`.
-    done: bool,
+    pub(crate) done: bool,
     /// `executionFinished` has already fired for this result — guards
     /// [`ffi::ConsoleService::report_and_advance`] so a later
     /// `ResultProvider::fetchMore` page never re-reports or re-advances a
     /// script a second time.
-    reported: bool,
-    cap_reached: bool,
-    affected: Option<u64>,
-    error: Option<DbError>,
-    started_at: Instant,
-    elapsed_ms: Option<u64>,
+    pub(crate) reported: bool,
+    pub(crate) cap_reached: bool,
+    pub(crate) affected: Option<u64>,
+    pub(crate) error: Option<DbError>,
+    pub(crate) started_at: Instant,
+    pub(crate) elapsed_ms: Option<u64>,
     /// The statement text this result came from — `applyClauses` wraps
     /// this as a derived table rather than needing its own copy tracked
     /// by the caller.
-    statement_text: String,
+    pub(crate) statement_text: String,
+    /// The data editor's own decision for this result (F4.1) — `Unknown`
+    /// until the first `Rows` batch's columns are in hand (and, for a
+    /// candidate single-table result, until the `Full`-level introspect
+    /// this triggers lands too).
+    pub(crate) edit: EditState,
 }
 
 /// State `ConsoleService` and `ResultProvider` both read/mutate — see this
 /// module's doc comment.
 #[derive(Default)]
 pub struct Shared {
-    consoles: HashMap<u64, ConsoleState>,
-    results: HashMap<u64, ResultState>,
+    pub(crate) consoles: HashMap<u64, ConsoleState>,
+    pub(crate) results: HashMap<u64, ResultState>,
     next_result_id: u64,
 }
 
 impl Shared {
-    fn alloc_result_id(&mut self) -> u64 {
+    pub(crate) fn alloc_result_id(&mut self) -> u64 {
         self.next_result_id += 1;
         self.next_result_id
     }
@@ -208,13 +232,20 @@ fn collect_schema_names(roots: &[db_core::schema::Node]) -> Vec<String> {
 }
 
 pub struct ConsoleServiceRust {
-    shared: Rc<std::cell::RefCell<Shared>>,
+    pub(crate) shared: Rc<std::cell::RefCell<Shared>>,
+    /// For `dmlPreview` (F4.2) only — opening a `db-dml` virtual document
+    /// is `AppSession`'s own call, mirroring `DatabaseServiceRust::session`
+    /// exactly (that module's own doc comment on why cxx-qt gives every
+    /// QObject its own `Default`-constructed state rather than a shared
+    /// instance passed in).
+    pub(crate) session: Rc<std::cell::RefCell<app_core::AppSession>>,
 }
 
 impl Default for ConsoleServiceRust {
     fn default() -> Self {
         Self {
             shared: crate::bridge::registry::shared_database_consoles(),
+            session: crate::bridge::registry::shared_session(),
         }
     }
 }
@@ -284,6 +315,8 @@ impl ffi::ConsoleService {
                                 current_result: None,
                                 pending: None,
                                 schemas: Vec::new(),
+                                pending_edit_lookups: std::collections::VecDeque::new(),
+                                submitting: None,
                             },
                         );
                         // The schema picker's own list — a `Names`-level
@@ -675,6 +708,7 @@ impl ffi::ConsoleService {
                     started_at: Instant::now(),
                     elapsed_ms: None,
                     statement_text: statement.clone(),
+                    edit: EditState::Unknown,
                 },
             );
             let worker_send = shared.consoles[&tab_id]
@@ -829,13 +863,35 @@ fn apply_event(mut service: Pin<&mut ffi::ConsoleService>, tab_id: u64, event: S
             }
         }
         SessionEvent::Introspected { generation, result } => {
-            if is_current(&service, tab_id, generation) {
-                if let Ok(snapshot) = result {
+            if !is_current(&service, tab_id, generation) {
+                return;
+            }
+            match result {
+                Ok(snapshot) if snapshot.level == db_core::schema::IntrospectLevel::Full => {
+                    apply_edit_lookup(service, tab_id, Ok(snapshot));
+                }
+                Err(error)
+                    if service
+                        .shared
+                        .borrow()
+                        .consoles
+                        .get(&tab_id)
+                        .is_some_and(|c| !c.pending_edit_lookups.is_empty()) =>
+                {
+                    apply_edit_lookup(service, tab_id, Err(error));
+                }
+                Ok(snapshot) => {
                     let names = collect_schema_names(&snapshot.roots);
                     if let Some(console) = service.shared.borrow_mut().consoles.get_mut(&tab_id) {
                         console.schemas = names;
                     }
                 }
+                Err(_) => {}
+            }
+        }
+        SessionEvent::Applied { generation, result } => {
+            if is_current(&service, tab_id, generation) {
+                apply_submit_outcome(service, tab_id, result);
             }
         }
         SessionEvent::Ddl { .. } | SessionEvent::Ran { .. } => {}
@@ -884,6 +940,7 @@ fn apply_batch(mut service: Pin<&mut ffi::ConsoleService>, tab_id: u64, outcome:
                 }
                 (first, count, cap_reached)
             };
+            service.as_mut().start_editability_check(tab_id, result_id);
             if count > 0 {
                 service.as_mut().rows_appended(result_id, first, count);
             }
@@ -913,7 +970,7 @@ fn apply_batch(mut service: Pin<&mut ffi::ConsoleService>, tab_id: u64, outcome:
 // ---- ResultProvider ----
 
 pub struct ResultProviderRust {
-    shared: Rc<std::cell::RefCell<Shared>>,
+    pub(crate) shared: Rc<std::cell::RefCell<Shared>>,
     page_sizes: std::cell::RefCell<HashMap<u64, u32>>,
 }
 
@@ -1197,6 +1254,7 @@ impl ffi::ResultProvider {
                 started_at: Instant::now(),
                 elapsed_ms: None,
                 statement_text: statement.clone(),
+                edit: EditState::Unknown,
             },
         );
         shared.consoles.get_mut(&tab_id).unwrap().current_result = Some(new_id);

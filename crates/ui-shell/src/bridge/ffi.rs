@@ -10452,6 +10452,18 @@ mod ffi {
         #[cxx_name = "availableSources"]
         fn available_sources(self: Pin<&mut ConsoleService>) -> Vec<FfiDbSourceRow>;
 
+        /// See `ConsoleService::dml_preview`'s own doc comment
+        /// (`bridge::database::console`) — F4.2's DML preview.
+        #[qinvokable]
+        #[cxx_name = "dmlPreview"]
+        fn dml_preview(self: Pin<&mut ConsoleService>, result_id: u64) -> FfiResult;
+
+        /// See `ConsoleService::submit`'s own doc comment
+        /// (`bridge::database::console`) — F4.2's submit; the outcome
+        /// arrives asynchronously through `submitFinished`.
+        #[qinvokable]
+        fn submit(self: Pin<&mut ConsoleService>, result_id: u64) -> FfiResult;
+
         /// A statement started executing — `index`/`count` are 1-based
         /// position within a multi-statement run (`1`/`1` for a lone
         /// statement).
@@ -10507,6 +10519,49 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "capReached"]
         fn cap_reached_signal(self: Pin<&mut ConsoleService>, result_id: u64);
+
+        /// `result_id`'s editability decision is in (F4.1) — `reason` is
+        /// empty when `editable`. Fires once a candidate single-table
+        /// result's `Full`-level introspect lands, or immediately for a
+        /// read-only source / a statement that is not a single table.
+        #[qsignal]
+        #[cxx_name = "editabilityChanged"]
+        fn editability_changed(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            editable: bool,
+            reason: QString,
+        );
+
+        /// `result_id`'s `dmlPreview` opened a tab — same shape as
+        /// `DatabaseService::virtualDocumentOpened`, a separate signal
+        /// because it is a different `QObject`.
+        #[qsignal]
+        #[cxx_name = "virtualDocumentOpened"]
+        fn virtual_document_opened(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            title: QString,
+            is_new: bool,
+        );
+
+        /// `submit`'s own outcome (F4.2) — `message` is a human summary on
+        /// success, the failing statement's error text otherwise.
+        #[qsignal]
+        #[cxx_name = "submitFinished"]
+        fn submit_finished(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            ok: bool,
+            message: QString,
+        );
+
+        /// A successful submit's own refresh: `old_result_id`'s page is
+        /// stale, `new_result_id` is the freshly re-run replacement the
+        /// grid should switch to.
+        #[qsignal]
+        #[cxx_name = "resultRefreshed"]
+        fn result_refreshed(self: Pin<&mut ConsoleService>, old_result_id: u64, new_result_id: u64);
     }
 
     impl cxx_qt::Threading for ConsoleService {}
@@ -10583,6 +10638,78 @@ mod ffi {
             where_clause: &QString,
             order_by: &QString,
         ) -> FfiResult;
+
+        // ---- data editor (F4.1/F4.2) ----
+
+        /// See `EditState`'s own doc comment (`bridge::database::console`).
+        #[qinvokable]
+        #[cxx_name = "isEditable"]
+        fn is_editable(self: Pin<&mut ResultProvider>, result_id: u64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "notEditableReason"]
+        fn not_editable_reason(self: Pin<&mut ResultProvider>, result_id: u64) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "pendingCount"]
+        fn pending_count(self: Pin<&mut ResultProvider>, result_id: u64) -> u64;
+
+        /// See `ResultProvider::set_cell`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        #[cxx_name = "setCell"]
+        fn set_cell(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+            text: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "setNull"]
+        fn set_null(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "setDefault"]
+        fn set_default(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "revertCell"]
+        fn revert_cell(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        /// See `ResultProvider::add_row`'s own doc comment — the new
+        /// row's grid index travels back in `FfiResult::message`.
+        #[qinvokable]
+        #[cxx_name = "addRow"]
+        fn add_row(self: Pin<&mut ResultProvider>, result_id: u64) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "cloneRow"]
+        fn clone_row(self: Pin<&mut ResultProvider>, result_id: u64, row: u64) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "deleteRows"]
+        fn delete_rows(self: Pin<&mut ResultProvider>, result_id: u64, rows: Vec<u64>)
+            -> FfiResult;
+
+        #[qinvokable]
+        fn revert(self: Pin<&mut ResultProvider>, result_id: u64);
     }
 
     impl cxx_qt::Threading for ResultProvider {}

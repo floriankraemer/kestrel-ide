@@ -911,6 +911,50 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Database",
         default_shortcut: "",
     },
+    // F4.2: the data editor's own grid actions.
+    ActionDef {
+        id: "database.submit",
+        label: "Submit",
+        category: "Database",
+        // The plan's own suggestion, `Ctrl+Return`, is already
+        // `database.run`'s default and this keymap has no per-widget-focus
+        // scoping (`Keymap::conflicts` checks every action globally) — this
+        // codebase's own free slot for the same "run/submit" gesture.
+        default_shortcut: "Ctrl+Alt+Return",
+    },
+    ActionDef {
+        id: "database.revert",
+        label: "Revert Changes",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.addRow",
+        label: "Add Row",
+        category: "Database",
+        default_shortcut: "Alt+Insert",
+    },
+    ActionDef {
+        id: "database.deleteRow",
+        label: "Delete Row",
+        category: "Database",
+        // `Ctrl+Y` (the plan's own suggestion, IntelliJ's convention) is
+        // already `edit.deleteLine`'s default in this keymap — `Ctrl+Delete`
+        // is this codebase's own free slot for the same action.
+        default_shortcut: "Ctrl+Delete",
+    },
+    ActionDef {
+        id: "database.cloneRow",
+        label: "Clone Row",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.previewDml",
+        label: "Preview DML",
+        category: "Database",
+        default_shortcut: "",
+    },
     // F3.4/F3.5: the Results dock.
     ActionDef {
         id: "view.databaseResults",

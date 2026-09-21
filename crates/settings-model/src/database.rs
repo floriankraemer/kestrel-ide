@@ -133,6 +133,9 @@ pub fn commit(draft: &DataSourceDraft) -> DataSourceSetting {
         // (`ui_shell::bridge::database::settings::commit`'s own doc
         // comment on why the caller must carry an existing value forward).
         script_policy: String::new(),
+        // Same reasoning as `script_policy` above: not part of this
+        // dialog's draft, the data editor's own affordance owns it.
+        no_primary_key_policy: String::new(),
         url: draft.url.clone(),
         ssl: SslSetting {
             mode: draft.ssl_mode.clone(),

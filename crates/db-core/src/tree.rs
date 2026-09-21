@@ -112,6 +112,12 @@ pub struct TreeRow {
     /// tree asks for them on first expand otherwise (`Children::NotLoaded`
     /// surfaced up through here).
     pub loaded: bool,
+    /// The real ancestry of schema-object names down to this row —
+    /// `node_id` with every synthetic folder segment stripped out, so a
+    /// caller building an `IntrospectScope`/`ObjectRef` for "expand" or
+    /// "Go to DDL" never has to guess which `/`-separated segment of
+    /// `node_id` was a folder label and which was a real object name.
+    pub object_path: Vec<String>,
 }
 
 /// A tree row is either a real schema object or a synthetic grouping
@@ -441,13 +447,14 @@ pub fn flatten(roots: &[Node], options: &FlattenOptions) -> Vec<TreeRow> {
     let mut rows = Vec::new();
     let mut refs: Vec<&Node> = roots.iter().collect();
     sort_nodes(&mut refs, options.sort);
-    push_children(&refs, "", 0, options, &mut rows);
+    push_children(&refs, "", &[], 0, options, &mut rows);
     rows
 }
 
 fn push_children(
     nodes: &[&Node],
     parent_id: &str,
+    object_path: &[String],
     depth: u32,
     options: &FlattenOptions,
     out: &mut Vec<TreeRow>,
@@ -464,7 +471,7 @@ fn push_children(
     match options.group_mode {
         GroupMode::Flat => {
             for node in filtered {
-                push_node(node, parent_id, depth, options, out);
+                push_node(node, parent_id, object_path, depth, options, out);
             }
         }
         GroupMode::ByObjectType => {
@@ -495,7 +502,7 @@ fn push_children(
                 }
             }
             for node in direct {
-                push_node(node, parent_id, depth, options, out);
+                push_node(node, parent_id, object_path, depth, options, out);
             }
             folders.sort_by_key(|(kind, _)| folder_order(*kind));
             for (folder, mut bucket) in folders {
@@ -514,9 +521,12 @@ fn push_children(
                     actions: ActionSet::NONE,
                     expandable: true,
                     loaded: true,
+                    // A folder is never a real object — its children's
+                    // own ancestry picks up exactly where it left off.
+                    object_path: object_path.to_vec(),
                 });
                 for node in bucket {
-                    push_node(node, &folder_id, depth + 1, options, out);
+                    push_node(node, &folder_id, object_path, depth + 1, options, out);
                 }
             }
         }
@@ -526,6 +536,7 @@ fn push_children(
 fn push_node(
     node: &Node,
     parent_id: &str,
+    object_path: &[String],
     depth: u32,
     options: &FlattenOptions,
     out: &mut Vec<TreeRow>,
@@ -535,6 +546,8 @@ fn push_node(
     } else {
         format!("{parent_id}/{}", node.name)
     };
+    let mut child_path = object_path.to_vec();
+    child_path.push(node.name.clone());
     let (expandable, loaded, children) = match &node.children {
         Children::NotLoaded => (is_expandable_kind(node.kind), false, None),
         Children::Loaded(children) => (
@@ -552,11 +565,12 @@ fn push_node(
         actions: actions_for(node.kind, options.caps),
         expandable,
         loaded,
+        object_path: child_path.clone(),
     });
     if let Some(children) = children {
         let mut refs: Vec<&Node> = children.iter().collect();
         sort_nodes(&mut refs, options.sort);
-        push_children(&refs, &node_id, depth + 1, options, out);
+        push_children(&refs, &node_id, &child_path, depth + 1, options, out);
     }
 }
 
@@ -823,6 +837,21 @@ mod tests {
         assert!(both.contains(ActionSet::DROP));
         assert!(both.contains(ActionSet::RENAME));
         assert!(!both.contains(ActionSet::TRUNCATE));
+    }
+
+    #[test]
+    fn object_path_skips_synthetic_folder_segments_but_node_id_keeps_them() {
+        let roots = vec![table("users", vec!["id"])];
+        let rows = flatten(&roots, &FlattenOptions::default());
+        let users_row = rows.iter().find(|r| r.label == "users").unwrap();
+        assert_eq!(users_row.node_id, "Tables/users");
+        assert_eq!(users_row.object_path, vec!["users".to_string()]);
+        let id_row = rows.iter().find(|r| r.label == "id").unwrap();
+        assert_eq!(id_row.node_id, "Tables/users/id");
+        assert_eq!(
+            id_row.object_path,
+            vec!["users".to_string(), "id".to_string()]
+        );
     }
 
     #[test]

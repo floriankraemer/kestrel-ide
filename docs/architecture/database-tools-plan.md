@@ -327,11 +327,15 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F2.1 — introspection levels (Names/Columns/Full), lazy `Node` expansion | open | |
-| F2.2 — flattened tree rows + actions matrix, filters, grouping, refresh/force | open | |
-| F2.3 — Go to DDL via a `db-ddl` virtual document scheme | open | |
-| F2.4 — SQL Generator; rename/drop/truncate/comment via `db_sql::ddl` | open | |
-| F2.5 — `database` dock (`database_panel`), 5k-table NFR bench | open | |
+| F2.1 — introspection levels (Names/Columns/Full), lazy `Node` expansion | done (sqlite+postgres; ADBC/ODBC compile but do not honour `level` yet) | 310fcb3 |
+| F2.2 — flattened tree rows + actions matrix, filters, grouping, refresh/force | done | 310fcb3, 8544815 |
+| F2.3 — Go to DDL via a `db-ddl` virtual document scheme | done (tab title is `<object>.sql`, not the literal wording — see database-tools.md §4) | 670e0a2 |
+| F2.4 — SQL Generator; rename/drop/truncate/comment via `db_core::ddl` (moved from the planned `db_sql::ddl` — `db-sql` is F3's crate to create, not F2's) | done (confirmation dialog does not yet show the exact generated SQL; no auto-refresh after a successful action) | 310fcb3, 670e0a2 |
+| F2.5 — `database` dock (`database_panel`), 5k-table NFR bench | dock done; **NFR bench not run** (see follow-up row below) | 670e0a2 |
+| F2 follow-up — `e2e_database` E2E flow (needs `database_panel.cpp` row-rect `e2eMark` reporting first) | open | |
+| F2 follow-up — 5 000-table SQLite `db-integration` NFR bench + §10 numbers | open | |
+| F2 follow-up — Postgres TLS (`SslMode::{Prefer,Require,VerifyCa,VerifyFull}` via `rustls-pemfile`/`rustls-native-certs`, `ring` only) | open | |
+| F2 follow-up — ADBC/ODBC `IntrospectLevel` honoured (currently always fetch at existing depth) | open | |
 
 ### F3 — console + grid
 

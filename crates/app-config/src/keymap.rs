@@ -877,6 +877,38 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "Alt+4",
     },
+    // database-tools-plan F3.3: the console bar's own actions.
+    ActionDef {
+        id: "database.run",
+        label: "Run Statement",
+        category: "Database",
+        default_shortcut: "Ctrl+Return",
+    },
+    ActionDef {
+        id: "database.cancel",
+        label: "Cancel Execution",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.commit",
+        label: "Commit",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.rollback",
+        label: "Rollback",
+        category: "Database",
+        default_shortcut: "",
+    },
+    // F3.4/F3.5: the Results dock.
+    ActionDef {
+        id: "view.databaseResults",
+        label: "Database Results",
+        category: "View",
+        default_shortcut: "",
+    },
     // Last, because the Help menu is last in the bar. Unbound by default:
     // every platform's convention for About is the menu, not a key.
     ActionDef {

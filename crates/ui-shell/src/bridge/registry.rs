@@ -29,6 +29,20 @@ pub(crate) fn shared_session() -> Rc<RefCell<AppSession>> {
     APP_SESSION.with(Rc::clone)
 }
 
+thread_local! {
+    /// `ConsoleService` and `ResultProvider` (database-tools plan F3.1/F3.4)
+    /// are two separate QObjects that both need the same live consoles and
+    /// in-flight results — cxx-qt's `Default`-construction gives neither a
+    /// way to receive the other's handle, so both take it from here, the
+    /// same as every other cross-QObject state in this module.
+    static DATABASE_CONSOLES: Rc<RefCell<crate::bridge::database::console::Shared>> =
+        Rc::new(RefCell::new(crate::bridge::database::console::Shared::default()));
+}
+
+pub(crate) fn shared_database_consoles() -> Rc<RefCell<crate::bridge::database::console::Shared>> {
+    DATABASE_CONSOLES.with(Rc::clone)
+}
+
 /// The one icon theme in this process, plus the appearance the current
 /// colour theme asks for.
 ///

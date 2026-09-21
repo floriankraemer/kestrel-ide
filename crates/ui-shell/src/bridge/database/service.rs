@@ -115,7 +115,7 @@ impl Default for DatabaseServiceRust {
     }
 }
 
-fn configured_sources() -> Vec<DataSourceSetting> {
+pub(super) fn configured_sources() -> Vec<DataSourceSetting> {
     let global = crate::bridge::convert::load_settings();
     let project = crate::bridge::convert::load_project_settings();
     settings_model::scope::resolve_database_sources(&global, &project)
@@ -124,7 +124,7 @@ fn configured_sources() -> Vec<DataSourceSetting> {
         .collect()
 }
 
-fn secrets_for(id: &str) -> Secrets {
+pub(super) fn secrets_for(id: &str) -> Secrets {
     let store = secret_store::SecretStore::new(SECRET_SERVICE);
     Secrets {
         password: store.load(id).ok().flatten(),
@@ -647,6 +647,47 @@ impl ffi::DatabaseService {
         source.pending.push_back(Pending::Ddl { key, title });
         FfiResult::default()
     }
+
+    /// "Open Console"/"Jump to console" (F3.1/F3.3) — see this slot's own
+    /// doc comment in `ffi.rs`.
+    pub fn open_console(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let composite = node_id.to_string();
+        let Some((source_id, _path)) = parse_node_id(&composite) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
+        };
+        let source_id = source_id.to_string();
+        let config_dir = app_core::resolve_config_dir();
+        let dir = db_core::console::console_dir(&config_dir, &source_id);
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            return errors::failure(errors::CODE_SETTINGS_IO, error.to_string());
+        }
+        let mut existing: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        existing.sort();
+        let path = match existing.into_iter().next() {
+            Some(path) => path,
+            None => {
+                let path = db_core::console::console_file(&config_dir, &source_id, 1);
+                if let Err(error) = std::fs::write(&path, "") {
+                    return errors::failure(errors::CODE_SETTINGS_IO, error.to_string());
+                }
+                path
+            }
+        };
+        let path_string = path.to_string_lossy().to_string();
+        self.as_mut().console_file_ready(
+            QString::from(path_string.as_str()),
+            QString::from(source_id.as_str()),
+        );
+        FfiResult::default()
+    }
 }
 
 /// Applies one `SessionEvent` for `source_id` — always runs on the Qt
@@ -758,6 +799,10 @@ fn apply_event(
                     .action_finished(false, QString::from(error.to_string().as_str())),
             }
         }
+        // The tree's own worker never sends `Execute`/`FetchMore`/tx
+        // commands — those are `ConsoleService`'s (F3.3), which runs each
+        // console on its own `SessionWorker` rather than this one.
+        SessionEvent::Batch { .. } | SessionEvent::TxChanged { .. } => {}
     }
 }
 

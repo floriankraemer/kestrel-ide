@@ -126,6 +126,15 @@ impl Session {
         self.connection.dialect()
     }
 
+    /// The connection's server-side cancel handle, obtained once up front
+    /// (driver.rs's own doc comment: "obtained *before* `execute` so it
+    /// stays usable even if the statement itself never returns") — a
+    /// caller stores this alongside the session and invokes it from
+    /// whatever thread is not itself blocked inside [`Self::execute`].
+    pub fn cancel_handle(&self) -> Option<Box<dyn crate::driver::CancelHandle>> {
+        self.connection.cancel_handle()
+    }
+
     pub fn introspect(
         &mut self,
         scope: &crate::schema::IntrospectScope,
@@ -424,6 +433,12 @@ mod tests {
         );
         assert_eq!(outcome.executed, 1);
         assert!(outcome.errors.is_empty());
+    }
+
+    #[test]
+    fn cancel_handle_delegates_to_the_connection() {
+        let session = session();
+        assert!(session.cancel_handle().is_none());
     }
 
     #[test]

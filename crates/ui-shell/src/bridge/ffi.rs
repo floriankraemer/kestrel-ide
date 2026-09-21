@@ -20,6 +20,7 @@ use crate::bridge::build::BuildServiceRust;
 use crate::bridge::build_tools::{BuildToolsEditorRust, BuildToolsServiceRust};
 use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
+use crate::bridge::database::console::{ConsoleServiceRust, ResultProviderRust};
 use crate::bridge::database::settings::DataSourceEditorRust;
 use crate::bridge::database::DatabaseServiceRust;
 use crate::bridge::debug::DebugServiceRust;
@@ -10228,9 +10229,320 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "actionFinished"]
         fn action_finished(self: Pin<&mut DatabaseService>, ok: bool, message: QString);
+
+        /// "Open Console"/"Jump to console" (F3.1/F3.3): finds `node_id`'s
+        /// source's first existing console file under `db_core::console::
+        /// console_dir`, or creates `console1.sql` if none exist yet, and
+        /// reports its path through `consoleFileReady` — the two actions
+        /// are the same call, since "open or focus" is exactly what
+        /// `EditorTabs::openFile` already does for a real file.
+        #[qinvokable]
+        #[cxx_name = "openConsole"]
+        fn open_console(self: Pin<&mut DatabaseService>, node_id: &QString) -> FfiResult;
+
+        /// A console file is ready to be opened as a normal editor tab —
+        /// `editor_tabs.cpp` wires this straight to `openFile`, the same
+        /// direct wiring `virtualDocumentOpened` already gets there.
+        #[qsignal]
+        #[cxx_name = "consoleFileReady"]
+        fn console_file_ready(self: Pin<&mut DatabaseService>, path: QString, source_id: QString);
     }
 
     impl cxx_qt::Threading for DatabaseService {}
+
+    // ---- database: F3 ----
+
+    /// Which console statement(s) to run (F3.3): `Statement` splits the
+    /// whole console buffer and runs only the one the caret sits in;
+    /// `Selection` splits and runs just the given text, in order; `File`
+    /// is `executeFile`'s own path (reads from disk), never a valid
+    /// `execute` argument.
+    enum FfiDbExecWhat {
+        Statement,
+        Selection,
+        File,
+    }
+
+    /// Auto commits every statement on its own; Manual opens a
+    /// transaction on the first statement, held open until `commit`/
+    /// `rollback`.
+    enum FfiDbTxMode {
+        Auto,
+        Manual,
+    }
+
+    /// How a multi-statement run responds to one statement failing.
+    #[derive(PartialEq, Eq)]
+    enum FfiDbScriptPolicy {
+        StopOnError,
+        Continue,
+        Ask,
+    }
+
+    enum FfiDbTextFormat {
+        Csv,
+        Tsv,
+        Json,
+    }
+
+    enum FfiDbAggOp {
+        Sum,
+        Avg,
+        Min,
+        Max,
+        Count,
+    }
+
+    /// `db_core::error::DbError` crossed the seam (ADR-0003): `code` is
+    /// `DbErrorCode`'s own discriminant, `line`/`col` are `-1` when the
+    /// backend gives no statement position for the failure. `code == 0`
+    /// (never a real `DbErrorCode` discriminant, `Unknown` is `0`... a
+    /// caller distinguishes "no error" by the signal's own `ok` bool, not
+    /// by this code, since `Unknown` legitimately shares `0`).
+    #[derive(Default)]
+    struct FfiDbError {
+        code: i32,
+        message: QString,
+        line: i32,
+        col: i32,
+    }
+
+    /// One result column (F3.4), 1:1 with `db_core::value::ColumnMeta`.
+    struct FfiDbColumn {
+        name: QString,
+        #[cxx_name = "typeName"]
+        type_name: QString,
+        nullable: bool,
+    }
+
+    /// One result row, already rendered (`Value::display`). `cells`/
+    /// `nulls` are `\u{1f}`-joined rather than `Vec<QString>` fields — a
+    /// `Vec` field on a shared struct is not a shape cxx supports (see
+    /// `FfiRunConfig::before_launch`'s own doc comment for the same
+    /// convention).
+    struct FfiDbRow {
+        cells: QString,
+        nulls: QString,
+    }
+
+    extern "RustQt" {
+        /// One console tab's execution engine (F3.1/F3.3): a dedicated
+        /// `SessionWorker` per attached tab (never the Database dock's
+        /// tree worker — see `bridge::database::console`'s own doc
+        /// comment), read-only-guarded through `db_sql::classify::
+        /// SqlClassifier`.
+        #[qobject]
+        type ConsoleService = super::ConsoleServiceRust;
+
+        #[qinvokable]
+        fn attach(self: Pin<&mut ConsoleService>, tab_id: u64, source_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        fn detach(self: Pin<&mut ConsoleService>, tab_id: u64);
+
+        #[qinvokable]
+        #[cxx_name = "setTxMode"]
+        fn set_tx_mode(self: Pin<&mut ConsoleService>, tab_id: u64, mode: FfiDbTxMode)
+            -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "setScriptPolicy"]
+        fn set_script_policy(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            policy: FfiDbScriptPolicy,
+        );
+
+        /// Runs a statement/selection against `tab_id`'s attached source —
+        /// see `FfiDbExecWhat`'s own doc comment for what `text`/`caret`
+        /// mean per variant.
+        #[qinvokable]
+        fn execute(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            text: &QString,
+            what: FfiDbExecWhat,
+            caret: u32,
+        ) -> FfiResult;
+
+        /// Runs `path`'s whole contents as a script against `source_id`
+        /// (F3.6's run configuration entry point); `tab_id` is `0` when no
+        /// console tab is involved.
+        #[qinvokable]
+        #[cxx_name = "executeFile"]
+        fn execute_file(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            path: &QString,
+            source_id: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        fn cancel(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiResult;
+
+        #[qinvokable]
+        fn commit(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiResult;
+
+        #[qinvokable]
+        fn rollback(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiResult;
+
+        /// Answers an `askContinue` — see `ConsoleService::resume`'s own
+        /// doc comment (`bridge::database::console`).
+        #[qinvokable]
+        fn resume(self: Pin<&mut ConsoleService>, result_id: u64, proceed: bool);
+
+        /// A source's execution history, statement text only, oldest
+        /// first — never a bound parameter value (ADR-0061 §1).
+        #[qinvokable]
+        fn history(self: Pin<&mut ConsoleService>, source_id: &QString) -> QStringList;
+
+        #[qinvokable]
+        #[cxx_name = "clearHistory"]
+        fn clear_history(self: Pin<&mut ConsoleService>, source_id: &QString) -> FfiResult;
+
+        /// See `ConsoleServiceRust::source_for_path`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "sourceForPath"]
+        fn source_for_path(self: Pin<&mut ConsoleService>, path: &QString) -> QString;
+
+        /// See `ConsoleServiceRust::available_sources`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "availableSources"]
+        fn available_sources(self: Pin<&mut ConsoleService>) -> Vec<FfiDbSourceRow>;
+
+        /// A statement started executing — `index`/`count` are 1-based
+        /// position within a multi-statement run (`1`/`1` for a lone
+        /// statement).
+        #[qsignal]
+        #[cxx_name = "executionStarted"]
+        fn execution_started(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            result_id: u64,
+            index: u32,
+            count: u32,
+        );
+
+        /// `count` more rows landed in `result_id`'s buffer, starting at
+        /// (0-based) `first` — the grid re-reads through `ResultProvider`.
+        #[qsignal]
+        #[cxx_name = "rowsAppended"]
+        fn rows_appended(self: Pin<&mut ConsoleService>, result_id: u64, first: u64, count: u64);
+
+        /// `result_id` is done: `affected` is the row count for a
+        /// `Rows`/`Affected` shape, `0` for a plain `Ok`. `error.code == 0`
+        /// alone never means success — read `ok`.
+        #[qsignal]
+        #[cxx_name = "executionFinished"]
+        fn execution_finished(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            ok: bool,
+            affected: u64,
+            elapsed_ms: u64,
+            error: FfiDbError,
+        );
+
+        /// A `StopOnError`/`Ask`-policy script hit a failing statement and
+        /// more remain — the view offers Continue/Stop, then calls
+        /// `resume`.
+        #[qsignal]
+        #[cxx_name = "askContinue"]
+        fn ask_continue(self: Pin<&mut ConsoleService>, result_id: u64, tab_id: u64);
+
+        /// Free-text status for the console's Output tab (attach/detach
+        /// outcomes, transaction errors) — never a substitute for
+        /// `executionFinished`'s typed error.
+        #[qsignal]
+        #[cxx_name = "outputAppended"]
+        fn output_appended(self: Pin<&mut ConsoleService>, tab_id: u64, text: QString);
+
+        /// A memory-cap-reached signal distinct from `executionFinished`
+        /// (F3.4's own "Fetch more" affordance) — the execution itself
+        /// still finishes normally right after this, since the statement
+        /// did complete, only paging further stopped.
+        #[qsignal]
+        #[cxx_name = "capReached"]
+        fn cap_reached_signal(self: Pin<&mut ConsoleService>, result_id: u64);
+    }
+
+    impl cxx_qt::Threading for ConsoleService {}
+
+    extern "RustQt" {
+        /// A result's rows and text/aggregate views (F3.4/F3.5) — reads
+        /// `bridge::database::console::Shared`, the same state
+        /// `ConsoleService` populates, since cxx-qt gives two QObjects no
+        /// way to share a constructor argument (see that module's own doc
+        /// comment).
+        #[qobject]
+        type ResultProvider = super::ResultProviderRust;
+
+        #[qinvokable]
+        fn columns(self: Pin<&mut ResultProvider>, result_id: u64) -> Vec<FfiDbColumn>;
+
+        #[qinvokable]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: Pin<&mut ResultProvider>, result_id: u64) -> u64;
+
+        #[qinvokable]
+        #[cxx_name = "rowPage"]
+        fn row_page(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            first: u64,
+            count: u64,
+        ) -> Vec<FfiDbRow>;
+
+        /// Asks the parked stream for its next page — `Err` once the
+        /// result already finished (nothing left to fetch) or the console
+        /// detached underneath it.
+        #[qinvokable]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut ResultProvider>, result_id: u64) -> FfiResult;
+
+        /// See `ConsoleServiceRust::fetch_more_available`'s own doc
+        /// comment (`ResultProvider` reads the same shared state).
+        #[qinvokable]
+        #[cxx_name = "fetchMoreAvailable"]
+        fn fetch_more_available(self: Pin<&mut ResultProvider>, result_id: u64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setPageSize"]
+        fn set_page_size(self: Pin<&mut ResultProvider>, result_id: u64, size: u32);
+
+        #[qinvokable]
+        #[cxx_name = "textView"]
+        fn text_view(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            format: FfiDbTextFormat,
+        ) -> QString;
+
+        /// A best-effort aggregate over the rows fetched so far (this
+        /// type's own doc comment on `aggregate`'s ponytail note).
+        #[qinvokable]
+        fn aggregate(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            column: &QString,
+            op: FfiDbAggOp,
+        ) -> QString;
+
+        /// Re-executes the result's statement wrapped as a derived table
+        /// with `WHERE`/`ORDER BY` applied — a fresh execution, reported
+        /// through `ConsoleService`'s own signals (see this module's doc
+        /// comment on why `ResultProvider` cannot emit them itself).
+        #[qinvokable]
+        #[cxx_name = "applyClauses"]
+        fn apply_clauses(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            where_clause: &QString,
+            order_by: &QString,
+        ) -> FfiResult;
+    }
+
+    impl cxx_qt::Threading for ResultProvider {}
 
     unsafe extern "C++" {
         include!("main_window.h");

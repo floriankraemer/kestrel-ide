@@ -49,6 +49,8 @@ container-registry = { path = "../container-registry" }
 # for container-core/jvm-build-core.
 db-core = { path = "../db-core" }
 db-drivers = { path = "../db-drivers" }
+db-sql = { path = "../db-sql" }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 # The OS-keychain password store, service `ide.database` (ADR-0058 §5).
 secret-store = { path = "../secret-store" }
 process-exec = { path = "../process-exec" }

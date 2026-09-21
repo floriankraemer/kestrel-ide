@@ -42,6 +42,7 @@ public:
 
 private:
     void refreshSources();
+    void refreshSchemas();
     void attachCurrentTab();
     void setStatus(const QString &text);
 
@@ -50,6 +51,7 @@ private:
     QComboBox *sourceCombo_;
     QComboBox *txModeCombo_;
     QComboBox *policyCombo_;
+    QComboBox *schemaCombo_;
     QToolButton *runButton_;
     QToolButton *runScriptButton_;
     QToolButton *cancelButton_;

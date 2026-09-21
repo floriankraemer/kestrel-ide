@@ -82,6 +82,12 @@ struct ConsoleState {
     /// A multi-statement run still in progress: the statements not yet
     /// dispatched, plus the policy governing what happens on a failure.
     pending: Option<PendingScript>,
+    /// Schema names from the source's own `Names`-level snapshot, for the
+    /// console bar's schema picker (database-tools-plan F3e) — empty
+    /// until the background `Introspect` this console kicks off at
+    /// `attach` time lands, and always empty for a dialect with no schema
+    /// concept (SQLite).
+    schemas: Vec<String>,
 }
 
 struct PendingScript {
@@ -184,6 +190,23 @@ fn statement_at_caret(text: &str, dialect: Dialect, caret: usize) -> Option<Stri
     }
 }
 
+/// Every `ObjectKind::Schema` node's name anywhere in `roots`, depth-first
+/// — a `Names`-level snapshot is small enough that a full walk costs
+/// nothing, and this stays correct regardless of whether a backend nests
+/// schemas under a catalog root or reports them as the roots themselves.
+fn collect_schema_names(roots: &[db_core::schema::Node]) -> Vec<String> {
+    let mut names = Vec::new();
+    for node in roots {
+        if node.kind == db_core::schema::ObjectKind::Schema {
+            names.push(node.name.clone());
+        }
+        if let db_core::schema::Children::Loaded(children) = &node.children {
+            names.extend(collect_schema_names(children));
+        }
+    }
+    names
+}
+
 pub struct ConsoleServiceRust {
     shared: Rc<std::cell::RefCell<Shared>>,
 }
@@ -260,8 +283,21 @@ impl ffi::ConsoleService {
                                 history,
                                 current_result: None,
                                 pending: None,
+                                schemas: Vec::new(),
                             },
                         );
+                        // The schema picker's own list — a `Names`-level
+                        // introspect, the same cheap level a tree's
+                        // initial expand always uses (`schema.rs`'s own
+                        // doc comment); its reply lands on
+                        // `SessionEvent::Introspected` below.
+                        if let Some(console) = service.shared.borrow().consoles.get(&tab_id) {
+                            let _ = console.worker.send(SessionCommand::Introspect {
+                                scope: db_core::schema::IntrospectScope::default(),
+                                level: db_core::schema::IntrospectLevel::Names,
+                                force: false,
+                            });
+                        }
                         service.as_mut().output_appended(
                             tab_id,
                             QString::from(format!("Attached to '{attach_source_id}'.").as_str()),
@@ -327,6 +363,39 @@ impl ffi::ConsoleService {
             console.source_id.clone()
         };
         super::settings::persist_script_policy(&source_id, policy_to_setting(policy));
+    }
+
+    /// Schema names from `tab_id`'s source's own `Names`-level snapshot —
+    /// empty until `attach`'s own background introspect lands, or always
+    /// for a dialect with no schema concept (`Dialect::
+    /// set_schema_statement`'s own doc comment).
+    pub fn schemas(self: Pin<&mut Self>, tab_id: u64) -> QStringList {
+        self.shared
+            .borrow()
+            .consoles
+            .get(&tab_id)
+            .map(|console| console.schemas.iter().map(QString::from).collect())
+            .unwrap_or_default()
+    }
+
+    /// Switches `tab_id`'s session to `schema`, running the dialect's own
+    /// `SET`/`USE` statement like any other statement (it lands in the
+    /// Output tab, the read-only guard sees it as session control, not a
+    /// data touch — `db_sql::classify`'s own doc comment) — a no-op with
+    /// `code == 0` for a dialect with none.
+    pub fn set_schema(mut self: Pin<&mut Self>, tab_id: u64, schema: &QString) -> FfiResult {
+        let schema = schema.to_string();
+        let dialect = {
+            let shared = self.shared.borrow();
+            let Some(console) = shared.consoles.get(&tab_id) else {
+                return errors::failure(errors::CODE_UNKNOWN_DB_CONSOLE, "no such console");
+            };
+            console.dialect
+        };
+        match dialect.set_schema_statement(&schema) {
+            Some(statement) => self.as_mut().begin_run(tab_id, vec![statement]),
+            None => FfiResult::default(),
+        }
     }
 
     /// Runs `text` against `tab_id`'s attached source. `what` decides how
@@ -752,8 +821,17 @@ fn apply_event(mut service: Pin<&mut ffi::ConsoleService>, tab_id: u64, event: S
                 );
             }
         }
-        SessionEvent::Introspected { .. } | SessionEvent::Ddl { .. } | SessionEvent::Ran { .. } => {
+        SessionEvent::Introspected { generation, result } => {
+            if is_current(&service, tab_id, generation) {
+                if let Ok(snapshot) = result {
+                    let names = collect_schema_names(&snapshot.roots);
+                    if let Some(console) = service.shared.borrow_mut().consoles.get_mut(&tab_id) {
+                        console.schemas = names;
+                    }
+                }
+            }
         }
+        SessionEvent::Ddl { .. } | SessionEvent::Ran { .. } => {}
     }
 }
 

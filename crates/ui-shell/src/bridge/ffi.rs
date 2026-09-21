@@ -10367,6 +10367,17 @@ mod ffi {
         #[cxx_name = "scriptPolicy"]
         fn script_policy(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiDbScriptPolicy;
 
+        /// See `ConsoleService::schemas`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        fn schemas(self: Pin<&mut ConsoleService>, tab_id: u64) -> QStringList;
+
+        /// See `ConsoleService::set_schema`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        #[cxx_name = "setSchema"]
+        fn set_schema(self: Pin<&mut ConsoleService>, tab_id: u64, schema: &QString) -> FfiResult;
+
         /// Runs a statement/selection against `tab_id`'s attached source —
         /// see `FfiDbExecWhat`'s own doc comment for what `text`/`caret`
         /// mean per variant.

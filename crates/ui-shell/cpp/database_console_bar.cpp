@@ -66,6 +66,21 @@ DatabaseConsoleBar::DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *c
             });
     layout->addWidget(policyCombo_);
 
+    schemaCombo_ = new QComboBox(this);
+    schemaCombo_->setMinimumWidth(120);
+    connect(schemaCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int index) {
+                if (currentTabId_ == 0 || index < 0 || schemaCombo_->count() == 0) {
+                    return;
+                }
+                const FfiResult result =
+                  consoleService_->setSchema(currentTabId_, schemaCombo_->itemText(index));
+                if (result.code != 0) {
+                    setStatus(QString(result.message));
+                }
+            });
+    layout->addWidget(schemaCombo_);
+
     runButton_ = new QToolButton(this);
     runButton_->setText(tr("Run"));
     connect(runButton_, &QToolButton::clicked, this, &DatabaseConsoleBar::runClicked);
@@ -117,6 +132,18 @@ DatabaseConsoleBar::DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *c
     connect(runScriptAction, &QAction::triggered, this, &DatabaseConsoleBar::runScriptClicked);
     addAction(runScriptAction);
 
+    // `attach`'s own `Names`-level introspect (`ConsoleServiceRust`'s doc
+    // comment) replies asynchronously, after the "Attached to ..."
+    // `outputAppended` this bar can already observe — ponytail: piggybacks
+    // on that signal rather than a dedicated "schemas changed" one, since
+    // every attach already appends at least that one line.
+    connect(consoleService_, &ConsoleService::outputAppended, this,
+            [this](quint64 tabId, const QString &) {
+                if (tabId == currentTabId_) {
+                    refreshSchemas();
+                }
+            });
+
     refreshSources();
     refreshForCurrentTab();
 }
@@ -165,6 +192,27 @@ void DatabaseConsoleBar::refreshForCurrentTab()
     if (policyIndex >= 0) {
         const QSignalBlocker blocker(policyCombo_);
         policyCombo_->setCurrentIndex(policyIndex);
+    }
+    refreshSchemas();
+}
+
+void DatabaseConsoleBar::refreshSchemas()
+{
+    if (currentTabId_ == 0) {
+        schemaCombo_->clear();
+        return;
+    }
+    const QSignalBlocker blocker(schemaCombo_);
+    const QString current = schemaCombo_->currentText();
+    schemaCombo_->clear();
+    const QStringList names = consoleService_->schemas(currentTabId_);
+    for (const QString &name : names) {
+        schemaCombo_->addItem(name);
+    }
+    schemaCombo_->setVisible(schemaCombo_->count() > 0);
+    const int index = schemaCombo_->findText(current);
+    if (index >= 0) {
+        schemaCombo_->setCurrentIndex(index);
     }
 }
 

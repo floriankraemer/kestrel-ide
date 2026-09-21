@@ -289,16 +289,16 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| P0.1 — `database-tools-plan.md` reshaped to repo conventions, parity matrix + user answers kept | done | _pending_ |
-| P0.2 — ADR-0058 database driver seam (NFR table attached) | done | _pending_ |
-| P0.3 — ADR-0059 tool-window and settings-page contribution points | done | _pending_ |
-| P0.4 — ADR-0060 query consoles as files and result dock | done | _pending_ |
-| P0.5 — ADR-0061 database security posture | done | _pending_ |
-| P0.6 — `docs/architecture/database-tools.md` skeleton, 11 sections, Mermaid diagrams | done | _pending_ |
-| P0.7 — `docs/architecture/db-integration.md` (target design; `linux-db`/`db-compose.yml`/`make test-db`/`make e2e-db` land in F1) | done | _pending_ |
-| P0.8 — `docs/README.md` index lines (plan, 4 ADRs, `database-tools.md`, `db-integration.md`) | done | _pending_ |
-| P0.9 — `layering.md` rows for `secret-store`, `db-core`, `db-sql`, `db-exchange`, `db-drivers`, `db-driver-adbc`, `db-driver-odbc` (marked "planned, lands in phase X") | done | _pending_ |
-| P0.10 — Windows cross-link spike: throwaway crate outside the workspace, Linux link, Windows cross-link, `cargo tree -i aws-lc-rs`, result recorded (§13) | done | _pending_ |
+| P0.1 — `database-tools-plan.md` reshaped to repo conventions, parity matrix + user answers kept | done | `f16e9aa` |
+| P0.2 — ADR-0058 database driver seam (NFR table attached) | done | `a57c631` |
+| P0.3 — ADR-0059 tool-window and settings-page contribution points | done | `a57c631` |
+| P0.4 — ADR-0060 query consoles as files and result dock | done | `a57c631` |
+| P0.5 — ADR-0061 database security posture | done | `a57c631` |
+| P0.6 — `docs/architecture/database-tools.md` skeleton, 11 sections, Mermaid diagrams | done | `fc13504` |
+| P0.7 — `docs/architecture/db-integration.md` (target design; `linux-db`/`db-compose.yml`/`make test-db`/`make e2e-db` land in F1) | done | `fc13504` |
+| P0.8 — `docs/README.md` index lines (plan, 4 ADRs, `database-tools.md`, `db-integration.md`) | done | `fc13504` |
+| P0.9 — `layering.md` rows for `secret-store`, `db-core`, `db-sql`, `db-exchange`, `db-drivers`, `db-driver-adbc`, `db-driver-odbc` (marked "planned, lands in phase X") | done | `fc13504` |
+| P0.10 — Windows cross-link spike: throwaway crate outside the workspace, Linux link, Windows cross-link, `cargo tree -i aws-lc-rs`, result recorded (§13) | done | `f16e9aa` |
 
 ### G1 — generic contribution points
 

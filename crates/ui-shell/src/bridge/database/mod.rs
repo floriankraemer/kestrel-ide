@@ -17,6 +17,9 @@ pub mod settings;
 pub mod tree;
 // ---- database: F3 ----
 pub mod console;
+// ---- database: F8b ----
+pub mod backend;
+pub mod drivers;
 
 pub use service::DatabaseServiceRust;
 
@@ -29,6 +32,7 @@ pub use service::DatabaseServiceRust;
 pub struct DriverOption {
     pub id: String,
     pub name: String,
+    pub backend: String,
 }
 
 /// Every `database-drivers` contribution, gathered fresh on every call —
@@ -40,19 +44,84 @@ pub fn driver_catalog() -> Vec<DriverOption> {
         .map(|(_, contribution)| DriverOption {
             id: contribution.id.clone(),
             name: contribution.name.clone(),
+            backend: contribution.backend.clone(),
         })
         .collect()
 }
 
-/// Attempt a real connection through `db_drivers::DriverRegistry`, close it
-/// immediately, and report which happened — the blocking half of "Test
-/// connection", always run off the UI thread by its caller.
+/// Looks `driver_id` up among the live registry's `database-drivers` rows
+/// and resolves its `backend` (`backend::backend_for`) — the half of the
+/// seam that touches `plugin_host::registry()`, kept out of
+/// [`connect_with_backend`] so that function stays testable with a
+/// hand-built [`backend::Backend`] and no live registry.
+fn resolve_backend(driver_id: &str) -> Result<backend::Backend, String> {
+    let contribution = plugin_host::registry()
+        .database_drivers()
+        .map(|(_, contribution)| contribution.clone())
+        .find(|contribution| contribution.id == driver_id)
+        .ok_or_else(|| format!("no driver registered for `{driver_id}`"))?;
+    backend::backend_for(&contribution).map_err(|e| e.to_string())
+}
+
+/// Dispatches an already-resolved [`backend::Backend`] to the matching
+/// driver crate — `db_drivers::DriverRegistry` (native),
+/// `db_driver_adbc::AdbcDriver` (adbc, quarantine-guarded internally),
+/// `db_driver_odbc::OdbcDriver` (odbc). Never crosses `plugin-api` into a
+/// driver crate itself (database-tools.md §7, F8b).
+pub fn connect_with_backend(
+    backend: &backend::Backend,
+    spec: &db_core::datasource::ConnectSpec,
+) -> Result<Box<dyn db_core::driver::Connection>, String> {
+    use db_core::driver::Driver as _;
+
+    match backend {
+        backend::Backend::Native { native_id } => {
+            let registry = db_drivers::DriverRegistry::builtin();
+            let driver = registry
+                .get(native_id)
+                .ok_or_else(|| format!("no native driver registered for `{native_id}`"))?;
+            driver.connect(spec).map_err(|error| error.to_string())
+        }
+        backend::Backend::Adbc {
+            manifest_name,
+            entrypoint,
+        } => {
+            let config_dir = app_core::resolve_config_dir();
+            let location = db_driver_adbc::locate::locate(
+                &config_dir,
+                manifest_name,
+                backend::ADBC_INSTALLED_SLOT,
+            );
+            let driver = db_driver_adbc::AdbcDriver::with_entrypoint(
+                manifest_name.clone(),
+                location,
+                config_dir,
+                entrypoint.clone(),
+            );
+            driver.connect(spec).map_err(|error| error.to_string())
+        }
+        backend::Backend::Odbc => {
+            let driver = db_driver_odbc::OdbcDriver::new();
+            driver.connect(spec).map_err(|error| error.to_string())
+        }
+    }
+}
+
+/// The one place a `plugin_api::DatabaseDriverContribution` becomes an
+/// actual connection: [`resolve_backend`] against the live registry, then
+/// [`connect_with_backend`].
+pub fn connect(
+    spec: &db_core::datasource::ConnectSpec,
+) -> Result<Box<dyn db_core::driver::Connection>, String> {
+    let backend = resolve_backend(&spec.driver)?;
+    connect_with_backend(&backend, spec)
+}
+
+/// Attempt a real connection through [`connect`], close it immediately,
+/// and report which happened — the blocking half of "Test connection",
+/// always run off the UI thread by its caller.
 pub fn test_connection(spec: &db_core::datasource::ConnectSpec) -> Result<(), String> {
-    let registry = db_drivers::DriverRegistry::builtin();
-    let driver = registry
-        .get(&spec.driver)
-        .ok_or_else(|| format!("no driver registered for `{}`", spec.driver))?;
-    let mut connection = driver.connect(spec).map_err(|error| error.to_string())?;
+    let mut connection = connect(spec)?;
     let result = connection
         .execute(
             &db_core::driver::Statement::sql("SELECT 1"),
@@ -68,35 +137,51 @@ pub fn test_connection(spec: &db_core::datasource::ConnectSpec) -> Result<(), St
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_connection_against_an_in_memory_sqlite_database_succeeds() {
-        let spec = db_core::datasource::ConnectSpec {
+    fn sqlite_spec(database: &str) -> db_core::datasource::ConnectSpec {
+        db_core::datasource::ConnectSpec {
             driver: "sqlite".to_string(),
             host: String::new(),
             port: None,
-            database: ":memory:".to_string(),
+            database: database.to_string(),
             user: String::new(),
             url: String::new(),
             password: None,
             ssl: Default::default(),
+        }
+    }
+
+    /// Exercises the dispatch in [`connect_with_backend`] directly, with a
+    /// hand-built `Backend` rather than a live plugin registry — see that
+    /// function's own doc comment for why.
+    #[test]
+    fn a_native_backend_connects_through_the_driver_registry() {
+        let backend = backend::Backend::Native {
+            native_id: "sqlite".to_string(),
         };
-        assert_eq!(test_connection(&spec), Ok(()));
+        let connection = connect_with_backend(&backend, &sqlite_spec(":memory:"));
+        assert!(connection.is_ok());
     }
 
     #[test]
-    fn test_connection_against_an_unknown_driver_fails_with_a_typed_message() {
-        let spec = db_core::datasource::ConnectSpec {
-            driver: "does-not-exist".to_string(),
-            host: String::new(),
-            port: None,
-            database: String::new(),
-            user: String::new(),
-            url: String::new(),
-            password: None,
-            ssl: Default::default(),
+    fn an_unknown_native_id_fails_with_a_typed_message() {
+        let backend = backend::Backend::Native {
+            native_id: "does-not-exist".to_string(),
         };
-        assert!(test_connection(&spec)
-            .unwrap_err()
-            .contains("does-not-exist"));
+        // `.err()` rather than `.unwrap_err()`: `Box<dyn Connection>` (the
+        // `Ok` side) implements no `Debug`, which `unwrap_err` requires
+        // even though it never prints it.
+        let error = connect_with_backend(&backend, &sqlite_spec(":memory:"))
+            .err()
+            .unwrap();
+        assert!(error.contains("does-not-exist"));
+    }
+
+    #[test]
+    fn resolve_backend_fails_with_a_typed_message_for_an_unregistered_driver_id() {
+        // No plugin registry is loaded in a unit test process, so any id
+        // is "unregistered" here — this exercises the not-found path, not
+        // a real registry lookup (database-tools.md §7, F8b's split).
+        let error = resolve_backend("does-not-exist").unwrap_err();
+        assert!(error.contains("does-not-exist"));
     }
 }

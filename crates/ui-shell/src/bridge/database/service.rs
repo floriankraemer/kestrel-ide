@@ -350,11 +350,7 @@ impl ffi::DatabaseService {
             let data_source = DataSource::from(&setting);
             let read_only = data_source.read_only;
             let spec = ConnectSpec::from(&data_source, &secrets_for(&thread_id));
-            let registry = db_drivers::DriverRegistry::builtin();
-            let outcome = registry
-                .get(&spec.driver)
-                .ok_or_else(|| format!("no driver registered for '{}'", spec.driver))
-                .and_then(|driver| driver.connect(&spec).map_err(|error| error.to_string()));
+            let outcome = super::connect(&spec);
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DatabaseService>| {
                 match outcome {
                     Ok(connection) => {

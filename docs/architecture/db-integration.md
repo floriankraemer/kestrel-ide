@@ -40,6 +40,22 @@ Fixture-based unit tests stay the first line of defense (fast, no server, run on
 An unpinned engine turns this suite into a random number generator: "the introspection query broke because PostgreSQL 18 renamed a system view" arriving as a red nightly build is exactly how a suite like this stops being trusted — the same reasoning `lsp-conformance.md`/`jvm-integration.md` both state for their own pinned dependencies.
 Bumping a pin (an engine's major version, a client-tool version) is a deliberate commit with its own fixture updates, not a background `apt-get upgrade`.
 
+## Manual DuckDB smoke test (F8b)
+
+`db-driver-adbc`'s own unit tests never load a real shared library (`install_from_bytes`/`quarantine` are exercised against byte fixtures, per this doc's opening paragraph), and `make test-db` does not grow a DuckDB service — there is no server to bring up, DuckDB runs in-process.
+Exercising the real load path — `AdbcDriver::connect` actually calling into a DuckDB shared library through `adbc_driver_manager` — is a manual step, done once per phase that touches `db-driver-adbc`'s loader, not a CI gate.
+
+With no IDE-managed install present (`<config_dir>/database/drivers/duckdb/current/manifest.toml` absent), `AdbcDriver` falls back to `DriverLocation::SystemName("duckdb")`, which asks the ADBC driver manager to resolve `duckdb` through its own standard search (`LOAD_FLAG_SEARCH_SYSTEM`/`LOAD_FLAG_SEARCH_USER`/`LOAD_FLAG_SEARCH_ENV`) — the same path a user hits before ever pressing "Install..." in the Data Source dialog (F8.5's `SystemSearch` status).
+To give that search something to find, install DuckDB's ADBC driver with `apache/arrow-adbc`'s own CLI:
+
+```sh
+pip install adbc_driver_manager   # ships the `dbc` console script
+dbc install duckdb                # registers duckdb's ADBC driver in the user-level manifest search path
+```
+
+Then, inside `linux-builder` (`make shell`), add a `sqlite`-shaped data source through the running app (or a throwaway `cargo run -p app`) with driver `duckdb` and a `database` field pointing at a scratch `.duckdb` file, and confirm: connect succeeds, the tree introspects at least one empty schema, and `SELECT 1` executes.
+A failure here with the driver actually installed points at `AdbcDriver`'s load/connect path (or an `AdbcVersion`/entrypoint mismatch) rather than at the install/quarantine machinery `db-driver-adbc`'s unit tests already cover.
+
 ## Status
 
 F1 landed `db-compose.yml` (PostgreSQL only), `make test-db`/`db-ci`, `db-drivers`' `db-integration` feature, and the `sqlite`/`postgres` unit-tested backends themselves.

@@ -402,8 +402,8 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F8.1 — `db-driver-adbc`: locate, install, quarantine marker, Arrow conversion | done | 08d749e |
 | F8.2 — `db-driver-odbc`: introspection via `SQLTables`/`SQLColumns`/`SQLPrimaryKeys`/`SQLForeignKeys` | done | 94b01f2 |
 | F8.3 — R1 one-day asset-enumeration spike (mssql/snowflake/bigquery/clickhouse/trino) | done | 08d749e |
-| F8.4 — DuckDB + SQL Server + foundry rows | partial (data only — `catalogue.toml`; plugin-manifest wiring is F8b) | 08d749e |
-| F8.5 — install UI + consent dialog | open (F8b) | |
+| F8.4 — DuckDB + SQL Server + foundry rows | done (rows moved from `catalogue.toml` into `builtin/database-tools/plugin.toml`; `catalogue.toml` deleted) | 4816e65 |
+| F8.5 — install UI + consent dialog | done (`DriverInstallService`, `driver_install_dialog.cpp`, `allow_third_party_drivers` on the Database settings page) | 9782a18 |
 | F8.6 — `unixodbc-dev` in `linux-builder` (image change; confirmed necessary by the P0 spike, §13); bundle `ldd`-closure check | done | afa16d6 |
 
 ### F9 — docs + polish

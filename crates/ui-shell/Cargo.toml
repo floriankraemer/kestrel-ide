@@ -50,6 +50,11 @@ container-registry = { path = "../container-registry" }
 db-core = { path = "../db-core" }
 db-drivers = { path = "../db-drivers" }
 db-sql = { path = "../db-sql" }
+# F8b: backend selection at the seam (bridge/database/backend.rs) — ADBC
+# and ODBC join db-drivers as the two other backends a `database-drivers`
+# row's `backend` field can name.
+db-driver-adbc = { path = "../db-driver-adbc" }
+db-driver-odbc = { path = "../db-driver-odbc" }
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 # The OS-keychain password store, service `ide.database` (ADR-0058 §5).
 secret-store = { path = "../secret-store" }
@@ -81,3 +86,9 @@ cxx-qt-lib = "0.9"
 
 [build-dependencies]
 cxx-qt-build = "0.9"
+
+[dev-dependencies]
+# F8b: `bridge/database/drivers.rs`'s status tests build a real IDE-managed
+# driver dir/quarantine marker on disk, the same fixture shape
+# `db-driver-adbc`'s own tests already use.
+tempfile = "3"

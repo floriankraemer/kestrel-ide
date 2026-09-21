@@ -359,10 +359,14 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     int databaseIndex = -1;
     if (hasDatabasePage) {
         auto *dataSourceEditor = new DataSourceEditor(&dialog);
-        databaseIndex = deferPage([&dialog, appSettings, dataSourceEditor, scopedPage]() {
-            return scopedPage(QStringLiteral("database"),
-                              buildDatabaseSettingsPage(&dialog, appSettings, dataSourceEditor));
-        });
+        // F8.5: same "owned by the dialog itself" lifetime as `dataSourceEditor` above.
+        auto *driverInstallService = new DriverInstallService(&dialog);
+        databaseIndex = deferPage(
+          [&dialog, appSettings, dataSourceEditor, driverInstallService, scopedPage]() {
+              return scopedPage(QStringLiteral("database"),
+                                buildDatabaseSettingsPage(&dialog, appSettings, dataSourceEditor,
+                                                          driverInstallService));
+          });
     }
 
     // Containers is project-scoped for the same reason Terminal/Tabs are:

@@ -240,8 +240,32 @@ impl ffi::AppSettings {
             .map(|option| ffi::FfiDriverOption {
                 id: QString::from(option.id.as_str()),
                 name: QString::from(option.name.as_str()),
+                backend: QString::from(option.backend.as_str()),
             })
             .collect()
+    }
+
+    /// `[database] allow_third_party_drivers` (F8.5, ADR-0061 §4), always
+    /// read from the global layer — a driver-install consent decision is
+    /// not the kind of thing a project should be able to relax on a
+    /// teammate's behalf, unlike a data source itself.
+    pub fn allow_third_party_drivers(&self) -> bool {
+        let config_dir = app_core::resolve_config_dir();
+        app_config::load(&config_dir)
+            .map(|settings| settings.database.allow_third_party_drivers_or_default())
+            .unwrap_or(app_config::database::DEFAULT_ALLOW_THIRD_PARTY_DRIVERS)
+    }
+
+    pub fn set_allow_third_party_drivers(&self, value: bool) -> FfiResult {
+        let config_dir = app_core::resolve_config_dir();
+        let Ok(mut settings) = app_config::load(&config_dir) else {
+            return errors::failure(errors::CODE_SETTINGS_IO, "could not read global settings");
+        };
+        settings.database.allow_third_party_drivers = Some(value);
+        match app_config::save(&config_dir, &settings) {
+            Ok(()) => FfiResult::default(),
+            Err(error) => errors::failure(errors::CODE_SETTINGS_IO, error.to_string()),
+        }
     }
 }
 

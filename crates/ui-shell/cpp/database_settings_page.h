@@ -12,9 +12,16 @@ namespace ui_shell {
 // Duplicate/Remove act immediately, the same "no separate OK to press"
 // shape the Registries list already uses for its own row actions.
 //
+// F8.5: a "Drivers..." button opens a list of every `adbc`-backend row with
+// its install status and Install/Re-enable action, plus the
+// `allow_third_party_drivers` checkbox (ADR-0061 §4) — both driven by
+// `driverInstallService`/`appSettings`, nothing decided here.
+//
 // Humble view: every row's data and every mutation come from `AppSettings`/
-// `DataSourceEditor`; this only lays out the list and forwards clicks.
+// `DataSourceEditor`/`DriverInstallService`; this only lays out the list and
+// forwards clicks.
 QWidget *buildDatabaseSettingsPage(QWidget *parent, AppSettings *appSettings,
-                                    DataSourceEditor *editor);
+                                    DataSourceEditor *editor,
+                                    DriverInstallService *driverInstallService);
 
 } // namespace ui_shell

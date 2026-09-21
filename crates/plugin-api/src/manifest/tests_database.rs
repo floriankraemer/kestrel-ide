@@ -170,6 +170,112 @@ fn an_adbc_artifact_with_a_valid_url_and_sha256_is_accepted() {
 }
 
 #[test]
+fn per_platform_artifacts_round_trip_with_an_entrypoint_override() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.database-drivers]]
+            id = "duckdb"
+            name = "DuckDB"
+            family = "duckdb"
+            backend = "adbc"
+
+            [contributes.database-drivers.adbc]
+            manifest-name = "duckdb"
+            entrypoint = "duckdb_adbc_init"
+
+            [contributes.database-drivers.adbc.artifacts.linux_amd64]
+            url = "https://example.com/libduckdb-linux-amd64.zip"
+            sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            library = "libduckdb.so"
+
+            [contributes.database-drivers.adbc.artifacts.windows_amd64]
+            url = "https://example.com/libduckdb-windows-amd64.zip"
+            sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            library = "duckdb.dll"
+            "#,
+    ))
+    .expect("valid");
+    let adbc = manifest.contributes.database_drivers[0]
+        .adbc
+        .as_ref()
+        .unwrap();
+    assert_eq!(adbc.entrypoint.as_deref(), Some("duckdb_adbc_init"));
+    assert_eq!(adbc.artifacts.len(), 2);
+    assert_eq!(adbc.artifacts["linux_amd64"].library, "libduckdb.so");
+    assert_eq!(adbc.artifacts["windows_amd64"].library, "duckdb.dll");
+}
+
+#[test]
+fn a_per_platform_artifact_url_must_also_be_https() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.database-drivers]]
+            id = "duckdb"
+            name = "DuckDB"
+            family = "duckdb"
+            backend = "adbc"
+
+            [contributes.database-drivers.adbc]
+            manifest-name = "duckdb"
+
+            [contributes.database-drivers.adbc.artifacts.linux_amd64]
+            url = "http://example.com/libduckdb.zip"
+            sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            library = "libduckdb.so"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
+fn an_install_hint_alone_satisfies_no_artifact_requirement_only_with_a_manifest_name() {
+    // `install-hint` is informational, not a substitute for `manifest-name`
+    // or an artifact — a row with only a hint is still rejected.
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.database-drivers]]
+            id = "trino"
+            name = "Trino"
+            family = "trino"
+            backend = "adbc"
+
+            [contributes.database-drivers.adbc]
+            install-hint = "No ADBC driver for Trino is published."
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
+fn a_manifest_name_with_an_install_hint_is_accepted() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.database-drivers]]
+            id = "trino"
+            name = "Trino"
+            family = "trino"
+            backend = "adbc"
+
+            [contributes.database-drivers.adbc]
+            manifest-name = "trino"
+            install-hint = "No ADBC driver for Trino is published; use the ODBC backend instead."
+            "#,
+    ))
+    .expect("valid");
+    assert_eq!(
+        manifest.contributes.database_drivers[0]
+            .adbc
+            .as_ref()
+            .unwrap()
+            .install_hint
+            .as_deref(),
+        Some("No ADBC driver for Trino is published; use the ODBC backend instead.")
+    );
+}
+
+#[test]
 fn a_zero_default_port_is_rejected() {
     let err = PluginManifest::from_toml_str(&with(
         r#"

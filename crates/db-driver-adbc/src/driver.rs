@@ -61,6 +61,10 @@ fn adbc_err(e: AdbcError) -> DbError {
 pub struct AdbcDriver {
     driver_id: String,
     location: DriverLocation,
+    /// The C entrypoint symbol to look up, when it isn't the ADBC-standard
+    /// `AdbcDriverInit` (e.g. DuckDB's own `duckdb_adbc_init`) — F8b,
+    /// threaded from a `database-drivers` contribution's `adbc.entrypoint`.
+    entrypoint: Option<String>,
     quarantine: Quarantine,
     loaded: OnceLock<Result<Arc<Mutex<ManagedDriver>>, DbError>>,
 }
@@ -71,9 +75,21 @@ impl AdbcDriver {
         location: DriverLocation,
         config_dir: impl Into<std::path::PathBuf>,
     ) -> Self {
+        Self::with_entrypoint(driver_id, location, config_dir, None)
+    }
+
+    /// As [`Self::new`], overriding the C entrypoint symbol the driver
+    /// manager looks up instead of the ADBC-standard `AdbcDriverInit`.
+    pub fn with_entrypoint(
+        driver_id: impl Into<String>,
+        location: DriverLocation,
+        config_dir: impl Into<std::path::PathBuf>,
+        entrypoint: Option<String>,
+    ) -> Self {
         Self {
             driver_id: driver_id.into(),
             location,
+            entrypoint,
             quarantine: Quarantine::new(config_dir),
             loaded: OnceLock::new(),
         }
@@ -84,24 +100,31 @@ impl AdbcDriver {
             .get_or_init(|| {
                 let driver_id = self.driver_id.clone();
                 let location = self.location.clone();
-                guarded_load(&self.quarantine, &driver_id, move || load_driver(&location))
-                    .map(|driver| Arc::new(Mutex::new(driver)))
+                let entrypoint = self.entrypoint.clone();
+                guarded_load(&self.quarantine, &driver_id, move || {
+                    load_driver(&location, entrypoint.as_deref())
+                })
+                .map(|driver| Arc::new(Mutex::new(driver)))
             })
             .clone()
     }
 }
 
-fn load_driver(location: &DriverLocation) -> Result<ManagedDriver, DbError> {
+fn load_driver(
+    location: &DriverLocation,
+    entrypoint: Option<&str>,
+) -> Result<ManagedDriver, DbError> {
     let flags = LOAD_FLAG_ALLOW_RELATIVE_PATHS
         | LOAD_FLAG_SEARCH_ENV
         | LOAD_FLAG_SEARCH_SYSTEM
         | LOAD_FLAG_SEARCH_USER;
+    let entrypoint = entrypoint.map(str::as_bytes);
     let result = match location {
         DriverLocation::ManagedManifest(path) => {
-            ManagedDriver::load_from_name(path, None, AdbcVersion::V110, flags, None)
+            ManagedDriver::load_from_name(path, entrypoint, AdbcVersion::V110, flags, None)
         }
         DriverLocation::SystemName(name) => {
-            ManagedDriver::load_from_name(name, None, AdbcVersion::V110, flags, None)
+            ManagedDriver::load_from_name(name, entrypoint, AdbcVersion::V110, flags, None)
         }
     };
     result.map_err(adbc_err)

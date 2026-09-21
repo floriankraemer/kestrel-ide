@@ -7,4 +7,5 @@ pub mod dump;
 pub mod er_diagram;
 pub mod export;
 pub mod import;
+pub mod schema_compare;
 pub mod schema_model;

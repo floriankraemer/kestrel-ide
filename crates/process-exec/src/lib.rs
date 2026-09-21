@@ -256,11 +256,24 @@ impl Spawned {
 /// in — a test runner's TeamCity service messages — rather than parse a
 /// batch report after the process has already exited.
 pub fn spawn(program: &str, args: &[&str], work_dir: &Path) -> Result<Spawned, Failure> {
+    spawn_with_env(program, args, work_dir, &[])
+}
+
+/// Same as [`spawn`], with extra environment variables set on the child —
+/// what a `db-exchange` dump/restore command needs for `PGPASSWORD`/
+/// `MYSQL_PWD` (never passed as an argv word, which any other user on the
+/// box could read from `/proc/<pid>/cmdline`).
+pub fn spawn_with_env(
+    program: &str,
+    args: &[&str],
+    work_dir: &Path,
+    env: &[(&str, &str)],
+) -> Result<Spawned, Failure> {
     let host = ExecHost::for_path(work_dir);
     let resolved_program =
         host::resolve_program(&host, program, work_dir).unwrap_or_else(|| program.to_string());
 
-    let mut command = host.command(&resolved_program, args, work_dir, &[]);
+    let mut command = host.command(&resolved_program, args, work_dir, env);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -385,6 +398,24 @@ mod tests {
         // never give it.
         assert_eq!(&buffer[..read], b"one\n");
         spawned.kill();
+        let _ = spawned.wait();
+    }
+
+    #[test]
+    fn spawn_with_env_reaches_the_child() {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let spawned = spawn_with_env(
+            "sh",
+            &["-c", "echo $PROCESS_EXEC_TEST_VAR"],
+            dir.path(),
+            &[("PROCESS_EXEC_TEST_VAR", "set")],
+        )
+        .unwrap();
+        let mut stdout = spawned.take_stdout().unwrap();
+        let mut buffer = Vec::new();
+        stdout.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"set\n");
         let _ = spawned.wait();
     }
 

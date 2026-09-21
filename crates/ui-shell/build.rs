@@ -553,6 +553,9 @@ fn main() {
         // connects), so only the sources are listed.
         .cpp_file("cpp/data_source_dialog.cpp")
         .cpp_file("cpp/database_settings_page.cpp")
+        // Database Tools plan F8.5: the ADBC driver install consent dialog,
+        // Q_OBJECT-free like the two above.
+        .cpp_file("cpp/driver_install_dialog.cpp")
         // The settings dialog and the last two pages that were still built
         // inline inside it. Q_OBJECT-free like the pages above — the dialog
         // is a stack-allocated QDialog and the pages are plain QWidgets

@@ -32,6 +32,7 @@ pub use service::DatabaseServiceRust;
 pub struct DriverOption {
     pub id: String,
     pub name: String,
+    pub backend: String,
 }
 
 /// Every `database-drivers` contribution, gathered fresh on every call —
@@ -43,6 +44,7 @@ pub fn driver_catalog() -> Vec<DriverOption> {
         .map(|(_, contribution)| DriverOption {
             id: contribution.id.clone(),
             name: contribution.name.clone(),
+            backend: contribution.backend.clone(),
         })
         .collect()
 }

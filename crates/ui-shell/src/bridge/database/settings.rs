@@ -224,6 +224,7 @@ impl ffi::AppSettings {
             .map(|option| ffi::FfiDriverOption {
                 id: QString::from(option.id.as_str()),
                 name: QString::from(option.name.as_str()),
+                backend: QString::from(option.backend.as_str()),
             })
             .collect()
     }

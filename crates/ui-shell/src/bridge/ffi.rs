@@ -9845,6 +9845,9 @@ mod ffi {
     struct FfiDriverOption {
         id: QString,
         name: QString,
+        /// `"native"`, `"adbc"`, or `"odbc"` (F8b) — which status/field
+        /// group the Data Source dialog shows for this row.
+        backend: QString,
     }
 
     /// Every field `DataSourceEditor` edits — one struct rather than

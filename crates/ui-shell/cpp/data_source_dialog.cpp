@@ -1,5 +1,6 @@
 #include "data_source_dialog.h"
 
+#include "driver_install_dialog.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <QCheckBox>
@@ -51,8 +52,13 @@ QLabel *colorSwatch(QWidget *parent, const QString &hex)
 
 } // namespace
 
+namespace {
+constexpr int kBackendRole = Qt::UserRole + 1;
+} // namespace
+
 void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceEditor *editor,
-                           const QString &id, const QString &scope)
+                           DriverInstallService *driverInstallService, const QString &id,
+                           const QString &scope)
 {
     editor->beginEdit(id, scope);
     const FfiDataSourceFields fields = editor->fields();
@@ -79,8 +85,21 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
     auto *driver = new QComboBox(general);
     for (const FfiDriverOption &option : appSettings->databaseDrivers()) {
         driver->addItem(option.name, option.id);
+        driver->setItemData(driver->count() - 1, QString(option.backend), kBackendRole);
     }
     selectData(driver, fields.driver);
+
+    // F8b: an `adbc` row shows its install status plus an Install/Re-enable
+    // button; an `odbc` row instead hints at the URL field below (Options
+    // tab) — both driven straight from `DriverInstallService`/the row's own
+    // `backend`, nothing decided here.
+    auto *driverStatusRow = new QHBoxLayout();
+    auto *driverStatusLabel = new QLabel(general);
+    driverStatusLabel->setWordWrap(true);
+    auto *driverActionButton = new QPushButton(general);
+    driverActionButton->setVisible(false);
+    driverStatusRow->addWidget(driverStatusLabel, 1);
+    driverStatusRow->addWidget(driverActionButton);
     auto *groupRow = new QHBoxLayout();
     auto *group = new QLineEdit(fields.group, general);
     auto *color = new QLineEdit(fields.color, general);
@@ -122,6 +141,7 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
 
     generalForm->addRow(QObject::tr("Name:"), name);
     generalForm->addRow(QObject::tr("Driver:"), driver);
+    generalForm->addRow(QString(), driverStatusRow);
     generalForm->addRow(QObject::tr("Group:"), group);
     generalForm->addRow(QObject::tr("Colour:"), groupRow);
     generalForm->addRow(QObject::tr("Host:"), host);
@@ -195,12 +215,51 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
         problemsLabel->setVisible(true);
     };
 
+    const auto refreshDriverStatus = [driver, driverInstallService, driverStatusLabel,
+                                       driverActionButton]() {
+        const QString backend = driver->currentData(kBackendRole).toString();
+        const QString driverId = driver->currentData().toString();
+        if (backend == QStringLiteral("odbc")) {
+            driverStatusLabel->setText(
+              QObject::tr("Uses a DSN (\"DSN=name\") or a full connection string in the URL "
+                          "field (Options tab)."));
+            driverActionButton->setVisible(false);
+            return;
+        }
+        if (backend != QStringLiteral("adbc") || !driverInstallService) {
+            driverStatusLabel->clear();
+            driverActionButton->setVisible(false);
+            return;
+        }
+        const FfiDriverStatus status = driverInstallService->status(driverId);
+        driverStatusLabel->setText(QString(status.text));
+        driverActionButton->setVisible(status.installable || status.canReenable);
+        driverActionButton->setProperty("reenable", status.canReenable);
+        driverActionButton->setText(status.canReenable ? QObject::tr("Re-enable")
+                                                        : QObject::tr("Install..."));
+    };
+
     QObject::connect(name, &QLineEdit::textChanged, editor, [editor, refreshProblems](const QString &text) {
         editor->setName(text);
         refreshProblems();
     });
     QObject::connect(driver, &QComboBox::currentIndexChanged, editor,
-                     [editor, driver](int) { editor->setDriver(driver->currentData().toString()); });
+                     [editor, driver, refreshDriverStatus](int) {
+                         editor->setDriver(driver->currentData().toString());
+                         refreshDriverStatus();
+                     });
+    QObject::connect(driverActionButton, &QPushButton::clicked, general,
+                     [driver, driverInstallService, driverActionButton, refreshDriverStatus]() {
+                         const QString driverId = driver->currentData().toString();
+                         const QString driverName = driver->currentText();
+                         if (driverActionButton->property("reenable").toBool()) {
+                             driverInstallService->reenable(driverId);
+                         } else {
+                             showDriverInstallDialog(driverActionButton, driverInstallService, driverId,
+                                                      driverName);
+                         }
+                         refreshDriverStatus();
+                     });
     QObject::connect(group, &QLineEdit::textChanged, editor,
                      [editor](const QString &text) { editor->setGroup(text); });
     QObject::connect(color, &QLineEdit::textChanged, editor,
@@ -286,6 +345,7 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
     });
 
     refreshProblems();
+    refreshDriverStatus();
     name->setFocus();
     dialog.exec();
 }

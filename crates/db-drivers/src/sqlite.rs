@@ -88,12 +88,23 @@ impl Driver for SqliteDriver {
             spec.url.clone()
         };
         let conn = rusqlite::Connection::open(&path).map_err(map_err)?;
-        Ok(Box::new(SqliteConnection { conn }))
+        Ok(Box::new(SqliteConnection {
+            conn,
+            path: Some(path),
+        }))
     }
 }
 
 pub struct SqliteConnection {
     conn: rusqlite::Connection,
+    /// The file this connection was opened on ([`Driver::connect`] only —
+    /// `None` for [`Self::wrap`]). `execute`'s row-streaming path needs it
+    /// to open a second, read-only connection for the live cursor (see
+    /// `SqliteLiveRowStream`); a `:memory:` database has no such second
+    /// handle to open, since each connection to `:memory:` is its own
+    /// private database, so `wrap()`-based connections (tests, and any
+    /// future in-memory embedding) fall back to the eager path instead.
+    path: Option<String>,
 }
 
 impl SqliteConnection {
@@ -101,7 +112,7 @@ impl SqliteConnection {
     /// `rusqlite::Connection::open_in_memory()`) rather than going through
     /// [`Driver::connect`]'s path/URL resolution.
     pub fn wrap(conn: rusqlite::Connection) -> Self {
-        Self { conn }
+        Self { conn, path: None }
     }
 }
 
@@ -116,19 +127,17 @@ impl CancelHandle for SqliteCancelHandle {
 
 /// `next_batch` pages an already-fully-fetched, in-memory row list rather
 /// than a live cursor.
-/// ponytail: eager fetch, chunked client-side; a real cursor-based page
-/// needs `rusqlite`'s borrowed `Rows<'stmt>` to outlive this call, which
-/// means either `unsafe`/self-referential storage or `db-core`'s
-/// `RowStream` growing a lifetime — revisit if a SQLite result set large
-/// enough for this to matter in practice shows up (SQLite files are
-/// typically small and local).
-struct SqliteRowStream {
+/// ponytail: eager fetch, chunked client-side; only reachable through
+/// [`SqliteConnection::wrap`] (tests / in-memory embedding), where there is
+/// no second file handle to open a live cursor on. `execute` against a
+/// real, `connect()`-opened file uses [`SqliteLiveRowStream`] instead.
+struct SqliteEagerRowStream {
     columns: Vec<ColumnMeta>,
     rows: VecDeque<Vec<Value>>,
     fetch_size: usize,
 }
 
-impl RowStream for SqliteRowStream {
+impl RowStream for SqliteEagerRowStream {
     fn next_batch(&mut self) -> Result<Option<RowBatch>, DbError> {
         if self.rows.is_empty() {
             return Ok(None);
@@ -143,6 +152,143 @@ impl RowStream for SqliteRowStream {
         Ok(Some(RowBatch {
             columns: self.columns.clone(),
             rows,
+        }))
+    }
+}
+
+/// A live `rusqlite` cursor, pulling `fetch_size` rows per `next_batch`
+/// straight off the database rather than draining the whole result set
+/// upfront (database-tools-plan F3c: the NFR-breaking defect F3b left —
+/// see `database-tools.md` §4/§11).
+///
+/// `rusqlite::Statement`/`Rows` borrow the `Connection` they were prepared
+/// against, and `db-core`'s `RowStream` trait object is `'static` (it
+/// outlives the call that created it, across repeated `next_batch` calls
+/// from the worker thread). Rather than adding a self-referential-struct
+/// crate, this opens a **second, read-only connection on the same file**
+/// dedicated to this one statement: the second connection is boxed (a
+/// stable heap address, never moved) and stored in this struct *after*
+/// the `Statement`/`Rows` fields, so Rust's top-to-bottom field drop order
+/// tears the cursor down before the connection it borrows from — the
+/// invariant `mem::transmute`'d `'static` lifetimes below rely on. Neither
+/// borrow ever leaves this struct.
+///
+/// This is why the fallback above only affects `:memory:`/`wrap()`:
+/// SQLite has no equivalent second handle for a private in-memory
+/// database.
+struct SqliteLiveRowStream {
+    columns: Vec<ColumnMeta>,
+    fetch_size: usize,
+    max_rows: Option<u64>,
+    fetched: u64,
+    rows: Option<rusqlite::Rows<'static>>,
+    // Boxed, not a bare `Statement`: `Rows<'stmt>` stores a *reference*
+    // to the `Statement` it was created from (`&'stmt Statement`), taken
+    // while it still lived at `open`'s local-variable address. If `stmt`
+    // were moved into this struct by value afterwards, that reference
+    // would dangle — moving relocates the bytes, a plain `Statement`
+    // field is not pinned. Boxing first gives it a stable heap address
+    // *before* `query()` borrows it, so moving the `Box` (a pointer)
+    // into this struct never moves the `Statement` data itself.
+    stmt: Option<Box<rusqlite::Statement<'static>>>,
+    _conn: Box<rusqlite::Connection>,
+}
+
+// SAFETY: `rusqlite::Statement`/`Rows` hold a raw `sqlite3_stmt*`, which
+// is not `Send` by default because SQLite forbids using the *same*
+// connection/statement concurrently from two threads at once. This
+// stream is never shared — `db-core`'s worker owns it exclusively and
+// only ever calls `next_batch` from one thread at a time — so moving the
+// whole struct (statement + the connection it was prepared against) to
+// that worker thread is sound; it never crosses threads while "in use".
+unsafe impl Send for SqliteLiveRowStream {}
+
+fn extend_stmt_lifetime(stmt: rusqlite::Statement<'_>) -> rusqlite::Statement<'static> {
+    // SAFETY: see `SqliteLiveRowStream`'s doc comment — the borrowed
+    // connection is boxed, never moved, and dropped after this statement.
+    unsafe { std::mem::transmute::<rusqlite::Statement<'_>, rusqlite::Statement<'static>>(stmt) }
+}
+
+fn extend_rows_lifetime(rows: rusqlite::Rows<'_>) -> rusqlite::Rows<'static> {
+    // SAFETY: see `SqliteLiveRowStream`'s doc comment — the borrowed
+    // statement is dropped after this `Rows`, never before.
+    unsafe { std::mem::transmute::<rusqlite::Rows<'_>, rusqlite::Rows<'static>>(rows) }
+}
+
+impl SqliteLiveRowStream {
+    fn open(
+        path: &str,
+        sql: &str,
+        params: &[rusqlite::types::Value],
+        columns: Vec<ColumnMeta>,
+        options: &ExecOptions,
+    ) -> Result<Self, DbError> {
+        let conn = rusqlite::Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(map_err)?;
+        let conn = Box::new(conn);
+        let conn_ptr: *const rusqlite::Connection = &*conn;
+        // SAFETY: `conn` is heap-allocated and never moved after this
+        // point; the reference below is only used to prepare a statement
+        // whose lifetime is then widened to match, and both are stored in
+        // `conn`'s own struct (see the struct doc comment for drop order).
+        let stmt = unsafe { &*conn_ptr }.prepare(sql).map_err(map_err)?;
+        let mut stmt = Box::new(extend_stmt_lifetime(stmt));
+        // SAFETY: `stmt` is heap-allocated above and never moved again —
+        // only `Box<Statement>` (a pointer) moves from here on, so the
+        // `Statement` data `rows` is about to borrow stays put for as
+        // long as this struct exists (see the struct's `stmt` field doc).
+        let stmt_ptr: *mut rusqlite::Statement<'static> = &mut *stmt;
+        let rows = unsafe { &mut *stmt_ptr }
+            .query(rusqlite::params_from_iter(params.iter()))
+            .map_err(map_err)?;
+        let rows = extend_rows_lifetime(rows);
+        Ok(Self {
+            columns,
+            fetch_size: options.fetch_size.max(1) as usize,
+            max_rows: options.max_rows,
+            fetched: 0,
+            rows: Some(rows),
+            stmt: Some(stmt),
+            _conn: conn,
+        })
+    }
+}
+
+impl RowStream for SqliteLiveRowStream {
+    fn next_batch(&mut self) -> Result<Option<RowBatch>, DbError> {
+        let Some(rows) = self.rows.as_mut() else {
+            return Ok(None);
+        };
+        let mut out = Vec::with_capacity(self.fetch_size);
+        while out.len() < self.fetch_size {
+            if let Some(max) = self.max_rows {
+                if self.fetched >= max {
+                    break;
+                }
+            }
+            match rows.next().map_err(map_err)? {
+                Some(row) => {
+                    let mut values = Vec::with_capacity(self.columns.len());
+                    for i in 0..self.columns.len() {
+                        values.push(from_rusqlite(row.get_ref(i).map_err(map_err)?));
+                    }
+                    out.push(values);
+                    self.fetched += 1;
+                }
+                None => break,
+            }
+        }
+        if out.is_empty() {
+            self.rows = None;
+            self.stmt = None;
+            return Ok(None);
+        }
+        Ok(Some(RowBatch {
+            columns: self.columns.clone(),
+            rows: out,
         }))
     }
 }
@@ -228,6 +374,19 @@ impl Connection for SqliteConnection {
                 nullable: true,
             })
             .collect();
+
+        if let Some(path) = self.path.clone() {
+            // Release `stmt`'s borrow of `self.conn` before opening the
+            // second, dedicated connection the live stream reads through.
+            drop(stmt);
+            let live =
+                SqliteLiveRowStream::open(&path, &statement.text, &params, columns, options)?;
+            return Ok(Execution::Rows(Box::new(live)));
+        }
+
+        // `wrap()`-constructed connection (tests / in-memory embedding):
+        // no second file handle to open, so this still drains eagerly —
+        // see `SqliteEagerRowStream`'s doc comment.
         let mut rows = VecDeque::new();
         let column_count = columns.len();
         let mut mapped = stmt
@@ -247,7 +406,7 @@ impl Connection for SqliteConnection {
                 }
             }
         }
-        Ok(Execution::Rows(Box::new(SqliteRowStream {
+        Ok(Execution::Rows(Box::new(SqliteEagerRowStream {
             columns,
             rows,
             fetch_size: options.fetch_size as usize,
@@ -838,6 +997,127 @@ mod tests {
         };
         let batch = stream.next_batch().unwrap().unwrap();
         assert_eq!(batch.rows, vec![vec![Value::Int(15)]]);
+    }
+
+    /// F3c: `execute` against a real file must stream — not drain the
+    /// whole result eagerly (the defect F3b left, `database-tools.md`
+    /// §4/§11). Proven with a big-enough table that an eager drain would
+    /// be obviously slower, and by paging to the end rather than reading
+    /// only the first batch.
+    #[test]
+    fn execute_streams_a_large_table_batch_by_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.db");
+        let path = path.to_str().unwrap();
+
+        {
+            let mut conn = rusqlite::Connection::open(path).unwrap();
+            let tx = conn.transaction().unwrap();
+            tx.execute_batch("CREATE TABLE big (n INTEGER)").unwrap();
+            {
+                let mut stmt = tx.prepare("INSERT INTO big (n) VALUES (?1)").unwrap();
+                for n in 0..50_000i64 {
+                    stmt.execute([n]).unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+
+        let mut driver_conn = SqliteDriver
+            .connect(&ConnectSpec {
+                driver: "sqlite".to_string(),
+                host: String::new(),
+                port: None,
+                database: String::new(),
+                user: String::new(),
+                url: path.to_string(),
+                password: None,
+                ssl: Default::default(),
+            })
+            .unwrap();
+
+        let options = ExecOptions {
+            fetch_size: 200,
+            ..Default::default()
+        };
+        let Execution::Rows(mut stream) = driver_conn
+            .execute(&Statement::sql("SELECT n FROM big ORDER BY n"), &options)
+            .unwrap()
+        else {
+            panic!("expected rows");
+        };
+
+        let mut seen = 0i64;
+        let mut batches = 0;
+        while let Some(batch) = stream.next_batch().unwrap() {
+            assert!(batch.rows.len() <= 200);
+            for row in &batch.rows {
+                assert_eq!(row, &vec![Value::Int(seen)]);
+                seen += 1;
+            }
+            batches += 1;
+        }
+        assert_eq!(seen, 50_000);
+        assert_eq!(batches, 250);
+    }
+
+    /// The parked-cursor rule: a live stream from one `execute` call must
+    /// not block or corrupt a second `execute` on the same
+    /// `SqliteConnection` — the live stream reads through its own,
+    /// dedicated connection rather than `self.conn`.
+    #[test]
+    fn a_second_execute_does_not_disturb_an_open_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("parked.db");
+        let path = path.to_str().unwrap();
+        {
+            let conn = rusqlite::Connection::open(path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE t (n INTEGER); \
+                 INSERT INTO t (n) VALUES (1), (2), (3), (4), (5);",
+            )
+            .unwrap();
+        }
+
+        let mut conn = SqliteDriver
+            .connect(&ConnectSpec {
+                driver: "sqlite".to_string(),
+                host: String::new(),
+                port: None,
+                database: String::new(),
+                user: String::new(),
+                url: path.to_string(),
+                password: None,
+                ssl: Default::default(),
+            })
+            .unwrap();
+
+        let options = ExecOptions {
+            fetch_size: 2,
+            ..Default::default()
+        };
+        let Execution::Rows(mut stream) = conn
+            .execute(&Statement::sql("SELECT n FROM t ORDER BY n"), &options)
+            .unwrap()
+        else {
+            panic!("expected rows");
+        };
+        let first = stream.next_batch().unwrap().unwrap();
+        assert_eq!(first.rows, vec![vec![Value::Int(1)], vec![Value::Int(2)]]);
+
+        // A second statement on the same connection, while `stream` is
+        // still parked mid-way through the first, must succeed.
+        conn.execute(
+            &Statement::sql("SELECT COUNT(*) FROM t"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+
+        let rest = stream.next_batch().unwrap().unwrap();
+        assert_eq!(rest.rows, vec![vec![Value::Int(3)], vec![Value::Int(4)]]);
+        let last = stream.next_batch().unwrap().unwrap();
+        assert_eq!(last.rows, vec![vec![Value::Int(5)]]);
+        assert!(stream.next_batch().unwrap().is_none());
     }
 
     #[test]

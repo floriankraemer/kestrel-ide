@@ -22,9 +22,7 @@ pub mod build_tools;
 pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0056).
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
 pub mod containers;
-/// The `[database]` section: data sources, no secrets (Database Tools plan
-/// F1.4, ADR-0061 §1).
-pub mod database;
+pub mod database; // Data sources, no secrets (ADR-0061 §1).
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
 /// The `[file_associations]` section: which handler a file pattern opens
@@ -75,9 +73,6 @@ pub use build_tools::{
 pub use containers::{
     ContainerConnectionSetting, ContainerSettings, ContainerTargetSetting, RegistrySetting,
 };
-pub use database::{
-    DataSourceSetting, DatabaseProjectSettings, DatabaseSettings, SshSetting, SslSetting,
-};
 pub use editing::EditingSettings;
 pub use file_associations::{FileAssociationRule, FileAssociationSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
@@ -122,13 +117,8 @@ pub struct LanguageServerSetting {
 pub(crate) fn is_false(b: &bool) -> bool {
     !*b
 }
-
 fn is_default_build_tools(value: &BuildToolsSettings) -> bool {
     value == &BuildToolsSettings::default()
-}
-
-fn is_default_database(value: &DatabaseSettings) -> bool {
-    value == &DatabaseSettings::default()
 }
 
 /// The `[minimap]` section: whether the editor's right-hand code map shows
@@ -386,22 +376,15 @@ pub struct Settings {
     /// — see [`analysis`] for the sparse per-row rule.
     #[serde(default)]
     pub analysis: AnalysisSettings,
-    /// The `[containers]` section (ADR-0055), project-scoped like
-    /// [`Settings::terminal`] — see [`containers`].
+    /// The `[containers]` section (ADR-0055) — see [`containers`].
     #[serde(default)]
     pub containers: ContainerSettings,
-    /// The `[build_tools]` section (ADR-0057): trusted sync roots plus
-    /// Gradle/Maven overrides. `trusted_roots` is global only — see
-    /// [`build_tools`]'s doc comment; the `gradle`/`maven` sub-tables are
-    /// project-scoped like [`Settings::terminal`].
+    /// The `[build_tools]` section (ADR-0057) — `trusted_roots` is global
+    /// only, see [`build_tools`]'s doc comment.
     #[serde(default, skip_serializing_if = "is_default_build_tools")]
     pub build_tools: BuildToolsSettings,
-    /// The `[database]` section (Database Tools plan F1.4): data-source
-    /// list and the tuning knobs from `database-tools.md` §8. Global by
-    /// default; the project layer merges its own sources by id rather than
-    /// replacing this wholesale — see [`database`].
-    #[serde(default, skip_serializing_if = "is_default_database")]
-    pub database: DatabaseSettings,
+    #[serde(default, skip_serializing_if = "database::is_default")]
+    pub database: database::DatabaseSettings,
     /// Gitignore-syntax patterns the project index skips, on top of the
     /// `.gitignore` rules its walker already honours.
     ///
@@ -1005,7 +988,7 @@ mod tests {
             containers: ContainerSettings::default(),
             analysis: AnalysisSettings::default(),
             build_tools: BuildToolsSettings::default(),
-            database: DatabaseSettings::default(),
+            database: database::DatabaseSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),

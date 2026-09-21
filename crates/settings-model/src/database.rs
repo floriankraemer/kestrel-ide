@@ -11,7 +11,7 @@
 //! not the settings page's own list (that list is `Vec<DataSourceSetting>`,
 //! read and reordered directly).
 
-use app_config::{DataSourceSetting, SshSetting, SslSetting};
+use app_config::database::{DataSourceSetting, SshSetting, SslSetting};
 
 /// One field the dialog can flag a problem against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

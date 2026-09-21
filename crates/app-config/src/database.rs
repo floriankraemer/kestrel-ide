@@ -42,6 +42,11 @@ pub struct DatabaseSettings {
     pub sources: Vec<DataSourceSetting>,
 }
 
+/// `#[serde(skip_serializing_if)]` predicate for `Settings::database`.
+pub fn is_default(value: &DatabaseSettings) -> bool {
+    value == &DatabaseSettings::default()
+}
+
 pub const DEFAULT_PAGE_SIZE: u32 = 500;
 pub const DEFAULT_MEMORY_CAP_MIB: u32 = 256;
 pub const DEFAULT_IDLE_CLOSE_MINUTES: u32 = 30;

@@ -316,7 +316,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | Task | Status | Commit |
 |---|---|---|
 | F1.1 — `secret-store` extraction from `container-registry/src/secrets.rs`; `container-registry` migrates in the same commit | done | |
-| F1.2 — `db-core`: `value`, `schema`, `driver`, `dialect`, `dml`, `result`, `datasource`, `tunnel` (`CliTunnel`), `console`, `history`, `session`, `readonly`, `error` | open | |
+| F1.2 — `db-core`: `value`, `schema`, `driver`, `dialect`, `dml`, `result`, `datasource`, `tunnel` (`CliTunnel`), `console`, `history`, `session`, `readonly`, `error` | done | |
 | F1.3 — `db-drivers`: sqlite + postgres backends, `DriverRegistry::builtin()`, private tokio runtime | open | |
 | F1.4 — `[database]` `app-config` section; `settings-model::database`; `ScopedField::Database` | done | |
 | F1.5 — `database-tools` plugin.toml (`database-drivers`, `sql-dialects` rows for postgresql/sqlite) | open | |

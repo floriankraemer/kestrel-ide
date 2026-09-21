@@ -1,0 +1,17 @@
+[package]
+name = "db-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `DataSource` reads `app_config::DataSourceSetting`/`SshSetting`/`SslSetting`.
+app-config = { path = "../app-config" }
+# `tunnel::CliTunnel` spawns and kills the `ssh` child.
+process-exec = { path = "../process-exec" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"

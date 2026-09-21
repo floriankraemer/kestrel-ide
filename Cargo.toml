@@ -30,6 +30,7 @@ members = [
     "crates/container-core",
     "crates/container-registry",
     "crates/secret-store",
+    "crates/db-core",
     "crates/jvm-build-core",
     "crates/app-core",
     "crates/ui-shell",

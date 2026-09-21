@@ -217,7 +217,7 @@ pub struct ProjectSettings {
     /// counterpart. Sparse like the rest: `None` is "the project says
     /// nothing about databases".
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub database: Option<crate::DatabaseProjectSettings>,
+    pub database: Option<crate::database::DatabaseProjectSettings>,
 
     /// Named workspace arrangements the project ships, as a `[layouts]`
     /// table keyed by name.

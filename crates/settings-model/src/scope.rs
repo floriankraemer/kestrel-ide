@@ -353,8 +353,8 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
 pub fn resolve_database_sources(
     global: &Settings,
     project: &ProjectSettings,
-) -> Vec<(app_config::DataSourceSetting, Scope)> {
-    let mut resolved: BTreeMap<&str, (&app_config::DataSourceSetting, Scope)> = global
+) -> Vec<(app_config::database::DataSourceSetting, Scope)> {
+    let mut resolved: BTreeMap<&str, (&app_config::database::DataSourceSetting, Scope)> = global
         .database
         .sources
         .iter()
@@ -962,30 +962,30 @@ mod tests {
         );
     }
 
-    fn data_source(id: &str, name: &str) -> app_config::DataSourceSetting {
-        app_config::DataSourceSetting {
+    fn data_source(id: &str, name: &str) -> app_config::database::DataSourceSetting {
+        app_config::database::DataSourceSetting {
             id: id.to_string(),
             name: name.to_string(),
             driver: "postgresql".to_string(),
-            ..app_config::DataSourceSetting::default()
+            ..app_config::database::DataSourceSetting::default()
         }
     }
 
-    fn with_sources(sources: Vec<app_config::DataSourceSetting>) -> Settings {
+    fn with_sources(sources: Vec<app_config::database::DataSourceSetting>) -> Settings {
         Settings {
-            database: app_config::DatabaseSettings {
+            database: app_config::database::DatabaseSettings {
                 sources,
-                ..app_config::DatabaseSettings::default()
+                ..app_config::database::DatabaseSettings::default()
             },
             ..Settings::default()
         }
     }
 
-    fn project_sources(sources: Vec<app_config::DataSourceSetting>) -> ProjectSettings {
+    fn project_sources(sources: Vec<app_config::database::DataSourceSetting>) -> ProjectSettings {
         ProjectSettings {
-            database: Some(app_config::DatabaseProjectSettings {
+            database: Some(app_config::database::DatabaseProjectSettings {
                 sources,
-                ..app_config::DatabaseProjectSettings::default()
+                ..app_config::database::DatabaseProjectSettings::default()
             }),
             ..ProjectSettings::default()
         }

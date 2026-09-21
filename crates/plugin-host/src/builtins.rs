@@ -85,6 +85,28 @@ pub(crate) const JVM_BUILD_TOOLS: BuiltinPlugin = BuiltinPlugin {
     )],
 };
 
+/// SQLite and PostgreSQL support (Database Tools plan F1.5, ADR-0058),
+/// first-party like `jvm-build-tools` above. Ships two keyword-list
+/// assets its `sql-dialects` rows point `keywords` at; the drivers
+/// themselves are `db-drivers`' `DriverRegistry::builtin()`, not files
+/// this plugin carries — a `database-drivers` row only names a driver
+/// `ui-shell` already links in, the same "metadata, not the code" split
+/// `BuildToolContribution::toolchain` already draws for `run_core::
+/// ToolchainId`.
+pub(crate) const DATABASE_TOOLS: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/database-tools/plugin.toml"),
+    files: &[
+        (
+            "dialects/sqlite.keywords",
+            include_bytes!("../builtin/database-tools/dialects/sqlite.keywords"),
+        ),
+        (
+            "dialects/postgresql.keywords",
+            include_bytes!("../builtin/database-tools/dialects/postgresql.keywords"),
+        ),
+    ],
+};
+
 /// The three colour themes that used to be hardcoded in `ui-shell`'s
 /// `theme.cpp` and `syntax-core`'s `theme.rs`, first-party like the
 /// Markdown preview above: a `color-themes` contribution needs no `[wasm]`

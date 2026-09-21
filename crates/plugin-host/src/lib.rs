@@ -48,8 +48,9 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
     AnalyzerContribution, BuildToolContribution, ColorThemeContribution, CommandContribution,
-    IconThemeContribution, LanguageServerContribution, LoadErrorKind, PluginLoadError,
-    PluginManifest, PreviewContribution, TestFrameworkContribution, MANIFEST_FILE, QUARANTINE_DIR,
+    DatabaseDriverContribution, IconThemeContribution, LanguageServerContribution, LoadErrorKind,
+    PluginLoadError, PluginManifest, PreviewContribution, SqlDialectContribution,
+    TestFrameworkContribution, MANIFEST_FILE, QUARANTINE_DIR,
 };
 
 pub use plugin::{expand_asset_dir, BuiltinPlugin, LoadedPlugin, PluginSource};
@@ -76,6 +77,7 @@ pub const BUILTIN_PLUGINS: &[BuiltinPlugin] = &[
     builtins::CORE_THEMES,
     builtins::GITHUB_VSCODE_THEME,
     builtins::JVM_BUILD_TOOLS,
+    builtins::DATABASE_TOOLS,
 ];
 
 /// Every plugin that loaded, and every one that did not.
@@ -212,6 +214,34 @@ impl PluginRegistry {
                 .build_tools
                 .iter()
                 .map(move |tool| (plugin, tool))
+        })
+    }
+
+    /// Every `database-drivers` contribution, with the plugin that offers
+    /// it (Database Tools plan F1.5).
+    pub fn database_drivers(
+        &self,
+    ) -> impl Iterator<Item = (&LoadedPlugin, &DatabaseDriverContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .database_drivers
+                .iter()
+                .map(move |driver| (plugin, driver))
+        })
+    }
+
+    /// Every `sql-dialects` contribution, with the plugin that offers it
+    /// (Database Tools plan F1.5).
+    pub fn sql_dialects(&self) -> impl Iterator<Item = (&LoadedPlugin, &SqlDialectContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .sql_dialects
+                .iter()
+                .map(move |dialect| (plugin, dialect))
         })
     }
 

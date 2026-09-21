@@ -319,7 +319,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F1.2 — `db-core`: `value`, `schema`, `driver`, `dialect`, `dml`, `result`, `datasource`, `tunnel` (`CliTunnel`), `console`, `history`, `session`, `readonly`, `error` | done | |
 | F1.3 — `db-drivers`: sqlite + postgres backends, `DriverRegistry::builtin()`, private tokio runtime | done | |
 | F1.4 — `[database]` `app-config` section; `settings-model::database`; `ScopedField::Database` | done | |
-| F1.5 — `database-tools` plugin.toml (`database-drivers`, `sql-dialects` rows for postgresql/sqlite) | open | |
+| F1.5 — `database-tools` plugin.toml (`database-drivers`, `sql-dialects` rows for postgresql/sqlite) | done | |
 | F1.6 — Data Source dialog + settings page + Test connection | open | |
 | F1.7 — per-driver-crate `aws-lc-rs` exclusion (R2); `cargo tree -i aws-lc-rs` empty joins `make lint` | done | |
 

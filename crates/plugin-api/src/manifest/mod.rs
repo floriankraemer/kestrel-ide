@@ -41,6 +41,8 @@ pub enum ContributionPoint {
     Analyzers,
     TestFrameworks,
     BuildTools,
+    DatabaseDrivers,
+    SqlDialects,
 }
 
 impl ContributionPoint {
@@ -55,6 +57,8 @@ impl ContributionPoint {
             Self::Analyzers => "analyzers",
             Self::TestFrameworks => "test-frameworks",
             Self::BuildTools => "build-tools",
+            Self::DatabaseDrivers => "database-drivers",
+            Self::SqlDialects => "sql-dialects",
         }
     }
 }
@@ -323,6 +327,87 @@ pub struct BuildToolContribution {
     pub init_script: Option<PathBuf>,
 }
 
+/// The ADBC-specific half of a [`DatabaseDriverContribution`] whose
+/// `backend` is `"adbc"`: either a driver manager can resolve
+/// `manifest-name` on its own (a system-installed driver), or `url`/
+/// `sha256` name a pinned, hash-verified download (ADR-0061 §4) —
+/// [`ContributionPoint::DatabaseDrivers`]'s validation requires at least
+/// one of the two.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdbcDriverSection {
+    #[serde(default, rename = "manifest-name")]
+    pub manifest_name: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub sha256: Option<String>,
+}
+
+/// One database backend a plugin makes connectable — joined to a
+/// [`SqlDialectContribution`] by `family`, and to `db_core`/`db-drivers`
+/// only at the `ui-shell` seam (this crate never depends on `db-core`,
+/// `database-tools.md` §7).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseDriverContribution {
+    pub id: String,
+    pub name: String,
+    /// The `sql-dialects` row this driver's SQL belongs to.
+    pub family: String,
+    /// `"native"`, `"adbc"`, or `"odbc"`.
+    pub backend: String,
+    /// `db_drivers::DriverRegistry` id this contribution names, required
+    /// when `backend = "native"`.
+    #[serde(default, rename = "native-id")]
+    pub native_id: Option<String>,
+    #[serde(default, rename = "default-port")]
+    pub default_port: Option<u16>,
+    /// A connection-string template for a driver that takes one instead of
+    /// host/port/database (e.g. `"sqlite://{database}"`); every `{…}`
+    /// placeholder must be one of the allow-listed names ADR-0058
+    /// validation checks.
+    #[serde(default, rename = "url-template")]
+    pub url_template: Option<String>,
+    /// The dump/restore tool name (`"pg_dump"`, `"mysqldump"`, …), for the
+    /// export path's tool lookup — absent when the backend has none.
+    #[serde(default, rename = "dump-tool")]
+    pub dump_tool: Option<String>,
+    #[serde(default)]
+    pub icon: Option<PathBuf>,
+    #[serde(default)]
+    pub adbc: Option<AdbcDriverSection>,
+}
+
+/// A url-template placeholder this backend may reference — anything else
+/// is refused so a driver row cannot smuggle an unbounded field into a
+/// connection string a consumer will build unescaped.
+const URL_TEMPLATE_PLACEHOLDERS: &[&str] = &["host", "port", "database", "user"];
+
+/// One SQL (or SQL-shaped) dialect a plugin describes for completion,
+/// formatting and identifier/parameter quoting — the plugin-manifest half
+/// of `db_core::dialect::Dialect`, joined to it at the `ui-shell` seam by
+/// plain strings (`database-tools.md` §7).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SqlDialectContribution {
+    pub id: String,
+    pub name: String,
+    /// `"sql"`, `"mongo-shell"`, `"cql"`, or `"redis-command"`.
+    pub parser: String,
+    /// `"double"`, `"backtick"`, `"bracket"`, or `"none"`.
+    #[serde(rename = "identifier-quote")]
+    pub identifier_quote: String,
+    /// `"question"`, `"dollar"`, `"colon"`, or `"none"`.
+    #[serde(rename = "param-style")]
+    pub param_style: String,
+    /// A keyword-list asset, relative to the plugin directory
+    /// (`dialects/postgres.keywords`, one keyword per line), for
+    /// completion/highlighting.
+    #[serde(default)]
+    pub keywords: Option<PathBuf>,
+}
+
 /// Everything a plugin contributes, by point.
 ///
 /// Deliberately *not* `deny_unknown_fields`: [`API_VERSION`]'s doc comment
@@ -349,6 +434,10 @@ pub struct Contributes {
     pub test_frameworks: Vec<TestFrameworkContribution>,
     #[serde(default, rename = "build-tools")]
     pub build_tools: Vec<BuildToolContribution>,
+    #[serde(default, rename = "database-drivers")]
+    pub database_drivers: Vec<DatabaseDriverContribution>,
+    #[serde(default, rename = "sql-dialects")]
+    pub sql_dialects: Vec<SqlDialectContribution>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -366,6 +455,8 @@ impl Contributes {
             && self.analyzers.is_empty()
             && self.test_frameworks.is_empty()
             && self.build_tools.is_empty()
+            && self.database_drivers.is_empty()
+            && self.sql_dialects.is_empty()
     }
 }
 
@@ -624,6 +715,136 @@ impl PluginManifest {
 
         // A build tool is a native process too — no `[wasm]` component.
 
+        for driver in &self.contributes.database_drivers {
+            check_id("contributes.database-drivers.id", &driver.id)?;
+            non_empty("contributes.database-drivers.name", &driver.name)?;
+            non_empty("contributes.database-drivers.family", &driver.family)?;
+            if !matches!(driver.backend.as_str(), "native" | "adbc" | "odbc") {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.database-drivers.backend `{}` must be one of `native`, `adbc`, `odbc`",
+                    driver.backend
+                )));
+            }
+            if driver.backend == "native" {
+                match &driver.native_id {
+                    Some(id) if !id.trim().is_empty() => {}
+                    _ => {
+                        return Err(LoadErrorKind::MalformedManifest(
+                            "contributes.database-drivers with backend `native` needs `native-id`"
+                                .to_string(),
+                        ))
+                    }
+                }
+            }
+            if driver.backend == "adbc" {
+                let has_manifest_name = driver
+                    .adbc
+                    .as_ref()
+                    .and_then(|adbc| adbc.manifest_name.as_deref())
+                    .is_some_and(|name| !name.trim().is_empty());
+                let has_artifact = driver
+                    .adbc
+                    .as_ref()
+                    .and_then(|adbc| adbc.url.as_deref())
+                    .is_some();
+                if !has_manifest_name && !has_artifact {
+                    return Err(LoadErrorKind::MalformedManifest(
+                        "contributes.database-drivers with backend `adbc` needs \
+                         `adbc.manifest-name` or `adbc.url`"
+                            .to_string(),
+                    ));
+                }
+                if let Some(adbc) = &driver.adbc {
+                    if let Some(url) = &adbc.url {
+                        if !url.starts_with("https://") {
+                            return Err(LoadErrorKind::MalformedManifest(format!(
+                                "contributes.database-drivers.adbc.url `{url}` must start with `https://`"
+                            )));
+                        }
+                        let sha256 = adbc.sha256.as_deref().unwrap_or_default();
+                        let valid_sha256 =
+                            sha256.len() == 64 && sha256.chars().all(|c| c.is_ascii_hexdigit());
+                        if !valid_sha256 {
+                            return Err(LoadErrorKind::MalformedManifest(
+                                "contributes.database-drivers.adbc with a url needs a 64-character \
+                                 hex sha256"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+            }
+            if let Some(port) = driver.default_port {
+                if port == 0 {
+                    return Err(LoadErrorKind::MalformedManifest(
+                        "contributes.database-drivers.default-port must be between 1 and 65535"
+                            .to_string(),
+                    ));
+                }
+            }
+            if let Some(template) = &driver.url_template {
+                check_url_template(template)?;
+            }
+            if let Some(icon) = &driver.icon {
+                check_relative("contributes.database-drivers.icon", icon)?;
+            }
+        }
+        check_unique(
+            ContributionPoint::DatabaseDrivers,
+            self.contributes
+                .database_drivers
+                .iter()
+                .map(|d| d.id.as_str()),
+        )?;
+
+        // A database driver row is metadata a native/ADBC/ODBC crate reads
+        // by id — no `[wasm]` component, the same reasoning a build tool
+        // needs none.
+
+        for dialect in &self.contributes.sql_dialects {
+            check_id("contributes.sql-dialects.id", &dialect.id)?;
+            non_empty("contributes.sql-dialects.name", &dialect.name)?;
+            if !matches!(
+                dialect.parser.as_str(),
+                "sql" | "mongo-shell" | "cql" | "redis-command"
+            ) {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.sql-dialects.parser `{}` must be one of `sql`, `mongo-shell`, \
+                     `cql`, `redis-command`",
+                    dialect.parser
+                )));
+            }
+            if !matches!(
+                dialect.identifier_quote.as_str(),
+                "double" | "backtick" | "bracket" | "none"
+            ) {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.sql-dialects.identifier-quote `{}` must be one of `double`, \
+                     `backtick`, `bracket`, `none`",
+                    dialect.identifier_quote
+                )));
+            }
+            if !matches!(
+                dialect.param_style.as_str(),
+                "question" | "dollar" | "colon" | "none"
+            ) {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.sql-dialects.param-style `{}` must be one of `question`, \
+                     `dollar`, `colon`, `none`",
+                    dialect.param_style
+                )));
+            }
+            if let Some(keywords) = &dialect.keywords {
+                check_relative("contributes.sql-dialects.keywords", keywords)?;
+            }
+        }
+        check_unique(
+            ContributionPoint::SqlDialects,
+            self.contributes.sql_dialects.iter().map(|d| d.id.as_str()),
+        )?;
+
+        // A SQL dialect row is metadata too — no `[wasm]` component.
+
         if let Some(wasm) = &self.wasm {
             check_relative("wasm.component", &wasm.component)?;
         } else if !self.contributes.commands.is_empty() {
@@ -738,6 +959,29 @@ fn check_capability_path(pattern: &str) -> Result<(), LoadErrorKind> {
         return Ok(());
     }
     check_relative("capabilities.read-files", Path::new(rest)).map_err(|_| unscoped())
+}
+
+/// Every `{placeholder}` in `template` must be one
+/// [`URL_TEMPLATE_PLACEHOLDERS`] names — anything else is refused before a
+/// consumer ever builds a connection string from it.
+fn check_url_template(template: &str) -> Result<(), LoadErrorKind> {
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        let Some(end) = rest[start..].find('}') else {
+            return Err(LoadErrorKind::MalformedManifest(format!(
+                "contributes.database-drivers.url-template `{template}` has an unterminated `{{`"
+            )));
+        };
+        let placeholder = &rest[start + 1..start + end];
+        if !URL_TEMPLATE_PLACEHOLDERS.contains(&placeholder) {
+            return Err(LoadErrorKind::MalformedManifest(format!(
+                "contributes.database-drivers.url-template placeholder `{{{placeholder}}}` must \
+                 be one of {URL_TEMPLATE_PLACEHOLDERS:?}"
+            )));
+        }
+        rest = &rest[start + end + 1..];
+    }
+    Ok(())
 }
 
 fn check_unique<'a>(

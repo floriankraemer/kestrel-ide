@@ -1,6 +1,7 @@
 #include "database_results_panel.h"
 
 #include "database_console_bar.h"
+#include "database_dialogs.h"
 #include "dock_layout.h"
 #include "result_grid_view.h"
 
@@ -44,13 +45,8 @@ DatabaseResultsPanel::DatabaseResultsPanel(EditorTabs *editorTabs, ConsoleServic
     connect(consoleService, &ConsoleService::executionFinished, this,
             &DatabaseResultsPanel::onExecutionFinished);
     connect(consoleService, &ConsoleService::askContinue, this,
-            [consoleService](quint64 resultId, quint64) {
-                // ponytail: no confirmation dialog yet — a script under the
-                // `Ask` policy always continues rather than pausing for a
-                // user decision. Wire a `QMessageBox` here once F3.3's
-                // `Ask` policy needs a real UI, `resume(resultId, true)`
-                // already does the right thing either way.
-                consoleService->resume(resultId, true);
+            [this, consoleService](quint64 resultId, const QString &message) {
+                showAskContinueDialog(consoleService, resultId, message, this);
             });
 }
 

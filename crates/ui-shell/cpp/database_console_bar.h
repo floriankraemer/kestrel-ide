@@ -49,6 +49,7 @@ private:
     ConsoleService *consoleService_;
     QComboBox *sourceCombo_;
     QComboBox *txModeCombo_;
+    QComboBox *policyCombo_;
     QToolButton *runButton_;
     QToolButton *runScriptButton_;
     QToolButton *cancelButton_;

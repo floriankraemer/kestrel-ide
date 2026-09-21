@@ -739,6 +739,9 @@ fn main() {
         .cpp_file("cpp/result_table_model.cpp")
         .cpp_file("cpp/result_grid_view.cpp")
         .cpp_file("cpp/database_results_panel.cpp")
+        // database-tools-plan F3e: the `Ask` script policy's confirmation
+        // dialog.
+        .cpp_file("cpp/database_dialogs.cpp")
         .include_dir("cpp")
         .include_dir(ads_dir)
         .cpp_file(compile_ads_qrc(ads_dir, &tool_dirs))

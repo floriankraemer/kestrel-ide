@@ -45,6 +45,25 @@ fn app_settings() -> app_config::database::DatabaseSettings {
     crate::bridge::convert::load_settings().database
 }
 
+/// `app_config::database::DataSourceSetting::script_policy`'s free-form
+/// string vocabulary, both directions — see that field's own doc comment
+/// on why it is a string, not this enum, in persistence.
+fn policy_from_setting(text: &str) -> FfiDbScriptPolicy {
+    match text {
+        "continue" => FfiDbScriptPolicy::Continue,
+        "ask" => FfiDbScriptPolicy::Ask,
+        _ => FfiDbScriptPolicy::StopOnError,
+    }
+}
+
+fn policy_to_setting(policy: FfiDbScriptPolicy) -> &'static str {
+    match policy {
+        FfiDbScriptPolicy::Continue => "continue",
+        FfiDbScriptPolicy::Ask => "ask",
+        _ => "stop_on_error",
+    }
+}
+
 /// One console tab's live state.
 struct ConsoleState {
     source_id: String,
@@ -196,6 +215,7 @@ impl ffi::ConsoleService {
         let settings = app_settings();
         let page_size = settings.page_size_or_default();
         let history = setting.history;
+        let initial_policy = policy_from_setting(setting.script_policy_or_default());
         let qt_thread = self.as_mut().qt_thread();
         let attach_source_id = source_id.clone();
         std::thread::spawn(move || {
@@ -235,7 +255,7 @@ impl ffi::ConsoleService {
                                 dialect,
                                 guard: Guard::new(Box::new(SqlClassifier { dialect })),
                                 tx_mode: FfiDbTxMode::Auto,
-                                script_policy: FfiDbScriptPolicy::StopOnError,
+                                script_policy: initial_policy,
                                 page_size,
                                 history,
                                 current_result: None,
@@ -282,10 +302,31 @@ impl ffi::ConsoleService {
         }
     }
 
+    /// Sets `tab_id`'s in-memory policy and persists it as this console's
+    /// source's own default (database-tools-plan F3e), so the next
+    /// console attached to that source starts with the same choice.
+    /// `tab_id`'s current policy — `StopOnError` for a tab this object has
+    /// never attached (the same default `attach` falls back to when a
+    /// source has no `script_policy` of its own).
+    pub fn script_policy(self: Pin<&mut Self>, tab_id: u64) -> FfiDbScriptPolicy {
+        self.shared
+            .borrow()
+            .consoles
+            .get(&tab_id)
+            .map(|console| console.script_policy)
+            .unwrap_or(FfiDbScriptPolicy::StopOnError)
+    }
+
     pub fn set_script_policy(self: Pin<&mut Self>, tab_id: u64, policy: FfiDbScriptPolicy) {
-        if let Some(console) = self.shared.borrow_mut().consoles.get_mut(&tab_id) {
+        let source_id = {
+            let mut shared = self.shared.borrow_mut();
+            let Some(console) = shared.consoles.get_mut(&tab_id) else {
+                return;
+            };
             console.script_policy = policy;
-        }
+            console.source_id.clone()
+        };
+        super::settings::persist_script_policy(&source_id, policy_to_setting(policy));
     }
 
     /// Runs `text` against `tab_id`'s attached source. `what` decides how
@@ -623,24 +664,24 @@ impl ffi::ConsoleService {
         if already_reported {
             return;
         }
-        let (tab_id, affected, elapsed_ms, ffi_error, ok) = {
+        let (tab_id, affected, elapsed_ms, ffi_error, ok, error_text) = {
             let mut shared = self.shared.borrow_mut();
             let Some(result) = shared.results.get_mut(&result_id) else {
                 return;
             };
             let elapsed_ms = result.started_at.elapsed().as_millis() as u64;
             result.elapsed_ms = Some(elapsed_ms);
-            let (affected, ffi_error, ok) = match &outcome {
+            let (affected, ffi_error, ok, error_text) = match &outcome {
                 Ok(n) => {
                     result.affected = Some(*n);
-                    (*n, ok_error(), true)
+                    (*n, ok_error(), true, String::new())
                 }
                 Err(error) => {
                     result.error = Some(error.clone());
-                    (0, to_ffi_error(error), false)
+                    (0, to_ffi_error(error), false, error.message.clone())
                 }
             };
-            (result.tab_id, affected, elapsed_ms, ffi_error, ok)
+            (result.tab_id, affected, elapsed_ms, ffi_error, ok, error_text)
         };
         self.as_mut()
             .execution_finished(result_id, ok, affected, elapsed_ms, ffi_error);
@@ -664,7 +705,8 @@ impl ffi::ConsoleService {
         if stop {
             pending.awaiting_resume = true;
             drop(shared);
-            self.as_mut().ask_continue(result_id, tab_id);
+            self.as_mut()
+                .ask_continue(result_id, QString::from(error_text.as_str()));
             return;
         }
         drop(shared);

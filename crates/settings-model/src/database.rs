@@ -128,6 +128,11 @@ pub fn commit(draft: &DataSourceDraft) -> DataSourceSetting {
         auth: draft.auth.clone(),
         read_only: draft.read_only,
         history: draft.history,
+        // Not part of the Add/Edit Source dialog's own draft — the console
+        // bar's policy selector owns this field directly
+        // (`ui_shell::bridge::database::settings::commit`'s own doc
+        // comment on why the caller must carry an existing value forward).
+        script_policy: String::new(),
         url: draft.url.clone(),
         ssl: SslSetting {
             mode: draft.ssl_mode.clone(),

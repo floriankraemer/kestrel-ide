@@ -8,6 +8,7 @@
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
+#include <QSignalBlocker>
 #include <QToolButton>
 #include <QVariant>
 
@@ -47,6 +48,23 @@ DatabaseConsoleBar::DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *c
                 consoleService_->setTxMode(currentTabId_, mode);
             });
     layout->addWidget(txModeCombo_);
+
+    policyCombo_ = new QComboBox(this);
+    policyCombo_->addItem(tr("Stop on error"),
+                          QVariant::fromValue(int(FfiDbScriptPolicy::StopOnError)));
+    policyCombo_->addItem(tr("Continue on error"),
+                          QVariant::fromValue(int(FfiDbScriptPolicy::Continue)));
+    policyCombo_->addItem(tr("Ask on error"), QVariant::fromValue(int(FfiDbScriptPolicy::Ask)));
+    connect(policyCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this](int index) {
+                if (currentTabId_ == 0) {
+                    return;
+                }
+                const auto policy =
+                  static_cast<FfiDbScriptPolicy>(policyCombo_->itemData(index).toInt());
+                consoleService_->setScriptPolicy(currentTabId_, policy);
+            });
+    layout->addWidget(policyCombo_);
 
     runButton_ = new QToolButton(this);
     runButton_->setText(tr("Run"));
@@ -142,6 +160,12 @@ void DatabaseConsoleBar::refreshForCurrentTab()
         }
     }
     attachCurrentTab();
+    const int policyIndex =
+      policyCombo_->findData(QVariant::fromValue(int(consoleService_->scriptPolicy(tabId))));
+    if (policyIndex >= 0) {
+        const QSignalBlocker blocker(policyCombo_);
+        policyCombo_->setCurrentIndex(policyIndex);
+    }
 }
 
 void DatabaseConsoleBar::attachCurrentTab()

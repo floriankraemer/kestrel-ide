@@ -51,7 +51,7 @@ fn generate_id() -> String {
 /// Every data source, global and project merged by id, each with the
 /// layer it actually lives in — what the settings page's "scope"
 /// indicator and `DataSourceEditor::begin_edit`'s lookup both read.
-fn sources_with_scope() -> Vec<(DataSourceSetting, Scope)> {
+pub(super) fn sources_with_scope() -> Vec<(DataSourceSetting, Scope)> {
     let global = crate::bridge::convert::load_settings();
     let project = crate::bridge::convert::load_project_settings();
     settings_model::scope::resolve_database_sources(&global, &project)
@@ -79,7 +79,7 @@ fn to_ffi_row(setting: &DataSourceSetting, scope: Scope) -> ffi::FfiDataSourceRo
 /// existing row with this id if one is there, appending otherwise — the
 /// one place both [`ffi::DataSourceEditor::commit`] and "Duplicate" go
 /// through, so the two never drift on how an upsert is done.
-fn upsert_source(setting: DataSourceSetting, scope: Scope) -> FfiResult {
+pub(super) fn upsert_source(setting: DataSourceSetting, scope: Scope) -> FfiResult {
     if scope == Scope::Project {
         return commit_to_project(move |project| {
             let database = project.database.get_or_insert_with(Default::default);
@@ -105,6 +105,22 @@ fn upsert_source(setting: DataSourceSetting, scope: Scope) -> FfiResult {
     match app_config::save(&config_dir, &settings) {
         Ok(()) => FfiResult::default(),
         Err(error) => errors::failure(errors::CODE_SETTINGS_IO, error.to_string()),
+    }
+}
+
+/// Persists a source's script policy — the console bar's own selector
+/// (database-tools-plan F3e), not the Add/Edit Source dialog. Silently
+/// does nothing when `source_id` no longer resolves to a configured
+/// source (e.g. the console detached mid-write); the in-memory
+/// `ConsoleState` the caller also updates is what governs the running
+/// console either way.
+pub(super) fn persist_script_policy(source_id: &str, policy: &str) {
+    if let Some((mut setting, scope)) = sources_with_scope()
+        .into_iter()
+        .find(|(row, _)| row.id == source_id)
+    {
+        setting.script_policy = policy.to_string();
+        let _ = upsert_source(setting, scope);
     }
 }
 
@@ -424,7 +440,18 @@ impl ffi::DataSourceEditor {
         if !settings_model::database::validate(&draft, &other_ids).is_empty() {
             return errors::failure(errors::CODE_REFUSED, "fix the highlighted fields first");
         }
-        let setting = settings_model::database::commit(&draft);
+        // `settings_model::database::commit` builds a fresh row from the
+        // dialog's own draft, which has no `script_policy` field (that's
+        // the console bar's own policy selector, not this dialog's) — carry
+        // whatever the source already had forward so editing a source here
+        // never silently resets it.
+        let mut setting = settings_model::database::commit(&draft);
+        if let Some((existing, _)) = sources_with_scope()
+            .into_iter()
+            .find(|(row, _)| row.id == setting.id)
+        {
+            setting.script_policy = existing.script_policy;
+        }
         let result = upsert_source(setting, *self.scope.borrow());
         if result.code == errors::CODE_OK {
             *self.saved.borrow_mut() = Some(draft);

@@ -10362,6 +10362,11 @@ mod ffi {
             policy: FfiDbScriptPolicy,
         );
 
+        /// See `ConsoleServiceRust`'s `script_policy`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "scriptPolicy"]
+        fn script_policy(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiDbScriptPolicy;
+
         /// Runs a statement/selection against `tab_id`'s attached source —
         /// see `FfiDbExecWhat`'s own doc comment for what `text`/`caret`
         /// mean per variant.
@@ -10453,11 +10458,12 @@ mod ffi {
         );
 
         /// A `StopOnError`/`Ask`-policy script hit a failing statement and
-        /// more remain — the view offers Continue/Stop, then calls
-        /// `resume`.
+        /// more remain — `message` is the failing statement's own error
+        /// text, for a confirmation dialog to show; the view offers
+        /// Continue/Stop, then calls `resume`.
         #[qsignal]
         #[cxx_name = "askContinue"]
-        fn ask_continue(self: Pin<&mut ConsoleService>, result_id: u64, tab_id: u64);
+        fn ask_continue(self: Pin<&mut ConsoleService>, result_id: u64, message: QString);
 
         /// Free-text status for the console's Output tab (attach/detach
         /// outcomes, transaction errors) — never a substitute for

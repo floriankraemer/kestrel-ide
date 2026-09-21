@@ -1,0 +1,12 @@
+[package]
+name = "db-sql"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+db-core = { path = "../db-core" }
+diagnostics-core = { path = "../diagnostics-core" }
+sqlparser = "0.63"
+sqlformat = "0.5"
+
+[dev-dependencies]

@@ -88,7 +88,8 @@ Module trees (see `database-tools-plan.md` §4 for the authoritative, kept-in-sy
 ```
 crates/db-core/src/      value.rs  schema.rs  driver.rs  dialect.rs  dml.rs  result.rs
                          datasource.rs  tunnel.rs  console.rs  history.rs  session.rs  readonly.rs  error.rs
-crates/db-sql/src/       split.rs  classify.rs  parse.rs  completion.rs  inspections.rs  format.rs  ddl.rs  navigation.rs  mongo.rs
+crates/db-sql/src/       lib.rs  split.rs  classify.rs  parse.rs  completion.rs  inspections.rs  format.rs
+                         navigation.rs  dialects.rs  scan.rs  refs.rs (F3.2, real) — ddl.rs  mongo.rs (not yet built, later phases)
 crates/db-exchange/src/  export/*.rs  import/*.rs  dump.rs  copy_table.rs  schema_compare.rs  data_compare.rs  er_diagram.rs
 crates/db-drivers/src/   lib.rs  postgres.rs  mysql.rs  sqlite.rs  mongodb.rs  redis.rs  cassandra.rs  introspect/*.sql  testsupport.rs  tunnel.rs
 crates/db-driver-adbc/src/  driver.rs  arrow.rs  install.rs  locate.rs

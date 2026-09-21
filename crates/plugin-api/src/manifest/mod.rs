@@ -1155,3 +1155,5 @@ fn check_extension(value: &str) -> Result<(), LoadErrorKind> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_database;

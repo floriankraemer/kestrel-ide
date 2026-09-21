@@ -1,0 +1,26 @@
+[package]
+name = "db-exchange"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+db-core = { path = "../db-core" }
+db-sql = { path = "../db-sql" }
+editor-core = { path = "../editor-core" }
+process-exec = { path = "../process-exec" }
+csv = "1.4"
+rust_xlsxwriter = { version = "0.99", features = ["chrono"] }
+calamine = { version = "0.36", features = ["chrono"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+# `dump`'s 0600 credentials temp file (`--defaults-extra-file`, a Mongo
+# `--config`) — never a password on argv.
+tempfile = "3"
+
+[dev-dependencies]
+# The real in-process backend for tests (F5/F6 brief): a `dev-dependency`
+# never shows up in `cargo tree -e normal`, so pulling in `db-drivers`
+# (which carries a private tokio runtime unconditionally) here does not
+# violate this crate's own "no tokio" layering gate.
+db-drivers = { path = "../db-drivers", default-features = false, features = ["sqlite"] }
+rusqlite = { version = "0.32", features = ["bundled"] }

@@ -18,8 +18,13 @@ use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 /// libs.versions.toml coordinate completion, injected before the
 /// language-server path the same way `containers.rs` injects image-name
 /// completion — split out for the same file-size-ceiling reason.
+/// F3.7 (database-tools plan): completion, inspections and two
+/// intentions for a `.sql` file attached to a data source, injected the
+/// same way — a third non-LSP file kind alongside containers and build
+/// files.
 mod build_files;
 mod containers;
+mod database;
 mod lsp_surface;
 
 /// RF8: code actions, rename, formatting, and the pending-edit preview
@@ -161,6 +166,10 @@ pub struct LanguageServiceRust {
     hub: RefCell<containers::HubState>,
     container_completion_span: RefCell<(u32, u32, u32)>,
     local_images: RefCell<Vec<String>>,
+    /// F3.7: attachment cache, per-source schema/dialect cache, and the
+    /// idle-debounce state behind database completion/inspections/
+    /// intentions.
+    pub(crate) database: database::DatabaseAssist,
     /// C7: which completion-item preview resolution (documentation/detail as
     /// the popup's selection moves) is still the current one.
     completion_resolve: RefCell<lsp_core::CompletionResolveTracker>,
@@ -278,6 +287,7 @@ impl Default for LanguageServiceRust {
             hub: RefCell::default(),
             container_completion_span: RefCell::default(),
             local_images: RefCell::default(),
+            database: database::DatabaseAssist::default(),
             completion_resolve: RefCell::default(),
             actions: RefCell::default(),
             actions_language: RefCell::default(),
@@ -603,6 +613,10 @@ impl ffi::LanguageService {
         let path_str = path.to_string();
         let Some(config) = self.config_for_path(&path_str) else {
             self.as_mut().open_build_file_document(&path_str, text);
+            // F3.7: a `.sql` file attached to a data source has no
+            // server either — same "register it anyway, for this
+            // module's own lifecycle" reasoning as the line above.
+            self.as_mut().open_database_document(&path_str, text);
             return;
         };
         let language_id = config.language_id.clone();
@@ -677,16 +691,18 @@ impl ffi::LanguageService {
         self.as_mut().refresh_version_hints(path_str);
     }
 
-    pub fn document_changed(self: Pin<&mut Self>, path: &QString, text: &QString) {
+    pub fn document_changed(mut self: Pin<&mut Self>, path: &QString, text: &QString) {
         let path = path.to_string();
         if !self.open_docs.borrow().contains_key(&path) {
             return;
         }
         let uri = lsp_core::uri_from_path(&path);
-        let text = text.to_string();
+        let text_str = text.to_string();
         self.push_job(move |manager| {
-            let _ = manager.did_change(&uri, &text);
+            let _ = manager.did_change(&uri, &text_str);
         });
+        // F3.7: cheap no-op for a path with no attachment.
+        self.as_mut().schedule_database_inspection(&path);
     }
 
     pub fn document_saved(mut self: Pin<&mut Self>, path: &QString) {
@@ -703,6 +719,8 @@ impl ffi::LanguageService {
         // file: `refresh_version_hints` only does real work once
         // `editing::context::declared_versions` recognises the path.
         self.as_mut().refresh_version_hints(&path);
+        // F3.7: same cheap-no-op convention, for a database-attached file.
+        self.as_mut().refresh_database_inspections_now(&path);
     }
 
     pub fn document_closed(mut self: Pin<&mut Self>, path: &QString) {
@@ -721,6 +739,9 @@ impl ffi::LanguageService {
         // D6: a closed build file's version hints must go with it, the
         // same way its language-server rows just did above.
         self.as_mut().clear_version_hints(&path);
+        // F3.7: same for a database-attached file's inspections and its
+        // cached attachment.
+        self.as_mut().clear_database_inspections(&path);
         self.as_mut().diagnostics_changed();
     }
 
@@ -1036,6 +1057,16 @@ impl ffi::LanguageService {
         // C6: an image reference in a Dockerfile/compose file is answered
         // locally (+ Docker Hub), whether or not a YAML server is running.
         if self.as_mut().container_completion(
+            &path,
+            line,
+            character,
+            &text_before_cursor.to_string(),
+        ) {
+            return;
+        }
+        // F3.7: a `.sql` file attached to a data source is answered
+        // locally too, the same non-LSP short-circuit as containers.
+        if self.as_mut().database_completion(
             &path,
             line,
             character,

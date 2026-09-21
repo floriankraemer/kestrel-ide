@@ -341,13 +341,18 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F3.1 — console files + `database_console_bar`; source/schema pickers, tx mode | open | |
+| F3.1 — console files + `database_console_bar`; source/schema pickers, tx mode | done (schema picker deferred, see database-tools.md §11) | f59c02a, d507d9f |
 | F3.2 — `db-sql`: split/classify/parse/format | done | c512ce7 |
-| F3.3 — run statement/selection/file; error policy Stop/Continue/Ask; cancel; history | open | |
-| F3.4 — `ResultTableModel` + paging (500/page) + memory cap | open | |
-| F3.5 — `databaseResults` dock, per-console tabs | open | |
-| F3.6 — `sql-script` run-configuration kind | open | |
-| F3.7 — completion/inspections seam (`database_completion`, source `database:inspections`) | open | |
+| F3.3 — run statement/selection/file; error policy Stop/Continue/Ask; cancel; history | done (Ask policy has no confirmation dialog yet, always continues; see database-tools.md §11) | f59c02a |
+| F3.4 — `ResultTableModel` + paging (500/page) + memory cap | done | d507d9f |
+| F3.5 — `databaseResults` dock, per-console tabs | done (one active console/result shown at a time, not a tab per console; see database-tools.md §11) | d507d9f |
+| F3.6 — `sql-script` run-configuration kind | open — not started this phase | |
+| F3.7 — completion/inspections seam (`database_completion`, source `database:inspections`) | open — not started this phase | |
+| F3 follow-up — `db-drivers`' `SqliteConnection`/`PgConnection::execute` eagerly drain the whole `Rows` result before returning instead of streaming (found this phase, out of its file list — see database-tools.md §4/§11) | open | |
+| F3 follow-up — `e2e_database` part 2 (console → run → grid → 1M rows → cancel) and the first-row/1M-row-paging/cancel NFR bench numbers in §10 — blocked on the eager-materialisation fix above, since the bench cannot be honestly measured (or met) against a driver that buffers the whole result first | open | |
+| F3 follow-up — caret-based "run statement at caret" (`EditorTabs` has no caret byte-offset accessor yet; `console.rs`'s `statement_at_caret`/`FfiDbExecWhat::Statement` are implemented and unit-tested, just unreachable from the console bar) | open | |
+| F3 follow-up — `Ask` script-error policy's confirmation dialog (`askContinue` always auto-resumes today) | open | |
+| F3 follow-up — schema picker in the console bar, and dialect-aware `WHERE`/`ORDER BY` clause injection in `ResultProvider::applyClauses` (currently a plain `SELECT * FROM (…) AS t` wrapper) | open | |
 
 ### F4 — data editor
 

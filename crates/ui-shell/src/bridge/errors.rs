@@ -65,6 +65,16 @@ pub const CODE_UNKNOWN_LAYOUT: i32 = 1010;
 /// longer exists, or the launch's `cwd` falls outside the project.
 pub const CODE_RUN_TARGET: i32 = 1011;
 
+/// A console tab id `ConsoleService` does not know (never attached, or
+/// already detached) — its own code rather than `CODE_UNKNOWN_CONSOLE`
+/// since that one already names run-core's terminal console concept, a
+/// different id space entirely.
+pub const CODE_UNKNOWN_DB_CONSOLE: i32 = 1012;
+
+/// A result id `ResultProvider` does not know — the execution already
+/// finished and its rows were dropped, or the id was never issued.
+pub const CODE_UNKNOWN_RESULT: i32 = 1013;
+
 /// A failure with an adapter code and a finished sentence.
 pub fn failure(code: i32, message: impl AsRef<str>) -> FfiResult {
     debug_assert!(
@@ -96,6 +106,8 @@ mod tests {
             CODE_INVALID_ARGUMENT,
             CODE_UNKNOWN_LAYOUT,
             CODE_RUN_TARGET,
+            CODE_UNKNOWN_DB_CONSOLE,
+            CODE_UNKNOWN_RESULT,
         ];
         for code in codes {
             assert!(

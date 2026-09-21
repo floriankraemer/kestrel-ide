@@ -17,8 +17,20 @@ use db_core::schema::{
 };
 use db_core::value::{ColumnMeta, RowBatch, Value};
 
+/// `SQLITE_INTERRUPT` (raised by `SqliteCancelHandle::cancel`'s own
+/// `InterruptHandle::interrupt`, database-tools-plan F3.3) maps to
+/// `DbErrorCode::Cancelled` — every other `rusqlite::Error` stays
+/// `Unknown`, this driver draws no finer distinction than that.
 fn map_err(error: rusqlite::Error) -> DbError {
-    DbError::new(DbErrorCode::Unknown, error.to_string())
+    let code = match &error {
+        rusqlite::Error::SqliteFailure(inner, _)
+            if inner.code == rusqlite::ErrorCode::OperationInterrupted =>
+        {
+            DbErrorCode::Cancelled
+        }
+        _ => DbErrorCode::Unknown,
+    };
+    DbError::new(code, error.to_string())
 }
 
 /// `Value` -> a `rusqlite`-bindable owned value. Every value crosses as a
@@ -680,6 +692,26 @@ mod tests {
         let conn = connect();
         let handle = conn.cancel_handle().expect("sqlite always has one");
         assert!(handle.cancel().is_ok());
+    }
+
+    #[test]
+    fn map_err_reports_cancelled_for_a_query_interrupted_from_another_thread() {
+        let mut conn = connect();
+        let handle = conn.cancel_handle().expect("sqlite always has one");
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = handle.cancel();
+        });
+        let result = conn.execute(
+            &Statement::sql(
+                "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 100000000) SELECT count(*) FROM c",
+            ),
+            &ExecOptions::default(),
+        );
+        match result {
+            Err(error) => assert_eq!(error.code, DbErrorCode::Cancelled),
+            Ok(_) => panic!("expected the interrupted query to fail"),
+        }
     }
 
     #[test]

@@ -26,13 +26,14 @@
 //! a connection's watcher handle.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use db_core::driver::{ExecOptions, Statement};
+use db_core::driver::{CancelHandle, ExecOptions, RowStream, Statement};
 use db_core::error::DbError;
 use db_core::schema::{IntrospectLevel, IntrospectScope, ObjectRef, SchemaSnapshot};
 use db_core::session::Session;
+use db_core::value::{ColumnMeta, Value};
 
 /// One request a [`SessionWorker`]'s thread runs against its `Session`.
 pub enum SessionCommand {
@@ -58,7 +59,44 @@ pub enum SessionCommand {
     RunStatement {
         statement: Statement,
     },
+    /// Run one console statement (F3.3). A `Rows`-shaped result parks its
+    /// stream in the worker's own local state (keyed by nothing but "the
+    /// one active result", since a new statement on the same console
+    /// closes the previous one first — `ConsoleService`'s own rule, not
+    /// this module's) and reports its first page through
+    /// [`SessionEvent::Batch`]; every other shape reports directly.
+    Execute {
+        statement: Statement,
+        options: ExecOptions,
+    },
+    /// Pull the parked stream's next page, up to `options.fetch_size` rows
+    /// (the same size the statement executed with) — `Err` via
+    /// [`SessionEvent::Batch`]'s `Error` case when nothing is parked (the
+    /// result already finished, or a paging request raced a new
+    /// `Execute`).
+    FetchMore,
+    BeginManual,
+    Commit,
+    Rollback,
     Shutdown,
+}
+
+/// [`SessionCommand::Execute`]/[`SessionCommand::FetchMore`]'s outcome —
+/// one shape, reused by both since paging a `Rows` result is exactly "ask
+/// for another page of the same shape".
+pub enum BatchOutcome {
+    /// A page of a `SELECT`-shaped result. `done` once the stream is
+    /// exhausted — the same page that reports it also carries any rows it
+    /// still had left, so a caller never has to tell "no more rows" apart
+    /// from "no more rows, and here are the last few".
+    Rows {
+        columns: Vec<ColumnMeta>,
+        rows: Vec<Vec<Value>>,
+        done: bool,
+    },
+    Affected(u64),
+    Ok,
+    Error(DbError),
 }
 
 /// What a [`SessionCommand`] produced, tagged with the session's
@@ -74,6 +112,14 @@ pub enum SessionEvent {
         result: Result<String, DbError>,
     },
     Ran {
+        generation: u64,
+        result: Result<(), DbError>,
+    },
+    Batch {
+        generation: u64,
+        outcome: BatchOutcome,
+    },
+    TxChanged {
         generation: u64,
         result: Result<(), DbError>,
     },
@@ -104,15 +150,96 @@ fn level_covers(have: IntrospectLevel, want: IntrospectLevel) -> bool {
     rank(have) >= rank(want)
 }
 
+/// Turn a freshly executed (or paged) statement's shape into the one
+/// event both `Execute` and `FetchMore` report through, pulling exactly
+/// one page from `stream` when the shape is `Rows` (a page's size is
+/// whatever `options.fetch_size` asked `execute` for — see this module's
+/// doc comment on [`SessionCommand::FetchMore`]).
+fn next_batch_outcome(stream: &mut Box<dyn RowStream>) -> BatchOutcome {
+    match stream.next_batch() {
+        Ok(Some(batch)) => BatchOutcome::Rows {
+            columns: batch.columns,
+            rows: batch.rows,
+            done: false,
+        },
+        Ok(None) => BatchOutcome::Rows {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            done: true,
+        },
+        Err(error) => BatchOutcome::Error(error),
+    }
+}
+
 fn run(
     mut session: Session,
     receiver: std::sync::mpsc::Receiver<SessionCommand>,
     on_event: impl Fn(SessionEvent) + Send + 'static,
 ) {
     let mut cache: Vec<CacheEntry> = Vec::new();
+    let mut parked_stream: Option<Box<dyn RowStream>> = None;
     while let Ok(command) = receiver.recv() {
         match command {
             SessionCommand::Shutdown => break,
+            SessionCommand::Execute { statement, options } => {
+                let generation = session.generation();
+                parked_stream = None;
+                let outcome = match session.execute(&statement, &options) {
+                    Ok(db_core::driver::Execution::Rows(mut stream)) => {
+                        let first = next_batch_outcome(&mut stream);
+                        if !matches!(first, BatchOutcome::Rows { done: true, .. }) {
+                            parked_stream = Some(stream);
+                        }
+                        first
+                    }
+                    Ok(db_core::driver::Execution::Affected(n)) => BatchOutcome::Affected(n),
+                    Ok(db_core::driver::Execution::Ok) => BatchOutcome::Ok,
+                    Ok(db_core::driver::Execution::Multi(_)) => BatchOutcome::Error(DbError::new(
+                        db_core::error::DbErrorCode::InvalidStatement,
+                        "a console statement must not itself be a multi-statement script",
+                    )),
+                    Err(error) => BatchOutcome::Error(error),
+                };
+                on_event(SessionEvent::Batch {
+                    generation,
+                    outcome,
+                });
+            }
+            SessionCommand::FetchMore => {
+                let generation = session.generation();
+                let outcome = match parked_stream.as_mut() {
+                    Some(stream) => {
+                        let outcome = next_batch_outcome(stream);
+                        if matches!(outcome, BatchOutcome::Rows { done: true, .. }) {
+                            parked_stream = None;
+                        }
+                        outcome
+                    }
+                    None => BatchOutcome::Error(DbError::new(
+                        db_core::error::DbErrorCode::Unknown,
+                        "no result is parked to fetch more of",
+                    )),
+                };
+                on_event(SessionEvent::Batch {
+                    generation,
+                    outcome,
+                });
+            }
+            SessionCommand::BeginManual => {
+                let generation = session.generation();
+                let result = session.begin_manual();
+                on_event(SessionEvent::TxChanged { generation, result });
+            }
+            SessionCommand::Commit => {
+                let generation = session.generation();
+                let result = session.commit();
+                on_event(SessionEvent::TxChanged { generation, result });
+            }
+            SessionCommand::Rollback => {
+                let generation = session.generation();
+                let result = session.rollback();
+                on_event(SessionEvent::TxChanged { generation, result });
+            }
             SessionCommand::DropCached { scope } => {
                 cache.retain(|entry| entry.scope != scope);
             }
@@ -170,6 +297,14 @@ fn run(
 pub struct SessionWorker {
     sender: std::sync::mpsc::Sender<SessionCommand>,
     generation: Arc<AtomicU64>,
+    /// The connection's cancel handle, obtained once at spawn time (see
+    /// `db_core::session::Session::cancel_handle`'s doc comment) and kept
+    /// outside the command channel entirely — a running `Execute` occupies
+    /// the worker thread for as long as it blocks, so a cancel that only
+    /// took effect once its own turn came up on that same channel would
+    /// never arrive in time to interrupt it. `None` when the backend has
+    /// no server-side cancel at all.
+    cancel_handle: Arc<Mutex<Option<Box<dyn CancelHandle>>>>,
     thread: Option<JoinHandle<()>>,
 }
 
@@ -179,12 +314,30 @@ impl SessionWorker {
     /// `qt_thread().queue`, so this module never depends on cxx-qt.
     pub fn spawn(session: Session, on_event: impl Fn(SessionEvent) + Send + 'static) -> Self {
         let generation = session.generation_handle();
+        let cancel_handle = Arc::new(Mutex::new(session.cancel_handle()));
         let (sender, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || run(session, receiver, on_event));
         Self {
             sender,
             generation,
+            cancel_handle,
             thread: Some(thread),
+        }
+    }
+
+    /// Interrupt whatever this connection is doing *right now*, from any
+    /// thread — see [`Self::cancel_handle`]'s doc comment. `Err` when the
+    /// backend never offered a cancel handle at all; the caller's own
+    /// client-side [`db_core::driver::CancelToken`] (checked between pages,
+    /// not while blocked inside one `next_batch`/`execute` call) is the
+    /// fallback that still stops paging further once a batch returns.
+    pub fn cancel_now(&self) -> Result<(), DbError> {
+        match self.cancel_handle.lock().unwrap().as_ref() {
+            Some(handle) => handle.cancel(),
+            None => Err(DbError::new(
+                db_core::error::DbErrorCode::NotSupported,
+                "this data source has no server-side cancel",
+            )),
         }
     }
 
@@ -231,11 +384,45 @@ mod tests {
     use db_core::schema::{Children, Node, ObjectKind};
     use std::sync::Mutex;
 
+    /// A canned two-batch `RowStream`: `[1, 2]` then `[3]`, then exhausted.
+    struct FakeRowStream {
+        remaining: Vec<Vec<Value>>,
+    }
+
+    impl RowStream for FakeRowStream {
+        fn next_batch(&mut self) -> Result<Option<db_core::value::RowBatch>, DbError> {
+            if self.remaining.is_empty() {
+                return Ok(None);
+            }
+            let row = self.remaining.remove(0);
+            Ok(Some(db_core::value::RowBatch {
+                columns: vec![ColumnMeta {
+                    name: "n".to_string(),
+                    type_name: "int".to_string(),
+                    nullable: false,
+                }],
+                rows: vec![row],
+            }))
+        }
+    }
+
+    struct FakeCancelHandle(Arc<AtomicU64>);
+    impl CancelHandle for FakeCancelHandle {
+        fn cancel(&self) -> Result<(), DbError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     /// A `Connection` double whose `introspect` counts every call it
     /// receives — proves the worker's own cache actually avoids a repeat
     /// query, which a mock that just returns canned data could not.
+    /// `execute` also recognises `"SELECT ROWS"` (a two-batch
+    /// [`FakeRowStream`]) and offers a [`FakeCancelHandle`] that counts how
+    /// many times it was invoked.
     struct CountingConnection {
         introspect_calls: Arc<AtomicU64>,
+        cancel_calls: Arc<AtomicU64>,
     }
 
     impl Connection for CountingConnection {
@@ -267,6 +454,11 @@ mod tests {
                     "boom",
                 ));
             }
+            if statement.text.contains("ROWS") {
+                return Ok(Execution::Rows(Box::new(FakeRowStream {
+                    remaining: vec![vec![Value::Int(1)], vec![Value::Int(2)]],
+                })));
+            }
             Ok(Execution::Affected(0))
         }
         fn begin(&mut self) -> Result<(), DbError> {
@@ -282,7 +474,7 @@ mod tests {
             Ok(())
         }
         fn cancel_handle(&self) -> Option<Box<dyn CancelHandle>> {
-            None
+            Some(Box::new(FakeCancelHandle(Arc::clone(&self.cancel_calls))))
         }
         fn ddl_of(&mut self, object: &ObjectRef) -> Result<String, DbError> {
             Ok(format!("CREATE TABLE {}", object.name))
@@ -299,6 +491,7 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let session = Session::new(Box::new(CountingConnection {
             introspect_calls: Arc::clone(&calls),
+            cancel_calls: Arc::new(AtomicU64::new(0)),
         }));
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received);
@@ -439,6 +632,7 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let session = Session::new(Box::new(CountingConnection {
             introspect_calls: calls,
+            cancel_calls: Arc::new(AtomicU64::new(0)),
         }));
         let ddls = Arc::new(Mutex::new(Vec::new()));
         let ran = Arc::new(Mutex::new(Vec::new()));
@@ -447,7 +641,9 @@ mod tests {
         let worker = SessionWorker::spawn(session, move |event| match event {
             SessionEvent::Ddl { result, .. } => ddls_clone.lock().unwrap().push(result),
             SessionEvent::Ran { result, .. } => ran_clone.lock().unwrap().push(result),
-            SessionEvent::Introspected { .. } => {}
+            SessionEvent::Introspected { .. }
+            | SessionEvent::Batch { .. }
+            | SessionEvent::TxChanged { .. } => {}
         });
         worker
             .send(SessionCommand::DdlOf {
@@ -524,6 +720,7 @@ mod tests {
         let calls = Arc::new(AtomicU64::new(0));
         let session = Session::new(Box::new(CountingConnection {
             introspect_calls: calls,
+            cancel_calls: Arc::new(AtomicU64::new(0)),
         }));
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received);
@@ -542,5 +739,129 @@ mod tests {
         wait_for(&received, 1);
         let snapshot = received.lock().unwrap().remove(0).unwrap();
         assert!(matches!(snapshot.roots[0].children, Children::NotLoaded));
+    }
+
+    fn batches_worker() -> (SessionWorker, Arc<Mutex<Vec<BatchOutcome>>>) {
+        let session = Session::new(Box::new(CountingConnection {
+            introspect_calls: Arc::new(AtomicU64::new(0)),
+            cancel_calls: Arc::new(AtomicU64::new(0)),
+        }));
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let batches_clone = Arc::clone(&batches);
+        let worker = SessionWorker::spawn(session, move |event| {
+            if let SessionEvent::Batch { outcome, .. } = event {
+                batches_clone.lock().unwrap().push(outcome);
+            }
+        });
+        (worker, batches)
+    }
+
+    #[test]
+    fn executing_a_rows_statement_parks_the_stream_and_reports_the_first_page() {
+        let (worker, batches) = batches_worker();
+        worker
+            .send(SessionCommand::Execute {
+                statement: Statement::sql("SELECT ROWS"),
+                options: ExecOptions::default(),
+            })
+            .unwrap();
+        wait_for(&batches, 1);
+        let guard = batches.lock().unwrap();
+        match &guard[0] {
+            BatchOutcome::Rows { rows, done, .. } => {
+                assert_eq!(rows, &vec![vec![Value::Int(1)]]);
+                assert!(!done);
+            }
+            _ => panic!("expected a Rows batch"),
+        }
+    }
+
+    #[test]
+    fn fetch_more_pages_the_parked_stream_until_it_is_exhausted() {
+        let (worker, batches) = batches_worker();
+        worker
+            .send(SessionCommand::Execute {
+                statement: Statement::sql("SELECT ROWS"),
+                options: ExecOptions::default(),
+            })
+            .unwrap();
+        worker.send(SessionCommand::FetchMore).unwrap();
+        worker.send(SessionCommand::FetchMore).unwrap();
+        wait_for(&batches, 3);
+        let batches = batches.lock().unwrap();
+        assert!(
+            matches!(&batches[1], BatchOutcome::Rows { rows, done: false, .. } if rows == &vec![vec![Value::Int(2)]])
+        );
+        assert!(matches!(&batches[2], BatchOutcome::Rows { done: true, .. }));
+    }
+
+    #[test]
+    fn fetch_more_with_nothing_parked_reports_an_error() {
+        let (worker, batches) = batches_worker();
+        worker.send(SessionCommand::FetchMore).unwrap();
+        wait_for(&batches, 1);
+        assert!(matches!(
+            &batches.lock().unwrap()[0],
+            BatchOutcome::Error(_)
+        ));
+    }
+
+    #[test]
+    fn a_non_rows_execute_reports_affected_directly_with_nothing_parked() {
+        let (worker, batches) = batches_worker();
+        worker
+            .send(SessionCommand::Execute {
+                statement: Statement::sql("UPDATE t SET x = 1"),
+                options: ExecOptions::default(),
+            })
+            .unwrap();
+        wait_for(&batches, 1);
+        assert!(matches!(
+            batches.lock().unwrap()[0],
+            BatchOutcome::Affected(0)
+        ));
+        // Nothing was parked — a follow-up `FetchMore` is refused, not
+        // silently served from a previous statement's leftover stream.
+        worker.send(SessionCommand::FetchMore).unwrap();
+        wait_for(&batches, 2);
+        assert!(matches!(batches.lock().unwrap()[1], BatchOutcome::Error(_)));
+    }
+
+    #[test]
+    fn cancel_now_invokes_the_connections_cancel_handle_from_outside_the_command_queue() {
+        let cancel_calls = Arc::new(AtomicU64::new(0));
+        let session = Session::new(Box::new(CountingConnection {
+            introspect_calls: Arc::new(AtomicU64::new(0)),
+            cancel_calls: Arc::clone(&cancel_calls),
+        }));
+        let worker = SessionWorker::spawn(session, |_event| {});
+        worker.cancel_now().unwrap();
+        assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn begin_commit_rollback_report_through_tx_changed() {
+        let session = Session::new(Box::new(CountingConnection {
+            introspect_calls: Arc::new(AtomicU64::new(0)),
+            cancel_calls: Arc::new(AtomicU64::new(0)),
+        }));
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let results_clone = Arc::clone(&results);
+        let worker = SessionWorker::spawn(session, move |event| {
+            if let SessionEvent::TxChanged { result, .. } = event {
+                results_clone.lock().unwrap().push(result);
+            }
+        });
+        worker.send(SessionCommand::BeginManual).unwrap();
+        worker.send(SessionCommand::Commit).unwrap();
+        worker.send(SessionCommand::Rollback).unwrap();
+        wait_for(&results, 3);
+        let results = results.lock().unwrap();
+        assert!(results[0].is_ok());
+        assert!(results[1].is_ok());
+        // A `Rollback` right after a `Commit` re-opened auto mode: the fake
+        // connection accepts it (it only counts calls), proving `run` wires
+        // the command through rather than the outcome mattering here.
+        assert!(results[2].is_ok());
     }
 }

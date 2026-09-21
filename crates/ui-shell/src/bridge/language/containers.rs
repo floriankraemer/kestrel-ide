@@ -89,7 +89,8 @@ fn fetch(prefix: &str) -> Fetched {
             .into_iter()
             .find(|setting| setting.id == id)
             .and_then(|setting| {
-                let secret = container_registry::secrets::SecretStore::load(&setting.id)
+                let secret = container_registry::secrets::store()
+                    .load(&setting.id)
                     .ok()
                     .flatten()
                     .unwrap_or_default();

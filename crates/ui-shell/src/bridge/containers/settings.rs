@@ -471,15 +471,17 @@ impl ffi::AppSettings {
     /// (a local keychain call, not a network one, so no worker thread is
     /// needed the way `testRegistryConnection` needs one).
     pub fn store_registry_secret(&self, id: &QString, secret: &QString) -> FfiResult {
-        match container_registry::secrets::SecretStore::store(&id.to_string(), &secret.to_string())
-        {
+        match container_registry::secrets::store().store(&id.to_string(), &secret.to_string()) {
             Ok(()) => FfiResult::default(),
-            Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
+            Err(error) => errors::failure(
+                errors::CODE_REFUSED,
+                container_registry::secrets::describe(&error),
+            ),
         }
     }
 
     pub fn has_registry_secret(&self, id: &QString) -> bool {
-        container_registry::secrets::SecretStore::has(&id.to_string())
+        container_registry::secrets::store().has(&id.to_string())
     }
 
     /// C7 review follow-up: "Remove" on a registry tree node — strips the
@@ -503,9 +505,12 @@ impl ffi::AppSettings {
         if result.code != errors::CODE_OK {
             return result;
         }
-        match container_registry::secrets::SecretStore::delete(&id) {
+        match container_registry::secrets::store().delete(&id) {
             Ok(()) => FfiResult::default(),
-            Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
+            Err(error) => errors::failure(
+                errors::CODE_REFUSED,
+                container_registry::secrets::describe(&error),
+            ),
         }
     }
 }

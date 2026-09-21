@@ -20,7 +20,7 @@ use container_core::registry_ref::RegistryKind;
 use container_core::session;
 use container_core::tree::NodeKind;
 use container_registry::registry::RegistryClient;
-use container_registry::secrets::SecretStore;
+use container_registry::secrets;
 
 use crate::bridge::errors;
 use crate::bridge::ffi::{self, FfiCommand, FfiResult};
@@ -96,7 +96,7 @@ fn client_for(
 fn login_credential(
     setting: &app_config::RegistrySetting,
 ) -> (Option<(String, String)>, Option<String>) {
-    match SecretStore::load(&setting.id) {
+    match secrets::store().load(&setting.id) {
         Ok(Some(secret)) => (
             Some((setting.address.clone(), setting.username.clone())),
             Some(secret),
@@ -117,7 +117,8 @@ impl ffi::ContainerService {
                 format!("no registry with id '{registry_id}' is configured"),
             );
         };
-        let secret = SecretStore::load(&registry_id)
+        let secret = secrets::store()
+            .load(&registry_id)
             .ok()
             .flatten()
             .unwrap_or_default();
@@ -195,7 +196,8 @@ impl ffi::ContainerService {
                 format!("no registry with id '{registry_id}' is configured"),
             );
         };
-        let secret = SecretStore::load(&registry_id)
+        let secret = secrets::store()
+            .load(&registry_id)
             .ok()
             .flatten()
             .unwrap_or_default();
@@ -247,7 +249,8 @@ impl ffi::ContainerService {
         let repository = repository.to_string();
         let kind = RegistryKind::from_id(&setting.kind);
         let address = setting.address.clone();
-        let secret = SecretStore::load(&setting.id)
+        let secret = secrets::store()
+            .load(&setting.id)
             .ok()
             .flatten()
             .unwrap_or_default();
@@ -305,7 +308,8 @@ impl ffi::ContainerService {
         let repository = repository.to_string();
         let kind = RegistryKind::from_id(&setting.kind);
         let address = setting.address.clone();
-        let secret = SecretStore::load(&setting.id)
+        let secret = secrets::store()
+            .load(&setting.id)
             .ok()
             .flatten()
             .unwrap_or_default();

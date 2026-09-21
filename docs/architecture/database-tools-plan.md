@@ -359,18 +359,18 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F5.1 — export formats (csv/tsv/json/sql/html/markdown/xlsx) | open | |
-| F5.2 — CSV/XLSX import mapping | open | |
-| F5.3 — dump/restore via `process-exec` into the Run dock | open | |
-| F5.4 — copy table between sources | open | |
+| F5.1 — export formats (csv/tsv/json/sql/html/markdown/xlsx) | partial (crate half; UI in F5b) | `f82b85c` |
+| F5.2 — CSV/XLSX import mapping | partial (crate half; UI in F5b) | `8d0f4ec` |
+| F5.3 — dump/restore via `process-exec` into the Run dock | partial (crate half — argv/`spawn`/`preview`; Run-dock hookup in F5b) | `03dd760` |
+| F5.4 — copy table between sources | partial (crate half; UI in F5b) | `59d08e3` |
 
 ### F6 — diagrams + compare
 
 | Task | Status | Commit |
 |---|---|---|
-| F6.1 — ER diagram → Mermaid `erDiagram` → preview dock | open | |
-| F6.2 — schema compare → `MigrationScript` on `DiffView` | open | |
-| F6.3 — data compare → canonical TSV per side on `DiffView` | open | |
+| F6.1 — ER diagram → Mermaid `erDiagram` → preview dock | partial (crate half — `to_mermaid`; preview-dock wiring in F6b) | `8720907` |
+| F6.2 — schema compare → `MigrationScript` on `DiffView` | partial (crate half — `compare`/`migration_script`/`ddl_pairs`; `DiffView` wiring in F6b) | `23433f7` |
+| F6.3 — data compare → canonical TSV per side on `DiffView` | partial (crate half — `compare`; `DiffView` wiring in F6b) | `a126594` |
 
 ### F7 — NoSQL + SSH fallback
 

@@ -6,6 +6,7 @@ Proposed.
 Implemented by [the plugin host and icon themes plan](../plugin-host-and-icon-themes-plan.md); this ADR covers tasks P1 and P2 (`plugin-api`, `plugin-host`).
 Makes concrete the "hybrid plugin system" direction of [ADR-0001](0001-core-tech-stack.md), whose open questions about the host API surface this decision answers for the first revision.
 The sandbox tier's own limits are [ADR-0028](0028-wasm-plugin-tier.md); the first contribution point to use this host is [ADR-0027](0027-icon-themes.md).
+Amended by ADR-0059: two more contribution points, `tool-windows` and `settings-pages` (the database-tools plan's G1), so a plugin can declare its own dock and settings page instead of the host wiring them by literal id — additive, so `api_version` stays 1.
 
 ## Context
 

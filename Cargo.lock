@@ -1535,6 +1535,7 @@ dependencies = [
  "bytes",
  "chrono",
  "db-core",
+ "futures-util",
  "rusqlite",
  "rustls",
  "tempfile",

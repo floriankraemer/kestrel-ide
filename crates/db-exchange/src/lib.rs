@@ -3,6 +3,7 @@
 //! half; dialogs and the Run-dock hookup are F5b/F6b.
 
 pub mod copy_table;
+pub mod data_compare;
 pub mod dump;
 pub mod er_diagram;
 pub mod export;

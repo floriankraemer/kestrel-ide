@@ -380,12 +380,12 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F7.1 — resolve R11 (mongodb build under pinned rustc) before writing `db-drivers::mongodb` | open | |
-| F7.2 — mongodb driver + Collection/Field tree kinds + Mongo sugar (`runCommand`/`db.coll.find`) | open | |
-| F7.3 — redis driver + Key/KeyNamespace tree kinds + RESP console | open | |
-| F7.4 — scylla driver + Keyspace tree kind + CQL console | open | |
-| F7.5 — `db_core::tunnel::Tunnel` trait; `RusshTunnel` in `db-drivers` (password/passphrase, known-hosts prompt) | open | |
-| F7.6 — document grid mode | open | |
+| F7.1 — resolve R11 (mongodb build under pinned rustc) before writing `db-drivers::mongodb` | done — `bson-3` feature (see §13 above) | `c794ee5 (db-sql)/90a412e (db-drivers)` |
+| F7.2 — mongodb driver + Collection/Field tree kinds + Mongo sugar (`runCommand`/`db.coll.find`) | done (crate half; console view is F7b) | `c794ee5 (db-sql)/90a412e (db-drivers)` |
+| F7.3 — redis driver + Key/KeyNamespace tree kinds + RESP console | done (crate half; console view is F7b) | `c794ee5 (db-sql)/90a412e (db-drivers)` |
+| F7.4 — scylla driver + Keyspace tree kind + CQL console | done (crate half, feature opt-in — see §3's `cassandra` note; console view is F7b) | `90a412e` |
+| F7.5 — `db_core::tunnel::Tunnel` trait; `RusshTunnel` in `db-drivers` (password/passphrase, known-hosts prompt) | done | `d3ae943 (db-core)/90a412e (db-drivers)` |
+| F7.6 — document grid mode | open (F7b, ui-shell) | |
 
 ### F8 — ADBC + ODBC
 
@@ -483,6 +483,8 @@ Release binary size for the full set minus `mongodb`: 448 KB — not representat
 **`mongodb` 3.9.1 does not compile at all** under this repo's pinned `rustc` 1.98.1: `error[E0659]: 'doc' is ambiguous`, 1226 downstream errors, from `macro_magic`'s `forward_tokens` macro re-exporting `bson::doc` into scope where it collides with the builtin `#[doc]` attribute (`action/search_index.rs`).
 This is new — R11, not previously in the plan's risk table (§7).
 It blocks F7's mongodb driver until resolved; the fix is upstream (a `macro_magic`/`mongodb` version bump, or reduced feature set) and is not attempted here, since it needs no crate in this repository to exist yet.
+
+**F7.1 resolution.** `mongodb` 3.9.1's own default `bson-2` feature is what collides; switching to its `bson-3` feature (pulling `bson` 3.x instead of 2.x, whose `doc!` macro no longer shares a name that ambiguates against `mongodb`'s `macro_magic`-based `#[options_doc]`/`#[export_doc]` plumbing) compiles cleanly under rustc 1.98.1 with zero errors — `compat-3-3-0` is a separate, unrelated hard `compile_error!` 3.9.1 requires regardless (its own forward-compat marker feature). No version downgrade needed: `mongodb = { version = "3.9.1", default-features = false, features = ["rustls-tls", "dns-resolver", "bson-3", "compat-3-3-0"] }` is the exact fix, recorded in `crates/db-drivers/Cargo.toml`'s `[dependencies.mongodb-driver]` comment. R2's per-driver-crate `aws-lc-rs` audit (mongodb, redis, postgres, russh) all came back clean with `default-features = false` + the crate's own `ring`/`rustls-tls` feature — only `scylla` could not be cleaned (its `Cargo.toml` hard-codes `rustls = { version = "0.23", optional = true }`/`tokio-rustls` with no `default-features = false` of its own, reproduced identically on 1.7.0/1.8.0/1.9.0), so F7.4's `cassandra` feature ships opt-in only, never in `default`, and `make lint`'s `aws-lc-rs` gate dropped `--all-features` accordingly (see `layering.md` and the Makefile).
 
 **`aws-lc-rs` is not empty**, contrary to decision 6's original wording.
 `cargo tree -i aws-lc-rs` in the spike:

@@ -276,7 +276,7 @@ impl ffi::ConsoleService {
                                 source_id: attach_source_id.clone(),
                                 worker,
                                 dialect,
-                                guard: Guard::new(Box::new(SqlClassifier { dialect })),
+                                guard: Guard::new(read_only, Box::new(SqlClassifier { dialect })),
                                 tx_mode: FfiDbTxMode::Auto,
                                 script_policy: initial_policy,
                                 page_size,

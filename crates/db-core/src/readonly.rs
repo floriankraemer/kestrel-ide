@@ -59,16 +59,35 @@ impl Classifier for NaiveClassifier {
 /// source. The data editor is hidden entirely on a read-only source
 /// (ADR-0061 §3) — this guard is what a console (which cannot be hidden
 /// the same way) checks before running a typed statement.
+///
+/// `read_only` is the source's own flag, captured once at construction:
+/// a `Guard` built for a *writable* source lets every statement through
+/// without even asking the classifier — this is the fix for the F3e
+/// follow-up (database-tools-plan's "F3e follow-up" row): every earlier
+/// caller built a `Guard` and called `check` unconditionally, which
+/// refused a plain `INSERT` on a perfectly writable source. Every
+/// consumer now routes through this one constructor rather than each
+/// re-deriving its own "only if read-only" gate around `check` (the
+/// `sql_script` module used to be the one caller that got this right by
+/// gating its own call — that gate moves in here instead, so a future
+/// caller cannot forget it).
 pub struct Guard {
+    read_only: bool,
     classifier: Box<dyn Classifier>,
 }
 
 impl Guard {
-    pub fn new(classifier: Box<dyn Classifier>) -> Self {
-        Self { classifier }
+    pub fn new(read_only: bool, classifier: Box<dyn Classifier>) -> Self {
+        Self {
+            read_only,
+            classifier,
+        }
     }
 
     pub fn check(&self, statement: &str) -> Result<(), DbError> {
+        if !self.read_only {
+            return Ok(());
+        }
         match self.classifier.classify(statement) {
             StatementKind::Read => Ok(()),
             StatementKind::Write | StatementKind::Ddl | StatementKind::Unknown => {
@@ -86,7 +105,11 @@ mod tests {
     use super::*;
 
     fn guard() -> Guard {
-        Guard::new(Box::new(NaiveClassifier))
+        Guard::new(true, Box::new(NaiveClassifier))
+    }
+
+    fn writable_guard() -> Guard {
+        Guard::new(false, Box::new(NaiveClassifier))
     }
 
     #[test]
@@ -126,5 +149,21 @@ mod tests {
     fn classification_is_case_insensitive() {
         assert!(guard().check("select 1").is_ok());
         assert!(guard().check("insert into t values (1)").is_err());
+    }
+
+    /// The F3e follow-up this constructor fixes: a `Guard` built for a
+    /// writable source must let a write/DDL/unknown statement straight
+    /// through, not just a `SELECT`.
+    #[test]
+    fn a_writable_source_s_guard_passes_every_statement() {
+        assert!(writable_guard().check("INSERT INTO users VALUES (1)").is_ok());
+        assert!(writable_guard().check("DROP TABLE users").is_ok());
+        assert!(writable_guard().check("").is_ok());
+        assert!(writable_guard().check("CALL do_something()").is_ok());
+    }
+
+    #[test]
+    fn a_read_only_source_s_guard_still_refuses_writes() {
+        assert!(guard().check("INSERT INTO users VALUES (1)").is_err());
     }
 }

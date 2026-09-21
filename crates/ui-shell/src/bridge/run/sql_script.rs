@@ -180,13 +180,10 @@ fn run_script(
 /// through `configured_sources`/`secrets_for`, which read this process's
 /// real settings file.
 ///
-/// The read-only guard only runs when `read_only` is set: `Guard::check`
-/// refuses *every* `Write`/`Ddl`/`Unknown` statement unconditionally (it
-/// has no notion of "is this source actually read-only" of its own —
-/// `db_core::readonly`'s own doc comment on why that is a client-side
-/// belt to the engine's own read-only session flag's suspenders, not a
-/// blanket "no writes ever" rule), so gating the call here is this
-/// function's own job rather than something `Guard` decides.
+/// `Guard::new(read_only, …)` carries the source's own flag now (the F3e
+/// follow-up's fix — `db_core::readonly`'s own doc comment), so `check`
+/// itself is a no-op on a writable source; this function no longer needs
+/// its own `if read_only` gate around the call.
 fn run_statements_on(
     mut connection: Box<dyn db_core::driver::Connection>,
     text: &str,
@@ -196,7 +193,7 @@ fn run_statements_on(
     mut on_line: impl FnMut(String),
 ) -> Result<(), String> {
     let dialect: Dialect = connection.dialect();
-    let guard = Guard::new(Box::new(SqlClassifier { dialect }));
+    let guard = Guard::new(read_only, Box::new(SqlClassifier { dialect }));
     let statements: Vec<String> = db_sql::split(text, dialect)
         .into_iter()
         .map(|statement| statement.text(text).trim().to_string())
@@ -207,13 +204,11 @@ fn run_statements_on(
         let _ = connection.close();
         return Ok(());
     }
-    if read_only {
-        for statement in &statements {
-            if let Err(error) = guard.check(statement) {
-                on_line(format!("Refused: {}", error.message));
-                let _ = connection.close();
-                return Err(error.message);
-            }
+    for statement in &statements {
+        if let Err(error) = guard.check(statement) {
+            on_line(format!("Refused: {}", error.message));
+            let _ = connection.close();
+            return Err(error.message);
         }
     }
     let mut session = Session::new(connection);

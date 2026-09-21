@@ -338,7 +338,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | Task | Status | Commit |
 |---|---|---|
 | F3.1 — console files + `database_console_bar`; source/schema pickers, tx mode | open | |
-| F3.2 — `db-sql`: split/classify/parse/format | open | |
+| F3.2 — `db-sql`: split/classify/parse/format | done | c512ce7 |
 | F3.3 — run statement/selection/file; error policy Stop/Continue/Ask; cancel; history | open | |
 | F3.4 — `ResultTableModel` + paging (500/page) + memory cap | open | |
 | F3.5 — `databaseResults` dock, per-console tabs | open | |

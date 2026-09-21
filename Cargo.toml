@@ -31,6 +31,7 @@ members = [
     "crates/container-registry",
     "crates/secret-store",
     "crates/db-core",
+    "crates/db-sql",
     "crates/db-drivers",
     "crates/db-driver-odbc",
     "crates/db-driver-adbc",

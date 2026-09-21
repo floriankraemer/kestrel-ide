@@ -315,13 +315,13 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F1.1 — `secret-store` extraction from `container-registry/src/secrets.rs`; `container-registry` migrates in the same commit | done | |
-| F1.2 — `db-core`: `value`, `schema`, `driver`, `dialect`, `dml`, `result`, `datasource`, `tunnel` (`CliTunnel`), `console`, `history`, `session`, `readonly`, `error` | done | |
-| F1.3 — `db-drivers`: sqlite + postgres backends, `DriverRegistry::builtin()`, private tokio runtime | done | |
-| F1.4 — `[database]` `app-config` section; `settings-model::database`; `ScopedField::Database` | done | |
-| F1.5 — `database-tools` plugin.toml (`database-drivers`, `sql-dialects` rows for postgresql/sqlite) | done | |
-| F1.6 — Data Source dialog + settings page + Test connection | done | |
-| F1.7 — per-driver-crate `aws-lc-rs` exclusion (R2); `cargo tree -i aws-lc-rs` empty joins `make lint` | done | |
+| F1.1 — `secret-store` extraction from `container-registry/src/secrets.rs`; `container-registry` migrates in the same commit | done | 14d287b |
+| F1.2 — `db-core`: `value`, `schema`, `driver`, `dialect`, `dml`, `result`, `datasource`, `tunnel` (`CliTunnel`), `console`, `history`, `session`, `readonly`, `error` | done | b26cb5e |
+| F1.3 — `db-drivers`: sqlite + postgres backends, `DriverRegistry::builtin()`, private tokio runtime | done | b9f6894 |
+| F1.4 — `[database]` `app-config` section; `settings-model::database`; `ScopedField::Database` | done | 8148486 |
+| F1.5 — `database-tools` plugin.toml (`database-drivers`, `sql-dialects` rows for postgresql/sqlite) | done | ffaa1e1 |
+| F1.6 — Data Source dialog + settings page + Test connection | done | 01a1b2b |
+| F1.7 — per-driver-crate `aws-lc-rs` exclusion (R2); `cargo tree -i aws-lc-rs` empty joins `make lint` | done | b9f6894 |
 
 ### F2 — tree
 

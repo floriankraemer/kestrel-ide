@@ -1013,23 +1013,22 @@ impl ffi::ResultProvider {
         QString::from(text.as_str())
     }
 
-    /// Re-executes `resultId`'s original console statement wrapped as a
-    /// derived table with `WHERE`/`ORDER BY` applied — every mainstream
-    /// SQL dialect supports a subquery in `FROM`, so this needs no
-    /// dialect-specific clause injection.
-    /// ponytail: does not validate `where_clause`/`order_by` beyond what
-    /// the database itself rejects; the read-only guard still runs (the
-    /// statement is still a `SELECT`), so this cannot smuggle a write.
-    /// Re-executes `resultId`'s original statement wrapped as a derived
-    /// table with `WHERE`/`ORDER BY` applied, on the same console worker
-    /// that ran it. `ResultProvider` cannot call `ConsoleService::execute`
-    /// directly (they are two separate QObjects — see this module's own
-    /// doc comment on why `Shared` exists), so this sends the `Execute`
+    /// Re-executes `resultId`'s original statement with `WHERE`/`ORDER BY`
+    /// applied through `db_sql::apply_clauses` — a plain `SELECT` gets its
+    /// own clauses extended in place; anything else falls back to that
+    /// module's derived-table wrapper (its own doc comment says which is
+    /// which), on the same console worker that ran the original statement.
+    /// `ResultProvider` cannot call `ConsoleService::execute` directly
+    /// (they are two separate QObjects — see this module's own doc
+    /// comment on why `Shared` exists), so this sends the `Execute`
     /// command straight to the worker; the worker's replies still land on
     /// `ConsoleService::apply_event` regardless of who sent the command
     /// (its `on_event` closure was bound to that QObject once, at
     /// `attach` time), so `rowsAppended`/`executionFinished` still fire
     /// exactly as they do for a plain "Run".
+    /// ponytail: does not validate `where_clause`/`order_by` beyond what
+    /// the database itself rejects; the read-only guard still runs below,
+    /// so this cannot smuggle a write.
     pub fn apply_clauses(
         self: Pin<&mut Self>,
         result_id: u64,
@@ -1043,19 +1042,15 @@ impl ffi::ResultProvider {
             return errors::failure(errors::CODE_UNKNOWN_RESULT, "no such result");
         };
         let tab_id = existing.tab_id;
-        let mut statement = format!(
-            "SELECT * FROM ({}) database_tools_clause_view",
-            existing.statement_text
-        );
-        if !where_clause.trim().is_empty() {
-            statement.push_str(&format!(" WHERE {where_clause}"));
-        }
-        if !order_by.trim().is_empty() {
-            statement.push_str(&format!(" ORDER BY {order_by}"));
-        }
         let Some(console) = shared.consoles.get(&tab_id) else {
             return errors::failure(errors::CODE_UNKNOWN_DB_CONSOLE, "console detached");
         };
+        let statement = db_sql::apply_clauses(
+            &existing.statement_text,
+            &where_clause,
+            &order_by,
+            console.dialect,
+        );
         if let Err(error) = console.guard.check(&statement) {
             return errors::failure(errors::CODE_REFUSED, error.message);
         }

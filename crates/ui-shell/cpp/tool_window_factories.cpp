@@ -73,8 +73,24 @@ void wireContributedToolWindowMenus(AppSettings *appSettings, QHash<QString, QAc
                                     DockRegistry *docks, QMenu *viewMenu)
 {
     for (const FfiToolWindow &row : appSettings->contributedToolWindows()) {
-        QAction *action =
-          registerAction(viewMenu, QStringLiteral("view.%1").arg(row.id), row.title, appSettings, actions);
+        // `registerAction`'s id must be a literal `app_config::keymap::ACTIONS`
+        // row can be found by (that catalog is where a default shortcut lives,
+        // and `app-config`'s own `every_registered_cpp_action_has_a_keymap_row`
+        // test scans `ui-shell/cpp` source text for exactly this call shape) —
+        // so the id is a per-row literal rather than built from `row.id`, and
+        // an id this table does not know yet is logged rather than guessed at.
+        QAction *action = nullptr;
+        if (row.id == QStringLiteral("buildTools")) {
+            action = registerAction(viewMenu, QStringLiteral("view.buildTools"), row.title,
+                                    appSettings, actions);
+        } else if (row.id == QStringLiteral("containers")) {
+            action = registerAction(viewMenu, QStringLiteral("view.containers"), row.title,
+                                    appSettings, actions);
+        } else {
+            qWarning().noquote() << QStringLiteral("tool window %1 from %2 has no View-menu action registered")
+                                        .arg(row.id, row.plugin_id);
+            continue;
+        }
         QObject::connect(action, &QAction::triggered, viewMenu,
                          [docks, id = row.id]() { docks->show(id); });
     }

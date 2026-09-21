@@ -113,12 +113,18 @@ fn attr(tag: &quick_xml::events::BytesStart<'_>, key: &str) -> Result<Option<Str
     for a in tag.attributes() {
         let a = a.map_err(|e| ParseError(e.to_string()))?;
         if a.key.as_ref() == key.as_bytes() {
-            // `normalized_value` needs an `XmlVersion` this crate has no
-            // reason to track; plain attribute unescaping is all a
-            // checkstyle report's `name`/`message`/`source` need.
-            #[allow(deprecated)]
+            // `unescape_value()` only exists when quick-xml's `encoding`
+            // feature is off (its own doc comment warns that depending on
+            // it "will fail to compile" the moment anything else in the
+            // build enables that feature — `db-exchange`'s `calamine`
+            // dependency now does, workspace-wide, via feature
+            // unification). `normalized_value` is the feature-agnostic
+            // replacement it names; `Implicit1_0` matches this parser's
+            // only-ever-seen-as-1.0 checkstyle XML, and it does not
+            // resolve any entity beyond the five predefined XML ones,
+            // which is all a `name`/`message`/`source` attribute needs.
             let value = a
-                .unescape_value()
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .map_err(|e| ParseError(e.to_string()))?
                 .into_owned();
             return Ok(Some(value));

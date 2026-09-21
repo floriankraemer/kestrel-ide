@@ -218,9 +218,14 @@ fn attr(tag: &quick_xml::events::BytesStart<'_>, key: &str) -> Result<Option<Str
     for a in tag.attributes() {
         let a = a.map_err(|e| ParseError(e.to_string()))?;
         if a.key.as_ref() == key.as_bytes() {
-            #[allow(deprecated)]
+            // `unescape_value()` only exists when quick-xml's `encoding`
+            // feature is off (its own doc comment warns any dependency
+            // enabling that feature elsewhere in the build breaks this
+            // via feature unification — `db-exchange`'s `calamine` now
+            // does, workspace-wide). `normalized_value` is the
+            // feature-agnostic replacement it names.
             let value = a
-                .unescape_value()
+                .normalized_value(quick_xml::XmlVersion::Implicit1_0)
                 .map_err(|e| ParseError(e.to_string()))?
                 .into_owned();
             return Ok(Some(value));

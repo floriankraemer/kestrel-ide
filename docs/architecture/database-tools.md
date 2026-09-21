@@ -30,9 +30,13 @@ flowchart LR
 
 ## 2. Building blocks
 
-*Target design; updated by phase F1-F8. F1 landed `secret-store`, `db-core`, `db-drivers` (sqlite+postgres), the `plugin-api`/`plugin-host` contribution points, and the `ui-shell::bridge::database` slice this phase needs (`AppSettings` source-list accessors, `DataSourceEditor`, `data_source_dialog.cpp`, `database_settings_page.cpp`).
+*Target design; updated by phase F1-F8.
+F1 landed `secret-store`, `db-core`, `db-drivers` (sqlite+postgres), the `plugin-api`/`plugin-host` contribution points, and the `ui-shell::bridge::database` slice this phase needs (`AppSettings` source-list accessors, `DataSourceEditor`, `data_source_dialog.cpp`, `database_settings_page.cpp`) — no dock/console/result-grid yet (F3/F4).
 F2 landed `db_core::tree` (flattening/grouping/filters/actions matrix), `db_core::ddl` (DDL synthesis + SQL generator), level/scope-aware introspection in `db-drivers`, `SessionWorker` (one thread per connected source, its own per-scope snapshot cache), `DatabaseService`, and `database_panel.cpp` — the dock itself.
-`ConsoleService`, `ResultProvider`, `DriverInstallService`, `ExchangeService` and their own `cpp/` views remain target design (F3/F4/F5).*
+F3.2 landed `db-sql` (split/classify/parse/format/completion/inspections/navigation).
+F5/F6 landed `db-exchange` — the Qt-free crate half only: export (csv/tsv/json/sql/html/markdown/xlsx), import (csv/xlsx, preview → mapping → plan → run), `dump` (argv builders for `pg_dump`/`pg_restore`/`psql`, `mysqldump`/`mysql`, `mongodump`/`mongorestore`, `sqlite3 .dump`, credentials never on argv), `copy_table`, `er_diagram` (Mermaid `erDiagram`), `schema_compare` and `data_compare`.
+Its own `schema_model` (`TableDef`/`ColumnDef`/`ForeignKey`/`IndexDef`/`ConstraintDef`/`TextObject`) is a second, fully-fetched schema shape the ER diagram/compare pair needs — separate from `db_core::schema::SchemaSnapshot`'s lazily-expanded, names-only dock tree (§6) — until a richer live-`Connection` introspection (F2/F7) can build one from a real driver.
+`ConsoleService`, `ResultProvider`, `DriverInstallService`, `ExchangeService`, the exchange/dump/diagram/compare dialogs, the Run-dock hookup for `dump`'s `spawn`, and their own `cpp/` views remain target design (F3b/F4/F5b/F6b/F8b).*
 
 Seven new Qt-free crates, additions to `plugin-api`/`plugin-host`, and a `ui-shell::bridge::database` module tree plus `database_*.cpp` views.
 The component diagram mirrors `layering.md`'s rows exactly — the same dependency edges, drawn once here for orientation:
@@ -92,7 +96,8 @@ crates/db-core/src/      value.rs  schema.rs  driver.rs  dialect.rs  dml.rs  res
                          datasource.rs  tunnel.rs  console.rs  history.rs  session.rs  readonly.rs  error.rs
 crates/db-sql/src/       lib.rs  split.rs  classify.rs  parse.rs  completion.rs  inspections.rs  format.rs
                          navigation.rs  dialects.rs  scan.rs  refs.rs (F3.2, real) — ddl.rs  mongo.rs (not yet built, later phases)
-crates/db-exchange/src/  export/*.rs  import/*.rs  dump.rs  copy_table.rs  schema_compare.rs  data_compare.rs  er_diagram.rs
+crates/db-exchange/src/  (F5/F6, real) export/{csv,tsv,json,sql,html,markdown,xlsx}.rs  import/{mod,csv,xlsx}.rs
+                         dump.rs  copy_table.rs  schema_model.rs  er_diagram.rs  schema_compare.rs  data_compare.rs
 crates/db-drivers/src/   lib.rs  postgres.rs  mysql.rs  sqlite.rs  mongodb.rs  redis.rs  cassandra.rs  introspect/*.sql  testsupport.rs  tunnel.rs
 crates/db-driver-adbc/src/  driver.rs  arrow.rs  install.rs  locate.rs
 crates/db-driver-odbc/src/  driver.rs  introspect.rs
@@ -231,6 +236,25 @@ sequenceDiagram
         end
     end
 ```
+
+**Import/export** (F5.1/F5.2, real): export takes the columns a result already fetched plus a `RowBatch` iterator and writes one of seven formats through `db_core::value::Value::display`.
+SQL and XLSX are the two exceptions — SQL renders a bindable literal, never `display` text, since a paste-into-console statement has no parameter slot; XLSX keeps numbers/dates as Excel's own typed cells and falls back to `display` text for everything else, including `Bytes` as full hex, which XLSX has no binary cell type for.
+Import runs the reverse: `preview` samples a source and guesses each column's type, a user-edited `Mapping` says what to keep/rename/skip, and `plan` compiles the full row set into a `CREATE TABLE` plus batched, parameterised multi-row `INSERT`s — never an inlined literal.
+`run` then applies that plan through a live `Connection`, stopping between batches on a `CancelToken`.
+
+**Dump/restore** (F5.3, real): `dump` builds one `Command` (argv, env, an optional 0600 credentials temp file) per tool — `pg_dump`/`pg_restore`/`psql`, `mysqldump`/`mysql`, `mongodump`/`mongorestore`, `sqlite3 .dump` — never a password as an argv word (`/proc/<pid>/cmdline` is world-readable).
+PostgreSQL gets `PGPASSWORD` via `process_exec::spawn_with_env` (added in F5, see `layering.md`'s `process-exec` row); MySQL and Mongo get a `--defaults-extra-file`/`--config` temp file instead, since neither tool has an env-var equivalent as clean as `PGPASSWORD`.
+`preview()` renders the shell-quoted command line for the confirmation dialog (F5b); `tool_available`/`install_hint` back the "not installed" affordance.
+
+**Copy table** (F5.4, real): stream `SELECT *` from the source `Connection`, synthesize a `CREATE TABLE` from the first batch's `ColumnMeta` for the target dialect (`copy_table::map_type`'s source-type-name → target-dialect-type table) unless the caller says the table already exists, then batch parameterised `INSERT`s, one transaction per batch, checking a `CancelToken` between batches — never mid-batch, so a cancelled copy never leaves a half-committed batch.
+
+**ER diagram** (F6.1, real): `er_diagram::to_mermaid` walks a `schema_model::SchemaSnapshot` (optionally scoped to one table plus its FK neighbours) into Mermaid `erDiagram` text — entities with `type name PK/FK` columns, relationships with cardinality derived from FK column nullability, deterministic (name-sorted) ordering so two runs over the same snapshot never flicker.
+Rendered through `PreviewService::render` with a synthetic `.mmd` path (§2's note on why `app-core` gains no new dependency for this), never a file on disk.
+
+**Schema/data compare** (F6.2/F6.3, real): `schema_compare::compare` diffs two `SchemaSnapshot`s into added/dropped/changed tables, field-level column/index/constraint changes, and view/routine text diffs (no structural view/routine diff — the plan's recorded debt).
+`migration_script` renders that as forward DDL, with view/routine changes as commented text blocks; `ddl_pairs` hands the DiffView a left/right DDL text pair per changed object.
+`data_compare::compare` key-aligns two already-fetched row sets (sorted in Rust — a merge-walk needs a total order regardless of whether the driver could `ORDER BY` for it), producing a `DataDiffSummary` plus a canonical, key-sorted TSV per side.
+`editor_core::diff::diff_lines` renders that pair exactly like any other two-text diff — the existing DiffView, no bespoke grid-diff widget.
 
 ## 5. Threading and lifetimes
 

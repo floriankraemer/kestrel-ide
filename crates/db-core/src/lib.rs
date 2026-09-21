@@ -11,6 +11,7 @@
 
 pub mod console;
 pub mod datasource;
+pub mod ddl;
 pub mod dialect;
 pub mod dml;
 pub mod driver;
@@ -20,5 +21,6 @@ pub mod readonly;
 pub mod result;
 pub mod schema;
 pub mod session;
+pub mod tree;
 pub mod tunnel;
 pub mod value;

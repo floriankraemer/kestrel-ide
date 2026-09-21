@@ -21,6 +21,7 @@ use crate::bridge::build_tools::{BuildToolsEditorRust, BuildToolsServiceRust};
 use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::database::settings::DataSourceEditorRust;
+use crate::bridge::database::DatabaseServiceRust;
 use crate::bridge::debug::DebugServiceRust;
 use crate::bridge::diagnostics::DiagnosticsServiceRust;
 use crate::bridge::editor::DocumentManagerRust;
@@ -10038,6 +10039,198 @@ mod ffi {
     }
 
     impl cxx_qt::Threading for DataSourceEditor {}
+
+    // ---- database: F2 ----
+
+    /// Where one connected data source stands (F2.5) — the same
+    /// disconnected/connecting/connected/error shape `FfiConnectionState`
+    /// already gives the Containers dock, its own enum since a data
+    /// source's states are never conflated with a container engine's.
+    enum FfiDbConnectionState {
+        Disconnected,
+        Connecting,
+        Connected,
+        Error,
+    }
+
+    /// One data source row, for the dock's own source list (its toolbar's
+    /// "New data source…"/status line, and the root of its tree).
+    struct FfiDbSourceRow {
+        id: QString,
+        name: QString,
+        driver: QString,
+        color: QString,
+        group: QString,
+        state: FfiDbConnectionState,
+        message: QString,
+    }
+
+    /// Which of a row's actions apply — `db_core::tree::actions_for`'s
+    /// `ActionSet` crossed as discrete bools, the same convention
+    /// `FfiNodeActions` already uses for the Containers dock so the view
+    /// never has to decode a bitfield.
+    #[derive(Default)]
+    struct FfiDbRowActions {
+        #[cxx_name = "canOpenConsole"]
+        can_open_console: bool,
+        #[cxx_name = "canEditData"]
+        can_edit_data: bool,
+        #[cxx_name = "canGoToDdl"]
+        can_go_to_ddl: bool,
+        #[cxx_name = "canCopyName"]
+        can_copy_name: bool,
+        #[cxx_name = "canCopyQualifiedName"]
+        can_copy_qualified_name: bool,
+        #[cxx_name = "canRefresh"]
+        can_refresh: bool,
+        #[cxx_name = "canRename"]
+        can_rename: bool,
+        #[cxx_name = "canDrop"]
+        can_drop: bool,
+        #[cxx_name = "canTruncate"]
+        can_truncate: bool,
+        #[cxx_name = "canComment"]
+        can_comment: bool,
+        #[cxx_name = "canGenerateDdl"]
+        can_generate_ddl: bool,
+        #[cxx_name = "canErDiagram"]
+        can_er_diagram: bool,
+    }
+
+    /// One flattened row of the Database dock's tree (database-tools-plan
+    /// F2.2/F2.5) — `db_core::tree::TreeRow` crossed the seam, `nodeId`
+    /// prefixed with its own source id (`bridge::database::tree::
+    /// to_ffi_row`) so one flat list can hold every connected source's
+    /// tree at once.
+    struct FfiDbTreeRow {
+        #[cxx_name = "sourceId"]
+        source_id: QString,
+        #[cxx_name = "nodeId"]
+        node_id: QString,
+        depth: i32,
+        /// The row's own kind, as a stable id (`table`, `view`, `column`,
+        /// `folder-tables`, …) — the view looks up its icon and context
+        /// menu by this, never by a translated word.
+        kind: QString,
+        label: QString,
+        detail: QString,
+        expandable: bool,
+        loaded: bool,
+        actions: FfiDbRowActions,
+    }
+
+    extern "RustQt" {
+        /// The Database dock's adapter (database-tools-plan F2.5): one
+        /// `SessionWorker` per connected source, `db_core::tree::flatten`
+        /// re-run whenever a source's schema, filter or grouping changes.
+        /// Owns no rule: introspection levels/scopes, grouping, filters
+        /// and the action matrix are all `db_core`'s.
+        #[qobject]
+        type DatabaseService = super::DatabaseServiceRust;
+
+        /// Every configured data source, connected or not.
+        #[qinvokable]
+        fn sources(self: &DatabaseService) -> Vec<FfiDbSourceRow>;
+
+        /// Every visible row across every connected source, in render
+        /// order. Re-read after `rowsChanged`.
+        #[qinvokable]
+        fn rows(self: &DatabaseService) -> Vec<FfiDbTreeRow>;
+
+        /// Spawn `id`'s `SessionWorker` and fetch its root schema at
+        /// `Names` level. Named `connectSource` so it cannot shadow
+        /// `QObject::connect`.
+        #[qinvokable]
+        #[cxx_name = "connectSource"]
+        fn connect_source(self: Pin<&mut DatabaseService>, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "disconnectSource"]
+        fn disconnect_source(self: Pin<&mut DatabaseService>, id: &QString) -> FfiResult;
+
+        /// Fetch `node_id`'s children at `Columns` level if not already
+        /// loaded (`TreeRow::loaded`) — a no-op, successful call for a
+        /// node that is already loaded or is not expandable.
+        #[qinvokable]
+        fn expand(self: Pin<&mut DatabaseService>, node_id: &QString) -> FfiResult;
+
+        /// Drop `node_id`'s own cached snapshot (its own `SessionWorker`'s
+        /// cache) — the next `expand` re-fetches it.
+        #[qinvokable]
+        fn refresh(self: Pin<&mut DatabaseService>, node_id: &QString, force: bool) -> FfiResult;
+
+        /// A plain substring, or a `kind:pattern`/`kind:-pattern` scoped
+        /// one (`db_core::tree::PatternFilter`); empty clears it.
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut DatabaseService>, text: &QString);
+
+        /// `true` renders every object as a flat sibling list; `false`
+        /// (the default) groups tables/views/routines/… into per-kind
+        /// folders.
+        #[qinvokable]
+        #[cxx_name = "setGrouping"]
+        fn set_grouping(self: Pin<&mut DatabaseService>, flat: bool);
+
+        /// Run `action_id` (`db_core::tree::ActionSet`'s own names,
+        /// lower-`snake_case`: `"drop"`, `"truncate"`, `"rename:<new
+        /// name>"`, `"comment:<text>"`, …) against `node_id`'s object,
+        /// through its source's own session. Reports through
+        /// `actionFinished`, not the returned `FfiResult` — the exact
+        /// statement Rust generated is what a caller confirms *before*
+        /// calling this at all (`db_core::ddl`'s own doc comment), so a
+        /// refusal here is only ever "no such node"/"not connected", never
+        /// "the statement failed" (that is `actionFinished(false, …)`).
+        #[qinvokable]
+        #[cxx_name = "runAction"]
+        fn run_action(
+            self: Pin<&mut DatabaseService>,
+            node_id: &QString,
+            action_id: &QString,
+        ) -> FfiResult;
+
+        /// Fetch `node_id`'s DDL (the engine's own text, or
+        /// `db_core::ddl::synthesize`'s fallback) and open it through
+        /// `virtualDocumentOpened`.
+        #[qinvokable]
+        #[cxx_name = "goToDdl"]
+        fn go_to_ddl(self: Pin<&mut DatabaseService>, node_id: &QString) -> FfiResult;
+
+        /// A source connected/disconnected, its schema changed, or a
+        /// filter/grouping change — the view re-reads `rows()`.
+        #[qsignal]
+        #[cxx_name = "rowsChanged"]
+        fn rows_changed(self: Pin<&mut DatabaseService>);
+
+        #[qsignal]
+        #[cxx_name = "connectionStateChanged"]
+        fn connection_state_changed(
+            self: Pin<&mut DatabaseService>,
+            id: QString,
+            state: FfiDbConnectionState,
+            message: QString,
+        );
+
+        /// Mirrors `ContainerService::virtualDocumentOpened` exactly
+        /// (`editor_tabs.cpp` wires both the same way): `is_new` tells the
+        /// view whether to register a fresh tab or just focus the
+        /// existing one for this scheme/key.
+        #[qsignal]
+        #[cxx_name = "virtualDocumentOpened"]
+        fn virtual_document_opened(
+            self: Pin<&mut DatabaseService>,
+            tab_id: u64,
+            title: QString,
+            is_new: bool,
+        );
+
+        /// `runAction`'s own outcome, once the statement actually ran.
+        #[qsignal]
+        #[cxx_name = "actionFinished"]
+        fn action_finished(self: Pin<&mut DatabaseService>, ok: bool, message: QString);
+    }
+
+    impl cxx_qt::Threading for DatabaseService {}
 
     unsafe extern "C++" {
         include!("main_window.h");

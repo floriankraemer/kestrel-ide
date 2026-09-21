@@ -34,7 +34,7 @@ use db_core::driver::{
 };
 use db_core::error::{DbError, DbErrorCode};
 use db_core::schema::{
-    IntrospectLevel, IntrospectScope, Node, ObjectKind, ObjectRef, SchemaSnapshot,
+    IntrospectLevel, IntrospectScope, Node, NodeDetail, ObjectKind, ObjectRef, SchemaSnapshot,
 };
 use db_core::value::{ColumnMeta, RowBatch, Value};
 
@@ -304,7 +304,15 @@ impl Connection for PostgresConnection {
         "PostgreSQL".to_string()
     }
 
-    fn introspect(&mut self, scope: &IntrospectScope) -> Result<SchemaSnapshot, DbError> {
+    fn introspect(
+        &mut self,
+        scope: &IntrospectScope,
+        level: IntrospectLevel,
+    ) -> Result<SchemaSnapshot, DbError> {
+        // `NAMES_QUERY` runs unconditionally at every level (F2.1): it is
+        // the cheap, near-instant listing the 5 000-table NFR needs, and
+        // `Columns`/`Full` only pay for a further per-table round trip
+        // (`table_node`) for the objects the scope actually narrows to.
         let rows = crate::runtime()
             .block_on(self.client.query(NAMES_QUERY, &[]))
             .map_err(io_err)?;
@@ -328,20 +336,28 @@ impl Connection for PostgresConnection {
                     continue;
                 }
             }
-            let children = objects
-                .into_iter()
-                .map(|(name, kind)| {
-                    let object_kind = match kind.as_str() {
-                        "v" => ObjectKind::View,
-                        "m" => ObjectKind::MaterializedView,
-                        _ => ObjectKind::Table,
-                    };
+            let mut children = Vec::with_capacity(objects.len());
+            for (name, kind) in objects {
+                if let Some(object_filter) = &scope.object {
+                    if object_filter != &name {
+                        continue;
+                    }
+                }
+                let object_kind = match kind.as_str() {
+                    "v" => ObjectKind::View,
+                    "m" => ObjectKind::MaterializedView,
+                    _ => ObjectKind::Table,
+                };
+                let node = if level == IntrospectLevel::Names {
                     Node::leaf(name, object_kind)
-                })
-                .collect();
+                } else {
+                    self.table_node(&schema, &name, object_kind)?
+                };
+                children.push(node);
+            }
             roots.push(Node::with_children(schema, ObjectKind::Schema, children));
         }
-        Ok(SchemaSnapshot::new(IntrospectLevel::Names, roots))
+        Ok(SchemaSnapshot::new(level, roots))
     }
 
     fn execute(
@@ -457,6 +473,34 @@ impl Connection for PostgresConnection {
     }
 }
 
+impl PostgresConnection {
+    /// One table/view's columns (F2.1's `Columns`/`Full` levels), fetched
+    /// through `COLUMNS_QUERY` — the per-object round trip `introspect`
+    /// only pays for the objects a scope actually narrows to, never for
+    /// every table in a 5 000-table catalog at once.
+    fn table_node(&self, schema: &str, name: &str, kind: ObjectKind) -> Result<Node, DbError> {
+        let rows = crate::runtime()
+            .block_on(self.client.query(COLUMNS_QUERY, &[&schema, &name]))
+            .map_err(io_err)?;
+        let children = rows
+            .iter()
+            .map(|row| {
+                let column_name: String = row.get(0);
+                let type_name: String = row.get(1);
+                let nullable: bool = row.get(2);
+                let primary_key: bool = row.get(3);
+                Node::leaf(column_name, ObjectKind::Column).with_detail(NodeDetail {
+                    type_name: Some(type_name),
+                    nullable: Some(nullable),
+                    default: None,
+                    primary_key,
+                })
+            })
+            .collect();
+        Ok(Node::with_children(name, kind, children))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +579,7 @@ mod tests {
         assert!(COLUMNS_QUERY.contains("pg_attribute"));
         assert!(COLUMNS_QUERY.contains("$1"));
         assert!(COLUMNS_QUERY.contains("$2"));
+        assert!(COLUMNS_QUERY.contains("is_primary_key"));
     }
 
     #[test]
@@ -589,8 +634,13 @@ mod tests {
         assert_eq!(batch.rows, vec![vec![Value::Int(1)]]);
 
         let snapshot = conn
-            .introspect(&IntrospectScope::default())
+            .introspect(&IntrospectScope::default(), IntrospectLevel::Names)
             .expect("introspect");
         assert_eq!(snapshot.level, IntrospectLevel::Names);
+
+        let with_columns = conn
+            .introspect(&IntrospectScope::default(), IntrospectLevel::Columns)
+            .expect("introspect at Columns level");
+        assert_eq!(with_columns.level, IntrospectLevel::Columns);
     }
 }

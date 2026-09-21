@@ -30,7 +30,9 @@ flowchart LR
 
 ## 2. Building blocks
 
-*Target design; updated by phase F1-F8. F1 landed `secret-store`, `db-core`, `db-drivers` (sqlite+postgres), the `plugin-api`/`plugin-host` contribution points, and the `ui-shell::bridge::database` slice this phase needs (`AppSettings` source-list accessors, `DataSourceEditor`, `data_source_dialog.cpp`, `database_settings_page.cpp`) — no dock/console/result-grid yet (F3/F4), so `DatabaseService`, `SessionWorker`, `ConsoleService`, `ResultProvider`, `DriverInstallService`, `ExchangeService` and every other `cpp/` view below remain target design.*
+*Target design; updated by phase F1-F8. F1 landed `secret-store`, `db-core`, `db-drivers` (sqlite+postgres), the `plugin-api`/`plugin-host` contribution points, and the `ui-shell::bridge::database` slice this phase needs (`AppSettings` source-list accessors, `DataSourceEditor`, `data_source_dialog.cpp`, `database_settings_page.cpp`).
+F2 landed `db_core::tree` (flattening/grouping/filters/actions matrix), `db_core::ddl` (DDL synthesis + SQL generator), level/scope-aware introspection in `db-drivers`, `SessionWorker` (one thread per connected source, its own per-scope snapshot cache), `DatabaseService`, and `database_panel.cpp` — the dock itself.
+`ConsoleService`, `ResultProvider`, `DriverInstallService`, `ExchangeService` and their own `cpp/` views remain target design (F3/F4/F5).*
 
 Seven new Qt-free crates, additions to `plugin-api`/`plugin-host`, and a `ui-shell::bridge::database` module tree plus `database_*.cpp` views.
 The component diagram mirrors `layering.md`'s rows exactly — the same dependency edges, drawn once here for orientation:
@@ -125,7 +127,11 @@ Per-driver type mapping tables (e.g. PostgreSQL `numeric` → `Decimal(String)`,
 
 ## 4. Runtime views
 
-*Target design; updated by phase F1, F3, F4, F7, F8.*
+*Target design; updated by phase F1, F2, F3, F4, F7, F8.*
+
+**F2 implementation note**: the Connect diagram below is target design still (no SSH tunnel/TLS wiring in `SessionWorker` yet — F1/F7's own territory); what F2 actually built is the *tree* half of it — `DatabaseService::connect_source` spawns the driver's blocking `connect()` off the Qt thread, and on success builds a `db_core::session::Session` + `SessionWorker` and dispatches an initial `Names`-level `Introspect`.
+**Go to DDL** (F2.3, shipped): `DatabasePanel`/context-menu → `DatabaseService::go_to_ddl` → `object_ref_for(row)` (the row's own kind/ancestry) → `SessionWorker::send(DdlOf)` → the worker's `Session::ddl_of` (the engine's own DDL text, e.g. SQLite's `sqlite_master.sql`; `db_core::ddl::synthesize`'s `Node`-detail fallback is wired into `db-core` but not yet called from a backend that has no native DDL text of its own) → `apply_event`'s `Ddl` branch opens it through `AppSession::open_virtual_document("db-ddl", …)` and emits `virtualDocumentOpened`, which `editor_tabs.cpp` wires exactly like `ContainerService`'s.
+Deviation: the virtual document's key ends in `.sql` (for the editor's language-by-extension detection), so the opened tab's title is `<object>.sql`, not the literal `"<object> DDL"` a key with no extension would have given it.
 
 **Connect** (secrets → tunnel → TLS → session thread):
 
@@ -228,7 +234,11 @@ sequenceDiagram
 
 ## 5. Threading and lifetimes
 
-*Target design; updated by phase F1, F3.*
+*Target design; updated by phase F1, F2, F3.*
+
+F2 shipped `SessionWorker` (`crates/ui-shell/src/bridge/database/sessions.rs`): one `std::thread` per connected source, an `mpsc::Receiver<SessionCommand>` loop, and a per-scope `SchemaSnapshot` cache keyed by `(IntrospectScope, IntrospectLevel)` with `level_covers` (a `Full`-level cache entry answers a `Names`-level request; the reverse does not).
+`Refresh` drops one scope's cache entry, `Force refresh` clears the whole cache and calls `SessionWorker::invalidate()` first, bumping `db_core::session::Session`'s own generation counter — reused as the stale-reply guard rather than a second counter, since every `SessionEvent` already carries the generation `Session::generation()` reported when its command was dispatched.
+Idle-close (30 minutes) is not yet implemented — every connected source's worker stays alive until `disconnectSource` is called by hand; tracked as an F2 follow-up alongside the SSH tunnel/TLS wiring `SessionWorker` still lacks.
 
 One session thread per open console and per source-tree connection (`SessionWorker`), the same "one blocking call per background operation" shape `ContainerService`/`BuildToolsService` already use; every result crosses back to the Qt thread through `CxxQtThread::queue()`, never a callback invoked from the worker thread directly.
 `db-drivers` owns a single private `tokio::Runtime` (`OnceLock`, 2 workers named `"db-io"`) that every async native driver's calls are `block_on`'d against; SQLite and Redis bypass it, since both have synchronous APIs.
@@ -255,6 +265,14 @@ Startup carries zero connections and loads zero drivers — the NFR table (ADR-0
 | `Group` | user-defined grouping (not backend-reported) | rename, recolor |
 
 `IntrospectLevel { Names, Columns, Full }` controls how much of a subtree is fetched eagerly versus lazily on expand (`Node::children: NotLoaded | Loaded`) — the 5 000-table NFR target depends on `Names` staying a cheap, near-instant query even on a large catalog.
+`Node` also carries `NodeDetail` (F2.1: a column's `type_name`/`nullable`/`default`/`primary_key`) — `db_core::ddl::synthesize`'s only source of column detail for a backend with no native DDL text.
+`IntrospectScope` gained an `object` field (F2.1): narrows a request to one object's own subtree, the shape `expand()` uses once a user opens a single table/view/collection rather than re-listing its whole schema.
+
+**F2 status**: `sqlite`/`postgresql` (`db-drivers`) honour all three levels — SQLite's `Names` level is a single `sqlite_master` query with no per-table pragma call, Postgres' is a single `pg_class`/`pg_namespace` join; `Columns`/`Full` add one further per-table round trip only for the objects a scope actually narrows to.
+SQLite's `Full` level also lists indexes (`PRAGMA index_list`) and triggers (`sqlite_master` filtered by `tbl_name`) as extra `Index`/`Trigger` child nodes; constraints beyond a column's own `primary_key` flag, and Postgres' `Full` level, are not yet implemented.
+`db-driver-adbc`/`db-driver-odbc` compile against the new `level` parameter but do not yet honour it (always fetch at their own existing depth) — a follow-up once either UI path needs the same 5 000-table NFR the native drivers meet.
+`db_core::tree` (F2.2, Qt-free, no Qt/tokio in its dependency tree) flattens a `SchemaSnapshot`'s roots into `TreeRow`s: `GroupMode::{ByObjectType, Flat}` (a fixed Tables→Views→Materialized Views→Procedures→Functions→Sequences→Types folder order), an `ObjectTypeFilter`, a dependency-free `PatternFilter` (a plain case-insensitive substring, or a `kind:pattern`/`kind:-pattern` scoped one over a small hand-rolled `.`/`*` regex subset), `SortOrder::{Natural, Alphabetical}`, and `actions_for(kind, SourceCapabilities)` — the one function that decides a row's rename/drop/truncate/comment/edit-data/go-to-ddl/generate-ddl/ER-diagram affordances, honouring a read-only source and a dialect with no `COMMENT ON` (SQLite).
+Every `TreeRow` also carries `object_path`: the row's real object-name ancestry with every synthetic folder segment stripped out, so `DatabaseService` can build an `IntrospectScope`/`ObjectRef` for `expand`/`goToDdl`/`runAction` without parsing `node_id`'s folder-inclusive path.
 
 ## 7. Plugin contract
 
@@ -385,6 +403,14 @@ Windows: a cross-link spike per phase that adds a new crate (the P0 spike is the
 ## 11. Known gaps and debt
 
 *From `database-tools-plan.md` §7, restated here for one-document orientation; triggers are authoritative there.*
+
+**F2 debt** (all tracked in `database-tools-plan.md`'s F2 row, not silently dropped):
+`e2e_database` (the `add SQLite source → tree → DDL` flow) was not written this phase — `database_panel.cpp` has no `e2eMark` row-rect reporting yet (`containers_panel.cpp`'s `rowRectsJson`/`containers_tree_changed` precedent), which a click-driven E2E flow needs to find a tree row to click; add both together.
+No NFR bench (`db-integration` feature, 5 000-table SQLite schema, `Names`/`Columns` timing) was run or recorded in §10 below.
+Postgres TLS (`SslMode::{Prefer,Require,VerifyCa,VerifyFull}`) is still `NotSupported` in `db-drivers::postgres` — F1's own deferral, not resolved by F2.
+`db-driver-adbc`/`db-driver-odbc` do not honour `IntrospectLevel` (see §6).
+`database_panel.cpp` uses `QStyle` standard icons, not the F2.5 spec's own `.a8` mask set; has no colour-tag bar, no speed-search, and one Flat/Grouped toggle rather than a full grouping menu; an object action's confirmation dialog states the action in English rather than showing the exact SQL `db_core::ddl` generated; a successful rename/drop/truncate/comment does not auto-refresh the affected node (Refresh is manual).
+"Jump to console" is a `qWarning` stub, per-plan (F3 wires it).
 
 No CQL parser (keyword+schema completion only for Scylla; revisit if a maintained crate appears).
 Data compare is a text diff, not a cell-level grid (revisit on a navigation request or datasets over 100k rows).

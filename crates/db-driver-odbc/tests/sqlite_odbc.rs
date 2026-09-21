@@ -101,7 +101,10 @@ fn smoke_select_and_ddl_round_trip_through_the_real_sqlite_odbc_driver() {
     assert!(stream.next_batch().expect("end of stream").is_none());
 
     let snapshot = conn
-        .introspect(&IntrospectScope::default())
+        .introspect(
+            &IntrospectScope::default(),
+            db_core::schema::IntrospectLevel::Full,
+        )
         .expect("introspect");
     let table_names: Vec<&str> = snapshot
         .roots

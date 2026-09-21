@@ -11,7 +11,7 @@ use std::time::Duration;
 use crate::datasource::ConnectSpec;
 use crate::dialect::Dialect;
 use crate::error::DbError;
-use crate::schema::{IntrospectScope, ObjectRef, SchemaSnapshot};
+use crate::schema::{IntrospectLevel, IntrospectScope, ObjectRef, SchemaSnapshot};
 use crate::value::{RowBatch, Value};
 
 /// A bitflag set of what a backend's connection can do — a consumer checks
@@ -156,7 +156,16 @@ impl CancelToken {
 pub trait Connection: Send {
     fn dialect(&self) -> Dialect;
     fn server_info(&self) -> String;
-    fn introspect(&mut self, scope: &IntrospectScope) -> Result<SchemaSnapshot, DbError>;
+    /// Fetch `scope`'s objects at `level` (F2.1: `Names` stays a cheap,
+    /// near-instant query even on a 5 000-table catalog — a backend that
+    /// cannot cheaply distinguish levels may still fetch more than asked,
+    /// but never less, so a caller that only needed `Names` always gets at
+    /// least that much back).
+    fn introspect(
+        &mut self,
+        scope: &IntrospectScope,
+        level: IntrospectLevel,
+    ) -> Result<SchemaSnapshot, DbError>;
     fn execute(
         &mut self,
         statement: &Statement,

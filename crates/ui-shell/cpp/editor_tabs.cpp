@@ -127,8 +127,8 @@ void moveCursorToByteColumn(QPlainTextEdit *editor, int line, int byteColumn)
 
 } // namespace
 
-EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageService,
-                       QSplitter *root, QWidget *window, ContainerService *containerService)
+EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageService, QSplitter *root,
+                       QWidget *window, ContainerService *containerService, DatabaseService *databaseService)
   : docManager_(docManager)
   , languageService_(languageService)
   , editorOps_(new EditorOps(this))
@@ -136,17 +136,17 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
   , window_(window)
 {
     connect(docManager_, &DocumentManager::tabOpened, this, &EditorTabs::onTabOpened);
-    // C3: `ContainerService`'s Inspect/Files-open tabs, same signal/handling
-    // as `languageService_`'s own decompiled-source ones just below.
+    // C3/F2.3: `ContainerService`'s and `DatabaseService`'s virtual-document
+    // tabs (Inspect/Files-open, Go to DDL), same signal/handling as
+    // `languageService_`'s own decompiled-source ones just below.
     if (containerService != nullptr) {
-        connect(containerService, &ContainerService::virtualDocumentOpened, this,
-                [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
+        connect(containerService, &ContainerService::virtualDocumentOpened, this, [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
+    }
+    if (databaseService != nullptr) {
+        connect(databaseService, &DatabaseService::virtualDocumentOpened, this, [this](quint64 id, const QString &title, bool isNew) { if (isNew) onTabOpened(id, title); focusTab(id); });
     }
     connect(docManager_, &DocumentManager::tabClosed, this, &EditorTabs::onTabClosed);
-    connect(docManager_,
-            &DocumentManager::tabModifiedChanged,
-            this,
-            &EditorTabs::onTabModifiedChanged);
+    connect(docManager_, &DocumentManager::tabModifiedChanged, this, &EditorTabs::onTabModifiedChanged);
 
     // Clicking anywhere inside a group — its tab bar or its editor —
     // makes that group the active one. One application-wide hook beats

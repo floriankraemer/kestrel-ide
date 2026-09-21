@@ -11,7 +11,12 @@
 //! module adds that seam back once a real consumer needs to keep a
 //! session alive across calls, not speculatively now (YAGNI).
 
+pub mod service;
+pub mod sessions;
 pub mod settings;
+pub mod tree;
+
+pub use service::DatabaseServiceRust;
 
 /// One driver a plugin contributes, mapped to the plain strings `db_core`
 /// understands — `ui-shell` is the one place a `plugin_api::

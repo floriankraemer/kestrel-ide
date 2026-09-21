@@ -13,7 +13,7 @@ use db_core::driver::{
 };
 use db_core::error::{DbError, DbErrorCode};
 use db_core::schema::{
-    IntrospectLevel, IntrospectScope, Node, ObjectKind, ObjectRef, SchemaSnapshot,
+    IntrospectLevel, IntrospectScope, Node, NodeDetail, ObjectKind, ObjectRef, SchemaSnapshot,
 };
 use db_core::value::{ColumnMeta, RowBatch, Value};
 
@@ -144,7 +144,23 @@ impl Connection for SqliteConnection {
         format!("SQLite {}", rusqlite::version())
     }
 
-    fn introspect(&mut self, _scope: &IntrospectScope) -> Result<SchemaSnapshot, DbError> {
+    fn introspect(
+        &mut self,
+        scope: &IntrospectScope,
+        level: IntrospectLevel,
+    ) -> Result<SchemaSnapshot, DbError> {
+        if let Some(object) = &scope.object {
+            // A lazy per-object expand (F2.1): one root, at whatever depth
+            // was asked for.
+            return Ok(SchemaSnapshot::new(
+                level,
+                vec![self.object_node(object, level)?],
+            ));
+        }
+
+        // `Names`-level listing never touches `PRAGMA table_info` per
+        // table — the cheap, near-instant query the 5 000-table NFR needs
+        // (`IntrospectLevel`'s own doc comment).
         let mut stmt = self
             .conn
             .prepare(
@@ -167,14 +183,14 @@ impl Connection for SqliteConnection {
             } else {
                 ObjectKind::Table
             };
-            let columns = self.columns_of(&name)?;
-            let children = columns
-                .into_iter()
-                .map(|column| Node::leaf(column, ObjectKind::Column))
-                .collect();
-            roots.push(Node::with_children(name, object_kind, children));
+            let node = if level == IntrospectLevel::Names {
+                Node::leaf(name, object_kind)
+            } else {
+                self.object_node(&name, level)?
+            };
+            roots.push(node);
         }
-        Ok(SchemaSnapshot::new(IntrospectLevel::Columns, roots))
+        Ok(SchemaSnapshot::new(level, roots))
     }
 
     fn execute(
@@ -281,11 +297,82 @@ impl Connection for SqliteConnection {
 }
 
 impl SqliteConnection {
-    fn columns_of(&self, table: &str) -> Result<Vec<String>, DbError> {
+    /// A table or view's kind, columns (`Columns`/`Full`) and, at `Full`,
+    /// its indexes and triggers — the "one object" lazy-expand shape
+    /// F2.1 asks both the top-level listing and a `scope.object` request
+    /// to share.
+    fn object_node(&self, name: &str, level: IntrospectLevel) -> Result<Node, DbError> {
+        use rusqlite::OptionalExtension;
+        let kind_text: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT type FROM sqlite_master WHERE name = ?1 AND type IN ('table', 'view')",
+                [name],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(map_err)?;
+        let Some(kind_text) = kind_text else {
+            return Err(DbError::new(
+                DbErrorCode::NotSupported,
+                format!("no such table or view: {name}"),
+            ));
+        };
+        let object_kind = if kind_text == "view" {
+            ObjectKind::View
+        } else {
+            ObjectKind::Table
+        };
+        if level == IntrospectLevel::Names {
+            return Ok(Node::leaf(name, object_kind));
+        }
+
+        let mut children = self.column_nodes(name)?;
+        if level == IntrospectLevel::Full {
+            children.extend(self.index_nodes(name)?);
+            children.extend(self.trigger_nodes(name)?);
+        }
+        Ok(Node::with_children(name, object_kind, children))
+    }
+
+    fn column_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
         let mut stmt = self
             .conn
             .prepare(&format!(
                 "PRAGMA table_info({})",
+                Dialect::Sqlite.quote_ident(table)
+            ))
+            .map_err(map_err)?;
+        let columns = stmt
+            .query_map([], |row| {
+                let name: String = row.get(1)?;
+                let type_name: String = row.get(2)?;
+                let not_null: i64 = row.get(3)?;
+                let default: Option<String> = row.get(4)?;
+                let pk: i64 = row.get(5)?;
+                Ok((name, type_name, not_null, default, pk))
+            })
+            .map_err(map_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+        Ok(columns
+            .into_iter()
+            .map(|(name, type_name, not_null, default, pk)| {
+                Node::leaf(name, ObjectKind::Column).with_detail(NodeDetail {
+                    type_name: (!type_name.is_empty()).then_some(type_name),
+                    nullable: Some(not_null == 0),
+                    default,
+                    primary_key: pk > 0,
+                })
+            })
+            .collect())
+    }
+
+    fn index_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!(
+                "PRAGMA index_list({})",
                 Dialect::Sqlite.quote_ident(table)
             ))
             .map_err(map_err)?;
@@ -294,7 +381,26 @@ impl SqliteConnection {
             .map_err(map_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_err)?;
-        Ok(names)
+        Ok(names
+            .into_iter()
+            .map(|name| Node::leaf(name, ObjectKind::Index))
+            .collect())
+    }
+
+    fn trigger_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = ?1")
+            .map_err(map_err)?;
+        let names = stmt
+            .query_map([table], |row| row.get::<_, String>(0))
+            .map_err(map_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+        Ok(names
+            .into_iter()
+            .map(|name| Node::leaf(name, ObjectKind::Trigger))
+            .collect())
     }
 }
 
@@ -404,11 +510,14 @@ mod tests {
     fn introspect_at_columns_level_lists_tables_and_their_columns() {
         let mut conn = connect();
         conn.execute(
-            &Statement::sql("CREATE TABLE users (id INTEGER, name TEXT)"),
+            &Statement::sql("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"),
             &ExecOptions::default(),
         )
         .unwrap();
-        let snapshot = conn.introspect(&IntrospectScope::default()).unwrap();
+        let snapshot = conn
+            .introspect(&IntrospectScope::default(), IntrospectLevel::Columns)
+            .unwrap();
+        assert_eq!(snapshot.level, IntrospectLevel::Columns);
         assert_eq!(snapshot.roots.len(), 1);
         let table = &snapshot.roots[0];
         assert_eq!(table.name, "users");
@@ -417,9 +526,101 @@ mod tests {
             Children::Loaded(columns) => {
                 let names: Vec<&str> = columns.iter().map(|c| c.name.as_str()).collect();
                 assert_eq!(names, vec!["id", "name"]);
+                assert!(columns[0].detail.primary_key);
+                assert_eq!(columns[0].detail.type_name.as_deref(), Some("INTEGER"));
+                assert_eq!(columns[1].detail.nullable, Some(false));
             }
             Children::NotLoaded => panic!("expected loaded columns"),
         }
+    }
+
+    #[test]
+    fn introspect_at_names_level_never_loads_columns() {
+        let mut conn = connect();
+        conn.execute(
+            &Statement::sql("CREATE TABLE users (id INTEGER, name TEXT)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        let snapshot = conn
+            .introspect(&IntrospectScope::default(), IntrospectLevel::Names)
+            .unwrap();
+        assert_eq!(snapshot.level, IntrospectLevel::Names);
+        assert_eq!(snapshot.roots[0].children, Children::NotLoaded);
+    }
+
+    #[test]
+    fn introspect_at_full_level_adds_indexes_and_triggers() {
+        let mut conn = connect();
+        conn.execute(
+            &Statement::sql("CREATE TABLE users (id INTEGER, name TEXT)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        conn.execute(
+            &Statement::sql("CREATE INDEX users_name_idx ON users (name)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        conn.execute(
+            &Statement::sql("CREATE TABLE audit (id INTEGER)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        conn.execute(
+            &Statement::sql(
+                "CREATE TRIGGER users_ai AFTER INSERT ON users BEGIN \
+                 INSERT INTO audit (id) VALUES (NEW.id); END",
+            ),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+
+        let snapshot = conn
+            .introspect(&IntrospectScope::default(), IntrospectLevel::Full)
+            .unwrap();
+        let users = snapshot.roots.iter().find(|n| n.name == "users").unwrap();
+        let Children::Loaded(children) = &users.children else {
+            panic!("expected loaded children");
+        };
+        assert!(children
+            .iter()
+            .any(|c| c.kind == ObjectKind::Index && c.name == "users_name_idx"));
+        assert!(children
+            .iter()
+            .any(|c| c.kind == ObjectKind::Trigger && c.name == "users_ai"));
+    }
+
+    #[test]
+    fn a_scoped_object_introspect_returns_just_that_one_table() {
+        let mut conn = connect();
+        conn.execute(
+            &Statement::sql("CREATE TABLE users (id INTEGER)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        conn.execute(
+            &Statement::sql("CREATE TABLE orders (id INTEGER)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        let snapshot = conn
+            .introspect(
+                &IntrospectScope::for_object("users"),
+                IntrospectLevel::Columns,
+            )
+            .unwrap();
+        assert_eq!(snapshot.roots.len(), 1);
+        assert_eq!(snapshot.roots[0].name, "users");
+    }
+
+    #[test]
+    fn introspecting_an_unknown_scoped_object_is_not_supported() {
+        let mut conn = connect();
+        let error = conn
+            .introspect(&IntrospectScope::for_object("nope"), IntrospectLevel::Names)
+            .unwrap_err();
+        assert_eq!(error.code, DbErrorCode::NotSupported);
     }
 
     #[test]

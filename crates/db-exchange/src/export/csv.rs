@@ -51,11 +51,13 @@ mod tests {
                 name: "id".to_string(),
                 type_name: "int".to_string(),
                 nullable: false,
+                origin: None,
             },
             ColumnMeta {
                 name: "note".to_string(),
                 type_name: "text".to_string(),
                 nullable: true,
+                origin: None,
             },
         ]
     }

@@ -400,6 +400,7 @@ mod tests {
                     name: "n".to_string(),
                     type_name: "int".to_string(),
                     nullable: false,
+                    origin: None,
                 }],
                 rows: vec![row],
             }))

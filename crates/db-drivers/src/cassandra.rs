@@ -346,6 +346,7 @@ impl Connection for CassandraConnection {
                             name: spec.name().to_string(),
                             type_name: format!("{:?}", spec.typ()),
                             nullable: true,
+                            origin: None,
                         })
                         .collect();
                     let rows: Vec<Vec<Value>> = rows_result

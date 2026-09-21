@@ -365,6 +365,13 @@ impl Connection for SqliteConnection {
                 .map_err(map_err)?;
             return Ok(Execution::Affected(affected as u64));
         }
+        // `rusqlite` 0.32 does not expose `sqlite3_column_table_name` at
+        // all (no `column_metadata`-shaped feature in its own feature
+        // list), so this driver cannot fill `ColumnMeta::origin` itself —
+        // `ui-shell`'s data editor (F4.1) instead derives a result's
+        // single-table origin from the statement text via
+        // `db_sql::single_table`, the same statement every backend's
+        // driver already has in hand.
         let columns: Vec<ColumnMeta> = stmt
             .column_names()
             .iter()
@@ -372,6 +379,7 @@ impl Connection for SqliteConnection {
                 name: name.to_string(),
                 type_name: String::new(),
                 nullable: true,
+                origin: None,
             })
             .collect();
 

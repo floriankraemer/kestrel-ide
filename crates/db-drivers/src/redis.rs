@@ -205,6 +205,7 @@ fn value_to_batch(value: RedisValue, flat_pairs_as_map: bool) -> RowBatch {
         name: name.to_string(),
         type_name: "redis".to_string(),
         nullable: true,
+        origin: None,
     };
     match value {
         RedisValue::Nil => RowBatch {

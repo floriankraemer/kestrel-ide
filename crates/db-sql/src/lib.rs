@@ -21,6 +21,7 @@ pub mod parse;
 mod refs;
 pub mod resp;
 mod scan;
+pub mod single_table;
 pub mod split;
 
 pub use classify::{classify, Classification, SqlClassifier};

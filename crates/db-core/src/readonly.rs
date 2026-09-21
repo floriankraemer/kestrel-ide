@@ -156,7 +156,9 @@ mod tests {
     /// through, not just a `SELECT`.
     #[test]
     fn a_writable_source_s_guard_passes_every_statement() {
-        assert!(writable_guard().check("INSERT INTO users VALUES (1)").is_ok());
+        assert!(writable_guard()
+            .check("INSERT INTO users VALUES (1)")
+            .is_ok());
         assert!(writable_guard().check("DROP TABLE users").is_ok());
         assert!(writable_guard().check("").is_ok());
         assert!(writable_guard().check("CALL do_something()").is_ok());

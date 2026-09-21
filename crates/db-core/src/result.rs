@@ -91,6 +91,7 @@ mod tests {
                 name: "n".to_string(),
                 type_name: "int".to_string(),
                 nullable: false,
+                origin: None,
             }],
             rows: (0..row_count).map(|i| vec![Value::Int(i as i64)]).collect(),
         }

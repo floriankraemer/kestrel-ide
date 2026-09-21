@@ -147,6 +147,132 @@ pub struct ColumnMeta {
     pub name: String,
     pub type_name: String,
     pub nullable: bool,
+    /// The single table this column's *values* came from, when a driver
+    /// can report it (SQLite's `column_table_name`, Postgres's row
+    /// description `table_oid`) — `None` for a computed expression, an
+    /// aggregate, a join's ambiguous column, or a backend that cannot say
+    /// (Mongo/Redis/Cassandra never populate this).
+    ///
+    /// This is what the data editor (F4.1) decides editability from: a
+    /// result is only offered as a grid to edit when every column's
+    /// `origin` names the *same* table (database-tools.md §4's submit
+    /// sequence) — never guessed by re-parsing the statement text, which
+    /// is exactly the kind of re-derivation `dialect.rs`'s own doc
+    /// comment already rules out for identifier quoting.
+    pub origin: Option<String>,
+}
+
+impl ColumnMeta {
+    /// A column with no known table origin — every call site that does
+    /// not (yet) report one uses this rather than repeating the `None`
+    /// literal, so the day a driver learns to report it, only its own
+    /// constructor needs to change.
+    pub fn new(name: impl Into<String>, type_name: impl Into<String>, nullable: bool) -> Self {
+        Self {
+            name: name.into(),
+            type_name: type_name.into(),
+            nullable,
+            origin: None,
+        }
+    }
+}
+
+/// Parses `text` (as a user typed it into a cell/value editor) into a
+/// [`Value`] shaped by `type_name` — the data editor's own "coerce before
+/// bind" step (F4.1): a cell's new value is always bound as a typed
+/// parameter, never interpolated as text (the same rule `dml.rs` applies
+/// to every staged edit). `type_name` is matched loosely (case-insensitive
+/// substring) since every backend spells its own types differently
+/// (`INTEGER` vs `int4` vs `bigint`); an unrecognised type falls back to
+/// `Text`, which still binds safely, just without the stronger type.
+///
+/// `Err` carries the message the editing cell shows — never a panic, and
+/// never a value that silently became something the user did not type.
+pub fn parse_text(text: &str, type_name: &str) -> Result<Value, String> {
+    let type_name = type_name.to_ascii_lowercase();
+    let contains = |needle: &str| type_name.contains(needle);
+    if contains("bool") {
+        return match text.trim().to_ascii_lowercase().as_str() {
+            "true" | "t" | "1" | "yes" => Ok(Value::Bool(true)),
+            "false" | "f" | "0" | "no" => Ok(Value::Bool(false)),
+            _ => Err(format!("'{text}' is not a boolean (try true/false)")),
+        };
+    }
+    if contains("int") || contains("serial") {
+        return text
+            .trim()
+            .parse::<i64>()
+            .map(Value::Int)
+            .map_err(|_| format!("'{text}' is not a whole number"));
+    }
+    if contains("float") || contains("double") || contains("real") {
+        return text
+            .trim()
+            .parse::<f64>()
+            .map(Value::Float)
+            .map_err(|_| format!("'{text}' is not a number"));
+    }
+    if contains("numeric") || contains("decimal") || contains("money") {
+        // Verbatim, like every other `Decimal` — only shape-checked, never
+        // reparsed through a lossy float (this module's own doc comment).
+        return text
+            .trim()
+            .parse::<f64>()
+            .map(|_| Value::Decimal(text.trim().to_string()))
+            .map_err(|_| format!("'{text}' is not a decimal number"));
+    }
+    if contains("uuid") {
+        return uuid::Uuid::parse_str(text.trim())
+            .map(Value::Uuid)
+            .map_err(|_| format!("'{text}' is not a valid UUID"));
+    }
+    if contains("json") {
+        return serde_json::from_str::<serde_json::Value>(text)
+            .map(|_| Value::Json(text.to_string()))
+            .map_err(|error| format!("'{text}' is not valid JSON: {error}"));
+    }
+    if contains("blob") || contains("bytea") || contains("binary") || contains("varbinary") {
+        let trimmed = text
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("\\x");
+        if trimmed.is_empty() {
+            return Ok(Value::Bytes(Vec::new()));
+        }
+        return parse_hex(trimmed)
+            .map(Value::Bytes)
+            .ok_or_else(|| format!("'{text}' is not valid hex"));
+    }
+    if contains("timestamp") || contains("datetime") {
+        if let Ok(dt) = DateTime::parse_from_rfc3339(text.trim()) {
+            return Ok(Value::DateTimeTz(dt));
+        }
+        return NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%d %H:%M:%S")
+            .or_else(|_| NaiveDateTime::parse_from_str(text.trim(), "%Y-%m-%dT%H:%M:%S"))
+            .map(Value::DateTime)
+            .map_err(|_| format!("'{text}' is not a recognised date/time"));
+    }
+    if contains("date") {
+        return NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d")
+            .map(Value::Date)
+            .map_err(|_| format!("'{text}' is not a date (expected YYYY-MM-DD)"));
+    }
+    if contains("time") {
+        return NaiveTime::parse_from_str(text.trim(), "%H:%M:%S")
+            .map(Value::Time)
+            .map_err(|_| format!("'{text}' is not a time (expected HH:MM:SS)"));
+    }
+    Ok(Value::Text(text.to_string()))
+}
+
+fn parse_hex(text: &str) -> Option<Vec<u8>> {
+    if !text.len().is_multiple_of(2) {
+        return None;
+    }
+    (0..text.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).ok())
+        .collect()
 }
 
 /// A page of rows a [`crate::driver::RowStream`] hands back, one column
@@ -296,13 +422,87 @@ mod tests {
     #[test]
     fn row_batch_approx_size_sums_columns_and_cells() {
         let batch = RowBatch {
-            columns: vec![ColumnMeta {
-                name: "id".to_string(),
-                type_name: "int".to_string(),
-                nullable: false,
-            }],
+            columns: vec![ColumnMeta::new("id", "int", false)],
             rows: vec![vec![Value::Int(1)], vec![Value::Int(2)]],
         };
         assert_eq!(batch.approx_size(), "id".len() + 8 + 8);
+    }
+
+    #[test]
+    fn parse_text_coerces_every_supported_type_name() {
+        assert_eq!(parse_text("42", "int4").unwrap(), Value::Int(42));
+        assert_eq!(parse_text("-7", "BIGINT").unwrap(), Value::Int(-7));
+        assert_eq!(parse_text("1.5", "float8").unwrap(), Value::Float(1.5));
+        assert_eq!(parse_text("true", "boolean").unwrap(), Value::Bool(true));
+        assert_eq!(parse_text("0", "bool").unwrap(), Value::Bool(false));
+        assert_eq!(
+            parse_text("12345678901234567890.5", "numeric(30,5)").unwrap(),
+            Value::Decimal("12345678901234567890.5".to_string())
+        );
+        assert_eq!(
+            parse_text("00000000-0000-0000-0000-000000000000", "uuid").unwrap(),
+            Value::Uuid(uuid::Uuid::nil())
+        );
+        assert_eq!(
+            parse_text("{\"a\":1}", "jsonb").unwrap(),
+            Value::Json("{\"a\":1}".to_string())
+        );
+        assert_eq!(
+            parse_text("2026-09-21", "date").unwrap(),
+            Value::Date(NaiveDate::from_ymd_opt(2026, 9, 21).unwrap())
+        );
+        assert_eq!(
+            parse_text("13:05:09", "time").unwrap(),
+            Value::Time(NaiveTime::from_hms_opt(13, 5, 9).unwrap())
+        );
+        assert_eq!(
+            parse_text("2026-09-21 13:05:09", "timestamp").unwrap(),
+            Value::DateTime(
+                NaiveDate::from_ymd_opt(2026, 9, 21)
+                    .unwrap()
+                    .and_hms_opt(13, 5, 9)
+                    .unwrap()
+            )
+        );
+        assert_eq!(
+            parse_text("deadbeef", "bytea").unwrap(),
+            Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef])
+        );
+        assert_eq!(
+            parse_text("0xdeadbeef", "blob").unwrap(),
+            Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef])
+        );
+    }
+
+    #[test]
+    fn parse_text_falls_back_to_text_for_an_unrecognised_type() {
+        assert_eq!(
+            parse_text("hello", "hstore").unwrap(),
+            Value::Text("hello".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_text_rejects_what_does_not_shape_check_with_a_readable_message() {
+        assert!(parse_text("not a number", "int4").is_err());
+        assert!(parse_text("not a uuid", "uuid").is_err());
+        assert!(parse_text("{broken", "json").is_err());
+        assert!(parse_text("zz", "bytea").is_err());
+        assert!(parse_text("2026-13-99", "date").is_err());
+        let error = parse_text("nope", "int4").unwrap_err();
+        assert!(error.contains("nope"));
+    }
+
+    #[test]
+    fn parse_text_never_panics_on_adversarial_input() {
+        // NUL bytes, unicode, empty text — must return `Err`, never panic.
+        assert!(parse_text("a\0b", "int4").is_err());
+        assert!(parse_text("", "int4").is_err());
+        assert!(parse_text("héllo", "uuid").is_err());
+        // Text falls back cleanly even for adversarial content.
+        assert_eq!(
+            parse_text("Robert'); DROP TABLE students;--", "text").unwrap(),
+            Value::Text("Robert'); DROP TABLE students;--".to_string())
+        );
     }
 }

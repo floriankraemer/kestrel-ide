@@ -969,3 +969,215 @@ fn duplicate_build_tool_ids_in_one_manifest_are_rejected() {
         }
     );
 }
+
+#[test]
+fn a_tool_window_contribution_round_trips() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.tool-windows]]
+            id = "buildTools"
+            title = "Build Tools"
+            area = "right"
+
+            [[contributes.tool-windows]]
+            id = "databaseResults"
+            title = "Database Results"
+            area = "bottom"
+            "#,
+    ))
+    .expect("valid");
+    let windows = &manifest.contributes.tool_windows;
+    assert_eq!(windows.len(), 2);
+    assert_eq!(windows[0].id, "buildTools");
+    assert_eq!(windows[0].title, "Build Tools");
+    assert_eq!(windows[0].area, ToolWindowArea::Right);
+    assert_eq!(windows[1].area, ToolWindowArea::Bottom);
+    assert!(!manifest.contributes.is_empty());
+    assert_eq!(ContributionPoint::ToolWindows.key(), "tool-windows");
+}
+
+#[test]
+fn a_tool_window_needs_no_wasm_component() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.tool-windows]]
+            id = "containers"
+            title = "Containers"
+            area = "bottom"
+            "#,
+    ))
+    .expect("valid");
+    assert!(manifest.wasm.is_none());
+}
+
+#[test]
+fn every_tool_window_area_parses() {
+    for (area, expected) in [
+        ("left", ToolWindowArea::Left),
+        ("right", ToolWindowArea::Right),
+        ("bottom", ToolWindowArea::Bottom),
+        ("center", ToolWindowArea::Center),
+    ] {
+        let manifest = PluginManifest::from_toml_str(&with(&format!(
+            r#"
+                [[contributes.tool-windows]]
+                id = "x"
+                title = "X"
+                area = "{area}"
+                "#
+        )))
+        .expect("valid");
+        assert_eq!(manifest.contributes.tool_windows[0].area, expected);
+    }
+}
+
+#[test]
+fn an_unknown_tool_window_area_is_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.tool-windows]]
+            id = "x"
+            title = "X"
+            area = "top"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)), "{err}");
+}
+
+#[test]
+fn a_tool_window_needs_a_non_empty_title() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.tool-windows]]
+            id = "x"
+            title = ""
+            area = "left"
+            "#,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        err,
+        LoadErrorKind::EmptyField("contributes.tool-windows.title")
+    );
+}
+
+#[test]
+fn a_malformed_tool_window_id_is_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.tool-windows]]
+            id = "Not Valid"
+            title = "X"
+            area = "left"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedId { .. }), "{err}");
+}
+
+#[test]
+fn duplicate_tool_window_ids_in_one_manifest_are_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.tool-windows]]
+            id = "database"
+            title = "Database"
+            area = "right"
+
+            [[contributes.tool-windows]]
+            id = "database"
+            title = "Database, again"
+            area = "bottom"
+            "#,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        err,
+        LoadErrorKind::DuplicateContributionId {
+            point: "tool-windows",
+            id: "database".to_string(),
+        }
+    );
+}
+
+#[test]
+fn a_settings_page_contribution_round_trips() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.settings-pages]]
+            id = "buildTools"
+            title = "Build Tools"
+            scope = "project"
+
+            [[contributes.settings-pages]]
+            id = "aiProviders"
+            title = "AI Providers"
+            scope = "global"
+            "#,
+    ))
+    .expect("valid");
+    let pages = &manifest.contributes.settings_pages;
+    assert_eq!(pages.len(), 2);
+    assert_eq!(pages[0].id, "buildTools");
+    assert_eq!(pages[0].scope, SettingsPageScope::Project);
+    assert_eq!(pages[1].scope, SettingsPageScope::Global);
+    assert!(!manifest.contributes.is_empty());
+    assert_eq!(ContributionPoint::SettingsPages.key(), "settings-pages");
+}
+
+#[test]
+fn an_unknown_settings_page_scope_is_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.settings-pages]]
+            id = "x"
+            title = "X"
+            scope = "workspace"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)), "{err}");
+}
+
+#[test]
+fn duplicate_settings_page_ids_in_one_manifest_are_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.settings-pages]]
+            id = "containers"
+            title = "Containers"
+            scope = "project"
+
+            [[contributes.settings-pages]]
+            id = "containers"
+            title = "Containers, again"
+            scope = "global"
+            "#,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        err,
+        LoadErrorKind::DuplicateContributionId {
+            point: "settings-pages",
+            id: "containers".to_string(),
+        }
+    );
+}
+
+#[test]
+fn a_settings_page_needs_a_non_empty_title() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.settings-pages]]
+            id = "x"
+            title = ""
+            scope = "global"
+            "#,
+    ))
+    .unwrap_err();
+    assert_eq!(
+        err,
+        LoadErrorKind::EmptyField("contributes.settings-pages.title")
+    );
+}

@@ -22,8 +22,10 @@
 //! (`docs/architecture/db-integration.md`'s `db-integration` feature).
 
 use std::error::Error as StdError;
+use std::pin::Pin;
 
 use bytes::BytesMut;
+use futures_util::{Stream, StreamExt};
 use tokio_postgres::types::{FromSql, IsNull, ToSql, Type as PgType};
 use tokio_postgres::{Client, NoTls};
 
@@ -264,29 +266,89 @@ impl CancelHandle for PgServerCancel {
     }
 }
 
-/// Already-fetched rows, paged out in `fetch_size` chunks.
-/// ponytail: same eager-fetch-then-chunk simplification as `sqlite`'s
-/// `RowStream` — a real server-side cursor needs `db_core::RowStream` to
-/// grow a lifetime or this crate to hold a self-referential borrow;
-/// revisit once large-result paging is a real complaint (fetch_size and
-/// max_rows already bound how much a single execute call reads).
+/// A live `tokio_postgres::RowStream`, pulling up to `fetch_size` rows per
+/// `next_batch` straight off the wire rather than draining the whole
+/// result upfront (database-tools-plan F3d: the same NFR-breaking defect
+/// F3c fixed for SQLite — see `database-tools.md` §4/§11).
+///
+/// Unlike SQLite's cursor, this needs no self-referential borrow or second
+/// connection: `Client::query_raw` returns a `'static`, owned stream that
+/// pages rows off the connection's own background I/O task, and
+/// tokio-postgres pipelines concurrent commands on one `Client`
+/// transparently — a second `execute` on the same `PostgresConnection`
+/// while this stream is still parked mid-result is fine protocol-wise
+/// (proven by `a_second_execute_does_not_disturb_an_open_stream`, gated
+/// behind `db-integration`).
+///
+/// The wire `Row` -> `Value` mapping happens once, at construction, via
+/// `.map()` on the raw stream — so this struct (and its tests) only ever
+/// see `Vec<Value>`, never a `tokio_postgres::Row`, which has no public
+/// constructor and so cannot be faked in a unit test.
 struct PostgresRowStream {
     columns: Vec<ColumnMeta>,
-    rows: std::collections::VecDeque<Vec<Value>>,
     fetch_size: usize,
+    max_rows: Option<u64>,
+    fetched: u64,
+    stream: Pin<Box<dyn Stream<Item = Result<Vec<Value>, DbError>> + Send>>,
+    done: bool,
+}
+
+impl PostgresRowStream {
+    fn new(
+        columns: Vec<ColumnMeta>,
+        options: &ExecOptions,
+        stream: Pin<Box<dyn Stream<Item = Result<Vec<Value>, DbError>> + Send>>,
+    ) -> Self {
+        Self {
+            columns,
+            fetch_size: options.fetch_size.max(1) as usize,
+            max_rows: options.max_rows,
+            fetched: 0,
+            stream,
+            done: false,
+        }
+    }
+
+    /// Pulls at most `fetch_size` rows off the live stream, honouring
+    /// `max_rows`. Returns the rows plus whether the stream (or the
+    /// `max_rows` budget) is now exhausted.
+    async fn pull_batch(&mut self) -> Result<(Vec<Vec<Value>>, bool), DbError> {
+        let mut out = Vec::with_capacity(self.fetch_size);
+        let mut exhausted = false;
+        while out.len() < self.fetch_size {
+            if let Some(max) = self.max_rows {
+                if self.fetched >= max {
+                    exhausted = true;
+                    break;
+                }
+            }
+            match self.stream.as_mut().next().await {
+                Some(Ok(values)) => {
+                    out.push(values);
+                    self.fetched += 1;
+                }
+                Some(Err(error)) => return Err(error),
+                None => {
+                    exhausted = true;
+                    break;
+                }
+            }
+        }
+        Ok((out, exhausted))
+    }
 }
 
 impl RowStream for PostgresRowStream {
     fn next_batch(&mut self) -> Result<Option<RowBatch>, DbError> {
-        if self.rows.is_empty() {
+        if self.done {
             return Ok(None);
         }
-        let mut rows = Vec::with_capacity(self.fetch_size);
-        for _ in 0..self.fetch_size {
-            match self.rows.pop_front() {
-                Some(row) => rows.push(row),
-                None => break,
-            }
+        let (rows, exhausted) = crate::runtime().block_on(self.pull_batch())?;
+        if exhausted {
+            self.done = true;
+        }
+        if rows.is_empty() {
+            return Ok(None);
         }
         Ok(Some(RowBatch {
             columns: self.columns.clone(),
@@ -366,14 +428,14 @@ impl Connection for PostgresConnection {
         options: &ExecOptions,
     ) -> Result<Execution, DbError> {
         let params: Vec<PgParam> = statement.params.iter().map(PgParam).collect();
-        let refs: Vec<&(dyn ToSql + Sync)> =
-            params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
 
         let prepared = crate::runtime()
             .block_on(self.client.prepare(&statement.text))
             .map_err(io_err)?;
 
         if prepared.columns().is_empty() {
+            let refs: Vec<&(dyn ToSql + Sync)> =
+                params.iter().map(|p| p as &(dyn ToSql + Sync)).collect();
             let affected = crate::runtime()
                 .block_on(self.client.execute(&prepared, &refs))
                 .map_err(io_err)?;
@@ -390,30 +452,27 @@ impl Connection for PostgresConnection {
             })
             .collect();
 
-        let raw_rows = crate::runtime()
-            .block_on(self.client.query(&prepared, &refs))
+        let raw_stream = crate::runtime()
+            .block_on(self.client.query_raw(&prepared, params))
             .map_err(io_err)?;
 
-        let mut rows = std::collections::VecDeque::new();
-        for row in &raw_rows {
-            let mut values = Vec::with_capacity(columns.len());
-            for i in 0..columns.len() {
-                let PgValue(value) = row.get(i);
-                values.push(value);
-            }
-            rows.push_back(values);
-            if let Some(max_rows) = options.max_rows {
-                if rows.len() as u64 >= max_rows {
-                    break;
+        let row_columns = columns.clone();
+        let mapped = raw_stream.map(move |row_result| {
+            row_result.map_err(io_err).map(|row| {
+                let mut values = Vec::with_capacity(row_columns.len());
+                for i in 0..row_columns.len() {
+                    let PgValue(value) = row.get(i);
+                    values.push(value);
                 }
-            }
-        }
+                values
+            })
+        });
 
-        Ok(Execution::Rows(Box::new(PostgresRowStream {
+        Ok(Execution::Rows(Box::new(PostgresRowStream::new(
             columns,
-            rows,
-            fetch_size: options.fetch_size as usize,
-        })))
+            options,
+            Box::pin(mapped),
+        ))))
     }
 
     fn begin(&mut self) -> Result<(), DbError> {
@@ -504,6 +563,92 @@ impl PostgresConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `PostgresRowStream` sees only `Vec<Value>`, never a
+    /// `tokio_postgres::Row` (which has no public constructor) — so its
+    /// batching/`max_rows`/error-propagation logic is exercised here
+    /// against a fake `futures_util::stream::iter`, with no real server
+    /// needed; `db-integration`'s tests below cover the real wire mapping.
+    fn fake_stream(
+        values: Vec<Result<Vec<Value>, DbError>>,
+    ) -> Pin<Box<dyn Stream<Item = Result<Vec<Value>, DbError>> + Send>> {
+        Box::pin(futures_util::stream::iter(values))
+    }
+
+    fn one_int_column() -> Vec<ColumnMeta> {
+        vec![ColumnMeta {
+            name: "n".to_string(),
+            type_name: "int4".to_string(),
+            nullable: true,
+        }]
+    }
+
+    #[test]
+    fn next_batch_pages_a_live_stream_by_fetch_size() {
+        let values: Vec<Result<Vec<Value>, DbError>> =
+            (0..5).map(|n| Ok(vec![Value::Int(n)])).collect();
+        let options = ExecOptions {
+            fetch_size: 2,
+            ..Default::default()
+        };
+        let mut stream = PostgresRowStream::new(one_int_column(), &options, fake_stream(values));
+
+        let first = stream.next_batch().unwrap().unwrap();
+        assert_eq!(first.rows, vec![vec![Value::Int(0)], vec![Value::Int(1)]]);
+        let second = stream.next_batch().unwrap().unwrap();
+        assert_eq!(second.rows, vec![vec![Value::Int(2)], vec![Value::Int(3)]]);
+        let third = stream.next_batch().unwrap().unwrap();
+        assert_eq!(third.rows, vec![vec![Value::Int(4)]]);
+        // Exhausted: further calls stay `None` without re-polling the stream.
+        assert!(stream.next_batch().unwrap().is_none());
+        assert!(stream.next_batch().unwrap().is_none());
+    }
+
+    #[test]
+    fn max_rows_caps_the_total_even_with_more_available_in_the_stream() {
+        let values: Vec<Result<Vec<Value>, DbError>> =
+            (0..10).map(|n| Ok(vec![Value::Int(n)])).collect();
+        let options = ExecOptions {
+            fetch_size: 3,
+            max_rows: Some(4),
+            ..Default::default()
+        };
+        let mut stream = PostgresRowStream::new(one_int_column(), &options, fake_stream(values));
+
+        let mut seen = 0usize;
+        while let Some(batch) = stream.next_batch().unwrap() {
+            seen += batch.rows.len();
+        }
+        assert_eq!(seen, 4);
+    }
+
+    #[test]
+    fn an_error_mid_stream_surfaces_as_a_db_error() {
+        let values = vec![
+            Ok(vec![Value::Int(1)]),
+            Err(DbError::new(DbErrorCode::Unknown, "boom")),
+        ];
+        let options = ExecOptions {
+            fetch_size: 1,
+            ..Default::default()
+        };
+        let mut stream = PostgresRowStream::new(one_int_column(), &options, fake_stream(values));
+
+        let first = stream.next_batch().unwrap().unwrap();
+        assert_eq!(first.rows, vec![vec![Value::Int(1)]]);
+        let error = stream.next_batch().unwrap_err();
+        assert_eq!(error.code, DbErrorCode::Unknown);
+    }
+
+    #[test]
+    fn an_empty_stream_yields_no_batches() {
+        let mut stream = PostgresRowStream::new(
+            one_int_column(),
+            &ExecOptions::default(),
+            fake_stream(vec![]),
+        );
+        assert!(stream.next_batch().unwrap().is_none());
+    }
 
     #[test]
     fn decode_numeric_zero() {
@@ -642,5 +787,111 @@ mod tests {
             .introspect(&IntrospectScope::default(), IntrospectLevel::Columns)
             .expect("introspect at Columns level");
         assert_eq!(with_columns.level, IntrospectLevel::Columns);
+    }
+
+    /// `statm`'s resident-set field, in bytes — the same "read the kernel's
+    /// own accounting rather than estimate" approach a heap-growth NFR
+    /// check needs, gated behind `db-integration` since it needs a real,
+    /// million-row result to be meaningful.
+    #[cfg(feature = "db-integration")]
+    fn resident_bytes() -> u64 {
+        let statm = std::fs::read_to_string("/proc/self/statm").expect("read /proc/self/statm");
+        let pages: u64 = statm
+            .split_whitespace()
+            .nth(1)
+            .expect("resident field")
+            .parse()
+            .expect("resident field is a number");
+        pages * 4096
+    }
+
+    /// F3d's own NFR: a 1 000 000-row result's first page must be fast
+    /// (proves `execute` no longer blocks on draining the whole result
+    /// before returning) and later pages must not accumulate memory
+    /// (proves `next_batch` is paging a live stream, not re-chunking an
+    /// already-fully-materialised buffer — the defect `database-tools.md`
+    /// §4/§11 tracked against this driver).
+    #[cfg(feature = "db-integration")]
+    #[test]
+    fn a_million_row_generate_series_streams_a_fast_first_batch_with_bounded_memory() {
+        let Some(spec) = crate::testsupport::postgres_test_spec() else {
+            eprintln!("IDE_DB_POSTGRES_URL not set — skipping");
+            return;
+        };
+        let mut conn = PostgresDriver.connect(&spec).expect("connect");
+        let options = ExecOptions {
+            fetch_size: 200,
+            ..ExecOptions::default()
+        };
+        let Execution::Rows(mut stream) = conn
+            .execute(
+                &Statement::sql("SELECT * FROM generate_series(1, 1000000)"),
+                &options,
+            )
+            .expect("execute")
+        else {
+            panic!("expected rows");
+        };
+
+        let started = std::time::Instant::now();
+        let first = stream
+            .next_batch()
+            .expect("first batch")
+            .expect("some rows");
+        let elapsed = started.elapsed();
+        assert_eq!(first.rows.len(), 200);
+        assert!(
+            elapsed < std::time::Duration::from_millis(100),
+            "first batch took {elapsed:?}, expected < 100ms"
+        );
+
+        let baseline = resident_bytes();
+        for _ in 0..3 {
+            stream.next_batch().expect("batch").expect("some rows");
+        }
+        let growth = resident_bytes().saturating_sub(baseline);
+        assert!(
+            growth < 30 * 1024 * 1024,
+            "RSS grew by {growth} bytes after three more pages, expected < 30MB"
+        );
+    }
+
+    /// The parked-cursor rule `database-tools.md` §4 documents: a live
+    /// stream from one `execute` must not block or be disturbed by a
+    /// second `execute` on the same `PostgresConnection` — unlike SQLite,
+    /// Postgres needs no second connection for this, since tokio-postgres
+    /// pipelines concurrent commands on one `Client` transparently.
+    #[cfg(feature = "db-integration")]
+    #[test]
+    fn a_second_execute_does_not_disturb_an_open_stream() {
+        let Some(spec) = crate::testsupport::postgres_test_spec() else {
+            eprintln!("IDE_DB_POSTGRES_URL not set — skipping");
+            return;
+        };
+        let mut conn = PostgresDriver.connect(&spec).expect("connect");
+        let options = ExecOptions {
+            fetch_size: 2,
+            ..ExecOptions::default()
+        };
+        let Execution::Rows(mut stream) = conn
+            .execute(
+                &Statement::sql("SELECT * FROM generate_series(1, 5)"),
+                &options,
+            )
+            .expect("execute")
+        else {
+            panic!("expected rows");
+        };
+        let first = stream.next_batch().expect("batch").expect("some rows");
+        assert_eq!(first.rows, vec![vec![Value::Int(1)], vec![Value::Int(2)]]);
+
+        conn.execute(&Statement::sql("SELECT 1"), &ExecOptions::default())
+            .expect("second execute");
+
+        let rest = stream.next_batch().expect("batch").expect("some rows");
+        assert_eq!(rest.rows, vec![vec![Value::Int(3)], vec![Value::Int(4)]]);
+        let last = stream.next_batch().expect("batch").expect("some rows");
+        assert_eq!(last.rows, vec![vec![Value::Int(5)]]);
+        assert!(stream.next_batch().expect("batch").is_none());
     }
 }

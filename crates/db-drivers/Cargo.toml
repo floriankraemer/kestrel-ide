@@ -25,11 +25,16 @@ tokio-postgres-rustls = { version = "0.13", default-features = false, optional =
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
 bytes = { version = "1", optional = true }
 uuid = { version = "1", optional = true }
+# F3d: `Client::query_raw`'s live row stream needs `StreamExt::next`/`map`
+# to page it batch-by-batch — already a transitive dependency of
+# tokio-postgres itself, so declaring it directly adds no new crate to the
+# tree, only a direct `use`.
+futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }
 
 [features]
 default = ["sqlite", "postgres"]
 sqlite = ["dep:rusqlite"]
-postgres = ["dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls", "dep:bytes", "dep:uuid"]
+postgres = ["dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls", "dep:bytes", "dep:uuid", "dep:futures-util"]
 # Gates the real-Postgres tests in `postgres.rs` (env `IDE_DB_POSTGRES_URL`).
 # `make test`/`cargo test --workspace` never builds this feature —
 # `db-integration.md` runs it separately, the same shape `jvm-integration`

@@ -3,6 +3,7 @@
 #include "build_tools_panel.h"
 #include "build_tools_wiring.h"
 #include "containers_panel.h"
+#include "database_panel.h"
 #include "dock_layout.h"
 #include "keymap_page.h"
 
@@ -33,7 +34,8 @@ ContributedToolWindows buildContributedToolWindows(
     ads::CDockAreaWidget *rightArea, ads::CDockAreaWidget *bottomArea,
     ads::CDockWidget *editorDock, BuildToolsService *buildToolsService, RunService *runService,
     ProjectTreeModel *treeModel, EditorTabs *editorTabs, ContainerService *containerService,
-    TerminalSupervisor *terminalSupervisor, ContainersPanel::OpenAt containersOpenAt)
+    TerminalSupervisor *terminalSupervisor, ContainersPanel::OpenAt containersOpenAt,
+    DatabaseService *databaseService)
 {
     QHash<QString, DockFactory> factories;
     factories.insert(
@@ -50,6 +52,11 @@ ContributedToolWindows buildContributedToolWindows(
           return buildContainersDock(dockManager, docks, relativeTo, containerService,
                                      terminalSupervisor, appSettings, containersOpenAt);
       });
+    factories.insert(QStringLiteral("database"),
+                     [dockManager, docks, databaseService](ads::CDockAreaWidget *relativeTo)
+                       -> QWidget * {
+                         return buildDatabaseDock(dockManager, docks, relativeTo, databaseService);
+                     });
 
     ContributedToolWindows built;
     for (const FfiToolWindow &row : appSettings->contributedToolWindows()) {
@@ -64,6 +71,8 @@ ContributedToolWindows buildContributedToolWindows(
             built.buildTools = static_cast<BuildToolsPanel *>(panel);
         } else if (row.id == QStringLiteral("containers")) {
             built.containers = static_cast<ContainersPanel *>(panel);
+        } else if (row.id == QStringLiteral("database")) {
+            built.database = static_cast<DatabasePanel *>(panel);
         }
     }
     return built;
@@ -85,6 +94,9 @@ void wireContributedToolWindowMenus(AppSettings *appSettings, QHash<QString, QAc
                                     appSettings, actions);
         } else if (row.id == QStringLiteral("containers")) {
             action = registerAction(viewMenu, QStringLiteral("view.containers"), row.title,
+                                    appSettings, actions);
+        } else if (row.id == QStringLiteral("database")) {
+            action = registerAction(viewMenu, QStringLiteral("view.database"), row.title,
                                     appSettings, actions);
         } else {
             qWarning().noquote() << QStringLiteral("tool window %1 from %2 has no View-menu action registered")

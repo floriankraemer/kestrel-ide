@@ -20,6 +20,7 @@ class CDockWidget;
 namespace ui_shell {
 
 class BuildToolsPanel;
+class DatabasePanel;
 class DockRegistry;
 class EditorTabs;
 
@@ -41,6 +42,7 @@ struct ContributedToolWindows
 {
     BuildToolsPanel *buildTools = nullptr;
     ContainersPanel *containers = nullptr;
+    DatabasePanel *database = nullptr;
 };
 
 // Replaces the literal `wireBuildToolsDock`/`buildContainersDock` calls
@@ -58,7 +60,8 @@ ContributedToolWindows buildContributedToolWindows(
     ads::CDockAreaWidget *rightArea, ads::CDockAreaWidget *bottomArea,
     ads::CDockWidget *editorDock, BuildToolsService *buildToolsService, RunService *runService,
     ProjectTreeModel *treeModel, EditorTabs *editorTabs, ContainerService *containerService,
-    TerminalSupervisor *terminalSupervisor, ContainersPanel::OpenAt containersOpenAt);
+    TerminalSupervisor *terminalSupervisor, ContainersPanel::OpenAt containersOpenAt,
+    DatabaseService *databaseService);
 
 // The View menu's `view.<id>` toggle actions for every contributed tool
 // window, with the contributed title passed through as-is (it is plugin

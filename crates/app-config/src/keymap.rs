@@ -795,6 +795,14 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // database-tools-plan F2.5: the Database dock. Unbound like
+    // `view.build`.
+    ActionDef {
+        id: "view.database",
+        label: "Database",
+        category: "View",
+        default_shortcut: "",
+    },
     // The PHP tooling plan's D5 dock. `tests_menu.cpp` has registered it
     // since that phase, but it never had a row here, so — unlike every
     // other `view.*` dock action — Search Everywhere/Find Action could not

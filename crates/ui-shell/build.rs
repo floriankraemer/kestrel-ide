@@ -731,6 +731,8 @@ fn main() {
         .cpp_file("cpp/status_bar.cpp")
         .cpp_file("cpp/navigate_menu.cpp")
         .cpp_file("cpp/ai_menu.cpp")
+        // database-tools-plan F2.5: the Database dock.
+        .cpp_file("cpp/database_panel.cpp")
         .include_dir("cpp")
         .include_dir(ads_dir)
         .cpp_file(compile_ads_qrc(ads_dir, &tool_dirs))

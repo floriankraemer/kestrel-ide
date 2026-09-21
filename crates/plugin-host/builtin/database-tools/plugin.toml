@@ -51,9 +51,16 @@ keywords = "dialects/postgresql.keywords"
 
 # G1's generic point: the Settings > Database page is contributed, not
 # hard-wired, so disabling this plugin hides it the way disabling
-# `containers` hides Containers. The `database`/`databaseResults` docks join
-# as `tool-windows` rows once their native factories exist (F2/F3).
+# `containers` hides Containers. The `databaseResults` dock joins as a
+# `tool-windows` row once F3's console/grid factory exists.
 [[contributes.settings-pages]]
 id = "database"
 title = "Database"
 scope = "project"
+
+# F2.5: the Database dock's native factory (`buildDatabaseDock`,
+# `tool_window_factories.cpp`).
+[[contributes.tool-windows]]
+id = "database"
+title = "Database"
+area = "right"

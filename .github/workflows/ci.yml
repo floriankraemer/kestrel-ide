@@ -51,9 +51,10 @@ jobs:
           for crate in editor-core project-model app-core pty-core terminal-core \
                        app-config index-core diagnostics-core mcp-server lsp-core ai-chat-core \
                        plugin-api icon-theme plugin-host run-core build-core dap-core \
-                       stdio-framing process-exec jvm-build-core; do
+                       stdio-framing process-exec jvm-build-core secret-store db-core; do
             check "$crate" qt
           done
+          check db-core tokio
           # jvm-build-core deliberately excluded here: D4's reqwest gives it
           # a private tokio runtime, tolerated the same way ai-chat-core's
           # and container-registry's are (docs/architecture/layering.md) —
@@ -66,6 +67,12 @@ jobs:
 
       - name: File-size gate
         run: scripts/check-file-size.sh
+
+      # R2 (database-tools-plan.md §13/§7): rustls/ring only, aws-lc-rs must
+      # never enter the tree — a per-driver-crate feature audit, not a
+      # passive assumption.
+      - name: aws-lc-rs exclusion gate
+        run: '! cargo tree --workspace --all-features -i aws-lc-rs >/dev/null 2>&1'
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings

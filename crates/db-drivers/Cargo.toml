@@ -1,0 +1,40 @@
+[package]
+name = "db-drivers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+db-core = { path = "../db-core" }
+# The private `"db-io"` runtime every async driver's calls are `block_on`'d
+# against (ADR-0058 §1) — never the ambient kind, and never reached by
+# SQLite/Redis, which bypass it entirely (both have synchronous APIs).
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+# SQLite: `bundled` links its own vendored C sqlite3 rather than a system
+# package, the same "the build itself never depends on one being present"
+# reasoning `secret-store`'s `linux-native` keyring backend already uses.
+# Synchronous — bypasses the tokio runtime entirely.
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
+# PostgreSQL: async, `block_on`'d against the private runtime above.
+# `rustls`'s `ring` provider only (never `aws-lc-rs`, ADR-0061 §2/R2) —
+# `default-features = false` on every crate in this chain is what keeps
+# `aws-lc-rs` out; see F1.7's `cargo tree -i aws-lc-rs` gate.
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"], optional = true }
+tokio-postgres-rustls = { version = "0.13", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
+bytes = { version = "1", optional = true }
+uuid = { version = "1", optional = true }
+
+[features]
+default = ["sqlite", "postgres"]
+sqlite = ["dep:rusqlite"]
+postgres = ["dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls", "dep:bytes", "dep:uuid"]
+# Gates the real-Postgres tests in `postgres.rs` (env `IDE_DB_POSTGRES_URL`).
+# `make test`/`cargo test --workspace` never builds this feature —
+# `db-integration.md` runs it separately, the same shape `jvm-integration`
+# already uses for `jvm-build-core`.
+db-integration = []
+
+[dev-dependencies]
+tempfile = "3"

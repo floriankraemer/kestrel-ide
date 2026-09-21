@@ -31,6 +31,7 @@ members = [
     "crates/container-registry",
     "crates/secret-store",
     "crates/db-core",
+    "crates/db-drivers",
     "crates/jvm-build-core",
     "crates/app-core",
     "crates/ui-shell",

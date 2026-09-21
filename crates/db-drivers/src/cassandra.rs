@@ -4,10 +4,16 @@
 //! UDTs, functions, columns) — Cassandra's own catalog, the same idea
 //! `postgres.rs`'s own `information_schema`-style query uses.
 //!
-//! TLS is plaintext-only in this slice, the same F1-carried-forward
-//! posture `postgres.rs`'s own doc comment explains: `SslMode` other than
-//! `Disable` returns `NotSupported` rather than connecting without
-//! verifying a certificate this driver cannot yet check.
+//! TLS is plaintext-only, permanently, not just for this slice: the
+//! `scylla` crate's own `Cargo.toml` gives a dependent no way to select
+//! `rustls`'s `ring` provider over its default `aws_lc_rs` one (unlike
+//! postgres/mongodb/redis/russh, whose manifests each expose that choice
+//! explicitly) — this crate's `Cargo.toml` therefore never enables
+//! scylla's `rustls-023` feature at all, in any feature combination, so
+//! `aws-lc-rs` can never enter the tree through this driver. `SslMode`
+//! other than `Disable` returns `NotSupported` with a message naming why.
+//! Revisit once scylla exposes a provider-agnostic rustls option
+//! upstream (`database-tools-plan.md`'s F7.4 row).
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
@@ -57,7 +63,7 @@ impl Driver for CassandraDriver {
         if spec.ssl.mode != SslMode::Disable {
             return Err(DbError::new(
                 DbErrorCode::NotSupported,
-                "TLS is not yet implemented for Cassandra/Scylla connections (F7.4 foundation) — use SSL mode \"disable\" for now",
+                "TLS for Cassandra/Scylla is not available yet (scylla's rustls feature forces aws-lc-rs)",
             ));
         }
         let mut builder = SessionBuilder::new();
@@ -425,6 +431,42 @@ impl Connection for CassandraConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn spec_with_ssl_mode(mode: SslMode) -> ConnectSpec {
+        ConnectSpec {
+            driver: "cassandra".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: Some(9042),
+            database: String::new(),
+            user: String::new(),
+            url: String::new(),
+            password: None,
+            ssl: db_core::datasource::SslConfig {
+                mode,
+                ca_file: None,
+            },
+        }
+    }
+
+    #[test]
+    fn connect_refuses_any_ssl_mode_other_than_disable() {
+        for mode in [
+            SslMode::Prefer,
+            SslMode::Require,
+            SslMode::VerifyCa,
+            SslMode::VerifyFull,
+        ] {
+            let error = match CassandraDriver.connect(&spec_with_ssl_mode(mode)) {
+                Err(error) => error,
+                Ok(_) => panic!("TLS must be refused client-side, before any network call"),
+            };
+            assert_eq!(error.code, DbErrorCode::NotSupported);
+            assert_eq!(
+                error.message,
+                "TLS for Cassandra/Scylla is not available yet (scylla's rustls feature forces aws-lc-rs)"
+            );
+        }
+    }
 
     #[test]
     fn select_is_read_only_case_insensitively() {

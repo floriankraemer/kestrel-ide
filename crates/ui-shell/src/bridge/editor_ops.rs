@@ -429,6 +429,14 @@ impl ffi::EditorOps {
         self.selection_of(tab_id).len() as u32
     }
 
+    /// The primary caret's byte offset — already the unit `SelectionSet`
+    /// stores internally (this module's own doc comment on why: bytes,
+    /// because tree-sitter/`edit-ops` are byte-addressed), so this needs no
+    /// conversion the way `carets()` does for the view.
+    pub fn caret_offset(&self, tab_id: u64) -> i64 {
+        self.selection_of(tab_id).primary().head as i64
+    }
+
     /// Esc: back to one caret.
     pub fn clear_secondary_carets(mut self: Pin<&mut Self>, tab_id: u64) {
         let mut selection = self.selection_of(tab_id);

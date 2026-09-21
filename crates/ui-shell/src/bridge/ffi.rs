@@ -4245,6 +4245,15 @@ mod ffi {
         #[cxx_name = "caretCount"]
         fn caret_count(self: &EditorOps, tab_id: u64) -> u32;
 
+        /// The primary caret's byte offset into the tab's buffer — the same
+        /// unit `db_sql::split`'s spans use, so a caller can hand this
+        /// straight to `ConsoleService::execute`'s `caret` parameter without
+        /// its own UTF-16-to-byte conversion (database-tools-plan F3e).
+        /// `0` for a tab this object has never seen a caret move for.
+        #[qinvokable]
+        #[cxx_name = "caretOffset"]
+        fn caret_offset(self: &EditorOps, tab_id: u64) -> i64;
+
         /// Esc: back to the primary caret alone.
         #[qinvokable]
         #[cxx_name = "clearSecondaryCarets"]

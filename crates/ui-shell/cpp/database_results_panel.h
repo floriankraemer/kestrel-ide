@@ -32,7 +32,8 @@ class DatabaseResultsPanel : public QWidget
 {
 public:
     DatabaseResultsPanel(EditorTabs *editorTabs, ConsoleService *consoleService,
-                         ResultProvider *resultProvider, QWidget *parent);
+                         ResultProvider *resultProvider, AppSettings *appSettings,
+                         QWidget *parent);
 
 private:
     void appendOutput(quint64 tabId, const QString &text);
@@ -50,6 +51,7 @@ DatabaseResultsPanel *buildDatabaseResultsDock(ads::CDockManager *dockManager, D
                                                ads::CDockAreaWidget *relativeTo,
                                                EditorTabs *editorTabs,
                                                ConsoleService *consoleService,
-                                               ResultProvider *resultProvider);
+                                               ResultProvider *resultProvider,
+                                               AppSettings *appSettings);
 
 } // namespace ui_shell

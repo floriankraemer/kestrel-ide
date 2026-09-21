@@ -884,6 +884,15 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Database",
         default_shortcut: "Ctrl+Return",
     },
+    // F3e: runs the whole console buffer as a script, independent of
+    // caret/selection — `database.run`'s own doc comment on how the two
+    // differ.
+    ActionDef {
+        id: "database.runScript",
+        label: "Run Script",
+        category: "Database",
+        default_shortcut: "Ctrl+Shift+Return",
+    },
     ActionDef {
         id: "database.cancel",
         label: "Cancel Execution",

@@ -15,13 +15,14 @@
 namespace ui_shell {
 
 DatabaseResultsPanel::DatabaseResultsPanel(EditorTabs *editorTabs, ConsoleService *consoleService,
-                                           ResultProvider *resultProvider, QWidget *parent)
+                                           ResultProvider *resultProvider,
+                                           AppSettings *appSettings, QWidget *parent)
   : QWidget(parent)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
 
-    bar_ = mountDatabaseConsoleBar(editorTabs, consoleService, this);
+    bar_ = mountDatabaseConsoleBar(editorTabs, consoleService, appSettings, this);
     layout->addWidget(bar_);
 
     tabs_ = new QTabWidget(this);
@@ -83,10 +84,12 @@ DatabaseResultsPanel *buildDatabaseResultsDock(ads::CDockManager *dockManager,
                                                ads::CDockAreaWidget *relativeTo,
                                                EditorTabs *editorTabs,
                                                ConsoleService *consoleService,
-                                               ResultProvider *resultProvider)
+                                               ResultProvider *resultProvider,
+                                               AppSettings *appSettings)
 {
     auto *panel =
-      new DatabaseResultsPanel(editorTabs, consoleService, resultProvider, dockManager);
+      new DatabaseResultsPanel(editorTabs, consoleService, resultProvider, appSettings,
+                               dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Database Results"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("databaseResults"), dock, ads::BottomDockWidgetArea,

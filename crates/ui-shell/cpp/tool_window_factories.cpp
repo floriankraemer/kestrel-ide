@@ -61,10 +61,10 @@ ContributedToolWindows buildContributedToolWindows(
                      });
     factories.insert(
       QStringLiteral("databaseResults"),
-      [dockManager, docks, editorTabs, consoleService,
-       resultProvider](ads::CDockAreaWidget *relativeTo) -> QWidget * {
+      [dockManager, docks, editorTabs, consoleService, resultProvider,
+       appSettings](ads::CDockAreaWidget *relativeTo) -> QWidget * {
           return buildDatabaseResultsDock(dockManager, docks, relativeTo, editorTabs,
-                                          consoleService, resultProvider);
+                                          consoleService, resultProvider, appSettings);
       });
 
     ContributedToolWindows built;

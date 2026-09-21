@@ -2,9 +2,11 @@
 
 #include "editor_tabs.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QToolButton>
 #include <QVariant>
@@ -19,7 +21,7 @@ bool isSqlPath(const QString &path)
 } // namespace
 
 DatabaseConsoleBar::DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *consoleService,
-                                       QWidget *parent)
+                                       AppSettings *appSettings, QWidget *parent)
   : QWidget(parent)
   , editorTabs_(editorTabs)
   , consoleService_(consoleService)
@@ -51,6 +53,11 @@ DatabaseConsoleBar::DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *c
     connect(runButton_, &QToolButton::clicked, this, &DatabaseConsoleBar::runClicked);
     layout->addWidget(runButton_);
 
+    runScriptButton_ = new QToolButton(this);
+    runScriptButton_->setText(tr("Run script"));
+    connect(runScriptButton_, &QToolButton::clicked, this, &DatabaseConsoleBar::runScriptClicked);
+    layout->addWidget(runScriptButton_);
+
     cancelButton_ = new QToolButton(this);
     cancelButton_->setText(tr("Cancel"));
     connect(cancelButton_, &QToolButton::clicked, this, &DatabaseConsoleBar::cancelClicked);
@@ -70,6 +77,27 @@ DatabaseConsoleBar::DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *c
 
     statusLabel_ = new QLabel(this);
     layout->addWidget(statusLabel_, 1);
+
+    // Window-scoped shortcuts (Qt's own default context for a QAction
+    // added to a widget): they fire regardless of which widget in the
+    // main window has focus, in particular the SQL editor itself, which
+    // is what the user is actually typing Ctrl+(Shift+)Enter into — the
+    // same reasoning `registerAction`'s menu actions already rely on for
+    // every other window-wide shortcut (`keymap_page.cpp`'s own doc
+    // comment).
+    auto *runAction = new QAction(this);
+    runAction->setShortcut(
+      QKeySequence(appSettings->shortcutFor(QStringLiteral("database.run")),
+                   QKeySequence::PortableText));
+    connect(runAction, &QAction::triggered, this, &DatabaseConsoleBar::runClicked);
+    addAction(runAction);
+
+    auto *runScriptAction = new QAction(this);
+    runScriptAction->setShortcut(
+      QKeySequence(appSettings->shortcutFor(QStringLiteral("database.runScript")),
+                   QKeySequence::PortableText));
+    connect(runScriptAction, &QAction::triggered, this, &DatabaseConsoleBar::runScriptClicked);
+    addAction(runScriptAction);
 
     refreshSources();
     refreshForCurrentTab();
@@ -134,7 +162,7 @@ void DatabaseConsoleBar::attachCurrentTab()
 
 void DatabaseConsoleBar::runClicked()
 {
-    if (currentTabId_ == 0) {
+    if (currentTabId_ == 0 || !isSqlPath(editorTabs_->currentPath())) {
         return;
     }
     attachCurrentTab();
@@ -143,15 +171,26 @@ void DatabaseConsoleBar::runClicked()
     if (!selected.isEmpty()) {
         result = consoleService_->execute(currentTabId_, selected, FfiDbExecWhat::Selection, 0);
     } else {
-        // Nothing selected: run the whole buffer as a script.
-        // ponytail: "run the statement at the caret" (F3.3's headline
-        // Ctrl+Enter behaviour) needs a caret byte offset `EditorTabs`
-        // does not expose yet — add it and switch this branch to
-        // `FfiDbExecWhat::Statement` once it does.
-        editorTabs_->withCurrentEditor([this, &result](quint64, const QString &text) {
-            result = consoleService_->execute(currentTabId_, text, FfiDbExecWhat::Selection, 0);
-        });
+        // Nothing selected: run only the statement the caret sits inside
+        // (F3.3's headline Ctrl+Enter behaviour) — `EditorOps` already
+        // tracks the live caret's byte offset for every open tab.
+        const quint32 caret = static_cast<quint32>(editorTabs_->editorOps()->caretOffset(currentTabId_));
+        const QString text = editorTabs_->currentContent();
+        result = consoleService_->execute(currentTabId_, text, FfiDbExecWhat::Statement, caret);
     }
+    if (result.code != 0) {
+        setStatus(QString(result.message));
+    }
+}
+
+void DatabaseConsoleBar::runScriptClicked()
+{
+    if (currentTabId_ == 0 || !isSqlPath(editorTabs_->currentPath())) {
+        return;
+    }
+    attachCurrentTab();
+    const QString text = editorTabs_->currentContent();
+    const FfiResult result = consoleService_->execute(currentTabId_, text, FfiDbExecWhat::Selection, 0);
     if (result.code != 0) {
         setStatus(QString(result.message));
     }
@@ -169,9 +208,9 @@ void DatabaseConsoleBar::cancelClicked()
 }
 
 DatabaseConsoleBar *mountDatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *consoleService,
-                                           QWidget *parent)
+                                           AppSettings *appSettings, QWidget *parent)
 {
-    auto *bar = new DatabaseConsoleBar(editorTabs, consoleService, parent);
+    auto *bar = new DatabaseConsoleBar(editorTabs, consoleService, appSettings, parent);
     // A second, independent subscriber to the app-wide focus signal —
     // `EditorTabs`'s own active-group tracking (`editor_tabs.cpp`) already
     // relies on the same signal the same way; Qt signals take any number

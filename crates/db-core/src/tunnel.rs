@@ -21,10 +21,120 @@ pub struct TunnelSpec {
 }
 
 /// A tunnel mechanism: opens a local port that forwards to
-/// `spec.remote_host:remote_port` through `spec.ssh_host`.
+/// `spec.remote_host:remote_port` through `spec.ssh_host`. Implementations
+/// close the tunnel on `Drop` (`CliTunnel` kills its `ssh` child;
+/// `db_drivers::ssh::RusshTunnel` drops its forwarding task and channel) —
+/// never a separate `close` method a caller could forget to call.
 pub trait Tunnel: Send {
     /// The local port traffic should be sent to once open.
     fn local_port(&self) -> u16;
+}
+
+/// How an SSH tunnel authenticates — `app_config::database::SshSetting`'s
+/// own free-form `auth` string, typed (F7.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshAuthMode {
+    /// Ask a running `ssh-agent` for a signature — never touches key
+    /// material directly.
+    Agent,
+    /// A private key file on disk, passphrase (if any) from [`crate::
+    /// datasource::Secrets::ssh_password`].
+    KeyFile,
+    /// A plain password, from the same `Secrets` field.
+    Password,
+    /// No explicit choice: let `ssh`'s own config/agent/default-identity
+    /// resolution decide — only meaningful for [`SelectedTunnel::Cli`],
+    /// since there is no "ssh config" for `RusshTunnel` to defer to.
+    SshConfig,
+}
+
+impl SshAuthMode {
+    pub fn from_id(id: &str) -> Self {
+        match id {
+            "password" => SshAuthMode::Password,
+            "key" => SshAuthMode::KeyFile,
+            "config" => SshAuthMode::SshConfig,
+            _ => SshAuthMode::Agent,
+        }
+    }
+}
+
+/// A typed view over `app_config::database::SshSetting` plus the secret
+/// [`crate::datasource::Secrets::ssh_password`] resolved (a passphrase for
+/// [`SshAuthMode::KeyFile`], a password for [`SshAuthMode::Password`]) —
+/// what [`select`] and `db_drivers::ssh::RusshTunnel::open` actually need.
+#[derive(Clone)]
+pub struct SshConfig {
+    pub host: String,
+    pub port: u16,
+    pub user: String,
+    pub auth: SshAuthMode,
+    pub key_file: Option<String>,
+    pub password: Option<String>,
+}
+
+impl std::fmt::Debug for SshConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SshConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("user", &self.user)
+            .field("auth", &self.auth)
+            .field("key_file", &self.key_file)
+            .field("password", &self.password.as_ref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+/// Which tunnel mechanism [`select`] picked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectedTunnel {
+    /// Shell out to the user's own `ssh` (`CliTunnel`) — free config,
+    /// agent and `ProxyJump` support.
+    Cli,
+    /// Connect in-process (`db_drivers::ssh::RusshTunnel`) — the only
+    /// option once a password is the credential, since `ssh -o
+    /// BatchMode=yes` cannot supply one interactively, and the only option
+    /// when no `ssh` binary is on `PATH` at all.
+    Russh,
+}
+
+/// Whether a binary named `name` exists on `PATH` — a plain file-exists
+/// check, not a spawn-and-see: cheap, and avoids the interactive-hang risk
+/// a real invocation could carry on a misconfigured `PATH`.
+fn binary_on_path(name: &str, path_var: Option<&std::ffi::OsStr>) -> bool {
+    let Some(path_var) = path_var else {
+        return false;
+    };
+    std::env::split_paths(path_var)
+        .any(|dir| dir.join(name).is_file() || dir.join(format!("{name}.exe")).is_file())
+}
+
+/// [`select`]'s decision rule, parameterised on whether `ssh` is on `PATH`
+/// so it is testable without a real binary or `$PATH` (ADR-0061 §5's
+/// "CLI first" default, narrowed to the auth modes it can actually
+/// carry).
+fn select_with(auth: SshAuthMode, ssh_on_path: bool) -> SelectedTunnel {
+    let cli_capable_auth = matches!(
+        auth,
+        SshAuthMode::Agent | SshAuthMode::KeyFile | SshAuthMode::SshConfig
+    );
+    if ssh_on_path && cli_capable_auth {
+        SelectedTunnel::Cli
+    } else {
+        SelectedTunnel::Russh
+    }
+}
+
+/// Pick a tunnel mechanism for `auth`: the CLI (`ssh` on `PATH`) when it
+/// can carry this auth mode, `RusshTunnel` otherwise — a password auth
+/// mode always selects `Russh` (`ssh -o BatchMode=yes` cannot prompt for
+/// one), and so does a missing `ssh` binary.
+pub fn select(auth: SshAuthMode) -> SelectedTunnel {
+    select_with(
+        auth,
+        binary_on_path("ssh", std::env::var_os("PATH").as_deref()),
+    )
 }
 
 /// Ask the OS for an ephemeral port, then release it immediately — the
@@ -126,6 +236,82 @@ impl Tunnel for CliTunnel {
 impl Drop for CliTunnel {
     fn drop(&mut self) {
         self.child.kill();
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    #[test]
+    fn agent_key_file_and_ssh_config_prefer_cli_when_ssh_is_on_path() {
+        assert_eq!(select_with(SshAuthMode::Agent, true), SelectedTunnel::Cli);
+        assert_eq!(select_with(SshAuthMode::KeyFile, true), SelectedTunnel::Cli);
+        assert_eq!(
+            select_with(SshAuthMode::SshConfig, true),
+            SelectedTunnel::Cli
+        );
+    }
+
+    #[test]
+    fn password_auth_always_selects_russh_even_with_ssh_on_path() {
+        assert_eq!(
+            select_with(SshAuthMode::Password, true),
+            SelectedTunnel::Russh
+        );
+    }
+
+    #[test]
+    fn a_missing_ssh_binary_always_selects_russh() {
+        assert_eq!(
+            select_with(SshAuthMode::Agent, false),
+            SelectedTunnel::Russh
+        );
+        assert_eq!(
+            select_with(SshAuthMode::KeyFile, false),
+            SelectedTunnel::Russh
+        );
+    }
+
+    #[test]
+    fn auth_mode_from_id_maps_the_known_strings_and_defaults_to_agent() {
+        assert_eq!(SshAuthMode::from_id("password"), SshAuthMode::Password);
+        assert_eq!(SshAuthMode::from_id("key"), SshAuthMode::KeyFile);
+        assert_eq!(SshAuthMode::from_id("config"), SshAuthMode::SshConfig);
+        assert_eq!(SshAuthMode::from_id("agent"), SshAuthMode::Agent);
+        assert_eq!(SshAuthMode::from_id("anything-else"), SshAuthMode::Agent);
+    }
+
+    #[test]
+    fn ssh_config_debug_never_prints_the_password() {
+        let config = SshConfig {
+            host: "bastion".to_string(),
+            port: 22,
+            user: "florian".to_string(),
+            auth: SshAuthMode::Password,
+            key_file: None,
+            password: Some("hunter2".to_string()),
+        };
+        let rendered = format!("{config:?}");
+        assert!(!rendered.contains("hunter2"));
+        assert!(rendered.contains("<redacted>"));
+    }
+
+    #[test]
+    fn binary_on_path_finds_a_real_binary_and_misses_a_fake_one() {
+        assert!(binary_on_path(
+            "sh",
+            Some(std::ffi::OsStr::new("/bin:/usr/bin"))
+        ));
+        assert!(!binary_on_path(
+            "not-a-real-binary-xyz",
+            Some(std::ffi::OsStr::new("/bin:/usr/bin"))
+        ));
+    }
+
+    #[test]
+    fn binary_on_path_is_false_with_no_path_variable() {
+        assert!(!binary_on_path("sh", None));
     }
 }
 

@@ -30,6 +30,14 @@ pub enum DbErrorCode {
     /// from a load that crashed the process (ADR-0061 §4); the user has to
     /// re-enable the driver explicitly before it is loaded again.
     DriverQuarantined = 14,
+    /// An SSH tunnel's server host key is not in `~/.ssh/known_hosts` at
+    /// all (F7.5) — the fingerprint is in the message; consent to trust it
+    /// is a later phase's UI, never auto-accepted here.
+    HostKeyUnknown = 15,
+    /// An SSH tunnel's server host key is in `~/.ssh/known_hosts` but does
+    /// not match what the server presented — a stronger signal than
+    /// [`DbErrorCode::HostKeyUnknown`] (a changed key, not just a new one).
+    HostKeyMismatch = 16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,5 +91,8 @@ mod tests {
         assert_eq!(DbErrorCode::TunnelFailed as u32, 11);
         assert_eq!(DbErrorCode::SecretUnavailable as u32, 12);
         assert_eq!(DbErrorCode::Io as u32, 13);
+        assert_eq!(DbErrorCode::DriverQuarantined as u32, 14);
+        assert_eq!(DbErrorCode::HostKeyUnknown as u32, 15);
+        assert_eq!(DbErrorCode::HostKeyMismatch as u32, 16);
     }
 }

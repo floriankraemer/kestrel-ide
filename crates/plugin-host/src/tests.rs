@@ -770,7 +770,7 @@ fn the_database_tools_builtin_loads_through_the_real_path() {
     assert_eq!(plugin.source(), PluginSource::Builtin);
 
     let drivers: Vec<_> = registry.database_drivers().collect();
-    assert_eq!(drivers.len(), 2, "{drivers:?}");
+    assert_eq!(drivers.len(), 5, "{drivers:?}");
     let sqlite = drivers
         .iter()
         .find(|(_, d)| d.id == "sqlite")
@@ -783,9 +783,27 @@ fn the_database_tools_builtin_loads_through_the_real_path() {
         .expect("postgresql contributed")
         .1;
     assert_eq!(postgresql.default_port, Some(5432));
+    let mongodb = drivers
+        .iter()
+        .find(|(_, d)| d.id == "mongodb")
+        .expect("mongodb contributed")
+        .1;
+    assert_eq!(mongodb.default_port, Some(27017));
+    let redis = drivers
+        .iter()
+        .find(|(_, d)| d.id == "redis")
+        .expect("redis contributed")
+        .1;
+    assert_eq!(redis.default_port, Some(6379));
+    let cassandra = drivers
+        .iter()
+        .find(|(_, d)| d.id == "cassandra")
+        .expect("cassandra contributed")
+        .1;
+    assert_eq!(cassandra.default_port, Some(9042));
 
     let dialects: Vec<_> = registry.sql_dialects().collect();
-    assert_eq!(dialects.len(), 2, "{dialects:?}");
+    assert_eq!(dialects.len(), 3, "{dialects:?}");
 }
 
 /// Every `keywords` path a `database-tools` `sql-dialects` row names must

@@ -534,6 +534,7 @@ impl SqliteConnection {
                     nullable: Some(not_null == 0),
                     default,
                     primary_key: pk > 0,
+                    ttl_seconds: None,
                 })
             })
             .collect())

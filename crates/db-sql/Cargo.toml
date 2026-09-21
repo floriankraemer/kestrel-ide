@@ -8,5 +8,9 @@ db-core = { path = "../db-core" }
 diagnostics-core = { path = "../diagnostics-core" }
 sqlparser = "0.63"
 sqlformat = "0.5"
+# MongoDB sugar parsing (F7.2) — JSON-value-typed rather than
+# `bson::Document` so this stays out of `db-drivers`'s tokio/mongodb tree
+# (`db-core` already depends on `serde_json`, this is the same crate).
+serde_json = { version = "1", features = ["preserve_order"] }
 
 [dev-dependencies]

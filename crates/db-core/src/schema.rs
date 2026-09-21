@@ -111,6 +111,12 @@ pub struct NodeDetail {
     pub default: Option<String>,
     /// Whether a column is (part of) its table's primary key.
     pub primary_key: bool,
+    /// A Redis [`ObjectKind::Key`]'s remaining time to live in seconds
+    /// (`PTTL`/1000), `None` for a key with no expiry set — every other
+    /// backend's nodes leave this `None`. Carried here rather than a
+    /// Redis-only side channel so a key's detail view reads it the same
+    /// way it reads `type_name`/`nullable` (F7.3).
+    pub ttl_seconds: Option<i64>,
 }
 
 /// One row the Database dock renders.

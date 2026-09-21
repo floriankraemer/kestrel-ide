@@ -1,6 +1,7 @@
 # DB integration: checking the database drivers against real engines
 
-`docker/db-compose.yml`, `make test-db`/`db-ci` and the `db-integration` feature landed in F1 for PostgreSQL; the rest of this document (Mongo/Redis/Scylla in F7, MSSQL in F8, `make e2e-db`) is still target design, grown per phase.
+`docker/db-compose.yml`, `make test-db`/`db-ci` and the `db-integration` feature landed in F1 for PostgreSQL; F7 added `mongo`, `redis`, `scylla` and `sshd` services to the same compose file (env `IDE_DB_MONGO_URL`, `IDE_DB_REDIS_URL`, `IDE_DB_CASSANDRA_HOSTS`, `IDE_DB_SSH_HOST`/`IDE_DB_SSH_PORT`/`IDE_DB_SSH_USER`/`IDE_DB_SSH_PASSWORD`); MSSQL (F8) and `make e2e-db` are still target design.
+`db-ci` itself still only runs `db-drivers`' Postgres suite (`cargo nextest run -p db-drivers --features db-integration`) — F7's `mongodb.rs`/`redis.rs`/`cassandra.rs`/`ssh.rs` integration tests exist and compile (gated behind the same `db-integration` feature, `#[ignore]`d) but were not run against a live server in this sandbox (no network services available there); wiring `db-ci` to bring up and reach the new services is the next increment, not done in this pass.
 F1's `db-ci` deliberately does **not** get its own `linux-db` Docker stage yet — it runs `db-drivers`' PostgreSQL integration tests inside the existing `linux-builder` image over `--network host`, reaching `docker/db-compose.yml`'s `postgres` service on its published loopback port. The `linux-db` stage (client tools: `postgresql-client`, `default-mysql-client`, `mongodb-database-tools`, `unixodbc` + `libsqliteodbc`) lands in F8.6 alongside the ODBC driver's own Dockerfile change, once a real client-tool binary (`pg_dump`, `mysqldump`, …) is actually exercised by a test — nothing in F1's PostgreSQL suite needs one.
 
 Every unit test in `db-drivers`/`db-driver-adbc`/`db-driver-odbc` runs against SQLite (in-process, no server needed) or a fixture-recorded wire response.
@@ -41,5 +42,7 @@ Bumping a pin (an engine's major version, a client-tool version) is a deliberate
 
 ## Status
 
-F1 landed `db-compose.yml` (PostgreSQL only), `make test-db`/`db-ci`, `db-drivers`' `db-integration` feature, and the `sqlite`/`postgres` unit-tested backends themselves; `make e2e-db` and the `linux-db` image are still not built.
-Later phases add each new backend's service, driver crate and tests, per `database-tools-plan.md`'s task list.
+F1 landed `db-compose.yml` (PostgreSQL only), `make test-db`/`db-ci`, `db-drivers`' `db-integration` feature, and the `sqlite`/`postgres` unit-tested backends themselves.
+F7 added the `mongo`/`redis`/`scylla`/`sshd` services to `db-compose.yml` and the `mongodb`/`redis`/`cassandra` drivers plus `RusshTunnel` (all unit-tested against fixtures/fakes; `db-ci` itself was not extended to reach these new services yet).
+`make e2e-db` and the `linux-db` image are still not built.
+Later phases add MySQL/MariaDB/SQL Server's services, driver crates and tests, and wire `db-ci` to the F7 services, per `database-tools-plan.md`'s task list.

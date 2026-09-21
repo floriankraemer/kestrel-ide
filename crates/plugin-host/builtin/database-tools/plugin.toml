@@ -33,6 +33,33 @@ default-port = 5432
 dump-tool = "pg_dump"
 url-template = "postgresql://{user}@{host}:{port}/{database}"
 
+[[contributes.database-drivers]]
+id = "mongodb"
+name = "MongoDB"
+family = "mongodb"
+backend = "native"
+native-id = "mongodb"
+default-port = 27017
+url-template = "mongodb://{user}@{host}:{port}/{database}"
+
+[[contributes.database-drivers]]
+id = "redis"
+name = "Redis"
+family = "redis"
+backend = "native"
+native-id = "redis"
+default-port = 6379
+url-template = "redis://{host}:{port}/{database}"
+
+[[contributes.database-drivers]]
+id = "cassandra"
+name = "Cassandra/Scylla"
+family = "cassandra"
+backend = "native"
+native-id = "cassandra"
+default-port = 9042
+url-template = "cassandra://{user}@{host}:{port}/{database}"
+
 [[contributes.sql-dialects]]
 id = "sqlite"
 name = "SQLite"
@@ -48,6 +75,14 @@ parser = "sql"
 identifier-quote = "double"
 param-style = "dollar"
 keywords = "dialects/postgresql.keywords"
+
+[[contributes.sql-dialects]]
+id = "cql"
+name = "CQL"
+parser = "cql"
+identifier-quote = "double"
+param-style = "question"
+keywords = "dialects/cql.keywords"
 
 # G1's generic point: the Settings > Database page is contributed, not
 # hard-wired, so disabling this plugin hides it the way disabling

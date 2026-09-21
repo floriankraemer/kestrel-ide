@@ -95,9 +95,10 @@ pub(crate) const CONTAINERS: BuiltinPlugin = BuiltinPlugin {
     files: &[],
 };
 
-/// SQLite and PostgreSQL support (Database Tools plan F1.5, ADR-0058),
-/// first-party like `jvm-build-tools` above. Ships two keyword-list
-/// assets its `sql-dialects` rows point `keywords` at; the drivers
+/// SQLite, PostgreSQL, MongoDB, Redis and Cassandra/Scylla support
+/// (Database Tools plan F1.5/F7, ADR-0058), first-party like
+/// `jvm-build-tools` above. Ships the keyword-list assets its
+/// `sql-dialects` rows point `keywords` at; the drivers
 /// themselves are `db-drivers`' `DriverRegistry::builtin()`, not files
 /// this plugin carries — a `database-drivers` row only names a driver
 /// `ui-shell` already links in, the same "metadata, not the code" split
@@ -113,6 +114,10 @@ pub(crate) const DATABASE_TOOLS: BuiltinPlugin = BuiltinPlugin {
         (
             "dialects/postgresql.keywords",
             include_bytes!("../builtin/database-tools/dialects/postgresql.keywords"),
+        ),
+        (
+            "dialects/cql.keywords",
+            include_bytes!("../builtin/database-tools/dialects/cql.keywords"),
         ),
     ],
 };

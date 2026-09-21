@@ -16,8 +16,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 /// The `[analysis]` section: per-analyzer trigger/enabled overrides.
 pub mod analysis;
-/// The `[build_tools]` section: trusted roots and Gradle/Maven overrides
-/// (the jvm-build-tools plan's A7, ADR-0057).
+/// The `[build_tools]` section: trusted roots and Gradle/Maven overrides (A7, ADR-0057).
 pub mod build_tools;
 pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0056).
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
@@ -29,6 +28,7 @@ pub mod editing;
 /// with.
 pub mod file_associations;
 pub mod keymap;
+pub mod sql_script_run; // `sql-script` run configuration sub-table (database-tools-plan F3.6).
 pub mod syntax_colors;
 /// The `[tab_padding]` section: air around an editor tab's label, per side.
 pub mod tab_padding;

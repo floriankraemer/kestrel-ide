@@ -258,6 +258,13 @@ public:
     // commit.
     EditorOps *editorOps() const { return editorOps_; }
 
+    // The real Qt signal a tool window docks its own per-tab state on —
+    // `EditorTabs` itself is deliberately not a `Q_OBJECT` (this class's
+    // own doc comment), so a listener that needs `tabClosed`/`tabOpened`
+    // rather than a one-off callback connects to this directly
+    // (`DatabaseResultsPanel`'s own per-console tab strip, F3e).
+    DocumentManager *documentManager() const { return docManager_; }
+
     // Re-read the carets Rust holds for this editor and show them: the
     // primary becomes the widget's own cursor, the rest are painted.
     void refreshCarets(CodeEditor *editor);

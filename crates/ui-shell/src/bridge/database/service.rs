@@ -115,7 +115,11 @@ impl Default for DatabaseServiceRust {
     }
 }
 
-pub(super) fn configured_sources() -> Vec<DataSourceSetting> {
+/// `pub(crate)`, not `pub(super)`: the `sql-script` run configuration
+/// (`bridge::run::sql_script`) needs a data source the same way the
+/// console does, and it is a sibling of `bridge::database`, not a
+/// descendant.
+pub(crate) fn configured_sources() -> Vec<DataSourceSetting> {
     let global = crate::bridge::convert::load_settings();
     let project = crate::bridge::convert::load_project_settings();
     settings_model::scope::resolve_database_sources(&global, &project)
@@ -124,7 +128,7 @@ pub(super) fn configured_sources() -> Vec<DataSourceSetting> {
         .collect()
 }
 
-pub(super) fn secrets_for(id: &str) -> Secrets {
+pub(crate) fn secrets_for(id: &str) -> Secrets {
     let store = secret_store::SecretStore::new(SECRET_SERVICE);
     Secrets {
         password: store.load(id).ok().flatten(),

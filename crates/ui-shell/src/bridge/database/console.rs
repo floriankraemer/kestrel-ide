@@ -45,6 +45,25 @@ fn app_settings() -> app_config::database::DatabaseSettings {
     crate::bridge::convert::load_settings().database
 }
 
+/// `app_config::database::DataSourceSetting::script_policy`'s free-form
+/// string vocabulary, both directions — see that field's own doc comment
+/// on why it is a string, not this enum, in persistence.
+fn policy_from_setting(text: &str) -> FfiDbScriptPolicy {
+    match text {
+        "continue" => FfiDbScriptPolicy::Continue,
+        "ask" => FfiDbScriptPolicy::Ask,
+        _ => FfiDbScriptPolicy::StopOnError,
+    }
+}
+
+fn policy_to_setting(policy: FfiDbScriptPolicy) -> &'static str {
+    match policy {
+        FfiDbScriptPolicy::Continue => "continue",
+        FfiDbScriptPolicy::Ask => "ask",
+        _ => "stop_on_error",
+    }
+}
+
 /// One console tab's live state.
 struct ConsoleState {
     source_id: String,
@@ -63,6 +82,12 @@ struct ConsoleState {
     /// A multi-statement run still in progress: the statements not yet
     /// dispatched, plus the policy governing what happens on a failure.
     pending: Option<PendingScript>,
+    /// Schema names from the source's own `Names`-level snapshot, for the
+    /// console bar's schema picker (database-tools-plan F3e) — empty
+    /// until the background `Introspect` this console kicks off at
+    /// `attach` time lands, and always empty for a dialect with no schema
+    /// concept (SQLite).
+    schemas: Vec<String>,
 }
 
 struct PendingScript {
@@ -165,6 +190,23 @@ fn statement_at_caret(text: &str, dialect: Dialect, caret: usize) -> Option<Stri
     }
 }
 
+/// Every `ObjectKind::Schema` node's name anywhere in `roots`, depth-first
+/// — a `Names`-level snapshot is small enough that a full walk costs
+/// nothing, and this stays correct regardless of whether a backend nests
+/// schemas under a catalog root or reports them as the roots themselves.
+fn collect_schema_names(roots: &[db_core::schema::Node]) -> Vec<String> {
+    let mut names = Vec::new();
+    for node in roots {
+        if node.kind == db_core::schema::ObjectKind::Schema {
+            names.push(node.name.clone());
+        }
+        if let db_core::schema::Children::Loaded(children) = &node.children {
+            names.extend(collect_schema_names(children));
+        }
+    }
+    names
+}
+
 pub struct ConsoleServiceRust {
     shared: Rc<std::cell::RefCell<Shared>>,
 }
@@ -196,6 +238,7 @@ impl ffi::ConsoleService {
         let settings = app_settings();
         let page_size = settings.page_size_or_default();
         let history = setting.history;
+        let initial_policy = policy_from_setting(setting.script_policy_or_default());
         let qt_thread = self.as_mut().qt_thread();
         let attach_source_id = source_id.clone();
         std::thread::spawn(move || {
@@ -235,13 +278,26 @@ impl ffi::ConsoleService {
                                 dialect,
                                 guard: Guard::new(Box::new(SqlClassifier { dialect })),
                                 tx_mode: FfiDbTxMode::Auto,
-                                script_policy: FfiDbScriptPolicy::StopOnError,
+                                script_policy: initial_policy,
                                 page_size,
                                 history,
                                 current_result: None,
                                 pending: None,
+                                schemas: Vec::new(),
                             },
                         );
+                        // The schema picker's own list — a `Names`-level
+                        // introspect, the same cheap level a tree's
+                        // initial expand always uses (`schema.rs`'s own
+                        // doc comment); its reply lands on
+                        // `SessionEvent::Introspected` below.
+                        if let Some(console) = service.shared.borrow().consoles.get(&tab_id) {
+                            let _ = console.worker.send(SessionCommand::Introspect {
+                                scope: db_core::schema::IntrospectScope::default(),
+                                level: db_core::schema::IntrospectLevel::Names,
+                                force: false,
+                            });
+                        }
                         service.as_mut().output_appended(
                             tab_id,
                             QString::from(format!("Attached to '{attach_source_id}'.").as_str()),
@@ -282,9 +338,63 @@ impl ffi::ConsoleService {
         }
     }
 
+    /// Sets `tab_id`'s in-memory policy and persists it as this console's
+    /// source's own default (database-tools-plan F3e), so the next
+    /// console attached to that source starts with the same choice.
+    /// `tab_id`'s current policy — `StopOnError` for a tab this object has
+    /// never attached (the same default `attach` falls back to when a
+    /// source has no `script_policy` of its own).
+    pub fn script_policy(self: Pin<&mut Self>, tab_id: u64) -> FfiDbScriptPolicy {
+        self.shared
+            .borrow()
+            .consoles
+            .get(&tab_id)
+            .map(|console| console.script_policy)
+            .unwrap_or(FfiDbScriptPolicy::StopOnError)
+    }
+
     pub fn set_script_policy(self: Pin<&mut Self>, tab_id: u64, policy: FfiDbScriptPolicy) {
-        if let Some(console) = self.shared.borrow_mut().consoles.get_mut(&tab_id) {
+        let source_id = {
+            let mut shared = self.shared.borrow_mut();
+            let Some(console) = shared.consoles.get_mut(&tab_id) else {
+                return;
+            };
             console.script_policy = policy;
+            console.source_id.clone()
+        };
+        super::settings::persist_script_policy(&source_id, policy_to_setting(policy));
+    }
+
+    /// Schema names from `tab_id`'s source's own `Names`-level snapshot —
+    /// empty until `attach`'s own background introspect lands, or always
+    /// for a dialect with no schema concept (`Dialect::
+    /// set_schema_statement`'s own doc comment).
+    pub fn schemas(self: Pin<&mut Self>, tab_id: u64) -> QStringList {
+        self.shared
+            .borrow()
+            .consoles
+            .get(&tab_id)
+            .map(|console| console.schemas.iter().map(QString::from).collect())
+            .unwrap_or_default()
+    }
+
+    /// Switches `tab_id`'s session to `schema`, running the dialect's own
+    /// `SET`/`USE` statement like any other statement (it lands in the
+    /// Output tab, the read-only guard sees it as session control, not a
+    /// data touch — `db_sql::classify`'s own doc comment) — a no-op with
+    /// `code == 0` for a dialect with none.
+    pub fn set_schema(mut self: Pin<&mut Self>, tab_id: u64, schema: &QString) -> FfiResult {
+        let schema = schema.to_string();
+        let dialect = {
+            let shared = self.shared.borrow();
+            let Some(console) = shared.consoles.get(&tab_id) else {
+                return errors::failure(errors::CODE_UNKNOWN_DB_CONSOLE, "no such console");
+            };
+            console.dialect
+        };
+        match dialect.set_schema_statement(&schema) {
+            Some(statement) => self.as_mut().begin_run(tab_id, vec![statement]),
+            None => FfiResult::default(),
         }
     }
 
@@ -623,24 +733,31 @@ impl ffi::ConsoleService {
         if already_reported {
             return;
         }
-        let (tab_id, affected, elapsed_ms, ffi_error, ok) = {
+        let (tab_id, affected, elapsed_ms, ffi_error, ok, error_text) = {
             let mut shared = self.shared.borrow_mut();
             let Some(result) = shared.results.get_mut(&result_id) else {
                 return;
             };
             let elapsed_ms = result.started_at.elapsed().as_millis() as u64;
             result.elapsed_ms = Some(elapsed_ms);
-            let (affected, ffi_error, ok) = match &outcome {
+            let (affected, ffi_error, ok, error_text) = match &outcome {
                 Ok(n) => {
                     result.affected = Some(*n);
-                    (*n, ok_error(), true)
+                    (*n, ok_error(), true, String::new())
                 }
                 Err(error) => {
                     result.error = Some(error.clone());
-                    (0, to_ffi_error(error), false)
+                    (0, to_ffi_error(error), false, error.message.clone())
                 }
             };
-            (result.tab_id, affected, elapsed_ms, ffi_error, ok)
+            (
+                result.tab_id,
+                affected,
+                elapsed_ms,
+                ffi_error,
+                ok,
+                error_text,
+            )
         };
         self.as_mut()
             .execution_finished(result_id, ok, affected, elapsed_ms, ffi_error);
@@ -664,7 +781,8 @@ impl ffi::ConsoleService {
         if stop {
             pending.awaiting_resume = true;
             drop(shared);
-            self.as_mut().ask_continue(result_id, tab_id);
+            self.as_mut()
+                .ask_continue(result_id, QString::from(error_text.as_str()));
             return;
         }
         drop(shared);
@@ -710,8 +828,17 @@ fn apply_event(mut service: Pin<&mut ffi::ConsoleService>, tab_id: u64, event: S
                 );
             }
         }
-        SessionEvent::Introspected { .. } | SessionEvent::Ddl { .. } | SessionEvent::Ran { .. } => {
+        SessionEvent::Introspected { generation, result } => {
+            if is_current(&service, tab_id, generation) {
+                if let Ok(snapshot) = result {
+                    let names = collect_schema_names(&snapshot.roots);
+                    if let Some(console) = service.shared.borrow_mut().consoles.get_mut(&tab_id) {
+                        console.schemas = names;
+                    }
+                }
+            }
         }
+        SessionEvent::Ddl { .. } | SessionEvent::Ran { .. } => {}
     }
 }
 
@@ -1013,23 +1140,22 @@ impl ffi::ResultProvider {
         QString::from(text.as_str())
     }
 
-    /// Re-executes `resultId`'s original console statement wrapped as a
-    /// derived table with `WHERE`/`ORDER BY` applied — every mainstream
-    /// SQL dialect supports a subquery in `FROM`, so this needs no
-    /// dialect-specific clause injection.
-    /// ponytail: does not validate `where_clause`/`order_by` beyond what
-    /// the database itself rejects; the read-only guard still runs (the
-    /// statement is still a `SELECT`), so this cannot smuggle a write.
-    /// Re-executes `resultId`'s original statement wrapped as a derived
-    /// table with `WHERE`/`ORDER BY` applied, on the same console worker
-    /// that ran it. `ResultProvider` cannot call `ConsoleService::execute`
-    /// directly (they are two separate QObjects — see this module's own
-    /// doc comment on why `Shared` exists), so this sends the `Execute`
+    /// Re-executes `resultId`'s original statement with `WHERE`/`ORDER BY`
+    /// applied through `db_sql::apply_clauses` — a plain `SELECT` gets its
+    /// own clauses extended in place; anything else falls back to that
+    /// module's derived-table wrapper (its own doc comment says which is
+    /// which), on the same console worker that ran the original statement.
+    /// `ResultProvider` cannot call `ConsoleService::execute` directly
+    /// (they are two separate QObjects — see this module's own doc
+    /// comment on why `Shared` exists), so this sends the `Execute`
     /// command straight to the worker; the worker's replies still land on
     /// `ConsoleService::apply_event` regardless of who sent the command
     /// (its `on_event` closure was bound to that QObject once, at
     /// `attach` time), so `rowsAppended`/`executionFinished` still fire
     /// exactly as they do for a plain "Run".
+    /// ponytail: does not validate `where_clause`/`order_by` beyond what
+    /// the database itself rejects; the read-only guard still runs below,
+    /// so this cannot smuggle a write.
     pub fn apply_clauses(
         self: Pin<&mut Self>,
         result_id: u64,
@@ -1043,19 +1169,15 @@ impl ffi::ResultProvider {
             return errors::failure(errors::CODE_UNKNOWN_RESULT, "no such result");
         };
         let tab_id = existing.tab_id;
-        let mut statement = format!(
-            "SELECT * FROM ({}) database_tools_clause_view",
-            existing.statement_text
-        );
-        if !where_clause.trim().is_empty() {
-            statement.push_str(&format!(" WHERE {where_clause}"));
-        }
-        if !order_by.trim().is_empty() {
-            statement.push_str(&format!(" ORDER BY {order_by}"));
-        }
         let Some(console) = shared.consoles.get(&tab_id) else {
             return errors::failure(errors::CODE_UNKNOWN_DB_CONSOLE, "console detached");
         };
+        let statement = db_sql::apply_clauses(
+            &existing.statement_text,
+            &where_clause,
+            &order_by,
+            console.dialect,
+        );
         if let Err(error) = console.guard.check(&statement) {
             return errors::failure(errors::CODE_REFUSED, error.message);
         }

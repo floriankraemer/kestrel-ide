@@ -62,6 +62,27 @@ impl Dialect {
     pub fn quote_literal(self, value: &str) -> String {
         format!("'{}'", value.replace('\'', "''"))
     }
+
+    /// The statement that switches a session's active schema/database, or
+    /// `None` when this dialect has no such concept for a console to
+    /// change mid-session (SQLite's whole file *is* its one schema —
+    /// `ATTACH DATABASE` adds another connection entirely, a different
+    /// operation from "pick one already open") — the console bar's own
+    /// schema picker (database-tools-plan F3e) runs this like any other
+    /// statement rather than special-casing it, since `db_sql::classify`
+    /// already puts `SET`/`USE` in the read-only guard's `Tx` bucket
+    /// (session control, not a data touch).
+    pub fn set_schema_statement(self, schema: &str) -> Option<String> {
+        match self {
+            Dialect::Postgres => Some(format!("SET search_path TO {}", self.quote_ident(schema))),
+            Dialect::MySql => Some(format!("USE {}", self.quote_ident(schema))),
+            Dialect::Sqlite
+            | Dialect::SqlServer
+            | Dialect::Cassandra
+            | Dialect::Mongo
+            | Dialect::Redis => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -140,5 +161,34 @@ mod tests {
     #[test]
     fn quote_literal_round_trips_plain_text() {
         assert_eq!(Dialect::Sqlite.quote_literal("hello"), "'hello'");
+    }
+
+    #[test]
+    fn postgres_set_schema_uses_search_path() {
+        assert_eq!(
+            Dialect::Postgres.set_schema_statement("reporting"),
+            Some("SET search_path TO \"reporting\"".to_string())
+        );
+    }
+
+    #[test]
+    fn mysql_set_schema_uses_use() {
+        assert_eq!(
+            Dialect::MySql.set_schema_statement("analytics"),
+            Some("USE `analytics`".to_string())
+        );
+    }
+
+    #[test]
+    fn sqlite_has_no_set_schema_statement() {
+        assert_eq!(Dialect::Sqlite.set_schema_statement("main"), None);
+    }
+
+    #[test]
+    fn set_schema_quotes_a_schema_name_needing_it() {
+        assert_eq!(
+            Dialect::Postgres.set_schema_statement("weird\"name"),
+            Some("SET search_path TO \"weird\"\"name\"".to_string())
+        );
     }
 }

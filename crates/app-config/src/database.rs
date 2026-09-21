@@ -73,6 +73,18 @@ impl DatabaseSettings {
     }
 }
 
+pub const DEFAULT_SCRIPT_POLICY: &str = "stop_on_error";
+
+impl DataSourceSetting {
+    pub fn script_policy_or_default(&self) -> &str {
+        if self.script_policy.is_empty() {
+            DEFAULT_SCRIPT_POLICY
+        } else {
+            self.script_policy.as_str()
+        }
+    }
+}
+
 /// One named data source. No password, passphrase or key-password field —
 /// see this module's doc comment.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
@@ -111,6 +123,13 @@ pub struct DataSourceSetting {
     /// dock filters use.
     #[serde(default = "default_true")]
     pub history: bool,
+    /// A script's on-error policy: `"stop_on_error"` (default), `"continue"`
+    /// or `"ask"` — free-form like `driver`/`auth`, the console bar's own
+    /// vocabulary (`ui_shell::bridge::ffi::FfiDbScriptPolicy`) rather than a
+    /// typed enum here, the same "persistence stays dumb" rule every other
+    /// kind tag in this struct already follows.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub script_policy: String,
     /// A full connection URL, when the driver takes one instead of
     /// host/port/database (e.g. a SQLite file path, or an ADBC DSN).
     #[serde(default)]
@@ -213,6 +232,7 @@ mod tests {
                 auth: "password".to_string(),
                 read_only: true,
                 history: false,
+                script_policy: "ask".to_string(),
                 url: String::new(),
                 ssl: SslSetting {
                     mode: "verify-full".to_string(),
@@ -252,11 +272,41 @@ mod tests {
             auth: String::new(),
             read_only: false,
             history: true,
+            script_policy: String::new(),
             url: String::new(),
             ssl: SslSetting::default(),
             ssh: None,
             options: BTreeMap::new(),
         };
+    }
+
+    #[test]
+    fn script_policy_defaults_to_stop_on_error_when_unset() {
+        let setting = DataSourceSetting::default();
+        assert_eq!(setting.script_policy_or_default(), DEFAULT_SCRIPT_POLICY);
+    }
+
+    #[test]
+    fn an_unset_script_policy_writes_nothing() {
+        let setting = DataSourceSetting {
+            id: "s1".to_string(),
+            ..Default::default()
+        };
+        let text = toml::to_string(&setting).expect("serialize");
+        assert!(!text.contains("script_policy"));
+    }
+
+    #[test]
+    fn script_policy_round_trips() {
+        let setting = DataSourceSetting {
+            id: "s1".to_string(),
+            script_policy: "ask".to_string(),
+            ..Default::default()
+        };
+        let text = toml::to_string(&setting).expect("serialize");
+        let parsed: DataSourceSetting = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed.script_policy, "ask");
+        assert_eq!(parsed.script_policy_or_default(), "ask");
     }
 
     #[test]

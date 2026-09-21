@@ -1399,11 +1399,28 @@ mod ffi {
         /// The container-kind sub-table's fields — meaningless (and left at
         /// its default) for a plain process (`kind` empty).
         container: FfiContainerOptions,
+        /// The `sql-script` kind's own sub-table (F3.6) — meaningless (and
+        /// left at its default) unless `kind == "sql-script"`.
+        sql_script: FfiSqlScriptOptions,
         /// Run targets (C8): empty for "Local" (run on this machine, as
         /// always), else `"container:<target-id>"` — the "Run on" combo's
         /// selection. Meaningless for a container-kind configuration
         /// (`kind` non-empty); the dialog's Run on combo is hidden for one.
         run_on: QString,
+    }
+
+    /// The `sql-script` run configuration's own page (database-tools-plan
+    /// F3.6): which data source, which file, and its error policy —
+    /// `app_config::SqlScriptRunSetting`'s exact fields, crossing the seam
+    /// the same structured way `FfiContainerOptions` does.
+    #[derive(Default)]
+    struct FfiSqlScriptOptions {
+        source_id: QString,
+        file: QString,
+        /// `"single_transaction"` or empty (auto-commit) — see
+        /// `app_config::SqlScriptRunSetting::tx_mode`'s own doc comment.
+        tx_mode: QString,
+        stop_on_error: bool,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -4244,6 +4261,15 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "caretCount"]
         fn caret_count(self: &EditorOps, tab_id: u64) -> u32;
+
+        /// The primary caret's byte offset into the tab's buffer — the same
+        /// unit `db_sql::split`'s spans use, so a caller can hand this
+        /// straight to `ConsoleService::execute`'s `caret` parameter without
+        /// its own UTF-16-to-byte conversion (database-tools-plan F3e).
+        /// `0` for a tab this object has never seen a caret move for.
+        #[qinvokable]
+        #[cxx_name = "caretOffset"]
+        fn caret_offset(self: &EditorOps, tab_id: u64) -> i64;
 
         /// Esc: back to the primary caret alone.
         #[qinvokable]
@@ -10353,6 +10379,22 @@ mod ffi {
             policy: FfiDbScriptPolicy,
         );
 
+        /// See `ConsoleServiceRust`'s `script_policy`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "scriptPolicy"]
+        fn script_policy(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiDbScriptPolicy;
+
+        /// See `ConsoleService::schemas`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        fn schemas(self: Pin<&mut ConsoleService>, tab_id: u64) -> QStringList;
+
+        /// See `ConsoleService::set_schema`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        #[cxx_name = "setSchema"]
+        fn set_schema(self: Pin<&mut ConsoleService>, tab_id: u64, schema: &QString) -> FfiResult;
+
         /// Runs a statement/selection against `tab_id`'s attached source —
         /// see `FfiDbExecWhat`'s own doc comment for what `text`/`caret`
         /// mean per variant.
@@ -10444,11 +10486,12 @@ mod ffi {
         );
 
         /// A `StopOnError`/`Ask`-policy script hit a failing statement and
-        /// more remain — the view offers Continue/Stop, then calls
-        /// `resume`.
+        /// more remain — `message` is the failing statement's own error
+        /// text, for a confirmation dialog to show; the view offers
+        /// Continue/Stop, then calls `resume`.
         #[qsignal]
         #[cxx_name = "askContinue"]
-        fn ask_continue(self: Pin<&mut ConsoleService>, result_id: u64, tab_id: u64);
+        fn ask_continue(self: Pin<&mut ConsoleService>, result_id: u64, message: QString);
 
         /// Free-text status for the console's Output tab (attach/detach
         /// outcomes, transaction errors) — never a substitute for

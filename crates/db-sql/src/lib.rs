@@ -10,6 +10,7 @@
 //! source's read-only guard (see `db_core::readonly`'s doc comment).
 
 pub mod classify;
+pub mod clauses;
 pub mod completion;
 pub mod dialects;
 pub mod format;
@@ -23,6 +24,7 @@ mod scan;
 pub mod split;
 
 pub use classify::{classify, Classification, SqlClassifier};
+pub use clauses::apply as apply_clauses;
 pub use completion::{completion, CompletionItem, CompletionKind};
 pub use format::format;
 pub use inspections::inspections;

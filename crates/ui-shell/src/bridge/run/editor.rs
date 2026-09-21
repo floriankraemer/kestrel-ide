@@ -93,6 +93,7 @@ impl ffi::RunConfigEditor {
         config.allow_parallel = form.allow_parallel;
         config.before_launch = super::tasks_from_string(&form.before_launch.to_string());
         container_form::apply_options(config, &form.kind.to_string(), &form.container);
+        super::sql_script_form::apply_options(config, &form.kind.to_string(), &form.sql_script);
         let run_on = form.run_on.to_string();
         config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
         // Editing a temporary configuration is how IntelliJ's "Save

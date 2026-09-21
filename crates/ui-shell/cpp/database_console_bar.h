@@ -32,14 +32,17 @@ class EditorTabs;
 class DatabaseConsoleBar : public QWidget
 {
 public:
-    DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *consoleService, QWidget *parent);
+    DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *consoleService,
+                       AppSettings *appSettings, QWidget *parent);
 
     void runClicked();
+    void runScriptClicked();
     void cancelClicked();
     void refreshForCurrentTab();
 
 private:
     void refreshSources();
+    void refreshSchemas();
     void attachCurrentTab();
     void setStatus(const QString &text);
 
@@ -47,7 +50,10 @@ private:
     ConsoleService *consoleService_;
     QComboBox *sourceCombo_;
     QComboBox *txModeCombo_;
+    QComboBox *policyCombo_;
+    QComboBox *schemaCombo_;
     QToolButton *runButton_;
+    QToolButton *runScriptButton_;
     QToolButton *cancelButton_;
     QToolButton *commitButton_;
     QToolButton *rollbackButton_;
@@ -61,6 +67,6 @@ private:
 // Builds the bar and wires its own tab-tracking hooks; the caller places
 // the returned widget (e.g. above `DatabaseResultsPanel`'s tabs).
 DatabaseConsoleBar *mountDatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *consoleService,
-                                           QWidget *parent);
+                                           AppSettings *appSettings, QWidget *parent);
 
 } // namespace ui_shell

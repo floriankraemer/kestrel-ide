@@ -353,9 +353,9 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F3 follow-up — `e2e_database` part 2 (console → run → grid → 1M rows → cancel) and the first-row/1M-row-paging/cancel NFR bench numbers in §10 — blocked on the eager-materialisation fix above, since the bench cannot be honestly measured (or met) against a driver that buffers the whole result first | open | |
 | F3e follow-up — `db_core::readonly::Guard::check` refuses every `Write`/`Ddl`/`Unknown` statement unconditionally; it has no notion of whether the *source* is actually read-only. `bridge::run::sql_script` gates its own call on the source's `read_only` flag, but `bridge::database::console`'s `attach()` builds and checks the same `Guard` for *every* console regardless of that flag — found this phase, out of its file list, not fixed | open | |
 
-| F3 follow-up — caret-based "run statement at caret" (`EditorTabs` has no caret byte-offset accessor yet; `console.rs`'s `statement_at_caret`/`FfiDbExecWhat::Statement` are implemented and unit-tested, just unreachable from the console bar) | open | |
-| F3 follow-up — `Ask` script-error policy's confirmation dialog (`askContinue` always auto-resumes today) | open | |
-| F3 follow-up — schema picker in the console bar, and dialect-aware `WHERE`/`ORDER BY` clause injection in `ResultProvider::applyClauses` (currently a plain `SELECT * FROM (…) AS t` wrapper) | open | |
+| F3 follow-up — caret-based "run statement at caret" (`EditorTabs` has no caret byte-offset accessor yet; `console.rs`'s `statement_at_caret`/`FfiDbExecWhat::Statement` are implemented and unit-tested, just unreachable from the console bar) | done (F3e) | a524355, 66a3c92, ca74d9f, 0fb740e |
+| F3 follow-up — `Ask` script-error policy's confirmation dialog (`askContinue` always auto-resumes today) | done (F3e) | a524355, 66a3c92, ca74d9f, 0fb740e |
+| F3 follow-up — schema picker in the console bar, and dialect-aware `WHERE`/`ORDER BY` clause injection in `ResultProvider::applyClauses` (currently a plain `SELECT * FROM (…) AS t` wrapper) | done (F3e) | a524355, 66a3c92, ca74d9f, 0fb740e |
 
 ### F4 — data editor
 

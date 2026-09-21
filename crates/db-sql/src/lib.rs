@@ -14,9 +14,11 @@ pub mod completion;
 pub mod dialects;
 pub mod format;
 pub mod inspections;
+pub mod mongo;
 pub mod navigation;
 pub mod parse;
 mod refs;
+pub mod resp;
 mod scan;
 pub mod split;
 

@@ -494,6 +494,7 @@ impl PostgresConnection {
                     nullable: Some(nullable),
                     default: None,
                     primary_key,
+                    ttl_seconds: None,
                 })
             })
             .collect();

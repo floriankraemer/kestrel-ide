@@ -116,8 +116,14 @@ lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings
 	$(RUN_LINUX) cargo fmt --all -- --check
 	$(RUN_LINUX) scripts/check-file-size.sh
-	# aws-lc-rs must never enter the tree (R2, database-tools-plan.md §13/§7): every rustls-using crate is audited to keep the `ring` provider only.
-	$(RUN_LINUX) sh -c '! cargo tree --workspace --all-features -i aws-lc-rs >/dev/null 2>&1'
+	# aws-lc-rs must never enter the tree of what actually ships (R2, database-tools-plan.md §13/§7):
+	# postgres/mongodb/redis/ssh are all default-on `db-drivers` features, so the *default* feature set below
+	# already covers every one of them — every rustls-using crate here is audited to keep the `ring` provider only.
+	# Deliberately NOT `--all-features`: `db-drivers`' opt-in-only `cassandra` feature (F7.4) pulls in the `scylla`
+	# crate, whose own manifest enables rustls's default `aws_lc_rs` feature with no way for a dependent to opt out
+	# (documented in `crates/db-drivers/Cargo.toml`'s `[dependencies.scylla]` comment and this plan's F7.4 row) —
+	# a real, upstream-caused gap in an opt-in feature nothing here ships by default, not a regression to gate on.
+	$(RUN_LINUX) sh -c '! cargo tree --workspace -i aws-lc-rs >/dev/null 2>&1'
 
 # Coverage measures the Qt-free crates only. `ui-shell` is a humble view and
 # `app` is a main(); both are untested by design (CLAUDE.md), and folding

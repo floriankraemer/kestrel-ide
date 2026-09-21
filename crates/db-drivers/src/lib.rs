@@ -4,27 +4,51 @@
 //! driver's calls are `block_on`'d against; SQLite and Redis bypass it
 //! entirely, since both have synchronous APIs.
 
-#[cfg(feature = "postgres")]
+#[cfg(any(
+    feature = "postgres",
+    feature = "mongodb",
+    feature = "cassandra",
+    feature = "ssh"
+))]
 use std::sync::OnceLock;
 
 use db_core::driver::Driver;
 
+#[cfg(feature = "cassandra")]
+pub mod cassandra;
+#[cfg(feature = "mongodb")]
+pub mod mongodb;
 #[cfg(feature = "postgres")]
 pub mod postgres;
+#[cfg(feature = "redis")]
+pub mod redis;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
+#[cfg(feature = "ssh")]
+pub mod ssh;
 
 #[cfg(all(test, feature = "db-integration", feature = "postgres"))]
 mod testsupport;
 
-#[cfg(feature = "postgres")]
+#[cfg(any(
+    feature = "postgres",
+    feature = "mongodb",
+    feature = "cassandra",
+    feature = "ssh"
+))]
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
 /// The shared private runtime every async driver call blocks on
 /// (`OnceLock`, 2 workers named `"db-io"` — ADR-0058 §1). Never the
 /// ambient kind: `db-core` and every consumer above it stay entirely
 /// synchronous, and this is the one place tokio actually runs anything.
-#[cfg(feature = "postgres")]
+/// SQLite and Redis bypass it entirely (both have synchronous APIs).
+#[cfg(any(
+    feature = "postgres",
+    feature = "mongodb",
+    feature = "cassandra",
+    feature = "ssh"
+))]
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
@@ -52,6 +76,12 @@ impl DriverRegistry {
         drivers.push(Box::new(sqlite::SqliteDriver));
         #[cfg(feature = "postgres")]
         drivers.push(Box::new(postgres::PostgresDriver));
+        #[cfg(feature = "mongodb")]
+        drivers.push(Box::new(mongodb::MongoDriver));
+        #[cfg(feature = "redis")]
+        drivers.push(Box::new(redis::RedisDriver));
+        #[cfg(feature = "cassandra")]
+        drivers.push(Box::new(cassandra::CassandraDriver));
         Self { drivers }
     }
 

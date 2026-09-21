@@ -308,6 +308,7 @@ mod tests {
             nullable: Some(nullable),
             default: None,
             primary_key: pk,
+            ttl_seconds: None,
         })
     }
 

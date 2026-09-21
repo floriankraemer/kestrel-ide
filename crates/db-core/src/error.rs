@@ -26,6 +26,10 @@ pub enum DbErrorCode {
     TunnelFailed = 11,
     SecretUnavailable = 12,
     Io = 13,
+    /// A native (ADBC/ODBC) driver's quarantine marker is still present
+    /// from a load that crashed the process (ADR-0061 §4); the user has to
+    /// re-enable the driver explicitly before it is loaded again.
+    DriverQuarantined = 14,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

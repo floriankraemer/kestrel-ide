@@ -14,7 +14,7 @@ use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
 /// MongoDB document *and* a Redis value — `Document`/`Array` are the two
 /// recursive cases the NoSQL backends need and the SQL backends never
 /// produce.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -175,6 +175,27 @@ impl Value {
     }
 }
 
+/// Serialises one row's [`Value`]s losslessly (`serde`'s own tagged
+/// representation of the enum, not [`Value::display`] text) — the FFI
+/// seam's typed-row encoding (database-tools-plan F4c): a compact
+/// JSON-per-row string rather than a new cxx-qt struct, since `Value`'s
+/// recursive `Array`/`Document` cases and its dozen scalar variants have
+/// no shape cxx's shared-struct rules accept directly. `ui_shell::bridge::
+/// database::console::ResultProvider::row_values` produces this, `db_
+/// exchange`-backed export consumes it back through [`row_from_json`] —
+/// never rendered through `display` first, so a cell's real type (an
+/// `Int`, not the text `"42"`) survives the round trip.
+pub fn row_to_json(row: &[Value]) -> String {
+    serde_json::to_string(row).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// The inverse of [`row_to_json`]. `Err` (never a panic) on malformed
+/// JSON — the FFI caller already trusts its own encoder, but a corrupt or
+/// truncated string must still fail cleanly rather than unwrap.
+pub fn row_from_json(text: &str) -> Result<Vec<Value>, String> {
+    serde_json::from_str(text).map_err(|error| format!("not a valid encoded row: {error}"))
+}
+
 /// One column's shape, as introspection or an executed statement reports
 /// it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,16 +304,7 @@ pub fn parse_text(text: &str, type_name: &str) -> Result<Value, String> {
             .map_err(|error| format!("'{text}' is not valid JSON: {error}"));
     }
     if contains("blob") || contains("bytea") || contains("binary") || contains("varbinary") {
-        let trimmed = text
-            .trim()
-            .trim_start_matches("0x")
-            .trim_start_matches("\\x");
-        if trimmed.is_empty() {
-            return Ok(Value::Bytes(Vec::new()));
-        }
-        return parse_hex(trimmed)
-            .map(Value::Bytes)
-            .ok_or_else(|| format!("'{text}' is not valid hex"));
+        return hex_text_to_bytes(text).map(Value::Bytes);
     }
     if contains("timestamp") || contains("datetime") {
         if let Ok(dt) = DateTime::parse_from_rfc3339(text.trim()) {
@@ -314,6 +326,46 @@ pub fn parse_text(text: &str, type_name: &str) -> Result<Value, String> {
             .map_err(|_| format!("'{text}' is not a time (expected HH:MM:SS)"));
     }
     Ok(Value::Text(text.to_string()))
+}
+
+/// `true` for a column `type_name` [`parse_text`] coerces through
+/// [`parse_hex`] — the same vocabulary that function's own `blob`/
+/// `bytea`/`binary`/`varbinary` branch matches, exposed so a caller
+/// outside this module (the value editor's own hex-edit mode, F4c) can
+/// ask "does this column need hex, not plain text" without re-deriving
+/// that vocabulary itself (the exact re-derivation `ColumnMeta::origin`'s
+/// own doc comment already rules out for a different question). Matched
+/// case-insensitively, same as `parse_text`.
+pub fn is_binary_type(type_name: &str) -> bool {
+    let type_name = type_name.to_ascii_lowercase();
+    ["blob", "bytea", "binary", "varbinary"]
+        .iter()
+        .any(|needle| type_name.contains(needle))
+}
+
+/// [`parse_text`]'s own hex-decoding step, factored out so the value
+/// editor's hex-edit mode (F4c) can validate what a user is typing
+/// against the exact same rule `parse_text` binds with — never a second,
+/// slightly different regex/parser that could accept text `parse_text`
+/// would then reject at Save time.
+fn hex_text_to_bytes(text: &str) -> Result<Vec<u8>, String> {
+    let trimmed = text
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("\\x");
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    parse_hex(trimmed).ok_or_else(|| format!("'{text}' is not valid hex"))
+}
+
+/// The value editor's own live-validation step for a binary (`Bytes`)
+/// cell (F4c, closing the gap `ValueEditorDialog`'s own doc comment used
+/// to describe): `Err` carries the same message [`parse_text`] would
+/// reject the same text with, so a user sees the problem as they type
+/// rather than only once they hit Save.
+pub fn validate_hex_text(text: &str) -> Result<(), String> {
+    hex_text_to_bytes(text).map(|_| ())
 }
 
 /// `text.len()` alone is a *byte* length, and byte-index slicing a `&str`
@@ -617,5 +669,75 @@ mod tests {
     fn pretty_json_rejects_invalid_json_without_panicking() {
         assert!(pretty_json("{not json").is_err());
         assert!(pretty_json("").is_err());
+    }
+
+    #[test]
+    fn row_to_json_round_trips_every_variant_losslessly() {
+        let row = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(-7),
+            Value::Float(1.5),
+            Value::Decimal("12345678901234567890.5".to_string()),
+            Value::Text("hé llo".to_string()),
+            Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            Value::Date(NaiveDate::from_ymd_opt(2026, 9, 21).unwrap()),
+            Value::Time(NaiveTime::from_hms_opt(13, 5, 9).unwrap()),
+            Value::DateTime(
+                NaiveDate::from_ymd_opt(2026, 9, 21)
+                    .unwrap()
+                    .and_hms_opt(13, 5, 9)
+                    .unwrap(),
+            ),
+            Value::Uuid(uuid::Uuid::nil()),
+            Value::Json("{\"a\":1}".to_string()),
+            Value::Array(vec![Value::Int(1), Value::Null]),
+            Value::Document(vec![("a".to_string(), Value::Int(1))]),
+            Value::Other {
+                type_name: "int4range".to_string(),
+                display: "[1,10)".to_string(),
+            },
+        ];
+        let encoded = row_to_json(&row);
+        let decoded = row_from_json(&encoded).unwrap();
+        assert_eq!(decoded, row);
+    }
+
+    #[test]
+    fn row_from_json_rejects_malformed_input_without_panicking() {
+        assert!(row_from_json("not json").is_err());
+        assert!(row_from_json("").is_err());
+    }
+
+    #[test]
+    fn is_binary_type_matches_every_blob_like_type_name_case_insensitively() {
+        for type_name in ["BLOB", "bytea", "VARBINARY(255)", "binary(16)"] {
+            assert!(is_binary_type(type_name), "{type_name} should be binary");
+        }
+        for type_name in ["int4", "text", "TIMESTAMP"] {
+            assert!(
+                !is_binary_type(type_name),
+                "{type_name} should not be binary"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_hex_text_accepts_what_parse_text_would_also_accept() {
+        for text in ["deadbeef", "0xDEADBEEF", "\\xdead", "", "  "] {
+            assert!(validate_hex_text(text).is_ok(), "{text} should validate");
+            assert!(parse_text(text, "bytea").is_ok());
+        }
+    }
+
+    #[test]
+    fn validate_hex_text_rejects_what_parse_text_would_also_reject() {
+        for text in ["zz", "abc", "1€2€"] {
+            let hex_err = validate_hex_text(text);
+            let parse_err = parse_text(text, "bytea");
+            assert!(hex_err.is_err(), "{text} should not validate");
+            assert!(parse_err.is_err());
+            assert_eq!(hex_err.unwrap_err(), parse_err.unwrap_err());
+        }
     }
 }

@@ -224,7 +224,7 @@ void showExportDataDialog(QWidget *parent, ExchangeService *exchange, const QStr
 }
 
 void showExportRowsDialog(QWidget *parent, ExchangeService *exchange, const QStringList &columns,
-                          const ::rust::Vec<FfiDbRow> &rows)
+                          const QStringList &rows)
 {
     QDialog dialog(parent);
     dialog.setWindowTitle(QObject::tr("Export / Copy As"));

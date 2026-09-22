@@ -105,7 +105,13 @@ DatabaseResultsPanel::ConsolePage &DatabaseResultsPanel::pageFor(quint64 tabId)
     page.output = new QPlainTextEdit(page.root);
     page.output->setReadOnly(true);
     page.subTabs->addTab(page.output, tr("Output"));
-    page.grid = new ResultGridView(consoleService_, resultProvider_, appSettings_, page.root);
+    // F4c: `applyClauses`/`goToNavTarget` hand this grid a fresh result id
+    // directly (never through `executionStarted`), so `resultTab_` must
+    // learn the mapping here too — otherwise that new id's own
+    // `rowsAppended`/`executionFinished` would have nowhere to route to.
+    page.grid = new ResultGridView(
+      consoleService_, resultProvider_, appSettings_, page.root,
+      [this, tabId](quint64 resultId) { resultTab_.insert(resultId, tabId); });
     page.subTabs->addTab(page.grid, tr("Result"));
     layout->addWidget(page.subTabs);
 
@@ -200,14 +206,18 @@ void DatabaseResultsPanel::exportCurrentResult(quint64 tabId)
     // upgrade if a huge already-fetched result set ever makes this a
     // real problem.
     const quint64 rowCount = qMin<quint64>(resultProvider_->rowCount(resultId), 100000);
-    ::rust::Vec<FfiDbRow> rows;
+    QStringList rows;
     for (quint64 first = 0; first < rowCount;) {
-        const auto page = resultProvider_->rowPage(resultId, first, 1000);
+        // `rowValues` (F4c), not `rowPage`: each entry is the row's real
+        // typed `Value`s (JSON-encoded), not rendered display text, so
+        // the export dialog can write a properly-typed SQL/XLSX/JSON
+        // file rather than quoting every cell as a string.
+        const auto page = resultProvider_->rowValues(resultId, first, 1000);
         if (page.empty()) {
             break;
         }
-        for (const FfiDbRow &row : page) {
-            rows.push_back(row);
+        for (const QString &row : page) {
+            rows.append(row);
         }
         first += page.size();
     }

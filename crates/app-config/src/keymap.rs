@@ -955,6 +955,14 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Database",
         default_shortcut: "",
     },
+    // F4.3/F4c: the current cell's forward FK navigation — same gesture
+    // most IDEs bind "go to declaration/reference" family actions to.
+    ActionDef {
+        id: "database.goToReferencedRow",
+        label: "Go to Referenced Row",
+        category: "Database",
+        default_shortcut: "F4",
+    },
     // F3.4/F3.5: the Results dock.
     ActionDef {
         id: "view.databaseResults",

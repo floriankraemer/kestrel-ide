@@ -24,9 +24,11 @@ void showExportDataDialog(QWidget *parent, ExchangeService *exchange, const QStr
                           const QString &objectPath);
 
 // Results grid toolbar's "Export…"/"Copy as ▸" — the rows are already
-// fetched and rendered, so this never touches a session.
+// fetched, so this never touches a session. `rows` is `ResultProvider::
+// rowValues`'s own typed JSON-per-row encoding (F4c), not rendered text —
+// `ExchangeService` decodes it back into real `Value`s before writing.
 void showExportRowsDialog(QWidget *parent, ExchangeService *exchange, const QStringList &columns,
-                          const ::rust::Vec<FfiDbRow> &rows);
+                          const QStringList &rows);
 
 // Table row's "Import data…" (`ActionSet::IMPORT_DATA`).
 void showImportDataDialog(QWidget *parent, ExchangeService *exchange, const QString &sourceId,

@@ -33,6 +33,7 @@ use db_core::driver::{CancelHandle, ExecOptions, RowStream, Statement};
 use db_core::error::DbError;
 use db_core::schema::{IntrospectLevel, IntrospectScope, ObjectRef, SchemaSnapshot};
 use db_core::session::Session;
+use db_core::tunnel::Tunnel;
 use db_core::value::{ColumnMeta, Value};
 
 /// One request a [`SessionWorker`]'s thread runs against its `Session`.
@@ -359,14 +360,30 @@ pub struct SessionWorker {
 }
 
 impl SessionWorker {
-    /// Spawn a worker owning `session`. Every [`SessionEvent`] the thread
-    /// produces is handed to `on_event` — the caller's own bridge to
-    /// `qt_thread().queue`, so this module never depends on cxx-qt.
-    pub fn spawn(session: Session, on_event: impl Fn(SessionEvent) + Send + 'static) -> Self {
+    /// Spawn a worker owning `session`, and `tunnel` (if `session`'s
+    /// connection was opened through one — F7c, `bridge::database::
+    /// open_session`). Every [`SessionEvent`] the thread produces is handed
+    /// to `on_event` — the caller's own bridge to `qt_thread().queue`, so
+    /// this module never depends on cxx-qt.
+    ///
+    /// `tunnel` is captured by the same thread closure as `session`, after
+    /// it, so it drops only once [`run`] returns — i.e. only after the
+    /// connection inside `session` has already been closed (`Drop for
+    /// SessionWorker` sends `Shutdown` and joins this thread before
+    /// returning), never before. Closing the tunnel first would sever the
+    /// forwarded port out from under a connection still using it.
+    pub fn spawn(
+        session: Session,
+        tunnel: Option<Box<dyn Tunnel>>,
+        on_event: impl Fn(SessionEvent) + Send + 'static,
+    ) -> Self {
         let generation = session.generation_handle();
         let cancel_handle = Arc::new(Mutex::new(session.cancel_handle()));
         let (sender, receiver) = std::sync::mpsc::channel();
-        let thread = std::thread::spawn(move || run(session, receiver, on_event));
+        let thread = std::thread::spawn(move || {
+            run(session, receiver, on_event);
+            drop(tunnel);
+        });
         Self {
             sender,
             generation,
@@ -546,7 +563,7 @@ mod tests {
         }));
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received);
-        let worker = SessionWorker::spawn(session, move |event| {
+        let worker = SessionWorker::spawn(session, None, move |event| {
             if let SessionEvent::Introspected { generation, .. } = event {
                 received_clone.lock().unwrap().push(generation);
             }
@@ -689,7 +706,7 @@ mod tests {
         let ran = Arc::new(Mutex::new(Vec::new()));
         let ddls_clone = Arc::clone(&ddls);
         let ran_clone = Arc::clone(&ran);
-        let worker = SessionWorker::spawn(session, move |event| match event {
+        let worker = SessionWorker::spawn(session, None, move |event| match event {
             SessionEvent::Ddl { result, .. } => ddls_clone.lock().unwrap().push(result),
             SessionEvent::Ran { result, .. } => ran_clone.lock().unwrap().push(result),
             SessionEvent::Introspected { .. }
@@ -776,7 +793,7 @@ mod tests {
         }));
         let received = Arc::new(Mutex::new(Vec::new()));
         let received_clone = Arc::clone(&received);
-        let worker = SessionWorker::spawn(session, move |event| {
+        let worker = SessionWorker::spawn(session, None, move |event| {
             if let SessionEvent::Introspected { result, .. } = event {
                 received_clone.lock().unwrap().push(result);
             }
@@ -800,7 +817,7 @@ mod tests {
         }));
         let batches = Arc::new(Mutex::new(Vec::new()));
         let batches_clone = Arc::clone(&batches);
-        let worker = SessionWorker::spawn(session, move |event| {
+        let worker = SessionWorker::spawn(session, None, move |event| {
             if let SessionEvent::Batch { outcome, .. } = event {
                 batches_clone.lock().unwrap().push(outcome);
             }
@@ -886,7 +903,7 @@ mod tests {
             introspect_calls: Arc::new(AtomicU64::new(0)),
             cancel_calls: Arc::clone(&cancel_calls),
         }));
-        let worker = SessionWorker::spawn(session, |_event| {});
+        let worker = SessionWorker::spawn(session, None, |_event| {});
         worker.cancel_now().unwrap();
         assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
     }
@@ -966,7 +983,7 @@ mod tests {
         }));
         let results = Arc::new(Mutex::new(Vec::new()));
         let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, move |event| {
+        let worker = SessionWorker::spawn(session, None, move |event| {
             if let SessionEvent::Applied { result, .. } = event {
                 results_clone.lock().unwrap().push(result);
             }
@@ -990,7 +1007,7 @@ mod tests {
         }));
         let results = Arc::new(Mutex::new(Vec::new()));
         let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, move |event| {
+        let worker = SessionWorker::spawn(session, None, move |event| {
             if let SessionEvent::Applied { result, .. } = event {
                 results_clone.lock().unwrap().push(result);
             }
@@ -1016,7 +1033,7 @@ mod tests {
         calls.lock().unwrap().clear();
         let results = Arc::new(Mutex::new(Vec::new()));
         let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, move |event| {
+        let worker = SessionWorker::spawn(session, None, move |event| {
             if let SessionEvent::Applied { result, .. } = event {
                 results_clone.lock().unwrap().push(result);
             }
@@ -1041,7 +1058,7 @@ mod tests {
         }));
         let results = Arc::new(Mutex::new(Vec::new()));
         let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, move |event| {
+        let worker = SessionWorker::spawn(session, None, move |event| {
             if let SessionEvent::TxChanged { result, .. } = event {
                 results_clone.lock().unwrap().push(result);
             }
@@ -1057,5 +1074,93 @@ mod tests {
         // connection accepts it (it only counts calls), proving `run` wires
         // the command through rather than the outcome mattering here.
         assert!(results[2].is_ok());
+    }
+
+    /// A fake tunnel that records into a shared log on `Drop` — proves
+    /// [`SessionWorker::spawn`]'s drop order (F7c): the connection must
+    /// close before the tunnel it was routed through does, never after.
+    struct LoggingTunnel {
+        log: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl Tunnel for LoggingTunnel {
+        fn local_port(&self) -> u16 {
+            12345
+        }
+    }
+
+    impl Drop for LoggingTunnel {
+        fn drop(&mut self) {
+            self.log.lock().unwrap().push("tunnel");
+        }
+    }
+
+    /// A `Connection` double whose `close` records into the same log —
+    /// paired with [`LoggingTunnel`] below.
+    struct LoggingConnection {
+        log: Arc<Mutex<Vec<&'static str>>>,
+    }
+
+    impl Connection for LoggingConnection {
+        fn dialect(&self) -> db_core::dialect::Dialect {
+            db_core::dialect::Dialect::Sqlite
+        }
+        fn server_info(&self) -> String {
+            "logging".to_string()
+        }
+        fn introspect(
+            &mut self,
+            _scope: &IntrospectScope,
+            level: IntrospectLevel,
+        ) -> Result<SchemaSnapshot, DbError> {
+            Ok(SchemaSnapshot::new(level, Vec::new()))
+        }
+        fn execute(
+            &mut self,
+            _statement: &Statement,
+            _options: &ExecOptions,
+        ) -> Result<Execution, DbError> {
+            Ok(Execution::Ok)
+        }
+        fn begin(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn commit(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn rollback(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn set_read_only(&mut self, _read_only: bool) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn cancel_handle(&self) -> Option<Box<dyn CancelHandle>> {
+            None
+        }
+        fn ddl_of(&mut self, _object: &ObjectRef) -> Result<String, DbError> {
+            unimplemented!("not exercised by this test")
+        }
+        fn apply(&mut self, _statements: &[Statement]) -> Result<u64, DbError> {
+            unimplemented!("not exercised by this test")
+        }
+        fn close(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+    }
+
+    impl Drop for LoggingConnection {
+        fn drop(&mut self) {
+            self.log.lock().unwrap().push("connection");
+        }
+    }
+
+    #[test]
+    fn dropping_the_worker_closes_the_connection_before_the_tunnel() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let session = Session::new(Box::new(LoggingConnection { log: log.clone() }));
+        let tunnel: Box<dyn Tunnel> = Box::new(LoggingTunnel { log: log.clone() });
+        let worker = SessionWorker::spawn(session, Some(tunnel), |_event| {});
+        drop(worker); // sends Shutdown and joins the thread (see the Drop impl)
+        assert_eq!(*log.lock().unwrap(), vec!["connection", "tunnel"]);
     }
 }

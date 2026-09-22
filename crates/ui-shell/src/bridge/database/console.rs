@@ -326,20 +326,14 @@ impl ffi::ConsoleService {
         let qt_thread = self.as_mut().qt_thread();
         let attach_source_id = source_id.clone();
         std::thread::spawn(move || {
-            let data_source = db_core::datasource::DataSource::from(&setting);
+            let secrets = super::service::secrets_for(&attach_source_id);
+            let data_source = db_core::datasource::DataSource::from_setting(&setting, &secrets);
             let read_only = data_source.read_only;
-            let spec = db_core::datasource::ConnectSpec::from(
-                &data_source,
-                &super::service::secrets_for(&attach_source_id),
-            );
-            let registry = db_drivers::DriverRegistry::builtin();
-            let outcome = registry
-                .get(&spec.driver)
-                .ok_or_else(|| format!("no driver registered for '{}'", spec.driver))
-                .and_then(|driver| driver.connect(&spec).map_err(|error| error.to_string()));
+            let outcome =
+                super::open_session(&data_source, &secrets).map_err(|error| error.to_string());
             let _ = qt_thread.queue(
                 move |mut service: Pin<&mut ffi::ConsoleService>| match outcome {
-                    Ok(mut connection) => {
+                    Ok((tunnel, mut connection)) => {
                         if read_only {
                             let _ = connection.set_read_only(true);
                         }
@@ -347,7 +341,7 @@ impl ffi::ConsoleService {
                         let session = Session::new(connection);
                         let inner_qt_thread = service.as_mut().qt_thread();
                         let worker_tab_id = tab_id;
-                        let worker = SessionWorker::spawn(session, move |event| {
+                        let worker = SessionWorker::spawn(session, tunnel, move |event| {
                             let _ = inner_qt_thread.queue(
                                 move |service: Pin<&mut ffi::ConsoleService>| {
                                     apply_event(service, worker_tab_id, event);

@@ -478,6 +478,7 @@ mod tests {
             url: String::new(),
             read_only: false,
             ssl: Default::default(),
+            ssh: None,
         }
     }
 

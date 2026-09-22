@@ -186,8 +186,15 @@ pub fn connect_typed(
 /// [`test_connection`], keeping the typed [`DbError`] — what
 /// `DataSourceEditor::test_connection` (`settings.rs`) reads `error.code`
 /// from to tell a host-key prompt apart from an ordinary failure (F7b).
-pub fn test_connection_typed(spec: &db_core::datasource::ConnectSpec) -> Result<(), DbError> {
-    let mut connection = connect_typed(spec)?;
+///
+/// Goes through [`open_session`] like every other connect path (F7c) —
+/// `source.ssh` set means "Test connection" actually opens the tunnel too,
+/// not just the bare backend connect a bastion sits in front of.
+pub fn test_connection_typed(
+    source: &db_core::datasource::DataSource,
+    secrets: &db_core::datasource::Secrets,
+) -> Result<(), DbError> {
+    let (_tunnel, mut connection) = open_session(source, secrets)?;
     let statement = ping_statement(connection.dialect());
     let result = connection
         .execute(&statement, &db_core::driver::ExecOptions::default())
@@ -196,9 +203,97 @@ pub fn test_connection_typed(spec: &db_core::datasource::ConnectSpec) -> Result<
     result
 }
 
+/// How long [`open_session`] waits for a freshly opened tunnel's forwarded
+/// port to accept a connection before giving up — [`db_core::tunnel::
+/// CliTunnel::open`]'s own `ready_timeout` parameter.
+const TUNNEL_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// [`open_session`]/[`open_session_with`]'s success shape: the tunnel, if
+/// one was opened, and the backend connection routed through it.
+type OpenedSession = (
+    Option<Box<dyn db_core::tunnel::Tunnel>>,
+    Box<dyn db_core::driver::Connection>,
+);
+
+/// Opens `source`'s SSH tunnel, if it has one, then connects the backend
+/// through it — the one path every connect site in this plugin goes
+/// through (`test_connection_typed` above, `DatabaseService::connect_source`,
+/// `ConsoleService::attach`, database-tools.md §4), so a tunnelled source is
+/// never connected to directly (F7c: the gap F7b left, §11).
+///
+/// The tunnel, when one is opened, must outlive the connection: the caller
+/// keeps both alive together (e.g. one `SessionWorker` thread closure
+/// capturing both) and drops the connection first — closing the tunnel
+/// while the connection still uses its forwarded port would sever it out
+/// from under a live session.
+pub fn open_session(
+    source: &db_core::datasource::DataSource,
+    secrets: &db_core::datasource::Secrets,
+) -> Result<OpenedSession, DbError> {
+    open_session_with(source, secrets, open_tunnel, connect_typed)
+}
+
+/// [`open_session`]'s actual logic, with the tunnel-opener and the
+/// backend-connector injected — a unit test drives this with a fake
+/// [`db_core::tunnel::Tunnel`] and a fake connect closure, neither of which
+/// touches a real network, proving the spec rewrite (host/port become the
+/// tunnel's loopback/local-port pair) without needing a real bastion.
+fn open_session_with(
+    source: &db_core::datasource::DataSource,
+    secrets: &db_core::datasource::Secrets,
+    open_tunnel: impl FnOnce(
+        &db_core::tunnel::SshConfig,
+        &str,
+        u16,
+    ) -> Result<Box<dyn db_core::tunnel::Tunnel>, DbError>,
+    connect: impl FnOnce(
+        &db_core::datasource::ConnectSpec,
+    ) -> Result<Box<dyn db_core::driver::Connection>, DbError>,
+) -> Result<OpenedSession, DbError> {
+    let mut spec = db_core::datasource::ConnectSpec::from(source, secrets);
+    let tunnel = match &source.ssh {
+        Some(ssh) => Some(open_tunnel(ssh, &spec.host, spec.port.unwrap_or_default())?),
+        None => None,
+    };
+    if let Some(tunnel) = &tunnel {
+        spec.host = "127.0.0.1".to_string();
+        spec.port = Some(tunnel.local_port());
+    }
+    let connection = connect(&spec)?;
+    Ok((tunnel, connection))
+}
+
+/// [`open_session_with`]'s real tunnel opener: [`db_core::tunnel::select`]
+/// picks the mechanism, `CliTunnel`/`db_drivers::ssh::RusshTunnel` open it.
+fn open_tunnel(
+    ssh: &db_core::tunnel::SshConfig,
+    remote_host: &str,
+    remote_port: u16,
+) -> Result<Box<dyn db_core::tunnel::Tunnel>, DbError> {
+    use db_core::tunnel::SelectedTunnel;
+    match db_core::tunnel::select(ssh.auth) {
+        SelectedTunnel::Cli => {
+            let spec = db_core::tunnel::TunnelSpec {
+                ssh_host: ssh.host.clone(),
+                ssh_port: ssh.port,
+                ssh_user: ssh.user.clone(),
+                remote_host: remote_host.to_string(),
+                remote_port,
+            };
+            let tunnel = db_core::tunnel::CliTunnel::open(&spec, TUNNEL_READY_TIMEOUT)?;
+            Ok(Box::new(tunnel))
+        }
+        SelectedTunnel::Russh => {
+            let tunnel = db_drivers::ssh::RusshTunnel::open(ssh, remote_host, remote_port)?;
+            Ok(Box::new(tunnel))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
 
     fn sqlite_spec(database: &str) -> db_core::datasource::ConnectSpec {
         db_core::datasource::ConnectSpec {
@@ -268,5 +363,164 @@ mod tests {
             .unwrap();
         assert_eq!(error.code, DbErrorCode::Unknown);
         assert!(error.message.contains("does-not-exist"));
+    }
+
+    /// A fake [`db_core::tunnel::Tunnel`] that never opens a real socket —
+    /// [`open_session_with`]'s tests use it to prove the spec rewrite
+    /// without a real bastion.
+    struct FakeTunnel {
+        local_port: u16,
+    }
+
+    impl db_core::tunnel::Tunnel for FakeTunnel {
+        fn local_port(&self) -> u16 {
+            self.local_port
+        }
+    }
+
+    /// A `Connection` double that panics on every method but `dialect`/
+    /// `close` — `open_session_with`'s tests only ever check what spec it
+    /// was constructed for (via the injected `connect` closure itself),
+    /// never anything this fake would need to answer.
+    struct FakeConnection;
+
+    impl db_core::driver::Connection for FakeConnection {
+        fn dialect(&self) -> db_core::dialect::Dialect {
+            db_core::dialect::Dialect::Postgres
+        }
+        fn server_info(&self) -> String {
+            "fake".to_string()
+        }
+        fn introspect(
+            &mut self,
+            _scope: &db_core::schema::IntrospectScope,
+            _level: db_core::schema::IntrospectLevel,
+        ) -> Result<db_core::schema::SchemaSnapshot, DbError> {
+            unimplemented!("not exercised by open_session_with's tests")
+        }
+        fn execute(
+            &mut self,
+            _statement: &db_core::driver::Statement,
+            _options: &db_core::driver::ExecOptions,
+        ) -> Result<db_core::driver::Execution, DbError> {
+            unimplemented!("not exercised by open_session_with's tests")
+        }
+        fn begin(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn commit(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn rollback(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn set_read_only(&mut self, _read_only: bool) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn cancel_handle(&self) -> Option<Box<dyn db_core::driver::CancelHandle>> {
+            None
+        }
+        fn ddl_of(&mut self, _object: &db_core::schema::ObjectRef) -> Result<String, DbError> {
+            unimplemented!("not exercised by open_session_with's tests")
+        }
+        fn apply(&mut self, _statements: &[db_core::driver::Statement]) -> Result<u64, DbError> {
+            unimplemented!("not exercised by open_session_with's tests")
+        }
+        fn close(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+    }
+
+    fn source_without_ssh() -> db_core::datasource::DataSource {
+        db_core::datasource::DataSource {
+            id: "s1".to_string(),
+            name: "prod".to_string(),
+            driver: "postgresql".to_string(),
+            host: "db.internal".to_string(),
+            port: Some(5432),
+            database: "shop".to_string(),
+            user: "florian".to_string(),
+            url: String::new(),
+            read_only: false,
+            ssl: Default::default(),
+            ssh: None,
+        }
+    }
+
+    fn fake_ssh() -> db_core::tunnel::SshConfig {
+        db_core::tunnel::SshConfig {
+            host: "bastion.example".to_string(),
+            port: 22,
+            user: "florian".to_string(),
+            auth: db_core::tunnel::SshAuthMode::Agent,
+            key_file: None,
+            password: None,
+        }
+    }
+
+    #[test]
+    fn open_session_with_never_opens_a_tunnel_when_the_source_has_none() {
+        let source = source_without_ssh();
+        let (tunnel, _connection) = open_session_with(
+            &source,
+            &Default::default(),
+            |_ssh, _host, _port| panic!("no tunnel should be opened"),
+            |spec| {
+                assert_eq!(spec.host, "db.internal");
+                assert_eq!(spec.port, Some(5432));
+                Ok(Box::new(FakeConnection))
+            },
+        )
+        .unwrap();
+        assert!(tunnel.is_none());
+    }
+
+    #[test]
+    fn open_session_with_opens_the_tunnel_against_the_source_s_own_endpoint() {
+        let source = db_core::datasource::DataSource {
+            ssh: Some(fake_ssh()),
+            ..source_without_ssh()
+        };
+        let seen = RefCell::new(None);
+        let (tunnel, _connection) = open_session_with(
+            &source,
+            &Default::default(),
+            |_ssh, host, port| {
+                *seen.borrow_mut() = Some((host.to_string(), port));
+                Ok(Box::new(FakeTunnel { local_port: 55555 }) as Box<dyn db_core::tunnel::Tunnel>)
+            },
+            |spec| {
+                // The rewrite: the backend connects to the tunnel's own
+                // loopback local port, never the original remote endpoint.
+                assert_eq!(spec.host, "127.0.0.1");
+                assert_eq!(spec.port, Some(55555));
+                Ok(Box::new(FakeConnection))
+            },
+        )
+        .unwrap();
+        assert_eq!(*seen.borrow(), Some(("db.internal".to_string(), 5432)));
+        assert_eq!(tunnel.unwrap().local_port(), 55555);
+    }
+
+    #[test]
+    fn open_session_with_propagates_a_tunnel_failure_without_ever_connecting() {
+        let source = db_core::datasource::DataSource {
+            ssh: Some(fake_ssh()),
+            ..source_without_ssh()
+        };
+        let error = open_session_with(
+            &source,
+            &Default::default(),
+            |_ssh, _host, _port| {
+                Err(DbError::new(
+                    DbErrorCode::TunnelFailed,
+                    "could not reach the bastion",
+                ))
+            },
+            |_spec| panic!("connect must not be attempted once the tunnel fails"),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.code, DbErrorCode::TunnelFailed);
     }
 }

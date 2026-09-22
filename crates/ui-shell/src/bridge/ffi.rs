@@ -9954,6 +9954,18 @@ mod ffi {
         sentence: QString,
     }
 
+    // ---- database: F7c ----
+    /// One family-specific connection option beyond the dialog's common
+    /// fields (`db_core::console::ExtraField`) — Mongo's replica set,
+    /// Redis's TLS toggle, Cassandra's local datacenter. `kind` is
+    /// `"text"` or `"bool"`, the widget the dialog builds for it; `key`
+    /// doubles as the stable label key the view maps to a `tr()`'d string
+    /// (the same convention `databaseFieldLabelKey` already uses).
+    struct FfiDbExtraField {
+        key: QString,
+        kind: QString,
+    }
+
     extern "RustQt" {
         /// Every data source, global and project merged by id
         /// (Database Tools plan F1.6).
@@ -10129,6 +10141,27 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "acceptHostKey"]
         fn accept_host_key(self: Pin<&mut DataSourceEditor>) -> FfiResult;
+
+        // ---- database: F7c ----
+        /// The extra fields the draft's current driver's family needs
+        /// beyond the common ones (`db_core::console::extra_fields`) —
+        /// the dialog rebuilds its "Options" tab's family-specific rows
+        /// from this whenever the driver combo changes.
+        #[qinvokable]
+        #[cxx_name = "extraFields"]
+        fn extra_fields(self: &DataSourceEditor) -> Vec<FfiDbExtraField>;
+
+        /// The current draft's value for one extra field's `key` — empty
+        /// when unset. A bool field's value is the literal string
+        /// `"true"` when checked, empty when unchecked.
+        #[qinvokable]
+        fn option(self: &DataSourceEditor, key: &QString) -> QString;
+
+        /// Sets (or, given an empty `value`, clears) one extra field's
+        /// value on the draft.
+        #[qinvokable]
+        #[cxx_name = "setOption"]
+        fn set_option(self: &DataSourceEditor, key: &QString, value: &QString);
     }
 
     impl cxx_qt::Threading for DataSourceEditor {}

@@ -67,6 +67,57 @@ pub fn database_field_label_key(family: Family) -> &'static str {
     }
 }
 
+/// Which widget kind [`ExtraField`] needs — the dialog builds a `QLineEdit`
+/// for [`Text`](ExtraFieldKind::Text) or a `QCheckBox` for
+/// [`Bool`](ExtraFieldKind::Bool), nothing richer than that (F7c's scoped
+/// version of the plan's "family-aware Data Source dialog" task — see
+/// `database-tools.md` §11 on why a fuller generic form-field
+/// vocabulary — lists, per-field sections, driver defaults — is left as
+/// documented debt rather than spelled out here for the three fields that
+/// currently exist).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExtraFieldKind {
+    Text,
+    Bool,
+}
+
+/// One connection option a [`Family`] needs beyond the dialog's common
+/// host/port/database/user set — persists through `DataSourceSetting::
+/// options`, keyed by `key`, never a new named field on `DataSourceSetting`
+/// itself. `key` doubles as the stable label key the view maps to a
+/// `tr()`'d string (the same convention [`database_field_label_key`]
+/// already uses).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtraField {
+    pub key: &'static str,
+    pub kind: ExtraFieldKind,
+}
+
+/// The extra fields the Data Source dialog shows for `family`, beyond its
+/// common fields (F7c) — empty for [`Family::Sql`] (Postgres/MySQL/SQLite
+/// need nothing beyond host/port/database/user, or a file path via `url`
+/// for SQLite).
+pub fn extra_fields(family: Family) -> &'static [ExtraField] {
+    const MONGO: [ExtraField; 1] = [ExtraField {
+        key: "replica_set",
+        kind: ExtraFieldKind::Text,
+    }];
+    const REDIS: [ExtraField; 1] = [ExtraField {
+        key: "tls",
+        kind: ExtraFieldKind::Bool,
+    }];
+    const CQL: [ExtraField; 1] = [ExtraField {
+        key: "local_dc",
+        kind: ExtraFieldKind::Text,
+    }];
+    match family {
+        Family::Sql => &[],
+        Family::Mongo => &MONGO,
+        Family::Redis => &REDIS,
+        Family::Cql => &CQL,
+    }
+}
+
 /// The directory a source's console files live under.
 pub fn console_dir(config_dir: &Path, source_id: &str) -> PathBuf {
     config_dir.join("consoles").join(source_id)
@@ -143,6 +194,35 @@ mod tests {
         assert_eq!(database_field_label_key(Family::Mongo), "auth_database");
         assert_eq!(database_field_label_key(Family::Redis), "db_index");
         assert_eq!(database_field_label_key(Family::Cql), "keyspace");
+    }
+
+    #[test]
+    fn sql_needs_no_extra_fields_beyond_the_common_ones() {
+        assert!(extra_fields(Family::Sql).is_empty());
+    }
+
+    #[test]
+    fn mongo_s_only_extra_field_is_a_text_replica_set() {
+        let fields = extra_fields(Family::Mongo);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].key, "replica_set");
+        assert_eq!(fields[0].kind, ExtraFieldKind::Text);
+    }
+
+    #[test]
+    fn redis_s_only_extra_field_is_a_bool_tls_toggle() {
+        let fields = extra_fields(Family::Redis);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].key, "tls");
+        assert_eq!(fields[0].kind, ExtraFieldKind::Bool);
+    }
+
+    #[test]
+    fn cql_s_only_extra_field_is_a_text_local_datacenter() {
+        let fields = extra_fields(Family::Cql);
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].key, "local_dc");
+        assert_eq!(fields[0].kind, ExtraFieldKind::Text);
     }
 
     #[test]

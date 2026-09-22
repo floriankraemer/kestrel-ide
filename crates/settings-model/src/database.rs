@@ -11,6 +11,8 @@
 //! not the settings page's own list (that list is `Vec<DataSourceSetting>`,
 //! read and reordered directly).
 
+use std::collections::BTreeMap;
+
 use app_config::database::{DataSourceSetting, SshSetting, SslSetting};
 
 /// One field the dialog can flag a problem against.
@@ -53,6 +55,14 @@ pub struct DataSourceDraft {
     pub ssh_user: String,
     pub ssh_auth: String,
     pub ssh_key_file: String,
+    /// The family-specific extra fields this driver's family needs beyond
+    /// the fields above (F7c, `db_core::console::extra_fields`) — e.g.
+    /// Mongo's replica set, Redis's TLS toggle, Cassandra's local
+    /// datacenter. Keyed by the same stable field key the dialog reads
+    /// `db_core::console::ExtraField::key` as; carried through unchanged
+    /// by a field this driver's own family does not use, so switching the
+    /// driver combo and back never silently drops a value the user typed.
+    pub options: BTreeMap<String, String>,
 }
 
 impl DataSourceDraft {
@@ -93,6 +103,7 @@ impl DataSourceDraft {
             ssh_user: ssh.user,
             ssh_auth: ssh.auth,
             ssh_key_file: ssh.key_file,
+            options: setting.options.clone(),
         }
     }
 
@@ -142,7 +153,7 @@ pub fn commit(draft: &DataSourceDraft) -> DataSourceSetting {
             ca_file: draft.ssl_ca_file.clone(),
         },
         ssh: draft.ssh_setting(),
-        options: Default::default(),
+        options: draft.options.clone(),
     }
 }
 
@@ -342,6 +353,23 @@ mod tests {
 
         let reopened = DataSourceDraft::from_setting(&setting);
         assert_eq!(reopened, draft);
+    }
+
+    #[test]
+    fn commit_carries_the_family_extra_options_forward() {
+        let mut draft = valid_draft();
+        draft
+            .options
+            .insert("replica_set".to_string(), "rs0".to_string());
+
+        let setting = commit(&draft);
+        assert_eq!(
+            setting.options.get("replica_set").map(String::as_str),
+            Some("rs0")
+        );
+
+        let reopened = DataSourceDraft::from_setting(&setting);
+        assert_eq!(reopened.options, draft.options);
     }
 
     #[test]

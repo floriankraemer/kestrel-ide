@@ -9,13 +9,20 @@
 //! helper (`layering.md`'s `db-core` row) — `ui-shell` reads the keychain
 //! and hands the result in as [`Secrets`].
 
-use app_config::database::DataSourceSetting;
+use app_config::database::{DataSourceSetting, SshSetting};
+
+use crate::tunnel::{SshAuthMode, SshConfig};
 
 /// The three credentials a data source can need, already resolved by the
 /// caller (`ui-shell`, from `secret-store`) — `None` for "no secret
 /// configured or the keychain had nothing for this key", never a
 /// distinguishable "keychain unavailable" here; that distinction is
 /// `secret-store::SecretError`'s to make, one layer up.
+///
+/// `ssh_password` doubles as both an SSH password ([`SshAuthMode::
+/// Password`]) and a private key's passphrase ([`SshAuthMode::KeyFile`]) —
+/// [`SshConfig::password`] carries the same single field for the same
+/// reason (only one of the two modes is ever active for a given source).
 #[derive(Clone, Default)]
 pub struct Secrets {
     pub password: Option<String>,
@@ -94,6 +101,11 @@ pub struct DataSource {
     pub url: String,
     pub read_only: bool,
     pub ssl: SslConfig,
+    /// The SSH tunnel to open before connecting, if this source is
+    /// configured to go through one — `None` from the plain [`From`] impl
+    /// below (no secret available there); [`Self::from_setting`] is the
+    /// constructor that actually resolves it.
+    pub ssh: Option<SshConfig>,
 }
 
 impl From<&DataSourceSetting> for DataSource {
@@ -112,7 +124,38 @@ impl From<&DataSourceSetting> for DataSource {
                 mode: SslMode::from_id(&setting.ssl.mode),
                 ca_file: (!setting.ssl.ca_file.is_empty()).then(|| setting.ssl.ca_file.clone()),
             },
+            ssh: None,
         }
+    }
+}
+
+fn ssh_config(setting: &SshSetting, password: Option<String>) -> SshConfig {
+    SshConfig {
+        host: setting.host.clone(),
+        port: setting.port.unwrap_or(22),
+        user: setting.user.clone(),
+        auth: SshAuthMode::from_id(&setting.auth),
+        key_file: (!setting.key_file.is_empty()).then(|| setting.key_file.clone()),
+        password,
+    }
+}
+
+impl DataSource {
+    /// [`From<&DataSourceSetting>`] plus the SSH tunnel field, resolved from
+    /// `setting.ssh` and `secrets.ssh_password` (a password or a key
+    /// passphrase, depending on [`SshAuthMode`] — see [`Secrets`]'s doc
+    /// comment). The plain `From` impl cannot do this itself: it has no
+    /// secret to fold in (`db-core` never reads the keychain — this
+    /// module's own doc comment), so every caller that actually opens a
+    /// tunnel (F7c: `ui-shell::bridge::database::open_session` and its
+    /// callers) must build a `DataSource` through this constructor instead.
+    pub fn from_setting(setting: &DataSourceSetting, secrets: &Secrets) -> Self {
+        let mut source = Self::from(setting);
+        source.ssh = setting
+            .ssh
+            .as_ref()
+            .map(|ssh| ssh_config(ssh, secrets.ssh_password.clone()));
+        source
     }
 }
 
@@ -197,6 +240,60 @@ mod tests {
         let source = DataSource::from(&plain);
         assert_eq!(source.ssl.mode, SslMode::Prefer);
         assert_eq!(source.ssl.ca_file, None);
+    }
+
+    fn setting_with_ssh() -> DataSourceSetting {
+        DataSourceSetting {
+            ssh: Some(app_config::database::SshSetting {
+                host: "bastion.example".to_string(),
+                port: Some(2222),
+                user: "florian".to_string(),
+                auth: "key".to_string(),
+                key_file: "/home/florian/.ssh/id_ed25519".to_string(),
+            }),
+            ..setting()
+        }
+    }
+
+    #[test]
+    fn from_setting_is_none_when_the_source_has_no_ssh_configured() {
+        let source = DataSource::from_setting(&setting(), &Secrets::default());
+        assert!(source.ssh.is_none());
+    }
+
+    #[test]
+    fn from_setting_maps_ssh_config_and_folds_in_the_secret() {
+        let secrets = Secrets {
+            ssh_password: Some("passphrase".to_string()),
+            ..Default::default()
+        };
+        let source = DataSource::from_setting(&setting_with_ssh(), &secrets);
+        let ssh = source.ssh.expect("ssh config");
+        assert_eq!(ssh.host, "bastion.example");
+        assert_eq!(ssh.port, 2222);
+        assert_eq!(ssh.user, "florian");
+        assert_eq!(ssh.auth, SshAuthMode::KeyFile);
+        assert_eq!(
+            ssh.key_file.as_deref(),
+            Some("/home/florian/.ssh/id_ed25519")
+        );
+        assert_eq!(ssh.password.as_deref(), Some("passphrase"));
+    }
+
+    #[test]
+    fn from_setting_defaults_the_ssh_port_to_22_when_unset() {
+        let mut setting = setting_with_ssh();
+        setting.ssh.as_mut().unwrap().port = None;
+        let source = DataSource::from_setting(&setting, &Secrets::default());
+        assert_eq!(source.ssh.unwrap().port, 22);
+    }
+
+    #[test]
+    fn from_setting_leaves_an_empty_key_file_as_none() {
+        let mut setting = setting_with_ssh();
+        setting.ssh.as_mut().unwrap().key_file.clear();
+        let source = DataSource::from_setting(&setting, &Secrets::default());
+        assert_eq!(source.ssh.unwrap().key_file, None);
     }
 
     #[test]

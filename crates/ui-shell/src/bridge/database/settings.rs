@@ -584,15 +584,17 @@ impl ffi::DataSourceEditor {
         let ssh_host = draft.ssh_host.clone();
         let ssh_port = draft.ssh_port.unwrap_or(22);
 
+        let ssh_password = secrets().load(&format!("{id}/ssh")).ok().flatten();
+
         std::thread::spawn(move || {
             let setting = settings_model::database::commit(&draft);
-            let source = db_core::datasource::DataSource::from(&setting);
             let db_secrets = db_core::datasource::Secrets {
                 password,
+                ssh_password,
                 ..Default::default()
             };
-            let spec = db_core::datasource::ConnectSpec::from(&source, &db_secrets);
-            let result = crate::bridge::database::test_connection_typed(&spec);
+            let source = db_core::datasource::DataSource::from_setting(&setting, &db_secrets);
+            let result = crate::bridge::database::test_connection_typed(&source, &db_secrets);
             if guard.load(Ordering::SeqCst) != generation {
                 return; // superseded by a newer test_connection() call
             }
@@ -636,6 +638,58 @@ impl ffi::DataSourceEditor {
         }
         self.test_connection();
         FfiResult::default()
+    }
+
+    /// The draft's current driver's family's own extra fields (F7c) —
+    /// which family decides this is `db_core::console::family_for_driver`,
+    /// same as `Self::database_field_label_key`.
+    pub fn extra_fields(&self) -> Vec<ffi::FfiDbExtraField> {
+        let driver = self
+            .draft
+            .borrow()
+            .as_ref()
+            .map(|draft| draft.driver.clone())
+            .unwrap_or_default();
+        let family = db_core::console::family_for_driver(&driver);
+        db_core::console::extra_fields(family)
+            .iter()
+            .map(|field| ffi::FfiDbExtraField {
+                key: QString::from(field.key),
+                kind: QString::from(match field.kind {
+                    db_core::console::ExtraFieldKind::Text => "text",
+                    db_core::console::ExtraFieldKind::Bool => "bool",
+                }),
+            })
+            .collect()
+    }
+
+    /// `key`'s current value on the draft, or empty when unset.
+    pub fn option(&self, key: &QString) -> QString {
+        let key = key.to_string();
+        self.draft
+            .borrow()
+            .as_ref()
+            .and_then(|draft| draft.options.get(&key).cloned())
+            .map(|value| QString::from(value.as_str()))
+            .unwrap_or_default()
+    }
+
+    /// Sets `key`'s value, or clears it (drops the map entry entirely
+    /// rather than storing an empty string — the same "empty means unset"
+    /// rule `ssl_ca_file`'s own field already follows) when `value` is
+    /// empty.
+    pub fn set_option(&self, key: &QString, value: &QString) {
+        let mut draft = self.draft.borrow_mut();
+        let Some(draft) = draft.as_mut() else {
+            return;
+        };
+        let key = key.to_string();
+        let value = value.to_string();
+        if value.is_empty() {
+            draft.options.remove(&key);
+        } else {
+            draft.options.insert(key, value);
+        }
     }
 }
 

@@ -14,6 +14,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMessageBox>
 #include <QTableView>
 #include <QToolButton>
@@ -38,10 +39,12 @@ QAction *windowShortcut(QWidget *owner, AppSettings *appSettings, const QString 
 } // namespace
 
 ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *provider,
-                               AppSettings *appSettings, QWidget *parent)
+                               AppSettings *appSettings, QWidget *parent,
+                               std::function<void(quint64)> onResultAdopted)
   : QWidget(parent)
   , consoleService_(consoleService)
   , provider_(provider)
+  , onResultAdopted_(std::move(onResultAdopted))
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -102,6 +105,9 @@ ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *p
     tableView_->setSelectionBehavior(QAbstractItemView::SelectRows);
     tableView_->installEventFilter(this);
     connect(tableView_, &QTableView::doubleClicked, this, &ResultGridView::openValueEditor);
+    tableView_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(tableView_, &QTableView::customContextMenuRequested, this,
+           &ResultGridView::showCellContextMenu);
     layout->addWidget(tableView_, 1);
 
     statusLabel_ = new QLabel(this);
@@ -116,6 +122,8 @@ ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *p
                   [this]() { cloneSelectedRow(); });
     windowShortcut(this, appSettings, QStringLiteral("database.previewDml"),
                   [this]() { previewDml(); });
+    windowShortcut(this, appSettings, QStringLiteral("database.goToReferencedRow"),
+                  [this]() { goToReferencedRow(); });
 
     updateActionsEnabled();
 }
@@ -127,6 +135,9 @@ void ResultGridView::setResultId(quint64 resultId)
     statusLabel_->setText(tr("Running…"));
     editableBanner_->setVisible(false);
     updateActionsEnabled();
+    if (onResultAdopted_) {
+        onResultAdopted_(resultId);
+    }
 }
 
 void ResultGridView::rowsAppended(quint64 resultId, quint64 first, quint64 count)
@@ -296,6 +307,56 @@ void ResultGridView::openValueEditor(const QModelIndex &index)
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     connect(dialog, &QDialog::accepted, this, [this]() { model_->refreshRows(); });
     dialog->exec();
+}
+
+void ResultGridView::showCellContextMenu(const QPoint &pos)
+{
+    navigateFromIndex(tableView_->indexAt(pos), tableView_->viewport()->mapToGlobal(pos));
+}
+
+void ResultGridView::goToReferencedRow()
+{
+    const QModelIndex index = tableView_->currentIndex();
+    navigateFromIndex(index, tableView_->viewport()->mapToGlobal(
+                              tableView_->visualRect(index).center()));
+}
+
+void ResultGridView::navigateFromIndex(const QModelIndex &index, const QPoint &globalPos)
+{
+    if (resultId_ == 0 || !index.isValid()) {
+        return;
+    }
+    const QString column = model_->columnNameAt(index.column());
+    if (column.isEmpty()) {
+        return;
+    }
+    const auto targets = consoleService_->cellNavigation(resultId_, quint64(index.row()), column);
+    if (targets.empty()) {
+        return;
+    }
+    QMenu menu(this);
+    for (const FfiDbNavTarget &target : targets) {
+        QAction *action = menu.addAction(QString(target.label));
+        connect(action, &QAction::triggered, this, [this, target]() { goToNavTarget(target); });
+    }
+    menu.exec(globalPos);
+}
+
+void ResultGridView::goToNavTarget(const FfiDbNavTarget &target)
+{
+    const FfiResult result = consoleService_->goToNavTarget(resultId_, target);
+    if (result.code != 0) {
+        statusLabel_->setText(QString(result.message));
+        return;
+    }
+    // The new result id travels back in `message` — same convention as
+    // `applyClauses`. Replaces this grid's own page with the target row,
+    // still inside the same console tab.
+    bool parsed = false;
+    const quint64 newId = QString(result.message).toULongLong(&parsed);
+    if (parsed) {
+        setResultId(newId);
+    }
 }
 
 bool ResultGridView::eventFilter(QObject *watched, QEvent *event)

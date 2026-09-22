@@ -105,7 +105,13 @@ DatabaseResultsPanel::ConsolePage &DatabaseResultsPanel::pageFor(quint64 tabId)
     page.output = new QPlainTextEdit(page.root);
     page.output->setReadOnly(true);
     page.subTabs->addTab(page.output, tr("Output"));
-    page.grid = new ResultGridView(consoleService_, resultProvider_, appSettings_, page.root);
+    // F4c: `applyClauses`/`goToNavTarget` hand this grid a fresh result id
+    // directly (never through `executionStarted`), so `resultTab_` must
+    // learn the mapping here too — otherwise that new id's own
+    // `rowsAppended`/`executionFinished` would have nowhere to route to.
+    page.grid = new ResultGridView(
+      consoleService_, resultProvider_, appSettings_, page.root,
+      [this, tabId](quint64 resultId) { resultTab_.insert(resultId, tabId); });
     page.subTabs->addTab(page.grid, tr("Result"));
     layout->addWidget(page.subTabs);
 

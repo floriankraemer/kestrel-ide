@@ -4,8 +4,11 @@
 
 #include <QWidget>
 
+#include <functional>
+
 class QLabel;
 class QLineEdit;
+class QPoint;
 class QSpinBox;
 class QTableView;
 class QToolButton;
@@ -26,8 +29,16 @@ class ResultTableModel;
 class ResultGridView : public QWidget
 {
 public:
+    // `onResultAdopted`, if given, fires every time this grid starts
+    // showing a *different* result id — including one this widget itself
+    // discovered, not just `executionStarted`'s own (`applyClauses`'/
+    // `goToNavTarget`'s new result id arrives back in an `FfiResult`
+    // message, never through `executionStarted`, so without this callback
+    // `DatabaseResultsPanel::resultTab_` never learns to route that id's
+    // `rowsAppended`/`executionFinished` back to this grid at all).
     ResultGridView(ConsoleService *consoleService, ResultProvider *provider,
-                  AppSettings *appSettings, QWidget *parent);
+                  AppSettings *appSettings, QWidget *parent,
+                  std::function<void(quint64)> onResultAdopted = {});
 
     // Switches the view to a fresh result — `executionStarted`'s handler.
     void setResultId(quint64 resultId);
@@ -56,6 +67,15 @@ private:
     void previewDml();
     void openValueEditor(const QModelIndex &index);
     void updateActionsEnabled();
+    // F4.3/F4c's forward FK navigation: the current cell's context menu
+    // ("Go to referenced row ▸ <table>", `pos` in `tableView_` viewport
+    // coordinates) and its `F4` shortcut equivalent (current cell, no
+    // `pos`) — both resolve targets through `ConsoleService::
+    // cellNavigation` and run the chosen one through `goToNavTarget`.
+    void showCellContextMenu(const QPoint &pos);
+    void goToReferencedRow();
+    void navigateFromIndex(const QModelIndex &index, const QPoint &globalPos);
+    void goToNavTarget(const FfiDbNavTarget &target);
 
     ConsoleService *consoleService_;
     ResultProvider *provider_;
@@ -73,6 +93,7 @@ private:
     QLabel *editableBanner_;
     QLabel *statusLabel_;
     quint64 resultId_ = 0;
+    std::function<void(quint64)> onResultAdopted_;
 };
 
 } // namespace ui_shell

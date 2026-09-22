@@ -35,10 +35,30 @@ public:
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     int columnCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
+    bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
+    Qt::ItemFlags flags(const QModelIndex &index) const override;
     QVariant headerData(int section, Qt::Orientation orientation,
                         int role = Qt::DisplayRole) const override;
     bool canFetchMore(const QModelIndex &parent) const override;
     void fetchMore(const QModelIndex &parent) override;
+
+    // Re-reads the row count and drops every cached page — called after
+    // addRow/cloneRow/deleteRows/revert, all of which change the buffer's
+    // own row shape server-side in ways a single cached page cannot track
+    // incrementally.
+    void refreshRows();
+
+    // Re-reads `provider_->isEditable`/`notEditableReason` — called once a
+    // fresh result's editability decision lands (`ConsoleService::
+    // editabilityChanged`), since that answer is not known yet when
+    // `setResultId` first runs (F4.1's own async `Full`-level introspect).
+    void refreshEditability();
+    bool isEditable() const { return editable_; }
+    QString notEditableReason() const { return notEditableReason_; }
+
+    // The column name at `index` — `ValueEditorDialog`'s own lookup, so it
+    // never has to re-derive column order itself.
+    QString columnNameAt(int column) const;
 
 private:
     struct Page
@@ -62,6 +82,9 @@ private:
     mutable QVector<Page> pages_;
     static constexpr int kPageSize = 200;
     static constexpr int kMaxCachedPages = 50;
+
+    bool editable_ = false;
+    QString notEditableReason_;
 };
 
 } // namespace ui_shell

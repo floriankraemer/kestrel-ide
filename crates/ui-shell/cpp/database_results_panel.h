@@ -62,10 +62,14 @@ private:
     void onRowsAppended(quint64 resultId, quint64 first, quint64 count);
     void onExecutionFinished(quint64 resultId, bool ok, quint64 affected, quint64 elapsedMs,
                              FfiDbError error);
+    void onEditabilityChanged(quint64 resultId, bool editable, const QString &reason);
+    void onSubmitFinished(quint64 resultId, bool ok, const QString &message);
+    void onResultRefreshed(quint64 oldResultId, quint64 newResultId);
 
     EditorTabs *editorTabs_;
     ConsoleService *consoleService_;
     ResultProvider *resultProvider_;
+    AppSettings *appSettings_;
     DatabaseConsoleBar *bar_;
     QTabWidget *consoleTabs_;
     QHash<quint64, ConsolePage> pages_;

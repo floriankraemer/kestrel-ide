@@ -1,9 +1,16 @@
 #include "result_table_model.h"
 
+#include <QColor>
+
 namespace ui_shell {
 
 namespace {
 constexpr QChar kCellSeparator(0x1f); // unit separator — matches console.rs's `CELL_SEP`.
+
+// `db_core::dml::EditBuffer::row_flags`'s own bit layout.
+constexpr quint8 kFlagEdited = 1 << 0;
+constexpr quint8 kFlagDeleted = 1 << 1;
+constexpr quint8 kFlagInserted = 1 << 2;
 
 QStringList splitField(const QString &joined)
 {
@@ -28,6 +35,29 @@ void ResultTableModel::setResultId(quint64 resultId)
     columns_ = provider_->columns(resultId_);
     pages_.clear();
     endResetModel();
+    refreshEditability();
+}
+
+void ResultTableModel::refreshRows()
+{
+    beginResetModel();
+    rowCount_ = provider_->rowCount(resultId_);
+    pages_.clear();
+    endResetModel();
+}
+
+void ResultTableModel::refreshEditability()
+{
+    editable_ = provider_->isEditable(resultId_);
+    notEditableReason_ = QString(provider_->notEditableReason(resultId_));
+}
+
+QString ResultTableModel::columnNameAt(int column) const
+{
+    if (column < 0 || column >= int(columns_.size())) {
+        return {};
+    }
+    return QString(columns_[column].name);
 }
 
 void ResultTableModel::rowsAppended(quint64 first, quint64 count)
@@ -80,7 +110,10 @@ void ResultTableModel::ensurePage(int row) const
 
 QVariant ResultTableModel::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid() || role != Qt::DisplayRole) {
+    if (!index.isValid()) {
+        return {};
+    }
+    if (role != Qt::DisplayRole && role != Qt::EditRole && role != Qt::BackgroundRole) {
         return {};
     }
     ensurePage(index.row());
@@ -93,11 +126,55 @@ QVariant ResultTableModel::data(const QModelIndex &index, int role) const
         return {};
     }
     const FfiDbRow &row = page->rows[offset];
+    if (role == Qt::BackgroundRole) {
+        if (row.flags & kFlagDeleted) {
+            return QColor(255, 205, 210); // light red
+        }
+        if (row.flags & kFlagInserted) {
+            return QColor(200, 230, 201); // light green
+        }
+        if (row.flags & kFlagEdited) {
+            return QColor(255, 249, 196); // light yellow
+        }
+        return {};
+    }
     const QStringList cells = splitField(QString(row.cells));
     if (index.column() >= cells.size()) {
         return {};
     }
     return cells.at(index.column());
+}
+
+bool ResultTableModel::setData(const QModelIndex &index, const QVariant &value, int role)
+{
+    if (!index.isValid() || role != Qt::EditRole) {
+        return false;
+    }
+    const QString column = columnNameAt(index.column());
+    if (column.isEmpty()) {
+        return false;
+    }
+    const FfiResult result =
+      provider_->setCell(resultId_, quint64(index.row()), column, value.toString());
+    if (result.code != 0) {
+        return false;
+    }
+    // The buffer's own state changed server-side; this cell's row (row
+    // highlight) and value both need a fresh read next time they are
+    // shown — evicting just this row's cached page is enough, no full
+    // reset (unlike `refreshRows`, which also picks up a row-count change).
+    pages_.clear();
+    emit dataChanged(index, index, {Qt::DisplayRole, Qt::BackgroundRole});
+    return true;
+}
+
+Qt::ItemFlags ResultTableModel::flags(const QModelIndex &index) const
+{
+    Qt::ItemFlags base = QAbstractTableModel::flags(index);
+    if (index.isValid() && editable_) {
+        base |= Qt::ItemIsEditable;
+    }
+    return base;
 }
 
 QVariant ResultTableModel::headerData(int section, Qt::Orientation orientation, int role) const

@@ -717,8 +717,6 @@ private:
     // every page (the editor font, the editor colours) need this too.
     void forEachHexViewer(const std::function<void(HexViewer *)> &apply) const;
 
-    void focusTab(quint64 tabId);
-
     // One tab group: everything a group needs to behave like the single tab
     // strip used to, plus the context menu and the "clicking me activates
     // me" wiring.
@@ -936,6 +934,12 @@ private:
     // this class.
 public:
     void onTabOpened(quint64 tabId, const QString &title);
+
+    // Public for the same reason: `DatabaseResultsPanel` wires
+    // `ConsoleService::virtualDocumentOpened` itself (F4.2's DML preview)
+    // rather than growing `editor_tabs.cpp`'s own constructor, which is at
+    // its file-size ceiling.
+    void focusTab(quint64 tabId);
 
     // `diffPanel_`'s `DiffClosed` callback: pulls the editor back out of
     // `page` (the closed diff's tab, about to be deleted) and puts it back

@@ -10389,6 +10389,24 @@ mod ffi {
         flags: u8,
     }
 
+    /// F4.3's FK navigation (`ConsoleService::cellNavigation`): one target
+    /// a cell offers, already resolved to a runnable statement — never a
+    /// raw table/column pair the view would have to assemble SQL from
+    /// itself (`CLAUDE.md`'s humble-view rule).
+    struct FfiDbNavTarget {
+        /// The context-menu label, e.g. `"Go to customers.id"` (forward)
+        /// or `"5 rows in orders.customer_id"` (reverse, `count` already
+        /// known).
+        label: QString,
+        /// A complete, already-bound `SELECT` — the cell's own value
+        /// rendered through `db_core::value::Value::sql_literal`, never
+        /// user-typed text (`ADR-0061` §1's "never interpolate untrusted
+        /// text" is unaffected: this value came from a result the driver
+        /// already returned, not from anything a user typed into this
+        /// call).
+        statement: QString,
+    }
+
     extern "RustQt" {
         /// One console tab's execution engine (F3.1/F3.3): a dedicated
         /// `SessionWorker` per attached tab (never the Database dock's
@@ -10600,6 +10618,74 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "resultRefreshed"]
         fn result_refreshed(self: Pin<&mut ConsoleService>, old_result_id: u64, new_result_id: u64);
+
+        // ---- database: F4b ----
+
+        /// F4.3's exact aggregate: re-runs `column`'s `op` as `SELECT
+        /// op(col), COUNT(*) FROM (<result's own statement>) t` over its
+        /// own short-lived connection (`bridge::database::edit`'s own doc
+        /// comment on why not the console's shared worker) — the outcome
+        /// arrives asynchronously through `aggregateComputed`, unlike
+        /// `ResultProvider::aggregate`'s synchronous fetched-rows-only
+        /// estimate.
+        #[qinvokable]
+        #[cxx_name = "aggregateExact"]
+        fn aggregate_exact(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            column: &QString,
+            op: FfiDbAggOp,
+        ) -> FfiResult;
+
+        /// `aggregateExact`'s outcome: `value` is the aggregate's own
+        /// display text on success (`ok`) or an error message otherwise;
+        /// `row_count` is the whole result's row count (`COUNT(*)` over
+        /// the same derived table), for the footer's "computed over all N
+        /// rows" text.
+        #[qsignal]
+        #[cxx_name = "aggregateComputed"]
+        fn aggregate_computed(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            column: QString,
+            op: FfiDbAggOp,
+            ok: bool,
+            value: QString,
+            row_count: u64,
+        );
+
+        /// F4.3's FK navigation, forward direction only this pass ("Show
+        /// referencing rows…" needs a whole-schema FK index this result's
+        /// own `Full`-level table introspect does not fetch — left out,
+        /// see `bridge::database::edit`'s own doc comment): every target
+        /// `row`/`column`'s cell offers, decided from the table's own
+        /// constraint detail (`db_core::schema::ConstraintKind`, F6c) —
+        /// empty when the result is not a single-table result, the column
+        /// is not part of a foreign key, or the constraint detail is not
+        /// in hand yet (the same `Full`-level introspect F4.1's
+        /// editability check already triggers backs this — a result
+        /// offers navigation exactly when it offers editing, since both
+        /// need the same snapshot).
+        #[qinvokable]
+        #[cxx_name = "cellNavigation"]
+        fn cell_navigation(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> Vec<FfiDbNavTarget>;
+
+        /// Runs `target`'s own statement (already bound — `db_core::ddl`'s
+        /// own "never interpolate" rule) as a fresh result on `result_id`'s
+        /// console, same as `applyClauses` — the new result id, in
+        /// `message`, same convention.
+        #[qinvokable]
+        #[cxx_name = "goToNavTarget"]
+        fn go_to_nav_target(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            target: &FfiDbNavTarget,
+        ) -> FfiResult;
     }
 
     impl cxx_qt::Threading for ConsoleService {}

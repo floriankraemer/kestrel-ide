@@ -268,6 +268,7 @@ impl ffi::ConsoleService {
                 elapsed_ms: None,
                 statement_text: statement_text.clone(),
                 edit: EditState::Unknown,
+                table_constraints: Vec::new(),
             },
         );
         shared.consoles.get_mut(&tab_id).unwrap().current_result = Some(new_id);
@@ -322,6 +323,10 @@ pub(crate) fn apply_edit_lookup(
             .unwrap_or_default();
         (policy, columns)
     };
+    let constraints = match &result {
+        Ok(snapshot) => table_constraints(snapshot, &table),
+        Err(_) => Vec::new(),
+    };
     let edit = match result {
         Ok(snapshot) => resolve_editability(&snapshot, &table, &columns, &no_pk_policy),
         Err(error) => EditState::NotEditable(error.to_string()),
@@ -333,6 +338,7 @@ pub(crate) fn apply_edit_lookup(
     };
     if let Some(r) = service.shared.borrow_mut().results.get_mut(&result_id) {
         r.edit = edit;
+        r.table_constraints = constraints;
     }
     service
         .as_mut()
@@ -345,6 +351,28 @@ pub(crate) fn apply_edit_lookup(
 /// `Full`-level introspection), keeps only the primary-key columns that
 /// are actually present in `columns` (the result's own projection — a
 /// key column the query never selected cannot be bound into a `WHERE`),
+/// Every [`db_core::schema::ConstraintKind`] `table`'s own `Constraint`
+/// children carry (F4.3's FK navigation) — the table node's own
+/// `Constraint`-kind children hold one each (`db_core::schema`'s own
+/// per-backend introspection, F6c), not the column children
+/// `resolve_editability` reads `primary_key`/`nullable` detail from.
+fn table_constraints(
+    snapshot: &db_core::schema::SchemaSnapshot,
+    table: &db_sql::single_table::TableRef,
+) -> Vec<db_core::schema::ConstraintKind> {
+    let Some(node) = snapshot.roots.iter().find(|n| n.name == table.name) else {
+        return Vec::new();
+    };
+    let db_core::schema::Children::Loaded(children) = &node.children else {
+        return Vec::new();
+    };
+    children
+        .iter()
+        .filter(|child| child.kind == db_core::schema::ObjectKind::Constraint)
+        .filter_map(|child| child.detail.constraint.clone())
+        .collect()
+}
+
 /// and applies `no_pk_policy` (`"refuse"` or `"all_columns_where"`, F4.2)
 /// when none remain.
 fn resolve_editability(
@@ -800,6 +828,46 @@ mod tests {
         )
     }
 
+    #[test]
+    fn table_constraints_reads_the_table_s_own_constraint_children() {
+        let fk = db_core::schema::ConstraintKind::ForeignKey {
+            columns: vec!["customer_id".to_string()],
+            ref_table: db_core::schema::ObjectRef::new("customers"),
+            ref_columns: vec!["id".to_string()],
+            on_delete: None,
+            on_update: None,
+        };
+        let snapshot = db_core::schema::SchemaSnapshot::new(
+            db_core::schema::IntrospectLevel::Full,
+            vec![db_core::schema::Node::with_children(
+                "users",
+                db_core::schema::ObjectKind::Table,
+                vec![
+                    db_core::schema::Node::leaf("id", db_core::schema::ObjectKind::Column),
+                    db_core::schema::Node::leaf("users_fk_0", db_core::schema::ObjectKind::Constraint)
+                        .with_detail(db_core::schema::NodeDetail {
+                            constraint: Some(fk.clone()),
+                            ..Default::default()
+                        }),
+                ],
+            )],
+        );
+        let constraints = table_constraints(&snapshot, &table_ref());
+        assert_eq!(constraints, vec![fk]);
+    }
+
+    #[test]
+    fn table_constraints_is_empty_for_a_missing_table() {
+        let snapshot = db_core::schema::SchemaSnapshot::new(
+            db_core::schema::IntrospectLevel::Full,
+            vec![db_core::schema::Node::leaf(
+                "other",
+                db_core::schema::ObjectKind::Table,
+            )],
+        );
+        assert!(table_constraints(&snapshot, &table_ref()).is_empty());
+    }
+
     fn table_ref() -> db_sql::single_table::TableRef {
         db_sql::single_table::TableRef {
             schema: None,
@@ -926,6 +994,7 @@ mod tests {
                 elapsed_ms: None,
                 statement_text: "SELECT * FROM t".to_string(),
                 edit,
+                table_constraints: Vec::new(),
             },
         );
         result_id

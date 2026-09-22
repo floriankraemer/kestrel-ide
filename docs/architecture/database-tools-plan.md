@@ -373,15 +373,15 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 |---|---|---|
 | F5.1 — export formats (csv/tsv/json/sql/html/markdown/xlsx) | done | `f82b85c`, F5b UI `79674cc` |
 | F5.2 — CSV/XLSX import mapping | done | `8d0f4ec`, F5b UI `79674cc` |
-| F5.3 — dump via `process-exec` (restore not implemented — §11) | partial (dump real, `ExchangeService`'s own job signals rather than the Run dock — deviation recorded in database-tools.md §4/§11; restore is open debt) | `03dd760`, F5b UI `79674cc` |
+| F5.3 — dump via `process-exec`; restore (F6c: `restore_command` + `spawn_with_stdin`) | done (dump and restore both real; `ExchangeService`'s own job signals rather than the Run dock — deviation recorded in database-tools.md §4/§11) | `03dd760`, F5b UI `79674cc`, F6c restore `0685470`/`a2fe428`/`2ca4a67` |
 | F5.4 — copy table between sources | done | `59d08e3`, F5b UI `79674cc` |
 
 ### F6 — diagrams + compare
 
 | Task | Status | Commit |
 |---|---|---|
-| F6.1 — ER diagram → Mermaid `erDiagram` → its own dialog (not the Preview dock — deviation recorded in database-tools.md §4/§11) | done | `8720907`, F6b UI `79674cc` |
-| F6.2 — schema compare → `MigrationScript` on `DiffView` | done | `23433f7`, F6b UI `79674cc` |
+| F6.1 — ER diagram → Mermaid `erDiagram`, real cardinality (F6c), previewable in its own dialog *and* the tab-following Preview dock (F6c) | done | `8720907`, F6b UI `79674cc`, F6c `12d5b58`/`26cd294` |
+| F6.2 — schema compare → `MigrationScript` on `DiffView`; structural index/constraint diff (F6c) | done | `23433f7`, F6b UI `79674cc`, F6c `12d5b58` |
 | F6.3 — data compare → canonical TSV per side on `DiffView` | done | `a126594`, F6b UI `79674cc` |
 
 ### F7 — NoSQL + SSH fallback

@@ -63,6 +63,13 @@ fn to_ffi_actions(actions: ActionSet) -> FfiDbRowActions {
         can_comment: actions.contains(ActionSet::COMMENT),
         can_generate_ddl: actions.contains(ActionSet::GENERATE_DDL),
         can_er_diagram: actions.contains(ActionSet::ER_DIAGRAM),
+        can_export_data: actions.contains(ActionSet::EXPORT_DATA),
+        can_import_data: actions.contains(ActionSet::IMPORT_DATA),
+        can_copy_table: actions.contains(ActionSet::COPY_TABLE),
+        // Source-level-only actions (F5b.3): never set from an object's
+        // own `ActionSet` — see `service.rs::rows`'s own root row.
+        can_dump: false,
+        can_compare: false,
     }
 }
 

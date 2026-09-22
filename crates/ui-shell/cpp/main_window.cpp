@@ -151,7 +151,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    AnalysisService *analysisService,
                                    ContainerService *containerService,
                                    BuildToolsService *buildToolsService, DatabaseService *databaseService,
-                                   ConsoleService *consoleService, ResultProvider *resultProvider)
+                                   ExchangeService *exchangeService, ConsoleService *consoleService,
+                                   ResultProvider *resultProvider)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -385,7 +386,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
     auto [buildToolsPanel, containersPanel, databasePanel] = buildContributedToolWindows(
-      appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService, consoleService, resultProvider);
+      appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService, exchangeService, consoleService, resultProvider);
 
     // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -702,6 +703,7 @@ void buildMainWindow(AppSettings *appSettings,
     auto *testService = new TestService(window); // PHP tooling D4: same rule.
     auto *containerService = new ContainerService(window); // C2: connects nothing until asked.
     auto *databaseService = new DatabaseService(window); // F2.5: connects nothing until asked.
+    auto *exchangeService = new ExchangeService(window); // F5b: export/import/dump/compare jobs.
     auto *consoleService = new ConsoleService(window); // F3.1: console execution.
     auto *resultProvider = new ResultProvider(window);  // F3.4: its result grid.
     auto *buildToolsService = new BuildToolsService(window); // B1: nothing runs until asked.
@@ -733,7 +735,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
                           buildService, debugService, testService, previewProvider,
-                          analysisService, containerService, buildToolsService, databaseService, consoleService, resultProvider);
+                          analysisService, containerService, buildToolsService, databaseService, exchangeService, consoleService, resultProvider);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5

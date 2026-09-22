@@ -38,8 +38,8 @@ class DatabaseResultsPanel : public QWidget
 {
 public:
     DatabaseResultsPanel(EditorTabs *editorTabs, ConsoleService *consoleService,
-                         ResultProvider *resultProvider, AppSettings *appSettings,
-                         QWidget *parent);
+                         ResultProvider *resultProvider, ExchangeService *exchangeService,
+                         AppSettings *appSettings, QWidget *parent);
 
     // Switches to `tabId`'s page if one exists — never creates one, so
     // merely browsing to a `.sql` file that has not attached yet does not
@@ -53,6 +53,11 @@ private:
         QTabWidget *subTabs;
         QPlainTextEdit *output;
         ResultGridView *grid;
+        // The result currently shown in `grid` — `exportButton_`'s click
+        // handler needs it and `ResultGridView` exposes no accessor of its
+        // own (F4a's file; not this phase's to extend), so it is tracked
+        // here from the same `executionStarted` that already feeds `grid`.
+        quint64 currentResultId = 0;
     };
 
     ConsolePage &pageFor(quint64 tabId);
@@ -62,10 +67,12 @@ private:
     void onRowsAppended(quint64 resultId, quint64 first, quint64 count);
     void onExecutionFinished(quint64 resultId, bool ok, quint64 affected, quint64 elapsedMs,
                              FfiDbError error);
+    void exportCurrentResult(quint64 tabId);
 
     EditorTabs *editorTabs_;
     ConsoleService *consoleService_;
     ResultProvider *resultProvider_;
+    ExchangeService *exchangeService_;
     DatabaseConsoleBar *bar_;
     QTabWidget *consoleTabs_;
     QHash<quint64, ConsolePage> pages_;
@@ -81,6 +88,7 @@ DatabaseResultsPanel *buildDatabaseResultsDock(ads::CDockManager *dockManager, D
                                                EditorTabs *editorTabs,
                                                ConsoleService *consoleService,
                                                ResultProvider *resultProvider,
+                                               ExchangeService *exchangeService,
                                                AppSettings *appSettings);
 
 } // namespace ui_shell

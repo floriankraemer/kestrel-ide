@@ -282,6 +282,8 @@ impl ffi::DatabaseService {
                 loaded: true,
                 actions: FfiDbRowActions {
                     can_refresh: true,
+                    can_dump: true,
+                    can_compare: true,
                     ..Default::default()
                 },
             });

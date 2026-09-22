@@ -42,7 +42,8 @@ class DatabasePanel : public QWidget
 public:
     using OpenSettings = std::function<void()>;
 
-    DatabasePanel(DatabaseService *databaseService, QWidget *parent);
+    DatabasePanel(DatabaseService *databaseService, ExchangeService *exchangeService,
+                 DocumentManager *documentManager, QWidget *parent);
 
     void setOpenSettingsHandler(OpenSettings handler);
 
@@ -57,6 +58,8 @@ private:
     QString selectedNodeId() const;
 
     DatabaseService *databaseService_;
+    ExchangeService *exchangeService_;
+    DocumentManager *documentManager_;
     OpenSettings openSettings_;
 
     QToolButton *addButton_ = nullptr;
@@ -78,6 +81,8 @@ private:
     struct RowInfo
     {
         QString label;
+        QString sourceId;
+        bool isSourceRoot = false;
         bool canOpenConsole = false;
         bool canEditData = false;
         bool canGoToDdl = false;
@@ -87,6 +92,12 @@ private:
         bool canDrop = false;
         bool canTruncate = false;
         bool canComment = false;
+        bool canErDiagram = false;
+        bool canExportData = false;
+        bool canImportData = false;
+        bool canCopyTable = false;
+        bool canDump = false;
+        bool canCompare = false;
     };
     QHash<QString, RowInfo> rowInfoById_;
 };
@@ -96,6 +107,7 @@ private:
 // `buildContainersDock`/`buildBuildToolsDock` use.
 DatabasePanel *buildDatabaseDock(ads::CDockManager *dockManager, DockRegistry *docks,
                                 ads::CDockAreaWidget *relativeTo,
-                                DatabaseService *databaseService);
+                                DatabaseService *databaseService, ExchangeService *exchangeService,
+                                DocumentManager *documentManager);
 
 } // namespace ui_shell

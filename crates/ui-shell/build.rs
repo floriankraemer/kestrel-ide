@@ -749,6 +749,9 @@ fn main() {
         // own page, registered alongside the container-kind pages above.
         .cpp_file("cpp/run_config_sql_page.h")
         .cpp_file("cpp/run_config_sql_page.cpp")
+        // database-tools-plan F5b: export/import/dump/copy-table/ER
+        // diagram/schema-and-data-compare dialogs.
+        .cpp_file("cpp/database_exchange_actions.cpp")
         .include_dir("cpp")
         .include_dir(ads_dir)
         .cpp_file(compile_ads_qrc(ads_dir, &tool_dirs))

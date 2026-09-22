@@ -20,6 +20,8 @@ pub mod console;
 // ---- database: F8b ----
 pub mod backend;
 pub mod drivers;
+// ---- database: F5b ----
+pub mod exchange;
 
 pub use service::DatabaseServiceRust;
 

@@ -9477,6 +9477,7 @@ dependencies = [
  "db-driver-adbc",
  "db-driver-odbc",
  "db-drivers",
+ "db-exchange",
  "db-sql",
  "diagnostics-core",
  "dirs",

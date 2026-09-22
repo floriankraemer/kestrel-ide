@@ -308,6 +308,41 @@ impl ffi::DocumentManager {
         id.raw()
     }
 
+    /// Open a read-only virtual document (C12's mechanism, generalised
+    /// for F5b: an ER diagram's Mermaid text, a schema-compare migration
+    /// script) — any caller that already has `scheme`/`key`/`text` in
+    /// hand, not only `LanguageService`'s own C# metadata fetch this
+    /// existed for. Focuses the existing tab rather than duplicating one
+    /// for the same `(scheme, key)`, same as `openFile`/`openDiffTab`.
+    pub fn open_virtual_document(
+        mut self: Pin<&mut Self>,
+        scheme: &QString,
+        key: &QString,
+        text: &QString,
+    ) -> u64 {
+        let opened = self.session.borrow_mut().open_virtual_document(
+            &scheme.to_string(),
+            &key.to_string(),
+            &text.to_string(),
+        );
+        // `EditorTabs` already listens to `tabOpened` generically
+        // (`connect(docManager_, &DocumentManager::tabOpened, ...)`, not
+        // per-service the way `DatabaseService::virtualDocumentOpened`
+        // needs its own connection) — a brand-new tab is built from that
+        // alone. Re-opening the same `(scheme, key)` focuses no tab of
+        // its own accord (`focusTab` is a private `EditorTabs` slot no
+        // signal reaches from here); a caller that reruns e.g. the ER
+        // diagram on an already-open diagram tab gets its text refreshed
+        // but not re-focused — a minor, deliberately accepted gap rather
+        // than growing `editor_tabs.cpp` (at its file-size ceiling) for
+        // it.
+        if opened.newly_opened {
+            self.as_mut()
+                .tab_opened(opened.id.raw(), QString::from(opened.title.as_str()));
+        }
+        opened.id.raw()
+    }
+
     pub fn diff_left_label(&self, tab_id: u64) -> QString {
         self.session
             .borrow()

@@ -6,6 +6,7 @@
 #include "database_panel.h"
 #include "database_results_panel.h"
 #include "dock_layout.h"
+#include "editor_tabs.h"
 #include "keymap_page.h"
 
 #include "DockAreaWidget.h"
@@ -36,8 +37,8 @@ ContributedToolWindows buildContributedToolWindows(
     ads::CDockWidget *editorDock, BuildToolsService *buildToolsService, RunService *runService,
     ProjectTreeModel *treeModel, EditorTabs *editorTabs, ContainerService *containerService,
     TerminalSupervisor *terminalSupervisor, ContainersPanel::OpenAt containersOpenAt,
-    DatabaseService *databaseService, ConsoleService *consoleService,
-    ResultProvider *resultProvider)
+    DatabaseService *databaseService, ExchangeService *exchangeService,
+    ConsoleService *consoleService, ResultProvider *resultProvider)
 {
     QHash<QString, DockFactory> factories;
     factories.insert(
@@ -55,16 +56,17 @@ ContributedToolWindows buildContributedToolWindows(
                                      terminalSupervisor, appSettings, containersOpenAt);
       });
     factories.insert(QStringLiteral("database"),
-                     [dockManager, docks, databaseService](ads::CDockAreaWidget *relativeTo)
-                       -> QWidget * {
-                         return buildDatabaseDock(dockManager, docks, relativeTo, databaseService);
+                     [dockManager, docks, databaseService, exchangeService, editorTabs](
+                       ads::CDockAreaWidget *relativeTo) -> QWidget * {
+                         return buildDatabaseDock(dockManager, docks, relativeTo, databaseService,
+                                                  exchangeService, editorTabs->documentManager());
                      });
     factories.insert(
       QStringLiteral("databaseResults"),
-      [dockManager, docks, editorTabs, consoleService, resultProvider,
+      [dockManager, docks, editorTabs, consoleService, resultProvider, exchangeService,
        appSettings](ads::CDockAreaWidget *relativeTo) -> QWidget * {
           return buildDatabaseResultsDock(dockManager, docks, relativeTo, editorTabs,
-                                          consoleService, resultProvider, appSettings);
+                                          consoleService, resultProvider, exchangeService, appSettings);
       });
 
     ContributedToolWindows built;

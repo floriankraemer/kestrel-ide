@@ -61,8 +61,8 @@ ContributedToolWindows buildContributedToolWindows(
     ads::CDockWidget *editorDock, BuildToolsService *buildToolsService, RunService *runService,
     ProjectTreeModel *treeModel, EditorTabs *editorTabs, ContainerService *containerService,
     TerminalSupervisor *terminalSupervisor, ContainersPanel::OpenAt containersOpenAt,
-    DatabaseService *databaseService, ConsoleService *consoleService,
-    ResultProvider *resultProvider);
+    DatabaseService *databaseService, ExchangeService *exchangeService,
+    ConsoleService *consoleService, ResultProvider *resultProvider);
 
 // The View menu's `view.<id>` toggle actions for every contributed tool
 // window, with the contributed title passed through as-is (it is plugin

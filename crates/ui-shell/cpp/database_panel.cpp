@@ -1,5 +1,6 @@
 #include "database_panel.h"
 
+#include "database_exchange_actions.h"
 #include "dock_layout.h"
 
 #include "DockAreaWidget.h"
@@ -70,9 +71,12 @@ QIcon rowIcon(const QWidget *widget, const QString &kind)
 
 } // namespace
 
-DatabasePanel::DatabasePanel(DatabaseService *databaseService, QWidget *parent)
+DatabasePanel::DatabasePanel(DatabaseService *databaseService, ExchangeService *exchangeService,
+                             DocumentManager *documentManager, QWidget *parent)
   : QWidget(parent)
   , databaseService_(databaseService)
+  , exchangeService_(exchangeService)
+  , documentManager_(documentManager)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(4, 4, 4, 4);
@@ -195,6 +199,8 @@ void DatabasePanel::rebuildTree()
 
         RowInfo info;
         info.label = QString(row.label);
+        info.sourceId = QString(row.sourceId);
+        info.isSourceRoot = QString(row.kind) == QLatin1String("source");
         info.canOpenConsole = row.actions.canOpenConsole;
         info.canEditData = row.actions.canEditData;
         info.canGoToDdl = row.actions.canGoToDdl;
@@ -204,6 +210,12 @@ void DatabasePanel::rebuildTree()
         info.canDrop = row.actions.canDrop;
         info.canTruncate = row.actions.canTruncate;
         info.canComment = row.actions.canComment;
+        info.canErDiagram = row.actions.canErDiagram;
+        info.canExportData = row.actions.canExportData;
+        info.canImportData = row.actions.canImportData;
+        info.canCopyTable = row.actions.canCopyTable;
+        info.canDump = row.actions.canDump;
+        info.canCompare = row.actions.canCompare;
         rowInfoById_.insert(nodeId, info);
     }
 
@@ -256,6 +268,21 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
     QAction *dropAction = info.canDrop ? menu.addAction(tr("Drop…")) : nullptr;
     QAction *truncateAction = info.canTruncate ? menu.addAction(tr("Truncate…")) : nullptr;
     QAction *commentAction = info.canComment ? menu.addAction(tr("Comment…")) : nullptr;
+    if (info.canExportData || info.canImportData || info.canCopyTable || info.canErDiagram
+        || info.canDump || info.canCompare) {
+        menu.addSeparator();
+    }
+    QAction *exportData = info.canExportData ? menu.addAction(tr("Export Data…")) : nullptr;
+    QAction *importData = info.canImportData ? menu.addAction(tr("Import Data…")) : nullptr;
+    QAction *copyTableTo = info.canCopyTable ? menu.addAction(tr("Copy Table to…")) : nullptr;
+    QAction *erDiagram = info.canErDiagram ? menu.addAction(tr("ER Diagram")) : nullptr;
+    // No `ActionSet::COMPARE_DATA` bit of its own: exactly the same
+    // "this row is a real table" condition `COPY_TABLE` already encodes,
+    // reused rather than adding a second flag that would always equal
+    // the first.
+    QAction *compareData = info.canCopyTable ? menu.addAction(tr("Compare Data with…")) : nullptr;
+    QAction *dumpAction = info.canDump ? menu.addAction(tr("Dump…")) : nullptr;
+    QAction *compareStructure = info.canCompare ? menu.addAction(tr("Compare Structure with…")) : nullptr;
     if (menu.actions().isEmpty()) {
         return;
     }
@@ -302,6 +329,27 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
         if (ok) {
             report(databaseService_->runAction(nodeId, QStringLiteral("comment:%1").arg(text)));
         }
+    } else if (chosen == exportData) {
+        showExportDataDialog(this, exchangeService_, info.sourceId, info.label);
+    } else if (chosen == importData) {
+        showImportDataDialog(this, exchangeService_, info.sourceId, info.label);
+    } else if (chosen == copyTableTo) {
+        showCopyTableDialog(this, exchangeService_, info.sourceId, info.label, databaseService_->sources());
+    } else if (chosen == erDiagram) {
+        // A table row's own name scopes the diagram to it and its FK
+        // neighbours; the data source's root row (no table name of its
+        // own) diagrams the whole schema — `ExchangeService::
+        // erDiagramMermaid`'s own `tableScope` contract.
+        const QString scope = info.isSourceRoot ? QString() : info.label;
+        showErDiagramDialog(this, exchangeService_, documentManager_, info.sourceId, scope);
+    } else if (chosen == compareData) {
+        showDataCompareDialog(this, exchangeService_, documentManager_, info.sourceId, info.label,
+                              databaseService_->sources());
+    } else if (chosen == dumpAction) {
+        showDumpDialog(this, exchangeService_, info.sourceId);
+    } else if (chosen == compareStructure) {
+        showSchemaCompareDialog(this, exchangeService_, documentManager_, info.sourceId,
+                                databaseService_->sources());
     }
 }
 
@@ -334,9 +382,10 @@ void DatabasePanel::report(const FfiResult &result)
 }
 
 DatabasePanel *buildDatabaseDock(ads::CDockManager *dockManager, DockRegistry *docks,
-                                 ads::CDockAreaWidget *relativeTo, DatabaseService *databaseService)
+                                 ads::CDockAreaWidget *relativeTo, DatabaseService *databaseService,
+                                 ExchangeService *exchangeService, DocumentManager *documentManager)
 {
-    auto *panel = new DatabasePanel(databaseService, dockManager);
+    auto *panel = new DatabasePanel(databaseService, exchangeService, documentManager, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Database"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("database"), dock, ads::RightDockWidgetArea, relativeTo);

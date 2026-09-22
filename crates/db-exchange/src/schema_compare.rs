@@ -115,38 +115,33 @@ fn compare_columns(left: &TableDef, right: &TableDef) -> Vec<ColumnChange> {
 }
 
 fn compare_table(left: &TableDef, right: &TableDef) -> TableDiff {
+    // Structural equality, not name-only: an index/constraint whose name
+    // is unchanged but whose columns/uniqueness/reference changed is a
+    // drop-and-recreate in the migration script (there is no portable
+    // `ALTER INDEX`/`ALTER CONSTRAINT` across dialects this crate
+    // targets), not a silent no-op.
     let added_indexes: Vec<IndexDef> = right
         .indexes
         .iter()
-        .filter(|i| !left.indexes.iter().any(|l| l.name == i.name))
+        .filter(|i| !left.indexes.contains(i))
         .cloned()
         .collect();
     let dropped_indexes: Vec<IndexDef> = left
         .indexes
         .iter()
-        .filter(|i| !right.indexes.iter().any(|r| r.name == i.name))
+        .filter(|i| !right.indexes.contains(i))
         .cloned()
         .collect();
     let added_constraints: Vec<ConstraintDef> = right
         .constraints
         .iter()
-        .filter(|c| {
-            !left
-                .constraints
-                .iter()
-                .any(|l| l.name == c.name && l.text == c.text)
-        })
+        .filter(|c| !left.constraints.contains(c))
         .cloned()
         .collect();
     let dropped_constraints: Vec<ConstraintDef> = left
         .constraints
         .iter()
-        .filter(|c| {
-            !right
-                .constraints
-                .iter()
-                .any(|r| r.name == c.name && r.text == c.text)
-        })
+        .filter(|c| !right.constraints.contains(c))
         .cloned()
         .collect();
 
@@ -428,6 +423,7 @@ mod tests {
     fn table(name: &str, columns: Vec<ColumnDef>) -> TableDef {
         TableDef {
             name: name.to_string(),
+            schema: None,
             columns,
             primary_key: vec!["id".to_string()],
             foreign_keys: vec![],
@@ -628,6 +624,7 @@ mod tests {
             }
             tables.push(TableDef {
                 name: table_name,
+                schema: None,
                 columns,
                 primary_key,
                 foreign_keys: vec![],

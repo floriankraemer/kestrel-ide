@@ -90,12 +90,10 @@ fn run_aggregate(
         .into_iter()
         .find(|s| s.id == source_id)
         .ok_or_else(|| format!("no data source with id '{source_id}' is configured"))?;
-    let data_source = db_core::datasource::DataSource::from(&setting);
-    let spec = db_core::datasource::ConnectSpec::from(
-        &data_source,
-        &super::service::secrets_for(source_id),
-    );
-    let mut connection = super::connect(&spec)?;
+    let secrets = super::service::secrets_for(source_id);
+    let data_source = db_core::datasource::DataSource::from_setting(&setting, &secrets);
+    let (_tunnel, mut connection) =
+        super::open_session(&data_source, &secrets).map_err(|error| error.to_string())?;
     let sql = aggregate_query(statement_text, column, op, dialect);
     let outcome = first_row(connection.as_mut(), &sql);
     let _ = connection.close();

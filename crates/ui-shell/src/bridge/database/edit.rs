@@ -956,7 +956,7 @@ mod tests {
         let connection: Box<dyn Connection> =
             db_drivers::sqlite::SqliteDriver.connect(&spec).unwrap();
         let session = Session::new(connection);
-        let worker = SessionWorker::spawn(session, |_event| {});
+        let worker = SessionWorker::spawn(session, None, |_event| {});
         let tab_id = 1;
         shared.borrow_mut().consoles.insert(
             tab_id,

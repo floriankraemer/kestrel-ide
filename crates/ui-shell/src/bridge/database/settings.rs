@@ -584,15 +584,17 @@ impl ffi::DataSourceEditor {
         let ssh_host = draft.ssh_host.clone();
         let ssh_port = draft.ssh_port.unwrap_or(22);
 
+        let ssh_password = secrets().load(&format!("{id}/ssh")).ok().flatten();
+
         std::thread::spawn(move || {
             let setting = settings_model::database::commit(&draft);
-            let source = db_core::datasource::DataSource::from(&setting);
             let db_secrets = db_core::datasource::Secrets {
                 password,
+                ssh_password,
                 ..Default::default()
             };
-            let spec = db_core::datasource::ConnectSpec::from(&source, &db_secrets);
-            let result = crate::bridge::database::test_connection_typed(&spec);
+            let source = db_core::datasource::DataSource::from_setting(&setting, &db_secrets);
+            let result = crate::bridge::database::test_connection_typed(&source, &db_secrets);
             if guard.load(Ordering::SeqCst) != generation {
                 return; // superseded by a newer test_connection() call
             }

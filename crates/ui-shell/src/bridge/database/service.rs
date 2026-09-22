@@ -16,7 +16,7 @@ use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
 use app_config::database::DataSourceSetting;
-use db_core::datasource::{ConnectSpec, DataSource, Secrets};
+use db_core::datasource::{DataSource, Secrets};
 use db_core::ddl;
 use db_core::dialect::Dialect;
 use db_core::driver::Statement;
@@ -386,18 +386,19 @@ impl ffi::DatabaseService {
         let qt_thread = self.as_mut().qt_thread();
         let thread_id = id.clone();
         std::thread::spawn(move || {
-            let data_source = DataSource::from(&setting);
+            let secrets = secrets_for(&thread_id);
+            let data_source = DataSource::from_setting(&setting, &secrets);
             let read_only = data_source.read_only;
-            let spec = ConnectSpec::from(&data_source, &secrets_for(&thread_id));
-            let outcome = super::connect(&spec);
+            let outcome =
+                super::open_session(&data_source, &secrets).map_err(|error| error.to_string());
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DatabaseService>| {
                 match outcome {
-                    Ok(connection) => {
+                    Ok((tunnel, connection)) => {
                         let dialect = connection.dialect();
                         let session = Session::new(connection);
                         let inner_qt_thread = service.as_mut().qt_thread();
                         let worker_source_id = thread_id.clone();
-                        let worker = SessionWorker::spawn(session, move |event| {
+                        let worker = SessionWorker::spawn(session, tunnel, move |event| {
                             let source_id = worker_source_id.clone();
                             let _ = inner_qt_thread.queue(
                                 move |service: Pin<&mut ffi::DatabaseService>| {

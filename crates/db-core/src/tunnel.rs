@@ -63,7 +63,7 @@ impl SshAuthMode {
 /// [`crate::datasource::Secrets::ssh_password`] resolved (a passphrase for
 /// [`SshAuthMode::KeyFile`], a password for [`SshAuthMode::Password`]) —
 /// what [`select`] and `db_drivers::ssh::RusshTunnel::open` actually need.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SshConfig {
     pub host: String,
     pub port: u16,

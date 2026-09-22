@@ -371,19 +371,31 @@ mod tests {
             Value::Text("O'Brien".to_string()).sql_literal(crate::dialect::Dialect::Postgres),
             "'O''Brien'"
         );
-        assert_eq!(Value::Int(42).sql_literal(crate::dialect::Dialect::Postgres), "42");
-        assert_eq!(Value::Null.sql_literal(crate::dialect::Dialect::Postgres), "NULL");
+        assert_eq!(
+            Value::Int(42).sql_literal(crate::dialect::Dialect::Postgres),
+            "42"
+        );
+        assert_eq!(
+            Value::Null.sql_literal(crate::dialect::Dialect::Postgres),
+            "NULL"
+        );
     }
 
     #[test]
     fn sql_literal_renders_bytes_per_dialect() {
         let bytes = Value::Bytes(vec![0xde, 0xad]);
-        assert_eq!(bytes.sql_literal(crate::dialect::Dialect::Sqlite), "X'dead'");
+        assert_eq!(
+            bytes.sql_literal(crate::dialect::Dialect::Sqlite),
+            "X'dead'"
+        );
         assert_eq!(
             bytes.sql_literal(crate::dialect::Dialect::Postgres),
             "'\\xdead'"
         );
-        assert_eq!(bytes.sql_literal(crate::dialect::Dialect::SqlServer), "0xdead");
+        assert_eq!(
+            bytes.sql_literal(crate::dialect::Dialect::SqlServer),
+            "0xdead"
+        );
     }
 
     #[test]

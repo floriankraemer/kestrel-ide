@@ -10641,13 +10641,16 @@ mod ffi {
         /// display text on success (`ok`) or an error message otherwise;
         /// `row_count` is the whole result's row count (`COUNT(*)` over
         /// the same derived table), for the footer's "computed over all N
-        /// rows" text.
+        /// rows" text. Carries no `column` — the caller already knows
+        /// which one it asked `aggregateExact` for; a footer that fires a
+        /// second request before the first answers is the caller's own
+        /// race to avoid, same as `dmlPreview`/`submit`'s single-slot
+        /// convention.
         #[qsignal]
         #[cxx_name = "aggregateComputed"]
         fn aggregate_computed(
             self: Pin<&mut ConsoleService>,
             result_id: u64,
-            column: QString,
             op: FfiDbAggOp,
             ok: bool,
             value: QString,

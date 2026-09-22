@@ -218,6 +218,15 @@ baseline() {
 	# (ADR-0049): the ui_locale_active marker on a cold launch and after a
 	# relaunch seeded with ui_locale = "de".
 	crates/app/tests/e2e.rs) echo 1397 ;;
+	# 1608 lines: F6c's structural FK/index/constraint detail (PRAGMA
+	# foreign_key_list/index_list/index_info/table_info at IntrospectLevel::
+	# Full) cherry-picked onto F4b's own worktree, auto-merged against F4a's
+	# pre-existing changes to the same file. Not a split this phase's own
+	# file list covers — `index_rows`/`index_columns`/`index_nodes`/
+	# `constraint_nodes`/`trigger_nodes` (database-tools-plan F2.1/F6c) are
+	# a natural extraction into a sibling module once whichever session
+	# reconciles db/f4b and db/f6c owns this file again.
+	crates/db-drivers/src/sqlite.rs) echo 1608 ;;
 	esac
 }
 

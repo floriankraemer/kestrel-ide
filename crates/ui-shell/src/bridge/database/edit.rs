@@ -719,7 +719,11 @@ impl ffi::ResultProvider {
 /// `Full`-level introspect that decision needs runs from a live
 /// `ConsoleService`, so this leaves it to the next execute/refresh on
 /// that console, same as opening the result the first time.
-pub(crate) fn rebuild_guards_for_source(shared: &Rc<std::cell::RefCell<super::console::Shared>>, source_id: &str, read_only: bool) {
+pub(crate) fn rebuild_guards_for_source(
+    shared: &Rc<std::cell::RefCell<super::console::Shared>>,
+    source_id: &str,
+    read_only: bool,
+) {
     let mut shared = shared.borrow_mut();
     let affected_tabs: Vec<u64> = shared
         .consoles
@@ -844,11 +848,14 @@ mod tests {
                 db_core::schema::ObjectKind::Table,
                 vec![
                     db_core::schema::Node::leaf("id", db_core::schema::ObjectKind::Column),
-                    db_core::schema::Node::leaf("users_fk_0", db_core::schema::ObjectKind::Constraint)
-                        .with_detail(db_core::schema::NodeDetail {
-                            constraint: Some(fk.clone()),
-                            ..Default::default()
-                        }),
+                    db_core::schema::Node::leaf(
+                        "users_fk_0",
+                        db_core::schema::ObjectKind::Constraint,
+                    )
+                    .with_detail(db_core::schema::NodeDetail {
+                        constraint: Some(fk.clone()),
+                        ..Default::default()
+                    }),
                 ],
             )],
         );
@@ -932,9 +939,9 @@ mod tests {
     }
 
     fn test_console(shared: &Rc<std::cell::RefCell<super::super::console::Shared>>) -> u64 {
+        use super::super::sessions::SessionWorker;
         use db_core::driver::{Connection, Driver};
         use db_core::session::Session;
-        use super::super::sessions::SessionWorker;
 
         let spec = db_core::datasource::ConnectSpec {
             driver: "sqlite".to_string(),
@@ -957,7 +964,12 @@ mod tests {
                 source_id: "src-1".to_string(),
                 worker,
                 dialect: Dialect::Sqlite,
-                guard: Guard::new(false, Box::new(SqlClassifier { dialect: Dialect::Sqlite })),
+                guard: Guard::new(
+                    false,
+                    Box::new(SqlClassifier {
+                        dialect: Dialect::Sqlite,
+                    }),
+                ),
                 tx_mode: ffi::FfiDbTxMode::Auto,
                 script_policy: ffi::FfiDbScriptPolicy::StopOnError,
                 page_size: 100,
@@ -1002,7 +1014,9 @@ mod tests {
 
     #[test]
     fn turning_read_only_on_demotes_an_editable_result_and_tightens_the_guard() {
-        let shared = Rc::new(std::cell::RefCell::new(super::super::console::Shared::default()));
+        let shared = Rc::new(std::cell::RefCell::new(
+            super::super::console::Shared::default(),
+        ));
         let tab_id = test_console(&shared);
         let result_id = test_result(
             &shared,
@@ -1018,7 +1032,10 @@ mod tests {
         rebuild_guards_for_source(&shared, "src-1", true);
 
         let shared_ref = shared.borrow();
-        assert!(shared_ref.consoles[&tab_id].guard.check("DELETE FROM t").is_err());
+        assert!(shared_ref.consoles[&tab_id]
+            .guard
+            .check("DELETE FROM t")
+            .is_err());
         assert!(
             matches!(&shared_ref.results[&result_id].edit, EditState::NotEditable(reason) if reason.contains("read-only"))
         );
@@ -1026,7 +1043,9 @@ mod tests {
 
     #[test]
     fn turning_read_only_off_lets_a_demoted_result_be_re_checked() {
-        let shared = Rc::new(std::cell::RefCell::new(super::super::console::Shared::default()));
+        let shared = Rc::new(std::cell::RefCell::new(
+            super::super::console::Shared::default(),
+        ));
         let tab_id = test_console(&shared);
         let result_id = test_result(
             &shared,
@@ -1037,7 +1056,10 @@ mod tests {
         rebuild_guards_for_source(&shared, "src-1", false);
 
         let shared_ref = shared.borrow();
-        assert!(shared_ref.consoles[&tab_id].guard.check("DELETE FROM t").is_ok());
+        assert!(shared_ref.consoles[&tab_id]
+            .guard
+            .check("DELETE FROM t")
+            .is_ok());
         assert!(matches!(
             &shared_ref.results[&result_id].edit,
             EditState::Unknown
@@ -1046,7 +1068,9 @@ mod tests {
 
     #[test]
     fn a_console_on_a_different_source_is_left_untouched() {
-        let shared = Rc::new(std::cell::RefCell::new(super::super::console::Shared::default()));
+        let shared = Rc::new(std::cell::RefCell::new(
+            super::super::console::Shared::default(),
+        ));
         let tab_id = test_console(&shared);
         let result_id = test_result(
             &shared,
@@ -1062,7 +1086,10 @@ mod tests {
         rebuild_guards_for_source(&shared, "some-other-source", true);
 
         let shared_ref = shared.borrow();
-        assert!(shared_ref.consoles[&tab_id].guard.check("DELETE FROM t").is_ok());
+        assert!(shared_ref.consoles[&tab_id]
+            .guard
+            .check("DELETE FROM t")
+            .is_ok());
         assert!(matches!(
             &shared_ref.results[&result_id].edit,
             EditState::Editable(_)

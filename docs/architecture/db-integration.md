@@ -1,8 +1,9 @@
 # DB integration: checking the database drivers against real engines
 
-`docker/db-compose.yml`, `make test-db`/`db-ci` and the `db-integration` feature landed in F1 for PostgreSQL; F7 added `mongo`, `redis`, `scylla` and `sshd` services to the same compose file (env `IDE_DB_MONGO_URL`, `IDE_DB_REDIS_URL`, `IDE_DB_CASSANDRA_HOSTS`, `IDE_DB_SSH_HOST`/`IDE_DB_SSH_PORT`/`IDE_DB_SSH_USER`/`IDE_DB_SSH_PASSWORD`); MSSQL (F8) and `make e2e-db` are still target design.
-`db-ci` itself still only runs `db-drivers`' Postgres suite (`cargo nextest run -p db-drivers --features db-integration`) — F7's `mongodb.rs`/`redis.rs`/`cassandra.rs`/`ssh.rs` integration tests exist and compile (gated behind the same `db-integration` feature, `#[ignore]`d) but were not run against a live server in this sandbox (no network services available there); wiring `db-ci` to bring up and reach the new services is the next increment, not done in this pass.
-F1's `db-ci` deliberately does **not** get its own `linux-db` Docker stage yet — it runs `db-drivers`' PostgreSQL integration tests inside the existing `linux-builder` image over `--network host`, reaching `docker/db-compose.yml`'s `postgres` service on its published loopback port. The `linux-db` stage (client tools: `postgresql-client`, `default-mysql-client`, `mongodb-database-tools`, `unixodbc` + `libsqliteodbc`) lands in F8.6 alongside the ODBC driver's own Dockerfile change, once a real client-tool binary (`pg_dump`, `mysqldump`, …) is actually exercised by a test — nothing in F1's PostgreSQL suite needs one.
+`docker/db-compose.yml`, `make test-db`/`db-ci` and the `db-integration` feature landed in F1 for PostgreSQL; F7/FX added `mongo`, `redis`, `scylla` and `sshd` services to the same compose file, and `db-ci` now passes every service's env into the test run and runs the `#[ignore]`d sshd tunnel test explicitly (phase FX).
+MySQL/MariaDB and SQL Server (`mssql/server:2022`) still have no compose service; `make e2e-db` and a dedicated `linux-db` Docker stage are still not built — both remain target design, not shipped.
+`db-ci` runs `db-drivers`' whole `db-integration`-gated suite (`cargo nextest run -p db-drivers --features db-integration`), plus a second, explicit `--run-ignored only ssh` pass for the sshd-backed tunnel test (`Makefile`'s `db-ci` target) — the tunnel test is `#[ignore]`d so an ordinary `cargo nextest run -p db-drivers --features db-integration` (and `make test`, which never enables the feature at all) does not need the `sshd` compose service up.
+`test-db` itself still runs inside the existing `linux-builder` image over `--network host` rather than a dedicated `linux-db` stage — every service is reached on its published loopback port (below), so no client tool (`pg_dump`, `mysqldump`, …) has needed installing yet. The `linux-db` stage (client tools: `postgresql-client`, `default-mysql-client`, `mongodb-database-tools`, `unixodbc` + `libsqliteodbc`) is still planned for F8.6-equivalent follow-up work, once a real client-tool binary is actually exercised by a test.
 
 Every unit test in `db-drivers`/`db-driver-adbc`/`db-driver-odbc` runs against SQLite (in-process, no server needed) or a fixture-recorded wire response.
 That proves the row-mapping and SQL-generation code is right about a snapshot of what an engine once returned.
@@ -14,13 +15,23 @@ This suite closes that gap, the same way `docs/architecture/jvm-integration.md` 
 
 ```sh
 make test-db
-make e2e-db
 ```
 
-`make test-db` brings up `docker/db-compose.yml`'s services (F1: `postgres:17` only), then runs `db-ci` (`cargo nextest run -p db-drivers --features db-integration`, growing to `-p db-driver-adbc -p db-driver-odbc` once those crates exist) inside `linux-builder` over `--network host`, and tears the compose stack down whether or not the tests passed.
-`make e2e-db` runs the `IDE_E2E_DB=1`-gated E2E flows (connect/introspect/execute against a real engine, one flow per backend family) under Xvfb, the same shape `e2e_build_tools.rs` already uses for `IDE_E2E_JVM=1`.
+`make test-db` brings up every service in `docker/db-compose.yml` (`docker compose -f docker/db-compose.yml up -d --wait`), runs `db-ci` inside `linux-builder` over `--network host` with one env var per service, and tears the compose stack down (`down -v`) whether or not the tests passed:
 
-The `db-integration`-feature tests are gated behind that Cargo feature, not `#[ignore]`, so `cargo test --workspace`/`make test` never builds or runs them — the feature simply is not enabled there, exactly `jvm-integration`'s own shape.
+| Env var | Value | Service |
+|---|---|---|
+| `IDE_DB_POSTGRES_URL` | `postgres://ide:ide@127.0.0.1:55432/ide_test` | `postgres` (`postgres:17`) |
+| `IDE_DB_MONGO_URL` | `mongodb://127.0.0.1:55017` | `mongo` (`mongo:8`) |
+| `IDE_DB_REDIS_URL` | `redis://127.0.0.1:56379` | `redis` (`redis:7`) |
+| `IDE_DB_CASSANDRA_HOSTS` | `127.0.0.1:59042` | `scylla` (`scylladb/scylla:2026.2`) |
+| `IDE_DB_SSH_HOST` / `IDE_DB_SSH_PORT` / `IDE_DB_SSH_USER` / `IDE_DB_SSH_PASSWORD` | `127.0.0.1` / `52222` / `ide` / `ide` | `sshd` (`linuxserver/openssh-server:10.3_p1-r1-ls237`), tunnelling to `postgres` |
+
+Every port is published bound to `127.0.0.1` only (ADR-0061 §5's "never a wildcard address" posture, applied to this throwaway nightly/on-demand fixture stack too, not just the SSH tunnel's forwarded port).
+`db-ci` (inside the image) runs `cargo nextest run -p db-drivers --features db-integration`, then a second explicit pass, `cargo nextest run -p db-drivers --features db-integration --run-ignored only ssh`, for the sshd-backed tunnel test alone — it stays `#[ignore]`d so neither `make test` nor a bare `cargo nextest run --features db-integration` needs the `sshd` service up.
+`make e2e-db` (an `IDE_E2E_DB=1`-gated E2E flow per backend family, click-driven rather than `db-drivers`' own unit-level integration tests) is still not built — planned, not shipped; the E2E flows this branch does ship (`e2e_database`, `e2e_database_console`) run entirely against SQLite, per §"Why it is not a per-PR gate" below.
+
+The `db-integration`-feature tests are gated behind that Cargo feature, not `#[ignore]` (the sshd tunnel test is the one exception, `#[ignore]`d *within* the feature for the reason above), so `cargo test --workspace`/`make test` never builds or runs any of them — the feature simply is not enabled there, exactly `jvm-integration`'s own shape.
 
 ## Why it is not a per-PR gate
 
@@ -29,8 +40,9 @@ The per-PR gate instead runs `e2e_database`, one flow, entirely against SQLite (
 
 ## What it verifies
 
-Services come from `docker/db-compose.yml`: `postgres:17`, `mysql:8.4`, `mariadb:11`, `mongo:8`, `redis:7`, `scylladb/scylla:2026.2`, and (from F8) `mcr.microsoft.com/mssql/server:2022`.
-`.github/workflows/nightly.yml` gains a `db-integration` job with the same services under `services:`.
+Services in `docker/db-compose.yml` today: `postgres:17`, `mongo:8`, `redis:7`, `scylladb/scylla:2026.2`, `linuxserver/openssh-server:10.3_p1-r1-ls237`.
+MySQL/MariaDB and `mcr.microsoft.com/mssql/server:2022` have no compose service yet — still planned, tracked as open follow-up work rather than shipped.
+`.github/workflows/nightly.yml` gaining a `db-integration` job with these services under `services:` is likewise still open.
 
 Per backend, the integration tests exercise: connect (plaintext and TLS where the engine supports it), introspection (the real system catalog, not a fixture — this is what catches an engine-version drift a fixture cannot), execute + page + cancel against a real cursor, and the read-only classifier's server-side flag actually taking effect on a live session.
 Fixture-based unit tests stay the first line of defense (fast, no server, run on every PR); this suite is the second line, proving the fixtures still describe reality.
@@ -59,6 +71,6 @@ A failure here with the driver actually installed points at `AdbcDriver`'s load/
 ## Status
 
 F1 landed `db-compose.yml` (PostgreSQL only), `make test-db`/`db-ci`, `db-drivers`' `db-integration` feature, and the `sqlite`/`postgres` unit-tested backends themselves.
-F7 added the `mongo`/`redis`/`scylla`/`sshd` services to `db-compose.yml` and the `mongodb`/`redis`/`cassandra` drivers plus `RusshTunnel` (all unit-tested against fixtures/fakes; `db-ci` itself was not extended to reach these new services yet).
-`make e2e-db` and the `linux-db` image are still not built.
-Later phases add MySQL/MariaDB/SQL Server's services, driver crates and tests, and wire `db-ci` to the F7 services, per `database-tools-plan.md`'s task list.
+F7 added the `mongo`/`redis`/`scylla`/`sshd` services to `db-compose.yml` and the `mongodb`/`redis`/`cassandra` drivers plus `RusshTunnel`.
+Phase FX wired `db-ci` to actually reach every one of those services (the env-var table above) and to run the sshd-backed tunnel test explicitly (`--run-ignored only ssh`) — the "not extended yet" gap this section used to describe is closed.
+`make e2e-db`, a dedicated `linux-db` image stage, MySQL/MariaDB's own driver and compose service, and SQL Server's compose service remain open — not built on this branch, no phase claims otherwise.

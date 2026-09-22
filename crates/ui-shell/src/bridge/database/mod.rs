@@ -24,6 +24,8 @@ pub mod drivers;
 pub mod exchange;
 // ---- database: F4 ----
 pub mod edit;
+// ---- database: F4b ----
+pub mod navigate;
 
 pub use service::DatabaseServiceRust;
 

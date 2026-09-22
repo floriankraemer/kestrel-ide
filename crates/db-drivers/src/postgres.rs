@@ -49,6 +49,11 @@ const NAMES_QUERY: &str = include_str!("introspect/postgres_names.sql");
 // query away, not a new SQL text to design from scratch.
 #[allow(dead_code)]
 const COLUMNS_QUERY: &str = include_str!("introspect/postgres_columns.sql");
+
+/// [`PostgresConnection::table_name_for_oid`]'s own query (`ColumnMeta::
+/// origin`, F4b) — short enough to keep inline rather than its own
+/// `.sql` file, unlike the multi-join introspection queries above.
+const TABLE_NAME_BY_OID_QUERY: &str = "SELECT relname FROM pg_catalog.pg_class WHERE oid = $1";
 /// `IntrospectLevel::Full`: one table's own constraints (F6c) —
 /// `pg_constraint`/`pg_get_constraintdef`, fixture-tested below (no live
 /// server needed for the query text itself; `db-integration`'s gated test
@@ -268,12 +273,23 @@ impl Driver for PostgresDriver {
         crate::runtime().spawn(async move {
             let _ = connection.await;
         });
-        Ok(Box::new(PostgresConnection { client }))
+        Ok(Box::new(PostgresConnection {
+            client,
+            table_names: std::collections::HashMap::new(),
+        }))
     }
 }
 
 pub struct PostgresConnection {
     client: Client,
+    /// `ColumnMeta::origin`'s own cache (F4b, `database-tools.md` §11):
+    /// `Column::table_oid()` names a row description column's source
+    /// table by oid, never by name, so `execute` resolves it against
+    /// `pg_class` once per oid and keeps the answer here for the rest of
+    /// this connection's life — a table's oid never changes without a
+    /// `DROP`/`CREATE` this connection would have to reconnect to see
+    /// anyway.
+    table_names: std::collections::HashMap<u32, String>,
 }
 
 /// Wraps `tokio_postgres::CancelToken` (the server-side cancel request,
@@ -472,7 +488,7 @@ impl Connection for PostgresConnection {
                 name: c.name().to_string(),
                 type_name: c.type_().name().to_string(),
                 nullable: true,
-                origin: None,
+                origin: c.table_oid().and_then(|oid| self.table_name_for_oid(oid)),
             })
             .collect();
 
@@ -557,6 +573,20 @@ impl Connection for PostgresConnection {
 }
 
 impl PostgresConnection {
+    /// [`ColumnMeta::origin`]'s own lookup — see `table_names`'s own doc
+    /// comment on why this caches per connection rather than per call.
+    fn table_name_for_oid(&mut self, oid: u32) -> Option<String> {
+        if let Some(name) = self.table_names.get(&oid) {
+            return Some(name.clone());
+        }
+        let rows = crate::runtime()
+            .block_on(self.client.query(TABLE_NAME_BY_OID_QUERY, &[&oid]))
+            .ok()?;
+        let name: String = rows.first()?.get(0);
+        self.table_names.insert(oid, name.clone());
+        Some(name)
+    }
+
     /// One table/view's columns (F2.1's `Columns`/`Full` levels), fetched
     /// through `COLUMNS_QUERY` — the per-object round trip `introspect`
     /// only pays for the objects a scope actually narrows to, never for
@@ -835,6 +865,13 @@ mod tests {
         assert!(COLUMNS_QUERY.contains("$1"));
         assert!(COLUMNS_QUERY.contains("$2"));
         assert!(COLUMNS_QUERY.contains("is_primary_key"));
+    }
+
+    #[test]
+    fn table_name_by_oid_query_targets_pg_class_by_oid() {
+        assert!(TABLE_NAME_BY_OID_QUERY.contains("pg_catalog.pg_class"));
+        assert!(TABLE_NAME_BY_OID_QUERY.contains("oid = $1"));
+        assert!(TABLE_NAME_BY_OID_QUERY.contains("relname"));
     }
 
     #[test]

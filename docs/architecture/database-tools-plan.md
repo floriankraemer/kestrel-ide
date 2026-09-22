@@ -363,11 +363,13 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 |---|---|---|
 | F4.1 — `EditBuffer`, inline + value editor, NULL/DEFAULT | done | dfd21de, 1340517, c10e633, af526f6, 8d8a4ce |
 | F4.2 — add/delete/clone; DML preview (virtual document); submit/revert | done | dfd21de, 1340517, c10e633, 8d8a4ce |
-| F4.3 — FK navigation; aggregates; transpose/tree/text modes; WHERE/ORDER BY | open | |
+| F4.3 — FK navigation (forward only); exact whole-result aggregate; WHERE/ORDER BY | partial | 1b28f69, 78a0df7 |
+| F4.3 follow-up — reverse FK navigation ("Show referencing rows…"), transpose/tree/text view modes, the typed row accessor (`rowValues`) db-exchange needs for "Copy as" fidelity, and the C++ footer/context-menu wiring for the aggregate/nav bridge calls above — see database-tools.md §11 | open | |
 | F4.4 — create/modify object dialogs (table/column/index/FK/user) | open | |
 | F4.5 — adversarial identifier fixtures; `security-audit` pass before merge | done | 7de5fcf, d677ae0 |
 | F4 follow-up — `security-expert`'s F4.5 pass found two real bugs, both fixed this phase (`Value::parse_hex` panicking on adversarial multi-byte-UTF-8 cell text; `ConsoleService::submit` never consulting the console's read-only `Guard` before dispatching a write) — see database-tools.md §11 | done | d677ae0 |
-| F4 follow-up — a source's read-only setting flip does not demote an already-open, already-`Editable` console/grid (`ConsoleState::guard` and `ResultState::edit` are both decided once and never re-checked); needs a task against `bridge::database::settings::set_read_only`, out of this phase's file list — see database-tools.md §11 | open | |
+| F4 follow-up — a source's read-only setting flip does not demote an already-open, already-`Editable` console/grid — fixed (`edit::rebuild_guards_for_source`, called from `DataSourceEditor::commit` when `read_only` actually changes) — see database-tools.md §11 | done | 8f098f0 |
+| F4b — `ColumnMeta.origin` for Postgres (`Column::table_oid()` → cached `pg_class` lookup); SQLite stays unpopulated (rusqlite 0.32 has no column-metadata API, documented in `sqlite.rs`) | done | 78a0df7 |
 
 ### F5 — exchange
 

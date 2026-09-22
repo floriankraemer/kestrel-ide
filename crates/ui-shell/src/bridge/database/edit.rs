@@ -9,6 +9,7 @@
 //! own extension, not an independent consumer of its state.
 
 use std::pin::Pin;
+use std::rc::Rc;
 use std::time::Instant;
 
 use cxx_qt_lib::QString;
@@ -17,8 +18,10 @@ use db_core::dialect::Dialect;
 use db_core::dml::EditBuffer;
 use db_core::driver::{ExecOptions, Statement as DbStatement};
 use db_core::error::DbError;
+use db_core::readonly::Guard;
 use db_core::result::ResultSet;
 use db_core::value::{ColumnMeta, Value};
+use db_sql::classify::SqlClassifier;
 
 use crate::bridge::errors;
 use crate::bridge::ffi::{self, FfiResult};
@@ -265,6 +268,7 @@ impl ffi::ConsoleService {
                 elapsed_ms: None,
                 statement_text: statement_text.clone(),
                 edit: EditState::Unknown,
+                table_constraints: Vec::new(),
             },
         );
         shared.consoles.get_mut(&tab_id).unwrap().current_result = Some(new_id);
@@ -319,6 +323,10 @@ pub(crate) fn apply_edit_lookup(
             .unwrap_or_default();
         (policy, columns)
     };
+    let constraints = match &result {
+        Ok(snapshot) => table_constraints(snapshot, &table),
+        Err(_) => Vec::new(),
+    };
     let edit = match result {
         Ok(snapshot) => resolve_editability(&snapshot, &table, &columns, &no_pk_policy),
         Err(error) => EditState::NotEditable(error.to_string()),
@@ -330,6 +338,7 @@ pub(crate) fn apply_edit_lookup(
     };
     if let Some(r) = service.shared.borrow_mut().results.get_mut(&result_id) {
         r.edit = edit;
+        r.table_constraints = constraints;
     }
     service
         .as_mut()
@@ -342,6 +351,28 @@ pub(crate) fn apply_edit_lookup(
 /// `Full`-level introspection), keeps only the primary-key columns that
 /// are actually present in `columns` (the result's own projection — a
 /// key column the query never selected cannot be bound into a `WHERE`),
+/// Every [`db_core::schema::ConstraintKind`] `table`'s own `Constraint`
+/// children carry (F4.3's FK navigation) — the table node's own
+/// `Constraint`-kind children hold one each (`db_core::schema`'s own
+/// per-backend introspection, F6c), not the column children
+/// `resolve_editability` reads `primary_key`/`nullable` detail from.
+fn table_constraints(
+    snapshot: &db_core::schema::SchemaSnapshot,
+    table: &db_sql::single_table::TableRef,
+) -> Vec<db_core::schema::ConstraintKind> {
+    let Some(node) = snapshot.roots.iter().find(|n| n.name == table.name) else {
+        return Vec::new();
+    };
+    let db_core::schema::Children::Loaded(children) = &node.children else {
+        return Vec::new();
+    };
+    children
+        .iter()
+        .filter(|child| child.kind == db_core::schema::ObjectKind::Constraint)
+        .filter_map(|child| child.detail.constraint.clone())
+        .collect()
+}
+
 /// and applies `no_pk_policy` (`"refuse"` or `"all_columns_where"`, F4.2)
 /// when none remain.
 fn resolve_editability(
@@ -666,6 +697,67 @@ impl ffi::ResultProvider {
     }
 }
 
+/// The F4a residual (database-tools-plan's "F4a follow-up" row,
+/// database-tools.md §11): a data source's `read_only` setting can flip
+/// after a console is already attached and a result already decided
+/// editable — `ConsoleState::guard` and `ResultState::edit` are both
+/// decided once and never re-checked on their own. `DataSourceEditor::
+/// commit` (`settings.rs`) calls this for every source whose `read_only`
+/// flag it just changed.
+///
+/// Every open console on `source_id` gets a fresh [`Guard`] built from
+/// `read_only` — closing the write-through gap immediately, the
+/// security-critical direction. Every already-decided [`EditState`] on
+/// those consoles' results is invalidated too: turning read-only *on*
+/// demotes an `Editable` result straight to `NotEditable` (no live
+/// `ConsoleService` pin reaches this free function to re-emit
+/// `editabilityChanged`, so the grid's next poll of `isEditable`/
+/// `notEditableReason` is what actually reflects it — both already read
+/// `EditState` fresh on every call, never a value cached on the C++
+/// side); turning it *off* only resets a read-only-caused `NotEditable`
+/// back to `Unknown` rather than eagerly re-deciding `Editable` — the
+/// `Full`-level introspect that decision needs runs from a live
+/// `ConsoleService`, so this leaves it to the next execute/refresh on
+/// that console, same as opening the result the first time.
+pub(crate) fn rebuild_guards_for_source(
+    shared: &Rc<std::cell::RefCell<super::console::Shared>>,
+    source_id: &str,
+    read_only: bool,
+) {
+    let mut shared = shared.borrow_mut();
+    let affected_tabs: Vec<u64> = shared
+        .consoles
+        .iter()
+        .filter(|(_, console)| console.source_id == source_id)
+        .map(|(tab_id, _)| *tab_id)
+        .collect();
+    for tab_id in &affected_tabs {
+        if let Some(console) = shared.consoles.get_mut(tab_id) {
+            console.guard = Guard::new(
+                read_only,
+                Box::new(SqlClassifier {
+                    dialect: console.dialect,
+                }),
+            );
+        }
+    }
+    for result in shared.results.values_mut() {
+        if !affected_tabs.contains(&result.tab_id) {
+            continue;
+        }
+        let current = std::mem::replace(&mut result.edit, EditState::Unknown);
+        result.edit = match current {
+            EditState::Editable(_) if read_only => {
+                EditState::NotEditable("this data source is now read-only".to_string())
+            }
+            EditState::NotEditable(reason) if !read_only && reason.contains("read-only") => {
+                EditState::Unknown
+            }
+            other => other,
+        };
+    }
+}
+
 /// Every row currently fetched for `result`, flattened in batch order —
 /// what `EditBuffer::sync_rows` needs before a mutating call, so a row
 /// paged in after editability was first decided is never out of the
@@ -740,6 +832,49 @@ mod tests {
         )
     }
 
+    #[test]
+    fn table_constraints_reads_the_table_s_own_constraint_children() {
+        let fk = db_core::schema::ConstraintKind::ForeignKey {
+            columns: vec!["customer_id".to_string()],
+            ref_table: db_core::schema::ObjectRef::new("customers"),
+            ref_columns: vec!["id".to_string()],
+            on_delete: None,
+            on_update: None,
+        };
+        let snapshot = db_core::schema::SchemaSnapshot::new(
+            db_core::schema::IntrospectLevel::Full,
+            vec![db_core::schema::Node::with_children(
+                "users",
+                db_core::schema::ObjectKind::Table,
+                vec![
+                    db_core::schema::Node::leaf("id", db_core::schema::ObjectKind::Column),
+                    db_core::schema::Node::leaf(
+                        "users_fk_0",
+                        db_core::schema::ObjectKind::Constraint,
+                    )
+                    .with_detail(db_core::schema::NodeDetail {
+                        constraint: Some(fk.clone()),
+                        ..Default::default()
+                    }),
+                ],
+            )],
+        );
+        let constraints = table_constraints(&snapshot, &table_ref());
+        assert_eq!(constraints, vec![fk]);
+    }
+
+    #[test]
+    fn table_constraints_is_empty_for_a_missing_table() {
+        let snapshot = db_core::schema::SchemaSnapshot::new(
+            db_core::schema::IntrospectLevel::Full,
+            vec![db_core::schema::Node::leaf(
+                "other",
+                db_core::schema::ObjectKind::Table,
+            )],
+        );
+        assert!(table_constraints(&snapshot, &table_ref()).is_empty());
+    }
+
     fn table_ref() -> db_sql::single_table::TableRef {
         db_sql::single_table::TableRef {
             schema: None,
@@ -801,6 +936,164 @@ mod tests {
     #[test]
     fn default_cell_value_uses_null_for_a_nullable_column() {
         assert_eq!(default_cell_value("int4", true), Value::Null);
+    }
+
+    fn test_console(shared: &Rc<std::cell::RefCell<super::super::console::Shared>>) -> u64 {
+        use super::super::sessions::SessionWorker;
+        use db_core::driver::{Connection, Driver};
+        use db_core::session::Session;
+
+        let spec = db_core::datasource::ConnectSpec {
+            driver: "sqlite".to_string(),
+            host: String::new(),
+            port: None,
+            database: ":memory:".to_string(),
+            user: String::new(),
+            url: String::new(),
+            password: None,
+            ssl: Default::default(),
+        };
+        let connection: Box<dyn Connection> =
+            db_drivers::sqlite::SqliteDriver.connect(&spec).unwrap();
+        let session = Session::new(connection);
+        let worker = SessionWorker::spawn(session, |_event| {});
+        let tab_id = 1;
+        shared.borrow_mut().consoles.insert(
+            tab_id,
+            super::super::console::ConsoleState {
+                source_id: "src-1".to_string(),
+                worker,
+                dialect: Dialect::Sqlite,
+                guard: Guard::new(
+                    false,
+                    Box::new(SqlClassifier {
+                        dialect: Dialect::Sqlite,
+                    }),
+                ),
+                tx_mode: ffi::FfiDbTxMode::Auto,
+                script_policy: ffi::FfiDbScriptPolicy::StopOnError,
+                page_size: 100,
+                history: false,
+                current_result: None,
+                pending: None,
+                schemas: Vec::new(),
+                pending_introspects: Default::default(),
+                submitting: None,
+            },
+        );
+        tab_id
+    }
+
+    fn test_result(
+        shared: &Rc<std::cell::RefCell<super::super::console::Shared>>,
+        tab_id: u64,
+        edit: EditState,
+    ) -> u64 {
+        let mut shared = shared.borrow_mut();
+        let result_id = shared.alloc_result_id();
+        shared.results.insert(
+            result_id,
+            ResultState {
+                tab_id,
+                columns: Vec::new(),
+                set: ResultSet::new(),
+                done: true,
+                reported: true,
+                cap_reached: false,
+                affected: None,
+                error: None,
+                started_at: Instant::now(),
+                elapsed_ms: None,
+                statement_text: "SELECT * FROM t".to_string(),
+                edit,
+                table_constraints: Vec::new(),
+            },
+        );
+        result_id
+    }
+
+    #[test]
+    fn turning_read_only_on_demotes_an_editable_result_and_tightens_the_guard() {
+        let shared = Rc::new(std::cell::RefCell::new(
+            super::super::console::Shared::default(),
+        ));
+        let tab_id = test_console(&shared);
+        let result_id = test_result(
+            &shared,
+            tab_id,
+            EditState::Editable(EditBuffer::new(
+                "t".to_string(),
+                vec!["id".to_string()],
+                vec!["id".to_string()],
+                Vec::new(),
+            )),
+        );
+
+        rebuild_guards_for_source(&shared, "src-1", true);
+
+        let shared_ref = shared.borrow();
+        assert!(shared_ref.consoles[&tab_id]
+            .guard
+            .check("DELETE FROM t")
+            .is_err());
+        assert!(
+            matches!(&shared_ref.results[&result_id].edit, EditState::NotEditable(reason) if reason.contains("read-only"))
+        );
+    }
+
+    #[test]
+    fn turning_read_only_off_lets_a_demoted_result_be_re_checked() {
+        let shared = Rc::new(std::cell::RefCell::new(
+            super::super::console::Shared::default(),
+        ));
+        let tab_id = test_console(&shared);
+        let result_id = test_result(
+            &shared,
+            tab_id,
+            EditState::NotEditable("this data source is read-only".to_string()),
+        );
+
+        rebuild_guards_for_source(&shared, "src-1", false);
+
+        let shared_ref = shared.borrow();
+        assert!(shared_ref.consoles[&tab_id]
+            .guard
+            .check("DELETE FROM t")
+            .is_ok());
+        assert!(matches!(
+            &shared_ref.results[&result_id].edit,
+            EditState::Unknown
+        ));
+    }
+
+    #[test]
+    fn a_console_on_a_different_source_is_left_untouched() {
+        let shared = Rc::new(std::cell::RefCell::new(
+            super::super::console::Shared::default(),
+        ));
+        let tab_id = test_console(&shared);
+        let result_id = test_result(
+            &shared,
+            tab_id,
+            EditState::Editable(EditBuffer::new(
+                "t".to_string(),
+                vec!["id".to_string()],
+                vec!["id".to_string()],
+                Vec::new(),
+            )),
+        );
+
+        rebuild_guards_for_source(&shared, "some-other-source", true);
+
+        let shared_ref = shared.borrow();
+        assert!(shared_ref.consoles[&tab_id]
+            .guard
+            .check("DELETE FROM t")
+            .is_ok());
+        assert!(matches!(
+            &shared_ref.results[&result_id].edit,
+            EditState::Editable(_)
+        ));
     }
 
     #[test]

@@ -165,6 +165,13 @@ pub(crate) struct ResultState {
     /// candidate single-table result, until the `Full`-level introspect
     /// this triggers lands too).
     pub(crate) edit: EditState,
+    /// The same `Full`-level table introspect [`EditState`] resolves
+    /// editability from, kept a second time here as the constraint list
+    /// alone (F4.3's FK navigation, `edit::apply_edit_lookup`'s own
+    /// populate step) — empty until that introspect lands, or forever for
+    /// a result that never became a data-editor candidate in the first
+    /// place (not a single table, a read-only source, …).
+    pub(crate) table_constraints: Vec<db_core::schema::ConstraintKind>,
 }
 
 /// State `ConsoleService` and `ResultProvider` both read/mutate — see this
@@ -734,6 +741,7 @@ impl ffi::ConsoleService {
                     elapsed_ms: None,
                     statement_text: statement.clone(),
                     edit: EditState::Unknown,
+                    table_constraints: Vec::new(),
                 },
             );
             let worker_send = shared.consoles[&tab_id]
@@ -1319,6 +1327,7 @@ impl ffi::ResultProvider {
                 elapsed_ms: None,
                 statement_text: statement.clone(),
                 edit: EditState::Unknown,
+                table_constraints: Vec::new(),
             },
         );
         shared.consoles.get_mut(&tab_id).unwrap().current_result = Some(new_id);

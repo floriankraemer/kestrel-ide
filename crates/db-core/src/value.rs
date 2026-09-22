@@ -138,6 +138,41 @@ impl Value {
             Value::Other { type_name, display } => type_name.len() + display.len(),
         }
     }
+
+    /// Render `self` as a literal `dialect`'s own parser accepts — never
+    /// `display` text, which is meant to be read, not parsed back (F4.3's
+    /// FK navigation binds a cell's already-known value into a `WHERE`
+    /// this way, the same "a value this crate itself produced, never
+    /// user-typed text" trust boundary `db_exchange::export::sql`'s own
+    /// `sql_literal` doc comment draws for the same reason — that
+    /// module's private copy predates this one and is out of this
+    /// phase's file list to unify with).
+    pub fn sql_literal(&self, dialect: crate::dialect::Dialect) -> String {
+        match self {
+            Value::Null => "NULL".to_string(),
+            Value::Bool(b) => if *b { "TRUE" } else { "FALSE" }.to_string(),
+            Value::Int(i) => i.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Decimal(text) => text.clone(),
+            Value::Text(text) | Value::Json(text) => dialect.quote_literal(text),
+            Value::Bytes(bytes) => {
+                let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                match dialect {
+                    crate::dialect::Dialect::SqlServer => format!("0x{hex}"),
+                    crate::dialect::Dialect::Postgres => format!("'\\x{hex}'"),
+                    _ => format!("X'{hex}'"),
+                }
+            }
+            Value::Date(date) => dialect.quote_literal(&date.to_string()),
+            Value::Time(time) => dialect.quote_literal(&time.to_string()),
+            Value::DateTime(dt) => dialect.quote_literal(&dt.to_string()),
+            Value::DateTimeTz(dt) => dialect.quote_literal(&dt.to_rfc3339()),
+            Value::Uuid(id) => dialect.quote_literal(&id.to_string()),
+            Value::Array(_) | Value::Document(_) | Value::Other { .. } => {
+                dialect.quote_literal(&self.display(&Default::default()))
+            }
+        }
+    }
 }
 
 /// One column's shape, as introspection or an executed statement reports
@@ -328,6 +363,39 @@ mod tests {
 
     fn rules() -> FormatRules {
         FormatRules::default()
+    }
+
+    #[test]
+    fn sql_literal_quotes_text_and_leaves_numbers_bare() {
+        assert_eq!(
+            Value::Text("O'Brien".to_string()).sql_literal(crate::dialect::Dialect::Postgres),
+            "'O''Brien'"
+        );
+        assert_eq!(
+            Value::Int(42).sql_literal(crate::dialect::Dialect::Postgres),
+            "42"
+        );
+        assert_eq!(
+            Value::Null.sql_literal(crate::dialect::Dialect::Postgres),
+            "NULL"
+        );
+    }
+
+    #[test]
+    fn sql_literal_renders_bytes_per_dialect() {
+        let bytes = Value::Bytes(vec![0xde, 0xad]);
+        assert_eq!(
+            bytes.sql_literal(crate::dialect::Dialect::Sqlite),
+            "X'dead'"
+        );
+        assert_eq!(
+            bytes.sql_literal(crate::dialect::Dialect::Postgres),
+            "'\\xdead'"
+        );
+        assert_eq!(
+            bytes.sql_literal(crate::dialect::Dialect::SqlServer),
+            "0xdead"
+        );
     }
 
     #[test]

@@ -96,6 +96,7 @@ pub fn to_ffi_row(source_id: &str, row: &TreeRow) -> FfiDbTreeRow {
         expandable: row.expandable,
         loaded: row.loaded,
         actions: to_ffi_actions(row.actions),
+        primary_key: row.primary_key,
     }
 }
 

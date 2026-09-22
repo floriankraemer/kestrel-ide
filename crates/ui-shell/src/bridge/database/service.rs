@@ -101,6 +101,14 @@ pub struct DatabaseServiceRust {
     sources: RefCell<BTreeMap<String, SourceState>>,
     filter: RefCell<String>,
     flat: RefCell<bool>,
+    // View-options menu (database-tools-plan FY.3): whether a Routine
+    // folds into its own "Procedures" folder rather than sharing "Tables"'
+    // grouping sibling, and whether a folder's children sort alphabetically
+    // rather than the natural (`table2` before `table10`) default —
+    // `db_core::tree::FlattenOptions`'s own knobs, just persisted here
+    // across `rows()` calls the same way `flat`/`filter` already are.
+    separate_routines: RefCell<bool>,
+    alphabetical_sort: RefCell<bool>,
     session: Rc<RefCell<app_core::AppSession>>,
 }
 
@@ -110,6 +118,8 @@ impl Default for DatabaseServiceRust {
             sources: RefCell::default(),
             filter: RefCell::default(),
             flat: RefCell::default(),
+            separate_routines: RefCell::default(),
+            alphabetical_sort: RefCell::default(),
             session: crate::bridge::registry::shared_session(),
         }
     }
@@ -366,10 +376,14 @@ impl ffi::DatabaseService {
             } else {
                 GroupMode::ByObjectType
             },
-            separate_routines: false,
+            separate_routines: *self.separate_routines.borrow(),
             object_types: ObjectTypeFilter::all(),
             pattern: PatternFilter::new(self.filter.borrow().clone()),
-            sort: SortOrder::Natural,
+            sort: if *self.alphabetical_sort.borrow() {
+                SortOrder::Alphabetical
+            } else {
+                SortOrder::Natural
+            },
             caps: source.caps(),
         };
         tree::flatten(&source.roots, &options)
@@ -415,6 +429,7 @@ impl ffi::DatabaseService {
                     can_create_user: !read_only,
                     ..Default::default()
                 },
+                primary_key: false,
             });
             if state != Some(ConnState::Connected) {
                 continue;
@@ -689,36 +704,64 @@ impl ffi::DatabaseService {
         self.as_mut().rows_changed();
     }
 
-    pub fn run_action(self: Pin<&mut Self>, node_id: &QString, action_id: &QString) -> FfiResult {
+    /// View options menu (FY.3): fold a `Routine` into its own "Procedures"
+    /// folder rather than sharing "Tables"' grouping sibling.
+    pub fn set_separate_routines(mut self: Pin<&mut Self>, value: bool) {
+        *self.separate_routines.borrow_mut() = value;
+        self.as_mut().rows_changed();
+    }
+
+    /// View options menu (FY.3): alphabetical (`table10` before `table2`)
+    /// rather than natural sort within a folder.
+    pub fn set_sort(mut self: Pin<&mut Self>, alphabetical: bool) {
+        *self.alphabetical_sort.borrow_mut() = alphabetical;
+        self.as_mut().rows_changed();
+    }
+
+    /// `runAction`/`actionPreview`'s shared setup: resolve `node_id`'s row
+    /// and dialect, then hand `action_id` to `db_core::ddl` (or the Redis
+    /// helpers below) for the exact statement text — never executed here,
+    /// so `actionPreview` can show a caller the same text `runAction` is
+    /// about to run without any side effect of its own.
+    fn resolve_action_statement(
+        &self,
+        node_id: &QString,
+        action_id: &str,
+    ) -> Result<(String, String), FfiResult> {
         let composite = node_id.to_string();
-        let action_id = action_id.to_string();
         let Some((source_id, path)) = parse_node_id(&composite) else {
-            return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "malformed node id",
+            ));
         };
         let source_id = source_id.to_string();
         let rows = self.flatten_for(&source_id);
         let Some(row) = rows.iter().find(|r| r.node_id == path) else {
-            return errors::failure(errors::CODE_INVALID_ARGUMENT, "no such node");
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "no such node",
+            ));
         };
         let Some(object_ref) = object_ref_for(row) else {
-            return errors::failure(
+            return Err(errors::failure(
                 errors::CODE_INVALID_ARGUMENT,
                 "this row has no runnable action",
-            );
+            ));
         };
         let dialect = {
             let sources = self.sources.borrow();
             let Some(source) = sources.get(&source_id) else {
-                return errors::failure(
+                return Err(errors::failure(
                     errors::CODE_REFUSED,
                     format!("'{source_id}' is not connected"),
-                );
+                ));
             };
             let Some(dialect) = source.dialect else {
-                return errors::failure(
+                return Err(errors::failure(
                     errors::CODE_REFUSED,
                     format!("'{source_id}' is not connected"),
-                );
+                ));
             };
             dialect
         };
@@ -726,7 +769,7 @@ impl ffi::DatabaseService {
             Some(("rename", new_name)) => ddl::rename_statement(dialect, &object_ref, new_name),
             Some(("comment", text)) => ddl::comment_statement(dialect, &object_ref, text),
             Some(("ttl", seconds)) => redis_ttl_statement(row, seconds),
-            _ => match action_id.as_str() {
+            _ => match action_id {
                 "drop" => ddl::drop_statement(dialect, &object_ref),
                 "truncate" => ddl::truncate_statement(dialect, &object_ref),
                 "delete-key" => redis_delete_key_statement(row),
@@ -736,9 +779,48 @@ impl ffi::DatabaseService {
                 )),
             },
         };
-        let statement_text = match generated {
-            Ok(text) => text,
-            Err(error) => return errors::failure(errors::CODE_INVALID_ARGUMENT, error.to_string()),
+        match generated {
+            Ok(text) => Ok((source_id, text)),
+            Err(error) => Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                error.to_string(),
+            )),
+        }
+    }
+
+    /// The exact statement `runAction(node_id, action_id)` would run,
+    /// generated but never executed — a rename/drop/truncate/comment
+    /// dialog's own confirmation shows this rather than a generic English
+    /// sentence (database-tools.md §11's tracked debt, closed here), the
+    /// same "never run what the user has not seen" contract
+    /// `objectDdlPreview` already gives the F4.4 dialogs.
+    pub fn action_preview(&self, node_id: &QString, action_id: &QString) -> FfiResult {
+        match self.resolve_action_statement(node_id, &action_id.to_string()) {
+            Ok((_, text)) => FfiResult {
+                code: 0,
+                message: QString::from(text.as_str()),
+            },
+            Err(failure) => failure,
+        }
+    }
+
+    pub fn run_action(self: Pin<&mut Self>, node_id: &QString, action_id: &QString) -> FfiResult {
+        let (source_id, statement_text) =
+            match self.resolve_action_statement(node_id, &action_id.to_string()) {
+                Ok(resolved) => resolved,
+                Err(failure) => return failure,
+            };
+        let dialect = {
+            let sources = self.sources.borrow();
+            // `resolve_action_statement` already checked this source is
+            // connected with a dialect; re-reading it here (rather than
+            // threading it back out) keeps that method's own return shape
+            // to just "which source, what text" — everything `runAction`'s
+            // dispatch below needs beyond that.
+            sources
+                .get(&source_id)
+                .and_then(|source| source.dialect)
+                .expect("resolve_action_statement already required a connected dialect")
         };
         let mut sources = self.sources.borrow_mut();
         let Some(source) = sources.get_mut(&source_id) else {

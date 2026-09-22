@@ -1237,7 +1237,8 @@ mod tests {
         assert!(text.contains("2,NULL"));
     }
 
-    fn table_node(name: &str, columns: &[(&str, &str, bool, bool)]) -> Node {
+    fn table_node(name: &str, columns: &[(&str, &str, bool, bool)]) -> db_core::schema::Node {
+        use db_core::schema::{Node, NodeDetail, ObjectKind};
         let children = columns
             .iter()
             .map(|(col_name, type_name, nullable, pk)| {
@@ -1246,7 +1247,7 @@ mod tests {
                     nullable: Some(*nullable),
                     default: None,
                     primary_key: *pk,
-                    ttl_seconds: None,
+                    ..NodeDetail::default()
                 })
             })
             .collect();
@@ -1263,7 +1264,7 @@ mod tests {
                 ("name", "TEXT", true, false),
             ],
         )];
-        let model = to_schema_model(&roots, &mut session);
+        let model = db_exchange::schema_model::from_snapshot(&roots, &mut session);
         assert_eq!(model.tables.len(), 1);
         let table = &model.tables[0];
         assert_eq!(table.name, "users");
@@ -1297,7 +1298,7 @@ mod tests {
     fn er_diagram_renders_a_table_with_no_relationship_lines_when_fks_are_unavailable() {
         let mut session = in_memory_session();
         let roots = vec![table_node("users", &[("id", "INTEGER", false, true)])];
-        let model = to_schema_model(&roots, &mut session);
+        let model = db_exchange::schema_model::from_snapshot(&roots, &mut session);
         let text = er_diagram::to_mermaid(&model, &er_diagram::DiagramScope::Schema);
         assert!(text.contains("erDiagram"));
         assert!(text.contains("users"));
@@ -1306,8 +1307,8 @@ mod tests {
     #[test]
     fn schema_compare_reports_an_added_table() {
         let mut session = in_memory_session();
-        let left = to_schema_model(&[], &mut session);
-        let right = to_schema_model(
+        let left = db_exchange::schema_model::from_snapshot(&[], &mut session);
+        let right = db_exchange::schema_model::from_snapshot(
             &[table_node("users", &[("id", "INTEGER", false, true)])],
             &mut session,
         );

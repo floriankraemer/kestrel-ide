@@ -334,6 +334,14 @@ public:
 
     QString currentPath() const { return docManager_->tabPath(currentTabId()); }
 
+    // F6c: what the Preview dock keys its provider lookup and render call
+    // on — `currentPath()` plus a virtual (C12) tab's own extension-bearing
+    // title, so a virtual document like an ER diagram's `db-erd://.../
+    // erd.mmd` previews the same way a `.mmd` file on disk does. Never use
+    // this for anything that needs a *real* file path (LSP, VCS, AI chat
+    // attachments all keep using `currentPath()`).
+    QString currentPreviewPath() const { return docManager_->previewPath(currentTabId()); }
+
     QString currentContent() const;
 
     // N2: ask the session to resolve whatever the caret sits on. The

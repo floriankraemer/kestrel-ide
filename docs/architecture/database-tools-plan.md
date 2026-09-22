@@ -351,7 +351,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F3e — console UX gaps (caret run, `Ask` dialog, schema picker, dialect-aware WHERE/ORDER BY, tab-per-console dock, F3.6) | done | 0fb740e, a524355, 66a3c92, ca74d9f, 4a831b2, d6019f7 |
 | F3 follow-up — `db-drivers`' `SqliteConnection`/`PgConnection::execute` eagerly drain the whole `Rows` result before returning instead of streaming (found this phase, out of its file list — see database-tools.md §4/§11) | done — F3c (`SqliteConnection`, live cursor over a second read-only connection) + F3d (`PgConnection`, live `Client::query_raw` stream) | 83e925b, 95a22ad |
 | F3 follow-up — `e2e_database` part 2 (console → run → grid → 1M rows → cancel) and the first-row/1M-row-paging/cancel NFR bench numbers in §10 — blocked on the eager-materialisation fix above, since the bench cannot be honestly measured (or met) against a driver that buffers the whole result first | open | |
-| F3e follow-up — `db_core::readonly::Guard::check` refuses every `Write`/`Ddl`/`Unknown` statement unconditionally; it has no notion of whether the *source* is actually read-only. `bridge::run::sql_script` gates its own call on the source's `read_only` flag, but `bridge::database::console`'s `attach()` builds and checks the same `Guard` for *every* console regardless of that flag — found this phase, out of its file list, not fixed | open | |
+| F3e follow-up — `db_core::readonly::Guard::check` refuses every `Write`/`Ddl`/`Unknown` statement unconditionally; it has no notion of whether the *source* is actually read-only. `bridge::run::sql_script` gates its own call on the source's `read_only` flag, but `bridge::database::console`'s `attach()` builds and checks the same `Guard` for *every* console regardless of that flag — found this phase, out of its file list, not fixed | done | 0e6a8cf |
 
 | F3 follow-up — caret-based "run statement at caret" (`EditorTabs` has no caret byte-offset accessor yet; `console.rs`'s `statement_at_caret`/`FfiDbExecWhat::Statement` are implemented and unit-tested, just unreachable from the console bar) | done (F3e) | a524355, 66a3c92, ca74d9f, 0fb740e |
 | F3 follow-up — `Ask` script-error policy's confirmation dialog (`askContinue` always auto-resumes today) | done (F3e) | a524355, 66a3c92, ca74d9f, 0fb740e |
@@ -361,11 +361,13 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F4.1 — `EditBuffer`, inline + value editor, NULL/DEFAULT | open | |
-| F4.2 — add/delete/clone; DML preview (virtual document); submit/revert | open | |
+| F4.1 — `EditBuffer`, inline + value editor, NULL/DEFAULT | done | dfd21de, 1340517, c10e633, af526f6, 8d8a4ce |
+| F4.2 — add/delete/clone; DML preview (virtual document); submit/revert | done | dfd21de, 1340517, c10e633, 8d8a4ce |
 | F4.3 — FK navigation; aggregates; transpose/tree/text modes; WHERE/ORDER BY | open | |
 | F4.4 — create/modify object dialogs (table/column/index/FK/user) | open | |
-| F4.5 — adversarial identifier fixtures; `security-audit` pass before merge | open | |
+| F4.5 — adversarial identifier fixtures; `security-audit` pass before merge | done | 7de5fcf, d677ae0 |
+| F4 follow-up — `security-expert`'s F4.5 pass found two real bugs, both fixed this phase (`Value::parse_hex` panicking on adversarial multi-byte-UTF-8 cell text; `ConsoleService::submit` never consulting the console's read-only `Guard` before dispatching a write) — see database-tools.md §11 | done | d677ae0 |
+| F4 follow-up — a source's read-only setting flip does not demote an already-open, already-`Editable` console/grid (`ConsoleState::guard` and `ResultState::edit` are both decided once and never re-checked); needs a task against `bridge::database::settings::set_read_only`, out of this phase's file list — see database-tools.md §11 | open | |
 
 ### F5 — exchange
 

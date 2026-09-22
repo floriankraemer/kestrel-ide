@@ -22,8 +22,7 @@ use russh::client::{self, Handle};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::agent::AgentIdentity;
 use russh::keys::{
-    known_hosts, load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKey,
-    PublicKeyOrCertificate,
+    known_hosts, load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate,
 };
 use russh::{ChannelMsg, Disconnect};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -150,10 +149,16 @@ impl client::Handler for HostKeyRecorder {
 /// wrapper over `russh`'s own `learn_known_hosts_path` (the crate already
 /// used for the read half, `check_known_hosts`, above) rather than a
 /// hand-rolled writer.
-pub fn append_known_host(host: &str, port: u16, key: &PublicKey, path: &Path) -> Result<(), DbError> {
+pub fn append_known_host(
+    host: &str,
+    port: u16,
+    key: &PublicKey,
+    path: &Path,
+) -> Result<(), DbError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| tunnel_err(format!("could not create {}: {error}", parent.display())))?;
+        std::fs::create_dir_all(parent).map_err(|error| {
+            tunnel_err(format!("could not create {}: {error}", parent.display()))
+        })?;
     }
     known_hosts::learn_known_hosts_path(host, port, key, path)
         .map_err(|error| tunnel_err(format!("could not update known_hosts: {error}")))
@@ -502,14 +507,17 @@ mod tests {
 
         let contents = std::fs::read_to_string(&path).expect("file was written");
         assert!(contents.contains("example.test"));
-        assert!(known_hosts::check_known_hosts_path("example.test", 22, &key, &path).unwrap_or(false));
+        assert!(
+            known_hosts::check_known_hosts_path("example.test", 22, &key, &path).unwrap_or(false)
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn append_known_host_creates_missing_parent_directories() {
-        let dir = std::env::temp_dir().join(format!("ide-known-hosts-nested-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ide-known-hosts-nested-{}", std::process::id()));
         let path = dir.join(".ssh").join("known_hosts");
         let key = test_public_key();
 
@@ -535,14 +543,19 @@ mod tests {
             .lock()
             .unwrap()
             .insert((host.clone(), 22), key.clone());
-        let dir = std::env::temp_dir().join(format!("ide-known-hosts-accept-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ide-known-hosts-accept-{}", std::process::id()));
         let path = dir.join("known_hosts");
 
         accept_host_key_at(&host, 22, &path).expect("accept succeeds");
         assert!(known_hosts::check_known_hosts_path(&host, 22, &key, &path).unwrap_or(false));
 
         // Consumed: a second accept with nothing pending is refused.
-        assert!(pending_host_keys().lock().unwrap().get(&(host.clone(), 22)).is_none());
+        assert!(pending_host_keys()
+            .lock()
+            .unwrap()
+            .get(&(host.clone(), 22))
+            .is_none());
         assert!(accept_host_key_at(&host, 22, &path).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);

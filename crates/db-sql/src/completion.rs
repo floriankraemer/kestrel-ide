@@ -117,7 +117,12 @@ fn mongo_completion(text: &str, offset: usize, schema: &SchemaSnapshot) -> Vec<C
         return Vec::new();
     };
     if qualifier == "db" {
-        return rank_and_wrap(table_and_view_names(schema), &prefix, CompletionKind::Table, None);
+        return rank_and_wrap(
+            table_and_view_names(schema),
+            &prefix,
+            CompletionKind::Table,
+            None,
+        );
     }
     // Method position only when the text right before `<qualifier>.`
     // literally reads `db.` — `head.ends_with(...)` sidesteps re-deriving
@@ -172,10 +177,7 @@ fn redis_completion(text: &str, offset: usize, schema: &SchemaSnapshot) -> Vec<C
 fn key_names(schema: &SchemaSnapshot) -> Vec<String> {
     fn walk(nodes: &[Node], out: &mut Vec<String>) {
         for node in nodes {
-            if matches!(
-                node.kind,
-                ObjectKind::KeyNamespace | ObjectKind::Key(_)
-            ) {
+            if matches!(node.kind, ObjectKind::KeyNamespace | ObjectKind::Key(_)) {
                 out.push(node.name.clone());
             }
             if let Children::Loaded(children) = &node.children {
@@ -500,7 +502,10 @@ mod tests {
     fn redis_schema() -> SchemaSnapshot {
         SchemaSnapshot::new(
             IntrospectLevel::Names,
-            vec![Node::leaf("session:42", ObjectKind::Key(db_core::schema::RedisType::String))],
+            vec![Node::leaf(
+                "session:42",
+                ObjectKind::Key(db_core::schema::RedisType::String),
+            )],
         )
     }
 

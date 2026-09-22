@@ -485,7 +485,10 @@ mod tests {
 
     #[test]
     fn a_single_statement_with_no_terminator_is_kept_whole() {
-        assert_eq!(split_commands("db.users.find({})"), vec!["db.users.find({})"]);
+        assert_eq!(
+            split_commands("db.users.find({})"),
+            vec!["db.users.find({})"]
+        );
     }
 
     #[test]

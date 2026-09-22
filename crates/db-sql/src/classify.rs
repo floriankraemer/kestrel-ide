@@ -358,7 +358,10 @@ mod tests {
             classifier.classify(r#"{"insert": "users", "documents": []}"#),
             StatementKind::Write
         );
-        assert_eq!(classifier.classify("not mongo at all"), StatementKind::Unknown);
+        assert_eq!(
+            classifier.classify("not mongo at all"),
+            StatementKind::Unknown
+        );
     }
 
     #[test]

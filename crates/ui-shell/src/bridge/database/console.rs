@@ -252,7 +252,9 @@ fn statement_at_caret(text: &str, dialect: Dialect, caret: usize) -> Option<Stri
                 }
                 offset = end;
             }
-            db_sql::resp::split_lines(text).last().map(|s| s.to_string())
+            db_sql::resp::split_lines(text)
+                .last()
+                .map(|s| s.to_string())
         }
         _ => {
             let statements = db_sql::split(text, dialect);
@@ -359,7 +361,10 @@ impl ffi::ConsoleService {
                                 source_id: attach_source_id.clone(),
                                 worker,
                                 dialect,
-                                guard: Guard::new(read_only, Box::new(FamilyClassifier { dialect })),
+                                guard: Guard::new(
+                                    read_only,
+                                    Box::new(FamilyClassifier { dialect }),
+                                ),
                                 tx_mode: FfiDbTxMode::Auto,
                                 script_policy: initial_policy,
                                 page_size,

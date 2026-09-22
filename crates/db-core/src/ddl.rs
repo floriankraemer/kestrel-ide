@@ -314,8 +314,7 @@ mod tests {
         // accepts a `runCommand` statement only when it parses as one —
         // this is the closest in-crate proxy for that contract without
         // introducing the dependency.
-        assert!(serde_json::from_str::<serde_json::Value>(&text)
-            .is_ok_and(|v| v.is_object()));
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v.is_object()));
     }
 
     #[test]

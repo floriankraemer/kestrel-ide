@@ -265,6 +265,7 @@ fn run_statement(
             name,
             type_name: odbc_data_type_name(description.data_type),
             nullable,
+            origin: None,
         });
         kinds.push(kind);
         descs.push(desc);

@@ -68,11 +68,15 @@ private:
     void onExecutionFinished(quint64 resultId, bool ok, quint64 affected, quint64 elapsedMs,
                              FfiDbError error);
     void exportCurrentResult(quint64 tabId);
+    void onEditabilityChanged(quint64 resultId, bool editable, const QString &reason);
+    void onSubmitFinished(quint64 resultId, bool ok, const QString &message);
+    void onResultRefreshed(quint64 oldResultId, quint64 newResultId);
 
     EditorTabs *editorTabs_;
     ConsoleService *consoleService_;
     ResultProvider *resultProvider_;
     ExchangeService *exchangeService_;
+    AppSettings *appSettings_;
     DatabaseConsoleBar *bar_;
     QTabWidget *consoleTabs_;
     QHash<quint64, ConsolePage> pages_;

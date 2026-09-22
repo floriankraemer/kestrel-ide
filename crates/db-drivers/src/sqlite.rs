@@ -365,6 +365,13 @@ impl Connection for SqliteConnection {
                 .map_err(map_err)?;
             return Ok(Execution::Affected(affected as u64));
         }
+        // `rusqlite` 0.32 does not expose `sqlite3_column_table_name` at
+        // all (no `column_metadata`-shaped feature in its own feature
+        // list), so this driver cannot fill `ColumnMeta::origin` itself —
+        // `ui-shell`'s data editor (F4.1) instead derives a result's
+        // single-table origin from the statement text via
+        // `db_sql::single_table`, the same statement every backend's
+        // driver already has in hand.
         let columns: Vec<ColumnMeta> = stmt
             .column_names()
             .iter()
@@ -372,6 +379,7 @@ impl Connection for SqliteConnection {
                 name: name.to_string(),
                 type_name: String::new(),
                 nullable: true,
+                origin: None,
             })
             .collect();
 
@@ -1131,5 +1139,135 @@ mod tests {
             }
             Ok(_) => panic!("expected an error"),
         }
+    }
+
+    /// Every row `sql` returns, in order — the F4.5 round-trip tests' own
+    /// "reopen and reread" step.
+    fn query_rows(conn: &mut SqliteConnection, sql: &str) -> Vec<Vec<Value>> {
+        let Execution::Rows(mut stream) = conn
+            .execute(&Statement::sql(sql), &ExecOptions::default())
+            .unwrap()
+        else {
+            panic!("expected rows");
+        };
+        let mut rows = Vec::new();
+        while let Some(batch) = stream.next_batch().unwrap() {
+            rows.extend(batch.rows);
+        }
+        rows
+    }
+
+    /// F4.5: a data-editor submit's whole lifecycle (edit an existing row,
+    /// add one, delete one) against a real SQLite connection, then reopen
+    /// (re-query) and confirm every value actually persisted — not just
+    /// that `apply` returned an affected-row count.
+    #[test]
+    fn edit_add_and_delete_all_persist_and_reopen_correctly() {
+        let mut conn = connect();
+        conn.execute(
+            &Statement::sql("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        conn.execute(
+            &Statement::sql("INSERT INTO t VALUES (1, 'alice'), (2, 'bob')"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+
+        let mut buffer = db_core::dml::EditBuffer::new(
+            "t",
+            vec!["id".to_string(), "name".to_string()],
+            vec!["id".to_string()],
+            vec![
+                vec![Value::Int(1), Value::Text("alice".to_string())],
+                vec![Value::Int(2), Value::Text("bob".to_string())],
+            ],
+        );
+        buffer.stage(0, "name", Value::Text("alice2".to_string()));
+        buffer.add_row(vec![Value::Int(3), Value::Text("carol".to_string())]);
+        buffer.delete_row(1); // bob
+
+        let plan = buffer.to_dml_plan(Dialect::Sqlite);
+        conn.apply(&plan.statements).unwrap();
+
+        let rows = query_rows(&mut conn, "SELECT id, name FROM t ORDER BY id");
+        assert_eq!(
+            rows,
+            vec![
+                vec![Value::Int(1), Value::Text("alice2".to_string())],
+                vec![Value::Int(3), Value::Text("carol".to_string())],
+            ]
+        );
+    }
+
+    /// F4.5: adversarial identifiers survive the full `EditBuffer` →
+    /// `DmlPlan` → real `apply` path — the table/column names are quoted,
+    /// never executed as syntax, and in particular the literal text
+    /// `DROP TABLE students` sitting *inside* the adversarial table name
+    /// never actually drops the real `students` table sitting right next
+    /// to it.
+    #[test]
+    fn adversarial_identifiers_survive_a_real_apply_without_executing_as_syntax() {
+        let mut conn = connect();
+        let table = "Robert'); DROP TABLE students;--";
+        let column = "a\"b";
+        conn.execute(
+            &Statement::sql("CREATE TABLE students (id INTEGER)"),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        conn.execute(
+            &Statement::sql(format!(
+                "CREATE TABLE {} (id INTEGER PRIMARY KEY, {} TEXT)",
+                Dialect::Sqlite.quote_ident(table),
+                Dialect::Sqlite.quote_ident(column),
+            )),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+        conn.execute(
+            &Statement::sql(format!(
+                "INSERT INTO {} VALUES (1, 'x')",
+                Dialect::Sqlite.quote_ident(table)
+            )),
+            &ExecOptions::default(),
+        )
+        .unwrap();
+
+        let mut buffer = db_core::dml::EditBuffer::new(
+            table,
+            vec!["id".to_string(), column.to_string()],
+            vec!["id".to_string()],
+            vec![vec![Value::Int(1), Value::Text("x".to_string())]],
+        );
+        buffer.stage(0, column, Value::Text("y".to_string()));
+        let plan = buffer.to_dml_plan(Dialect::Sqlite);
+        // The adversarial name appears only inside its own quoted
+        // identifier — never as a second, unquoted statement an
+        // injection would need.
+        assert_eq!(
+            plan.statements[0].text,
+            "UPDATE \"Robert'); DROP TABLE students;--\" SET \"a\"\"b\" = ? WHERE \"id\" = ?"
+        );
+        conn.apply(&plan.statements).unwrap();
+
+        // The real `students` table is untouched: the DROP text embedded
+        // in the adversarial table's own name never executed as syntax.
+        let students = query_rows(&mut conn, "SELECT count(*) FROM students");
+        assert_eq!(students, vec![vec![Value::Int(0)]]);
+
+        let rows = query_rows(
+            &mut conn,
+            &format!(
+                "SELECT id, {} FROM {}",
+                Dialect::Sqlite.quote_ident(column),
+                Dialect::Sqlite.quote_ident(table)
+            ),
+        );
+        assert_eq!(
+            rows,
+            vec![vec![Value::Int(1), Value::Text("y".to_string())]]
+        );
     }
 }

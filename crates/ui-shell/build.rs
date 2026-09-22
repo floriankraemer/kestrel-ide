@@ -742,6 +742,10 @@ fn main() {
         .cpp_file("cpp/result_table_model.cpp")
         .cpp_file("cpp/result_grid_view.cpp")
         .cpp_file("cpp/database_results_panel.cpp")
+        // database-tools-plan F4.1: the data editor's own value editor
+        // dialog (Shift+Enter / double-click on a grid cell).
+        .cpp_file("cpp/value_editor_dialog.h")
+        .cpp_file("cpp/value_editor_dialog.cpp")
         // database-tools-plan F3e: the `Ask` script policy's confirmation
         // dialog.
         .cpp_file("cpp/database_dialogs.cpp")

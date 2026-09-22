@@ -223,6 +223,7 @@ fn parse_ffi_rows(
             name: columns.get(i).map(|q| q.to_string()).unwrap_or_default(),
             type_name: "text".to_string(),
             nullable: true,
+            origin: None,
         })
         .collect();
     let parsed_rows: Vec<Vec<Value>> = rows

@@ -179,11 +179,13 @@ mod tests {
                 name: "id".to_string(),
                 type_name: "int".to_string(),
                 nullable: false,
+                origin: None,
             },
             ColumnMeta {
                 name: "name".to_string(),
                 type_name: "text".to_string(),
                 nullable: false,
+                origin: None,
             },
         ]
     }
@@ -265,11 +267,13 @@ mod tests {
                 name: "id".to_string(),
                 type_name: "int".to_string(),
                 nullable: false,
+                origin: None,
             },
             ColumnMeta {
                 name: "amount".to_string(),
                 type_name: "float".to_string(),
                 nullable: false,
+                origin: None,
             },
         ];
         let left = vec![vec![Value::Int(1), Value::Float(1.000_001)]];

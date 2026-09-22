@@ -124,11 +124,13 @@ mod tests {
                 name: "id".to_string(),
                 type_name: "int".to_string(),
                 nullable: false,
+                origin: None,
             },
             ColumnMeta {
                 name: "when".to_string(),
                 type_name: "date".to_string(),
                 nullable: false,
+                origin: None,
             },
         ]
     }

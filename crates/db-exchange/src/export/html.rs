@@ -52,6 +52,7 @@ mod tests {
             name: "name".to_string(),
             type_name: "text".to_string(),
             nullable: false,
+            origin: None,
         }]
     }
 

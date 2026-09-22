@@ -22,6 +22,8 @@ pub mod backend;
 pub mod drivers;
 // ---- database: F5b ----
 pub mod exchange;
+// ---- database: F4 ----
+pub mod edit;
 
 pub use service::DatabaseServiceRust;
 

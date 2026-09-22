@@ -78,6 +78,14 @@ pub enum SessionCommand {
     BeginManual,
     Commit,
     Rollback,
+    /// Runs a data-editor submit's bound statements (F4.2) through
+    /// `Session::apply` — auto mode: whatever transaction state the
+    /// session is already in (its own `apply` does not open one of its
+    /// own); manual mode: inside the console's already-open transaction,
+    /// same as any other statement run while one is open.
+    Apply {
+        statements: Vec<Statement>,
+    },
     Shutdown,
 }
 
@@ -122,6 +130,12 @@ pub enum SessionEvent {
     TxChanged {
         generation: u64,
         result: Result<(), DbError>,
+    },
+    /// [`SessionCommand::Apply`]'s outcome — the total row count
+    /// `Connection::apply` reported, or the first statement's failure.
+    Applied {
+        generation: u64,
+        result: Result<u64, DbError>,
     },
 }
 
@@ -278,6 +292,42 @@ fn run(
                 let result = session.ddl_of(&object);
                 on_event(SessionEvent::Ddl { generation, result });
             }
+            SessionCommand::Apply { statements } => {
+                let generation = session.generation();
+                // Auto mode: this submit's own all-or-nothing transaction
+                // — a mid-batch failure must not leave some of a
+                // multi-row edit applied and some not. Manual mode: the
+                // console already has a transaction open (or the user
+                // will commit/rollback explicitly either way), so this
+                // never begins/commits one of its own — it runs inside
+                // whatever is already open, same as any other statement.
+                let auto_wrapped = session.tx_mode() == db_core::session::TxMode::Auto;
+                if auto_wrapped {
+                    if let Err(error) = session.begin_manual() {
+                        on_event(SessionEvent::Applied {
+                            generation,
+                            result: Err(error),
+                        });
+                        continue;
+                    }
+                }
+                let result = session.apply(&statements);
+                if auto_wrapped {
+                    let closed = if result.is_ok() {
+                        session.commit()
+                    } else {
+                        session.rollback()
+                    };
+                    if let Err(close_error) = closed {
+                        on_event(SessionEvent::Applied {
+                            generation,
+                            result: Err(close_error),
+                        });
+                        continue;
+                    }
+                }
+                on_event(SessionEvent::Applied { generation, result });
+            }
             SessionCommand::RunStatement { statement } => {
                 let generation = session.generation();
                 let result = session
@@ -400,6 +450,7 @@ mod tests {
                     name: "n".to_string(),
                     type_name: "int".to_string(),
                     nullable: false,
+                    origin: None,
                 }],
                 rows: vec![row],
             }))
@@ -643,7 +694,8 @@ mod tests {
             SessionEvent::Ran { result, .. } => ran_clone.lock().unwrap().push(result),
             SessionEvent::Introspected { .. }
             | SessionEvent::Batch { .. }
-            | SessionEvent::TxChanged { .. } => {}
+            | SessionEvent::TxChanged { .. }
+            | SessionEvent::Applied { .. } => {}
         });
         worker
             .send(SessionCommand::DdlOf {
@@ -837,6 +889,148 @@ mod tests {
         let worker = SessionWorker::spawn(session, |_event| {});
         worker.cancel_now().unwrap();
         assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// A `Connection` double for [`SessionCommand::Apply`]'s own tests:
+    /// records every `begin`/`commit`/`rollback`/`apply` call in order, and
+    /// `apply` fails when any statement's text contains `"FAIL"`.
+    #[derive(Default)]
+    struct ApplyConnection {
+        calls: Arc<Mutex<Vec<&'static str>>>,
+        fail: bool,
+    }
+
+    impl Connection for ApplyConnection {
+        fn dialect(&self) -> db_core::dialect::Dialect {
+            db_core::dialect::Dialect::Sqlite
+        }
+        fn server_info(&self) -> String {
+            "apply".to_string()
+        }
+        fn introspect(
+            &mut self,
+            _scope: &IntrospectScope,
+            _level: IntrospectLevel,
+        ) -> Result<SchemaSnapshot, DbError> {
+            unimplemented!("not exercised by the Apply tests")
+        }
+        fn execute(
+            &mut self,
+            _statement: &Statement,
+            _options: &ExecOptions,
+        ) -> Result<Execution, DbError> {
+            unimplemented!("not exercised by the Apply tests")
+        }
+        fn begin(&mut self) -> Result<(), DbError> {
+            self.calls.lock().unwrap().push("begin");
+            Ok(())
+        }
+        fn commit(&mut self) -> Result<(), DbError> {
+            self.calls.lock().unwrap().push("commit");
+            Ok(())
+        }
+        fn rollback(&mut self) -> Result<(), DbError> {
+            self.calls.lock().unwrap().push("rollback");
+            Ok(())
+        }
+        fn set_read_only(&mut self, _read_only: bool) -> Result<(), DbError> {
+            Ok(())
+        }
+        fn cancel_handle(&self) -> Option<Box<dyn CancelHandle>> {
+            None
+        }
+        fn ddl_of(&mut self, _object: &ObjectRef) -> Result<String, DbError> {
+            unimplemented!("not exercised by the Apply tests")
+        }
+        fn apply(&mut self, statements: &[Statement]) -> Result<u64, DbError> {
+            self.calls.lock().unwrap().push("apply");
+            if self.fail || statements.iter().any(|s| s.text.contains("FAIL")) {
+                return Err(DbError::new(
+                    db_core::error::DbErrorCode::InvalidStatement,
+                    "boom",
+                ));
+            }
+            Ok(statements.len() as u64)
+        }
+        fn close(&mut self) -> Result<(), DbError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn apply_in_auto_mode_wraps_a_begin_and_commit_around_it() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let session = Session::new(Box::new(ApplyConnection {
+            calls: Arc::clone(&calls),
+            fail: false,
+        }));
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let results_clone = Arc::clone(&results);
+        let worker = SessionWorker::spawn(session, move |event| {
+            if let SessionEvent::Applied { result, .. } = event {
+                results_clone.lock().unwrap().push(result);
+            }
+        });
+        worker
+            .send(SessionCommand::Apply {
+                statements: vec![Statement::sql("UPDATE t SET x = 1")],
+            })
+            .unwrap();
+        wait_for(&results, 1);
+        assert_eq!(*calls.lock().unwrap(), vec!["begin", "apply", "commit"]);
+        assert_eq!(results.lock().unwrap()[0], Ok(1));
+    }
+
+    #[test]
+    fn apply_in_auto_mode_rolls_back_on_failure_and_reports_the_error() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let session = Session::new(Box::new(ApplyConnection {
+            calls: Arc::clone(&calls),
+            fail: true,
+        }));
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let results_clone = Arc::clone(&results);
+        let worker = SessionWorker::spawn(session, move |event| {
+            if let SessionEvent::Applied { result, .. } = event {
+                results_clone.lock().unwrap().push(result);
+            }
+        });
+        worker
+            .send(SessionCommand::Apply {
+                statements: vec![Statement::sql("UPDATE t SET x = 1")],
+            })
+            .unwrap();
+        wait_for(&results, 1);
+        assert_eq!(*calls.lock().unwrap(), vec!["begin", "apply", "rollback"]);
+        assert!(results.lock().unwrap()[0].is_err());
+    }
+
+    #[test]
+    fn apply_in_manual_mode_neither_begins_nor_commits_its_own_transaction() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut session = Session::new(Box::new(ApplyConnection {
+            calls: Arc::clone(&calls),
+            fail: false,
+        }));
+        session.begin_manual().unwrap();
+        calls.lock().unwrap().clear();
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let results_clone = Arc::clone(&results);
+        let worker = SessionWorker::spawn(session, move |event| {
+            if let SessionEvent::Applied { result, .. } = event {
+                results_clone.lock().unwrap().push(result);
+            }
+        });
+        worker
+            .send(SessionCommand::Apply {
+                statements: vec![Statement::sql("UPDATE t SET x = 1")],
+            })
+            .unwrap();
+        wait_for(&results, 1);
+        // Only the apply itself — no begin/commit of its own, since a
+        // manual transaction is already open.
+        assert_eq!(*calls.lock().unwrap(), vec!["apply"]);
+        assert_eq!(results.lock().unwrap()[0], Ok(1));
     }
 
     #[test]

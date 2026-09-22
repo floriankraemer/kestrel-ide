@@ -222,26 +222,34 @@ The schema picker reads a `Names`-level `Introspect` `attach` now kicks off on i
 F3.6's `sql-script` run configuration (`bridge::run::sql_script`) runs off a plain background thread, no `Supervisor`/PTY process, reporting through the same `consoleStarted`/`consoleOutput`/`consoleFinished` signals with its own console-id range.
 **Known gap, found not fixed**: `db_core::readonly::Guard::check` refuses every `Write`/`Ddl`/`Unknown` statement unconditionally — it has no notion of whether the *source* is actually read-only, despite this module's own doc comment describing it as a read-only-source check. `bridge::run::sql_script` gates its own guard check on the source's `read_only` flag; `bridge::database::console`'s `attach()` (F3, unchanged this phase) does not, so every console — on a read-only source or not — currently refuses any write/DDL statement. §11 tracks this as new debt.
 
-**Data-editor submit** (EditBuffer → DmlPlan → apply → refresh):
+**Data-editor submit** (EditBuffer → DmlPlan → apply → refresh) — shipped
+(F4.2), on `ConsoleService` rather than `ResultProvider` for `dmlPreview`/
+`submit`: both need the console's own worker/session (`submit`) or the
+shared `AppSession` (`dmlPreview`, to open the virtual document), neither
+of which `ResultProvider` holds (this document's own doc comment on why
+the two QObjects split as they do); every cell-staging call
+(`setCell`/`setNull`/`setDefault`/`revertCell`/`addRow`/`cloneRow`/
+`deleteRows`/`revert`) still lives on `ResultProvider`, pure buffer state:
 
 ```mermaid
 sequenceDiagram
     participant UI as result_grid_view
     participant RP as ResultProvider
+    participant CS as ConsoleService
     participant Buf as db_core::EditBuffer
-    participant Session as db_core::Session
+    participant Worker as SessionWorker
 
     UI->>RP: setCell(row, col, value)
     RP->>Buf: stage(row, col, value)
-    UI->>RP: dmlPreview()
-    RP->>Buf: to_dml_plan()
-    Buf-->>RP: DmlPlan (bound params, quoted identifiers)
-    RP-->>UI: preview text (virtual document)
-    UI->>RP: submit()
-    RP->>Session: apply(DmlPlan)
-    Session-->>RP: affected rows / DbError
-    RP->>Buf: clear()
-    RP-->>UI: refresh (re-run current page)
+    UI->>CS: dmlPreview()
+    CS->>Buf: to_dml_plan()
+    Buf-->>CS: DmlPlan (bound params, quoted identifiers)
+    CS-->>UI: virtualDocumentOpened (db-dml, params shown as ?)
+    UI->>CS: submit()
+    CS->>Worker: SessionCommand::Apply(statements)
+    Worker-->>CS: SessionEvent::Applied(affected rows / DbError)
+    CS->>Buf: clear()
+    CS-->>UI: submitFinished, resultRefreshed(oldId, newId)
 ```
 
 **Driver install** (download → sha256 → quarantine → probe):
@@ -501,10 +509,20 @@ Postgres TLS (`SslMode::{Prefer,Require,VerifyCa,VerifyFull}`) is still `NotSupp
 The NFR bench (1 000 000-row SQLite table: first batch ≤ 500 ms, `rowPage` ≤ 16 ms, cancel ≤ 1.5 s) was not run — `e2e_database_console.rs` was not written this phase; write it together with a fix for the eager-materialisation gap above, since the NFR cannot be met (or honestly measured) while `db-drivers::execute` still buffers a whole `SELECT *` before returning.
 
 **F3e debt** (F3e addressed every other F3 debt row above except the two still listed — caret run, the `Ask` dialog, dialect-aware clause injection, tab-per-console, schema picker, F3.6 — not silently dropped):
-`db_core::readonly::Guard::check` refuses every `Write`/`Ddl`/`Unknown` statement unconditionally regardless of whether the source is actually read-only, despite its own doc comment describing it as a read-only-source check — found this phase. `bridge::run::sql_script::run_script` gates its own guard check on the source's `read_only` flag; `bridge::database::console`'s `attach()` (F3, unchanged this phase) does not, so every interactive console today refuses any write/DDL statement regardless of the source's own setting — a pre-existing gap this phase's own sql-script code would otherwise have inherited silently. Needs its own task against `console.rs`.
 The `sql-script` run configuration supports no cancel, no rerun-in-place, and its console's `resolveLink` always answers empty (`ConsoleState.path_map` is `None` — there is no in-container path to translate, but a plain "click a line number in the output to jump to it" affordance would still be useful and is not wired). A script that hangs mid-statement can only be dealt with by closing the IDE.
 `ResultProvider::applyClauses` still returns its fresh result id string-encoded in `FfiResult::message` (`ResultProvider` has no `executionStarted` signal of its own to announce it with — ponytail, noted at the call site) rather than a typed field; unchanged this phase.
 `ResultProvider::aggregate`/`textView` still operate over the rows fetched so far, not the whole result; unchanged this phase.
+
+**F4 implementation note (data editor, F4.1/F4.2/F4.5)**: shipped — `bridge::database::edit` (split out of `console.rs` once F4 pushed it past the file-size ceiling). The F3e follow-up row above is paid off: `db_core::readonly::Guard::new` now takes the source's own `read_only` flag at construction and `check` is a no-op when it is `false`; every caller (`console::attach`, `run::sql_script`) routes through the fixed constructor.
+Editability is decided per result, not per source: a read-only source or a statement `db_sql::single_table::of` cannot resolve to one plain table settles `NotEditable` immediately; otherwise a `Full`-level introspect scoped to that one table (`ConsoleService::start_editability_check`/`edit::apply_edit_lookup`) reads the table's own primary-key columns (already populated by both real drivers' `Full`-level introspection) and applies the new per-source `no_primary_key_policy` setting (`"refuse"` default, `"all_columns_where"` opt-in) when none remain — reported through `editabilityChanged`.
+`db_core::dml::EditBuffer` grew `CellEdit::{Set,Default}`, `add_row`/`clone_row`/`delete_row`/`revert_cell`/`pending_count`/`row_flags`/`sync_rows`; `to_dml_plan` now emits `DELETE`/`INSERT` alongside the existing `UPDATE`, still binding every value and quoting every identifier through `Dialect`. `submit` runs the plan through a new `SessionCommand::Apply` (auto mode wraps its own transaction; manual mode runs inside the console's already-open one), then clears the buffer and re-runs the original statement for a fresh page (`resultRefreshed`). `dmlPreview` opens the plan's SQL (params shown as `?`, never substituted) as a read-only `db-dml` virtual document, the same scheme Go to DDL uses.
+`ColumnMeta::origin` (the plan's own module-tree note) is not populated by any driver yet — `rusqlite` 0.32 has no column-metadata API at all, and Postgres's row-description `table_oid` would need its own follow-up to resolve cheaply; `db_sql::single_table::of` (parses the statement text every backend already has in hand) is the stand-in, conservative by construction (a `JOIN`, a derived table, `DISTINCT`, `GROUP BY`/`HAVING`, a set operation, or a computed projection all fall back to read-only rather than risk staging an edit against a column that is not really the table's own).
+Deferred to F4.3/F4.4, per the plan's own split: FK navigation, aggregates over the whole result (not just the fetched page), transpose/tree/text edit modes, the create/modify object dialogs. The value editor dialog has no binary/hex edit mode yet (`HexViewer` is shaped for a read-only file view, not a bound-parameter edit) — load-from-file with hex-encoded text is today's workaround, since `parse_text` already accepts it for a binary column.
+
+**F4.5 `security-expert` pass** (read-only review of `dml.rs`, `dialect.rs`, `readonly.rs`, `value.rs`, `single_table.rs`, `console.rs`, `edit.rs`, `sessions.rs`): the "every value bound, every identifier quoted, nothing interpolated" property held up under adversarial-identifier/value testing — no place splices a cell value or a table/column name into SQL text as a literal.
+Two real findings, both fixed this phase: `Value::parse_hex` byte-index-sliced a value-editor cell's text without checking it was ASCII first, so a multi-byte UTF-8 character padded to an even byte length (no 2-byte-aligned char boundary at all) panicked the process rather than returning `Err`; and `ConsoleService::submit` compiled a `DmlPlan` and dispatched it straight to `SessionCommand::Apply` without ever consulting the console's own read-only `Guard`, unlike every other console-run path — a result's editability decision is cached once in `ResultState::edit` and never re-checked, so this was the one write path with no client-side check left between a stale "editable" decision and an actual write.
+Residual gap, not fixed this phase (needs `bridge::database::settings.rs`, outside this phase's file list): flipping a source's read-only setting does not demote an already-open, already-`Editable` grid's cached decision, nor rebuild that console's own `Guard` — a console attached before the flip keeps its original `read_only` value baked into both until it is detached and reattached. Low severity in practice (the `submit` fix above still gates every actual write through a classifier-checked `Guard`, just one built at attach time rather than kept live), but a real gap: needs a task against `settings::set_read_only` to walk `Shared::consoles` for the affected source and force-refresh both.
+Two Low/Info findings noted but not fixed (pre-existing, out of this phase's file list): `ResultProvider::text_view`'s JSON export path uses Rust's `Debug` formatting rather than real JSON string escaping (a column name or cell value with certain control characters can produce syntactically invalid JSON); driver/connection error text is surfaced verbatim to console output with no redaction pass for anything a future driver's own error formatting might embed.
 
 
 **F5b/F6b debt** (all tracked here, not silently dropped):

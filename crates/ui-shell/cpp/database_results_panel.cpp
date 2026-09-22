@@ -30,6 +30,7 @@ DatabaseResultsPanel::DatabaseResultsPanel(EditorTabs *editorTabs, ConsoleServic
   , consoleService_(consoleService)
   , resultProvider_(resultProvider)
   , exchangeService_(exchangeService)
+  , appSettings_(appSettings)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -51,6 +52,23 @@ DatabaseResultsPanel::DatabaseResultsPanel(EditorTabs *editorTabs, ConsoleServic
     connect(consoleService, &ConsoleService::askContinue, this,
             [this, consoleService](quint64 resultId, const QString &message) {
                 showAskContinueDialog(consoleService, resultId, message, this);
+            });
+    connect(consoleService, &ConsoleService::editabilityChanged, this,
+            &DatabaseResultsPanel::onEditabilityChanged);
+    connect(consoleService, &ConsoleService::submitFinished, this,
+            &DatabaseResultsPanel::onSubmitFinished);
+    connect(consoleService, &ConsoleService::resultRefreshed, this,
+            &DatabaseResultsPanel::onResultRefreshed);
+    // F4.2's DML preview opens a read-only virtual document tab — wired
+    // here rather than in `editor_tabs.cpp` (its own constructor, at that
+    // file's line-size ceiling), the same way `DatabaseService`'s own
+    // `virtualDocumentOpened` is wired there for "Go to DDL".
+    connect(consoleService, &ConsoleService::virtualDocumentOpened, this,
+            [this](quint64 id, const QString &title, bool isNew) {
+                if (isNew) {
+                    editorTabs_->onTabOpened(id, title);
+                }
+                editorTabs_->focusTab(id);
             });
 
     // The page a tab's console writes into disappears the moment its own
@@ -87,7 +105,7 @@ DatabaseResultsPanel::ConsolePage &DatabaseResultsPanel::pageFor(quint64 tabId)
     page.output = new QPlainTextEdit(page.root);
     page.output->setReadOnly(true);
     page.subTabs->addTab(page.output, tr("Output"));
-    page.grid = new ResultGridView(resultProvider_, page.root);
+    page.grid = new ResultGridView(consoleService_, resultProvider_, appSettings_, page.root);
     page.subTabs->addTab(page.grid, tr("Result"));
     layout->addWidget(page.subTabs);
 
@@ -194,6 +212,31 @@ void DatabaseResultsPanel::exportCurrentResult(quint64 tabId)
         first += page.size();
     }
     showExportRowsDialog(this, exchangeService_, columns, rows);
+}
+
+void DatabaseResultsPanel::onEditabilityChanged(quint64 resultId, bool editable,
+                                                const QString &reason)
+{
+    const auto it = pages_.find(resultTab_.value(resultId, 0));
+    if (it != pages_.end()) {
+        it.value().grid->editabilityChanged(resultId, editable, reason);
+    }
+}
+
+void DatabaseResultsPanel::onSubmitFinished(quint64 resultId, bool ok, const QString &message)
+{
+    const auto it = pages_.find(resultTab_.value(resultId, 0));
+    if (it != pages_.end()) {
+        it.value().grid->submitFinished(resultId, ok, message);
+    }
+}
+
+void DatabaseResultsPanel::onResultRefreshed(quint64 oldResultId, quint64 newResultId)
+{
+    const auto it = pages_.find(resultTab_.value(oldResultId, 0));
+    if (it != pages_.end()) {
+        it.value().grid->resultRefreshed(oldResultId, newResultId);
+    }
 }
 
 DatabaseResultsPanel *buildDatabaseResultsDock(ads::CDockManager *dockManager,

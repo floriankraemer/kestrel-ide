@@ -74,6 +74,10 @@ impl DatabaseSettings {
 }
 
 pub const DEFAULT_SCRIPT_POLICY: &str = "stop_on_error";
+/// The data editor's default when a table has no primary key (F4.2):
+/// refuse to offer it as editable at all, rather than silently matching a
+/// `WHERE` on every column (database-tools.md §4's `NoPrimaryKey` policy).
+pub const DEFAULT_NO_PRIMARY_KEY_POLICY: &str = "refuse";
 
 impl DataSourceSetting {
     pub fn script_policy_or_default(&self) -> &str {
@@ -81,6 +85,14 @@ impl DataSourceSetting {
             DEFAULT_SCRIPT_POLICY
         } else {
             self.script_policy.as_str()
+        }
+    }
+
+    pub fn no_primary_key_policy_or_default(&self) -> &str {
+        if self.no_primary_key_policy.is_empty() {
+            DEFAULT_NO_PRIMARY_KEY_POLICY
+        } else {
+            self.no_primary_key_policy.as_str()
         }
     }
 }
@@ -130,6 +142,13 @@ pub struct DataSourceSetting {
     /// kind tag in this struct already follows.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub script_policy: String,
+    /// The data editor's own policy (F4.2) for a table with no primary
+    /// key: `"refuse"` (default, the grid opens read-only with that as
+    /// its reason) or `"all_columns_where"` (opt in to `db_core::dml::
+    /// EditBuffer`'s all-original-columns `WHERE` fallback) — free-form
+    /// like `script_policy`, same reasoning.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub no_primary_key_policy: String,
     /// A full connection URL, when the driver takes one instead of
     /// host/port/database (e.g. a SQLite file path, or an ADBC DSN).
     #[serde(default)]
@@ -233,6 +252,7 @@ mod tests {
                 read_only: true,
                 history: false,
                 script_policy: "ask".to_string(),
+                no_primary_key_policy: "all_columns_where".to_string(),
                 url: String::new(),
                 ssl: SslSetting {
                     mode: "verify-full".to_string(),
@@ -273,6 +293,7 @@ mod tests {
             read_only: false,
             history: true,
             script_policy: String::new(),
+            no_primary_key_policy: String::new(),
             url: String::new(),
             ssl: SslSetting::default(),
             ssh: None,
@@ -307,6 +328,41 @@ mod tests {
         let parsed: DataSourceSetting = toml::from_str(&text).expect("deserialize");
         assert_eq!(parsed.script_policy, "ask");
         assert_eq!(parsed.script_policy_or_default(), "ask");
+    }
+
+    #[test]
+    fn no_primary_key_policy_defaults_to_refuse_when_unset() {
+        let setting = DataSourceSetting::default();
+        assert_eq!(
+            setting.no_primary_key_policy_or_default(),
+            DEFAULT_NO_PRIMARY_KEY_POLICY
+        );
+    }
+
+    #[test]
+    fn an_unset_no_primary_key_policy_writes_nothing() {
+        let setting = DataSourceSetting {
+            id: "s1".to_string(),
+            ..Default::default()
+        };
+        let text = toml::to_string(&setting).expect("serialize");
+        assert!(!text.contains("no_primary_key_policy"));
+    }
+
+    #[test]
+    fn no_primary_key_policy_round_trips() {
+        let setting = DataSourceSetting {
+            id: "s1".to_string(),
+            no_primary_key_policy: "all_columns_where".to_string(),
+            ..Default::default()
+        };
+        let text = toml::to_string(&setting).expect("serialize");
+        let parsed: DataSourceSetting = toml::from_str(&text).expect("deserialize");
+        assert_eq!(parsed.no_primary_key_policy, "all_columns_where");
+        assert_eq!(
+            parsed.no_primary_key_policy_or_default(),
+            "all_columns_where"
+        );
     }
 
     #[test]

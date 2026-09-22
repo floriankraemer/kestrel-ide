@@ -22,6 +22,7 @@ pub fn convert_batch(batch: &RecordBatch) -> RowBatch {
             name: field.name().clone(),
             type_name: format!("{:?}", field.data_type()),
             nullable: field.is_nullable(),
+            origin: None,
         })
         .collect();
 

@@ -172,6 +172,7 @@ pub fn flatten_documents(documents: &[Document]) -> RowBatch {
             name: name.clone(),
             type_name: "bson".to_string(),
             nullable: true,
+            origin: None,
         })
         .collect();
     let rows = documents
@@ -198,6 +199,7 @@ fn documents_batch(documents: Vec<Document>) -> RowBatch {
             name: "document".to_string(),
             type_name: "bson".to_string(),
             nullable: false,
+            origin: None,
         }],
         rows: documents
             .into_iter()
@@ -472,6 +474,7 @@ impl MongoConnection {
                         name: "count".to_string(),
                         type_name: "int64".to_string(),
                         nullable: false,
+                        origin: None,
                     }],
                     rows: vec![vec![Value::Int(count as i64)]],
                 }))))
@@ -487,6 +490,7 @@ impl MongoConnection {
                         name: "value".to_string(),
                         type_name: "bson".to_string(),
                         nullable: true,
+                        origin: None,
                     }],
                     rows: values
                         .into_iter()

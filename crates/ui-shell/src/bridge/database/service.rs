@@ -804,7 +804,9 @@ fn apply_event(
         // The tree's own worker never sends `Execute`/`FetchMore`/tx
         // commands — those are `ConsoleService`'s (F3.3), which runs each
         // console on its own `SessionWorker` rather than this one.
-        SessionEvent::Batch { .. } | SessionEvent::TxChanged { .. } => {}
+        SessionEvent::Batch { .. }
+        | SessionEvent::TxChanged { .. }
+        | SessionEvent::Applied { .. } => {}
     }
 }
 

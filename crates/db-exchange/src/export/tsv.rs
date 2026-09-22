@@ -34,11 +34,13 @@ mod tests {
                 name: "a".to_string(),
                 type_name: "int".to_string(),
                 nullable: false,
+                origin: None,
             },
             ColumnMeta {
                 name: "b".to_string(),
                 type_name: "text".to_string(),
                 nullable: false,
+                origin: None,
             },
         ];
         let batch = RowBatch {
@@ -62,6 +64,7 @@ mod tests {
             name: "a".to_string(),
             type_name: "text".to_string(),
             nullable: false,
+            origin: None,
         }];
         let batch = RowBatch {
             columns: columns.clone(),

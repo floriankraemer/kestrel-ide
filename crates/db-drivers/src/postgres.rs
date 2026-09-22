@@ -449,6 +449,7 @@ impl Connection for PostgresConnection {
                 name: c.name().to_string(),
                 type_name: c.type_().name().to_string(),
                 nullable: true,
+                origin: None,
             })
             .collect();
 
@@ -581,6 +582,7 @@ mod tests {
             name: "n".to_string(),
             type_name: "int4".to_string(),
             nullable: true,
+            origin: None,
         }]
     }
 

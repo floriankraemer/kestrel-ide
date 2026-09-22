@@ -280,6 +280,17 @@ impl ffi::DocumentManager {
             .unwrap_or_default()
     }
 
+    /// F6c: `tab_path`, falling back to a virtual (C12) tab's own title so
+    /// the Preview dock/overlay can key its provider lookup on it — see
+    /// `AppSession::tab_preview_path`.
+    pub fn preview_path(&self, tab_id: u64) -> QString {
+        self.session
+            .borrow()
+            .tab_preview_path(TabId::from_raw(tab_id))
+            .map(|path| QString::from(path.to_string_lossy().as_ref()))
+            .unwrap_or_default()
+    }
+
     pub fn tab_is_modified(&self, tab_id: u64) -> bool {
         self.session
             .borrow()

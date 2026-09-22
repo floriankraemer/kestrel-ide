@@ -20,7 +20,7 @@ use std::path::Path;
 
 use db_core::datasource::DataSource;
 use process_exec::host::{resolve_program, ExecHost};
-use process_exec::{spawn_with_env, Failure, Spawned};
+use process_exec::{spawn_with_stdin, Failure, Spawned};
 
 /// A resolved password, kept out of `Debug`/`Display` the same way
 /// [`db_core::datasource::Secrets`] is — a panic message or a log line
@@ -325,6 +325,44 @@ pub fn sqlite_dump(source: &DataSource, options: &DumpOptions) -> Command {
     Command::new("sqlite3", vec![path, meta], Vec::new())
 }
 
+/// SQLite has no `pg_restore`/`mysql`-shaped restore client of its own —
+/// `sqlite3 DBFILE` reads a script from stdin the same way `mysql`'s own
+/// restore does (its CLI has no "run this whole file as a script" flag,
+/// only `.read` as an interactive meta-command), so this reuses
+/// `stdin_file` exactly like [`mysql_restore`].
+pub fn sqlite_restore(source: &DataSource, input_file: &str) -> Command {
+    let path = if source.url.is_empty() {
+        source.database.clone()
+    } else {
+        source.url.clone()
+    };
+    let mut command = Command::new("sqlite3", vec![path], Vec::new());
+    command.stdin_file = Some(input_file.to_string());
+    command
+}
+
+/// The restore command for `driver` (the same id `DataSource::driver`
+/// carries), dispatching to the tool-specific builder above: `psql -f`
+/// for PostgreSQL (this crate's own `pg_dump` never passes
+/// `--format=custom`, so its output is always plain SQL `psql` reads
+/// directly — `pg_restore` stays exported for a dump made some other
+/// way, but is not this dispatch's default), `mysql` (stdin) for MySQL/
+/// MariaDB, `mongorestore` (archive file arg) for MongoDB, and `sqlite3`
+/// (stdin) otherwise.
+pub fn restore_command(
+    driver: &str,
+    source: &DataSource,
+    credentials: &Credentials,
+    input_file: &str,
+) -> io::Result<Command> {
+    match driver {
+        "postgres" | "postgresql" => Ok(psql_file(source, credentials, input_file)),
+        "mysql" | "mariadb" => mysql_restore(source, credentials, input_file),
+        "mongo" | "mongodb" => mongorestore(source, credentials, input_file),
+        _ => Ok(sqlite_restore(source, input_file)),
+    }
+}
+
 // ---- preview / spawn / tool presence ----
 
 /// Shell-quote one argv word for display only — see
@@ -355,9 +393,12 @@ pub fn preview(command: &Command) -> String {
 }
 
 /// Spawn `command` in `work_dir` for the caller's own console — the
-/// Run-dock hookup (reading `Spawned`'s pipes, following `stdin_file`)
-/// is F5b's job; this only starts the process with argv/env set exactly
-/// as built above.
+/// Run-dock hookup (reading `Spawned`'s pipes) is `ExchangeService`'s job;
+/// this only starts the process with argv/env set exactly as built above,
+/// piping `stdin_file`'s contents in when the command names one (F6c:
+/// `mysql_restore`'s own doc comment — `mysql` reads its script from
+/// stdin, not a `-f` flag, and this is the one place that stdin actually
+/// gets connected to the file it names).
 pub fn spawn(command: &Command, work_dir: &Path) -> Result<Spawned, Failure> {
     let args: Vec<&str> = command.argv.iter().map(String::as_str).collect();
     let env: Vec<(&str, &str)> = command
@@ -365,7 +406,8 @@ pub fn spawn(command: &Command, work_dir: &Path) -> Result<Spawned, Failure> {
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    spawn_with_env(&command.program, &args, work_dir, &env)
+    let stdin_file = command.stdin_file.as_ref().map(Path::new);
+    spawn_with_stdin(&command.program, &args, work_dir, &env, stdin_file)
 }
 
 /// Whether `program` resolves on `PATH` (or, for a WSL project root, in
@@ -550,6 +592,35 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_restore_reads_its_script_from_stdin() {
+        let mut source = source();
+        source.database = "/data/app.db".to_string();
+        let command = sqlite_restore(&source, "/tmp/dump.sql");
+        assert_eq!(command.program, "sqlite3");
+        assert_eq!(command.argv, vec!["/data/app.db"]);
+        assert_eq!(command.stdin_file.as_deref(), Some("/tmp/dump.sql"));
+    }
+
+    #[test]
+    fn restore_command_dispatches_by_driver() {
+        let credentials = Credentials::default();
+        let pg = restore_command("postgresql", &source(), &credentials, "/tmp/d.sql").unwrap();
+        assert_eq!(pg.program, "psql");
+        assert!(pg.stdin_file.is_none());
+
+        let my = restore_command("mysql", &source(), &credentials, "/tmp/d.sql").unwrap();
+        assert_eq!(my.program, "mysql");
+        assert_eq!(my.stdin_file.as_deref(), Some("/tmp/d.sql"));
+
+        let mongo = restore_command("mongodb", &source(), &credentials, "/tmp/d.archive").unwrap();
+        assert_eq!(mongo.program, "mongorestore");
+
+        let sqlite = restore_command("sqlite", &source(), &credentials, "/tmp/d.sql").unwrap();
+        assert_eq!(sqlite.program, "sqlite3");
+        assert_eq!(sqlite.stdin_file.as_deref(), Some("/tmp/d.sql"));
+    }
+
+    #[test]
     fn sqlite_dump_has_no_credentials_at_all() {
         let mut source = source();
         source.database = "/data/app.db".to_string();
@@ -577,6 +648,28 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(preview(&command), "sqlite3 'a b' .dump");
+    }
+
+    /// `spawn` must actually connect `stdin_file` to the child's stdin —
+    /// `mysql_restore_reads_its_script_from_stdin_not_a_flag` above only
+    /// proves the `Command` *names* the file; this proves `spawn` reads
+    /// it. `cat` stands in for `mysql`, same reasoning as
+    /// `process_exec`'s own stdin-piping test.
+    #[test]
+    fn spawn_pipes_a_commands_stdin_file_into_the_child() {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let input_path = dir.path().join("dump.sql");
+        std::fs::write(&input_path, b"INSERT INTO t VALUES (1);\n").unwrap();
+        let mut command = Command::new("cat", Vec::new(), Vec::new());
+        command.stdin_file = Some(input_path.to_string_lossy().into_owned());
+
+        let spawned = spawn(&command, dir.path()).unwrap();
+        let mut stdout = spawned.take_stdout().unwrap();
+        let mut buffer = Vec::new();
+        stdout.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"INSERT INTO t VALUES (1);\n");
+        assert!(spawned.wait().unwrap().success());
     }
 
     #[test]

@@ -36,7 +36,8 @@ use db_core::driver::{
 };
 use db_core::error::{DbError, DbErrorCode};
 use db_core::schema::{
-    IntrospectLevel, IntrospectScope, Node, NodeDetail, ObjectKind, ObjectRef, SchemaSnapshot,
+    ConstraintKind, IndexDetail, IntrospectLevel, IntrospectScope, Node, NodeDetail, ObjectKind,
+    ObjectRef, SchemaSnapshot,
 };
 use db_core::value::{ColumnMeta, RowBatch, Value};
 
@@ -48,6 +49,28 @@ const NAMES_QUERY: &str = include_str!("introspect/postgres_names.sql");
 // query away, not a new SQL text to design from scratch.
 #[allow(dead_code)]
 const COLUMNS_QUERY: &str = include_str!("introspect/postgres_columns.sql");
+/// `IntrospectLevel::Full`: one table's own constraints (F6c) —
+/// `pg_constraint`/`pg_get_constraintdef`, fixture-tested below (no live
+/// server needed for the query text itself; `db-integration`'s gated test
+/// exercises it against a real server).
+const CONSTRAINTS_QUERY: &str = include_str!("introspect/postgres_constraints.sql");
+/// `IntrospectLevel::Full`: one table's own indexes (F6c) — `pg_index`.
+const INDEXES_QUERY: &str = include_str!("introspect/postgres_indexes.sql");
+
+/// Postgres's `pg_constraint.confupdtype`/`confdeltype` one-character
+/// codes -> the SQL keyword `db_core::schema::ConstraintKind::ForeignKey`
+/// carries, `None` for `'a'` (`NO ACTION`, the default — worth omitting
+/// rather than repeating on every foreign key that never named one).
+fn referential_action(code: &str) -> Option<String> {
+    match code {
+        "a" | "" => None,
+        "r" => Some("RESTRICT".to_string()),
+        "c" => Some("CASCADE".to_string()),
+        "n" => Some("SET NULL".to_string()),
+        "d" => Some("SET DEFAULT".to_string()),
+        other => Some(other.to_string()),
+    }
+}
 
 fn io_err(message: impl std::fmt::Display) -> DbError {
     DbError::new(DbErrorCode::ConnectionFailed, message.to_string())
@@ -413,7 +436,7 @@ impl Connection for PostgresConnection {
                 let node = if level == IntrospectLevel::Names {
                     Node::leaf(name, object_kind)
                 } else {
-                    self.table_node(&schema, &name, object_kind)?
+                    self.table_node(&schema, &name, object_kind, level)?
                 };
                 children.push(node);
             }
@@ -538,11 +561,17 @@ impl PostgresConnection {
     /// through `COLUMNS_QUERY` — the per-object round trip `introspect`
     /// only pays for the objects a scope actually narrows to, never for
     /// every table in a 5 000-table catalog at once.
-    fn table_node(&self, schema: &str, name: &str, kind: ObjectKind) -> Result<Node, DbError> {
+    fn table_node(
+        &self,
+        schema: &str,
+        name: &str,
+        kind: ObjectKind,
+        level: IntrospectLevel,
+    ) -> Result<Node, DbError> {
         let rows = crate::runtime()
             .block_on(self.client.query(COLUMNS_QUERY, &[&schema, &name]))
             .map_err(io_err)?;
-        let children = rows
+        let mut children: Vec<Node> = rows
             .iter()
             .map(|row| {
                 let column_name: String = row.get(0);
@@ -554,11 +583,89 @@ impl PostgresConnection {
                     nullable: Some(nullable),
                     default: None,
                     primary_key,
-                    ttl_seconds: None,
+                    ..NodeDetail::default()
                 })
             })
             .collect();
+        if level == IntrospectLevel::Full {
+            children.extend(self.index_nodes(schema, name)?);
+            children.extend(self.constraint_nodes(schema, name)?);
+        }
         Ok(Node::with_children(name, kind, children))
+    }
+
+    /// `IntrospectLevel::Full`'s own indexes, via [`INDEXES_QUERY`].
+    fn index_nodes(&self, schema: &str, name: &str) -> Result<Vec<Node>, DbError> {
+        let rows = crate::runtime()
+            .block_on(self.client.query(INDEXES_QUERY, &[&schema, &name]))
+            .map_err(io_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                let index_name: String = row.get(0);
+                let unique: bool = row.get(1);
+                let method: String = row.get(2);
+                let columns: Vec<String> = row.get(3);
+                Node::leaf(index_name, ObjectKind::Index).with_detail(NodeDetail {
+                    index: Some(IndexDetail {
+                        columns,
+                        unique,
+                        method: Some(method),
+                    }),
+                    ..NodeDetail::default()
+                })
+            })
+            .collect())
+    }
+
+    /// `IntrospectLevel::Full`'s own constraints, via [`CONSTRAINTS_QUERY`]
+    /// — `contype`'s one-character code selects which [`ConstraintKind`]
+    /// variant a row becomes (`p` primary key, `f` foreign key, `u`
+    /// unique, `c` check; every other code — `t` constraint trigger, `x`
+    /// exclusion — is skipped, `database-tools.md` §11's recorded gap).
+    fn constraint_nodes(&self, schema: &str, name: &str) -> Result<Vec<Node>, DbError> {
+        let rows = crate::runtime()
+            .block_on(self.client.query(CONSTRAINTS_QUERY, &[&schema, &name]))
+            .map_err(io_err)?;
+        let mut nodes = Vec::new();
+        for row in &rows {
+            let constraint_name: String = row.get(0);
+            let contype: i8 = row.get(1);
+            let columns: Vec<String> = row.get(2);
+            let ref_schema: Option<String> = row.get(3);
+            let ref_table: Option<String> = row.get(4);
+            let ref_columns: Vec<String> = row.get(5);
+            let on_update: i8 = row.get(6);
+            let on_delete: i8 = row.get(7);
+            let definition: String = row.get(8);
+            let kind = match contype as u8 as char {
+                'p' => ConstraintKind::PrimaryKey { columns },
+                'u' => ConstraintKind::Unique { columns },
+                'f' => {
+                    let mut reference =
+                        ObjectRef::new(ref_table.unwrap_or_default()).with_kind(ObjectKind::Table);
+                    if let Some(ref_schema) = ref_schema {
+                        reference = reference.with_schema(ref_schema);
+                    }
+                    ConstraintKind::ForeignKey {
+                        columns,
+                        ref_table: reference,
+                        ref_columns,
+                        on_delete: referential_action(&(on_delete as u8 as char).to_string()),
+                        on_update: referential_action(&(on_update as u8 as char).to_string()),
+                    }
+                }
+                'c' => ConstraintKind::Check { expr: definition },
+                _ => continue,
+            };
+            nodes.push(
+                Node::leaf(constraint_name, ObjectKind::Constraint).with_detail(NodeDetail {
+                    constraint: Some(kind),
+                    ..NodeDetail::default()
+                }),
+            );
+        }
+        Ok(nodes)
     }
 }
 
@@ -728,6 +835,36 @@ mod tests {
         assert!(COLUMNS_QUERY.contains("$1"));
         assert!(COLUMNS_QUERY.contains("$2"));
         assert!(COLUMNS_QUERY.contains("is_primary_key"));
+    }
+
+    #[test]
+    fn constraints_fixture_text_names_pg_constraint_and_the_fk_reference() {
+        assert!(CONSTRAINTS_QUERY.contains("pg_catalog.pg_constraint"));
+        assert!(CONSTRAINTS_QUERY.contains("confrelid"));
+        assert!(CONSTRAINTS_QUERY.contains("confupdtype"));
+        assert!(CONSTRAINTS_QUERY.contains("confdeltype"));
+        assert!(CONSTRAINTS_QUERY.contains("pg_get_constraintdef"));
+        assert!(CONSTRAINTS_QUERY.contains("$1"));
+        assert!(CONSTRAINTS_QUERY.contains("$2"));
+    }
+
+    #[test]
+    fn indexes_fixture_text_names_pg_index_and_its_access_method() {
+        assert!(INDEXES_QUERY.contains("pg_catalog.pg_index"));
+        assert!(INDEXES_QUERY.contains("indisunique"));
+        assert!(INDEXES_QUERY.contains("pg_am"));
+        assert!(INDEXES_QUERY.contains("$1"));
+        assert!(INDEXES_QUERY.contains("$2"));
+    }
+
+    #[test]
+    fn referential_action_maps_the_known_codes_and_omits_no_action() {
+        assert_eq!(referential_action("a"), None);
+        assert_eq!(referential_action(""), None);
+        assert_eq!(referential_action("c"), Some("CASCADE".to_string()));
+        assert_eq!(referential_action("n"), Some("SET NULL".to_string()));
+        assert_eq!(referential_action("d"), Some("SET DEFAULT".to_string()));
+        assert_eq!(referential_action("r"), Some("RESTRICT".to_string()));
     }
 
     #[test]

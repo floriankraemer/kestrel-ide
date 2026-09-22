@@ -482,6 +482,66 @@ void showDumpDialog(QWidget *parent, ExchangeService *exchange, const QString &s
     runJobModally(parent, exchange, jobId, QObject::tr("Dumping %1").arg(sourceId));
 }
 
+void showRestoreDialog(QWidget *parent, ExchangeService *exchange, const QString &sourceId)
+{
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("Restore — %1").arg(sourceId));
+    auto *outer = new QVBoxLayout(&dialog);
+
+    auto *warning = new QLabel(
+      QObject::tr("This writes into '%1'. Existing data may be overwritten or duplicated.")
+        .arg(sourceId));
+    warning->setWordWrap(true);
+    outer->addWidget(warning);
+
+    auto *form = new QFormLayout();
+    outer->addLayout(form);
+    auto *inputEdit = new QLineEdit();
+    auto *browseButton = new QPushButton(QObject::tr("Browse…"));
+    auto *inputRow = new QHBoxLayout();
+    inputRow->addWidget(inputEdit, 1);
+    inputRow->addWidget(browseButton);
+    form->addRow(QObject::tr("Dump file:"), inputRow);
+    QObject::connect(browseButton, &QPushButton::clicked, &dialog, [&dialog, inputEdit]() {
+        const QString path = QFileDialog::getOpenFileName(&dialog, QObject::tr("Restore From"));
+        if (!path.isEmpty()) {
+            inputEdit->setText(path);
+        }
+    });
+
+    auto *argvPreview = new QPlainTextEdit();
+    argvPreview->setReadOnly(true);
+    argvPreview->setMaximumHeight(60);
+    outer->addWidget(argvPreview);
+    auto refreshPreview = [exchange, sourceId, inputEdit, argvPreview]() {
+        argvPreview->setPlainText(exchange->restoreArgvPreview(sourceId, inputEdit->text()));
+    };
+    QObject::connect(inputEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
+    refreshPreview();
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    buttons->button(QDialogButtonBox::Ok)->setText(QObject::tr("Restore"));
+    outer->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    if (inputEdit->text().isEmpty()) {
+        QMessageBox::warning(parent, QObject::tr("Restore"), QObject::tr("Choose a dump file."));
+        return;
+    }
+    if (QMessageBox::question(parent, QObject::tr("Restore"),
+                              QObject::tr("Restore '%1' from '%2'? This may overwrite existing data.")
+                                .arg(sourceId, inputEdit->text()))
+        != QMessageBox::Yes) {
+        return;
+    }
+    const quint64 jobId = exchange->restore(sourceId, inputEdit->text());
+    runJobModally(parent, exchange, jobId, QObject::tr("Restoring %1").arg(sourceId));
+}
+
 void showErDiagramDialog(QWidget *parent, ExchangeService *exchange, DocumentManager *documentManager,
                          const QString &sourceId, const QString &tableScope)
 {

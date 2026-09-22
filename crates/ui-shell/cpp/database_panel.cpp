@@ -282,6 +282,11 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
     // the first.
     QAction *compareData = info.canCopyTable ? menu.addAction(tr("Compare Data with…")) : nullptr;
     QAction *dumpAction = info.canDump ? menu.addAction(tr("Dump…")) : nullptr;
+    // Restore shares Dump's own `canDump` gate (F6c): both write to this
+    // exact source, one direction each, and no backend distinguishes
+    // "can be dumped" from "can be restored into" the way it does for,
+    // say, comparison (`canCompare`) versus data copy (`canCopyTable`).
+    QAction *restoreAction = info.canDump ? menu.addAction(tr("Restore…")) : nullptr;
     QAction *compareStructure = info.canCompare ? menu.addAction(tr("Compare Structure with…")) : nullptr;
     if (menu.actions().isEmpty()) {
         return;
@@ -347,6 +352,8 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
                               databaseService_->sources());
     } else if (chosen == dumpAction) {
         showDumpDialog(this, exchangeService_, info.sourceId);
+    } else if (chosen == restoreAction) {
+        showRestoreDialog(this, exchangeService_, info.sourceId);
     } else if (chosen == compareStructure) {
         showSchemaCompareDialog(this, exchangeService_, documentManager_, info.sourceId,
                                 databaseService_->sources());

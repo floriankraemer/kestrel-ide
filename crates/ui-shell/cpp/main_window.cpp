@@ -437,7 +437,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
           // at, the same restraint the Problems panel's first-diagnostic
           // auto-open already uses.
           const quint64 tabId = editorTabs->currentTabId();
-          const QString path = editorTabs->currentPath();
+          const QString path = editorTabs->currentPreviewPath();
           // While a tab renders itself in place (view mode,
           // editor_tabs_preview.cpp), the dock stands down: `PreviewProvider`
           // keys one render per tab id, so two panels asking for the same tab
@@ -473,7 +473,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
         if (editorTabs->previewModeActive(tabId)) {
             return;
         }
-        previewPanel->setCurrentTab(tabId, editorTabs->currentPath(), editorTabs->currentContent());
+        previewPanel->setCurrentTab(tabId, editorTabs->currentPreviewPath(), editorTabs->currentContent());
     });
     QObject::connect(docManager, &DocumentManager::tabModifiedChanged, structurePanel,
                       [structurePanel, editorTabs](quint64 tabId, bool modified) {

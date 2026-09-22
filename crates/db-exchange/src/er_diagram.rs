@@ -53,13 +53,13 @@ fn tables_in_scope<'a>(snapshot: &'a SchemaSnapshot, scope: &DiagramScope) -> Ve
             let mut names: BTreeSet<&str> = BTreeSet::new();
             names.insert(root.name.as_str());
             for fk in &root.foreign_keys {
-                names.insert(fk.ref_table.as_str());
+                names.insert(fk.ref_table.name.as_str());
             }
             for table in &snapshot.tables {
                 if table
                     .foreign_keys
                     .iter()
-                    .any(|fk| fk.ref_table == root.name)
+                    .any(|fk| root.matches_ref(&fk.ref_table))
                 {
                     names.insert(table.name.as_str());
                 }
@@ -115,18 +115,34 @@ pub fn to_mermaid(snapshot: &SchemaSnapshot, scope: &DiagramScope) -> String {
     let mut relationships = Vec::new();
     for table in &tables {
         for fk in &table.foreign_keys {
-            if !in_scope.contains(fk.ref_table.as_str()) {
+            if !in_scope.contains(fk.ref_table.name.as_str()) {
                 continue;
             }
+            // A one-to-one relationship (child's own FK columns are
+            // themselves unique, so at most one child row per parent)
+            // renders `||--||`; otherwise nullability picks between
+            // "zero or many" and "one or many" on the child side. Every
+            // relationship this crate draws comes from exactly one FK,
+            // so the target (parent) side is always "exactly one"
+            // (`||`) — a `}o--o{` many-to-many only arises from an
+            // association table's *pair* of FKs, which this per-FK
+            // rendering does not attempt to collapse into one line.
+            let one_to_one = table.columns_are_unique(&fk.columns);
             let nullable = fk
                 .columns
                 .iter()
                 .filter_map(|name| table.column(name))
                 .any(|column| column.nullable);
-            let right_token = if nullable { "o{" } else { "|{" };
+            let right_token = if one_to_one {
+                "||"
+            } else if nullable {
+                "o{"
+            } else {
+                "|{"
+            };
             relationships.push(format!(
                 "    {} ||--{right_token} {} : \"{}\"",
-                mermaid_ident(&fk.ref_table),
+                mermaid_ident(&fk.ref_table.name),
                 mermaid_ident(&table.name),
                 fk.columns.join(",")
             ));
@@ -140,7 +156,7 @@ pub fn to_mermaid(snapshot: &SchemaSnapshot, scope: &DiagramScope) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_model::{ColumnDef, ForeignKey};
+    use crate::schema_model::{ColumnDef, ForeignKey, IndexDef, TableRef};
 
     fn column(name: &str, type_name: &str, nullable: bool) -> ColumnDef {
         ColumnDef {
@@ -154,6 +170,7 @@ mod tests {
     fn snapshot() -> SchemaSnapshot {
         let users = TableDef {
             name: "users".to_string(),
+            schema: None,
             columns: vec![
                 column("id", "INTEGER", false),
                 column("name", "TEXT", false),
@@ -165,6 +182,7 @@ mod tests {
         };
         let orders = TableDef {
             name: "orders".to_string(),
+            schema: None,
             columns: vec![
                 column("id", "INTEGER", false),
                 column("user_id", "INTEGER", true),
@@ -172,8 +190,10 @@ mod tests {
             primary_key: vec!["id".to_string()],
             foreign_keys: vec![ForeignKey {
                 columns: vec!["user_id".to_string()],
-                ref_table: "users".to_string(),
+                ref_table: TableRef::bare("users"),
                 ref_columns: vec!["id".to_string()],
+                on_delete: None,
+                on_update: None,
             }],
             indexes: vec![],
             constraints: vec![],
@@ -220,6 +240,7 @@ mod tests {
         let mut snap = snapshot();
         snap.tables.push(TableDef {
             name: "unrelated".to_string(),
+            schema: None,
             columns: vec![column("id", "INTEGER", false)],
             primary_key: vec!["id".to_string()],
             foreign_keys: vec![],
@@ -230,6 +251,21 @@ mod tests {
         assert!(text.contains("orders"));
         assert!(text.contains("users"));
         assert!(!text.contains("unrelated"));
+    }
+
+    #[test]
+    fn a_fk_covered_by_a_unique_index_renders_one_to_one() {
+        let mut snap = snapshot();
+        // orders.user_id becomes unique (one order per user): the
+        // relationship should render `||--||`, not `||--o{`.
+        snap.tables[0].indexes.push(IndexDef {
+            name: "orders_user_id_key".to_string(),
+            columns: vec!["user_id".to_string()],
+            unique: true,
+            method: Some("btree".to_string()),
+        });
+        let text = to_mermaid(&snap, &DiagramScope::Schema);
+        assert!(text.contains("users ||--|| orders"));
     }
 
     #[test]

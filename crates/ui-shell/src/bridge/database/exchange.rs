@@ -29,12 +29,11 @@ use cxx_qt_lib::{QString, QStringList};
 
 use db_core::dialect::Dialect;
 use db_core::driver::{CancelToken, Connection, ExecOptions, Execution, Statement};
-use db_core::schema::{Children, IntrospectLevel, IntrospectScope, Node, NodeDetail, ObjectKind};
 use db_core::session::Session;
 use db_core::value::{ColumnMeta, RowBatch, Value};
 
 use db_exchange::export::{self, ExportOptions, Format, JsonShape, SqlMode};
-use db_exchange::schema_model::{ColumnDef, SchemaSnapshot as ModelSnapshot, TableDef, TextObject};
+use db_exchange::schema_model::SchemaSnapshot as ModelSnapshot;
 use db_exchange::{copy_table, data_compare, dump, er_diagram, import, schema_compare};
 
 use crate::bridge::database::service::{configured_sources, secrets_for};
@@ -283,111 +282,12 @@ fn render_rows(
 
 // ---- schema model (er diagram / schema compare) ----
 
-/// Walks a `db_core::schema::SchemaSnapshot` (`IntrospectLevel::Full`)
-/// into `db_exchange`'s own eagerly-fetched shape. `foreign_keys` and
-/// `indexes`' own columns are left empty — `db_core::schema::NodeDetail`
-/// carries a column's own `type_name`/`nullable`/`default`/`primary_key`
-/// but no structured FK target or index column list yet (F2's own
-/// recorded scope), so an ER diagram renders table boxes with no
-/// relationship lines and a schema compare's index/constraint diff is
-/// name-only.
-/// ponytail: FK/index structural detail — upgrade once `NodeDetail` (or a
-/// richer per-object introspection) carries it; the ceiling is entirely
-/// in `db_core`, not this mapping.
-fn to_schema_model(roots: &[Node], session: &mut Session) -> ModelSnapshot {
-    let mut tables = Vec::new();
-    let mut views = Vec::new();
-    let mut routines = Vec::new();
-    collect_objects(roots, session, &mut tables, &mut views, &mut routines);
-    tables.sort_by(|a: &TableDef, b: &TableDef| a.name.cmp(&b.name));
-    ModelSnapshot {
-        tables,
-        views,
-        routines,
-    }
-}
-
-fn collect_objects(
-    nodes: &[Node],
-    session: &mut Session,
-    tables: &mut Vec<TableDef>,
-    views: &mut Vec<TextObject>,
-    routines: &mut Vec<TextObject>,
-) {
-    for node in nodes {
-        match node.kind {
-            ObjectKind::Table => tables.push(to_table_def(node)),
-            ObjectKind::View => views.push(to_text_object(node, session, ObjectKind::View)),
-            ObjectKind::Routine => {
-                routines.push(to_text_object(node, session, ObjectKind::Routine))
-            }
-            _ => {}
-        }
-        if let Children::Loaded(children) = &node.children {
-            collect_objects(children, session, tables, views, routines);
-        }
-    }
-}
-
-fn to_table_def(node: &Node) -> TableDef {
-    let mut columns = Vec::new();
-    let mut primary_key = Vec::new();
-    let mut indexes = Vec::new();
-    let mut constraints = Vec::new();
-    if let Children::Loaded(children) = &node.children {
-        for child in children {
-            match child.kind {
-                ObjectKind::Column => {
-                    let detail: &NodeDetail = &child.detail;
-                    if detail.primary_key {
-                        primary_key.push(child.name.clone());
-                    }
-                    columns.push(ColumnDef {
-                        name: child.name.clone(),
-                        type_name: detail.type_name.clone().unwrap_or_default(),
-                        nullable: detail.nullable.unwrap_or(true),
-                        default: detail.default.clone(),
-                    });
-                }
-                ObjectKind::Index => indexes.push(db_exchange::schema_model::IndexDef {
-                    name: child.name.clone(),
-                    columns: Vec::new(),
-                    unique: false,
-                }),
-                ObjectKind::Constraint => {
-                    constraints.push(db_exchange::schema_model::ConstraintDef {
-                        name: child.name.clone(),
-                        text: String::new(),
-                    })
-                }
-                _ => {}
-            }
-        }
-    }
-    TableDef {
-        name: node.name.clone(),
-        columns,
-        primary_key,
-        foreign_keys: Vec::new(),
-        indexes,
-        constraints,
-    }
-}
-
-fn to_text_object(node: &Node, session: &mut Session, kind: ObjectKind) -> TextObject {
-    let object = db_core::schema::ObjectRef::new(node.name.clone()).with_kind(kind);
-    let definition = session.ddl_of(&object).unwrap_or_default();
-    TextObject {
-        name: node.name.clone(),
-        definition,
-    }
-}
-
+/// `db_exchange::schema_model::fetch` does the actual `Node` ->
+/// `TableDef` walk (FK/PK/unique/index structural detail included,
+/// F6c) — this is just the "resolve a live session" seam every other
+/// long call in this file already goes through.
 fn fetch_schema_model(session: &mut Session) -> Result<ModelSnapshot, String> {
-    let snapshot = session
-        .introspect(&IntrospectScope::default(), IntrospectLevel::Full)
-        .map_err(|e| e.to_string())?;
-    Ok(to_schema_model(&snapshot.roots, session))
+    db_exchange::schema_model::fetch(session).map_err(|e| e.to_string())
 }
 
 /// `FfiPreviewImage` derives no `Default` (it is a `cxx-qt` shared struct
@@ -863,6 +763,44 @@ impl ffi::ExchangeService {
         job_id
     }
 
+    pub fn restore_argv_preview(
+        self: Pin<&mut Self>,
+        source_id: &QString,
+        input_file: &QString,
+    ) -> QString {
+        match build_restore_command(&source_id.to_string(), &input_file.to_string()) {
+            Ok(command) => QString::from(dump::preview(&command).as_str()),
+            Err(error) => QString::from(format!("error: {error}").as_str()),
+        }
+    }
+
+    pub fn restore(mut self: Pin<&mut Self>, source_id: &QString, input_file: &QString) -> u64 {
+        let (job_id, _cancel) = self.as_mut().start_job();
+        let source_id_owned = source_id.to_string();
+        let input_file_owned = input_file.to_string();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let outcome = run_restore(&source_id_owned, &input_file_owned, job_id, &qt_thread);
+            let _ = qt_thread.queue(
+                move |mut service: Pin<&mut ffi::ExchangeService>| match outcome {
+                    Ok(()) => service.as_mut().job_finished(
+                        job_id,
+                        true,
+                        QString::from("restore finished"),
+                        QString::default(),
+                    ),
+                    Err(error) => service.as_mut().job_finished(
+                        job_id,
+                        false,
+                        QString::from(error.as_str()),
+                        QString::default(),
+                    ),
+                },
+            );
+        });
+        job_id
+    }
+
     pub fn cancel_job(self: Pin<&mut Self>, job_id: u64) -> ffi::FfiResult {
         if let Some(flag) = self.jobs.borrow().cancel.get(&job_id) {
             flag.store(true, Ordering::Relaxed);
@@ -1221,6 +1159,48 @@ fn build_dump_command(source_id: &str, options: &FfiDumpOptions) -> Result<dump:
     }
 }
 
+fn build_restore_command(source_id: &str, input_file: &str) -> Result<dump::Command, String> {
+    let source = data_source_for(source_id)?;
+    let secrets = secrets_for(source_id);
+    let credentials = dump::Credentials {
+        password: secrets.password,
+    };
+    dump::restore_command(&source.driver, &source, &credentials, input_file)
+        .map_err(|e| e.to_string())
+}
+
+fn run_restore(
+    source_id: &str,
+    input_file: &str,
+    job_id: u64,
+    qt_thread: &cxx_qt::CxxQtThread<ffi::ExchangeService>,
+) -> Result<(), String> {
+    let command = build_restore_command(source_id, input_file)?;
+    let work_dir = std::env::current_dir().unwrap_or_default();
+    let spawned = dump::spawn(&command, &work_dir).map_err(|e| format!("{e:?}"))?;
+
+    // A restore's stdout is its own tool's progress chatter (`psql`'s
+    // `COPY`/`CREATE TABLE` echoes, `mongorestore`'s summary) — there is
+    // no output file to write it to the way `run_dump` writes a dump's
+    // stdout, so it reports through `jobProgress` line by line, same as
+    // stderr. Read one pipe to EOF before the other, same sequential
+    // trade-off `run_dump` already accepts for its own two pipes — sound
+    // here too, since every restore tool this dispatches to writes a
+    // bounded amount of progress text, not a multi-gigabyte stream.
+    if let Some(stdout) = spawned.take_stdout() {
+        report_lines(stdout, job_id, qt_thread);
+    }
+    if let Some(stderr) = spawned.take_stderr() {
+        report_lines(stderr, job_id, qt_thread);
+    }
+    let status = spawned.wait().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("restore exited with status {status}"))
+    }
+}
+
 fn run_dump(
     source_id: &str,
     options: &FfiDumpOptions,
@@ -1242,21 +1222,32 @@ fn run_dump(
         }
     }
     if let Some(stderr) = spawned.take_stderr() {
-        use std::io::{BufRead, BufReader};
-        let progress_thread = qt_thread.clone();
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            let _ = progress_thread.queue(move |mut service: Pin<&mut ffi::ExchangeService>| {
-                service
-                    .as_mut()
-                    .job_progress(job_id, 0, 0, QString::from(line.as_str()));
-            });
-        }
+        report_lines(stderr, job_id, qt_thread);
     }
     let status = spawned.wait().map_err(|e| e.to_string())?;
     if status.success() {
         Ok(output_file)
     } else {
         Err(format!("dump exited with status {status}"))
+    }
+}
+
+/// Reads `stream` line by line and forwards each one through
+/// `jobProgress`, `run_dump`'s stderr handling generalised so `run_restore`
+/// can reuse it for both of its own pipes (F6c).
+fn report_lines(
+    stream: impl std::io::Read,
+    job_id: u64,
+    qt_thread: &cxx_qt::CxxQtThread<ffi::ExchangeService>,
+) {
+    use std::io::{BufRead, BufReader};
+    let progress_thread = qt_thread.clone();
+    for line in BufReader::new(stream).lines().map_while(Result::ok) {
+        let _ = progress_thread.queue(move |mut service: Pin<&mut ffi::ExchangeService>| {
+            service
+                .as_mut()
+                .job_progress(job_id, 0, 0, QString::from(line.as_str()));
+        });
     }
 }
 
@@ -1340,7 +1331,8 @@ mod tests {
         assert!(text.contains("2,NULL"));
     }
 
-    fn table_node(name: &str, columns: &[(&str, &str, bool, bool)]) -> Node {
+    fn table_node(name: &str, columns: &[(&str, &str, bool, bool)]) -> db_core::schema::Node {
+        use db_core::schema::{Node, NodeDetail, ObjectKind};
         let children = columns
             .iter()
             .map(|(col_name, type_name, nullable, pk)| {
@@ -1349,7 +1341,7 @@ mod tests {
                     nullable: Some(*nullable),
                     default: None,
                     primary_key: *pk,
-                    ttl_seconds: None,
+                    ..NodeDetail::default()
                 })
             })
             .collect();
@@ -1366,7 +1358,7 @@ mod tests {
                 ("name", "TEXT", true, false),
             ],
         )];
-        let model = to_schema_model(&roots, &mut session);
+        let model = db_exchange::schema_model::from_snapshot(&roots, &mut session);
         assert_eq!(model.tables.len(), 1);
         let table = &model.tables[0];
         assert_eq!(table.name, "users");
@@ -1400,7 +1392,7 @@ mod tests {
     fn er_diagram_renders_a_table_with_no_relationship_lines_when_fks_are_unavailable() {
         let mut session = in_memory_session();
         let roots = vec![table_node("users", &[("id", "INTEGER", false, true)])];
-        let model = to_schema_model(&roots, &mut session);
+        let model = db_exchange::schema_model::from_snapshot(&roots, &mut session);
         let text = er_diagram::to_mermaid(&model, &er_diagram::DiagramScope::Schema);
         assert!(text.contains("erDiagram"));
         assert!(text.contains("users"));
@@ -1409,8 +1401,8 @@ mod tests {
     #[test]
     fn schema_compare_reports_an_added_table() {
         let mut session = in_memory_session();
-        let left = to_schema_model(&[], &mut session);
-        let right = to_schema_model(
+        let left = db_exchange::schema_model::from_snapshot(&[], &mut session);
+        let right = db_exchange::schema_model::from_snapshot(
             &[table_node("users", &[("id", "INTEGER", false, true)])],
             &mut session,
         );

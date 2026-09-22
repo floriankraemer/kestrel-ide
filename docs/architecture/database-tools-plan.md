@@ -420,10 +420,10 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 
 | Task | Status | Commit |
 |---|---|---|
-| F9.1 — `database-tools.md` truth-up, section by section against the shipped code; module/crate/cpp file lists corrected against the real tree; §11 consolidated into one debt table | done | (this phase, uncommitted at time of writing) |
-| F9.2 — `overview.md`/`project-structure.md` truth (seven new crates added to the building-block table and layer list; `db-integration.md` corrected against `docker/db-compose.yml`/`Makefile` as they actually are) | done | (this phase, uncommitted at time of writing) |
-| F9.3 — ADR-0058..0061 → Accepted, each with an "As delivered" paragraph; ADR-0055 gains the ADR-0059 amendment note it was missing | done | (this phase, uncommitted at time of writing) |
-| F9.4 — `tr()` sweep across every new `cpp/` string | done — audited every `database_*`/`result_*`/`db_*`/`data_source_*`/`driver_install_dialog` `.cpp` file; zero violations found (every candidate was either already `tr()`-wrapped across a line break the first grep pass missed, or a `qWarning()` diagnostic, which ADR-0049 does not cover) | (this phase, uncommitted at time of writing) |
+| F9.1 — `database-tools.md` truth-up, section by section against the shipped code; module/crate/cpp file lists corrected against the real tree; §11 consolidated into one debt table | done | 55a09d5 |
+| F9.2 — `overview.md`/`project-structure.md` truth (seven new crates added to the building-block table and layer list; `db-integration.md` corrected against `docker/db-compose.yml`/`Makefile` as they actually are) | done | c71f0ae |
+| F9.3 — ADR-0058..0061 → Accepted, each with an "As delivered" paragraph; ADR-0055 gains the ADR-0059 amendment note it was missing | done | 2537647 |
+| F9.4 — `tr()` sweep across every new `cpp/` string | done — audited every `database_*`/`result_*`/`db_*`/`data_source_*`/`driver_install_dialog` `.cpp` file; zero violations found (every candidate was either already `tr()`-wrapped across a line break the first grep pass missed, or a `qWarning()` diagnostic, which ADR-0049 does not cover); no code changed | 55a09d5 |
 | F9.5 — Windows manual matrix (ODBC DSN, OpenSSH tunnel) | open — `ide-windows-builder` is still stale (rustc 1.90 vs the pinned 1.98.1, found in P0, §13); a Windows cross-build of the final tree has not been done since P0's own spike, so this remains a manual step for the main session, not doable from this docs-only worktree | |
 
 ## 10. Verification (F9 truth-up: what actually runs today, see `docs/architecture/db-integration.md` for the full account)

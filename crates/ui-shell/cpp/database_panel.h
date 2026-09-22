@@ -98,6 +98,8 @@ private:
         bool canCopyTable = false;
         bool canDump = false;
         bool canCompare = false;
+        bool canDeleteKey = false;
+        bool canTtlSet = false;
     };
     QHash<QString, RowInfo> rowInfoById_;
 };

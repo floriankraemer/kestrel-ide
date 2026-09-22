@@ -63,7 +63,18 @@ QIcon rowIcon(const QWidget *widget, const QString &kind)
     if (kind.startsWith(QLatin1String("folder-"))) {
         return style->standardIcon(QStyle::SP_DirIcon);
     }
-    if (kind == QLatin1String("column")) {
+    if (kind == QLatin1String("column") || kind == QLatin1String("field")) {
+        return style->standardIcon(QStyle::SP_FileIcon);
+    }
+    // Keyspace/KeyNamespace (F7b): both are schema-like grouping nodes —
+    // a Cassandra keyspace groups tables the way a folder does, a Redis
+    // key namespace groups keys the same `:`-delimited way. Neither is
+    // backend-reported the way a `Schema` is, but visually they play the
+    // same "directory of objects" role.
+    if (kind == QLatin1String("keyspace") || kind == QLatin1String("key-namespace")) {
+        return style->standardIcon(QStyle::SP_DirIcon);
+    }
+    if (kind == QLatin1String("key")) {
         return style->standardIcon(QStyle::SP_FileIcon);
     }
     return style->standardIcon(QStyle::SP_FileDialogDetailedView);
@@ -216,6 +227,8 @@ void DatabasePanel::rebuildTree()
         info.canCopyTable = row.actions.canCopyTable;
         info.canDump = row.actions.canDump;
         info.canCompare = row.actions.canCompare;
+        info.canDeleteKey = row.actions.canDeleteKey;
+        info.canTtlSet = row.actions.canTtlSet;
         rowInfoById_.insert(nodeId, info);
     }
 
@@ -288,6 +301,11 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
     // say, comparison (`canCompare`) versus data copy (`canCopyTable`).
     QAction *restoreAction = info.canDump ? menu.addAction(tr("Restore…")) : nullptr;
     QAction *compareStructure = info.canCompare ? menu.addAction(tr("Compare Structure with…")) : nullptr;
+    if (info.canDeleteKey || info.canTtlSet) {
+        menu.addSeparator();
+    }
+    QAction *deleteKey = info.canDeleteKey ? menu.addAction(tr("Delete Key…")) : nullptr;
+    QAction *setTtl = info.canTtlSet ? menu.addAction(tr("Set TTL…")) : nullptr;
     if (menu.actions().isEmpty()) {
         return;
     }
@@ -357,6 +375,22 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
     } else if (chosen == compareStructure) {
         showSchemaCompareDialog(this, exchangeService_, documentManager_, info.sourceId,
                                 databaseService_->sources());
+    } else if (chosen == deleteKey) {
+        if (QMessageBox::question(this, tr("Delete Key"),
+                                  tr("Delete key '%1'? This cannot be undone.").arg(info.label))
+            == QMessageBox::Yes) {
+            report(databaseService_->runAction(nodeId, QStringLiteral("delete-key")));
+        }
+    } else if (chosen == setTtl) {
+        bool ok = false;
+        const int seconds = QInputDialog::getInt(this, tr("Set TTL"),
+                                                  tr("Expire '%1' after how many seconds:")
+                                                    .arg(info.label),
+                                                  60, 1, 2147483647, 1, &ok);
+        if (ok) {
+            report(databaseService_->runAction(nodeId,
+                                               QStringLiteral("ttl:%1").arg(seconds)));
+        }
     }
 }
 

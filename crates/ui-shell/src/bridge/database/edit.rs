@@ -646,6 +646,17 @@ impl ffi::ResultProvider {
             }
         }
     }
+
+    /// See `db_core::value::pretty_json`'s own doc comment.
+    pub fn pretty_json(self: Pin<&mut Self>, text: &QString) -> FfiResult {
+        match db_core::value::pretty_json(&text.to_string()) {
+            Ok(pretty) => FfiResult {
+                code: 0,
+                message: QString::from(pretty.as_str()),
+            },
+            Err(message) => errors::failure(errors::CODE_INVALID_ARGUMENT, message),
+        }
+    }
 }
 
 /// Every row currently fetched for `result`, flattened in batch order —

@@ -186,6 +186,22 @@ impl ColumnMeta {
 /// (`INTEGER` vs `int4` vs `bigint`); an unrecognised type falls back to
 /// `Text`, which still binds safely, just without the stronger type.
 ///
+/// Reformats `text` as pretty-printed (2-space indented) JSON — the value
+/// editor's own JSON pretty-print toggle (F4.1). `Err` (the parse error)
+/// when `text` is not valid JSON; the editor keeps showing the raw text
+/// in that case rather than losing what the user typed.
+///
+/// XML gets no equivalent helper yet: this crate has no XML parser
+/// dependency, and F4.1's own XML content is rare enough (a handful of
+/// database columns store it, none of this codebase's own fixtures do)
+/// that pulling one in for a pretty-print button alone is not yet earned
+/// (YAGNI) — add it if a real user asks.
+pub fn pretty_json(text: &str) -> Result<String, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|error| format!("not valid JSON: {error}"))?;
+    serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
+}
+
 /// `Err` carries the message the editing cell shows — never a panic, and
 /// never a value that silently became something the user did not type.
 pub fn parse_text(text: &str, type_name: &str) -> Result<Value, String> {
@@ -504,5 +520,17 @@ mod tests {
             parse_text("Robert'); DROP TABLE students;--", "text").unwrap(),
             Value::Text("Robert'); DROP TABLE students;--".to_string())
         );
+    }
+
+    #[test]
+    fn pretty_json_indents_a_compact_object() {
+        let pretty = pretty_json("{\"a\":1,\"b\":[2,3]}").unwrap();
+        assert_eq!(pretty, "{\n  \"a\": 1,\n  \"b\": [\n    2,\n    3\n  ]\n}");
+    }
+
+    #[test]
+    fn pretty_json_rejects_invalid_json_without_panicking() {
+        assert!(pretty_json("{not json").is_err());
+        assert!(pretty_json("").is_err());
     }
 }

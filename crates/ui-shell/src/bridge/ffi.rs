@@ -10715,6 +10715,15 @@ mod ffi {
 
         #[qinvokable]
         fn revert(self: Pin<&mut ResultProvider>, result_id: u64);
+
+        /// See `db_core::value::pretty_json`'s own doc comment — the
+        /// value editor's JSON pretty-print toggle. Stateless (no
+        /// `result_id`): a plain text transform, not a per-result
+        /// question, kept on this `QObject` only because the value
+        /// editor already talks to it for everything else.
+        #[qinvokable]
+        #[cxx_name = "prettyJson"]
+        fn pretty_json(self: Pin<&mut ResultProvider>, text: &QString) -> FfiResult;
     }
 
     impl cxx_qt::Threading for ResultProvider {}

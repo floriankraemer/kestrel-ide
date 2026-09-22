@@ -95,12 +95,52 @@ pub enum Children {
     Loaded(Vec<Node>),
 }
 
+/// A constraint node's own shape — what kind it is and the columns/
+/// reference it names. Only [`ObjectKind::Constraint`] nodes carry this
+/// (in [`NodeDetail::constraint`]); every other kind leaves it `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConstraintKind {
+    PrimaryKey {
+        columns: Vec<String>,
+    },
+    ForeignKey {
+        columns: Vec<String>,
+        ref_table: ObjectRef,
+        ref_columns: Vec<String>,
+        /// The referential action's verbatim SQL keyword (`"CASCADE"`,
+        /// `"SET NULL"`, `"RESTRICT"`, `"NO ACTION"`, …), `None` when the
+        /// backend does not report one cheaply.
+        on_delete: Option<String>,
+        on_update: Option<String>,
+    },
+    Unique {
+        columns: Vec<String>,
+    },
+    /// A `CHECK` constraint's expression, verbatim (never evaluated) —
+    /// no backend this crate talks to exposes a check constraint's
+    /// columns separately from its expression text.
+    Check {
+        expr: String,
+    },
+}
+
+/// An index node's own shape — the columns it covers, in order, whether
+/// it enforces uniqueness, and its access method (`"btree"`, `"hash"`, …)
+/// where the backend reports one. Only [`ObjectKind::Index`] nodes carry
+/// this (in [`NodeDetail::index`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IndexDetail {
+    pub columns: Vec<String>,
+    pub unique: bool,
+    pub method: Option<String>,
+}
+
 /// Extra detail a column-shaped node carries once introspected at
 /// [`IntrospectLevel::Columns`] or deeper — a column's type/nullability/
 /// default, or a table's own primary-key column names, both of which
 /// `db_core::ddl::synthesize` needs to produce a usable `CREATE TABLE`
 /// fallback for a backend whose engine cannot hand back its own DDL text.
-/// Every other kind's node carries the all-`None`/empty default.
+/// Every other kind's node carries the all-`None`/empty/false default.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NodeDetail {
     /// A column's declared type, verbatim from the backend (`"INTEGER"`,
@@ -111,6 +151,20 @@ pub struct NodeDetail {
     pub default: Option<String>,
     /// Whether a column is (part of) its table's primary key.
     pub primary_key: bool,
+    /// Whether a column auto-generates its value on insert (SQLite
+    /// `INTEGER PRIMARY KEY AUTOINCREMENT`, Postgres `IDENTITY`/`SERIAL`),
+    /// `None` where the backend does not report this cheaply rather than
+    /// a guessed `false`.
+    pub auto_increment: Option<bool>,
+    /// A column's comment/description text, where the backend carries
+    /// one (Postgres `COMMENT ON COLUMN`); `None` elsewhere.
+    pub comment: Option<String>,
+    /// A [`ObjectKind::Constraint`] node's own kind — `None` for every
+    /// other node kind, or a constraint node below [`IntrospectLevel::Full`].
+    pub constraint: Option<ConstraintKind>,
+    /// A [`ObjectKind::Index`] node's own shape — `None` for every other
+    /// node kind, or an index node below [`IntrospectLevel::Full`].
+    pub index: Option<IndexDetail>,
     /// A Redis [`ObjectKind::Key`]'s remaining time to live in seconds
     /// (`PTTL`/1000), `None` for a key with no expiry set — every other
     /// backend's nodes leave this `None`. Carried here rather than a
@@ -278,5 +332,45 @@ mod tests {
         let snapshot = SchemaSnapshot::new(IntrospectLevel::Names, vec![]);
         assert_eq!(snapshot.level, IntrospectLevel::Names);
         assert!(snapshot.roots.is_empty());
+    }
+
+    #[test]
+    fn a_foreign_key_constraint_carries_its_reference_and_actions() {
+        let kind = ConstraintKind::ForeignKey {
+            columns: vec!["user_id".to_string()],
+            ref_table: ObjectRef::new("users").with_schema("public"),
+            ref_columns: vec!["id".to_string()],
+            on_delete: Some("CASCADE".to_string()),
+            on_update: None,
+        };
+        let node =
+            Node::leaf("orders_user_id_fkey", ObjectKind::Constraint).with_detail(NodeDetail {
+                constraint: Some(kind.clone()),
+                ..NodeDetail::default()
+            });
+        assert_eq!(node.detail.constraint, Some(kind));
+    }
+
+    #[test]
+    fn an_index_detail_carries_its_columns_and_uniqueness() {
+        let detail = IndexDetail {
+            columns: vec!["email".to_string()],
+            unique: true,
+            method: Some("btree".to_string()),
+        };
+        let node = Node::leaf("users_email_idx", ObjectKind::Index).with_detail(NodeDetail {
+            index: Some(detail.clone()),
+            ..NodeDetail::default()
+        });
+        assert_eq!(node.detail.index, Some(detail));
+    }
+
+    #[test]
+    fn a_default_node_detail_carries_no_structural_detail() {
+        let detail = NodeDetail::default();
+        assert_eq!(detail.constraint, None);
+        assert_eq!(detail.index, None);
+        assert_eq!(detail.auto_increment, None);
+        assert_eq!(detail.comment, None);
     }
 }

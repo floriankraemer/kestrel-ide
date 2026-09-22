@@ -657,6 +657,10 @@ fn e2e_containers_settings_test_connection() {
         view_actions.iter().all(|e| e["label"] != "Containers"),
         "disabling containers before the relaunch above must drop its View-menu entry, got: {view_actions:?}"
     );
+    // The menu is still open (`view_menu_action`'s own `aboutToShow` never
+    // closed it) — `ctrl+q` below is a global shortcut, but an open popup
+    // menu still eats the keystroke before it reaches the window.
+    ide.key("Escape");
 
     assert_eq!(ide.quit(), 0);
 }

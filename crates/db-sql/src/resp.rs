@@ -166,6 +166,34 @@ pub fn is_read_only_command(command: &str) -> bool {
         .any(|known| known.eq_ignore_ascii_case(command))
 }
 
+/// Commands whose effect is a write — the completion popup's other half
+/// (F7b): [`is_read_only_command`]'s table exists to gate the read-only
+/// guard, but a console's completion needs every command name it might
+/// offer, read and write alike, not the read-only subset alone.
+const WRITE_COMMANDS: &[&str] = &[
+    "SET", "SETEX", "PSETEX", "SETNX", "MSET", "MSETNX", "DEL", "UNLINK", "EXPIRE", "PEXPIRE",
+    "EXPIREAT", "PERSIST", "RENAME", "RENAMENX", "APPEND", "INCR", "INCRBY", "INCRBYFLOAT",
+    "DECR", "DECRBY", "HSET", "HMSET", "HSETNX", "HDEL", "HINCRBY", "HINCRBYFLOAT", "LPUSH",
+    "RPUSH", "LPUSHX", "RPUSHX", "LPOP", "RPOP", "LSET", "LREM", "LTRIM", "LINSERT", "SADD",
+    "SREM", "SPOP", "SMOVE", "ZADD", "ZREM", "ZINCRBY", "ZPOPMIN", "ZPOPMAX", "XADD", "XDEL",
+    "XTRIM", "FLUSHDB", "FLUSHALL", "COPY", "MOVE", "RESTORE", "SETRANGE", "GETSET", "GETDEL",
+];
+
+/// Every command name this crate knows of, read and write alike, sorted
+/// and de-duplicated — what the console's completion popup offers after a
+/// bare prefix (F7b), distinct from [`is_read_only_command`]'s narrower
+/// read-only-safety table.
+pub fn command_names() -> Vec<&'static str> {
+    let mut names: Vec<&'static str> = READ_ONLY_COMMANDS
+        .iter()
+        .chain(WRITE_COMMANDS.iter())
+        .copied()
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,5 +302,18 @@ mod tests {
     #[test]
     fn an_unrecognised_command_is_not_read_only_fail_closed() {
         assert!(!is_read_only_command("SOME.FUTURE.MODULE.COMMAND"));
+    }
+
+    #[test]
+    fn command_names_includes_both_read_and_write_commands_sorted_and_deduped() {
+        let names = command_names();
+        assert!(names.contains(&"GET"));
+        assert!(names.contains(&"SET"));
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        assert_eq!(names, sorted);
+        let mut deduped = names.clone();
+        deduped.dedup();
+        assert_eq!(names.len(), deduped.len());
     }
 }

@@ -29,7 +29,7 @@ The per-PR gate instead runs `e2e_database`, one flow, entirely against SQLite (
 
 ## What it verifies
 
-Services come from `docker/db-compose.yml`: `postgres:17`, `mysql:8.4`, `mariadb:11`, `mongo:8`, `redis:7`, `scylladb/scylla:6`, and (from F8) `mcr.microsoft.com/mssql/server:2022`.
+Services come from `docker/db-compose.yml`: `postgres:17`, `mysql:8.4`, `mariadb:11`, `mongo:8`, `redis:7`, `scylladb/scylla:2026.2`, and (from F8) `mcr.microsoft.com/mssql/server:2022`.
 `.github/workflows/nightly.yml` gains a `db-integration` job with the same services under `services:`.
 
 Per backend, the integration tests exercise: connect (plaintext and TLS where the engine supports it), introspection (the real system catalog, not a fixture — this is what catches an engine-version drift a fixture cannot), execute + page + cancel against a real cursor, and the read-only classifier's server-side flag actually taking effect on a live session.

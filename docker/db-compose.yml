@@ -51,7 +51,7 @@ services:
 
   # F7.4: `IDE_DB_CASSANDRA_HOSTS=127.0.0.1:59042`.
   scylla:
-    image: scylladb/scylla:6
+    image: scylladb/scylla:2026.2
     command: --smp 1 --memory 750M --overprovisioned 1
     ports:
       - "127.0.0.1:59042:9042"

@@ -770,9 +770,10 @@ fn the_database_tools_builtin_loads_through_the_real_path() {
     assert_eq!(plugin.source(), PluginSource::Builtin);
 
     let drivers: Vec<_> = registry.database_drivers().collect();
-    // sqlite, postgresql, mongodb, redis, cassandra (native); duckdb,
-    // snowflake, bigquery, mssql, clickhouse, trino (adbc); odbc — F8b.
-    assert_eq!(drivers.len(), 12, "{drivers:?}");
+    // sqlite, postgresql, mysql, mariadb, mongodb, redis, cassandra
+    // (native); duckdb, snowflake, bigquery, mssql, clickhouse, trino
+    // (adbc); odbc — F8b + FZ.
+    assert_eq!(drivers.len(), 14, "{drivers:?}");
     let sqlite = drivers
         .iter()
         .find(|(_, d)| d.id == "sqlite")
@@ -805,9 +806,9 @@ fn the_database_tools_builtin_loads_through_the_real_path() {
     assert_eq!(cassandra.default_port, Some(9042));
 
     let dialects: Vec<_> = registry.sql_dialects().collect();
-    // sqlite, postgresql, cql (F1/F7) + duckdb, snowflake, bigquery, mssql,
-    // clickhouse, trino (F8b) = 9.
-    assert_eq!(dialects.len(), 9, "{dialects:?}");
+    // sqlite, postgresql, mysql, cql (F1/F7/FZ) + duckdb, snowflake,
+    // bigquery, mssql, clickhouse, trino (F8b) = 10.
+    assert_eq!(dialects.len(), 10, "{dialects:?}");
 }
 
 /// Every `keywords` path a `database-tools` `sql-dialects` row names must

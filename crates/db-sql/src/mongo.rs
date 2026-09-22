@@ -215,6 +215,183 @@ pub fn run_command_name(document: &Json) -> Option<&str> {
     document.as_object()?.keys().next().map(String::as_str)
 }
 
+/// Splits a Mongo console's whole buffer into the byte range of each
+/// top-level statement — one `db.<collection>.<method>(…)` call, or one
+/// JSON `runCommand` document (F7b's multi-statement Mongo console,
+/// database-tools.md §4). Bracket- and string-aware like
+/// [`split_top_level_args`]: a statement ends once its own brackets close
+/// back to depth zero, at an explicit `;`, or at the next non-whitespace
+/// character once one already has — so `db.a.find({})\ndb.b.find({})` and
+/// `db.a.find({}); db.b.find({});` both split into two statements, and a
+/// `;`/newline inside a nested document never does.
+pub fn command_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut depth = 0i32;
+    let mut in_string: Option<char> = None;
+    let mut escaped = false;
+    let mut start: Option<usize> = None;
+    // Byte offset right after a bracket that just closed depth back to
+    // zero — the earliest point a following statement could start; `None`
+    // once anything other than trailing whitespace is seen past it (so a
+    // `.sort()` chained after `db.a.find({})` does not fork a boundary).
+    let mut boundary: Option<usize> = None;
+
+    for (i, c) in text.char_indices() {
+        if let Some(quote) = in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == quote {
+                in_string = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => {
+                in_string = Some(c);
+                if start.is_none() {
+                    start = Some(i);
+                }
+                boundary = None;
+            }
+            '{' | '[' | '(' => {
+                depth += 1;
+                if start.is_none() {
+                    start = Some(i);
+                }
+                boundary = None;
+            }
+            '}' | ']' | ')' => {
+                depth -= 1;
+                if depth <= 0 {
+                    depth = depth.max(0);
+                    boundary = Some(i + c.len_utf8());
+                }
+            }
+            ';' if depth == 0 => {
+                if let Some(s) = start.take() {
+                    spans.push((s, i));
+                }
+                boundary = None;
+            }
+            c if depth == 0 && !c.is_whitespace() => {
+                if let (Some(b), Some(s)) = (boundary, start) {
+                    spans.push((s, b));
+                    start = Some(i);
+                } else if start.is_none() {
+                    start = Some(i);
+                }
+                boundary = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        spans.push((s, text.len()));
+    }
+    spans
+        .into_iter()
+        .filter(|(s, e)| !text[*s..*e].trim().is_empty())
+        .collect()
+}
+
+/// [`command_spans`], rendered as the trimmed statement texts themselves —
+/// what a console's "run selection"/script runner actually sends one at a
+/// time to `parse`.
+pub fn split_commands(text: &str) -> Vec<&str> {
+    command_spans(text)
+        .into_iter()
+        .map(|(s, e)| text[s..e].trim())
+        .collect()
+}
+
+/// Read-only `runCommand` names (F7b) — the raw-document counterpart to
+/// [`is_read_only_method`]'s sugar-method table, same fail-closed rule: a
+/// command this table has never heard of is a write as far as the guard
+/// is concerned.
+const READ_ONLY_RUN_COMMANDS: &[&str] = &[
+    "find",
+    "aggregate",
+    "count",
+    "distinct",
+    "listCollections",
+    "listDatabases",
+    "listIndexes",
+    "dbStats",
+    "collStats",
+    "ping",
+    "explain",
+    "hello",
+    "isMaster",
+    "buildInfo",
+    "serverStatus",
+    "whatsmyuri",
+];
+
+pub fn is_read_only_run_command(name: &str) -> bool {
+    READ_ONLY_RUN_COMMANDS.contains(&name)
+}
+
+/// Splits console text into its top-level statements: one per `db.<coll>.
+/// <method>(…)` sugar call or top-level JSON document, bracket- and
+/// string-aware so a `}`/`)` nested inside a filter or a quoted string
+/// never ends a statement early (the same depth-tracking
+/// [`split_top_level_args`] uses, applied to the whole buffer rather than
+/// to one call's argument list). A stray `;` or blank line between
+/// statements is skipped, matching `mongosh`'s own tolerance for a
+/// trailing semicolon (`parse` already trims one per statement).
+pub fn split_statements(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut in_string: Option<char> = None;
+    let mut escaped = false;
+    let mut start: Option<usize> = None;
+
+    for (i, c) in text.char_indices() {
+        if let Some(quote) = in_string {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == quote {
+                in_string = None;
+            }
+            continue;
+        }
+        match c {
+            '"' | '\'' => in_string = Some(c),
+            '{' | '[' | '(' => depth += 1,
+            '}' | ']' | ')' => {
+                depth = (depth - 1).max(0);
+                if depth == 0 {
+                    if let Some(s) = start {
+                        let end = i + c.len_utf8();
+                        let piece = text[s..end].trim();
+                        if !piece.is_empty() {
+                            out.push(piece);
+                        }
+                        start = None;
+                    }
+                    continue;
+                }
+            }
+            _ if depth == 0 && start.is_none() && (c.is_whitespace() || c == ';') => continue,
+            _ => {}
+        }
+        if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(s) = start {
+        let rest = text[s..].trim();
+        if !rest.is_empty() {
+            out.push(rest);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +507,48 @@ mod tests {
     }
 
     #[test]
+    fn two_semicolon_separated_calls_split_into_two_statements() {
+        assert_eq!(
+            split_commands("db.a.find({});db.b.find({});"),
+            vec!["db.a.find({})", "db.b.find({})"]
+        );
+    }
+
+    #[test]
+    fn two_newline_separated_calls_with_no_semicolons_still_split() {
+        assert_eq!(
+            split_commands("db.a.find({})\ndb.b.find({})"),
+            vec!["db.a.find({})", "db.b.find({})"]
+        );
+    }
+
+    #[test]
+    fn back_to_back_run_command_documents_split_on_the_closing_brace() {
+        assert_eq!(
+            split_commands(r#"{"ping": 1} {"ping": 2}"#),
+            vec![r#"{"ping": 1}"#, r#"{"ping": 2}"#]
+        );
+    }
+
+    #[test]
+    fn a_semicolon_inside_a_nested_document_does_not_split() {
+        assert_eq!(
+            split_commands(r#"db.a.find({"msg": "a;b"});"#),
+            vec![r#"db.a.find({"msg": "a;b"})"#]
+        );
+    }
+
+    #[test]
+    fn a_single_statement_with_no_terminator_is_kept_whole() {
+        assert_eq!(split_commands("db.users.find({})"), vec!["db.users.find({})"]);
+    }
+
+    #[test]
+    fn blank_input_yields_no_statements() {
+        assert_eq!(split_commands("   \n\t "), Vec::<&str>::new());
+    }
+
+    #[test]
     fn read_only_methods_are_classified_correctly() {
         assert!(is_read_only_method("find"));
         assert!(is_read_only_method("aggregate"));
@@ -347,5 +566,55 @@ mod tests {
             Some("insert")
         );
         assert_eq!(run_command_name(&json!([1, 2])), None);
+    }
+
+    #[test]
+    fn read_only_run_commands_are_classified_correctly() {
+        assert!(is_read_only_run_command("find"));
+        assert!(is_read_only_run_command("aggregate"));
+        assert!(!is_read_only_run_command("insert"));
+        assert!(!is_read_only_run_command("update"));
+        assert!(!is_read_only_run_command("mapReduce"));
+    }
+
+    #[test]
+    fn split_statements_separates_two_sugar_calls_on_separate_lines() {
+        let text = "db.users.find({\"a\": 1})\ndb.orders.find({\"b\": 2})";
+        assert_eq!(
+            split_statements(text),
+            vec!["db.users.find({\"a\": 1})", "db.orders.find({\"b\": 2})"]
+        );
+    }
+
+    #[test]
+    fn split_statements_separates_two_run_command_documents() {
+        let text = "{\"ping\": 1}\n{\"find\": \"users\"}";
+        assert_eq!(split_statements(text), vec!["{\"ping\": 1}", "{\"find\": \"users\"}"]);
+    }
+
+    #[test]
+    fn split_statements_ignores_a_trailing_semicolon_between_statements() {
+        let text = "db.users.find({});\ndb.users.find({})";
+        assert_eq!(
+            split_statements(text),
+            vec!["db.users.find({})", "db.users.find({})"]
+        );
+    }
+
+    #[test]
+    fn split_statements_does_not_split_on_a_brace_nested_inside_a_call() {
+        let text = r#"db.users.updateOne({"id": 1}, {"$set": {"a": 1}})"#;
+        assert_eq!(split_statements(text), vec![text]);
+    }
+
+    #[test]
+    fn split_statements_does_not_split_on_a_closing_paren_inside_a_quoted_string() {
+        let text = r#"db.users.find({"note": "a) b"})"#;
+        assert_eq!(split_statements(text), vec![text]);
+    }
+
+    #[test]
+    fn split_statements_on_empty_text_is_empty() {
+        assert!(split_statements("   \n  ").is_empty());
     }
 }

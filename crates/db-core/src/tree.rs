@@ -11,7 +11,7 @@
 //! offers — the view never encodes a business decision about what a
 //! table vs. a read-only source can do (`CLAUDE.md`'s humble-view rule).
 
-use crate::schema::{Children, Node, ObjectKind, RedisType};
+use crate::schema::{Children, Node, ObjectKind};
 
 /// Which of a row's possible actions apply — a bitflag set for the same
 /// reason `driver::Capabilities` is one: a handful of flags, no value from
@@ -640,6 +640,7 @@ fn is_expandable_kind(kind: ObjectKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::RedisType;
 
     fn table(name: &str, columns: Vec<&str>) -> Node {
         Node::with_children(

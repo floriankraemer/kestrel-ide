@@ -266,6 +266,77 @@ impl SchemaSnapshot {
     }
 }
 
+/// One table elsewhere in the schema whose foreign key points back at
+/// `(table, column)` — reverse FK navigation's ("Show referencing rows…",
+/// database-tools-plan F4.3 follow-up) own answer to "who references me".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferencingColumn {
+    /// The referencing table, exactly as its own foreign key names it —
+    /// not necessarily schema-qualified the same way `table`/`column`
+    /// were asked for, since a backend's FK detail carries whatever
+    /// `ref_table`/its own table ancestry gave it.
+    pub table: ObjectRef,
+    /// The referencing table's own foreign-key column — the value to bind
+    /// against the cell's own value when building the target `SELECT`.
+    pub column: String,
+}
+
+/// Walks every `Table`/`Collection` node in `roots` (recursively, so a
+/// schema-nested catalog is covered the same as a flat one) looking for a
+/// `ForeignKey` constraint whose `ref_table`/`ref_columns` name
+/// `(table, column)` — the whole-schema FK index reverse navigation needs
+/// (database-tools.md §4's F4b note on why forward-only shipped first: a
+/// per-table `Full` introspect has no visibility into any *other* table's
+/// own foreign keys, only this walk over a whole-schema snapshot does).
+/// `table`/`ref_table.name` are compared by bare name only — matching
+/// `qualify`'s own "this crate's tested backend is single-schema" scope
+/// note in `ddl.rs`, not a schema-qualified comparison.
+pub fn find_referencing_columns(
+    roots: &[Node],
+    table: &str,
+    column: &str,
+) -> Vec<ReferencingColumn> {
+    fn walk(nodes: &[Node], table: &str, column: &str, out: &mut Vec<ReferencingColumn>) {
+        for node in nodes {
+            if matches!(node.kind, ObjectKind::Table | ObjectKind::Collection) {
+                if let Children::Loaded(children) = &node.children {
+                    for child in children {
+                        if child.kind != ObjectKind::Constraint {
+                            continue;
+                        }
+                        let Some(ConstraintKind::ForeignKey {
+                            columns,
+                            ref_table,
+                            ref_columns,
+                            ..
+                        }) = &child.detail.constraint
+                        else {
+                            continue;
+                        };
+                        if ref_table.name != table {
+                            continue;
+                        }
+                        for (fk_column, ref_column) in columns.iter().zip(ref_columns.iter()) {
+                            if ref_column == column {
+                                out.push(ReferencingColumn {
+                                    table: ObjectRef::new(node.name.clone()).with_kind(node.kind),
+                                    column: fk_column.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+            if let Children::Loaded(children) = &node.children {
+                walk(children, table, column, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(roots, table, column, &mut out);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,5 +443,73 @@ mod tests {
         assert_eq!(detail.index, None);
         assert_eq!(detail.auto_increment, None);
         assert_eq!(detail.comment, None);
+    }
+
+    fn fk_child(name: &str, ref_table: &str, ref_column: &str) -> Node {
+        Node::leaf(name, ObjectKind::Constraint).with_detail(NodeDetail {
+            constraint: Some(ConstraintKind::ForeignKey {
+                columns: vec![format!("{ref_table}_id")],
+                ref_table: ObjectRef::new(ref_table),
+                ref_columns: vec![ref_column.to_string()],
+                on_delete: None,
+                on_update: None,
+            }),
+            ..NodeDetail::default()
+        })
+    }
+
+    #[test]
+    fn find_referencing_columns_finds_a_direct_child_table() {
+        let roots = vec![
+            Node::leaf("customers", ObjectKind::Table),
+            Node::with_children(
+                "orders",
+                ObjectKind::Table,
+                vec![fk_child("orders_customer_fkey", "customers", "id")],
+            ),
+        ];
+        let hits = find_referencing_columns(&roots, "customers", "id");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].table.name, "orders");
+        assert_eq!(hits[0].column, "customers_id");
+    }
+
+    #[test]
+    fn find_referencing_columns_walks_nested_schema_roots() {
+        let roots = vec![Node::with_children(
+            "public",
+            ObjectKind::Schema,
+            vec![
+                Node::leaf("customers", ObjectKind::Table),
+                Node::with_children(
+                    "orders",
+                    ObjectKind::Table,
+                    vec![fk_child("fk", "customers", "id")],
+                ),
+            ],
+        )];
+        let hits = find_referencing_columns(&roots, "customers", "id");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].table.name, "orders");
+    }
+
+    #[test]
+    fn find_referencing_columns_is_empty_when_nothing_points_back() {
+        let roots = vec![Node::with_children(
+            "orders",
+            ObjectKind::Table,
+            vec![fk_child("fk", "customers", "id")],
+        )];
+        assert!(find_referencing_columns(&roots, "products", "id").is_empty());
+    }
+
+    #[test]
+    fn find_referencing_columns_ignores_a_foreign_key_to_a_different_column() {
+        let roots = vec![Node::with_children(
+            "orders",
+            ObjectKind::Table,
+            vec![fk_child("fk", "customers", "external_id")],
+        )];
+        assert!(find_referencing_columns(&roots, "customers", "id").is_empty());
     }
 }

@@ -1,12 +1,14 @@
 #include "result_grid_view.h"
 
 #include "result_table_model.h"
+#include "result_view_modes.h"
 #include "value_editor_dialog.h"
 
 #include <cstdint>
 #include <functional>
 
 #include <QAction>
+#include <QComboBox>
 #include <QEvent>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -16,8 +18,12 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPlainTextEdit>
+#include <QStackedWidget>
+#include <QStandardItemModel>
 #include <QTableView>
 #include <QToolButton>
+#include <QTreeView>
 #include <QVBoxLayout>
 
 namespace ui_shell {
@@ -98,6 +104,53 @@ ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *p
     editableBanner_->setVisible(false);
     layout->addWidget(editableBanner_);
 
+    // F4d: view modes + column visibility.
+    auto *viewToolbar = new QHBoxLayout();
+    tableModeButton_ = new QToolButton(this);
+    tableModeButton_->setText(tr("Table"));
+    tableModeButton_->setCheckable(true);
+    tableModeButton_->setChecked(true);
+    connect(tableModeButton_, &QToolButton::clicked, this,
+           [this]() { setViewMode(FfiDbViewMode::Table); });
+    viewToolbar->addWidget(tableModeButton_);
+
+    transposeModeButton_ = new QToolButton(this);
+    transposeModeButton_->setText(tr("Transpose"));
+    transposeModeButton_->setCheckable(true);
+    connect(transposeModeButton_, &QToolButton::clicked, this,
+           [this]() { setViewMode(FfiDbViewMode::Transpose); });
+    viewToolbar->addWidget(transposeModeButton_);
+
+    textModeButton_ = new QToolButton(this);
+    textModeButton_->setText(tr("Text"));
+    textModeButton_->setCheckable(true);
+    connect(textModeButton_, &QToolButton::clicked, this,
+           [this]() { setViewMode(FfiDbViewMode::Text); });
+    viewToolbar->addWidget(textModeButton_);
+
+    recordModeButton_ = new QToolButton(this);
+    recordModeButton_->setText(tr("Record"));
+    recordModeButton_->setCheckable(true);
+    connect(recordModeButton_, &QToolButton::clicked, this,
+           [this]() { setViewMode(FfiDbViewMode::Record); });
+    viewToolbar->addWidget(recordModeButton_);
+
+    textFormatCombo_ = new QComboBox(this);
+    textFormatCombo_->addItem(tr("CSV"), int(FfiDbTextFormat::Csv));
+    textFormatCombo_->addItem(tr("TSV"), int(FfiDbTextFormat::Tsv));
+    textFormatCombo_->addItem(tr("JSON"), int(FfiDbTextFormat::Json));
+    textFormatCombo_->addItem(tr("Markdown"), int(FfiDbTextFormat::Markdown));
+    connect(textFormatCombo_, &QComboBox::currentIndexChanged, this,
+           [this]() { updateTextView(); });
+    viewToolbar->addWidget(textFormatCombo_);
+
+    viewToolbar->addStretch(1);
+
+    columnsButton_ = new QToolButton(this);
+    columnsButton_->setText(tr("Columns…"));
+    viewToolbar->addWidget(columnsButton_);
+    layout->addLayout(viewToolbar);
+
     model_ = new ResultTableModel(provider_, this);
     tableView_ = new QTableView(this);
     tableView_->setModel(model_);
@@ -108,10 +161,82 @@ ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *p
     tableView_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tableView_, &QTableView::customContextMenuRequested, this,
            &ResultGridView::showCellContextMenu);
-    layout->addWidget(tableView_, 1);
+    connect(tableView_->selectionModel(), &QItemSelectionModel::currentColumnChanged, this,
+           [this]() { updateAggregateFooter(); });
+    connect(tableView_->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
+           [this]() { updateRecordView(); });
+
+    transposeModel_ = new TransposeTableModel(model_, this);
+    transposeView_ = new QTableView(this);
+    transposeView_->setModel(transposeModel_);
+
+    textView_ = new QPlainTextEdit(this);
+    textView_->setReadOnly(true);
+    textView_->setLineWrapMode(QPlainTextEdit::NoWrap);
+
+    recordView_ = new QTreeView(this);
+    recordView_->setModel(nullptr);
+
+    viewStack_ = new QStackedWidget(this);
+    viewStack_->addWidget(tableView_);
+    viewStack_->addWidget(transposeView_);
+    viewStack_->addWidget(textView_);
+    viewStack_->addWidget(recordView_);
+    layout->addWidget(viewStack_, 1);
+
+    auto *footer = new QHBoxLayout();
+    aggregateOpCombo_ = new QComboBox(this);
+    aggregateOpCombo_->addItem(tr("Sum"), int(FfiDbAggOp::Sum));
+    aggregateOpCombo_->addItem(tr("Avg"), int(FfiDbAggOp::Avg));
+    aggregateOpCombo_->addItem(tr("Min"), int(FfiDbAggOp::Min));
+    aggregateOpCombo_->addItem(tr("Max"), int(FfiDbAggOp::Max));
+    aggregateOpCombo_->addItem(tr("Count"), int(FfiDbAggOp::Count));
+    connect(aggregateOpCombo_, &QComboBox::currentIndexChanged, this,
+           [this]() { updateAggregateFooter(); });
+    footer->addWidget(aggregateOpCombo_);
+    aggregateLabel_ = new QLabel(this);
+    footer->addWidget(aggregateLabel_, 1);
+    layout->addLayout(footer);
 
     statusLabel_ = new QLabel(this);
     layout->addWidget(statusLabel_);
+
+    connect(consoleService_, &ConsoleService::aggregateComputed, this,
+           [this](quint64 resultId, FfiDbAggOp op, const FfiDbAggregateOutcome &outcome) {
+               Q_UNUSED(op);
+               if (resultId != resultId_) {
+                   return;
+               }
+               if (outcome.scope == FfiDbAggScope::FetchedRowsOnly) {
+                   const QString column =
+                     model_->columnNameAt(tableView_->currentIndex().column());
+                   const QString fallback = provider_->aggregate(
+                     resultId_, column, FfiDbAggOp(aggregateOpCombo_->currentData().toInt()));
+                   aggregateLabel_->setText(
+                     tr("%1 (from fetched rows only — %2)").arg(fallback, QString(outcome.reason)));
+                   return;
+               }
+               aggregateLabel_->setText(outcome.ok
+                                          ? tr("%1 (over all %2 rows)")
+                                              .arg(QString(outcome.value))
+                                              .arg(outcome.rowCount)
+                                          : QString(outcome.value));
+           });
+    connect(consoleService_, &ConsoleService::referencingTargetsReady, this,
+           [this](quint64 resultId, const QString &column, const ::rust::Vec<FfiDbNavTarget> &targets) {
+               Q_UNUSED(column);
+               if (resultId != resultId_ || targets.empty()) {
+                   return;
+               }
+               QMenu menu(this);
+               for (const FfiDbNavTarget &target : targets) {
+                   QAction *action = menu.addAction(QString(target.label));
+                   connect(action, &QAction::triggered, this,
+                          [this, target]() { goToNavTarget(target); });
+               }
+               menu.exec(tableView_->viewport()->mapToGlobal(
+                 tableView_->visualRect(tableView_->currentIndex()).center()));
+           });
 
     windowShortcut(this, appSettings, QStringLiteral("database.submit"), [this]() { submit(); });
     windowShortcut(this, appSettings, QStringLiteral("database.revert"), [this]() { revert(); });
@@ -124,6 +249,16 @@ ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *p
                   [this]() { previewDml(); });
     windowShortcut(this, appSettings, QStringLiteral("database.goToReferencedRow"),
                   [this]() { goToReferencedRow(); });
+    windowShortcut(this, appSettings, QStringLiteral("database.showReferencingRows"),
+                  [this]() { showReferencingRows(); });
+    windowShortcut(this, appSettings, QStringLiteral("database.viewTable"),
+                  [this]() { setViewMode(FfiDbViewMode::Table); });
+    windowShortcut(this, appSettings, QStringLiteral("database.viewTranspose"),
+                  [this]() { setViewMode(FfiDbViewMode::Transpose); });
+    windowShortcut(this, appSettings, QStringLiteral("database.viewText"),
+                  [this]() { setViewMode(FfiDbViewMode::Text); });
+    windowShortcut(this, appSettings, QStringLiteral("database.viewRecord"),
+                  [this]() { setViewMode(FfiDbViewMode::Record); });
 
     updateActionsEnabled();
 }
@@ -134,7 +269,9 @@ void ResultGridView::setResultId(quint64 resultId)
     model_->setResultId(resultId);
     statusLabel_->setText(tr("Running…"));
     editableBanner_->setVisible(false);
+    aggregateLabel_->clear();
     updateActionsEnabled();
+    setViewMode(FfiDbViewMode::Table);
     if (onResultAdopted_) {
         onResultAdopted_(resultId);
     }
@@ -156,6 +293,7 @@ void ResultGridView::executionFinished(quint64 resultId, bool ok, quint64 affect
     }
     statusLabel_->setText(ok ? tr("%1 row(s) — %2 ms").arg(affected).arg(elapsedMs)
                              : tr("Failed — %1 ms").arg(elapsedMs));
+    refreshViewModes();
 }
 
 void ResultGridView::editabilityChanged(quint64 resultId, bool editable, const QString &reason)
@@ -331,13 +469,21 @@ void ResultGridView::navigateFromIndex(const QModelIndex &index, const QPoint &g
         return;
     }
     const auto targets = consoleService_->cellNavigation(resultId_, quint64(index.row()), column);
-    if (targets.empty()) {
-        return;
-    }
     QMenu menu(this);
     for (const FfiDbNavTarget &target : targets) {
         QAction *action = menu.addAction(QString(target.label));
         connect(action, &QAction::triggered, this, [this, target]() { goToNavTarget(target); });
+    }
+    // F4d: reverse navigation is always offered — whether this column is
+    // referenced by anything else is only known once
+    // `referencingTargetsReady` answers (a whole-schema introspect, not a
+    // cheap synchronous check like `cellNavigation`'s forward case).
+    QAction *reverseAction = menu.addAction(tr("Show Referencing Rows…"));
+    const quint64 row = quint64(index.row());
+    connect(reverseAction, &QAction::triggered, this,
+           [this, row, column]() { consoleService_->referencingTargets(resultId_, row, column); });
+    if (menu.isEmpty()) {
+        return;
     }
     menu.exec(globalPos);
 }
@@ -357,6 +503,104 @@ void ResultGridView::goToNavTarget(const FfiDbNavTarget &target)
     if (parsed) {
         setResultId(newId);
     }
+}
+
+void ResultGridView::showReferencingRows()
+{
+    if (resultId_ == 0) {
+        return;
+    }
+    const QModelIndex index = tableView_->currentIndex();
+    if (!index.isValid()) {
+        return;
+    }
+    const QString column = model_->columnNameAt(index.column());
+    if (column.isEmpty()) {
+        return;
+    }
+    // Answered asynchronously through `referencingTargetsReady` — see the
+    // constructor's own connection.
+    consoleService_->referencingTargets(resultId_, quint64(index.row()), column);
+}
+
+void ResultGridView::setViewMode(FfiDbViewMode mode)
+{
+    tableModeButton_->setChecked(mode == FfiDbViewMode::Table);
+    transposeModeButton_->setChecked(mode == FfiDbViewMode::Transpose);
+    textModeButton_->setChecked(mode == FfiDbViewMode::Text);
+    recordModeButton_->setChecked(mode == FfiDbViewMode::Record);
+    textFormatCombo_->setVisible(mode == FfiDbViewMode::Text);
+    switch (mode) {
+    case FfiDbViewMode::Transpose:
+        viewStack_->setCurrentWidget(transposeView_);
+        break;
+    case FfiDbViewMode::Text:
+        viewStack_->setCurrentWidget(textView_);
+        updateTextView();
+        break;
+    case FfiDbViewMode::Record:
+        viewStack_->setCurrentWidget(recordView_);
+        updateRecordView();
+        break;
+    case FfiDbViewMode::Table:
+    default:
+        viewStack_->setCurrentWidget(tableView_);
+        break;
+    }
+}
+
+void ResultGridView::refreshViewModes()
+{
+    if (resultId_ == 0) {
+        return;
+    }
+    const FfiResultModes modes = provider_->resultModes(resultId_);
+    transposeModeButton_->setEnabled(modes.canTranspose);
+    textModeButton_->setEnabled(modes.canText);
+    recordModeButton_->setEnabled(modes.canRecord);
+    installColumnVisibilityMenu(columnsButton_, tableView_, provider_->columns(resultId_));
+    setViewMode(modes.defaultMode);
+}
+
+void ResultGridView::updateTextView()
+{
+    if (resultId_ == 0 || viewStack_->currentWidget() != textView_) {
+        return;
+    }
+    const auto format = FfiDbTextFormat(textFormatCombo_->currentData().toInt());
+    textView_->setPlainText(provider_->textView(resultId_, format));
+}
+
+void ResultGridView::updateRecordView()
+{
+    if (resultId_ == 0 || viewStack_->currentWidget() != recordView_) {
+        return;
+    }
+    const QModelIndex current = tableView_->currentIndex();
+    const quint64 row = current.isValid() ? quint64(current.row()) : 0;
+    QAbstractItemModel *old = recordView_->model();
+    recordView_->setModel(buildRecordModel(provider_->recordRows(resultId_, row), recordView_));
+    delete old;
+    recordView_->expandAll();
+    for (int i = 0; i < 3; ++i) {
+        recordView_->resizeColumnToContents(i);
+    }
+}
+
+void ResultGridView::updateAggregateFooter()
+{
+    if (resultId_ == 0) {
+        aggregateLabel_->clear();
+        return;
+    }
+    const QString column = model_->columnNameAt(tableView_->currentIndex().column());
+    if (column.isEmpty()) {
+        aggregateLabel_->clear();
+        return;
+    }
+    aggregateLabel_->setText(tr("computing…"));
+    const auto op = FfiDbAggOp(aggregateOpCombo_->currentData().toInt());
+    consoleService_->aggregateExact(resultId_, column, op);
 }
 
 bool ResultGridView::eventFilter(QObject *watched, QEvent *event)

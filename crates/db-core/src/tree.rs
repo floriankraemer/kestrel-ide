@@ -50,6 +50,23 @@ impl ActionSet {
     pub const DELETE_KEY: ActionSet = ActionSet(1 << 15);
     /// Set a Redis key's TTL (F7b) — a write, same gate as `DELETE_KEY`.
     pub const TTL_SET: ActionSet = ActionSet(1 << 16);
+    /// Create a new table under a schema/catalog/source root (F4.4) — a
+    /// write, so gated by `!caps.read_only` like every other DDL action.
+    pub const CREATE_TABLE: ActionSet = ActionSet(1 << 17);
+    /// Open the Modify Table dialog (add/alter/drop a column, F4.4) on an
+    /// existing table.
+    pub const MODIFY_TABLE: ActionSet = ActionSet(1 << 18);
+    /// Add a column to an existing table (F4.4) — offered alongside
+    /// `MODIFY_TABLE` rather than folded into it, since a caller may want
+    /// the narrower "just add one column" dialog directly from the
+    /// context menu.
+    pub const ADD_COLUMN: ActionSet = ActionSet(1 << 19);
+    /// Create an index on an existing table (F4.4).
+    pub const CREATE_INDEX: ActionSet = ActionSet(1 << 20);
+    /// Create a user/role at the source's own root (F4.4) — offered
+    /// wherever `CREATE_TABLE` is, since both are schema/source-level DDL
+    /// rather than one table's own action.
+    pub const CREATE_USER: ActionSet = ActionSet(1 << 21);
 
     pub const fn contains(self, other: ActionSet) -> bool {
         self.0 & other.0 == other.0
@@ -456,6 +473,17 @@ pub fn actions_for(kind: ObjectKind, caps: SourceCapabilities) -> ActionSet {
         }
         if (is_relation || is_routine) && caps.supports_comment {
             actions = actions | ActionSet::COMMENT;
+        }
+        // F4.4's object dialogs: a schema/catalog/keyspace root offers
+        // "Create Table…"/"Create User…" (both are schema-level DDL, not
+        // one table's own action); an existing table offers "Modify
+        // Table…"/"Add Column…"/"Create Index…".
+        if is_schema_like {
+            actions = actions | ActionSet::CREATE_TABLE | ActionSet::CREATE_USER;
+        }
+        if matches!(kind, Table) {
+            actions =
+                actions | ActionSet::MODIFY_TABLE | ActionSet::ADD_COLUMN | ActionSet::CREATE_INDEX;
         }
     }
     actions
@@ -995,5 +1023,51 @@ mod tests {
         assert!(!regex_lite_match("payment_.*", "user_log"));
         assert!(regex_lite_match(".*", "anything"));
         assert!(!regex_lite_match("abc", "abcd"));
+    }
+
+    #[test]
+    fn a_schema_offers_create_table_and_create_user_when_writable() {
+        let actions = actions_for(ObjectKind::Schema, caps());
+        assert!(actions.contains(ActionSet::CREATE_TABLE));
+        assert!(actions.contains(ActionSet::CREATE_USER));
+    }
+
+    #[test]
+    fn a_read_only_source_offers_no_create_table_or_create_user() {
+        let read_only = SourceCapabilities {
+            read_only: true,
+            supports_comment: true,
+        };
+        let actions = actions_for(ObjectKind::Schema, read_only);
+        assert!(!actions.contains(ActionSet::CREATE_TABLE));
+        assert!(!actions.contains(ActionSet::CREATE_USER));
+    }
+
+    #[test]
+    fn a_table_offers_modify_add_column_and_create_index_when_writable() {
+        let actions = actions_for(ObjectKind::Table, caps());
+        assert!(actions.contains(ActionSet::MODIFY_TABLE));
+        assert!(actions.contains(ActionSet::ADD_COLUMN));
+        assert!(actions.contains(ActionSet::CREATE_INDEX));
+    }
+
+    #[test]
+    fn a_read_only_table_offers_none_of_the_f4_4_write_actions() {
+        let read_only = SourceCapabilities {
+            read_only: true,
+            supports_comment: true,
+        };
+        let actions = actions_for(ObjectKind::Table, read_only);
+        assert!(!actions.contains(ActionSet::MODIFY_TABLE));
+        assert!(!actions.contains(ActionSet::ADD_COLUMN));
+        assert!(!actions.contains(ActionSet::CREATE_INDEX));
+    }
+
+    #[test]
+    fn a_view_offers_no_f4_4_table_only_write_actions() {
+        let actions = actions_for(ObjectKind::View, caps());
+        assert!(!actions.contains(ActionSet::MODIFY_TABLE));
+        assert!(!actions.contains(ActionSet::ADD_COLUMN));
+        assert!(!actions.contains(ActionSet::CREATE_INDEX));
     }
 }

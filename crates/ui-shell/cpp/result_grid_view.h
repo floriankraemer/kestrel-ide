@@ -6,17 +6,22 @@
 
 #include <functional>
 
+class QComboBox;
 class QLabel;
 class QLineEdit;
+class QPlainTextEdit;
 class QPoint;
 class QSpinBox;
+class QStackedWidget;
 class QTableView;
 class QToolButton;
+class QTreeView;
 class QKeyEvent;
 
 namespace ui_shell {
 
 class ResultTableModel;
+class TransposeTableModel;
 
 // One result's grid (database-tools-plan F3.4/F3.5/F4.1/F4.2): a
 // `QTableView` over `ResultTableModel`, plus a toolbar for paging, `WHERE`/
@@ -76,6 +81,18 @@ private:
     void goToReferencedRow();
     void navigateFromIndex(const QModelIndex &index, const QPoint &globalPos);
     void goToNavTarget(const FfiDbNavTarget &target);
+    // F4d: reverse FK navigation ("Show referencing rows ▸ <table.column>")
+    // — offered from the same context menu/shortcut as forward navigation,
+    // answered asynchronously through `referencingTargetsReady`.
+    void showReferencingRows();
+
+    // F4d: view modes (Table/Transpose/Text/Record) and the aggregate
+    // footer.
+    void setViewMode(FfiDbViewMode mode);
+    void refreshViewModes();
+    void updateTextView();
+    void updateRecordView();
+    void updateAggregateFooter();
 
     ConsoleService *consoleService_;
     ResultProvider *provider_;
@@ -94,6 +111,23 @@ private:
     QLabel *statusLabel_;
     quint64 resultId_ = 0;
     std::function<void(quint64)> onResultAdopted_;
+
+    // F4d: view modes.
+    QStackedWidget *viewStack_;
+    QToolButton *tableModeButton_;
+    QToolButton *transposeModeButton_;
+    QToolButton *textModeButton_;
+    QToolButton *recordModeButton_;
+    QToolButton *columnsButton_;
+    TransposeTableModel *transposeModel_;
+    QTableView *transposeView_;
+    QPlainTextEdit *textView_;
+    QComboBox *textFormatCombo_;
+    QTreeView *recordView_;
+
+    // F4d: the aggregate footer.
+    QComboBox *aggregateOpCombo_;
+    QLabel *aggregateLabel_;
 };
 
 } // namespace ui_shell

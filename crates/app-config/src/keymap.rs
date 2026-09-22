@@ -963,6 +963,40 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Database",
         default_shortcut: "F4",
     },
+    // F4d: reverse FK navigation ("Show referencing rows…") — a context
+    // menu action only (a whole-schema introspect is too slow for a bare
+    // keystroke to trigger unconditionally), so unbound by default.
+    ActionDef {
+        id: "database.showReferencingRows",
+        label: "Show Referencing Rows",
+        category: "Database",
+        default_shortcut: "",
+    },
+    // F4d: the result grid's view modes.
+    ActionDef {
+        id: "database.viewTable",
+        label: "View: Table",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+1",
+    },
+    ActionDef {
+        id: "database.viewTranspose",
+        label: "View: Transpose",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+2",
+    },
+    ActionDef {
+        id: "database.viewText",
+        label: "View: Text",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+3",
+    },
+    ActionDef {
+        id: "database.viewRecord",
+        label: "View: Record",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+4",
+    },
     // F3.4/F3.5: the Results dock.
     ActionDef {
         id: "view.databaseResults",

@@ -100,8 +100,21 @@ private:
         bool canCompare = false;
         bool canDeleteKey = false;
         bool canTtlSet = false;
+        bool canCreateTable = false;
+        bool canModifyTable = false;
+        bool canAddColumn = false;
+        bool canCreateIndex = false;
+        bool canCreateUser = false;
     };
     QHash<QString, RowInfo> rowInfoById_;
+
+    // F4.4: the node id whose scope a just-dispatched object-DDL action
+    // (`objectDdlPreview`/`runObjectDdl`) affects — set right before
+    // dispatch, consumed by `onActionFinished` to refresh that one node
+    // on success. `runAction`'s older rename/drop/truncate/comment paths
+    // are unchanged (still manual-refresh, `database-tools.md` §11's own
+    // tracked debt) — this is scoped to the new dialogs only.
+    QString ddlRefreshNodeId_;
 };
 
 // Builds the panel, wraps it in a dock widget and registers it with

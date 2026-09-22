@@ -5,6 +5,7 @@
 Accepted.
 C1 (foundation: `container-core`'s connection/discovery/probe, `[containers]` settings, the Settings > Containers page) is implemented.
 The remaining tasks (C2-C10) are tracked in `docs/architecture/containers-plan.md`'s Progress table.
+Amended by ADR-0059 by one sentence: the `containers` built-in gains a `plugin.toml` manifest declaring its `tool-windows`/`settings-pages` rows on the same generic contribution points `database-tools`/`jvm-build-tools` use, manifest-only — no code moved.
 
 ## Context
 

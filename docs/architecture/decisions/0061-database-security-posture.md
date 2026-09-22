@@ -2,9 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted.
 Implemented across [the database-tools plan](../database-tools-plan.md)'s F1 (secrets, TLS defaults), F4 (DML safety, security-audit gate), F7 (SSH fallback) and F8 (driver downloads, quarantine) phases.
 Reviewed by the security-expert agent before F1 and again before F8, per the plan's §6.
+
+**As delivered (F9 truth-up)**: every posture item in this ADR is implemented — keychain-only secrets, `Prefer`→`VerifyFull` TLS defaults with no skip-verification flag, the client+server double read-only check, ADBC/ODBC driver quarantine gated by an explicit consent dialog and `allow_third_party_drivers = false` by default, and SSH host-key trust that is never automatic.
+Two deviations found along the way, both recorded as deliberate rather than silently dropped: Cassandra/Scylla connections carry no TLS option at all (plaintext-only, permanently — see ADR-0058's "as delivered" note), and `VerifyCa` is handled identically to `VerifyFull` (chain+hostname, not chain-only) since a no-hostname verifier needs a deeper corner of `rustls::client::danger` than any phase budgeted for — stricter than asked, not a gap.
+The F4.5 security-expert pass found and fixed two real defects (a UTF-8 byte-slicing panic in the hex value editor, a write path that skipped the read-only guard) and left two Low/Info findings unfixed as recorded debt (see §11 of `database-tools.md`).
 
 ## Context
 

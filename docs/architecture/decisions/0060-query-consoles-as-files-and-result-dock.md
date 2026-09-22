@@ -2,9 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted.
 Implemented by [the database-tools plan](../database-tools-plan.md)'s F3 (console + grid) and F4 (data editor) phases.
 States that [ADR-0020](0020-tab-kinds-and-the-binary-viewer.md) and [ADR-0036](0036-virtual-documents.md) need no amendment; the [ADR-0033](0033-markdown-preview.md)/[ADR-0043](0043-preview-mode-and-mermaid-documents.md) preview dock is reused unchanged for ER diagrams (a later phase, F6).
+
+**As delivered (F9 truth-up)**: consoles-as-files and the one windowed results dock both shipped unchanged from this ADR's design, extended across F7b/F7c to family-specific console extensions (`.mongodb`/`.redis`/`.cql`) and F4d to view modes (Transpose/Text/Record) and an aggregate footer over the same dock.
+Sessions-not-pools stayed the connection model throughout — no phase found a need for a pool, since a `SessionWorker` per source/console already serialises every command that would otherwise contend for one.
+One real gap the plan did not anticipate and F9 records here rather than in the driver ADR: `db_core::readonly::Guard`'s original shape had no notion of whether the *source* itself was read-only (F3e found it, F4 fixed the constructor to take that flag).
 
 ## Context
 

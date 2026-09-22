@@ -2,9 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted.
 Implemented by [the database-tools plan](../database-tools-plan.md)'s G1 phase, ahead of any database-specific code, so the `database`/`databaseResults` docks and the Database settings page are born on the generic path rather than migrated onto it later.
 Amends [ADR-0026](0026-plugin-host.md) (two new contribution points) and [ADR-0055](0055-cli-driven-container-integration.md) by one sentence (the `containers` built-in gains a manifest, see Consequences).
+
+**As delivered (F9 truth-up)**: `tool-windows`/`settings-pages` shipped exactly as designed and are now shared by three built-ins (`jvm-build-tools`, `containers`, `database-tools`), plus F8b's own `database-drivers`/`sql-dialects` points for driver/dialect manifests.
+The one gap this ADR flagged up front — a settings page whose id has no matching `settings_model::ScopedField`, falling back to a global-only registration with a logged warning — remains unexercised: every built-in's settings page to date already has a matching `ScopedField`, so `settings_dialog.cpp` never had to build that fallback path.
+The wasm limitation (no `render-tool-window` WIT export) is unchanged, deferred to a future `api_version` 2.
 
 ## Context
 

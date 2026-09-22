@@ -70,6 +70,8 @@ fn to_ffi_actions(actions: ActionSet) -> FfiDbRowActions {
         // own `ActionSet` — see `service.rs::rows`'s own root row.
         can_dump: false,
         can_compare: false,
+        can_delete_key: actions.contains(ActionSet::DELETE_KEY),
+        can_ttl_set: actions.contains(ActionSet::TTL_SET),
     }
 }
 

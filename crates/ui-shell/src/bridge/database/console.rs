@@ -24,7 +24,7 @@ use db_core::readonly::Guard;
 use db_core::result::{MemoryCap, ResultSet};
 use db_core::session::Session;
 use db_core::value::{ColumnMeta, Value};
-use db_sql::classify::SqlClassifier;
+use db_sql::classify::FamilyClassifier;
 
 use crate::bridge::errors;
 use crate::bridge::ffi::{
@@ -208,32 +208,70 @@ fn ok_error() -> FfiDbError {
     }
 }
 
-/// Splits `text` into individual statement texts through `db_sql::split`,
-/// dropping empty/whitespace-only ones — the same "statements only" shape
-/// `db_core::session::split_script`'s naive version already promised
-/// callers, now dialect-aware and quote/comment safe.
+/// Splits `text` into individual statement texts, dropping empty/
+/// whitespace-only ones — dialect-aware and quote/comment safe for the
+/// SQL family (`db_sql::split`), and family-native for Mongo (top-level
+/// `db.coll.method(…)`/JSON documents, `db_sql::mongo::split_commands`)
+/// and Redis (one command per line, `db_sql::resp::split_lines`), so a
+/// SQL-shaped splitter never runs over `db.coll.find(…)` sugar or a RESP
+/// line and misreads its `;`/`{}` (F7b).
 fn split_statements(text: &str, dialect: Dialect) -> Vec<String> {
-    db_sql::split(text, dialect)
-        .into_iter()
-        .map(|statement| statement.text(text).trim().to_string())
-        .filter(|text| !text.is_empty())
-        .collect()
+    match dialect {
+        Dialect::Mongo => db_sql::mongo::split_commands(text)
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        Dialect::Redis => db_sql::resp::split_lines(text)
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        _ => db_sql::split(text, dialect)
+            .into_iter()
+            .map(|statement| statement.text(text).trim().to_string())
+            .filter(|text| !text.is_empty())
+            .collect(),
+    }
 }
 
 /// The one statement whose span contains `caret` (a byte offset into
 /// `text`), or the last statement if the caret sits past every span (e.g.
-/// at end of file right after the final `;`).
+/// at end of file right after the final `;`/newline).
 fn statement_at_caret(text: &str, dialect: Dialect, caret: usize) -> Option<String> {
-    let statements = db_sql::split(text, dialect);
-    let hit = statements
-        .iter()
-        .find(|statement| caret >= statement.start && caret <= statement.end)
-        .or_else(|| statements.last())?;
-    let rendered = hit.text(text).trim().to_string();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(rendered)
+    match dialect {
+        Dialect::Mongo => {
+            let spans = db_sql::mongo::command_spans(text);
+            let hit = spans
+                .iter()
+                .find(|(start, end)| caret >= *start && caret <= *end)
+                .or_else(|| spans.last())?;
+            let rendered = text[hit.0..hit.1].trim().to_string();
+            (!rendered.is_empty()).then_some(rendered)
+        }
+        Dialect::Redis => {
+            let mut offset = 0usize;
+            for line in text.split_inclusive('\n') {
+                let end = offset + line.len();
+                if caret >= offset && caret <= end {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() && !trimmed.starts_with('#') {
+                        return Some(trimmed.to_string());
+                    }
+                }
+                offset = end;
+            }
+            db_sql::resp::split_lines(text)
+                .last()
+                .map(|s| s.to_string())
+        }
+        _ => {
+            let statements = db_sql::split(text, dialect);
+            let hit = statements
+                .iter()
+                .find(|statement| caret >= statement.start && caret <= statement.end)
+                .or_else(|| statements.last())?;
+            let rendered = hit.text(text).trim().to_string();
+            (!rendered.is_empty()).then_some(rendered)
+        }
     }
 }
 
@@ -330,7 +368,10 @@ impl ffi::ConsoleService {
                                 source_id: attach_source_id.clone(),
                                 worker,
                                 dialect,
-                                guard: Guard::new(read_only, Box::new(SqlClassifier { dialect })),
+                                guard: Guard::new(
+                                    read_only,
+                                    Box::new(FamilyClassifier { dialect }),
+                                ),
                                 tx_mode: FfiDbTxMode::Auto,
                                 script_policy: initial_policy,
                                 page_size,
@@ -725,6 +766,7 @@ impl ffi::ConsoleService {
                 (pending.index, pending.total)
             };
             let page_size = shared.consoles[&tab_id].page_size;
+            let dialect = shared.consoles[&tab_id].dialect;
             shared.consoles.get_mut(&tab_id).unwrap().current_result = Some(result_id);
             shared.results.insert(
                 result_id,
@@ -747,7 +789,7 @@ impl ffi::ConsoleService {
             let worker_send = shared.consoles[&tab_id]
                 .worker
                 .send(SessionCommand::Execute {
-                    statement: DbStatement::sql(statement),
+                    statement: DbStatement::for_dialect(dialect, statement),
                     options: ExecOptions {
                         fetch_size: page_size,
                         max_rows: None,
@@ -1311,6 +1353,7 @@ impl ffi::ResultProvider {
             return errors::failure(errors::CODE_REFUSED, error.message);
         }
         let page_size = console.page_size;
+        let dialect = console.dialect;
         let new_id = shared.alloc_result_id();
         shared.results.insert(
             new_id,
@@ -1334,7 +1377,7 @@ impl ffi::ResultProvider {
         match shared.consoles[&tab_id]
             .worker
             .send(SessionCommand::Execute {
-                statement: DbStatement::sql(statement),
+                statement: DbStatement::for_dialect(dialect, statement),
                 options: ExecOptions {
                     fetch_size: page_size,
                     max_rows: None,

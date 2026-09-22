@@ -57,10 +57,50 @@ pub fn insert_template(dialect: Dialect, object: &ObjectRef, columns: &[String])
 }
 
 /// `DROP TABLE`/`DROP VIEW`/… — the keyword follows `object.kind` so a
-/// view is never dropped with a `TABLE` keyword.
+/// view is never dropped with a `TABLE` keyword. Mongo has no `DROP`
+/// keyword at all (F7b): a `Collection` drop is instead a `runCommand`
+/// JSON document (`{"drop": "<name>"}`), the same shape `db_sql::mongo::
+/// parse` already recognises as a raw command — this is the one dialect
+/// where the generated text is not SQL, so `run_action`'s caller must
+/// still send it through the connection's own `QueryLang` (`Dialect::
+/// query_lang`), never `Statement::sql`.
 pub fn drop_statement(dialect: Dialect, object: &ObjectRef) -> Result<String, DbError> {
+    if dialect == Dialect::Mongo {
+        return match object.kind {
+            Some(ObjectKind::Collection) => {
+                Ok(format!("{{\"drop\": {}}}", json_string(&object.name)))
+            }
+            _ => Err(DbError::new(
+                DbErrorCode::NotSupported,
+                "this object kind has no drop command",
+            )),
+        };
+    }
     let keyword = drop_keyword(object.kind)?;
     Ok(format!("DROP {keyword} {}", qualify(dialect, object)))
+}
+
+/// A minimal JSON string literal — just enough escaping (`"`, `\`,
+/// control characters) for a collection name, which `db_sql::mongo::parse`
+/// then round-trips through `serde_json` on the way back in. Not a
+/// general-purpose JSON encoder: this module has no other use for one, so
+/// it does not depend on `serde_json` for a single string field.
+fn json_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn drop_keyword(kind: Option<ObjectKind>) -> Result<&'static str, DbError> {
@@ -261,6 +301,34 @@ mod tests {
     fn drop_statement_refuses_a_kind_with_no_drop_shape() {
         let column = ObjectRef::new("c").with_kind(ObjectKind::Column);
         let error = drop_statement(Dialect::Postgres, &column).unwrap_err();
+        assert_eq!(error.code, DbErrorCode::NotSupported);
+    }
+
+    #[test]
+    fn dropping_a_mongo_collection_is_a_run_command_document_not_sql() {
+        let collection = ObjectRef::new("users").with_kind(ObjectKind::Collection);
+        let text = drop_statement(Dialect::Mongo, &collection).unwrap();
+        assert_eq!(text, "{\"drop\": \"users\"}");
+        // A valid JSON object, since `db_sql::mongo::parse` (a crate this
+        // one may not depend on, `db-core`/`db-sql`'s layering direction)
+        // accepts a `runCommand` statement only when it parses as one —
+        // this is the closest in-crate proxy for that contract without
+        // introducing the dependency.
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok_and(|v| v.is_object()));
+    }
+
+    #[test]
+    fn dropping_a_mongo_collection_escapes_a_quote_in_the_name() {
+        let collection = ObjectRef::new("weird\"name").with_kind(ObjectKind::Collection);
+        let text = drop_statement(Dialect::Mongo, &collection).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).expect("valid json");
+        assert_eq!(value["drop"], "weird\"name");
+    }
+
+    #[test]
+    fn a_mongo_kind_with_no_drop_shape_is_refused() {
+        let index = ObjectRef::new("i").with_kind(ObjectKind::Index);
+        let error = drop_statement(Dialect::Mongo, &index).unwrap_err();
         assert_eq!(error.code, DbErrorCode::NotSupported);
     }
 

@@ -284,6 +284,12 @@ pub struct DataSourceEditorRust {
     /// §4's generation counter, applied to one editor's own in-flight
     /// test rather than a whole session).
     generation: Arc<AtomicU64>,
+    /// The `(host, port)` a `hostKeyPrompt` signal was just raised for
+    /// (F7b) — `acceptHostKey` reads this to know which pending key
+    /// `db_drivers::ssh` should record, since the signal only carries
+    /// what the dialog displays, not what the accept call needs to look
+    /// the key back up by.
+    pending_host_key: RefCell<Option<(String, u16)>>,
 }
 
 impl ffi::DataSourceEditor {
@@ -344,6 +350,22 @@ impl ffi::DataSourceEditor {
         if let Some(draft) = self.draft.borrow_mut().as_mut() {
             draft.driver = value.to_string();
         }
+    }
+
+    /// The current draft's driver's own [`db_core::console::
+    /// database_field_label_key`] (F7b's Data Source dialog task) — the
+    /// dialog re-reads this whenever the driver combo changes, and maps
+    /// the key to a `tr()`'d label itself (ADR-0049), never showing this
+    /// string verbatim.
+    pub fn database_field_label_key(&self) -> QString {
+        let driver = self
+            .draft
+            .borrow()
+            .as_ref()
+            .map(|draft| draft.driver.clone())
+            .unwrap_or_default();
+        let family = db_core::console::family_for_driver(&driver);
+        QString::from(db_core::console::database_field_label_key(family))
     }
 
     pub fn set_group(&self, value: &QString) {
@@ -541,9 +563,11 @@ impl ffi::DataSourceEditor {
     }
 
     /// Attempt a real connection with the draft's current fields, off the
-    /// UI thread, reporting through `testConnectionFinished`. A result
-    /// tagged with a generation older than the latest call is dropped
-    /// (database-tools.md §4).
+    /// UI thread, reporting through `testConnectionFinished` — or, for an
+    /// SSH tunnel whose host key `~/.ssh/known_hosts` has never seen,
+    /// through `hostKeyPrompt` instead (F7b; this slot's own doc comment
+    /// on `hostKeyPrompt` in `ffi.rs`). A result tagged with a generation
+    /// older than the latest call is dropped (database-tools.md §4).
     pub fn test_connection(self: Pin<&mut Self>) {
         let Some(draft) = self.draft.borrow().clone() else {
             return;
@@ -557,6 +581,8 @@ impl ffi::DataSourceEditor {
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         let guard = self.generation.clone();
         let qt_thread = self.qt_thread();
+        let ssh_host = draft.ssh_host.clone();
+        let ssh_port = draft.ssh_port.unwrap_or(22);
 
         std::thread::spawn(move || {
             let setting = settings_model::database::commit(&draft);
@@ -566,20 +592,64 @@ impl ffi::DataSourceEditor {
                 ..Default::default()
             };
             let spec = db_core::datasource::ConnectSpec::from(&source, &db_secrets);
-            let result = crate::bridge::database::test_connection(&spec);
+            let result = crate::bridge::database::test_connection_typed(&spec);
             if guard.load(Ordering::SeqCst) != generation {
                 return; // superseded by a newer test_connection() call
             }
             let _ = qt_thread.queue(move |mut editor: Pin<&mut ffi::DataSourceEditor>| {
+                if let Err(error) = &result {
+                    if error.code == db_core::error::DbErrorCode::HostKeyUnknown {
+                        *editor.pending_host_key.borrow_mut() = Some((ssh_host.clone(), ssh_port));
+                        editor.as_mut().host_key_prompt(
+                            QString::from(ssh_host.as_str()),
+                            ssh_port as i32,
+                            QString::from(fingerprint_from_message(&error.message).as_str()),
+                        );
+                        return;
+                    }
+                }
                 let (ok, message) = match result {
                     Ok(()) => (true, "Connected.".to_string()),
-                    Err(message) => (false, message),
+                    Err(error) => (false, error.message),
                 };
                 editor
                     .as_mut()
                     .test_connection_finished(ok, QString::from(message.as_str()));
             });
         });
+    }
+
+    /// "Accept and add to known_hosts" (F7b): records the pending key
+    /// `db_drivers::ssh::check_server_key` stashed for the last
+    /// `hostKeyPrompt`, then retries `testConnection` — the dialog itself
+    /// never opens a tunnel; it only fixes `known_hosts` and asks for the
+    /// same attempt again.
+    pub fn accept_host_key(self: Pin<&mut Self>) -> FfiResult {
+        let Some((host, port)) = self.pending_host_key.borrow_mut().take() else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                "no host key prompt is pending for this editor",
+            );
+        };
+        if let Err(error) = db_drivers::ssh::accept_host_key(&host, port) {
+            return errors::failure(errors::CODE_REFUSED, error.message);
+        }
+        self.test_connection();
+        FfiResult::default()
+    }
+}
+
+/// The `SHA256:…` fingerprint out of `db_drivers::ssh`'s own
+/// `HostKeyUnknown`/`HostKeyMismatch` message text (`"the server's host
+/// key (SHA256:…) is not in ~/.ssh/known_hosts"`) — the dialog shows only
+/// the fingerprint, not the whole sentence a second time. Falls back to
+/// the full message if the wrapping parentheses are ever missing (a
+/// future wording change should not panic here, only show more text than
+/// intended).
+fn fingerprint_from_message(message: &str) -> String {
+    match (message.find('('), message.find(')')) {
+        (Some(open), Some(close)) if open < close => message[open + 1..close].to_string(),
+        _ => message.to_string(),
     }
 }
 
@@ -592,6 +662,24 @@ mod tests {
         assert_eq!(scope_id(Scope::Global), "global");
         assert_eq!(scope_id(Scope::Project), "project");
         assert_eq!(scope_id(Scope::Default), "global");
+    }
+
+    #[test]
+    fn fingerprint_from_message_reads_the_parenthesised_text() {
+        assert_eq!(
+            fingerprint_from_message(
+                "the server's host key (SHA256:abc123) is not in ~/.ssh/known_hosts"
+            ),
+            "SHA256:abc123"
+        );
+    }
+
+    #[test]
+    fn fingerprint_from_message_falls_back_to_the_whole_message_without_parentheses() {
+        assert_eq!(
+            fingerprint_from_message("connection refused"),
+            "connection refused"
+        );
     }
 
     #[test]

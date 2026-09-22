@@ -77,6 +77,18 @@ impl Statement {
         }
     }
 
+    /// Builds a statement in `dialect`'s own [`QueryLang`] (F7b) —
+    /// `crate::dialect::Dialect::query_lang`'s one call site outside a
+    /// test, so a console never re-derives "which language does this
+    /// family's driver expect" alongside its own per-dialect splitting.
+    pub fn for_dialect(dialect: crate::dialect::Dialect, text: impl Into<String>) -> Self {
+        Self {
+            lang: dialect.query_lang(),
+            text: text.into(),
+            params: Vec::new(),
+        }
+    }
+
     pub fn with_params(mut self, params: Vec<Value>) -> Self {
         self.params = params;
         self

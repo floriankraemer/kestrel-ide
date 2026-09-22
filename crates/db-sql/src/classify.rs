@@ -153,6 +153,63 @@ impl Classifier for SqlClassifier {
     }
 }
 
+/// Dispatches classification by family (F7b): `SqlClassifier` for every
+/// SQL-shaped dialect (Cassandra/CQL included — its keyword grammar is
+/// SQL-like enough for the same keyword scan), `db_sql::mongo`/`resp`'s
+/// own read-only tables for Mongo/Redis text. Replaces a bare
+/// `SqlClassifier` on a console attached to a NoSQL source, which would
+/// otherwise fail every statement closed (`db.coll.find(…)` starts with
+/// neither a SQL keyword nor a recognised Redis command name, so
+/// `SqlClassifier` reports `Unknown` — the guard's fail-closed default —
+/// and blocks reads on a read-only Mongo/Redis source).
+pub struct FamilyClassifier {
+    pub dialect: Dialect,
+}
+
+impl Classifier for FamilyClassifier {
+    fn classify(&self, statement: &str) -> StatementKind {
+        match self.dialect {
+            Dialect::Mongo => classify_mongo(statement),
+            Dialect::Redis => classify_redis(statement),
+            _ => SqlClassifier {
+                dialect: self.dialect,
+            }
+            .classify(statement),
+        }
+    }
+}
+
+fn classify_mongo(statement: &str) -> StatementKind {
+    match crate::mongo::parse(statement) {
+        Ok(crate::mongo::MongoCommand::Sugar { method, .. }) => {
+            if crate::mongo::is_read_only_method(&method) {
+                StatementKind::Read
+            } else {
+                StatementKind::Write
+            }
+        }
+        Ok(crate::mongo::MongoCommand::RunCommand(document)) => {
+            match crate::mongo::run_command_name(&document) {
+                Some(name) if crate::mongo::is_read_only_run_command(name) => StatementKind::Read,
+                Some(_) => StatementKind::Write,
+                None => StatementKind::Unknown,
+            }
+        }
+        Err(_) => StatementKind::Unknown,
+    }
+}
+
+fn classify_redis(statement: &str) -> StatementKind {
+    match crate::resp::tokenize(statement) {
+        Ok(tokens) => match tokens.first() {
+            Some(command) if crate::resp::is_read_only_command(command) => StatementKind::Read,
+            Some(_) => StatementKind::Write,
+            None => StatementKind::Unknown,
+        },
+        Err(_) => StatementKind::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +335,56 @@ mod tests {
         // classify receives one already-split statement, but must still
         // not choke if it contains a quoted `;` (it never re-splits).
         assert_eq!(c("INSERT INTO t VALUES (';')", Dialect::Postgres), Write);
+    }
+
+    #[test]
+    fn family_classifier_reads_a_mongo_find_but_writes_an_insert() {
+        let classifier = FamilyClassifier {
+            dialect: Dialect::Mongo,
+        };
+        assert_eq!(
+            classifier.classify(r#"db.users.find({"active": true})"#),
+            StatementKind::Read
+        );
+        assert_eq!(
+            classifier.classify(r#"db.users.insertOne({"a": 1})"#),
+            StatementKind::Write
+        );
+        assert_eq!(
+            classifier.classify(r#"{"find": "users"}"#),
+            StatementKind::Read
+        );
+        assert_eq!(
+            classifier.classify(r#"{"insert": "users", "documents": []}"#),
+            StatementKind::Write
+        );
+        assert_eq!(
+            classifier.classify("not mongo at all"),
+            StatementKind::Unknown
+        );
+    }
+
+    #[test]
+    fn family_classifier_reads_a_redis_get_but_writes_a_set() {
+        let classifier = FamilyClassifier {
+            dialect: Dialect::Redis,
+        };
+        assert_eq!(classifier.classify("GET foo"), StatementKind::Read);
+        assert_eq!(classifier.classify("set foo bar"), StatementKind::Write);
+    }
+
+    #[test]
+    fn family_classifier_still_uses_the_sql_classifier_for_cassandra() {
+        let classifier = FamilyClassifier {
+            dialect: Dialect::Cassandra,
+        };
+        assert_eq!(
+            classifier.classify("SELECT * FROM ks.t"),
+            StatementKind::Read
+        );
+        assert_eq!(
+            classifier.classify("INSERT INTO ks.t (id) VALUES (1)"),
+            StatementKind::Write
+        );
     }
 }

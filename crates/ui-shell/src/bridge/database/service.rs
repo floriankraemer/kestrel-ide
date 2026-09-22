@@ -219,6 +219,43 @@ fn qualified_name(row: &TreeRow) -> String {
     row.object_path.join(".")
 }
 
+/// A Redis key row's real key text (F7b) — `row.object_path` for a `Key`
+/// node holds `[namespace, leaf]` (`db_drivers::redis`'s own doc comment:
+/// `KeyNamespace`/`Key` split the wire key on `key_separator`, and the
+/// node's own name is the leaf half only), so `object_ref_for`'s bare
+/// `object_path.last()` would send `DEL`/`EXPIRE` against the leaf alone
+/// rather than the actual key. Rejoins with `:`, the default separator —
+/// ponytail: a source configured with a non-default `key_separator`
+/// rejoins wrong; `db_core::tree::TreeRow` carries no separator of its
+/// own to rejoin with correctly, upgrade path is threading it through
+/// once a source using a custom one actually hits this.
+fn redis_key_text(row: &TreeRow) -> Option<String> {
+    if !matches!(row.kind, RowKind::Object(ObjectKind::Key(_))) {
+        return None;
+    }
+    Some(row.object_path.join(":"))
+}
+
+fn redis_delete_key_statement(row: &TreeRow) -> Result<String, DbError> {
+    let key = redis_key_text(row).ok_or_else(|| {
+        DbError::new(db_core::error::DbErrorCode::NotSupported, "not a Redis key")
+    })?;
+    Ok(format!("DEL {key}"))
+}
+
+fn redis_ttl_statement(row: &TreeRow, seconds: &str) -> Result<String, DbError> {
+    let key = redis_key_text(row).ok_or_else(|| {
+        DbError::new(db_core::error::DbErrorCode::NotSupported, "not a Redis key")
+    })?;
+    let secs: u64 = seconds.trim().parse().map_err(|_| {
+        DbError::new(
+            db_core::error::DbErrorCode::InvalidStatement,
+            "TTL must be a whole number of seconds",
+        )
+    })?;
+    Ok(format!("EXPIRE {key} {secs}"))
+}
+
 impl ffi::DatabaseService {
     pub fn sources(&self) -> Vec<FfiDbSourceRow> {
         let states = self.sources.borrow();
@@ -580,9 +617,11 @@ impl ffi::DatabaseService {
         let generated = match action_id.split_once(':') {
             Some(("rename", new_name)) => ddl::rename_statement(dialect, &object_ref, new_name),
             Some(("comment", text)) => ddl::comment_statement(dialect, &object_ref, text),
+            Some(("ttl", seconds)) => redis_ttl_statement(row, seconds),
             _ => match action_id.as_str() {
                 "drop" => ddl::drop_statement(dialect, &object_ref),
                 "truncate" => ddl::truncate_statement(dialect, &object_ref),
+                "delete-key" => redis_delete_key_statement(row),
                 _ => Err(DbError::new(
                     db_core::error::DbErrorCode::NotSupported,
                     format!("unknown action '{action_id}'"),
@@ -606,8 +645,13 @@ impl ffi::DatabaseService {
                 format!("'{source_id}' is not connected"),
             );
         };
+        // `Statement::for_dialect`, not `Statement::sql` (F7b): a
+        // generated statement is not always SQL text — `db_core::ddl::
+        // drop_statement`'s Mongo branch emits a `runCommand` JSON
+        // document, which `db_drivers::mongodb`'s connection refuses
+        // outright unless it crosses in `QueryLang::MongoShell`.
         if let Err(error) = worker.send(SessionCommand::RunStatement {
-            statement: Statement::sql(statement_text),
+            statement: Statement::for_dialect(dialect, statement_text),
         }) {
             return errors::failure(errors::CODE_REFUSED, error.to_string());
         }
@@ -658,6 +702,12 @@ impl ffi::DatabaseService {
             return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
         };
         let source_id = source_id.to_string();
+        let family = configured_sources()
+            .into_iter()
+            .find(|s| s.id == source_id)
+            .map(|s| db_core::console::family_for_driver(&s.driver))
+            .unwrap_or(db_core::console::Family::Sql);
+        let extension = db_core::console::extension(family);
         let config_dir = app_core::resolve_config_dir();
         let dir = db_core::console::console_dir(&config_dir, &source_id);
         if let Err(error) = std::fs::create_dir_all(&dir) {
@@ -668,7 +718,7 @@ impl ffi::DatabaseService {
                 entries
                     .flatten()
                     .map(|entry| entry.path())
-                    .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
+                    .filter(|path| path.extension().is_some_and(|ext| ext == extension))
                     .collect()
             })
             .unwrap_or_default();
@@ -676,7 +726,7 @@ impl ffi::DatabaseService {
         let path = match existing.into_iter().next() {
             Some(path) => path,
             None => {
-                let path = db_core::console::console_file(&config_dir, &source_id, 1);
+                let path = db_core::console::console_file(&config_dir, &source_id, 1, family);
                 if let Err(error) = std::fs::write(&path, "") {
                     return errors::failure(errors::CODE_SETTINGS_IO, error.to_string());
                 }

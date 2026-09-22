@@ -40,6 +40,23 @@ impl Dialect {
         }
     }
 
+    /// Which [`crate::driver::QueryLang`] a console attached to this
+    /// dialect sends a statement in — the one place that mapping lives
+    /// (database-tools-plan F7b), so a console never re-derives "which
+    /// language does this family's driver expect" alongside its own
+    /// per-dialect splitting/classification choice.
+    pub fn query_lang(self) -> crate::driver::QueryLang {
+        use crate::driver::QueryLang;
+        match self {
+            Dialect::Postgres | Dialect::MySql | Dialect::SqlServer | Dialect::Sqlite => {
+                QueryLang::Sql
+            }
+            Dialect::Cassandra => QueryLang::Cql,
+            Dialect::Mongo => QueryLang::MongoShell,
+            Dialect::Redis => QueryLang::RedisCommand,
+        }
+    }
+
     /// Quote `ident` for use as an identifier in this dialect, escaping any
     /// embedded delimiter by doubling it — never by stripping or
     /// backslash-escaping, both of which change what the identifier
@@ -109,6 +126,18 @@ mod tests {
     fn mongo_and_redis_quote_nothing() {
         assert_eq!(Dialect::Mongo.quote_ident("users"), "users");
         assert_eq!(Dialect::Redis.quote_ident("users"), "users");
+    }
+
+    #[test]
+    fn each_family_maps_to_its_own_query_lang() {
+        use crate::driver::QueryLang;
+        assert_eq!(Dialect::Postgres.query_lang(), QueryLang::Sql);
+        assert_eq!(Dialect::MySql.query_lang(), QueryLang::Sql);
+        assert_eq!(Dialect::SqlServer.query_lang(), QueryLang::Sql);
+        assert_eq!(Dialect::Sqlite.query_lang(), QueryLang::Sql);
+        assert_eq!(Dialect::Cassandra.query_lang(), QueryLang::Cql);
+        assert_eq!(Dialect::Mongo.query_lang(), QueryLang::MongoShell);
+        assert_eq!(Dialect::Redis.query_lang(), QueryLang::RedisCommand);
     }
 
     #[test]

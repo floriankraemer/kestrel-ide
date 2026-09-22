@@ -45,6 +45,11 @@ impl ActionSet {
     /// the *destination*'s capabilities in the dialog, not this row's; the
     /// row itself only needs to be a real table to offer the entry.
     pub const COPY_TABLE: ActionSet = ActionSet(1 << 14);
+    /// Delete a Redis key (F7b) — a write, gated by `!caps.read_only` like
+    /// every other destructive action.
+    pub const DELETE_KEY: ActionSet = ActionSet(1 << 15);
+    /// Set a Redis key's TTL (F7b) — a write, same gate as `DELETE_KEY`.
+    pub const TTL_SET: ActionSet = ActionSet(1 << 16);
 
     pub const fn contains(self, other: ActionSet) -> bool {
         self.0 & other.0 == other.0
@@ -403,9 +408,15 @@ pub fn actions_for(kind: ObjectKind, caps: SourceCapabilities) -> ActionSet {
         actions =
             actions | ActionSet::OPEN_CONSOLE | ActionSet::GO_TO_DDL | ActionSet::GENERATE_DDL;
     }
-    if matches!(kind, Table | Collection) {
+    if matches!(kind, Table) {
         actions = actions | ActionSet::EDIT_DATA | ActionSet::ER_DIAGRAM;
     }
+    // `Collection` (MongoDB) gets no `EDIT_DATA` bit here: F4 (parallel
+    // phase F4b) owns the document grid editor and is not landed on this
+    // branch yet — wiring the bit on before the editor exists would offer
+    // a menu entry that does nothing. No `ER_DIAGRAM` either: a schemaless
+    // collection has no foreign keys for the ER builder to draw (F6's ER
+    // diagram is relational-only, database-tools.md §6).
     if is_relation {
         actions = actions | ActionSet::EXPORT_DATA;
     }
@@ -415,10 +426,30 @@ pub fn actions_for(kind: ObjectKind, caps: SourceCapabilities) -> ActionSet {
     if is_routine {
         actions = actions | ActionSet::GO_TO_DDL | ActionSet::GENERATE_DDL;
     }
+    if matches!(kind, KeyNamespace | Key(_)) {
+        // Redis has no schema-shaped "go to DDL"/rename — a namespace is a
+        // `:`-grouping the tree itself invented (database-tools.md §6),
+        // and a key's only object-level actions are deleting it and
+        // setting its TTL, both writes.
+        actions = actions | ActionSet::REFRESH | ActionSet::COPY_NAME;
+        if matches!(kind, Key(_)) {
+            actions = actions | ActionSet::OPEN_CONSOLE;
+        }
+        if !caps.read_only && matches!(kind, Key(_)) {
+            actions = actions | ActionSet::DELETE_KEY | ActionSet::TTL_SET;
+        }
+    }
 
     if !caps.read_only {
         if is_relation || is_routine {
-            actions = actions | ActionSet::RENAME | ActionSet::DROP;
+            actions = actions | ActionSet::DROP;
+        }
+        if matches!(kind, Table | View | MaterializedView) || is_routine {
+            // No rename for `Collection`: Mongo's `renameCollection` is an
+            // admin-database command most drivers keep separate from the
+            // ordinary CRUD surface `db-drivers::mongodb` implements, and
+            // it is not in this phase's scope — drop is enough for now.
+            actions = actions | ActionSet::RENAME;
         }
         if matches!(kind, Table) {
             actions = actions | ActionSet::TRUNCATE | ActionSet::IMPORT_DATA;
@@ -609,6 +640,7 @@ fn is_expandable_kind(kind: ObjectKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::RedisType;
 
     fn table(name: &str, columns: Vec<&str>) -> Node {
         Node::with_children(
@@ -872,6 +904,66 @@ mod tests {
         assert!(actions.contains(ActionSet::COPY_NAME));
         assert!(!actions.contains(ActionSet::DROP));
         assert!(!actions.contains(ActionSet::RENAME));
+    }
+
+    #[test]
+    fn a_collection_offers_open_console_and_drop_but_no_edit_data_or_er_diagram() {
+        let actions = actions_for(ObjectKind::Collection, caps());
+        assert!(actions.contains(ActionSet::OPEN_CONSOLE));
+        assert!(actions.contains(ActionSet::GO_TO_DDL));
+        assert!(actions.contains(ActionSet::DROP));
+        assert!(!actions.contains(ActionSet::RENAME));
+        assert!(!actions.contains(ActionSet::EDIT_DATA));
+        assert!(!actions.contains(ActionSet::ER_DIAGRAM));
+    }
+
+    #[test]
+    fn a_read_only_collection_offers_no_drop() {
+        let read_only = SourceCapabilities {
+            read_only: true,
+            supports_comment: true,
+        };
+        assert!(!actions_for(ObjectKind::Collection, read_only).contains(ActionSet::DROP));
+    }
+
+    #[test]
+    fn a_keyspace_offers_refresh_and_copy_but_no_console_or_drop() {
+        let actions = actions_for(ObjectKind::Keyspace, caps());
+        assert!(actions.contains(ActionSet::REFRESH));
+        assert!(actions.contains(ActionSet::COPY_NAME));
+        assert!(!actions.contains(ActionSet::OPEN_CONSOLE));
+        assert!(!actions.contains(ActionSet::DROP));
+    }
+
+    #[test]
+    fn a_redis_key_offers_console_delete_and_ttl() {
+        let actions = actions_for(ObjectKind::Key(RedisType::String), caps());
+        assert!(actions.contains(ActionSet::OPEN_CONSOLE));
+        assert!(actions.contains(ActionSet::DELETE_KEY));
+        assert!(actions.contains(ActionSet::TTL_SET));
+        assert!(actions.contains(ActionSet::COPY_NAME));
+    }
+
+    #[test]
+    fn a_read_only_redis_key_offers_no_delete_or_ttl() {
+        let read_only = SourceCapabilities {
+            read_only: true,
+            supports_comment: true,
+        };
+        let actions = actions_for(ObjectKind::Key(RedisType::String), read_only);
+        assert!(!actions.contains(ActionSet::DELETE_KEY));
+        assert!(!actions.contains(ActionSet::TTL_SET));
+        // Reading a key's value is not a write.
+        assert!(actions.contains(ActionSet::OPEN_CONSOLE));
+    }
+
+    #[test]
+    fn a_key_namespace_offers_no_delete_ttl_or_console() {
+        let actions = actions_for(ObjectKind::KeyNamespace, caps());
+        assert!(actions.contains(ActionSet::REFRESH));
+        assert!(!actions.contains(ActionSet::DELETE_KEY));
+        assert!(!actions.contains(ActionSet::TTL_SET));
+        assert!(!actions.contains(ActionSet::OPEN_CONSOLE));
     }
 
     #[test]

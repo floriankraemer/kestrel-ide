@@ -107,6 +107,119 @@ fn table_and_view_names(schema: &SchemaSnapshot) -> Vec<String> {
     out
 }
 
+/// Mongo console completion (F7b): collection names after `db.`, sugar
+/// method names (`db_sql::mongo::SUGAR_METHODS`) after `db.<collection>.`
+/// — no keyword fallback (`db_sql::dialects`' generic SQL keyword list
+/// means nothing to a Mongo console).
+fn mongo_completion(text: &str, offset: usize, schema: &SchemaSnapshot) -> Vec<CompletionItem> {
+    let (qualifier, prefix) = prefix_before(text, offset);
+    let Some(qualifier) = qualifier else {
+        return Vec::new();
+    };
+    if qualifier == "db" {
+        return rank_and_wrap(
+            table_and_view_names(schema),
+            &prefix,
+            CompletionKind::Table,
+            None,
+        );
+    }
+    // Method position only when the text right before `<qualifier>.`
+    // literally reads `db.` — `head.ends_with(...)` sidesteps re-deriving
+    // `prefix_before`'s own word-boundary scan a second level back.
+    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+    let before = &text[..offset.min(text.len())];
+    let word_start = before
+        .rfind(|c: char| !is_word_char(c))
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    let head = &before[..word_start];
+    if head.ends_with(&format!("db.{qualifier}.")) {
+        return rank_and_wrap(
+            crate::mongo::SUGAR_METHODS
+                .iter()
+                .map(|m| m.to_string())
+                .collect(),
+            &prefix,
+            CompletionKind::Keyword,
+            None,
+        );
+    }
+    Vec::new()
+}
+
+/// Redis console completion (F7b): command names
+/// (`db_sql::resp::command_names`) plus key names from the snapshot's own
+/// `KeyNamespace`/`Key` nodes — both ranked together against whatever
+/// prefix is typed, since a Redis line has no fixed "command position vs.
+/// key position" grammar the way SQL's `FROM`/`SELECT` does.
+fn redis_completion(text: &str, offset: usize, schema: &SchemaSnapshot) -> Vec<CompletionItem> {
+    let (_, prefix) = prefix_before(text, offset);
+    let mut items = rank_and_wrap(
+        crate::resp::command_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        &prefix,
+        CompletionKind::Keyword,
+        None,
+    );
+    items.extend(rank_and_wrap(
+        key_names(schema),
+        &prefix,
+        CompletionKind::Table,
+        None,
+    ));
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items
+}
+
+fn key_names(schema: &SchemaSnapshot) -> Vec<String> {
+    fn walk(nodes: &[Node], out: &mut Vec<String>) {
+        for node in nodes {
+            if matches!(node.kind, ObjectKind::KeyNamespace | ObjectKind::Key(_)) {
+                out.push(node.name.clone());
+            }
+            if let Children::Loaded(children) = &node.children {
+                walk(children, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(&schema.roots, &mut out);
+    out
+}
+
+/// Ranks every `candidate` against `prefix` (dropping non-matches),
+/// wrapping each survivor as a `kind`-tagged [`CompletionItem`] — the
+/// small piece [`mongo_completion`]/[`redis_completion`] share so neither
+/// hand-rolls the same rank-then-wrap loop [`completion`]'s own SQL path
+/// already has inline.
+fn rank_and_wrap(
+    candidates: Vec<String>,
+    prefix: &str,
+    kind: CompletionKind,
+    detail: Option<String>,
+) -> Vec<CompletionItem> {
+    let mut items: Vec<(u8, CompletionItem)> = candidates
+        .into_iter()
+        .filter_map(|label| {
+            rank(&label, prefix).map(|r| {
+                (
+                    r,
+                    CompletionItem {
+                        label,
+                        kind,
+                        detail: detail.clone(),
+                    },
+                )
+            })
+        })
+        .collect();
+    items.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.label.cmp(&b.1.label)));
+    items.into_iter().map(|(_, item)| item).collect()
+}
+
 fn columns_of(schema: &SchemaSnapshot, table_name: &str) -> Vec<String> {
     fn find<'a>(nodes: &'a [Node], name: &str) -> Option<&'a Node> {
         for node in nodes {
@@ -162,6 +275,11 @@ pub fn completion(
     schema: &SchemaSnapshot,
     dialect: Dialect,
 ) -> Vec<CompletionItem> {
+    match dialect {
+        Dialect::Mongo => return mongo_completion(text, offset, schema),
+        Dialect::Redis => return redis_completion(text, offset, schema),
+        _ => {}
+    }
     let opts = lex_options(dialect);
     let tokens = scan(text, &opts);
     let context = context_at(&tokens, offset);
@@ -346,5 +464,64 @@ mod tests {
         let schema = SchemaSnapshot::new(IntrospectLevel::Names, vec![]);
         let items = completion("SEL", 3, &schema, Dialect::Postgres);
         assert!(items.iter().any(|i| i.label == "SELECT"));
+    }
+
+    fn mongo_schema() -> SchemaSnapshot {
+        SchemaSnapshot::new(
+            IntrospectLevel::Names,
+            vec![Node::leaf("users", ObjectKind::Collection)],
+        )
+    }
+
+    #[test]
+    fn after_db_dot_suggests_collection_names() {
+        let schema = mongo_schema();
+        let text = "db.us";
+        let items = completion(text, text.len(), &schema, Dialect::Mongo);
+        assert!(items.iter().any(|i| i.label == "users"));
+    }
+
+    #[test]
+    fn after_db_collection_dot_suggests_sugar_methods() {
+        let schema = mongo_schema();
+        let text = "db.users.fi";
+        let items = completion(text, text.len(), &schema, Dialect::Mongo);
+        assert!(items.iter().any(|i| i.label == "find"));
+        assert!(items.iter().any(|i| i.label == "findOne"));
+        // No SQL keyword leakage onto a Mongo console.
+        assert!(!items.iter().any(|i| i.label == "SELECT"));
+    }
+
+    #[test]
+    fn mongo_completion_outside_a_db_call_is_empty() {
+        let schema = mongo_schema();
+        let text = "{ping: 1}";
+        assert!(completion(text, text.len(), &schema, Dialect::Mongo).is_empty());
+    }
+
+    fn redis_schema() -> SchemaSnapshot {
+        SchemaSnapshot::new(
+            IntrospectLevel::Names,
+            vec![Node::leaf(
+                "session:42",
+                ObjectKind::Key(db_core::schema::RedisType::String),
+            )],
+        )
+    }
+
+    #[test]
+    fn redis_completion_offers_command_names() {
+        let schema = redis_schema();
+        let text = "GE";
+        let items = completion(text, text.len(), &schema, Dialect::Redis);
+        assert!(items.iter().any(|i| i.label == "GET"));
+    }
+
+    #[test]
+    fn redis_completion_offers_key_names_from_the_snapshot() {
+        let schema = redis_schema();
+        let text = "GET sess";
+        let items = completion(text, text.len(), &schema, Dialect::Redis);
+        assert!(items.iter().any(|i| i.label == "session:42"));
     }
 }

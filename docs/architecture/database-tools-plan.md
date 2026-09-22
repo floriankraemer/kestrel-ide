@@ -393,11 +393,11 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | Task | Status | Commit |
 |---|---|---|
 | F7.1 — resolve R11 (mongodb build under pinned rustc) before writing `db-drivers::mongodb` | done — `bson-3` feature (see §13 above) | `c794ee5 (db-sql)/90a412e (db-drivers)` |
-| F7.2 — mongodb driver + Collection/Field tree kinds + Mongo sugar (`runCommand`/`db.coll.find`) | done (crate half; console view is F7b) | `c794ee5 (db-sql)/90a412e (db-drivers)` |
-| F7.3 — redis driver + Key/KeyNamespace tree kinds + RESP console | done (crate half; console view is F7b) | `c794ee5 (db-sql)/90a412e (db-drivers)` |
-| F7.4 — scylla driver + Keyspace tree kind + CQL console | done (no TLS; trigger: scylla exposes a ring/provider-agnostic rustls option — see §3/§11's `cassandra` note; console view is F7b) | `90a412e` (+ `dd57451` review fix) |
-| F7.5 — `db_core::tunnel::Tunnel` trait; `RusshTunnel` in `db-drivers` (password/passphrase, known-hosts prompt) | done | `d3ae943 (db-core)/90a412e (db-drivers)` |
-| F7.6 — document grid mode | open (F7b, ui-shell) | |
+| F7.2 — mongodb driver + Collection/Field tree kinds + Mongo sugar (`runCommand`/`db.coll.find`) | done — console view landed in F7b (family dispatch, `.mongodb` console files, completion) | `c794ee5 (db-sql)/90a412e (db-drivers)`, F7b: `9fc7d07 179cba4 e52d9fa beb4a1f bfb0cad a44b797 ae00213` (db-core/db-sql/db-drivers/ui-shell) |
+| F7.3 — redis driver + Key/KeyNamespace tree kinds + RESP console | done — console view landed in F7b (family dispatch, `.redis` console files, delete-key/set-TTL actions, completion) | `c794ee5 (db-sql)/90a412e (db-drivers)`, F7b: same commits as F7.2 |
+| F7.4 — scylla driver + Keyspace tree kind + CQL console | done (no TLS; trigger: scylla exposes a ring/provider-agnostic rustls option — see §3/§11's `cassandra` note) — console view landed in F7b (family dispatch, `.cql` console files) | `90a412e` (+ `dd57451` review fix), F7b: same commits as F7.2 |
+| F7.5 — `db_core::tunnel::Tunnel` trait; `RusshTunnel` in `db-drivers` (password/passphrase, known-hosts prompt) | done — F7b added the UI half (`hostKeyPrompt`/`acceptHostKey`, `known_hosts::append`); **the tunnel itself is still not called from `connect_with_backend`**, so the prompt is unreachable from a real connect yet (database-tools.md §11's F7b debt) | `d3ae943 (db-core)/90a412e (db-drivers)`, F7b: `e52d9fa` (db-drivers `ssh.rs`), host-key-prompt UI `ae00213` |
+| F7.6 — document grid mode | in progress (F7b, ui-shell) — cell rendering (`Value::display`'s compact JSON-ish text for `Document`/`Array`/`Json`) and `flatten_documents` (table-mode column flattening) already exist from F7a; the results toolbar's Document/Table toggle is a separate F7b agent's in-flight work, not yet landed on this branch as of this row's own commit | |
 
 ### F8 — ADBC + ODBC
 

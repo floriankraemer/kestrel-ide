@@ -216,7 +216,12 @@ pub const BUILTIN_LANGUAGES: &[LanguageDef] = &[
         id: "javascript",
         name: "JavaScript",
         // The grammar includes JSX, so `.jsx` needs no separate row.
-        extensions: &["js", "mjs", "cjs", "jsx"],
+        // `.mongodb` (database-tools.md §4/F7b): a Mongo console file's
+        // own extension (`db_core::console::Family::Mongo`) — its
+        // `db.<collection>.<method>(…)` sugar and JSON `runCommand`
+        // documents are close enough to this grammar's own syntax that
+        // highlighting it as JavaScript reads far better than plain text.
+        extensions: &["js", "mjs", "cjs", "jsx", "mongodb"],
         filenames: &[],
         line_comment: Some("//"),
         block_comment: Some(("/*", "*/")),
@@ -283,7 +288,12 @@ pub const BUILTIN_LANGUAGES: &[LanguageDef] = &[
     LanguageDef {
         id: "sql",
         name: "SQL",
-        extensions: &["sql"],
+        // `.cql` (database-tools.md §4/F7b): a Cassandra console file's own
+        // extension (`db_core::console::Family::Cql`) — CQL is SQL-*like*
+        // enough for this generic grammar to tokenize usefully, the same
+        // call `db_sql::dialects`'s own doc comment makes for
+        // splitting/classification.
+        extensions: &["sql", "cql"],
         filenames: &[],
         // `tree-sitter-sequel` is the crate name of derekstride's SQL
         // grammar — not a typo, and not a different language.

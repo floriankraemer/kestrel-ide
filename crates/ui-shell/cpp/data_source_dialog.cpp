@@ -40,6 +40,24 @@ QSpinBox *portSpin(QWidget *parent, const QString &text)
     return spin;
 }
 
+// F7b: which family the draft's driver belongs to is decided in Rust
+// (`db_core::console::database_field_label_key`) — this only maps its
+// stable key to the `tr()`'d label text ADR-0049 requires, never a
+// business decision about which family a driver is.
+QString databaseFieldLabel(const QString &key)
+{
+    if (key == QLatin1String("auth_database")) {
+        return QObject::tr("Auth database:");
+    }
+    if (key == QLatin1String("db_index")) {
+        return QObject::tr("Database index:");
+    }
+    if (key == QLatin1String("keyspace")) {
+        return QObject::tr("Keyspace:");
+    }
+    return QObject::tr("Database:");
+}
+
 QLabel *colorSwatch(QWidget *parent, const QString &hex)
 {
     auto *swatch = new QLabel(parent);
@@ -146,7 +164,7 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
     generalForm->addRow(QObject::tr("Colour:"), groupRow);
     generalForm->addRow(QObject::tr("Host:"), host);
     generalForm->addRow(QObject::tr("Port:"), port);
-    generalForm->addRow(QObject::tr("Database:"), database);
+    generalForm->addRow(databaseFieldLabel(editor->databaseFieldLabelKey()), database);
     generalForm->addRow(QObject::tr("User:"), user);
     generalForm->addRow(QObject::tr("Authentication:"), auth);
     generalForm->addRow(QObject::tr("Password:"), password);
@@ -244,9 +262,12 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
         refreshProblems();
     });
     QObject::connect(driver, &QComboBox::currentIndexChanged, editor,
-                     [editor, driver, refreshDriverStatus](int) {
+                     [editor, driver, refreshDriverStatus, generalForm, database](int) {
                          editor->setDriver(driver->currentData().toString());
                          refreshDriverStatus();
+                         if (auto *label = qobject_cast<QLabel *>(generalForm->labelForField(database))) {
+                             label->setText(databaseFieldLabel(editor->databaseFieldLabelKey()));
+                         }
                      });
     QObject::connect(driverActionButton, &QPushButton::clicked, general,
                      [driver, driverInstallService, driverActionButton, refreshDriverStatus]() {
@@ -333,6 +354,32 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
                          testResult->setStyleSheet(ok ? QStringLiteral("color: #4caf50;")
                                                        : QStringLiteral("color: #e53935;"));
                      });
+    // F7b: an SSH tunnel's host key `~/.ssh/known_hosts` has never seen —
+    // `db_core::error::DbErrorCode::HostKeyUnknown`'s own doc comment on
+    // why this is the one host-key outcome with an accept path at all (a
+    // *changed* key reports through `testConnectionFinished` above like
+    // any other failure, with no such affordance).
+    QObject::connect(
+      editor, &DataSourceEditor::hostKeyPrompt, &dialog,
+      [editor, testResult, &dialog](const QString &host, int, const QString &fingerprint) {
+          const auto answer = QMessageBox::question(
+            &dialog, QObject::tr("Unknown host key"),
+            QObject::tr("The authenticity of host '%1' can't be established.\n"
+                         "%2\n\n"
+                         "Accept and add to known_hosts?")
+              .arg(host, fingerprint),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+          if (answer != QMessageBox::Yes) {
+              testResult->setText(QObject::tr("Connection cancelled: host key not trusted."));
+              testResult->setStyleSheet(QStringLiteral("color: #e53935;"));
+              return;
+          }
+          const FfiResult result = editor->acceptHostKey();
+          if (result.code != 0) {
+              testResult->setText(QString(result.message));
+              testResult->setStyleSheet(QStringLiteral("color: #e53935;"));
+          }
+      });
 
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&dialog, editor]() {

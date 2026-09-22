@@ -51,6 +51,22 @@ pub fn extension(family: Family) -> &'static str {
     }
 }
 
+/// A stable key (never shown verbatim — the view maps it to a `tr()`'d
+/// label, ADR-0049) for what the Data Source dialog's "Database" field
+/// actually means for `family` (F7b's Data Source dialog task): a Mongo
+/// auth database, a Redis numeric db index, a Cassandra keyspace, or an
+/// ordinary SQL database name. The dialog reads this once per driver
+/// choice rather than hard-coding a per-family label switch of its own —
+/// which family a driver belongs to still decided only here, in Rust.
+pub fn database_field_label_key(family: Family) -> &'static str {
+    match family {
+        Family::Sql => "database",
+        Family::Mongo => "auth_database",
+        Family::Redis => "db_index",
+        Family::Cql => "keyspace",
+    }
+}
+
 /// The directory a source's console files live under.
 pub fn console_dir(config_dir: &Path, source_id: &str) -> PathBuf {
     config_dir.join("consoles").join(source_id)
@@ -119,6 +135,14 @@ mod tests {
         assert!(matches!(family_for_driver("postgresql"), Family::Sql));
         assert!(matches!(family_for_driver("sqlite"), Family::Sql));
         assert!(matches!(family_for_driver("odbc"), Family::Sql));
+    }
+
+    #[test]
+    fn database_field_label_key_names_each_family_s_own_meaning() {
+        assert_eq!(database_field_label_key(Family::Sql), "database");
+        assert_eq!(database_field_label_key(Family::Mongo), "auth_database");
+        assert_eq!(database_field_label_key(Family::Redis), "db_index");
+        assert_eq!(database_field_label_key(Family::Cql), "keyspace");
     }
 
     #[test]

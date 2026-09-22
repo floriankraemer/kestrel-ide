@@ -9997,6 +9997,14 @@ mod ffi {
         #[cxx_name = "setDriver"]
         fn set_driver(self: &DataSourceEditor, value: &QString);
 
+        /// A stable key (`"database"`/`"auth_database"`/`"db_index"`/
+        /// `"keyspace"`) for what the "Database" field means for the
+        /// draft's current driver (F7b) — never shown verbatim, the
+        /// dialog maps it to a `tr()`'d label (ADR-0049).
+        #[qinvokable]
+        #[cxx_name = "databaseFieldLabelKey"]
+        fn database_field_label_key(self: &DataSourceEditor) -> QString;
+
         #[qinvokable]
         #[cxx_name = "setGroup"]
         fn set_group(self: &DataSourceEditor, value: &QString);

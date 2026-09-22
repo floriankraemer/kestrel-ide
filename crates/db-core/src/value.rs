@@ -233,6 +233,151 @@ impl ColumnMeta {
     }
 }
 
+/// One line of the result grid's Record view (database-tools-plan F4d) —
+/// a single row rendered as a flat, indented field list instead of a
+/// table, the shape a Mongo document (or any nested `Array`/`Document`/
+/// `Json` cell) actually needs to be read rather than squashed onto one
+/// line of `Value::display` text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordRow {
+    /// Nesting depth from the row's own top level (`0` = one of the
+    /// row's columns; a `Document` field or `Array` element is `depth +
+    /// 1` below its parent).
+    pub depth: u32,
+    /// The field name, an array index rendered `"[0]"`, or the column
+    /// name at `depth == 0`.
+    pub key: String,
+    /// The scalar's own display text — empty for a `Document`/`Array`
+    /// node, which carries no value of its own, only children.
+    pub value: String,
+    /// A short type label (`"int"`, `"text"`, `"document"`, `"array"`,
+    /// `"json"`, …) — `Document`/`Array` get their own literal label
+    /// instead of a driver type name, since neither is one of this
+    /// column's declared types.
+    pub type_name: String,
+}
+
+fn push_scalar(
+    out: &mut Vec<RecordRow>,
+    depth: u32,
+    key: String,
+    value: &Value,
+    rules: &FormatRules,
+) {
+    match value {
+        Value::Document(fields) => {
+            out.push(RecordRow {
+                depth,
+                key,
+                value: String::new(),
+                type_name: "document".to_string(),
+            });
+            for (field_name, field_value) in fields {
+                push_scalar(out, depth + 1, field_name.clone(), field_value, rules);
+            }
+        }
+        Value::Array(items) => {
+            out.push(RecordRow {
+                depth,
+                key,
+                value: String::new(),
+                type_name: "array".to_string(),
+            });
+            for (index, item) in items.iter().enumerate() {
+                push_scalar(out, depth + 1, format!("[{index}]"), item, rules);
+            }
+        }
+        Value::Json(text) => match serde_json::from_str::<serde_json::Value>(text) {
+            Ok(parsed) => push_json(out, depth, key, &parsed),
+            Err(_) => out.push(RecordRow {
+                depth,
+                key,
+                value: text.clone(),
+                type_name: "json".to_string(),
+            }),
+        },
+        other => out.push(RecordRow {
+            depth,
+            key,
+            value: other.display(rules),
+            type_name: type_label(other),
+        }),
+    }
+}
+
+fn push_json(out: &mut Vec<RecordRow>, depth: u32, key: String, value: &serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            out.push(RecordRow {
+                depth,
+                key,
+                value: String::new(),
+                type_name: "document".to_string(),
+            });
+            for (field_name, field_value) in fields {
+                push_json(out, depth + 1, field_name.clone(), field_value);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            out.push(RecordRow {
+                depth,
+                key,
+                value: String::new(),
+                type_name: "array".to_string(),
+            });
+            for (index, item) in items.iter().enumerate() {
+                push_json(out, depth + 1, format!("[{index}]"), item);
+            }
+        }
+        serde_json::Value::Null => out.push(RecordRow {
+            depth,
+            key,
+            value: "null".to_string(),
+            type_name: "null".to_string(),
+        }),
+        leaf => out.push(RecordRow {
+            depth,
+            key,
+            value: leaf.to_string(),
+            type_name: "json".to_string(),
+        }),
+    }
+}
+
+fn type_label(value: &Value) -> String {
+    match value {
+        Value::Null => "null".to_string(),
+        Value::Bool(_) => "bool".to_string(),
+        Value::Int(_) => "int".to_string(),
+        Value::Float(_) => "float".to_string(),
+        Value::Decimal(_) => "decimal".to_string(),
+        Value::Text(_) => "text".to_string(),
+        Value::Bytes(_) => "bytes".to_string(),
+        Value::Date(_) => "date".to_string(),
+        Value::Time(_) => "time".to_string(),
+        Value::DateTime(_) | Value::DateTimeTz(_) => "datetime".to_string(),
+        Value::Uuid(_) => "uuid".to_string(),
+        Value::Json(_) => "json".to_string(),
+        Value::Array(_) => "array".to_string(),
+        Value::Document(_) => "document".to_string(),
+        Value::Other { type_name, .. } => type_name.clone(),
+    }
+}
+
+/// Flattens one row's cells into the Record view's own field list —
+/// `columns[i]` names each top-level entry, recursing into a `Document`/
+/// `Array`/`Json` cell's own nested structure (database-tools-plan F4d).
+/// A Mongo result whose one column *is* a whole document (`FfiResultModes::
+/// default` picks Record for exactly that shape) reads naturally here:
+/// depth 0 is the column (`"document"`), depth 1 is each of its fields.
+pub fn record_rows(columns: &[ColumnMeta], row: &[Value], rules: &FormatRules) -> Vec<RecordRow> {
+    let mut out = Vec::new();
+    for (column, value) in columns.iter().zip(row.iter()) {
+        push_scalar(&mut out, 0, column.name.clone(), value, rules);
+    }
+    out
+}
+
 /// Parses `text` (as a user typed it into a cell/value editor) into a
 /// [`Value`] shaped by `type_name` — the data editor's own "coerce before
 /// bind" step (F4.1): a cell's new value is always bound as a typed
@@ -739,5 +884,84 @@ mod tests {
             assert!(parse_err.is_err());
             assert_eq!(hex_err.unwrap_err(), parse_err.unwrap_err());
         }
+    }
+
+    #[test]
+    fn record_rows_flattens_scalars_at_depth_zero() {
+        let columns = vec![
+            ColumnMeta::new("id", "int4", false),
+            ColumnMeta::new("name", "text", true),
+        ];
+        let row = vec![Value::Int(1), Value::Text("ada".to_string())];
+        let rows = record_rows(&columns, &row, &rules());
+        assert_eq!(
+            rows,
+            vec![
+                RecordRow {
+                    depth: 0,
+                    key: "id".to_string(),
+                    value: "1".to_string(),
+                    type_name: "int".to_string(),
+                },
+                RecordRow {
+                    depth: 0,
+                    key: "name".to_string(),
+                    value: "ada".to_string(),
+                    type_name: "text".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn record_rows_recurses_into_a_document_value() {
+        let columns = vec![ColumnMeta::new("doc", "document", false)];
+        let row = vec![Value::Document(vec![
+            ("name".to_string(), Value::Text("ada".to_string())),
+            (
+                "tags".to_string(),
+                Value::Array(vec![
+                    Value::Text("x".to_string()),
+                    Value::Text("y".to_string()),
+                ]),
+            ),
+        ])];
+        let rows = record_rows(&columns, &row, &rules());
+        assert_eq!(rows[0].key, "doc");
+        assert_eq!(rows[0].type_name, "document");
+        assert_eq!(rows[0].depth, 0);
+        let name_row = rows.iter().find(|r| r.key == "name").unwrap();
+        assert_eq!(name_row.depth, 1);
+        assert_eq!(name_row.value, "ada");
+        let tags_row = rows.iter().find(|r| r.key == "tags").unwrap();
+        assert_eq!(tags_row.depth, 1);
+        assert_eq!(tags_row.type_name, "array");
+        let item_row = rows.iter().find(|r| r.key == "[0]").unwrap();
+        assert_eq!(item_row.depth, 2);
+        assert_eq!(item_row.value, "x");
+    }
+
+    #[test]
+    fn record_rows_parses_a_json_cell_into_the_same_tree_shape() {
+        let columns = vec![ColumnMeta::new("payload", "jsonb", false)];
+        let row = vec![Value::Json(r#"{"a": 1, "b": [true, null]}"#.to_string())];
+        let rows = record_rows(&columns, &row, &rules());
+        assert_eq!(rows[0].type_name, "document");
+        let a_row = rows.iter().find(|r| r.key == "a").unwrap();
+        assert_eq!(a_row.value, "1");
+        let b_row = rows.iter().find(|r| r.key == "b").unwrap();
+        assert_eq!(b_row.type_name, "array");
+        let null_row = rows.iter().find(|r| r.key == "[1]").unwrap();
+        assert_eq!(null_row.value, "null");
+    }
+
+    #[test]
+    fn record_rows_keeps_malformed_json_as_a_leaf_rather_than_panicking() {
+        let columns = vec![ColumnMeta::new("payload", "jsonb", false)];
+        let row = vec![Value::Json("{not valid".to_string())];
+        let rows = record_rows(&columns, &row, &rules());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value, "{not valid");
+        assert_eq!(rows[0].type_name, "json");
     }
 }

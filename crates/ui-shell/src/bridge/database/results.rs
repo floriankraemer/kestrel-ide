@@ -264,6 +264,7 @@ impl ffi::ResultProvider {
                 format!("[{}]", objects.join(","))
             }
             ffi::FfiDbTextFormat::Tsv => render_delimited(&result.columns, &rows, &rules, '\t'),
+            ffi::FfiDbTextFormat::Markdown => render_markdown(&result.columns, &rows, &rules),
             _ => render_delimited(&result.columns, &rows, &rules, ','),
         };
         QString::from(text.as_str())
@@ -411,6 +412,111 @@ impl ffi::ResultProvider {
             },
             Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
         }
+    }
+}
+
+/// A GitHub-flavoured Markdown table — `FfiDbTextFormat::Markdown`'s own
+/// shape: a header row, a `---` separator row, then one row per data row,
+/// every cell's `|`/newline escaped so a value never fractures the table
+/// into extra columns/rows.
+fn render_markdown(
+    columns: &[ColumnMeta],
+    rows: &[&Vec<Value>],
+    rules: &db_core::value::FormatRules,
+) -> String {
+    fn escape_cell(text: &str) -> String {
+        text.replace('|', "\\|").replace('\n', " ")
+    }
+    let header = columns
+        .iter()
+        .map(|c| escape_cell(&c.name))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let separator = columns
+        .iter()
+        .map(|_| "---")
+        .collect::<Vec<_>>()
+        .join(" | ");
+    let mut lines = vec![format!("| {header} |"), format!("| {separator} |")];
+    for row in rows {
+        let cells = row
+            .iter()
+            .map(|v| escape_cell(&v.display(rules)))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        lines.push(format!("| {cells} |"));
+    }
+    lines.join("\n")
+}
+
+/// Whether `value` carries structure a Record view would actually flatten
+/// — `FfiResultModes::can_record`'s own test, over the first fetched row
+/// only (a cheap enough sample: a result's own shape does not change row
+/// to row).
+fn has_nested_structure(value: &Value) -> bool {
+    match value {
+        Value::Document(_) | Value::Array(_) => true,
+        Value::Json(text) => serde_json::from_str::<serde_json::Value>(text)
+            .is_ok_and(|parsed| parsed.is_object() || parsed.is_array()),
+        _ => false,
+    }
+}
+
+impl ffi::ResultProvider {
+    /// See `FfiResultModes`'s own doc comment (F4d).
+    pub fn result_modes(self: Pin<&mut Self>, result_id: u64) -> ffi::FfiResultModes {
+        let shared = self.shared.borrow();
+        let Some(result) = shared.results.get(&result_id) else {
+            return ffi::FfiResultModes {
+                can_transpose: false,
+                can_text: false,
+                can_record: false,
+                default_mode: ffi::FfiDbViewMode::Table,
+            };
+        };
+        let first_row = result.set.batches().first().and_then(|b| b.rows.first());
+        let can_record = first_row.is_some_and(|row| row.iter().any(has_nested_structure));
+        // A single-document-shaped column (Mongo's own `find` result:
+        // one column, one `Document` per row) defaults to Record —
+        // closing F7b's "Document/Table toggle" gap; every other shape
+        // still defaults to the plain grid.
+        let default_mode = if result.columns.len() == 1
+            && first_row.is_some_and(|row| matches!(row.first(), Some(Value::Document(_))))
+        {
+            ffi::FfiDbViewMode::Record
+        } else {
+            ffi::FfiDbViewMode::Table
+        };
+        ffi::FfiResultModes {
+            can_transpose: !result.columns.is_empty(),
+            can_text: !result.columns.is_empty(),
+            can_record,
+            default_mode,
+        }
+    }
+
+    /// See `FfiRecordRow`'s own doc comment (F4d) —
+    /// `db_core::value::record_rows` over `row`'s own already-fetched
+    /// values.
+    pub fn record_rows(self: Pin<&mut Self>, result_id: u64, row: u64) -> Vec<ffi::FfiRecordRow> {
+        let shared = self.shared.borrow();
+        let rules = db_core::value::FormatRules::default();
+        let rows = walk_row_range(&shared, result_id, row, 1, |values, _flags| values.to_vec());
+        let Some(values) = rows.into_iter().next() else {
+            return Vec::new();
+        };
+        let Some(result) = shared.results.get(&result_id) else {
+            return Vec::new();
+        };
+        db_core::value::record_rows(&result.columns, &values, &rules)
+            .into_iter()
+            .map(|r| ffi::FfiRecordRow {
+                depth: r.depth,
+                key: QString::from(r.key.as_str()),
+                value: QString::from(r.value.as_str()),
+                type_name: QString::from(r.type_name.as_str()),
+            })
+            .collect()
     }
 }
 

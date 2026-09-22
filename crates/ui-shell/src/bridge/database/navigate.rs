@@ -74,6 +74,30 @@ fn first_row(
     }
 }
 
+/// F4d's own "can this statement be wrapped as a derived table at all"
+/// decision — `database-tools.md` §11's F4c debt row: `run_aggregate`
+/// used to just report whatever error the wrapped query hit rather than
+/// telling "not wrappable" apart from any other failure. A dialect with
+/// no derived-table concept (Mongo/Redis — `query_lang() != Sql`) is
+/// never wrappable regardless of statement text; a SQL dialect's own
+/// statement is wrappable only when it is (whitespace/comments aside) a
+/// plain `SELECT` — anything else (a script's non-`SELECT` last
+/// statement, several statements joined, an already-non-`SELECT`
+/// original) is refused *before* ever issuing a query, so a caller can
+/// fall back to `ResultProvider::aggregate`'s fetched-rows estimate
+/// instead of showing this as a query error.
+fn aggregate_scope(statement_text: &str, dialect: Dialect) -> Result<(), &'static str> {
+    if dialect.query_lang() != db_core::driver::QueryLang::Sql {
+        return Err("this data source has no SELECT-shaped derived table to wrap");
+    }
+    let trimmed = statement_text.trim_start();
+    let starts_with_select = trimmed.len() >= 6 && trimmed[..6].eq_ignore_ascii_case("select");
+    if !starts_with_select {
+        return Err("this statement is not a plain SELECT");
+    }
+    Ok(())
+}
+
 /// [`ffi::ConsoleService::aggregate_exact`]'s own connect-run-close step,
 /// split out so it never touches `ffi`/cxx-qt types (a plain `Result` a
 /// unit test can drive against an in-memory SQLite table, the same split
@@ -228,6 +252,25 @@ impl ffi::ConsoleService {
                 console.dialect,
             )
         };
+        // F4d: refuse before ever opening a connection when the
+        // statement/dialect cannot be wrapped at all — the caller falls
+        // back to `ResultProvider::aggregate`'s fetched-rows estimate
+        // rather than waiting on a query this would only fail anyway.
+        if let Err(reason) = aggregate_scope(&statement_text, dialect) {
+            let mut this = self;
+            this.as_mut().aggregate_computed(
+                result_id,
+                op,
+                ffi::FfiDbAggregateOutcome {
+                    ok: false,
+                    value: QString::default(),
+                    row_count: 0,
+                    scope: ffi::FfiDbAggScope::FetchedRowsOnly,
+                    reason: QString::from(reason),
+                },
+            );
+            return FfiResult::default();
+        }
         let mut this = self;
         let qt_thread = this.as_mut().qt_thread();
         let column_for_thread = column.clone();
@@ -235,22 +278,23 @@ impl ffi::ConsoleService {
             let outcome =
                 run_aggregate(&source_id, &statement_text, &column_for_thread, op, dialect);
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ConsoleService>| {
-                match outcome {
-                    Ok((value, count)) => service.as_mut().aggregate_computed(
-                        result_id,
-                        op,
-                        true,
-                        QString::from(value.as_str()),
-                        count,
-                    ),
-                    Err(message) => service.as_mut().aggregate_computed(
-                        result_id,
-                        op,
-                        false,
-                        QString::from(message.as_str()),
-                        0,
-                    ),
+                let payload = match outcome {
+                    Ok((value, count)) => ffi::FfiDbAggregateOutcome {
+                        ok: true,
+                        value: QString::from(value.as_str()),
+                        row_count: count,
+                        scope: ffi::FfiDbAggScope::Exact,
+                        reason: QString::default(),
+                    },
+                    Err(message) => ffi::FfiDbAggregateOutcome {
+                        ok: false,
+                        value: QString::from(message.as_str()),
+                        row_count: 0,
+                        scope: ffi::FfiDbAggScope::Exact,
+                        reason: QString::default(),
+                    },
                 };
+                service.as_mut().aggregate_computed(result_id, op, payload);
             });
         });
         FfiResult::default()
@@ -347,6 +391,150 @@ impl ffi::ConsoleService {
             },
             Err(error) => errors::failure(errors::CODE_REFUSED, error.to_string()),
         }
+    }
+}
+
+/// Reverse FK navigation's own connect-introspect-query step (F4d) — a
+/// fresh, short-lived connection (same "never steal the console's shared
+/// worker slot" reasoning `run_aggregate`'s own doc comment gives), a
+/// whole-schema `Full`-level introspect (`IntrospectScope::default()`,
+/// every catalog/schema this source has), then `db_core::schema::
+/// find_referencing_columns` over the snapshot's roots and one `COUNT(*)`
+/// per hit to build the label's row count.
+/// ponytail: no cache — every call re-introspects the whole schema from
+/// scratch, unlike the brief's "cached in the worker" ideal; a whole-
+/// schema `Full` introspect is the same cost `edit.rs`'s own per-table one
+/// already pays per candidate result, just wider, and this crate has no
+/// existing per-source cache slot outside the worker's own (private to
+/// `sessions.rs`) that this call could reuse without a larger
+/// restructuring. Upgrade if a real user's schema is large enough to make
+/// re-running this on every "Show referencing rows…" click noticeable.
+fn run_referencing_targets(
+    source_id: &str,
+    table: &str,
+    column: &str,
+    dialect: Dialect,
+    value: &Value,
+) -> Result<Vec<ffi::FfiDbNavTarget>, String> {
+    let setting = super::service::configured_sources()
+        .into_iter()
+        .find(|s| s.id == source_id)
+        .ok_or_else(|| format!("no data source with id '{source_id}' is configured"))?;
+    let data_source = db_core::datasource::DataSource::from(&setting);
+    let spec = db_core::datasource::ConnectSpec::from(
+        &data_source,
+        &super::service::secrets_for(source_id),
+    );
+    let mut connection = super::connect(&spec)?;
+    let snapshot = connection
+        .introspect(
+            &db_core::schema::IntrospectScope::default(),
+            db_core::schema::IntrospectLevel::Full,
+        )
+        .map_err(|error| error.to_string());
+    let snapshot = match snapshot {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            let _ = connection.close();
+            return Err(error);
+        }
+    };
+    let hits = db_core::schema::find_referencing_columns(&snapshot.roots, table, column);
+    let mut targets = Vec::with_capacity(hits.len());
+    for hit in &hits {
+        let table_ref = qualify_object_ref(dialect, &hit.table);
+        let condition = format!(
+            "{} = {}",
+            dialect.quote_ident(&hit.column),
+            value.sql_literal(dialect)
+        );
+        let count_sql = format!("SELECT COUNT(*) FROM {table_ref} WHERE {condition}");
+        let count = match first_row(connection.as_mut(), &count_sql) {
+            Ok(row) => match row.first() {
+                Some(Value::Int(n)) => Some(*n),
+                _ => None,
+            },
+            Err(_) => None,
+        };
+        let label = match count {
+            Some(n) => format!("{n} rows in {}.{}", hit.table.name, hit.column),
+            None => format!("Rows in {}.{}", hit.table.name, hit.column),
+        };
+        targets.push(ffi::FfiDbNavTarget {
+            label: QString::from(label.as_str()),
+            statement: QString::from(
+                format!("SELECT * FROM {table_ref} WHERE {condition}").as_str(),
+            ),
+        });
+    }
+    let _ = connection.close();
+    Ok(targets)
+}
+
+impl ffi::ConsoleService {
+    /// See `ffi.rs`'s own doc comment on `referencingTargets` — reverse FK
+    /// navigation (F4d).
+    pub fn referencing_targets(
+        self: Pin<&mut Self>,
+        result_id: u64,
+        row: u64,
+        column: &QString,
+    ) -> FfiResult {
+        let column = column.to_string();
+        let (source_id, dialect, table, value) = {
+            let shared = self.shared.borrow();
+            let Some(result) = shared.results.get(&result_id) else {
+                return errors::failure(errors::CODE_UNKNOWN_RESULT, "no such result");
+            };
+            let Some(console) = shared.consoles.get(&result.tab_id) else {
+                return errors::failure(errors::CODE_UNKNOWN_DB_CONSOLE, "console detached");
+            };
+            let Some(table) = db_sql::single_table::of(&result.statement_text, console.dialect)
+            else {
+                return errors::failure(
+                    errors::CODE_INVALID_ARGUMENT,
+                    "this result is not a single table",
+                );
+            };
+            let Some(column_index) = result.columns.iter().position(|c| c.name == column) else {
+                return errors::failure(errors::CODE_INVALID_ARGUMENT, "no such column");
+            };
+            let Some(row_values) = result
+                .set
+                .batches()
+                .iter()
+                .flat_map(|batch| batch.rows.iter())
+                .nth(row as usize)
+            else {
+                return errors::failure(errors::CODE_INVALID_ARGUMENT, "no such row");
+            };
+            let Some(value) = row_values.get(column_index).cloned() else {
+                return errors::failure(errors::CODE_INVALID_ARGUMENT, "no such column");
+            };
+            (
+                console.source_id.clone(),
+                console.dialect,
+                table.name,
+                value,
+            )
+        };
+        let mut this = self;
+        let qt_thread = this.as_mut().qt_thread();
+        let column_for_thread = column.clone();
+        std::thread::spawn(move || {
+            let outcome =
+                run_referencing_targets(&source_id, &table, &column_for_thread, dialect, &value);
+            let column_for_signal = column_for_thread.clone();
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::ConsoleService>| {
+                let targets = outcome.unwrap_or_default();
+                service.as_mut().referencing_targets_ready(
+                    result_id,
+                    QString::from(column_for_signal.as_str()),
+                    targets,
+                );
+            });
+        });
+        FfiResult::default()
     }
 }
 

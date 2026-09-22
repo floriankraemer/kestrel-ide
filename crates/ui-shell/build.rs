@@ -736,12 +736,21 @@ fn main() {
         .cpp_file("cpp/ai_menu.cpp")
         // database-tools-plan F2.5: the Database dock.
         .cpp_file("cpp/database_panel.cpp")
+        // database-tools-plan F4.4: create/modify object dialogs
+        // (table/column/index/user), Q_OBJECT-free (plain `QDialog`s built
+        // and driven by lambdas, same shape as `container_target_wizard.cpp`).
+        .cpp_file("cpp/db_object_dialogs.cpp")
         // database-tools-plan F3.1/F3.3-F3.5: the console bar and the
         // Output/Result grid dock.
         .cpp_file("cpp/database_console_bar.cpp")
         .cpp_file("cpp/result_table_model.cpp")
         .cpp_file("cpp/result_grid_view.cpp")
         .cpp_file("cpp/database_results_panel.cpp")
+        // database-tools-plan F4d: the result grid's view modes
+        // (Table/Transpose/Text/Record) and its column-visibility popup.
+        // Header registered too (`TransposeTableModel` declares Q_OBJECT).
+        .cpp_file("cpp/result_view_modes.h")
+        .cpp_file("cpp/result_view_modes.cpp")
         // database-tools-plan F4.1: the data editor's own value editor
         // dialog (Shift+Enter / double-click on a grid cell).
         .cpp_file("cpp/value_editor_dialog.h")

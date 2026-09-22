@@ -1,6 +1,7 @@
 #include "database_panel.h"
 
 #include "database_exchange_actions.h"
+#include "db_object_dialogs.h"
 #include "dock_layout.h"
 
 #include "DockAreaWidget.h"
@@ -229,6 +230,11 @@ void DatabasePanel::rebuildTree()
         info.canCompare = row.actions.canCompare;
         info.canDeleteKey = row.actions.canDeleteKey;
         info.canTtlSet = row.actions.canTtlSet;
+        info.canCreateTable = row.actions.canCreateTable;
+        info.canModifyTable = row.actions.canModifyTable;
+        info.canAddColumn = row.actions.canAddColumn;
+        info.canCreateIndex = row.actions.canCreateIndex;
+        info.canCreateUser = row.actions.canCreateUser;
         rowInfoById_.insert(nodeId, info);
     }
 
@@ -306,6 +312,16 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
     }
     QAction *deleteKey = info.canDeleteKey ? menu.addAction(tr("Delete Key…")) : nullptr;
     QAction *setTtl = info.canTtlSet ? menu.addAction(tr("Set TTL…")) : nullptr;
+    if (info.canCreateTable || info.canModifyTable || info.canAddColumn || info.canCreateIndex
+        || info.canCreateUser) {
+        menu.addSeparator();
+    }
+    QAction *createTable = info.canCreateTable ? menu.addAction(tr("Create Table…")) : nullptr;
+    QAction *createUser = info.canCreateUser ? menu.addAction(tr("Create User…")) : nullptr;
+    QAction *modifyTable = info.canModifyTable ? menu.addAction(tr("Modify Column…")) : nullptr;
+    QAction *addColumn = info.canAddColumn ? menu.addAction(tr("Add Column…")) : nullptr;
+    QAction *dropColumn = info.canModifyTable ? menu.addAction(tr("Drop Column…")) : nullptr;
+    QAction *createIndex = info.canCreateIndex ? menu.addAction(tr("Create Index…")) : nullptr;
     if (menu.actions().isEmpty()) {
         return;
     }
@@ -391,6 +407,24 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
             report(databaseService_->runAction(nodeId,
                                                QStringLiteral("ttl:%1").arg(seconds)));
         }
+    } else if (chosen == createTable) {
+        ddlRefreshNodeId_ = showCreateTableDialog(this, databaseService_, nodeId) ? nodeId
+                                                                                 : QString();
+    } else if (chosen == createUser) {
+        ddlRefreshNodeId_ =
+          showCreateUserDialog(this, databaseService_, nodeId) ? nodeId : QString();
+    } else if (chosen == modifyTable) {
+        ddlRefreshNodeId_ =
+          showModifyColumnDialog(this, databaseService_, nodeId) ? nodeId : QString();
+    } else if (chosen == addColumn) {
+        ddlRefreshNodeId_ =
+          showAddColumnDialog(this, databaseService_, nodeId) ? nodeId : QString();
+    } else if (chosen == dropColumn) {
+        ddlRefreshNodeId_ =
+          showDropColumnDialog(this, databaseService_, nodeId) ? nodeId : QString();
+    } else if (chosen == createIndex) {
+        ddlRefreshNodeId_ =
+          showCreateIndexDialog(this, databaseService_, nodeId) ? nodeId : QString();
     }
 }
 
@@ -409,9 +443,18 @@ void DatabasePanel::onActionFinished(bool ok, const QString &message)
 {
     if (!ok) {
         statusLabel_->setText(message);
+        ddlRefreshNodeId_.clear();
         return;
     }
     statusLabel_->clear();
+    // F4.4: refresh the scope a just-run object-DDL dialog affected —
+    // `showContextMenu`'s own dispatch sets this right before the dialog
+    // ran; every other `runAction` path (rename/drop/…) leaves it empty,
+    // unchanged (`database-tools.md` §11's own tracked debt on those).
+    if (!ddlRefreshNodeId_.isEmpty()) {
+        report(databaseService_->refresh(ddlRefreshNodeId_, false));
+        ddlRefreshNodeId_.clear();
+    }
 }
 
 void DatabasePanel::report(const FfiResult &result)

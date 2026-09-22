@@ -72,6 +72,11 @@ fn to_ffi_actions(actions: ActionSet) -> FfiDbRowActions {
         can_compare: false,
         can_delete_key: actions.contains(ActionSet::DELETE_KEY),
         can_ttl_set: actions.contains(ActionSet::TTL_SET),
+        can_create_table: actions.contains(ActionSet::CREATE_TABLE),
+        can_modify_table: actions.contains(ActionSet::MODIFY_TABLE),
+        can_add_column: actions.contains(ActionSet::ADD_COLUMN),
+        can_create_index: actions.contains(ActionSet::CREATE_INDEX),
+        can_create_user: actions.contains(ActionSet::CREATE_USER),
     }
 }
 

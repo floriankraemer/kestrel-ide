@@ -243,6 +243,82 @@ fn redis_delete_key_statement(row: &TreeRow) -> Result<String, DbError> {
     Ok(format!("DEL {key}"))
 }
 
+/// F4.4's object dialogs' own DDL generation — `kind` is `objectDdlPreview`/
+/// `runObjectDdl`'s own vocabulary (`ffi.rs`'s doc comment), `spec_json`
+/// decodes straight into the matching `db_core::ddl` spec struct.
+/// `table`/`schema` narrow which of those two contexts the caller
+/// resolved `node_id` to (never both — a table-scoped kind ignores
+/// `schema`, a schema-scoped kind ignores `table`).
+fn generate_object_ddl(
+    dialect: Dialect,
+    kind: &str,
+    spec_json: &str,
+    table: Option<&ObjectRef>,
+    schema: Option<&str>,
+) -> Result<String, DbError> {
+    fn bad_spec(error: serde_json::Error) -> DbError {
+        DbError::new(
+            db_core::error::DbErrorCode::InvalidStatement,
+            format!("malformed spec: {error}"),
+        )
+    }
+    fn no_table() -> DbError {
+        DbError::new(
+            db_core::error::DbErrorCode::InvalidStatement,
+            "this action needs a table",
+        )
+    }
+    match kind {
+        "create_table" => {
+            let mut spec: ddl::TableSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            if spec.schema.is_none() {
+                spec.schema = schema.map(str::to_string);
+            }
+            ddl::create_table(dialect, &spec)
+        }
+        "create_user" => {
+            let spec: ddl::UserSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            ddl::create_user(dialect, &spec)
+        }
+        "add_column" => {
+            let spec: ddl::ColumnSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            ddl::alter_table_add_column(dialect, table.ok_or_else(no_table)?, &spec)
+        }
+        "alter_column" => {
+            let spec: ddl::ColumnSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            ddl::alter_table_alter_column(dialect, table.ok_or_else(no_table)?, &spec)
+        }
+        "drop_column" => {
+            let spec: serde_json::Value = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            let column = spec.get("column").and_then(|v| v.as_str()).ok_or_else(|| {
+                DbError::new(
+                    db_core::error::DbErrorCode::InvalidStatement,
+                    "malformed spec: missing 'column'",
+                )
+            })?;
+            ddl::alter_table_drop_column(dialect, table.ok_or_else(no_table)?, column)
+        }
+        "create_index" => {
+            let mut spec: ddl::IndexSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            // `table`/`schema` come from `node_id`'s own resolved table,
+            // never from the dialog's own JSON (which carries no schema
+            // field at all, and its `table` is empty — see
+            // `db_object_dialogs.cpp`'s own doc comment on why) — a create-
+            // index action is always dispatched against one specific table
+            // row, so there is no ambiguity to leave to client-supplied
+            // text.
+            let table_ref = table.ok_or_else(no_table)?;
+            spec.table = table_ref.name.clone();
+            spec.schema = table_ref.schema.clone();
+            ddl::create_index(dialect, &spec)
+        }
+        _ => Err(DbError::new(
+            db_core::error::DbErrorCode::NotSupported,
+            format!("unknown object DDL kind '{kind}'"),
+        )),
+    }
+}
+
 fn redis_ttl_statement(row: &TreeRow, seconds: &str) -> Result<String, DbError> {
     let key = redis_key_text(row).ok_or_else(|| {
         DbError::new(db_core::error::DbErrorCode::NotSupported, "not a Redis key")
@@ -308,6 +384,20 @@ impl ffi::DatabaseService {
                 .get(&setting.id)
                 .map(|s| (Some(s.state), s.message.clone()))
                 .unwrap_or((None, String::new()));
+            // A source with no schema concept of its own (SQLite: its
+            // tables sit directly under this root, no `Schema` node
+            // between them) still needs *somewhere* to offer "Create
+            // Table…"/"Create User…" — `db_core::tree::actions_for` only
+            // wires those bits onto a real `Schema`/`Catalog`/`Keyspace`
+            // node, which this synthetic root row is not, so it is
+            // decided here instead, from the same `!read_only` gate every
+            // other write action already uses.
+            let read_only = self
+                .sources
+                .borrow()
+                .get(&setting.id)
+                .map(|s| s.read_only)
+                .unwrap_or(false);
             out.push(FfiDbTreeRow {
                 source_id: QString::from(setting.id.as_str()),
                 node_id: QString::from(format!("{}:$root", setting.id)),
@@ -321,6 +411,8 @@ impl ffi::DatabaseService {
                     can_refresh: true,
                     can_dump: true,
                     can_compare: true,
+                    can_create_table: !read_only,
+                    can_create_user: !read_only,
                     ..Default::default()
                 },
             });
@@ -691,6 +783,131 @@ impl ffi::DatabaseService {
             return errors::failure(errors::CODE_REFUSED, error.to_string());
         }
         source.pending.push_back(Pending::Ddl { key, title });
+        FfiResult::default()
+    }
+
+    /// `objectDdlPreview`/`runObjectDdl`'s shared setup: `node_id`'s own
+    /// source's dialect, plus whichever of a table `ObjectRef`/a schema
+    /// name `node_id` resolves to (the root row's own `"$root"` path
+    /// resolves to neither — a source has no schema name of its own to
+    /// qualify a `CREATE TABLE`/`CREATE USER` with on every dialect, so
+    /// `generate_object_ddl` is left to qualify with `None` there, exactly
+    /// like `create_table`'s own "no schema given" case).
+    fn ddl_context(
+        &self,
+        node_id: &QString,
+    ) -> Result<(String, Dialect, Option<ObjectRef>, Option<String>), FfiResult> {
+        let composite = node_id.to_string();
+        let Some((source_id, path)) = parse_node_id(&composite) else {
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "malformed node id",
+            ));
+        };
+        let source_id = source_id.to_string();
+        let dialect = {
+            let sources = self.sources.borrow();
+            let Some(source) = sources.get(&source_id) else {
+                return Err(errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                ));
+            };
+            let Some(dialect) = source.dialect else {
+                return Err(errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                ));
+            };
+            dialect
+        };
+        if path == "$root" {
+            return Ok((source_id, dialect, None, None));
+        }
+        let rows = self.flatten_for(&source_id);
+        let Some(row) = rows.iter().find(|r| r.node_id == path) else {
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "no such node",
+            ));
+        };
+        match row.kind {
+            RowKind::Object(ObjectKind::Table) => {
+                Ok((source_id, dialect, object_ref_for(row), None))
+            }
+            RowKind::Object(ObjectKind::Schema | ObjectKind::Catalog | ObjectKind::Keyspace) => {
+                Ok((source_id, dialect, None, row.object_path.last().cloned()))
+            }
+            _ => Ok((source_id, dialect, None, None)),
+        }
+    }
+
+    /// See `ffi.rs`'s own doc comment on `objectDdlPreview` (F4.4).
+    pub fn object_ddl_preview(
+        self: Pin<&mut Self>,
+        node_id: &QString,
+        kind: &QString,
+        spec_json: &QString,
+    ) -> FfiResult {
+        let (_, dialect, table, schema) = match self.ddl_context(node_id) {
+            Ok(context) => context,
+            Err(failure) => return failure,
+        };
+        match generate_object_ddl(
+            dialect,
+            &kind.to_string(),
+            &spec_json.to_string(),
+            table.as_ref(),
+            schema.as_deref(),
+        ) {
+            Ok(text) => FfiResult {
+                code: 0,
+                message: QString::from(text.as_str()),
+            },
+            Err(error) => errors::failure(errors::CODE_INVALID_ARGUMENT, error.to_string()),
+        }
+    }
+
+    /// See `ffi.rs`'s own doc comment on `runObjectDdl` (F4.4).
+    pub fn run_object_ddl(
+        self: Pin<&mut Self>,
+        node_id: &QString,
+        kind: &QString,
+        spec_json: &QString,
+    ) -> FfiResult {
+        let (source_id, dialect, table, schema) = match self.ddl_context(node_id) {
+            Ok(context) => context,
+            Err(failure) => return failure,
+        };
+        let statement_text = match generate_object_ddl(
+            dialect,
+            &kind.to_string(),
+            &spec_json.to_string(),
+            table.as_ref(),
+            schema.as_deref(),
+        ) {
+            Ok(text) => text,
+            Err(error) => return errors::failure(errors::CODE_INVALID_ARGUMENT, error.to_string()),
+        };
+        let mut sources = self.sources.borrow_mut();
+        let Some(source) = sources.get_mut(&source_id) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        let Some(worker) = source.worker.as_ref() else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        if let Err(error) = worker.send(SessionCommand::RunStatement {
+            statement: Statement::for_dialect(dialect, statement_text),
+        }) {
+            return errors::failure(errors::CODE_REFUSED, error.to_string());
+        }
+        source.pending.push_back(Pending::Run);
         FfiResult::default()
     }
 

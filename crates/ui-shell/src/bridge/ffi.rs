@@ -10206,6 +10206,20 @@ mod ffi {
         can_delete_key: bool,
         #[cxx_name = "canTtlSet"]
         can_ttl_set: bool,
+        /// F4.4's object dialogs — set on a schema/catalog/keyspace root.
+        #[cxx_name = "canCreateTable"]
+        can_create_table: bool,
+        /// F4.4 — set on an existing table.
+        #[cxx_name = "canModifyTable"]
+        can_modify_table: bool,
+        #[cxx_name = "canAddColumn"]
+        can_add_column: bool,
+        #[cxx_name = "canCreateIndex"]
+        can_create_index: bool,
+        /// F4.4 — set on a schema/catalog/keyspace root, alongside
+        /// `canCreateTable`.
+        #[cxx_name = "canCreateUser"]
+        can_create_user: bool,
     }
 
     /// One flattened row of the Database dock's tree (database-tools-plan
@@ -10356,6 +10370,45 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "consoleFileReady"]
         fn console_file_ready(self: Pin<&mut DatabaseService>, path: QString, source_id: QString);
+
+        // ---- database: F4d ----
+
+        /// F4.4's create/modify object dialogs' own DDL preview: `kind` is
+        /// one of `runAction`'s own vocabulary widened with
+        /// `"create_table"`/`"alter_column"`/`"add_column"`/
+        /// `"drop_column"`/`"create_index"`/`"create_user"`; `spec_json`
+        /// is the dialog's own form state, compact JSON decoded straight
+        /// into the matching `db_core::ddl` spec struct (`TableSpec`/
+        /// `ColumnSpec`/`IndexSpec`/`UserSpec`) — the same "spec crosses
+        /// as JSON, decoded in Rust" pattern F4c's typed rows already
+        /// established. The generated statement text comes back in
+        /// `message` on success; a caller shows it before ever calling
+        /// `runObjectDdl` with the same arguments (`db_core::ddl`'s own
+        /// "never run what the user has not seen" rule).
+        #[qinvokable]
+        #[cxx_name = "objectDdlPreview"]
+        fn object_ddl_preview(
+            self: Pin<&mut DatabaseService>,
+            node_id: &QString,
+            kind: &QString,
+            spec_json: &QString,
+        ) -> FfiResult;
+
+        /// Runs `objectDdlPreview`'s own generated statement against
+        /// `node_id`'s source — same dispatch as `runAction`
+        /// (`SessionCommand::RunStatement`, reported through
+        /// `actionFinished`, not this call's own `FfiResult`), so a
+        /// successful create/alter/drop still only ever means "no such
+        /// node"/"not connected" here, and "the statement failed" through
+        /// `actionFinished(false, …)` exactly like `runAction`.
+        #[qinvokable]
+        #[cxx_name = "runObjectDdl"]
+        fn run_object_ddl(
+            self: Pin<&mut DatabaseService>,
+            node_id: &QString,
+            kind: &QString,
+            spec_json: &QString,
+        ) -> FfiResult;
     }
 
     impl cxx_qt::Threading for DatabaseService {}
@@ -10393,6 +10446,13 @@ mod ffi {
         Csv,
         Tsv,
         Json,
+        /// A GitHub-flavoured Markdown table — F4d's Text view export
+        /// (`ResultProvider::textView`'s own doc comment on why this
+        /// module already renders text formats itself rather than
+        /// reusing `db-exchange`'s exporters: those write a whole file
+        /// from a typed `RowBatch`, this reads the *already-fetched*
+        /// page straight from `display` text for an instant preview).
+        Markdown,
     }
 
     enum FfiDbAggOp {
@@ -10456,6 +10516,74 @@ mod ffi {
         /// already returned, not from anything a user typed into this
         /// call).
         statement: QString,
+    }
+
+    // ---- database: F4d ----
+
+    /// The result grid's view modes (F4d): `Table` is the plain grid every
+    /// result already has; `Transpose`/`Text`/`Record` are offered only
+    /// when `ResultProvider::resultModes` says so — `Record` in
+    /// particular only makes sense once a row has nested structure to
+    /// flatten (`db_core::value::record_rows`), not for a plain scalar
+    /// row.
+    enum FfiDbViewMode {
+        Table,
+        Transpose,
+        Text,
+        Record,
+    }
+
+    /// Which view modes `resultId` supports, and which one to pre-select —
+    /// a Mongo result whose one column is a whole document defaults to
+    /// `Record` (closing F7b's "Document/Table toggle" gap), every other
+    /// result defaults to `Table`. Transpose/Text are always offered
+    /// (they work over any tabular result); `Record` only when at least
+    /// one column actually carries `Document`/`Array`/`Json` structure to
+    /// flatten.
+    struct FfiResultModes {
+        #[cxx_name = "canTranspose"]
+        can_transpose: bool,
+        #[cxx_name = "canText"]
+        can_text: bool,
+        #[cxx_name = "canRecord"]
+        can_record: bool,
+        #[cxx_name = "defaultMode"]
+        default_mode: FfiDbViewMode,
+    }
+
+    /// One line of the Record view's flattened field tree — see
+    /// `db_core::value::RecordRow`'s own doc comment (F4d), which this
+    /// mirrors field-for-field.
+    struct FfiRecordRow {
+        depth: u32,
+        key: QString,
+        value: QString,
+        #[cxx_name = "typeName"]
+        type_name: QString,
+    }
+
+    /// Whether `aggregateComputed`'s answer is the exact whole-result
+    /// value, or a same-shaped fallback computed over only the rows
+    /// fetched so far — `FetchedRowsOnly` when the result's own statement
+    /// cannot be wrapped as `SELECT op(col) FROM (stmt) t` (not a plain
+    /// `SELECT`, or a dialect with no derived-table concept at all —
+    /// Mongo/Redis).
+    enum FfiDbAggScope {
+        Exact,
+        FetchedRowsOnly,
+    }
+
+    /// `aggregateComputed`'s whole payload, bundled into one struct rather
+    /// than a signal with `clippy::too_many_arguments`' own ceiling worth
+    /// of scalar params — see that signal's own doc comment for what each
+    /// field means.
+    struct FfiDbAggregateOutcome {
+        ok: bool,
+        value: QString,
+        #[cxx_name = "rowCount"]
+        row_count: u64,
+        scope: FfiDbAggScope,
+        reason: QString,
     }
 
     extern "RustQt" {
@@ -10697,21 +10825,23 @@ mod ffi {
         /// second request before the first answers is the caller's own
         /// race to avoid, same as `dmlPreview`/`submit`'s single-slot
         /// convention.
+        /// `scope`/`reason` (F4d): `FetchedRowsOnly` means the statement
+        /// could not be wrapped as a derived table at all — the footer
+        /// falls back to `ResultProvider::aggregate`'s own fetched-rows
+        /// estimate and shows `reason` as a caveat, rather than treating
+        /// this as a normal query failure (`ok` is `false` for that case
+        /// too, but `reason` is never empty, unlike a real query error's
+        /// `value`).
         #[qsignal]
         #[cxx_name = "aggregateComputed"]
         fn aggregate_computed(
             self: Pin<&mut ConsoleService>,
             result_id: u64,
             op: FfiDbAggOp,
-            ok: bool,
-            value: QString,
-            row_count: u64,
+            outcome: FfiDbAggregateOutcome,
         );
 
-        /// F4.3's FK navigation, forward direction only this pass ("Show
-        /// referencing rows…" needs a whole-schema FK index this result's
-        /// own `Full`-level table introspect does not fetch — left out,
-        /// see `bridge::database::edit`'s own doc comment): every target
+        /// F4.3's FK navigation, forward direction: every target
         /// `row`/`column`'s cell offers, decided from the table's own
         /// constraint detail (`db_core::schema::ConstraintKind`, F6c) —
         /// empty when the result is not a single-table result, the column
@@ -10740,6 +10870,37 @@ mod ffi {
             result_id: u64,
             target: &FfiDbNavTarget,
         ) -> FfiResult;
+
+        /// Reverse FK navigation (F4d, the F4.3 follow-up
+        /// `database-tools.md` §4 tracked as open): "Show referencing
+        /// rows ▸ &lt;table.column&gt;" — every *other* table whose own
+        /// foreign key points back at this cell's `(table, column)`,
+        /// found from a whole-schema `Full`-level introspect run once per
+        /// source and cached (`db_core::schema::find_referencing_columns`
+        /// over that snapshot), not the single-table introspect
+        /// `cellNavigation` uses. Runs off the Qt thread (a whole-schema
+        /// introspect is not cheap) — the outcome arrives through
+        /// `referencingTargetsReady`, one `FfiDbNavTarget` per
+        /// referencing table with a bound `COUNT(*)`-derived label
+        /// (`"N rows in orders.customer_id"`).
+        #[qinvokable]
+        #[cxx_name = "referencingTargets"]
+        fn referencing_targets(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        /// `referencingTargets`' own outcome — see its doc comment.
+        #[qsignal]
+        #[cxx_name = "referencingTargetsReady"]
+        fn referencing_targets_ready(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            column: QString,
+            targets: Vec<FfiDbNavTarget>,
+        );
     }
 
     impl cxx_qt::Threading for ConsoleService {}
@@ -10932,6 +11093,25 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "validateHex"]
         fn validate_hex(self: Pin<&mut ResultProvider>, text: &QString) -> FfiResult;
+
+        // ---- database: F4d ----
+
+        /// Which view modes `resultId` offers right now — see
+        /// `FfiResultModes`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "resultModes"]
+        fn result_modes(self: Pin<&mut ResultProvider>, result_id: u64) -> FfiResultModes;
+
+        /// The Record view's own data: `row`'s cells flattened into a
+        /// field tree (`db_core::value::record_rows`) — empty when `row`
+        /// is out of range.
+        #[qinvokable]
+        #[cxx_name = "recordRows"]
+        fn record_rows(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+        ) -> Vec<FfiRecordRow>;
     }
 
     impl cxx_qt::Threading for ResultProvider {}

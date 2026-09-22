@@ -505,14 +505,33 @@ impl ffi::DatabaseService {
                         let session = Session::new(connection);
                         let inner_qt_thread = service.as_mut().qt_thread();
                         let worker_source_id = thread_id.clone();
-                        let worker = SessionWorker::spawn(session, tunnel, move |event| {
-                            let source_id = worker_source_id.clone();
-                            let _ = inner_qt_thread.queue(
-                                move |service: Pin<&mut ffi::DatabaseService>| {
-                                    apply_event(service, source_id, event);
-                                },
-                            );
+                        // FZ: the tree's per-source connection is the one that sits idle
+                        // longest, so it is the one the idle-close timer frees; the
+                        // reconnect closure rebuilds it through the same `open_session`
+                        // path (secrets re-read, tunnel re-opened) on the next command.
+                        let idle_close_minutes = crate::bridge::convert::load_settings()
+                            .database
+                            .idle_close_minutes_or_default();
+                        let reconnect_source = data_source.clone();
+                        let reconnect: super::sessions::Reconnect = Box::new(move || {
+                            let secrets = secrets_for(&reconnect_source.id);
+                            super::open_session(&reconnect_source, &secrets)
+                                .map(|(tunnel, connection)| (connection, tunnel))
                         });
+                        let worker = SessionWorker::spawn_with_idle_close(
+                            session,
+                            tunnel,
+                            idle_close_minutes,
+                            Some(reconnect),
+                            move |event| {
+                                let source_id = worker_source_id.clone();
+                                let _ = inner_qt_thread.queue(
+                                    move |service: Pin<&mut ffi::DatabaseService>| {
+                                        apply_event(service, source_id, event);
+                                    },
+                                );
+                            },
+                        );
                         let _ = worker.send(SessionCommand::Introspect {
                             scope: IntrospectScope::default(),
                             level: IntrospectLevel::Names,

@@ -626,9 +626,11 @@ fn e2e_containers_settings_test_connection() {
     );
     let (tx, ty) = rect_centre(&toggle["rect"]);
     ide.click_at(tx, ty, 1);
-    let toggled = ide.wait_for_event(mark, "the toggle to flip once containers is disabled", |e| {
-        e["ev"] == "plugins_page_toggle" && e["id"] == "containers" && e["disable"] == false
-    });
+    let toggled = ide.wait_for_event(
+        mark,
+        "the toggle to flip once containers is disabled",
+        |e| e["ev"] == "plugins_page_toggle" && e["id"] == "containers" && e["disable"] == false,
+    );
     let _ = toggled;
 
     ide.key("Escape");
@@ -643,10 +645,10 @@ fn e2e_containers_settings_test_connection() {
     ide.wait_for_ev(Mark::start(), "project_opened");
     let mark = ide.mark();
     ide.key("alt+v"); // "&View"
-    // Something else in the View menu is always there (Structure has no
-    // plugin/contribution gate at all) — proof the menu actually opened
-    // and reported its actions, so an *absent* Containers entry below
-    // means the entry is really gone, not that the mark never fired.
+                      // Something else in the View menu is always there (Structure has no
+                      // plugin/contribution gate at all) — proof the menu actually opened
+                      // and reported its actions, so an *absent* Containers entry below
+                      // means the entry is really gone, not that the mark never fired.
     ide.wait_for_event(mark, "the View menu to report its actions", |e| {
         e["ev"] == "view_menu_action" && e["label"] == "Structure"
     });

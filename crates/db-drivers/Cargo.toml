@@ -36,11 +36,19 @@ rustls-pemfile = { version = "2", optional = true }
 rustls-native-certs = { version = "0.7", optional = true }
 bytes = { version = "1", optional = true }
 uuid = { version = "1", optional = true }
+# Unconditional (not gated by any feature): `sqlite_tests.rs` uses it
+# directly regardless of which other backend features are on, and
+# `mysql.rs`'s `Value::Date`/`Time`/`DateTime` -> `mysql_async::Value`
+# conversion needs its `Datelike`/`Timelike` traits in scope, which
+# requires `chrono` to be *this* crate's own direct dependency (an
+# indirect one via `db-core` is not nameable in a `use` path).
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [features]
-default = ["sqlite", "postgres", "mongodb", "redis", "cassandra", "ssh"]
+default = ["sqlite", "postgres", "mysql", "mongodb", "redis", "cassandra", "ssh"]
 sqlite = ["dep:rusqlite"]
 postgres = ["dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls", "dep:rustls-pemfile", "dep:rustls-native-certs", "dep:bytes", "dep:uuid", "dep:futures-util"]
+mysql = ["dep:mysql_async", "dep:futures-util", "dep:flate2", "flate2/rust_backend"]
 mongodb = ["dep:mongodb-driver", "dep:bson", "dep:futures-util", "dep:serde_json"]
 redis = ["dep:redis-driver"]
 cassandra = ["dep:scylla"]
@@ -145,7 +153,31 @@ default-features = false
 features = ["ring", "rsa"]
 optional = true
 
+# MySQL/MariaDB: async, `block_on`'d against the private runtime, same as
+# `postgres`. `default-features = false` drops the crate's own default
+# `native-tls-tls`/`flate2/zlib` (a C zlib) selection; `rustls-tls` +
+# `ring` keeps the one crypto provider this tree allows (ADR-0061 §2/R2),
+# `flate2/rust_backend` keeps the compression codec pure Rust too (the
+# same "no C dependency this build doesn't already need" reasoning
+# `rusqlite`'s `bundled` comment gives, applied to the one place this
+# crate would otherwise pull in a second C library).
+[dependencies.mysql_async]
+version = "0.37"
+default-features = false
+features = ["rustls-tls", "ring"]
+optional = true
+
+# `mysql_async`'s own default compression codec is `flate2/zlib` (a C
+# zlib) — this crate's `mysql` feature line above re-selects
+# `flate2/rust_backend` (a pure-Rust `miniz_oxide` backend) instead, the
+# same "no C dependency this build doesn't already need" reasoning
+# `rusqlite`'s `bundled` comment gives, applied to the one transitive
+# dependency that would otherwise pull in libz.
+[dependencies.flate2]
+version = "1"
+default-features = false
+optional = true
+
 [dev-dependencies]
 tempfile = "3"
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 uuid = { version = "1", features = ["v4"] }

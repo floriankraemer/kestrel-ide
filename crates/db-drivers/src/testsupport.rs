@@ -44,6 +44,38 @@ pub fn postgres_test_spec() -> Option<ConnectSpec> {
     })
 }
 
+/// `IDE_DB_MYSQL_URL`/`IDE_DB_MARIADB_URL`, parsed the same minimal way as
+/// [`postgres_test_spec`] (`mysql://user:password@host:port/dbname`) — a
+/// second env var name so `db-ci` can run the same fixture-tested driver
+/// against both engines in one pass without a second copy of this parser.
+pub fn mysql_test_spec(env_var: &str) -> Option<ConnectSpec> {
+    let url = std::env::var(env_var).ok()?;
+    let rest = url.strip_prefix("mysql://")?;
+    let (auth, hostpart) = rest.split_once('@').unwrap_or(("", rest));
+    let (user, password) = match auth.split_once(':') {
+        Some((user, password)) => (user.to_string(), Some(password.to_string())),
+        None => (auth.to_string(), None),
+    };
+    let (hostport, database) = hostpart.split_once('/').unwrap_or((hostpart, ""));
+    let (host, port) = match hostport.split_once(':') {
+        Some((host, port)) => (host.to_string(), port.parse().ok()),
+        None => (hostport.to_string(), None),
+    };
+    Some(ConnectSpec {
+        driver: "mysql".to_string(),
+        host,
+        port,
+        database: database.to_string(),
+        user,
+        url: String::new(),
+        password,
+        ssl: SslConfig {
+            mode: SslMode::Disable,
+            ca_file: None,
+        },
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

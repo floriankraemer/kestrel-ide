@@ -39,9 +39,19 @@ public:
     void runScriptClicked();
     void cancelClicked();
     void refreshForCurrentTab();
+    // Public so `mountDatabaseConsoleBar` can wire it to `ConsoleService::
+    // sourcesChanged` (a project just opened) — see that signal's own
+    // `ffi.rs` doc comment for why the combo needs re-populating at all.
+    void refreshSources();
+
+    // E2E only (`crates/app/tests/e2e_database_console.rs`): the Cancel
+    // button has no default keymap shortcut (`database.cancel`'s own
+    // empty `default_shortcut`), so a click is the only way to reach it —
+    // the same `containers_toolbar_rects` shape `ContainersPanel` already
+    // reports.
+    void markE2eToolbarRects() const;
 
 private:
-    void refreshSources();
     void refreshSchemas();
     void attachCurrentTab();
     void setStatus(const QString &text);

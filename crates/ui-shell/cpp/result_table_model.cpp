@@ -1,6 +1,9 @@
 #include "result_table_model.h"
 
+#include "e2e_mark.h"
+
 #include <QColor>
+#include <QElapsedTimer>
 
 namespace ui_shell {
 
@@ -101,7 +104,17 @@ void ResultTableModel::ensurePage(int row) const
         return;
     }
     const quint64 first = (quint64(row) / kPageSize) * kPageSize;
+    // E2E only (`crates/app/tests/e2e_database_console.rs`): the NFR
+    // table's "UI thread never blocked > 16 ms per FFI call" target, one
+    // `db_row_page{ms}` mark per page — the test takes the max over the
+    // whole scroll.
+    QElapsedTimer timer;
+    timer.start();
     Page page{first, provider_->rowPage(resultId_, first, kPageSize)};
+    e2eMark(QStringLiteral("{\"ev\":\"db_row_page\",\"resultId\":%1,\"first\":%2,\"ms\":%3}")
+              .arg(resultId_)
+              .arg(first)
+              .arg(timer.elapsed()));
     if (pages_.size() >= kMaxCachedPages) {
         pages_.removeFirst();
     }

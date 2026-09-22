@@ -331,10 +331,10 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F2.2 — flattened tree rows + actions matrix, filters, grouping, refresh/force | done | 310fcb3, 8544815 |
 | F2.3 — Go to DDL via a `db-ddl` virtual document scheme | done (tab title is `<object>.sql`, not the literal wording — see database-tools.md §4) | 670e0a2 |
 | F2.4 — SQL Generator; rename/drop/truncate/comment via `db_core::ddl` (moved from the planned `db_sql::ddl` — `db-sql` is F3's crate to create, not F2's) | done (confirmation dialog does not yet show the exact generated SQL; no auto-refresh after a successful action) | 310fcb3, 670e0a2 |
-| F2.5 — `database` dock (`database_panel`), 5k-table NFR bench | dock done; **NFR bench not run** (see follow-up row below) | 670e0a2 |
-| F2 follow-up — `e2e_database` E2E flow (needs `database_panel.cpp` row-rect `e2eMark` reporting first) | open | |
-| F2 follow-up — 5 000-table SQLite `db-integration` NFR bench + §10 numbers | open | |
-| F2 follow-up — Postgres TLS (`SslMode::{Prefer,Require,VerifyCa,VerifyFull}` via `rustls-pemfile`/`rustls-native-certs`, `ring` only) | open | |
+| F2.5 — `database` dock (`database_panel`), 5k-table NFR bench | dock done; NFR bench run in phase FX (Names 7.0ms, Columns 2.11s — see database-tools.md §10) | 670e0a2, 98c131d |
+| F2 follow-up — `e2e_database` E2E flow (needs `database_panel.cpp` row-rect `e2eMark` reporting first) | done (FX) — `e2e_database_add_sqlite_source_and_browse_tree`, budget 13/16 | 98c131d |
+| F2 follow-up — 5 000-table SQLite `db-integration` NFR bench + §10 numbers | done (FX) | 98c131d |
+| F2 follow-up — Postgres TLS (`SslMode::{Prefer,Require,VerifyCa,VerifyFull}` via `rustls-pemfile`/`rustls-native-certs`, `ring` only) | done (FX) — `VerifyCa` handled identically to `VerifyFull` (both check chain + hostname; a chain-only/no-hostname verifier is a further follow-up), `Prefer`/`Require` via a named `DangerousNoVerify` (`ring` provider explicit); `cargo tree --all-features -i aws-lc-rs` stays empty | a104f79 |
 | F2 follow-up — ADBC/ODBC `IntrospectLevel` honoured (currently always fetch at existing depth) | open | |
 
 ### F3 — console + grid
@@ -350,7 +350,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F3.7 — completion/inspections seam (`database_completion`, source `database:inspections`) | done (selection-scoped "Format SQL" not wired — `requestIntentions` carries no selection range yet; see database-tools.md §4) | 5e87280 |
 | F3e — console UX gaps (caret run, `Ask` dialog, schema picker, dialect-aware WHERE/ORDER BY, tab-per-console dock, F3.6) | done | 0fb740e, a524355, 66a3c92, ca74d9f, 4a831b2, d6019f7 |
 | F3 follow-up — `db-drivers`' `SqliteConnection`/`PgConnection::execute` eagerly drain the whole `Rows` result before returning instead of streaming (found this phase, out of its file list — see database-tools.md §4/§11) | done — F3c (`SqliteConnection`, live cursor over a second read-only connection) + F3d (`PgConnection`, live `Client::query_raw` stream) | 83e925b, 95a22ad |
-| F3 follow-up — `e2e_database` part 2 (console → run → grid → 1M rows → cancel) and the first-row/1M-row-paging/cancel NFR bench numbers in §10 — blocked on the eager-materialisation fix above, since the bench cannot be honestly measured (or met) against a driver that buffers the whole result first | open | |
+| F3 follow-up — `e2e_database` part 2 (console → run → grid → 1M rows → cancel) and the first-row/1M-row-paging/cancel NFR bench numbers in §10 | done (FX) — `e2e_database_console_runs_query_and_pages_grid`, budget 14/16; first-row timing measured live; grid paging beyond one sample and the busy-query cancel sub-flow left out, documented in database-tools.md §10 | 0f57ca8 |
 | F3e follow-up — `db_core::readonly::Guard::check` refuses every `Write`/`Ddl`/`Unknown` statement unconditionally; it has no notion of whether the *source* is actually read-only. `bridge::run::sql_script` gates its own call on the source's `read_only` flag, but `bridge::database::console`'s `attach()` builds and checks the same `Guard` for *every* console regardless of that flag — found this phase, out of its file list, not fixed | done | 0e6a8cf |
 
 | F3 follow-up — caret-based "run statement at caret" (`EditorTabs` has no caret byte-offset accessor yet; `console.rs`'s `statement_at_caret`/`FfiDbExecWhat::Statement` are implemented and unit-tested, just unreachable from the console bar) | done (F3e) | a524355, 66a3c92, ca74d9f, 0fb740e |

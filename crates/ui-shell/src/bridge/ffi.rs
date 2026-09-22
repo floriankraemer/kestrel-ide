@@ -10306,6 +10306,19 @@ mod ffi {
         #[cxx_name = "disconnectSource"]
         fn disconnect_source(self: Pin<&mut DatabaseService>, id: &QString) -> FfiResult;
 
+        // ---- database: FX ----
+        /// A project opened (or reopened): `rows()` reads
+        /// `configured_sources()` fresh from disk on every call, but
+        /// nothing re-triggers that read on its own — this re-emits
+        /// `rowsChanged` so a source declared in the just-opened
+        /// project's own `.ide/settings.toml` actually shows up, the same
+        /// project-open lifecycle event `BuildToolsService::
+        /// projectOpened` already uses (`main_window.cpp` wires both to
+        /// `ProjectTreeModel::projectOpened`).
+        #[qinvokable]
+        #[cxx_name = "projectOpened"]
+        fn project_opened(self: Pin<&mut DatabaseService>, root: &QString);
+
         /// Fetch `node_id`'s children at `Columns` level if not already
         /// loaded (`TreeRow::loaded`) — a no-op, successful call for a
         /// node that is already loaded or is not expandable.
@@ -10719,6 +10732,23 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "availableSources"]
         fn available_sources(self: Pin<&mut ConsoleService>) -> Vec<FfiDbSourceRow>;
+
+        // ---- database: FX ----
+        /// A project opened (or reopened): `availableSources` reads
+        /// `configured_sources()` fresh from disk on every call, but
+        /// `DatabaseConsoleBar::sourceCombo_` is only ever populated once,
+        /// at construction — before any project is open — so a source
+        /// declared in the project this window eventually opens never
+        /// appears in the picker without this. Emits `sourcesChanged`,
+        /// the same "re-emit, the read itself is already live" shape
+        /// `DatabaseService::projectOpened` uses.
+        #[qinvokable]
+        #[cxx_name = "projectOpened"]
+        fn console_project_opened(self: Pin<&mut ConsoleService>, root: &QString);
+
+        #[qsignal]
+        #[cxx_name = "sourcesChanged"]
+        fn sources_changed(self: Pin<&mut ConsoleService>);
 
         /// See `ConsoleService::dml_preview`'s own doc comment
         /// (`bridge::database::console`) — F4.2's DML preview.

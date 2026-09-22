@@ -30,6 +30,9 @@ pub mod ssh;
 #[cfg(all(test, feature = "db-integration", feature = "postgres"))]
 mod testsupport;
 
+#[cfg(all(test, feature = "db-integration", feature = "sqlite"))]
+mod sqlite_bench;
+
 #[cfg(any(
     feature = "postgres",
     feature = "mongodb",

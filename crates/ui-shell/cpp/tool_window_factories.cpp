@@ -86,6 +86,16 @@ ContributedToolWindows buildContributedToolWindows(
             built.database = static_cast<DatabasePanel *>(panel);
         }
     }
+    // FX: `databaseService->rows()` re-reads `configured_sources()` fresh
+    // every call, but this dock's tree is only ever built once, before any
+    // project is open — so a source in the project this window eventually
+    // opens never shows without this.
+    QObject::connect(treeModel, &ProjectTreeModel::projectOpened, databaseService,
+                      [databaseService](const QString &root) { databaseService->projectOpened(root); });
+    // Same reasoning, for the console bar's own source picker
+    // (`DatabaseConsoleBar::sourceCombo_`, populated once at construction).
+    QObject::connect(treeModel, &ProjectTreeModel::projectOpened, consoleService,
+                      [consoleService](const QString &root) { consoleService->projectOpened(root); });
     return built;
 }
 

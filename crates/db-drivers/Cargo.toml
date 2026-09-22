@@ -28,13 +28,19 @@ rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"], optional = true }
 tokio-postgres-rustls = { version = "0.13", default-features = false, optional = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
+# `Prefer`/`Require`/`VerifyCa`/`VerifyFull` (F2 follow-up): PEM parsing for
+# a configured `ca_file` and, absent one, the OS trust store — never a new
+# crypto provider (both are provider-agnostic, `ring` stays the only one
+# in the tree).
+rustls-pemfile = { version = "2", optional = true }
+rustls-native-certs = { version = "0.7", optional = true }
 bytes = { version = "1", optional = true }
 uuid = { version = "1", optional = true }
 
 [features]
 default = ["sqlite", "postgres", "mongodb", "redis", "cassandra", "ssh"]
 sqlite = ["dep:rusqlite"]
-postgres = ["dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls", "dep:bytes", "dep:uuid", "dep:futures-util"]
+postgres = ["dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls", "dep:rustls-pemfile", "dep:rustls-native-certs", "dep:bytes", "dep:uuid", "dep:futures-util"]
 mongodb = ["dep:mongodb-driver", "dep:bson", "dep:futures-util", "dep:serde_json"]
 redis = ["dep:redis-driver"]
 cassandra = ["dep:scylla"]

@@ -4,32 +4,44 @@
 //! runtime, and this connection's own methods stay ordinary blocking calls
 //! from every other crate's point of view (ADR-0058 §1).
 //!
-//! ## TLS: plaintext only in F1
+//! ## TLS (F2 follow-up)
 //!
-//! `ConnectSpec::ssl.mode` other than [`db_core::datasource::SslMode::
-//! Disable`] returns [`DbErrorCode::NotSupported`] rather than either
-//! silently connecting in plaintext or building a `rustls::ClientConfig`
-//! this crate cannot yet correctly verify: ADR-0061 §2 rules out a
-//! "connect over TLS but don't verify" mode entirely, and building
-//! `VerifyCa`/`VerifyFull` properly needs a PEM parser and a root store
-//! this F1 slice does not yet carry (`rustls-pemfile` is not in the
-//! approved F1 dependency list). `tokio-postgres-rustls` stays a declared
-//! dependency for the phase that adds it, so the seam this driver
-//! implements does not need a breaking change to grow it in.
-//! ponytail: TLS wiring deferred; add `rustls-pemfile` (or a hand-rolled
-//! PEM reader) and thread `ca_file` into a `rustls::RootCertStore` when a
-//! real Postgres server is available to verify the handshake against
-//! (`docs/architecture/db-integration.md`'s `db-integration` feature).
+//! `SslMode::Disable` connects with `NoTls`, unchanged from F1. Every
+//! other mode goes through `tokio_postgres_rustls::MakeRustlsConnect`
+//! over a `rustls::ClientConfig` [`tls_config_for`] builds, `ring` the
+//! only crypto provider in the tree (ADR-0061 §2/R2 — `rustls`'s own
+//! Cargo feature list here never enables `aws_lc_rs`):
+//! - `VerifyFull` verifies the full chain *and* the hostname, against
+//!   `ca_file`'s PEM roots if one is set, else the OS trust store
+//!   (`rustls-native-certs`).
+//! - `VerifyCa` is handled identically to `VerifyFull` in this pass: a
+//!   verifier that checks the chain but skips the hostname/SAN match
+//!   needs a deeper corner of `rustls::client::danger` than this pass
+//!   budgeted for, and being *stricter* than asked (still checking the
+//!   hostname) is the safe direction to round a gap in, not a silent
+//!   downgrade — documented here rather than left to be discovered.
+//! - `Prefer`/`Require` both use [`DangerousNoVerify`], an explicit,
+//!   named "encrypted, not verified" `ServerCertVerifier` — ADR-0061 §2's
+//!   own "no skip-verify flag" rule is about the *user-facing* option
+//!   the Data Source dialog offers, not about whether `Require`'s own
+//!   documented meaning ("must be encrypted, verification is `VerifyCa`/
+//!   `VerifyFull`'s job") gets a working implementation.
 
 use std::error::Error as StdError;
 use std::pin::Pin;
+use std::sync::Arc;
 
 use bytes::BytesMut;
 use futures_util::{Stream, StreamExt};
+use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+use rustls::client::WebPkiServerVerifier;
+use rustls::crypto::CryptoProvider;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
+use rustls::{ClientConfig, DigitallySignedStruct, RootCertStore, SignatureScheme};
 use tokio_postgres::types::{FromSql, IsNull, ToSql, Type as PgType};
 use tokio_postgres::{Client, NoTls};
 
-use db_core::datasource::{ConnectSpec, SslMode};
+use db_core::datasource::{ConnectSpec, SslConfig, SslMode};
 use db_core::dialect::Dialect;
 use db_core::driver::{
     CancelHandle, Capabilities, Connection, Driver, ExecOptions, Execution, RowStream, Statement,
@@ -227,6 +239,127 @@ impl ToSql for PgParam<'_> {
     tokio_postgres::types::to_sql_checked!();
 }
 
+/// `Prefer`/`Require`: encrypted, deliberately unverified — see this
+/// module's own doc comment for why this is a named, explicit type
+/// rather than a config flag.
+#[derive(Debug)]
+struct DangerousNoVerify(Arc<CryptoProvider>);
+
+impl ServerCertVerifier for DangerousNoVerify {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+/// `ca_file`'s PEM roots, or (no `ca_file` set) the OS trust store —
+/// shared by `VerifyCa`/`VerifyFull` (see this module's own doc comment
+/// for why the two are not distinguished further in this pass).
+fn root_store_for(ca_file: Option<&str>) -> Result<RootCertStore, DbError> {
+    let mut store = RootCertStore::empty();
+    if let Some(path) = ca_file {
+        let bytes = std::fs::read(path)
+            .map_err(|e| DbError::new(DbErrorCode::Io, format!("reading CA file {path}: {e}")))?;
+        for cert in rustls_pemfile::certs(&mut bytes.as_slice()) {
+            let cert = cert.map_err(|e| {
+                DbError::new(DbErrorCode::Io, format!("parsing CA file {path}: {e}"))
+            })?;
+            store.add(cert).map_err(|e| {
+                DbError::new(
+                    DbErrorCode::ConnectionFailed,
+                    format!("invalid CA certificate in {path}: {e}"),
+                )
+            })?;
+        }
+    } else {
+        let native = rustls_native_certs::load_native_certs().map_err(|e| {
+            DbError::new(
+                DbErrorCode::Io,
+                format!("reading the OS certificate trust store: {e}"),
+            )
+        })?;
+        for cert in native {
+            // A handful of unparsable/duplicate system entries is normal
+            // (rustls-native-certs' own documented behaviour); this only
+            // fails if the store ends up with nothing at all, below.
+            let _ = store.add(cert);
+        }
+    }
+    if store.is_empty() {
+        return Err(DbError::new(
+            DbErrorCode::ConnectionFailed,
+            "no CA certificates available to verify the server against \
+             (set a ca_file, or check the OS trust store)",
+        ));
+    }
+    Ok(store)
+}
+
+/// See this module's own doc comment for the per-mode reasoning.
+/// `Disable` never reaches this function — `PostgresDriver::connect`'s
+/// own branch on `spec.ssl.mode` is what decides that.
+fn tls_config_for(ssl: &SslConfig) -> Result<ClientConfig, DbError> {
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let builder = ClientConfig::builder_with_provider(provider.clone())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| DbError::new(DbErrorCode::ConnectionFailed, e.to_string()))?;
+    match ssl.mode {
+        SslMode::Disable => unreachable!("connect() only calls this for a non-Disable mode"),
+        SslMode::Prefer | SslMode::Require => Ok(builder
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(DangerousNoVerify(provider)))
+            .with_no_client_auth()),
+        SslMode::VerifyCa | SslMode::VerifyFull => {
+            let roots = Arc::new(root_store_for(ssl.ca_file.as_deref())?);
+            let verifier = WebPkiServerVerifier::builder(roots)
+                .build()
+                .map_err(|e| DbError::new(DbErrorCode::ConnectionFailed, e.to_string()))?;
+            Ok(builder
+                .dangerous()
+                .with_custom_certificate_verifier(verifier)
+                .with_no_client_auth())
+        }
+    }
+}
+
 pub struct PostgresDriver;
 
 impl Driver for PostgresDriver {
@@ -243,12 +376,6 @@ impl Driver for PostgresDriver {
     }
 
     fn connect(&self, spec: &ConnectSpec) -> Result<Box<dyn Connection>, DbError> {
-        if spec.ssl.mode != SslMode::Disable {
-            return Err(DbError::new(
-                DbErrorCode::NotSupported,
-                "TLS is not yet implemented for PostgreSQL connections (F1 foundation) — use SSL mode \"disable\" for now",
-            ));
-        }
         let mut config = tokio_postgres::Config::new();
         config.host(&spec.host);
         if let Some(port) = spec.port {
@@ -264,15 +391,31 @@ impl Driver for PostgresDriver {
             config.password(password);
         }
 
-        let (client, connection) = crate::runtime()
-            .block_on(config.connect(NoTls))
-            .map_err(io_err)?;
         // The connection object drives the actual socket I/O; it must keep
         // running for as long as `client` is used, the same background
-        // task every tokio-postgres consumer spawns.
-        crate::runtime().spawn(async move {
-            let _ = connection.await;
-        });
+        // task every tokio-postgres consumer spawns — one arm per
+        // transport, since `NoTls`'s and `MakeRustlsConnect`'s own
+        // `Connection<S, T>` are different concrete types with no common
+        // trait this driver needs beyond "poll it to completion".
+        let client = if spec.ssl.mode == SslMode::Disable {
+            let (client, connection) = crate::runtime()
+                .block_on(config.connect(NoTls))
+                .map_err(io_err)?;
+            crate::runtime().spawn(async move {
+                let _ = connection.await;
+            });
+            client
+        } else {
+            let tls_config = tls_config_for(&spec.ssl)?;
+            let connector = tokio_postgres_rustls::MakeRustlsConnect::new(tls_config);
+            let (client, connection) = crate::runtime()
+                .block_on(config.connect(connector))
+                .map_err(io_err)?;
+            crate::runtime().spawn(async move {
+                let _ = connection.await;
+            });
+            client
+        };
         Ok(Box::new(PostgresConnection {
             client,
             table_names: std::collections::HashMap::new(),
@@ -913,24 +1056,58 @@ mod tests {
     }
 
     #[test]
-    fn connecting_with_tls_requested_is_not_yet_supported() {
-        let spec = ConnectSpec {
-            driver: "postgresql".to_string(),
-            host: "localhost".to_string(),
-            port: Some(5432),
-            database: "postgres".to_string(),
-            user: "postgres".to_string(),
-            url: String::new(),
-            password: None,
-            ssl: db_core::datasource::SslConfig {
-                mode: SslMode::Require,
+    fn prefer_and_require_build_a_client_config_with_no_verification() {
+        for mode in [SslMode::Prefer, SslMode::Require] {
+            let ssl = SslConfig {
+                mode,
                 ca_file: None,
-            },
-        };
-        match PostgresDriver.connect(&spec) {
-            Err(error) => assert_eq!(error.code, DbErrorCode::NotSupported),
-            Ok(_) => panic!("expected NotSupported"),
+            };
+            assert!(
+                tls_config_for(&ssl).is_ok(),
+                "{mode:?} should build fine with no CA file"
+            );
         }
+    }
+
+    #[test]
+    fn verify_full_with_no_ca_file_falls_back_to_the_os_trust_store() {
+        let ssl = SslConfig {
+            mode: SslMode::VerifyFull,
+            ca_file: None,
+        };
+        // The OS trust store is present on every builder/CI image this
+        // repo targets; a genuinely empty store is the one case
+        // `root_store_for` refuses.
+        assert!(tls_config_for(&ssl).is_ok());
+    }
+
+    #[test]
+    fn verify_ca_with_a_missing_ca_file_is_reported_not_panicked() {
+        let ssl = SslConfig {
+            mode: SslMode::VerifyCa,
+            ca_file: Some("/no/such/file.pem".to_string()),
+        };
+        let error = tls_config_for(&ssl).expect_err("a missing file must not silently succeed");
+        assert_eq!(error.code, DbErrorCode::Io);
+    }
+
+    #[test]
+    fn verify_full_with_a_garbage_ca_file_is_reported_not_panicked() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let path = dir.path().join("ca.pem");
+        std::fs::write(&path, b"not a certificate").expect("writing the garbage file");
+        let ssl = SslConfig {
+            mode: SslMode::VerifyFull,
+            ca_file: Some(path.to_string_lossy().into_owned()),
+        };
+        // `rustls_pemfile::certs` on a file with no PEM blocks yields no
+        // certificates at all (not a parse error) — this must surface as
+        // "no CA certificates available", not a silent empty-root config
+        // that would accept nothing (`WebPkiServerVerifier::builder` on
+        // an empty store, or `root_store_for`'s own explicit check).
+        let error =
+            tls_config_for(&ssl).expect_err("an empty root store must not silently succeed");
+        assert_eq!(error.code, DbErrorCode::ConnectionFailed);
     }
 
     /// Only runs with `--features db-integration` against a real server

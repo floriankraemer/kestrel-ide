@@ -4,6 +4,7 @@
 #include "database_dialogs.h"
 #include "database_exchange_actions.h"
 #include "dock_layout.h"
+#include "e2e_mark.h"
 #include "editor_tabs.h"
 #include "result_grid_view.h"
 
@@ -17,6 +18,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
 
 namespace ui_shell {
@@ -165,6 +167,18 @@ void DatabaseResultsPanel::onExecutionStarted(quint64 tabId, quint64 resultId, q
     page.grid->setResultId(resultId);
     page.subTabs->setCurrentWidget(page.grid);
     consoleTabs_->setCurrentWidget(page.root);
+    // E2E only (`crates/app/tests/e2e_database_console.rs`): the NFR
+    // table's "first row" timing starts here, at Run — never at the
+    // console-bar click itself, which races the FFI call that produces
+    // this `resultId` in the first place.
+    e2eMark(QStringLiteral("{\"ev\":\"db_exec_started\",\"resultId\":%1}").arg(resultId));
+    // One turn of the event loop later: `page.grid` may be becoming the
+    // current tab for the very first time right on this call (a page is
+    // created lazily, `DatabaseResultsPanel`'s own doc comment), so its
+    // geometry needs a turn to settle before `markE2eGridRect` reads it —
+    // see that method's own doc comment.
+    ResultGridView *grid = page.grid;
+    QTimer::singleShot(0, this, [grid, resultId]() { grid->markE2eGridRect(resultId); });
 }
 
 void DatabaseResultsPanel::onRowsAppended(quint64 resultId, quint64 first, quint64 count)
@@ -173,6 +187,13 @@ void DatabaseResultsPanel::onRowsAppended(quint64 resultId, quint64 first, quint
     if (it != pages_.end()) {
         it.value().grid->rowsAppended(resultId, first, count);
     }
+    // E2E only: the NFR table's "first row" timing ends at the *first*
+    // of these per result — every later one is `rowPage`'s own concern,
+    // not this mark's (see `ResultTableModel::ensurePage`).
+    e2eMark(QStringLiteral("{\"ev\":\"db_rows_appended\",\"resultId\":%1,\"first\":%2,\"count\":%3}")
+              .arg(resultId)
+              .arg(first)
+              .arg(count));
 }
 
 void DatabaseResultsPanel::onExecutionFinished(quint64 resultId, bool ok, quint64 affected,
@@ -186,6 +207,15 @@ void DatabaseResultsPanel::onExecutionFinished(quint64 resultId, bool ok, quint6
     if (!ok) {
         it.value().output->appendPlainText(QString(error.message));
     }
+    // E2E only: `error.code == 3` is `DbErrorCode::Cancelled` — the
+    // console-bar Cancel flow's own outcome (`docs/architecture/
+    // database-tools.md` §4's "two cancellation layers").
+    e2eMark(QStringLiteral("{\"ev\":\"db_exec_finished\",\"resultId\":%1,\"ok\":%2,"
+                            "\"errorCode\":%3,\"elapsedMs\":%4}")
+              .arg(resultId)
+              .arg(ok ? "true" : "false")
+              .arg(error.code)
+              .arg(elapsedMs));
 }
 
 void DatabaseResultsPanel::exportCurrentResult(quint64 tabId)
@@ -265,6 +295,13 @@ DatabaseResultsPanel *buildDatabaseResultsDock(ads::CDockManager *dockManager,
     docks->registerDock(QStringLiteral("databaseResults"), dock, ads::BottomDockWidgetArea,
                         relativeTo);
     docks->hide(QStringLiteral("databaseResults"));
+    // E2E only — see `ContainersPanel::refreshE2eRects`'s own doc comment
+    // for why this waits a turn of the event loop past `visibilityChanged`.
+    QObject::connect(dock, &ads::CDockWidget::visibilityChanged, panel, [panel](bool visible) {
+        if (visible) {
+            QTimer::singleShot(0, panel, [panel]() { panel->bar()->markE2eToolbarRects(); });
+        }
+    });
     return panel;
 }
 

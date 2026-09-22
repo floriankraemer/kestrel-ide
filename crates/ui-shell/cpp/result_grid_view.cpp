@@ -1,5 +1,6 @@
 #include "result_grid_view.h"
 
+#include "e2e_mark.h"
 #include "result_table_model.h"
 #include "result_view_modes.h"
 #include "value_editor_dialog.h"
@@ -22,6 +23,7 @@
 #include <QStackedWidget>
 #include <QStandardItemModel>
 #include <QTableView>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
 #include <QVBoxLayout>
@@ -283,6 +285,19 @@ void ResultGridView::rowsAppended(quint64 resultId, quint64 first, quint64 count
         return;
     }
     model_->rowsAppended(first, count);
+}
+
+void ResultGridView::markE2eGridRect(quint64 resultId) const
+{
+    const QRect rect = tableView_->viewport()->rect();
+    const QPoint origin = tableView_->viewport()->mapToGlobal(rect.topLeft());
+    e2eMark(QStringLiteral("{\"ev\":\"database_grid_rect\",\"resultId\":%1,"
+                            "\"rect\":[%2,%3,%4,%5]}")
+              .arg(resultId)
+              .arg(origin.x())
+              .arg(origin.y())
+              .arg(rect.width())
+              .arg(rect.height()));
 }
 
 void ResultGridView::executionFinished(quint64 resultId, bool ok, quint64 affected,

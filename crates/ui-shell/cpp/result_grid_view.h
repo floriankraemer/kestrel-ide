@@ -49,6 +49,16 @@ public:
     void setResultId(quint64 resultId);
     // `rowsAppended`'s handler.
     void rowsAppended(quint64 resultId, quint64 first, quint64 count);
+
+    // E2E only (`crates/app/tests/e2e_database_console.rs`): the grid's
+    // own screen rect, so a flow that needs to scroll it (to page through
+    // a large result and sample `rowPage` timings) has somewhere to click
+    // first. Called from `DatabaseResultsPanel::onExecutionStarted`, one
+    // turn of the event loop after this page becomes the current tab —
+    // the same "mark it at the moment it actually becomes visible, not
+    // some arbitrary time after" fix `DatabaseConsoleBar::
+    // refreshForCurrentTab`'s own toolbar-rects mark needed.
+    void markE2eGridRect(quint64 resultId) const;
     // `executionFinished`'s handler: updates the row count/elapsed status.
     void executionFinished(quint64 resultId, bool ok, quint64 affected, quint64 elapsedMs);
     // `ConsoleService::editabilityChanged`'s handler (F4.1).

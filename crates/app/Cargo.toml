@@ -35,3 +35,16 @@ tempfile = "3"
 # `qCompress`ed XML, base64'd through `window_state`.
 base64 = "0.22"
 flate2 = "1"
+# Only for `e2e_database.rs`/`e2e_database_console.rs`: builds the fixture
+# SQLite `.db` file each test seeds directly — raw `rusqlite`, the same
+# pinned version and `bundled` feature `db-drivers`' own `sqlite` feature
+# uses. Not `db-drivers` itself: the running `app` process is what
+# exercises `db_drivers::sqlite` (through the Add Data Source / tree /
+# console flow this suite drives over X11), and the test process only
+# needs to put bytes on disk, so pulling the whole crate in here would be
+# an unused dependency — the F1.6 "sqlite not yet wired as an e2e
+# dependency" row in `layering.md` is closed by this line, not by an
+# unused `db-drivers` edge. Invisible to `cargo tree -p e2e -e normal`
+# either way (`e2e` itself still depends on no workspace crate, ADR-0024;
+# this is `app`'s own dev-dependency).
+rusqlite = { version = "0.32", features = ["bundled"] }

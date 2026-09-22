@@ -249,6 +249,14 @@ async fn authenticate(
     }
 }
 
+/// Authenticates through whichever SSH agent this platform exposes.
+///
+/// `russh`'s `AgentClient::connect_env` is `#[cfg(unix)]` only: Windows has
+/// no `SSH_AUTH_SOCK` socket, it has OpenSSH's named pipe
+/// (`\\.\pipe\openssh-ssh-agent`, overridable through `SSH_AUTH_SOCK`) and
+/// Pageant. The connection is therefore per-platform; the identity loop
+/// below is shared, generic over whatever stream the agent client rides on.
+#[cfg(unix)]
 async fn authenticate_via_agent(
     handle: &mut Handle<HostKeyRecorder>,
     user: &str,
@@ -256,6 +264,41 @@ async fn authenticate_via_agent(
     let mut agent = AgentClient::connect_env()
         .await
         .map_err(|error| tunnel_err(format!("could not reach ssh-agent: {error}")))?;
+    authenticate_with_agent(handle, user, &mut agent).await
+}
+
+#[cfg(windows)]
+async fn authenticate_via_agent(
+    handle: &mut Handle<HostKeyRecorder>,
+    user: &str,
+) -> Result<russh::client::AuthResult, DbError> {
+    // OpenSSH for Windows first (the agent `ssh.exe` itself uses), Pageant
+    // second (PuTTY's, what most key-file users on Windows already run).
+    let pipe = std::env::var("SSH_AUTH_SOCK")
+        .unwrap_or_else(|_| r"\\.\pipe\openssh-ssh-agent".to_string());
+    match AgentClient::connect_named_pipe(&pipe).await {
+        Ok(mut agent) => authenticate_with_agent(handle, user, &mut agent).await,
+        Err(pipe_error) => {
+            let mut agent = AgentClient::connect_pageant().await.map_err(|error| {
+                tunnel_err(format!(
+                    "could not reach an SSH agent: {pipe} ({pipe_error}), Pageant ({error})"
+                ))
+            })?;
+            authenticate_with_agent(handle, user, &mut agent).await
+        }
+    }
+}
+
+/// The identity loop both platforms share: ask the agent what it holds and
+/// offer each public key until the server accepts one.
+async fn authenticate_with_agent<S>(
+    handle: &mut Handle<HostKeyRecorder>,
+    user: &str,
+    agent: &mut AgentClient<S>,
+) -> Result<russh::client::AuthResult, DbError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     let identities = agent
         .request_identities()
         .await
@@ -270,7 +313,7 @@ async fn authenticate_via_agent(
             continue;
         };
         let result = handle
-            .authenticate_publickey_with(user, key, hash_alg, &mut agent)
+            .authenticate_publickey_with(user, key, hash_alg, agent)
             .await
             .map_err(|error| tunnel_err(format!("ssh-agent auth failed: {error:?}")))?;
         if result.success() {

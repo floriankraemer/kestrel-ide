@@ -702,7 +702,9 @@ DatabasePanel *buildDatabaseDock(ads::CDockManager *dockManager, DockRegistry *d
     auto *panel = new DatabasePanel(databaseService, exchangeService, documentManager, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Database"));
     dock->setWidget(panel);
-    docks->registerDock(QStringLiteral("database"), dock, ads::RightDockWidgetArea, relativeTo);
+    // Tabbed into the existing right area (Structure/AI Chat) rather than
+    // splitting a second right column — same reason as `databaseResults`.
+    docks->registerDock(QStringLiteral("database"), dock, ads::CenterDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("database"));
     // E2E only — see `ContainersPanel::refreshE2eRects`'s own doc comment
     // for why this waits a turn of the event loop past `visibilityChanged`.

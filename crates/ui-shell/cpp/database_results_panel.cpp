@@ -292,7 +292,11 @@ DatabaseResultsPanel *buildDatabaseResultsDock(ads::CDockManager *dockManager,
                                            exchangeService, appSettings, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Database Results"));
     dock->setWidget(panel);
-    docks->registerDock(QStringLiteral("databaseResults"), dock, ads::BottomDockWidgetArea,
+    // Tabbed *into* the existing bottom area (CenterDockWidgetArea relative
+    // to it) like every other bottom dock — `BottomDockWidgetArea` would
+    // split a second bottom row that keeps stealing editor height even while
+    // the dock is hidden (found by the minimap E2E flow's strip-height premise).
+    docks->registerDock(QStringLiteral("databaseResults"), dock, ads::CenterDockWidgetArea,
                         relativeTo);
     docks->hide(QStringLiteral("databaseResults"));
     // E2E only — see `ContainersPanel::refreshE2eRects`'s own doc comment

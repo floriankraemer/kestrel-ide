@@ -309,7 +309,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | G1.3 — `cpp/tool_window_factories.{h,cpp}`, `main_window.cpp:383-384` migrated to the factory-table loop | done | 4c0b133, c2d88a1 |
 | G1.4 — `settings_dialog.cpp` page-factory table, `l.72-97`/`l.311-326` migrated | partial (presence-guarded, not a generic page-factory table; scope-mismatch fallback unexercised — see `database-tools.md` §7) | f18e9a7 |
 | G1.5 — `jvm-build-tools/plugin.toml` gains `tool-windows`/`settings-pages` rows; new `builtin/containers/plugin.toml` (manifest-only, amends ADR-0055) | done | d3e0f5a |
-| G1.6 — `e2e_containers` assertion: disabling `containers` removes the View entry | done (FY) — extends `e2e_containers_settings_test_connection` (14 flows unchanged); compiles clean, unit/lint green; could not confirm green under `../mk e2e-repeat` in this phase's sandbox (`main_window_shown` timeout reproduces even on the pre-existing, unmodified test — sandbox contention, not this change, see `database-tools.md` §10); main session's wave-end E2E pass gives it its real run | 743da59, 4569b3a |
+| G1.6 — `e2e_containers` assertion: disabling `containers` removes the View entry | done (FY) — extends `e2e_containers_settings_test_connection` (14 flows unchanged); green 3/3 under `../mk e2e-repeat N=3`. Found and fixed a real crash along the way: disabling `containers`/`database`/`jvm-build-tools` segfaulted the next launch (`main_window.cpp`/`build_tools_wiring.cpp` dereferenced their now-null panel pointers unconditionally) — see `database-tools.md` §10/§11 | 743da59, 4569b3a, ecb9714 |
 
 ### F1 — foundation
 

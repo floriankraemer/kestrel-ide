@@ -442,13 +442,17 @@ mod integration_tests {
     use super::*;
     use db_core::datasource::SslMode;
 
-    /// Compiles a real connect-through-a-tunnel path against the `sshd`
-    /// service `docker/db-compose.yml` adds (env `IDE_DB_SSH_HOST` etc.) —
-    /// not run in this sandbox (no network services available here), only
-    /// proven to compile and type-check.
+    /// The real connect-through-a-tunnel path against the `sshd` service
+    /// `docker/db-compose.yml` adds (env `IDE_DB_SSH_*`, `make test-db`):
+    /// the first open is refused with `HostKeyUnknown` (the sandbox's
+    /// `$HOME/.ssh/known_hosts` is empty — the same posture a first-time
+    /// user hits), the prompt's "Accept" path records the key, the retry
+    /// opens, and a real Postgres round trip runs through the forwarded
+    /// port to prove the tunnel forwards bytes and not just a listener.
     #[test]
     #[ignore = "needs docker/db-compose.yml's sshd + postgres services"]
     fn tunnels_through_the_compose_sshd_to_postgres() {
+        use db_core::driver::{Driver, ExecOptions, Execution, Statement};
         let host = std::env::var("IDE_DB_SSH_HOST").expect("IDE_DB_SSH_HOST");
         let port: u16 = std::env::var("IDE_DB_SSH_PORT")
             .unwrap_or_else(|_| "22".to_string())
@@ -456,17 +460,42 @@ mod integration_tests {
             .expect("IDE_DB_SSH_PORT");
         let user = std::env::var("IDE_DB_SSH_USER").expect("IDE_DB_SSH_USER");
         let password = std::env::var("IDE_DB_SSH_PASSWORD").expect("IDE_DB_SSH_PASSWORD");
-        let _ = SslMode::Disable; // keep the import meaningful once this test grows a real assertion
         let ssh = SshConfig {
-            host,
+            host: host.clone(),
             port,
             user,
             auth: SshAuthMode::Password,
             key_file: None,
             password: Some(password),
         };
-        let tunnel = RusshTunnel::open(&ssh, "postgres", 5432).expect("tunnel open");
+        let tunnel = match RusshTunnel::open(&ssh, "postgres", 5432) {
+            Ok(tunnel) => tunnel,
+            Err(error) if error.code == DbErrorCode::HostKeyUnknown => {
+                accept_host_key(&host, port).expect("accept the compose sshd's host key");
+                RusshTunnel::open(&ssh, "postgres", 5432).expect("tunnel open after accept")
+            }
+            Err(error) => panic!("tunnel open: {error:?}"),
+        };
         assert!(tunnel.local_port() > 0);
+
+        let mut spec = crate::testsupport::postgres_test_spec().expect("IDE_DB_POSTGRES_URL");
+        spec.host = "127.0.0.1".to_string();
+        spec.port = Some(tunnel.local_port());
+        spec.ssl = db_core::datasource::SslConfig {
+            mode: SslMode::Disable,
+            ca_file: None,
+        };
+        let mut conn = crate::postgres::PostgresDriver
+            .connect(&spec)
+            .expect("connect through the tunnel");
+        let Execution::Rows(mut stream) = conn
+            .execute(&Statement::sql("SELECT 42"), &ExecOptions::default())
+            .expect("execute through the tunnel")
+        else {
+            panic!("expected rows");
+        };
+        let batch = stream.next_batch().expect("batch").expect("one batch");
+        assert_eq!(batch.rows[0][0], db_core::value::Value::Int(42));
     }
 }
 

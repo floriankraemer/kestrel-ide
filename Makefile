@@ -100,10 +100,14 @@ jvm-ci: ## Inner half of `test-jvm` — run inside the image
 # stage yet — that lands in F8.6 alongside the ODBC client-tools install;
 # for now the compose service is reached over `--network host`, the same
 # loopback-only posture `docker/db-compose.yml` publishes it under).
-test-db: linux-image ## Bring up docker/db-compose.yml and run the real-Postgres integration tests
+test-db: linux-image ## Bring up docker/db-compose.yml and run the real-server integration tests (postgres, mongo, redis, scylla, sshd)
 	docker compose -f docker/db-compose.yml up -d --wait
 	$(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) --network host \
 		-e IDE_DB_POSTGRES_URL=postgres://ide:ide@127.0.0.1:55432/ide_test \
+		-e IDE_DB_MONGO_URL=mongodb://127.0.0.1:55017 \
+		-e IDE_DB_REDIS_URL=redis://127.0.0.1:56379 \
+		-e IDE_DB_CASSANDRA_HOSTS=127.0.0.1:59042 \
+		-e IDE_DB_SSH_HOST=127.0.0.1 -e IDE_DB_SSH_PORT=52222 -e IDE_DB_SSH_USER=ide -e IDE_DB_SSH_PASSWORD=ide \
 		$(LINUX_IMAGE) $(MAKE) db-ci; \
 		status=$$?; \
 		docker compose -f docker/db-compose.yml down -v; \
@@ -111,6 +115,9 @@ test-db: linux-image ## Bring up docker/db-compose.yml and run the real-Postgres
 
 db-ci: ## Inner half of `test-db` — run inside the image
 	cargo nextest run -p db-drivers --features db-integration
+	# The sshd-backed tunnel test is #[ignore]d so `make test` never needs a
+	# service; the compose stack's sshd is up here, so run it explicitly.
+	cargo nextest run -p db-drivers --features db-integration --run-ignored only ssh
 
 lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings

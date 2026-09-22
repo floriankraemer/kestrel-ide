@@ -1316,10 +1316,12 @@ mod tests {
             ffi::FfiDbRow {
                 cells: QString::from(format!("1{CELL_SEP}hello").as_str()),
                 nulls: QString::from(format!("0{CELL_SEP}0").as_str()),
+                flags: 0,
             },
             ffi::FfiDbRow {
                 cells: QString::from(format!("2{CELL_SEP}").as_str()),
                 nulls: QString::from(format!("0{CELL_SEP}1").as_str()),
+                flags: 0,
             },
         ];
         let options = FfiExportOptions {
@@ -1347,7 +1349,7 @@ mod tests {
                     nullable: Some(*nullable),
                     default: None,
                     primary_key: *pk,
-                    ttl_seconds: None,
+                    ..NodeDetail::default()
                 })
             })
             .collect();

@@ -476,9 +476,23 @@ impl ffi::DataSourceEditor {
         {
             setting.script_policy = existing.script_policy;
         }
+        let previous_read_only = self.saved.borrow().as_ref().map(|s| s.read_only);
+        let source_id = setting.id.clone();
+        let new_read_only = setting.read_only;
         let result = upsert_source(setting, *self.scope.borrow());
         if result.code == errors::CODE_OK {
             *self.saved.borrow_mut() = Some(draft);
+            // F4a residual (database-tools.md §11): a read-only flip must
+            // reach every console already attached to this source, not
+            // just future ones — `rebuild_guards_for_source`'s own doc
+            // comment.
+            if previous_read_only != Some(new_read_only) {
+                super::edit::rebuild_guards_for_source(
+                    &crate::bridge::registry::shared_database_consoles(),
+                    &source_id,
+                    new_read_only,
+                );
+            }
         }
         result
     }

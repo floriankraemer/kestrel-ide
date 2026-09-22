@@ -289,6 +289,19 @@ async fn authenticate_via_agent(
     }
 }
 
+/// The public keys an agent's identity list offers, in the order the agent
+/// returned them — anything that is not a public key (a certificate, a
+/// future variant) is skipped rather than guessed at.
+fn agent_public_keys(identities: Vec<AgentIdentity>) -> Vec<PublicKey> {
+    identities
+        .into_iter()
+        .filter_map(|identity| match identity {
+            AgentIdentity::PublicKey { key, .. } => Some(key),
+            _ => None,
+        })
+        .collect()
+}
+
 /// The identity loop both platforms share: ask the agent what it holds and
 /// offer each public key until the server accepts one.
 async fn authenticate_with_agent<S>(
@@ -308,10 +321,7 @@ where
         .await
         .map_err(|error| tunnel_err(format!("SSH handshake failed: {error}")))?
         .flatten();
-    for identity in identities {
-        let AgentIdentity::PublicKey { key, .. } = identity else {
-            continue;
-        };
+    for key in agent_public_keys(identities) {
         let result = handle
             .authenticate_publickey_with(user, key, hash_alg, agent)
             .await
@@ -708,6 +718,28 @@ mod tests {
             None => std::env::remove_var("HOME"),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_public_keys_keeps_only_public_keys_in_order() {
+        let first = test_public_key();
+        let second = test_public_key();
+        let keys = agent_public_keys(vec![
+            AgentIdentity::PublicKey {
+                key: first.clone(),
+                comment: "first".to_string(),
+            },
+            AgentIdentity::PublicKey {
+                key: second.clone(),
+                comment: "second".to_string(),
+            },
+        ]);
+        assert_eq!(keys, vec![first, second]);
+    }
+
+    #[test]
+    fn agent_public_keys_of_nothing_is_empty() {
+        assert!(agent_public_keys(Vec::new()).is_empty());
     }
 
     #[test]

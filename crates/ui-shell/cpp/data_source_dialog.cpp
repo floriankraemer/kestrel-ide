@@ -58,6 +58,24 @@ QString databaseFieldLabel(const QString &key)
     return QObject::tr("Database:");
 }
 
+// F7c: which extra fields a family needs is decided in Rust
+// (`db_core::console::extra_fields`) — this only maps a field's stable
+// `key` to its `tr()`'d label text (ADR-0049), the same convention
+// `databaseFieldLabel` above already follows.
+QString extraFieldLabel(const QString &key)
+{
+    if (key == QLatin1String("replica_set")) {
+        return QObject::tr("Replica set:");
+    }
+    if (key == QLatin1String("tls")) {
+        return QObject::tr("TLS");
+    }
+    if (key == QLatin1String("local_dc")) {
+        return QObject::tr("Local datacenter:");
+    }
+    return key;
+}
+
 QLabel *colorSwatch(QWidget *parent, const QString &hex)
 {
     auto *swatch = new QLabel(parent);
@@ -215,6 +233,43 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
     optionsForm->addRow(QObject::tr("URL:"), url);
     tabs->addTab(options, QObject::tr("Options"));
 
+    // F7c: the driver's family's own extra fields (Mongo's replica set,
+    // Redis's TLS toggle, Cassandra's local datacenter) — built generically
+    // from `editor->extraFields()`'s descriptor, never a per-family `if` in
+    // this view (the hard layering rule this file's header already states).
+    // Rebuilt (the whole row replaced) whenever the driver combo changes,
+    // since a different driver's family may need a different field set.
+    QWidget *extraFieldsRow = nullptr;
+    const auto rebuildExtraFields = [editor, options, optionsForm, &extraFieldsRow]() {
+        if (extraFieldsRow) {
+            optionsForm->removeRow(extraFieldsRow);
+            extraFieldsRow = nullptr;
+        }
+        auto *container = new QWidget(options);
+        auto *containerForm = new QFormLayout(container);
+        containerForm->setContentsMargins(0, 0, 0, 0);
+        for (const FfiDbExtraField &field : editor->extraFields()) {
+            const QString key = field.key;
+            const QString current = editor->option(key);
+            if (QString(field.kind) == QStringLiteral("bool")) {
+                auto *check = new QCheckBox(extraFieldLabel(key), container);
+                check->setChecked(current == QStringLiteral("true"));
+                QObject::connect(check, &QCheckBox::toggled, editor, [editor, key](bool on) {
+                    editor->setOption(key, on ? QStringLiteral("true") : QString());
+                });
+                containerForm->addRow(check);
+            } else {
+                auto *lineEdit = new QLineEdit(current, container);
+                QObject::connect(lineEdit, &QLineEdit::textChanged, editor,
+                                 [editor, key](const QString &text) { editor->setOption(key, text); });
+                containerForm->addRow(extraFieldLabel(key), lineEdit);
+            }
+        }
+        optionsForm->addRow(container);
+        extraFieldsRow = container;
+    };
+    rebuildExtraFields();
+
     auto *buttons =
       new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     layout->addWidget(buttons);
@@ -261,14 +316,16 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
         editor->setName(text);
         refreshProblems();
     });
-    QObject::connect(driver, &QComboBox::currentIndexChanged, editor,
-                     [editor, driver, refreshDriverStatus, generalForm, database](int) {
-                         editor->setDriver(driver->currentData().toString());
-                         refreshDriverStatus();
-                         if (auto *label = qobject_cast<QLabel *>(generalForm->labelForField(database))) {
-                             label->setText(databaseFieldLabel(editor->databaseFieldLabelKey()));
-                         }
-                     });
+    QObject::connect(
+      driver, &QComboBox::currentIndexChanged, editor,
+      [editor, driver, refreshDriverStatus, generalForm, database, rebuildExtraFields](int) {
+          editor->setDriver(driver->currentData().toString());
+          refreshDriverStatus();
+          if (auto *label = qobject_cast<QLabel *>(generalForm->labelForField(database))) {
+              label->setText(databaseFieldLabel(editor->databaseFieldLabelKey()));
+          }
+          rebuildExtraFields();
+      });
     QObject::connect(driverActionButton, &QPushButton::clicked, general,
                      [driver, driverInstallService, driverActionButton, refreshDriverStatus]() {
                          const QString driverId = driver->currentData().toString();

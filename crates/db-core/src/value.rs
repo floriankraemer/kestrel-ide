@@ -281,8 +281,15 @@ pub fn parse_text(text: &str, type_name: &str) -> Result<Value, String> {
     Ok(Value::Text(text.to_string()))
 }
 
+/// `text.len()` alone is a *byte* length, and byte-index slicing a `&str`
+/// panics when a slice boundary lands inside a multi-byte UTF-8 character
+/// — a real crash the `security-expert`'s F4.5 review found (a value
+/// editor cell typed as e.g. `"1€2€"` has an even byte length but no
+/// 2-byte-aligned char boundary at all). Requiring every byte to be an
+/// ASCII hex digit first guarantees every 2-byte chunk is already a valid
+/// boundary, so the slicing below can never panic.
 fn parse_hex(text: &str) -> Option<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..text.len())
@@ -520,6 +527,16 @@ mod tests {
             parse_text("Robert'); DROP TABLE students;--", "text").unwrap(),
             Value::Text("Robert'); DROP TABLE students;--".to_string())
         );
+    }
+
+    /// `security-expert`'s F4.5 finding: a multi-byte UTF-8 character
+    /// padded to an even *byte* length has no 2-byte-aligned char
+    /// boundary at all — `parse_hex`'s old byte-index slicing panicked
+    /// on this instead of returning `Err`.
+    #[test]
+    fn parse_text_rejects_non_ascii_bytea_text_instead_of_panicking() {
+        assert!(parse_text("1€2€", "bytea").is_err());
+        assert!(parse_text("€€", "blob").is_err());
     }
 
     #[test]

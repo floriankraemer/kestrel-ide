@@ -23,13 +23,13 @@ use db_core::value::{ColumnMeta, Value};
 use crate::bridge::errors;
 use crate::bridge::ffi::{self, FfiResult};
 
-use super::console::ResultState;
+use super::console::{IntrospectPurpose, ResultState};
 use super::sessions::SessionCommand;
 
 /// The data editor's editability decision for one result (F4.1).
 pub(crate) enum EditState {
     /// Not yet decided — no columns yet, or a `Full`-level introspect is
-    /// still in flight (`ConsoleState::pending_edit_lookups`).
+    /// still in flight (`ConsoleState::pending_introspects`).
     Unknown,
     /// Read-only, with the reason the grid shows.
     NotEditable(String),
@@ -117,6 +117,19 @@ impl ffi::ConsoleService {
         if console.submitting.is_some() {
             return errors::failure(errors::CODE_REFUSED, "a submit is already in progress");
         }
+        // The same client-side read-only check every other console-run
+        // path already runs before dispatch (`begin_run`/`apply_clauses`
+        // in `console.rs`) — a `security-expert` F4.5 finding: `submit`
+        // was the one path that compiled straight to `SessionCommand::
+        // Apply` without ever consulting `console.guard`, so a source
+        // whose read-only flag flips after a grid is already open (its
+        // editability decision is cached in `ResultState::edit` and
+        // never re-checked) had nothing left stopping the write.
+        for statement in &statements {
+            if let Err(error) = console.guard.check(&statement.text) {
+                return errors::failure(errors::CODE_REFUSED, error.message);
+            }
+        }
         match console.worker.send(SessionCommand::Apply { statements }) {
             Ok(()) => {
                 console.submitting = Some(result_id);
@@ -167,15 +180,23 @@ impl ffi::ConsoleService {
                             ..Default::default()
                         };
                         let console = shared.consoles.get_mut(&tab_id).unwrap();
-                        console.pending_edit_lookups.push_back((result_id, table));
-                        Some((
-                            console.worker.send(SessionCommand::Introspect {
-                                scope,
-                                level: db_core::schema::IntrospectLevel::Full,
-                                force: false,
-                            }),
-                            result_id,
-                        ))
+                        let sent = console.worker.send(SessionCommand::Introspect {
+                            scope,
+                            level: db_core::schema::IntrospectLevel::Full,
+                            force: false,
+                        });
+                        // Only queued once the dispatch actually succeeded
+                        // — a failed `send` produces no reply, so nothing
+                        // must ever try to pop this from the front of
+                        // `pending_introspects` later (`apply_event`'s own
+                        // doc comment on why that queue must stay exactly
+                        // in dispatch order).
+                        if sent.is_ok() {
+                            console
+                                .pending_introspects
+                                .push_back(IntrospectPurpose::EditLookup(result_id, table));
+                        }
+                        Some(sent)
                     }
                     None => {
                         shared.results.get_mut(&result_id).unwrap().edit = EditState::NotEditable(
@@ -201,24 +222,17 @@ impl ffi::ConsoleService {
                     QString::from(reason.as_str()),
                 );
             }
-            Some((Err(error), result_id)) => {
-                let mut shared = self.shared.borrow_mut();
-                if let Some(console) = shared.consoles.get_mut(&tab_id) {
-                    console
-                        .pending_edit_lookups
-                        .retain(|(id, _)| *id != result_id);
-                }
-                if let Some(result) = shared.results.get_mut(&result_id) {
+            Some(Err(error)) => {
+                if let Some(result) = self.shared.borrow_mut().results.get_mut(&result_id) {
                     result.edit = EditState::NotEditable(error.to_string());
                 }
-                drop(shared);
                 self.as_mut().editability_changed(
                     result_id,
                     false,
                     QString::from(error.to_string().as_str()),
                 );
             }
-            Some((Ok(()), _)) => {}
+            Some(Ok(())) => {}
         }
     }
 
@@ -275,24 +289,17 @@ impl ffi::ConsoleService {
 }
 
 /// Resolves the `Full`-level introspect [`ffi::ConsoleService::
-/// start_editability_check`] dispatched for the result at the front of
-/// `console.pending_edit_lookups` — that queue is FIFO in dispatch order,
-/// and the worker runs commands in order, so the front entry is always
-/// the one this reply answers.
+/// start_editability_check`] dispatched for `result_id`/`table` — the
+/// caller (`apply_event`'s `Introspected` branch, `console.rs`) already
+/// popped `console.pending_introspects`'s front entry to get here, so
+/// this never needs to touch that queue itself.
 pub(crate) fn apply_edit_lookup(
     mut service: Pin<&mut ffi::ConsoleService>,
     tab_id: u64,
+    result_id: u64,
+    table: db_sql::single_table::TableRef,
     result: Result<db_core::schema::SchemaSnapshot, DbError>,
 ) {
-    let Some((result_id, table)) = ({
-        let mut shared = service.shared.borrow_mut();
-        shared
-            .consoles
-            .get_mut(&tab_id)
-            .and_then(|console| console.pending_edit_lookups.pop_front())
-    }) else {
-        return;
-    };
     let (no_pk_policy, columns) = {
         let shared = service.shared.borrow();
         let source_id = shared

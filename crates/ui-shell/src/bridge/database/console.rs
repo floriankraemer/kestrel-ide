@@ -95,17 +95,33 @@ pub(crate) struct ConsoleState {
     /// `attach` time lands, and always empty for a dialect with no schema
     /// concept (SQLite).
     pub(crate) schemas: Vec<String>,
-    /// Result ids awaiting a `Full`-level introspect's answer to F4.1's
-    /// editability question, oldest first — the worker runs commands in
-    /// order, so the front of this queue is always the one the next
-    /// `Full`-level `Introspected` reply answers.
-    pub(crate) pending_edit_lookups:
-        std::collections::VecDeque<(u64, db_sql::single_table::TableRef)>,
+    /// Every `Introspect` this console has dispatched and not yet been
+    /// answered for, oldest first — the worker is one thread processing
+    /// one command at a time over an ordered channel, so a reply always
+    /// answers the front of this queue, regardless of whether it succeeds
+    /// or fails. Two different call sites dispatch `Introspect` (the
+    /// schema picker at `attach` time, F4.1's per-result editability
+    /// lookup) and a `DbError` reply carries no level/scope to tell them
+    /// apart by itself — this queue is what does, rather than the
+    /// `Ok(snapshot) => snapshot.level == Full` guess an error reply
+    /// cannot make (a real bug this queue replaces: an unrelated schema-
+    /// picker failure could otherwise resolve a pending edit-lookup with
+    /// the wrong error, or vice versa).
+    pub(crate) pending_introspects: std::collections::VecDeque<IntrospectPurpose>,
     /// The one result a `submit` (F4.2) is waiting on an `Applied` reply
     /// for — `None` once answered. A console only ever has one submit in
     /// flight at a time (the grid disables Submit while one is pending),
     /// so a single slot (not a queue) is enough.
     pub(crate) submitting: Option<u64>,
+}
+
+/// What a dispatched `Introspect` command answers — see
+/// `ConsoleState::pending_introspects`'s own doc comment.
+pub(crate) enum IntrospectPurpose {
+    /// The console bar's schema picker (`ConsoleState::schemas`).
+    SchemaPicker,
+    /// F4.1's editability lookup for one result, over the given table.
+    EditLookup(u64, db_sql::single_table::TableRef),
 }
 
 pub(crate) struct PendingScript {
@@ -315,7 +331,7 @@ impl ffi::ConsoleService {
                                 current_result: None,
                                 pending: None,
                                 schemas: Vec::new(),
-                                pending_edit_lookups: std::collections::VecDeque::new(),
+                                pending_introspects: std::collections::VecDeque::new(),
                                 submitting: None,
                             },
                         );
@@ -324,12 +340,21 @@ impl ffi::ConsoleService {
                         // initial expand always uses (`schema.rs`'s own
                         // doc comment); its reply lands on
                         // `SessionEvent::Introspected` below.
-                        if let Some(console) = service.shared.borrow().consoles.get(&tab_id) {
-                            let _ = console.worker.send(SessionCommand::Introspect {
-                                scope: db_core::schema::IntrospectScope::default(),
-                                level: db_core::schema::IntrospectLevel::Names,
-                                force: false,
-                            });
+                        if let Some(console) = service.shared.borrow_mut().consoles.get_mut(&tab_id)
+                        {
+                            if console
+                                .worker
+                                .send(SessionCommand::Introspect {
+                                    scope: db_core::schema::IntrospectScope::default(),
+                                    level: db_core::schema::IntrospectLevel::Names,
+                                    force: false,
+                                })
+                                .is_ok()
+                            {
+                                console
+                                    .pending_introspects
+                                    .push_back(IntrospectPurpose::SchemaPicker);
+                            }
                         }
                         service.as_mut().output_appended(
                             tab_id,
@@ -866,27 +891,26 @@ fn apply_event(mut service: Pin<&mut ffi::ConsoleService>, tab_id: u64, event: S
             if !is_current(&service, tab_id, generation) {
                 return;
             }
-            match result {
-                Ok(snapshot) if snapshot.level == db_core::schema::IntrospectLevel::Full => {
-                    apply_edit_lookup(service, tab_id, Ok(snapshot));
+            let purpose = {
+                let mut shared = service.shared.borrow_mut();
+                shared
+                    .consoles
+                    .get_mut(&tab_id)
+                    .and_then(|console| console.pending_introspects.pop_front())
+            };
+            match purpose {
+                Some(IntrospectPurpose::EditLookup(result_id, table)) => {
+                    apply_edit_lookup(service, tab_id, result_id, table, result);
                 }
-                Err(error)
-                    if service
-                        .shared
-                        .borrow()
-                        .consoles
-                        .get(&tab_id)
-                        .is_some_and(|c| !c.pending_edit_lookups.is_empty()) =>
-                {
-                    apply_edit_lookup(service, tab_id, Err(error));
-                }
-                Ok(snapshot) => {
-                    let names = collect_schema_names(&snapshot.roots);
-                    if let Some(console) = service.shared.borrow_mut().consoles.get_mut(&tab_id) {
-                        console.schemas = names;
+                Some(IntrospectPurpose::SchemaPicker) | None => {
+                    if let Ok(snapshot) = result {
+                        let names = collect_schema_names(&snapshot.roots);
+                        if let Some(console) = service.shared.borrow_mut().consoles.get_mut(&tab_id)
+                        {
+                            console.schemas = names;
+                        }
                     }
                 }
-                Err(_) => {}
             }
         }
         SessionEvent::Applied { generation, result } => {

@@ -177,7 +177,16 @@ baseline() {
 	# already have, split for the same reason: the View menu and
 	# SettingsContext do not exist yet inside buildCentralWidget). No
 	# further split planned.
-	crates/ui-shell/cpp/main_window.cpp) echo 1243 ;;
+	# Ratcheted down from 1243: F3.1/F3.4 add `ConsoleService`/
+	# `ResultProvider` construction and threading (2 lines each in the
+	# signature/call sites), offset by compacting five single-line
+	# per-window-QObject comments into their own construction lines.
+	# Raised from 1239 by 2 lines for F5b: one `ExchangeService`
+	# construction line (with its own explanatory comment) — the single
+	# factory-registration line the database-tools-plan agent brief
+	# allows here, threaded through to `buildCentralWidget`/
+	# `buildContributedToolWindows` (both defined elsewhere).
+	crates/ui-shell/cpp/main_window.cpp) echo 1241 ;;
 	# Raised from the 1200 ceiling by 3 lines for the jvm-build-tools
 	# plan's B4, review fix 4: a save of an open build file also reaches
 	# BuildToolsService::fileSaved, right where saveTab already forwards
@@ -189,7 +198,10 @@ baseline() {
 	# set from `build_tools_wiring.cpp`, not a second EditorTabs-owned
 	# service pointer, so this is the whole cost, not part of a larger
 	# one. No split planned for these 3 lines alone.
-	crates/ui-shell/cpp/editor_tabs.cpp) echo 1203 ;;
+	# Ratcheted down from 1203: F3.1/F3.3 compacted the containerService/
+	# databaseService virtual-document `if` blocks to one line each to
+	# make room for the `consoleFileReady` -> `openFile` connect.
+	crates/ui-shell/cpp/editor_tabs.cpp) echo 1202 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

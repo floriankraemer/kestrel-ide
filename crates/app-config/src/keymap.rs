@@ -795,6 +795,14 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // database-tools-plan F2.5: the Database dock. Unbound like
+    // `view.build`.
+    ActionDef {
+        id: "view.database",
+        label: "Database",
+        category: "View",
+        default_shortcut: "",
+    },
     // The PHP tooling plan's D5 dock. `tests_menu.cpp` has registered it
     // since that phase, but it never had a row here, so — unlike every
     // other `view.*` dock action — Search Everywhere/Find Action could not
@@ -868,6 +876,133 @@ pub const ACTIONS: &[ActionDef] = &[
         label: "Run Console",
         category: "View",
         default_shortcut: "Alt+4",
+    },
+    // database-tools-plan F3.3: the console bar's own actions.
+    ActionDef {
+        id: "database.run",
+        label: "Run Statement",
+        category: "Database",
+        default_shortcut: "Ctrl+Return",
+    },
+    // F3e: runs the whole console buffer as a script, independent of
+    // caret/selection — `database.run`'s own doc comment on how the two
+    // differ.
+    ActionDef {
+        id: "database.runScript",
+        label: "Run Script",
+        category: "Database",
+        default_shortcut: "Ctrl+Shift+Return",
+    },
+    ActionDef {
+        id: "database.cancel",
+        label: "Cancel Execution",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.commit",
+        label: "Commit",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.rollback",
+        label: "Rollback",
+        category: "Database",
+        default_shortcut: "",
+    },
+    // F4.2: the data editor's own grid actions.
+    ActionDef {
+        id: "database.submit",
+        label: "Submit",
+        category: "Database",
+        // The plan's own suggestion, `Ctrl+Return`, is already
+        // `database.run`'s default and this keymap has no per-widget-focus
+        // scoping (`Keymap::conflicts` checks every action globally) — this
+        // codebase's own free slot for the same "run/submit" gesture.
+        default_shortcut: "Ctrl+Alt+Return",
+    },
+    ActionDef {
+        id: "database.revert",
+        label: "Revert Changes",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.addRow",
+        label: "Add Row",
+        category: "Database",
+        default_shortcut: "Alt+Insert",
+    },
+    ActionDef {
+        id: "database.deleteRow",
+        label: "Delete Row",
+        category: "Database",
+        // `Ctrl+Y` (the plan's own suggestion, IntelliJ's convention) is
+        // already `edit.deleteLine`'s default in this keymap — `Ctrl+Delete`
+        // is this codebase's own free slot for the same action.
+        default_shortcut: "Ctrl+Delete",
+    },
+    ActionDef {
+        id: "database.cloneRow",
+        label: "Clone Row",
+        category: "Database",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "database.previewDml",
+        label: "Preview DML",
+        category: "Database",
+        default_shortcut: "",
+    },
+    // F4.3/F4c: the current cell's forward FK navigation — same gesture
+    // most IDEs bind "go to declaration/reference" family actions to.
+    ActionDef {
+        id: "database.goToReferencedRow",
+        label: "Go to Referenced Row",
+        category: "Database",
+        default_shortcut: "F4",
+    },
+    // F4d: reverse FK navigation ("Show referencing rows…") — a context
+    // menu action only (a whole-schema introspect is too slow for a bare
+    // keystroke to trigger unconditionally), so unbound by default.
+    ActionDef {
+        id: "database.showReferencingRows",
+        label: "Show Referencing Rows",
+        category: "Database",
+        default_shortcut: "",
+    },
+    // F4d: the result grid's view modes.
+    ActionDef {
+        id: "database.viewTable",
+        label: "View: Table",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+1",
+    },
+    ActionDef {
+        id: "database.viewTranspose",
+        label: "View: Transpose",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+2",
+    },
+    ActionDef {
+        id: "database.viewText",
+        label: "View: Text",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+3",
+    },
+    ActionDef {
+        id: "database.viewRecord",
+        label: "View: Record",
+        category: "Database",
+        default_shortcut: "Ctrl+Alt+4",
+    },
+    // F3.4/F3.5: the Results dock.
+    ActionDef {
+        id: "view.databaseResults",
+        label: "Database Results",
+        category: "View",
+        default_shortcut: "",
     },
     // Last, because the Help menu is last in the bar. Unbound by default:
     // every platform's convention for About is the menu, not a key.

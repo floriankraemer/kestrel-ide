@@ -37,7 +37,7 @@ RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IM
 RUN_JVM = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(JVM_IMAGE)
 
 .PHONY: help all test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
-	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci
+	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci test-db db-ci
 
 .DEFAULT_GOAL := help
 
@@ -95,10 +95,45 @@ jvm-ci: ## Inner half of `test-jvm` — run inside the image
 	cargo build -p app
 	IDE_E2E_JVM=1 $(E2E_XVFB) cargo test -p app --test e2e_build_tools -- --ignored --test-threads=1 --nocapture
 
+# Database Tools' real-server suite (docs/architecture/db-integration.md).
+# F1 lands PostgreSQL only, in `linux-builder` itself (no `linux-db` image
+# stage yet — that lands in F8.6 alongside the ODBC client-tools install;
+# for now the compose service is reached over `--network host`, the same
+# loopback-only posture `docker/db-compose.yml` publishes it under).
+test-db: linux-image ## Bring up docker/db-compose.yml and run the real-server integration tests (postgres, mysql, mariadb, mongo, redis, scylla, sshd)
+	docker compose -f docker/db-compose.yml up -d --wait
+	$(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) --network host \
+		-e IDE_DB_POSTGRES_URL=postgres://ide:ide@127.0.0.1:55432/ide_test \
+		-e IDE_DB_MYSQL_URL=mysql://ide:ide@127.0.0.1:53306/ide_test \
+		-e IDE_DB_MARIADB_URL=mysql://ide:ide@127.0.0.1:53307/ide_test \
+		-e IDE_DB_MONGO_URL=mongodb://127.0.0.1:55017 \
+		-e IDE_DB_REDIS_URL=redis://127.0.0.1:56379 \
+		-e IDE_DB_CASSANDRA_HOSTS=127.0.0.1:59042 \
+		-e IDE_DB_SSH_HOST=127.0.0.1 -e IDE_DB_SSH_PORT=52222 -e IDE_DB_SSH_USER=ide -e IDE_DB_SSH_PASSWORD=ide \
+		$(LINUX_IMAGE) $(MAKE) db-ci; \
+		status=$$?; \
+		docker compose -f docker/db-compose.yml down -v; \
+		exit $$status
+
+db-ci: ## Inner half of `test-db` — run inside the image
+	cargo nextest run -p db-drivers --features db-integration
+	# The sshd-backed tunnel test is #[ignore]d so `make test` never needs a
+	# service; the compose stack's sshd is up here, so run it explicitly.
+	cargo nextest run -p db-drivers --features db-integration --run-ignored only ssh
+
 lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings
 	$(RUN_LINUX) cargo fmt --all -- --check
 	$(RUN_LINUX) scripts/check-file-size.sh
+	# aws-lc-rs must never enter the tree (R2, database-tools-plan.md §13/§7): every rustls-using crate is audited
+	# to keep the `ring` provider only. Stays `--all-features`, strict: this is the only thing that catches a
+	# Windows link break before the MXE cross-build (R2). db-drivers' `cassandra` feature (F7.4, scylla 1.9) is
+	# built without scylla's `rustls-023` feature entirely — scylla's own manifest cannot be told to pick `ring`
+	# over its default `aws_lc_rs` (unlike postgres/mongodb/redis/russh, whose manifests each let a dependent
+	# choose), so Cassandra/Scylla connections stay plaintext-only (`cassandra.rs`'s `connect` refuses any
+	# `SslMode` other than `Disable`) rather than pulling `aws-lc-rs` in — see
+	# `crates/db-drivers/Cargo.toml`'s `[dependencies.scylla]` comment.
+	$(RUN_LINUX) sh -c '! cargo tree --workspace --all-features -i aws-lc-rs >/dev/null 2>&1'
 
 # Coverage measures the Qt-free crates only. `ui-shell` is a humble view and
 # `app` is a main(); both are untested by design (CLAUDE.md), and folding
@@ -135,7 +170,7 @@ e2e-ci: ## Inner half of `e2e` — run inside the builder image
 	cargo build --bin stub_server -p lsp-core
 	cargo build --bin stub_analyzer -p analysis-core
 	cargo build --bin stub_engine -p container-core
-	$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff --test e2e_analysis --test e2e_edit --test e2e_editor_popups --test e2e_containers -- --ignored --test-threads=1 --nocapture
+	$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff --test e2e_analysis --test e2e_edit --test e2e_editor_popups --test e2e_containers --test e2e_database --test e2e_database_console -- --ignored --test-threads=1 --nocapture
 
 # Burn-in: `make e2e-repeat TEST=e2e_open_project_edit_save N=20`. A flake is
 # a P1 bug in the product or the harness, so this exists to find one before
@@ -148,7 +183,7 @@ e2e-repeat: linux-image ## Repeat one E2E flow N times: make e2e-repeat TEST=<na
 		cargo build --bin stub_engine -p container-core && \
 		for i in $$(seq 1 $(N)); do \
 		echo "--- run $$i/$(N) ---"; \
-		$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff --test e2e_analysis --test e2e_edit --test e2e_editor_popups --test e2e_containers -- --ignored --exact \
+		$(E2E_XVFB) cargo test -p app --test e2e --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff --test e2e_analysis --test e2e_edit --test e2e_editor_popups --test e2e_containers --test e2e_database --test e2e_database_console -- --ignored --exact \
 			--test-threads=1 --nocapture $(TEST) || exit 1; \
 	done'
 

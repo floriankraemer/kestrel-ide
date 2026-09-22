@@ -124,6 +124,8 @@ Choosing its `HostServices` stays in `ui-shell`, because the implementation that
 `wasmtime` with fuel accounting, epoch interruption plus a watchdog, and a `StoreLimits` memory cap.
 A capability-gated `Linker`: `log` always, `notify` and `workspace-root` by declaration, `read-file` restricted to prefixes granted under `${plugin_dir}`.
 `contributes.commands` is a fully working mechanism — `WasmTier::invoke` calls a component's `on-command` by id — but it has no palette consumer: the palette's action list is `app_config::keymap::ACTIONS`, a static table, and nothing merges a plugin's contributed commands into it. Found while writing [the markdown preview plan](../markdown-preview-plan.md); wiring the palette up is not part of that plan's scope and remains open.
+Two more points, `tool-windows` and `settings-pages`, do now have a native consumer path — the database-tools plan's G1 (amends ADR-0026 as ADR-0059): `ui-shell/cpp/tool_window_factories.cpp`'s id-keyed dock-factory table and `settings_dialog.cpp`'s equivalent for pages, both reading `AppSettings::contributedToolWindows`/`contributedSettingsPages`.
+A wasm plugin may still only *declare* a tool window; it is logged and skipped until a `render-tool-window` WIT export exists, which is the same open palette-consumer question `commands` raises above, not a new one.
 A worked example plugin lives under `crates/plugin-host/examples/` (`hello-plugin`, exercising `on-command`; `preview-plugin`, exercising the preview world's `render` export added in ADR-0033).
 A trap disables the plugin with a typed error on the Plugins page; it never takes the process down, which is the whole reason for choosing a sandbox over the `dlopen` tier.
 

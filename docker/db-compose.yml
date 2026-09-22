@@ -1,0 +1,124 @@
+# Real database servers for `make test-db`/`make e2e-db`
+# (docs/architecture/db-integration.md). Nightly/on-demand only — never a
+# per-PR gate, the same `lsp-conformance`/`jvm-integration` reasoning.
+#
+# F1 lands PostgreSQL; F7 adds Mongo/Redis/Scylla/sshd; FZ adds MySQL/
+# MariaDB (this file). SQL Server (F8) still needs its own service added.
+#
+# Every version is pinned (docs/architecture/db-integration.md's "why every
+# version is pinned"): bumping one is a deliberate commit with its own
+# fixture updates, never a background `apt-get upgrade`-shaped drift.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ide
+      POSTGRES_PASSWORD: ide
+      POSTGRES_DB: ide_test
+    ports:
+      # Bound to loopback only, the same "never a wildcard address"
+      # posture ADR-0061 §5 states for the SSH tunnel's forwarded port —
+      # this is a throwaway nightly/on-demand fixture database, not a
+      # network service.
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ide -d ide_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # FZ: `IDE_DB_MYSQL_URL=mysql://ide:ide@127.0.0.1:53306/ide_test`.
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_USER: ide
+      MYSQL_PASSWORD: ide
+      MYSQL_DATABASE: ide_test
+      MYSQL_ROOT_PASSWORD: ide
+    ports:
+      - "127.0.0.1:53306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u ide -pide"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # FZ: `IDE_DB_MARIADB_URL=mysql://ide:ide@127.0.0.1:53307/ide_test`.
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_USER: ide
+      MARIADB_PASSWORD: ide
+      MARIADB_DATABASE: ide_test
+      MARIADB_ROOT_PASSWORD: ide
+    ports:
+      - "127.0.0.1:53307:3306"
+    healthcheck:
+      # `mariadb:11`'s image ships `mariadb-admin`, not the `mysqladmin`
+      # name the upstream `mysql:8.4` image still symlinks (verified
+      # against the running container: `mysqladmin` is not on `$PATH`
+      # here at all).
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u ide -pide"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # F7.2: `IDE_DB_MONGO_URL=mongodb://127.0.0.1:55017`.
+  mongo:
+    image: mongo:8
+    ports:
+      - "127.0.0.1:55017:27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # F7.3: `IDE_DB_REDIS_URL=redis://127.0.0.1:56379`.
+  redis:
+    image: redis:7
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # F7.4: `IDE_DB_CASSANDRA_HOSTS=127.0.0.1:59042`.
+  scylla:
+    image: scylladb/scylla:2026.2
+    command: --smp 1 --memory 750M --overprovisioned 1
+    ports:
+      - "127.0.0.1:59042:9042"
+    healthcheck:
+      # Scylla binds CQL to the container's own address, never 127.0.0.1.
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster' $(hostname -i)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # F7.5: the `RusshTunnel`/`CliTunnel` integration test's bastion,
+  # tunnelling to `postgres` above. `IDE_DB_SSH_HOST=127.0.0.1`,
+  # `IDE_DB_SSH_PORT=52222`, `IDE_DB_SSH_USER=ide`,
+  # `IDE_DB_SSH_PASSWORD=ide` (a throwaway fixture credential, the same
+  # posture `postgres`'s own `POSTGRES_PASSWORD` above already has —
+  # never a real secret, never reachable outside loopback).
+  sshd:
+    image: linuxserver/openssh-server:10.3_p1-r1-ls237
+    environment:
+      PUID: 1000
+      PGID: 1000
+      USER_NAME: ide
+      USER_PASSWORD: ide
+      PASSWORD_ACCESS: "true"
+      SUDO_ACCESS: "false"
+    volumes:
+      - ./sshd:/config/sshd/sshd_config.d:ro
+    ports:
+      - "127.0.0.1:52222:2222"
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 2222"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

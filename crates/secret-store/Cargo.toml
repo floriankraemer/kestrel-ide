@@ -1,0 +1,14 @@
+[package]
+name = "secret-store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# `linux-native` (kernel keyutils, pure-Rust `linux-keyutils`) rather than
+# `sync-secret-service`/`linux-native-sync-persistent` (both pull in
+# `dbus-secret-service`, which needs `libdbus-1-dev` + `pkg-config` just to
+# *compile*): the linux-builder image, CI, and a minimal desktop all lack a
+# running D-Bus Secret Service daemon (ADR-0021 already rejected `keyring`
+# for `ai-chat-core` on exactly this). `linux-native` needs no system
+# package at all, so the build itself never depends on one being present.
+keyring = { version = "3", default-features = false, features = ["linux-native", "windows-native", "apple-native"] }

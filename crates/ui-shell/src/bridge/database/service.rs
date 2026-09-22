@@ -1,0 +1,1314 @@
+//! `DatabaseService` (database-tools-plan F2.5): the Database dock's
+//! adapter. Translation only — one [`super::sessions::SessionWorker`] per
+//! connected data source, `db_core::tree::flatten` re-run whenever
+//! `rows()` is asked for. Every rule (introspection scope/level, grouping,
+//! filters, the action matrix, DDL/SQL generation) lives in `db_core`;
+//! this file only tracks which source is connected, what schema its
+//! worker has delivered so far, and which of that schema an in-flight
+//! request will land in once its reply arrives.
+
+use std::cell::RefCell;
+use std::collections::{BTreeMap, VecDeque};
+use std::pin::Pin;
+use std::rc::Rc;
+
+use cxx_qt::Threading;
+use cxx_qt_lib::QString;
+
+use app_config::database::DataSourceSetting;
+use db_core::datasource::{DataSource, Secrets};
+use db_core::ddl;
+use db_core::dialect::Dialect;
+use db_core::driver::Statement;
+use db_core::error::DbError;
+use db_core::schema::{Children, IntrospectLevel, IntrospectScope, Node, ObjectKind, ObjectRef};
+use db_core::session::Session;
+use db_core::tree::{
+    self, FlattenOptions, GroupMode, ObjectTypeFilter, PatternFilter, RowKind, SortOrder,
+    SourceCapabilities, TreeRow,
+};
+
+use crate::bridge::errors;
+use crate::bridge::ffi::{
+    self, FfiDbConnectionState, FfiDbRowActions, FfiDbSourceRow, FfiDbTreeRow, FfiResult,
+};
+
+use super::sessions::{SessionCommand, SessionEvent, SessionWorker};
+use super::tree::{parse_node_id, to_ffi_row};
+
+/// `secret-store`'s service name for data-source credentials — the exact
+/// constant `bridge::database::settings` already uses (ADR-0061 §1);
+/// duplicated here rather than made `pub(crate)` there, since `settings.rs`
+/// is F1's own file and this module reads no other private item of it.
+const SECRET_SERVICE: &str = "ide.database";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnState {
+    Disconnected,
+    Connecting,
+    Connected,
+    Error,
+}
+
+fn to_ffi_state(state: ConnState) -> FfiDbConnectionState {
+    match state {
+        ConnState::Disconnected => FfiDbConnectionState::Disconnected,
+        ConnState::Connecting => FfiDbConnectionState::Connecting,
+        ConnState::Connected => FfiDbConnectionState::Connected,
+        ConnState::Error => FfiDbConnectionState::Error,
+    }
+}
+
+/// What an in-flight request will do with its reply once it arrives —
+/// pushed the instant a command is sent, popped in the same order once
+/// its `SessionEvent` comes back (both sides of one worker's single mpsc
+/// channel are strictly FIFO, so this never needs its own correlation
+/// id).
+enum Pending {
+    /// The initial (or force-refreshed) root snapshot: replace the whole
+    /// tree.
+    Root,
+    /// An `expand`: merge the reply into this exact object path.
+    Node(Vec<String>),
+    /// A `goToDdl`: the virtual-document key/title to open the text
+    /// under.
+    Ddl { key: String, title: String },
+    /// A `runAction`: nothing further to do beyond reporting
+    /// `actionFinished`.
+    Run,
+}
+
+struct SourceState {
+    read_only: bool,
+    state: ConnState,
+    message: String,
+    roots: Vec<Node>,
+    worker: Option<SessionWorker>,
+    dialect: Option<Dialect>,
+    pending: VecDeque<Pending>,
+}
+
+impl SourceState {
+    fn caps(&self) -> SourceCapabilities {
+        SourceCapabilities {
+            read_only: self.read_only,
+            supports_comment: self.dialect.map(ddl::supports_comment).unwrap_or(true),
+        }
+    }
+}
+
+pub struct DatabaseServiceRust {
+    sources: RefCell<BTreeMap<String, SourceState>>,
+    filter: RefCell<String>,
+    flat: RefCell<bool>,
+    // View-options menu (database-tools-plan FY.3): whether a Routine
+    // folds into its own "Procedures" folder rather than sharing "Tables"'
+    // grouping sibling, and whether a folder's children sort alphabetically
+    // rather than the natural (`table2` before `table10`) default —
+    // `db_core::tree::FlattenOptions`'s own knobs, just persisted here
+    // across `rows()` calls the same way `flat`/`filter` already are.
+    separate_routines: RefCell<bool>,
+    alphabetical_sort: RefCell<bool>,
+    session: Rc<RefCell<app_core::AppSession>>,
+}
+
+impl Default for DatabaseServiceRust {
+    fn default() -> Self {
+        Self {
+            sources: RefCell::default(),
+            filter: RefCell::default(),
+            flat: RefCell::default(),
+            separate_routines: RefCell::default(),
+            alphabetical_sort: RefCell::default(),
+            session: crate::bridge::registry::shared_session(),
+        }
+    }
+}
+
+/// `pub(crate)`, not `pub(super)`: the `sql-script` run configuration
+/// (`bridge::run::sql_script`) needs a data source the same way the
+/// console does, and it is a sibling of `bridge::database`, not a
+/// descendant.
+pub(crate) fn configured_sources() -> Vec<DataSourceSetting> {
+    let global = crate::bridge::convert::load_settings();
+    let project = crate::bridge::convert::load_project_settings();
+    settings_model::scope::resolve_database_sources(&global, &project)
+        .into_iter()
+        .map(|(setting, _)| setting)
+        .collect()
+}
+
+pub(crate) fn secrets_for(id: &str) -> Secrets {
+    let store = secret_store::SecretStore::new(SECRET_SERVICE);
+    Secrets {
+        password: store.load(id).ok().flatten(),
+        ..Default::default()
+    }
+}
+
+/// Replace the node at `path` (a real object-name ancestry,
+/// `TreeRow::object_path`) with `children` — the merge [`Pending::Node`]
+/// applies once an `expand`'s reply arrives. `false` when `path` no
+/// longer exists (the schema changed underneath it, e.g. a concurrent
+/// force refresh) — the caller drops the reply silently rather than
+/// panicking on a shape mismatch.
+fn replace_node_children(roots: &mut [Node], path: &[String], children: Children) -> bool {
+    let Some((first, rest)) = path.split_first() else {
+        return false;
+    };
+    for node in roots.iter_mut() {
+        if &node.name == first {
+            if rest.is_empty() {
+                node.children = children;
+                return true;
+            }
+            if let Children::Loaded(inner) = &mut node.children {
+                return replace_node_children(inner, rest, children);
+            }
+            return false;
+        }
+    }
+    false
+}
+
+/// The `IntrospectScope`/`IntrospectLevel` an `expand` of this row asks
+/// for: a schema-like row lists its children's *names* only (cheap — the
+/// NFR's fast path), a table/view/collection-like row fetches its own
+/// *columns*. `object_path`'s last two segments become `(schema, object)`
+/// when there are at least two — one segment alone is the whole scope
+/// (SQLite has no schema level).
+fn scope_for_expand(row: &TreeRow) -> (IntrospectScope, IntrospectLevel) {
+    let path = &row.object_path;
+    let is_schema_like = matches!(
+        row.kind,
+        RowKind::Object(ObjectKind::Schema | ObjectKind::Catalog | ObjectKind::Keyspace)
+    );
+    if is_schema_like {
+        let scope = IntrospectScope {
+            schema: path.last().cloned(),
+            ..Default::default()
+        };
+        return (scope, IntrospectLevel::Names);
+    }
+    let object = path.last().cloned();
+    let schema = if path.len() >= 2 {
+        Some(path[path.len() - 2].clone())
+    } else {
+        None
+    };
+    (
+        IntrospectScope {
+            schema,
+            object,
+            ..Default::default()
+        },
+        IntrospectLevel::Columns,
+    )
+}
+
+/// The `ObjectRef` a Go-to-DDL/rename/drop/truncate/comment action names,
+/// from a row's own kind and ancestry.
+fn object_ref_for(row: &TreeRow) -> Option<ObjectRef> {
+    let RowKind::Object(kind) = row.kind else {
+        return None;
+    };
+    let name = row.object_path.last()?.clone();
+    let schema = if row.object_path.len() >= 2 {
+        Some(row.object_path[row.object_path.len() - 2].clone())
+    } else {
+        None
+    };
+    let mut object_ref = ObjectRef::new(name).with_kind(kind);
+    if let Some(schema) = schema {
+        object_ref = object_ref.with_schema(schema);
+    }
+    Some(object_ref)
+}
+
+fn qualified_name(row: &TreeRow) -> String {
+    row.object_path.join(".")
+}
+
+/// A Redis key row's real key text (F7b) — `row.object_path` for a `Key`
+/// node holds `[namespace, leaf]` (`db_drivers::redis`'s own doc comment:
+/// `KeyNamespace`/`Key` split the wire key on `key_separator`, and the
+/// node's own name is the leaf half only), so `object_ref_for`'s bare
+/// `object_path.last()` would send `DEL`/`EXPIRE` against the leaf alone
+/// rather than the actual key. Rejoins with `:`, the default separator —
+/// ponytail: a source configured with a non-default `key_separator`
+/// rejoins wrong; `db_core::tree::TreeRow` carries no separator of its
+/// own to rejoin with correctly, upgrade path is threading it through
+/// once a source using a custom one actually hits this.
+fn redis_key_text(row: &TreeRow) -> Option<String> {
+    if !matches!(row.kind, RowKind::Object(ObjectKind::Key(_))) {
+        return None;
+    }
+    Some(row.object_path.join(":"))
+}
+
+fn redis_delete_key_statement(row: &TreeRow) -> Result<String, DbError> {
+    let key = redis_key_text(row).ok_or_else(|| {
+        DbError::new(db_core::error::DbErrorCode::NotSupported, "not a Redis key")
+    })?;
+    Ok(format!("DEL {key}"))
+}
+
+/// F4.4's object dialogs' own DDL generation — `kind` is `objectDdlPreview`/
+/// `runObjectDdl`'s own vocabulary (`ffi.rs`'s doc comment), `spec_json`
+/// decodes straight into the matching `db_core::ddl` spec struct.
+/// `table`/`schema` narrow which of those two contexts the caller
+/// resolved `node_id` to (never both — a table-scoped kind ignores
+/// `schema`, a schema-scoped kind ignores `table`).
+fn generate_object_ddl(
+    dialect: Dialect,
+    kind: &str,
+    spec_json: &str,
+    table: Option<&ObjectRef>,
+    schema: Option<&str>,
+) -> Result<String, DbError> {
+    fn bad_spec(error: serde_json::Error) -> DbError {
+        DbError::new(
+            db_core::error::DbErrorCode::InvalidStatement,
+            format!("malformed spec: {error}"),
+        )
+    }
+    fn no_table() -> DbError {
+        DbError::new(
+            db_core::error::DbErrorCode::InvalidStatement,
+            "this action needs a table",
+        )
+    }
+    match kind {
+        "create_table" => {
+            let mut spec: ddl::TableSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            if spec.schema.is_none() {
+                spec.schema = schema.map(str::to_string);
+            }
+            ddl::create_table(dialect, &spec)
+        }
+        "create_user" => {
+            let spec: ddl::UserSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            ddl::create_user(dialect, &spec)
+        }
+        "add_column" => {
+            let spec: ddl::ColumnSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            ddl::alter_table_add_column(dialect, table.ok_or_else(no_table)?, &spec)
+        }
+        "alter_column" => {
+            let spec: ddl::ColumnSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            ddl::alter_table_alter_column(dialect, table.ok_or_else(no_table)?, &spec)
+        }
+        "drop_column" => {
+            let spec: serde_json::Value = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            let column = spec.get("column").and_then(|v| v.as_str()).ok_or_else(|| {
+                DbError::new(
+                    db_core::error::DbErrorCode::InvalidStatement,
+                    "malformed spec: missing 'column'",
+                )
+            })?;
+            ddl::alter_table_drop_column(dialect, table.ok_or_else(no_table)?, column)
+        }
+        "create_index" => {
+            let mut spec: ddl::IndexSpec = serde_json::from_str(spec_json).map_err(bad_spec)?;
+            // `table`/`schema` come from `node_id`'s own resolved table,
+            // never from the dialog's own JSON (which carries no schema
+            // field at all, and its `table` is empty — see
+            // `db_object_dialogs.cpp`'s own doc comment on why) — a create-
+            // index action is always dispatched against one specific table
+            // row, so there is no ambiguity to leave to client-supplied
+            // text.
+            let table_ref = table.ok_or_else(no_table)?;
+            spec.table = table_ref.name.clone();
+            spec.schema = table_ref.schema.clone();
+            ddl::create_index(dialect, &spec)
+        }
+        _ => Err(DbError::new(
+            db_core::error::DbErrorCode::NotSupported,
+            format!("unknown object DDL kind '{kind}'"),
+        )),
+    }
+}
+
+fn redis_ttl_statement(row: &TreeRow, seconds: &str) -> Result<String, DbError> {
+    let key = redis_key_text(row).ok_or_else(|| {
+        DbError::new(db_core::error::DbErrorCode::NotSupported, "not a Redis key")
+    })?;
+    let secs: u64 = seconds.trim().parse().map_err(|_| {
+        DbError::new(
+            db_core::error::DbErrorCode::InvalidStatement,
+            "TTL must be a whole number of seconds",
+        )
+    })?;
+    Ok(format!("EXPIRE {key} {secs}"))
+}
+
+impl ffi::DatabaseService {
+    pub fn sources(&self) -> Vec<FfiDbSourceRow> {
+        let states = self.sources.borrow();
+        configured_sources()
+            .into_iter()
+            .map(|setting| {
+                let (state, message) = states
+                    .get(&setting.id)
+                    .map(|s| (s.state, s.message.clone()))
+                    .unwrap_or((ConnState::Disconnected, String::new()));
+                FfiDbSourceRow {
+                    id: QString::from(setting.id.as_str()),
+                    name: QString::from(setting.name.as_str()),
+                    driver: QString::from(setting.driver.as_str()),
+                    color: QString::from(setting.color.as_str()),
+                    group: QString::from(setting.group.as_str()),
+                    state: to_ffi_state(state),
+                    message: QString::from(message.as_str()),
+                }
+            })
+            .collect()
+    }
+
+    fn flatten_for(&self, source_id: &str) -> Vec<TreeRow> {
+        let sources = self.sources.borrow();
+        let Some(source) = sources.get(source_id) else {
+            return Vec::new();
+        };
+        let options = FlattenOptions {
+            group_mode: if *self.flat.borrow() {
+                GroupMode::Flat
+            } else {
+                GroupMode::ByObjectType
+            },
+            separate_routines: *self.separate_routines.borrow(),
+            object_types: ObjectTypeFilter::all(),
+            pattern: PatternFilter::new(self.filter.borrow().clone()),
+            sort: if *self.alphabetical_sort.borrow() {
+                SortOrder::Alphabetical
+            } else {
+                SortOrder::Natural
+            },
+            caps: source.caps(),
+        };
+        tree::flatten(&source.roots, &options)
+    }
+
+    pub fn rows(&self) -> Vec<FfiDbTreeRow> {
+        let mut out = Vec::new();
+        for setting in configured_sources() {
+            let (state, message) = self
+                .sources
+                .borrow()
+                .get(&setting.id)
+                .map(|s| (Some(s.state), s.message.clone()))
+                .unwrap_or((None, String::new()));
+            // A source with no schema concept of its own (SQLite: its
+            // tables sit directly under this root, no `Schema` node
+            // between them) still needs *somewhere* to offer "Create
+            // Table…"/"Create User…" — `db_core::tree::actions_for` only
+            // wires those bits onto a real `Schema`/`Catalog`/`Keyspace`
+            // node, which this synthetic root row is not, so it is
+            // decided here instead, from the same `!read_only` gate every
+            // other write action already uses.
+            let read_only = self
+                .sources
+                .borrow()
+                .get(&setting.id)
+                .map(|s| s.read_only)
+                .unwrap_or(false);
+            out.push(FfiDbTreeRow {
+                source_id: QString::from(setting.id.as_str()),
+                node_id: QString::from(format!("{}:$root", setting.id)),
+                depth: 0,
+                kind: QString::from("source"),
+                label: QString::from(setting.name.as_str()),
+                detail: QString::from(message.as_str()),
+                expandable: true,
+                loaded: true,
+                actions: FfiDbRowActions {
+                    can_refresh: true,
+                    can_dump: true,
+                    can_compare: true,
+                    can_create_table: !read_only,
+                    can_create_user: !read_only,
+                    ..Default::default()
+                },
+                primary_key: false,
+            });
+            if state != Some(ConnState::Connected) {
+                continue;
+            }
+            for row in self.flatten_for(&setting.id) {
+                let mut ffi_row = to_ffi_row(&setting.id, &row);
+                ffi_row.depth += 1;
+                out.push(ffi_row);
+            }
+        }
+        out
+    }
+
+    /// Connects off the Qt thread (the connect itself may be a slow
+    /// network round trip — the same "always run off the UI thread"
+    /// rule `DataSourceEditor::test_connection`'s doc comment states):
+    /// this call only marks the source `Connecting` and returns; the
+    /// spawned thread reports the outcome back through one `qt_thread()
+    /// .queue` closure that builds the `SessionWorker` itself (spawning a
+    /// worker thread is cheap, so it happens on the Qt thread rather than
+    /// needing a second cross-thread hop).
+    pub fn connect_source(mut self: Pin<&mut Self>, id: &QString) -> FfiResult {
+        let id = id.to_string();
+        let Some(setting) = configured_sources().into_iter().find(|s| s.id == id) else {
+            return errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                format!("no data source with id '{id}' is configured"),
+            );
+        };
+        if self
+            .sources
+            .borrow()
+            .get(&id)
+            .is_some_and(|s| s.worker.is_some())
+        {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{}' is already connected", setting.name),
+            );
+        }
+
+        self.sources.borrow_mut().insert(
+            id.clone(),
+            SourceState {
+                read_only: false,
+                state: ConnState::Connecting,
+                message: String::new(),
+                roots: Vec::new(),
+                worker: None,
+                dialect: None,
+                pending: VecDeque::new(),
+            },
+        );
+        self.as_mut().connection_state_changed(
+            QString::from(id.as_str()),
+            FfiDbConnectionState::Connecting,
+            QString::default(),
+        );
+        self.as_mut().rows_changed();
+
+        let qt_thread = self.as_mut().qt_thread();
+        let thread_id = id.clone();
+        std::thread::spawn(move || {
+            let secrets = secrets_for(&thread_id);
+            let data_source = DataSource::from_setting(&setting, &secrets);
+            let read_only = data_source.read_only;
+            let outcome =
+                super::open_session(&data_source, &secrets).map_err(|error| error.to_string());
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DatabaseService>| {
+                match outcome {
+                    Ok((tunnel, connection)) => {
+                        let dialect = connection.dialect();
+                        let session = Session::new(connection);
+                        let inner_qt_thread = service.as_mut().qt_thread();
+                        let worker_source_id = thread_id.clone();
+                        // FZ: the tree's per-source connection is the one that sits idle
+                        // longest, so it is the one the idle-close timer frees; the
+                        // reconnect closure rebuilds it through the same `open_session`
+                        // path (secrets re-read, tunnel re-opened) on the next command.
+                        let idle_close_minutes = crate::bridge::convert::load_settings()
+                            .database
+                            .idle_close_minutes_or_default();
+                        let reconnect_source = data_source.clone();
+                        let reconnect: super::sessions::Reconnect = Box::new(move || {
+                            let secrets = secrets_for(&reconnect_source.id);
+                            super::open_session(&reconnect_source, &secrets)
+                                .map(|(tunnel, connection)| (connection, tunnel))
+                        });
+                        let worker = SessionWorker::spawn_with_idle_close(
+                            session,
+                            tunnel,
+                            idle_close_minutes,
+                            Some(reconnect),
+                            move |event| {
+                                let source_id = worker_source_id.clone();
+                                let _ = inner_qt_thread.queue(
+                                    move |service: Pin<&mut ffi::DatabaseService>| {
+                                        apply_event(service, source_id, event);
+                                    },
+                                );
+                            },
+                        );
+                        let _ = worker.send(SessionCommand::Introspect {
+                            scope: IntrospectScope::default(),
+                            level: IntrospectLevel::Names,
+                            force: false,
+                        });
+                        if let Some(source) = service.sources.borrow_mut().get_mut(&thread_id) {
+                            source.read_only = read_only;
+                            source.dialect = Some(dialect);
+                            source.state = ConnState::Connected;
+                            source.worker = Some(worker);
+                            source.pending.push_back(Pending::Root);
+                        }
+                        service.as_mut().connection_state_changed(
+                            QString::from(thread_id.as_str()),
+                            FfiDbConnectionState::Connected,
+                            QString::default(),
+                        );
+                    }
+                    Err(message) => {
+                        if let Some(source) = service.sources.borrow_mut().get_mut(&thread_id) {
+                            source.state = ConnState::Error;
+                            source.message = message.clone();
+                        }
+                        service.as_mut().connection_state_changed(
+                            QString::from(thread_id.as_str()),
+                            FfiDbConnectionState::Error,
+                            QString::from(message.as_str()),
+                        );
+                    }
+                }
+                service.as_mut().rows_changed();
+            });
+        });
+        FfiResult::default()
+    }
+
+    pub fn disconnect_source(mut self: Pin<&mut Self>, id: &QString) -> FfiResult {
+        let id = id.to_string();
+        let existed = self.sources.borrow_mut().remove(&id).is_some();
+        if !existed {
+            return errors::failure(errors::CODE_REFUSED, format!("'{id}' is not connected"));
+        }
+        self.as_mut().connection_state_changed(
+            QString::from(id.as_str()),
+            FfiDbConnectionState::Disconnected,
+            QString::default(),
+        );
+        self.as_mut().rows_changed();
+        FfiResult::default()
+    }
+
+    /// database-tools-plan phase FX: `rows()`/`configured_sources()`
+    /// re-read `load_project_settings()` fresh from disk on every call, so
+    /// the fix is only ever "ask the view to re-read", never a cached
+    /// value to invalidate. Every source this project's own `.ide/
+    /// settings.toml` still names stays connected across the reopen (its
+    /// `SessionWorker` is keyed by source id, not by project root) — only
+    /// a source that belonged to the *previous* project and shares no id
+    /// with this one would show as connected with no matching row, which
+    /// `configured_sources()`'s own id-keyed lookup already excludes from
+    /// `rows()`'s output today; disconnecting it outright is tracked debt
+    /// (`database-tools.md` §11), not a regression this fix introduces.
+    pub fn project_opened(mut self: Pin<&mut Self>, _root: &QString) {
+        self.as_mut().rows_changed();
+    }
+
+    pub fn expand(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let composite = node_id.to_string();
+        let Some((source_id, path)) = parse_node_id(&composite) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
+        };
+        if path == "$root" {
+            return FfiResult::default();
+        }
+        let rows = self.flatten_for(source_id);
+        let Some(row) = rows.iter().find(|r| r.node_id == path) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "no such node");
+        };
+        if row.loaded || !row.expandable {
+            return FfiResult::default();
+        }
+        let (scope, level) = scope_for_expand(row);
+        let object_path = row.object_path.clone();
+        let source_id = source_id.to_string();
+        let mut sources = self.sources.borrow_mut();
+        let Some(source) = sources.get_mut(&source_id) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        let Some(worker) = source.worker.as_ref() else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        if let Err(error) = worker.send(SessionCommand::Introspect {
+            scope,
+            level,
+            force: false,
+        }) {
+            return errors::failure(errors::CODE_REFUSED, error.to_string());
+        }
+        source.pending.push_back(Pending::Node(object_path));
+        FfiResult::default()
+    }
+
+    pub fn refresh(mut self: Pin<&mut Self>, node_id: &QString, force: bool) -> FfiResult {
+        let composite = node_id.to_string();
+        let Some((source_id, path)) = parse_node_id(&composite) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
+        };
+        let source_id = source_id.to_string();
+        if force {
+            let mut sources = self.sources.borrow_mut();
+            let Some(source) = sources.get_mut(&source_id) else {
+                return errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                );
+            };
+            let Some(worker) = source.worker.as_ref() else {
+                return errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                );
+            };
+            // Drop every reply already in flight — a force refresh means
+            // "whatever this source answers next is authoritative", not
+            // "queue behind whatever it was already about to say".
+            worker.invalidate();
+            source.pending.clear();
+            if let Err(error) = worker.send(SessionCommand::Introspect {
+                scope: IntrospectScope::default(),
+                level: IntrospectLevel::Names,
+                force: true,
+            }) {
+                return errors::failure(errors::CODE_REFUSED, error.to_string());
+            }
+            source.pending.push_back(Pending::Root);
+            return FfiResult::default();
+        }
+        if path == "$root" {
+            return self.as_mut().refresh(node_id, true);
+        }
+        let rows = self.flatten_for(&source_id);
+        let Some(row) = rows.iter().find(|r| r.node_id == path) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "no such node");
+        };
+        let (scope, level) = scope_for_expand(row);
+        let object_path = row.object_path.clone();
+        let mut sources = self.sources.borrow_mut();
+        let Some(source) = sources.get_mut(&source_id) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        let Some(worker) = source.worker.as_ref() else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        if let Err(error) = worker.send(SessionCommand::DropCached {
+            scope: scope.clone(),
+        }) {
+            return errors::failure(errors::CODE_REFUSED, error.to_string());
+        }
+        if let Err(error) = worker.send(SessionCommand::Introspect {
+            scope,
+            level,
+            force: false,
+        }) {
+            return errors::failure(errors::CODE_REFUSED, error.to_string());
+        }
+        source.pending.push_back(Pending::Node(object_path));
+        FfiResult::default()
+    }
+
+    pub fn set_filter(mut self: Pin<&mut Self>, text: &QString) {
+        *self.filter.borrow_mut() = text.to_string();
+        self.as_mut().rows_changed();
+    }
+
+    pub fn set_grouping(mut self: Pin<&mut Self>, flat: bool) {
+        *self.flat.borrow_mut() = flat;
+        self.as_mut().rows_changed();
+    }
+
+    /// View options menu (FY.3): fold a `Routine` into its own "Procedures"
+    /// folder rather than sharing "Tables"' grouping sibling.
+    pub fn set_separate_routines(mut self: Pin<&mut Self>, value: bool) {
+        *self.separate_routines.borrow_mut() = value;
+        self.as_mut().rows_changed();
+    }
+
+    /// View options menu (FY.3): alphabetical (`table10` before `table2`)
+    /// rather than natural sort within a folder.
+    pub fn set_sort(mut self: Pin<&mut Self>, alphabetical: bool) {
+        *self.alphabetical_sort.borrow_mut() = alphabetical;
+        self.as_mut().rows_changed();
+    }
+
+    /// `runAction`/`actionPreview`'s shared setup: resolve `node_id`'s row
+    /// and dialect, then hand `action_id` to `db_core::ddl` (or the Redis
+    /// helpers below) for the exact statement text — never executed here,
+    /// so `actionPreview` can show a caller the same text `runAction` is
+    /// about to run without any side effect of its own.
+    fn resolve_action_statement(
+        &self,
+        node_id: &QString,
+        action_id: &str,
+    ) -> Result<(String, String), FfiResult> {
+        let composite = node_id.to_string();
+        let Some((source_id, path)) = parse_node_id(&composite) else {
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "malformed node id",
+            ));
+        };
+        let source_id = source_id.to_string();
+        let rows = self.flatten_for(&source_id);
+        let Some(row) = rows.iter().find(|r| r.node_id == path) else {
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "no such node",
+            ));
+        };
+        let Some(object_ref) = object_ref_for(row) else {
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "this row has no runnable action",
+            ));
+        };
+        let dialect = {
+            let sources = self.sources.borrow();
+            let Some(source) = sources.get(&source_id) else {
+                return Err(errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                ));
+            };
+            let Some(dialect) = source.dialect else {
+                return Err(errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                ));
+            };
+            dialect
+        };
+        let generated = match action_id.split_once(':') {
+            Some(("rename", new_name)) => ddl::rename_statement(dialect, &object_ref, new_name),
+            Some(("comment", text)) => ddl::comment_statement(dialect, &object_ref, text),
+            Some(("ttl", seconds)) => redis_ttl_statement(row, seconds),
+            _ => match action_id {
+                "drop" => ddl::drop_statement(dialect, &object_ref),
+                "truncate" => ddl::truncate_statement(dialect, &object_ref),
+                "delete-key" => redis_delete_key_statement(row),
+                _ => Err(DbError::new(
+                    db_core::error::DbErrorCode::NotSupported,
+                    format!("unknown action '{action_id}'"),
+                )),
+            },
+        };
+        match generated {
+            Ok(text) => Ok((source_id, text)),
+            Err(error) => Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                error.to_string(),
+            )),
+        }
+    }
+
+    /// The exact statement `runAction(node_id, action_id)` would run,
+    /// generated but never executed — a rename/drop/truncate/comment
+    /// dialog's own confirmation shows this rather than a generic English
+    /// sentence (database-tools.md §11's tracked debt, closed here), the
+    /// same "never run what the user has not seen" contract
+    /// `objectDdlPreview` already gives the F4.4 dialogs.
+    pub fn action_preview(&self, node_id: &QString, action_id: &QString) -> FfiResult {
+        match self.resolve_action_statement(node_id, &action_id.to_string()) {
+            Ok((_, text)) => FfiResult {
+                code: 0,
+                message: QString::from(text.as_str()),
+            },
+            Err(failure) => failure,
+        }
+    }
+
+    pub fn run_action(self: Pin<&mut Self>, node_id: &QString, action_id: &QString) -> FfiResult {
+        let (source_id, statement_text) =
+            match self.resolve_action_statement(node_id, &action_id.to_string()) {
+                Ok(resolved) => resolved,
+                Err(failure) => return failure,
+            };
+        let dialect = {
+            let sources = self.sources.borrow();
+            // `resolve_action_statement` already checked this source is
+            // connected with a dialect; re-reading it here (rather than
+            // threading it back out) keeps that method's own return shape
+            // to just "which source, what text" — everything `runAction`'s
+            // dispatch below needs beyond that.
+            sources
+                .get(&source_id)
+                .and_then(|source| source.dialect)
+                .expect("resolve_action_statement already required a connected dialect")
+        };
+        let mut sources = self.sources.borrow_mut();
+        let Some(source) = sources.get_mut(&source_id) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        let Some(worker) = source.worker.as_ref() else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        // `Statement::for_dialect`, not `Statement::sql` (F7b): a
+        // generated statement is not always SQL text — `db_core::ddl::
+        // drop_statement`'s Mongo branch emits a `runCommand` JSON
+        // document, which `db_drivers::mongodb`'s connection refuses
+        // outright unless it crosses in `QueryLang::MongoShell`.
+        if let Err(error) = worker.send(SessionCommand::RunStatement {
+            statement: Statement::for_dialect(dialect, statement_text),
+        }) {
+            return errors::failure(errors::CODE_REFUSED, error.to_string());
+        }
+        source.pending.push_back(Pending::Run);
+        FfiResult::default()
+    }
+
+    pub fn go_to_ddl(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let composite = node_id.to_string();
+        let Some((source_id, path)) = parse_node_id(&composite) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
+        };
+        let source_id = source_id.to_string();
+        let rows = self.flatten_for(&source_id);
+        let Some(row) = rows.iter().find(|r| r.node_id == path) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "no such node");
+        };
+        let Some(object_ref) = object_ref_for(row) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "this row has no DDL");
+        };
+        let key = format!("{source_id}/{}.sql", qualified_name(row));
+        let title = format!("{} DDL", row.label);
+        let mut sources = self.sources.borrow_mut();
+        let Some(source) = sources.get_mut(&source_id) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        let Some(worker) = source.worker.as_ref() else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        if let Err(error) = worker.send(SessionCommand::DdlOf { object: object_ref }) {
+            return errors::failure(errors::CODE_REFUSED, error.to_string());
+        }
+        source.pending.push_back(Pending::Ddl { key, title });
+        FfiResult::default()
+    }
+
+    /// `objectDdlPreview`/`runObjectDdl`'s shared setup: `node_id`'s own
+    /// source's dialect, plus whichever of a table `ObjectRef`/a schema
+    /// name `node_id` resolves to (the root row's own `"$root"` path
+    /// resolves to neither — a source has no schema name of its own to
+    /// qualify a `CREATE TABLE`/`CREATE USER` with on every dialect, so
+    /// `generate_object_ddl` is left to qualify with `None` there, exactly
+    /// like `create_table`'s own "no schema given" case).
+    fn ddl_context(
+        &self,
+        node_id: &QString,
+    ) -> Result<(String, Dialect, Option<ObjectRef>, Option<String>), FfiResult> {
+        let composite = node_id.to_string();
+        let Some((source_id, path)) = parse_node_id(&composite) else {
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "malformed node id",
+            ));
+        };
+        let source_id = source_id.to_string();
+        let dialect = {
+            let sources = self.sources.borrow();
+            let Some(source) = sources.get(&source_id) else {
+                return Err(errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                ));
+            };
+            let Some(dialect) = source.dialect else {
+                return Err(errors::failure(
+                    errors::CODE_REFUSED,
+                    format!("'{source_id}' is not connected"),
+                ));
+            };
+            dialect
+        };
+        if path == "$root" {
+            return Ok((source_id, dialect, None, None));
+        }
+        let rows = self.flatten_for(&source_id);
+        let Some(row) = rows.iter().find(|r| r.node_id == path) else {
+            return Err(errors::failure(
+                errors::CODE_INVALID_ARGUMENT,
+                "no such node",
+            ));
+        };
+        match row.kind {
+            RowKind::Object(ObjectKind::Table) => {
+                Ok((source_id, dialect, object_ref_for(row), None))
+            }
+            RowKind::Object(ObjectKind::Schema | ObjectKind::Catalog | ObjectKind::Keyspace) => {
+                Ok((source_id, dialect, None, row.object_path.last().cloned()))
+            }
+            _ => Ok((source_id, dialect, None, None)),
+        }
+    }
+
+    /// See `ffi.rs`'s own doc comment on `objectDdlPreview` (F4.4).
+    pub fn object_ddl_preview(
+        self: Pin<&mut Self>,
+        node_id: &QString,
+        kind: &QString,
+        spec_json: &QString,
+    ) -> FfiResult {
+        let (_, dialect, table, schema) = match self.ddl_context(node_id) {
+            Ok(context) => context,
+            Err(failure) => return failure,
+        };
+        match generate_object_ddl(
+            dialect,
+            &kind.to_string(),
+            &spec_json.to_string(),
+            table.as_ref(),
+            schema.as_deref(),
+        ) {
+            Ok(text) => FfiResult {
+                code: 0,
+                message: QString::from(text.as_str()),
+            },
+            Err(error) => errors::failure(errors::CODE_INVALID_ARGUMENT, error.to_string()),
+        }
+    }
+
+    /// See `ffi.rs`'s own doc comment on `runObjectDdl` (F4.4).
+    pub fn run_object_ddl(
+        self: Pin<&mut Self>,
+        node_id: &QString,
+        kind: &QString,
+        spec_json: &QString,
+    ) -> FfiResult {
+        let (source_id, dialect, table, schema) = match self.ddl_context(node_id) {
+            Ok(context) => context,
+            Err(failure) => return failure,
+        };
+        let statement_text = match generate_object_ddl(
+            dialect,
+            &kind.to_string(),
+            &spec_json.to_string(),
+            table.as_ref(),
+            schema.as_deref(),
+        ) {
+            Ok(text) => text,
+            Err(error) => return errors::failure(errors::CODE_INVALID_ARGUMENT, error.to_string()),
+        };
+        let mut sources = self.sources.borrow_mut();
+        let Some(source) = sources.get_mut(&source_id) else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        let Some(worker) = source.worker.as_ref() else {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("'{source_id}' is not connected"),
+            );
+        };
+        if let Err(error) = worker.send(SessionCommand::RunStatement {
+            statement: Statement::for_dialect(dialect, statement_text),
+        }) {
+            return errors::failure(errors::CODE_REFUSED, error.to_string());
+        }
+        source.pending.push_back(Pending::Run);
+        FfiResult::default()
+    }
+
+    /// "Open Console"/"Jump to console" (F3.1/F3.3) — see this slot's own
+    /// doc comment in `ffi.rs`.
+    pub fn open_console(mut self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
+        let composite = node_id.to_string();
+        let Some((source_id, _path)) = parse_node_id(&composite) else {
+            return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
+        };
+        let source_id = source_id.to_string();
+        let family = configured_sources()
+            .into_iter()
+            .find(|s| s.id == source_id)
+            .map(|s| db_core::console::family_for_driver(&s.driver))
+            .unwrap_or(db_core::console::Family::Sql);
+        let extension = db_core::console::extension(family);
+        let config_dir = app_core::resolve_config_dir();
+        let dir = db_core::console::console_dir(&config_dir, &source_id);
+        if let Err(error) = std::fs::create_dir_all(&dir) {
+            return errors::failure(errors::CODE_SETTINGS_IO, error.to_string());
+        }
+        let mut existing: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .filter(|path| path.extension().is_some_and(|ext| ext == extension))
+                    .collect()
+            })
+            .unwrap_or_default();
+        existing.sort();
+        let path = match existing.into_iter().next() {
+            Some(path) => path,
+            None => {
+                let path = db_core::console::console_file(&config_dir, &source_id, 1, family);
+                if let Err(error) = std::fs::write(&path, "") {
+                    return errors::failure(errors::CODE_SETTINGS_IO, error.to_string());
+                }
+                path
+            }
+        };
+        let path_string = path.to_string_lossy().to_string();
+        self.as_mut().console_file_ready(
+            QString::from(path_string.as_str()),
+            QString::from(source_id.as_str()),
+        );
+        FfiResult::default()
+    }
+}
+
+/// Applies one `SessionEvent` for `source_id` — always runs on the Qt
+/// thread (queued there by [`ffi::DatabaseService::connect_source`]'s own
+/// `on_event` closure).
+fn apply_event(
+    mut service: Pin<&mut ffi::DatabaseService>,
+    source_id: String,
+    event: SessionEvent,
+) {
+    match event {
+        SessionEvent::Introspected { generation, result } => {
+            let outcome = {
+                let mut sources = service.sources.borrow_mut();
+                let Some(source) = sources.get_mut(&source_id) else {
+                    return;
+                };
+                let current = source.worker.as_ref().map(|w| w.generation());
+                if current != Some(generation) {
+                    // Stale: a disconnect/force-refresh already invalidated
+                    // whatever this reply answers.
+                    return;
+                }
+                let pending = source.pending.pop_front();
+                match result {
+                    Ok(snapshot) => {
+                        match pending {
+                            Some(Pending::Node(path)) => {
+                                if let Some(node) = snapshot.roots.into_iter().next() {
+                                    replace_node_children(&mut source.roots, &path, node.children);
+                                }
+                            }
+                            _ => source.roots = snapshot.roots,
+                        }
+                        source.state = ConnState::Connected;
+                        source.message.clear();
+                        Ok(())
+                    }
+                    Err(error) => {
+                        source.state = ConnState::Error;
+                        source.message = error.to_string();
+                        Err(error)
+                    }
+                }
+            };
+            if let Err(error) = outcome {
+                service.as_mut().connection_state_changed(
+                    QString::from(source_id.as_str()),
+                    FfiDbConnectionState::Error,
+                    QString::from(error.to_string().as_str()),
+                );
+            }
+            service.as_mut().rows_changed();
+        }
+        SessionEvent::Ddl { generation, result } => {
+            let pending = {
+                let mut sources = service.sources.borrow_mut();
+                let Some(source) = sources.get_mut(&source_id) else {
+                    return;
+                };
+                let current = source.worker.as_ref().map(|w| w.generation());
+                if current != Some(generation) {
+                    return;
+                }
+                source.pending.pop_front()
+            };
+            let Some(Pending::Ddl { key, title: _title }) = pending else {
+                return;
+            };
+            match result {
+                Ok(text) => {
+                    let opened = service
+                        .session
+                        .borrow_mut()
+                        .open_virtual_document("db-ddl", &key, &text);
+                    service.as_mut().virtual_document_opened(
+                        opened.id.raw(),
+                        QString::from(opened.title.as_str()),
+                        opened.newly_opened,
+                    );
+                }
+                Err(error) => {
+                    service
+                        .as_mut()
+                        .action_finished(false, QString::from(error.to_string().as_str()));
+                }
+            }
+        }
+        SessionEvent::Ran { generation, result } => {
+            let is_current = {
+                let mut sources = service.sources.borrow_mut();
+                let Some(source) = sources.get_mut(&source_id) else {
+                    return;
+                };
+                let current = source.worker.as_ref().map(|w| w.generation());
+                let is_current = current == Some(generation);
+                if is_current {
+                    source.pending.pop_front();
+                }
+                is_current
+            };
+            if !is_current {
+                return;
+            }
+            match result {
+                Ok(()) => service.as_mut().action_finished(true, QString::default()),
+                Err(error) => service
+                    .as_mut()
+                    .action_finished(false, QString::from(error.to_string().as_str())),
+            }
+        }
+        // The tree's own worker never sends `Execute`/`FetchMore`/tx
+        // commands — those are `ConsoleService`'s (F3.3), which runs each
+        // console on its own `SessionWorker` rather than this one.
+        SessionEvent::Batch { .. }
+        | SessionEvent::TxChanged { .. }
+        | SessionEvent::Applied { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use db_core::tree::{flatten, FlattenOptions};
+
+    #[test]
+    fn replace_node_children_finds_a_nested_table_by_its_real_ancestry() {
+        let table = Node::with_children(
+            "users",
+            ObjectKind::Table,
+            vec![Node::leaf("id", ObjectKind::Column)],
+        );
+        let mut roots = vec![Node::with_children(
+            "public",
+            ObjectKind::Schema,
+            vec![table],
+        )];
+        let new_children = Children::Loaded(vec![
+            Node::leaf("id", ObjectKind::Column),
+            Node::leaf("name", ObjectKind::Column),
+        ]);
+        let found = replace_node_children(
+            &mut roots,
+            &["public".to_string(), "users".to_string()],
+            new_children,
+        );
+        assert!(found);
+        let Children::Loaded(schema_children) = &roots[0].children else {
+            panic!("expected loaded schema");
+        };
+        let Children::Loaded(table_children) = &schema_children[0].children else {
+            panic!("expected loaded table");
+        };
+        assert_eq!(table_children.len(), 2);
+    }
+
+    #[test]
+    fn replace_node_children_is_a_no_op_for_a_path_that_no_longer_exists() {
+        let mut roots = vec![Node::leaf("users", ObjectKind::Table)];
+        let found =
+            replace_node_children(&mut roots, &["gone".to_string()], Children::Loaded(vec![]));
+        assert!(!found);
+    }
+
+    #[test]
+    fn scope_for_expand_uses_names_level_for_a_schema_like_row() {
+        let node = Node::leaf("public", ObjectKind::Schema);
+        let rows = flatten(&[node], &FlattenOptions::default());
+        let row = rows.iter().find(|r| r.label == "public").unwrap();
+        let (scope, level) = scope_for_expand(row);
+        assert_eq!(level, IntrospectLevel::Names);
+        assert_eq!(scope.schema.as_deref(), Some("public"));
+        assert_eq!(scope.object, None);
+    }
+
+    #[test]
+    fn scope_for_expand_uses_columns_level_and_the_object_name_for_a_table() {
+        let node = Node::leaf("users", ObjectKind::Table);
+        let rows = flatten(&[node], &FlattenOptions::default());
+        let row = rows.iter().find(|r| r.label == "users").unwrap();
+        let (scope, level) = scope_for_expand(row);
+        assert_eq!(level, IntrospectLevel::Columns);
+        assert_eq!(scope.object.as_deref(), Some("users"));
+        assert_eq!(scope.schema, None);
+    }
+
+    #[test]
+    fn scope_for_expand_derives_the_schema_from_a_two_segment_path() {
+        let table = Node::leaf("users", ObjectKind::Table);
+        let roots = vec![Node::with_children(
+            "public",
+            ObjectKind::Schema,
+            vec![table],
+        )];
+        let options = FlattenOptions {
+            group_mode: db_core::tree::GroupMode::Flat,
+            ..FlattenOptions::default()
+        };
+        let rows = flatten(&roots, &options);
+        let row = rows.iter().find(|r| r.label == "users").unwrap();
+        let (scope, level) = scope_for_expand(row);
+        assert_eq!(level, IntrospectLevel::Columns);
+        assert_eq!(scope.schema.as_deref(), Some("public"));
+        assert_eq!(scope.object.as_deref(), Some("users"));
+    }
+
+    #[test]
+    fn object_ref_for_a_folder_row_is_none() {
+        let node = Node::leaf("users", ObjectKind::Table);
+        let rows = flatten(&[node], &FlattenOptions::default());
+        let folder_row = rows.iter().find(|r| r.label == "Tables").unwrap();
+        assert!(object_ref_for(folder_row).is_none());
+    }
+
+    #[test]
+    fn object_ref_for_a_table_carries_its_kind_and_name() {
+        let node = Node::leaf("users", ObjectKind::Table);
+        let rows = flatten(&[node], &FlattenOptions::default());
+        let row = rows.iter().find(|r| r.label == "users").unwrap();
+        let object_ref = object_ref_for(row).unwrap();
+        assert_eq!(object_ref.name, "users");
+        assert_eq!(object_ref.kind, Some(ObjectKind::Table));
+        assert_eq!(object_ref.schema, None);
+    }
+
+    #[test]
+    fn qualified_name_joins_the_real_ancestry_with_dots() {
+        let table = Node::leaf("users", ObjectKind::Table);
+        let roots = vec![Node::with_children(
+            "public",
+            ObjectKind::Schema,
+            vec![table],
+        )];
+        let rows = flatten(&roots, &FlattenOptions::default());
+        let row = rows.iter().find(|r| r.label == "users").unwrap();
+        assert_eq!(qualified_name(row), "public.users");
+    }
+}

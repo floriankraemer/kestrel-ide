@@ -547,6 +547,15 @@ fn main() {
         // The jvm-build-tools plan's B5: the Build Tools settings page,
         // Q_OBJECT-free like the Analysis page above.
         .cpp_file("cpp/build_tools_settings_page.cpp")
+        // Database Tools plan F1.6: the Add/Edit Data Source dialog and
+        // the Settings > Database list. Q_OBJECT-free (plain QDialog/
+        // QWidget builder functions, lambdas and pointer-to-member
+        // connects), so only the sources are listed.
+        .cpp_file("cpp/data_source_dialog.cpp")
+        .cpp_file("cpp/database_settings_page.cpp")
+        // Database Tools plan F8.5: the ADBC driver install consent dialog,
+        // Q_OBJECT-free like the two above.
+        .cpp_file("cpp/driver_install_dialog.cpp")
         // The settings dialog and the last two pages that were still built
         // inline inside it. Q_OBJECT-free like the pages above — the dialog
         // is a stack-allocated QDialog and the pages are plain QWidgets
@@ -579,6 +588,9 @@ fn main() {
         .cpp_file("cpp/editor_banner.h")
         .cpp_file("cpp/editor_banner.cpp")
         .cpp_file("cpp/build_tools_wiring.cpp")
+        // Database-tools plan G1: the dock/settings-page factory table,
+        // same Q_OBJECT-free shape as build_tools_wiring.cpp above.
+        .cpp_file("cpp/tool_window_factories.cpp")
         // Containers plan C2: the Containers dock, same Q_OBJECT-free shape.
         .cpp_file("cpp/containers_panel.cpp")
         .cpp_file("cpp/containers_menu.cpp")
@@ -722,6 +734,37 @@ fn main() {
         .cpp_file("cpp/status_bar.cpp")
         .cpp_file("cpp/navigate_menu.cpp")
         .cpp_file("cpp/ai_menu.cpp")
+        // database-tools-plan F2.5: the Database dock.
+        .cpp_file("cpp/database_panel.cpp")
+        // database-tools-plan F4.4: create/modify object dialogs
+        // (table/column/index/user), Q_OBJECT-free (plain `QDialog`s built
+        // and driven by lambdas, same shape as `container_target_wizard.cpp`).
+        .cpp_file("cpp/db_object_dialogs.cpp")
+        // database-tools-plan F3.1/F3.3-F3.5: the console bar and the
+        // Output/Result grid dock.
+        .cpp_file("cpp/database_console_bar.cpp")
+        .cpp_file("cpp/result_table_model.cpp")
+        .cpp_file("cpp/result_grid_view.cpp")
+        .cpp_file("cpp/database_results_panel.cpp")
+        // database-tools-plan F4d: the result grid's view modes
+        // (Table/Transpose/Text/Record) and its column-visibility popup.
+        // Header registered too (`TransposeTableModel` declares Q_OBJECT).
+        .cpp_file("cpp/result_view_modes.h")
+        .cpp_file("cpp/result_view_modes.cpp")
+        // database-tools-plan F4.1: the data editor's own value editor
+        // dialog (Shift+Enter / double-click on a grid cell).
+        .cpp_file("cpp/value_editor_dialog.h")
+        .cpp_file("cpp/value_editor_dialog.cpp")
+        // database-tools-plan F3e: the `Ask` script policy's confirmation
+        // dialog.
+        .cpp_file("cpp/database_dialogs.cpp")
+        // database-tools-plan F3.6: the `sql-script` run configuration's
+        // own page, registered alongside the container-kind pages above.
+        .cpp_file("cpp/run_config_sql_page.h")
+        .cpp_file("cpp/run_config_sql_page.cpp")
+        // database-tools-plan F5b: export/import/dump/copy-table/ER
+        // diagram/schema-and-data-compare dialogs.
+        .cpp_file("cpp/database_exchange_actions.cpp")
         .include_dir("cpp")
         .include_dir(ads_dir)
         .cpp_file(compile_ads_qrc(ads_dir, &tool_dirs))

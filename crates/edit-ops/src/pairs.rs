@@ -1,17 +1,21 @@
 //! Auto-close, type-over, smart backspace and surround.
 //!
-//! # Type-over is stateful, and pretending otherwise is the bug
+//! # Type-over
 //!
-//! Typing `)` when a `)` sits under the caret should skip over it — but
-//! **only when this session put that `)` there**. A `)` the user typed,
-//! pasted or opened the file with is content, and typing another `)`
-//! before it must insert. There is no way to tell those apart from the
-//! text alone, so [`PairTracker`] remembers the closers it inserted, moves
-//! them as later edits shift them, and forgets all of them the moment an
-//! edit it did not produce lands ([`PairTracker::invalidate`]).
+//! Typing a closing bracket (`)`, `]`, `}`) when an identical one sits
+//! under the caret always skips over it rather than inserting a second
+//! one — IntelliJ's own rule, and it applies whether or not this session
+//! put that closer there: a `)` the user typed, pasted, or opened the file
+//! with is still a `)` to step past, not to duplicate.
 //!
-//! The state is on the caller's side of the seam, explicit, rather than
-//! guessed at from the buffer.
+//! Quotes are narrower: the same character opens and closes a string, so
+//! an untracked quote could just as easily be content to wrap as a closer
+//! to skip. [`PairTracker`] remembers only the quote (and bracket) closers
+//! it itself inserted, moves them as later edits shift them, and forgets
+//! all of them the moment an edit it did not produce lands
+//! ([`PairTracker::invalidate`]) — that tracked state is what still makes
+//! quote type-over work, on the caller's side of the seam, explicit rather
+//! than guessed at from the buffer.
 //!
 //! # Paste is not typing
 //!
@@ -95,8 +99,18 @@ impl PairTracker {
         let tokens = Tokens::of(language);
         let typed = ch.to_string();
         let closing = tokens.closing_for(&typed);
+        // A non-quote closing delimiter (`)`, `]`, `}`) types over an
+        // identical character already under the caret whether or not this
+        // session put it there — IntelliJ's own rule, and simpler than the
+        // tracked-only one this module used to apply: a closer the user
+        // never inserted (typed, pasted, or loaded from disk) still reads
+        // as "step past it", the same way it reads to a human. Quotes stay
+        // tracked-only (`types_over` below): the same character opens and
+        // closes a string, so an untracked quote could just as easily be
+        // content to wrap rather than a closer to skip.
+        let is_bracket_closer = !tokens.is_quote(&typed) && tokens.open_for(&typed).is_some();
         let types_over = self.closers.iter().any(|c| c.text == typed);
-        if closing.is_none() && !types_over {
+        if closing.is_none() && !types_over && !is_bracket_closer {
             // Nothing about this character is a pair: plain typing, and the
             // tracked closers only need moving.
             let transaction = Transaction::type_text(selection, &typed);
@@ -142,14 +156,19 @@ impl PairTracker {
                 continue;
             }
 
-            if let Some(index) = self
+            let tracked_index = self
                 .closers
                 .iter()
-                .position(|c| c.offset == start && c.text == typed)
-            {
-                // Type-over: the character is already there because we put
-                // it there. Nothing is inserted; the caret steps past it.
-                self.closers.remove(index);
+                .position(|c| c.offset == start && c.text == typed);
+            let adjacent_matches = is_bracket_closer
+                && text[start..].chars().next().map(|c| c.to_string()).as_ref() == Some(&typed);
+            if tracked_index.is_some() || adjacent_matches {
+                // Type-over: either we put this closer here, or (brackets
+                // only) an identical one already sits under the caret.
+                // Nothing is inserted; the caret steps past it.
+                if let Some(index) = tracked_index {
+                    self.closers.remove(index);
+                }
                 plan.push(Plan::head(start + typed.len(), 0));
                 continue;
             }
@@ -409,26 +428,57 @@ mod tests {
     }
 
     #[test]
-    fn typing_a_closer_before_a_bracket_we_did_not_insert_inserts_it() {
-        // The pre-existing `)` is content: a second one must appear.
+    fn typing_a_closer_before_a_bracket_we_did_not_insert_still_types_over_it() {
+        // IntelliJ's own rule: an identical closer under the caret is
+        // always stepped past, tracked or not — the fix for FX's console
+        // finding (typing `)` after an auto-inserted `)` used to double it).
         let mut tracker = PairTracker::new();
         let (text, head) = typed(&mut tracker, "rust", "foo()\n", &at(4), ')');
-        assert_eq!(text, "foo())\n");
+        assert_eq!(text, "foo()\n");
         assert_eq!(head, 5);
     }
 
     #[test]
-    fn an_intervening_edit_invalidates_type_over() {
+    fn a_closer_typed_at_a_caret_with_no_adjacent_match_still_inserts() {
+        let mut tracker = PairTracker::new();
+        let (text, head) = typed(&mut tracker, "rust", "foo\n", &at(3), ')');
+        assert_eq!(text, "foo)\n");
+        assert_eq!(head, 4);
+    }
+
+    #[test]
+    fn an_intervening_edit_forgets_the_tracked_closer_but_a_bracket_still_types_over() {
         let mut tracker = PairTracker::new();
         let opened = tracker.type_char(lang("rust"), "f = ", &at(4), '(');
         let text = opened.transaction.apply("f = ").expect("applies");
         assert_eq!(tracker.tracked(), 1);
 
         // Something else changed the buffer — a refactoring, an undo, the
-        // watcher. The tracked closer is no longer trustworthy.
+        // watcher. The tracked closer is forgotten either way…
         tracker.invalidate();
         let closed = tracker.type_char(lang("rust"), &text, &opened.selection, ')');
-        assert_eq!(closed.transaction.apply(&text).expect("applies"), "f = ())");
+        // …but a bracket closer still types over an identical one under the
+        // caret regardless of tracking (IntelliJ's rule, see the module doc
+        // comment) — the untracked `)` is not re-inserted.
+        assert_eq!(closed.transaction.apply(&text).expect("applies"), "f = ()");
+    }
+
+    #[test]
+    fn an_intervening_edit_forgets_the_tracked_quote_and_a_quote_does_not_type_over() {
+        // Quotes are the narrower case the module doc comment calls out:
+        // the same character opens and closes a string, so once tracking
+        // is lost a quote is content to wrap, not a closer to skip.
+        let mut tracker = PairTracker::new();
+        let opened = tracker.type_char(lang("rust"), "s = ", &at(4), '"');
+        let text = opened.transaction.apply("s = ").expect("applies");
+        assert_eq!(tracker.tracked(), 1);
+
+        tracker.invalidate();
+        let closed = tracker.type_char(lang("rust"), &text, &opened.selection, '"');
+        assert_eq!(
+            closed.transaction.apply(&text).expect("applies"),
+            "s = \"\"\""
+        );
     }
 
     #[test]

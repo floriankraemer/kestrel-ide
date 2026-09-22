@@ -23,10 +23,18 @@ ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWi
 
 void DockRegistry::show(const QString &id)
 {
-    const Entry &entry = docks_[id];
-    reseat(entry);
-    entry.dock->toggleView(true);
-    entry.dock->raise();
+    // G1: a caller (the status bar's Build Tools button, a View-menu action)
+    // can name a dock whose contributing plugin is now disabled — `docks_`
+    // never held it, or held it and lost it on the next reload. Silently
+    // doing nothing beats `docks_[id]` default-constructing an `Entry` whose
+    // `dock` is a null pointer and crashing on the very next line.
+    const auto found = docks_.constFind(id);
+    if (found == docks_.constEnd()) {
+        return;
+    }
+    reseat(*found);
+    found->dock->toggleView(true);
+    found->dock->raise();
 }
 
 void DockRegistry::restoreState(const QString &base64State)
@@ -96,17 +104,24 @@ void DockRegistry::reseat(const Entry &entry)
 
 void DockRegistry::hide(const QString &id)
 {
-    docks_[id].dock->toggleView(false);
+    const auto found = docks_.constFind(id);
+    if (found != docks_.constEnd()) {
+        found->dock->toggleView(false);
+    }
 }
 
 bool DockRegistry::isClosed(const QString &id) const
 {
-    return docks_[id].dock->isClosed();
+    const auto found = docks_.constFind(id);
+    // A dock nothing registered is, from every caller's point of view,
+    // already closed.
+    return found == docks_.constEnd() || found->dock->isClosed();
 }
 
 ads::CDockWidget *DockRegistry::dock(const QString &id) const
 {
-    return docks_[id].dock;
+    const auto found = docks_.constFind(id);
+    return found == docks_.constEnd() ? nullptr : found->dock;
 }
 
 } // namespace ui_shell

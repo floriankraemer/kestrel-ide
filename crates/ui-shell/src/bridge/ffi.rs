@@ -20,6 +20,12 @@ use crate::bridge::build::BuildServiceRust;
 use crate::bridge::build_tools::{BuildToolsEditorRust, BuildToolsServiceRust};
 use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
+use crate::bridge::database::console::ConsoleServiceRust;
+use crate::bridge::database::drivers::DriverInstallServiceRust;
+use crate::bridge::database::exchange::ExchangeServiceRust;
+use crate::bridge::database::results::ResultProviderRust;
+use crate::bridge::database::settings::DataSourceEditorRust;
+use crate::bridge::database::DatabaseServiceRust;
 use crate::bridge::debug::DebugServiceRust;
 use crate::bridge::diagnostics::DiagnosticsServiceRust;
 use crate::bridge::editor::DocumentManagerRust;
@@ -1396,11 +1402,28 @@ mod ffi {
         /// The container-kind sub-table's fields — meaningless (and left at
         /// its default) for a plain process (`kind` empty).
         container: FfiContainerOptions,
+        /// The `sql-script` kind's own sub-table (F3.6) — meaningless (and
+        /// left at its default) unless `kind == "sql-script"`.
+        sql_script: FfiSqlScriptOptions,
         /// Run targets (C8): empty for "Local" (run on this machine, as
         /// always), else `"container:<target-id>"` — the "Run on" combo's
         /// selection. Meaningless for a container-kind configuration
         /// (`kind` non-empty); the dialog's Run on combo is hidden for one.
         run_on: QString,
+    }
+
+    /// The `sql-script` run configuration's own page (database-tools-plan
+    /// F3.6): which data source, which file, and its error policy —
+    /// `app_config::SqlScriptRunSetting`'s exact fields, crossing the seam
+    /// the same structured way `FfiContainerOptions` does.
+    #[derive(Default)]
+    struct FfiSqlScriptOptions {
+        source_id: QString,
+        file: QString,
+        /// `"single_transaction"` or empty (auto-commit) — see
+        /// `app_config::SqlScriptRunSetting::tx_mode`'s own doc comment.
+        tx_mode: QString,
+        stop_on_error: bool,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -2278,6 +2301,16 @@ mod ffi {
         #[cxx_name = "tabPath"]
         fn tab_path(self: &DocumentManager, tab_id: u64) -> QString;
 
+        /// What the preview dock/overlay keys its provider lookup on:
+        /// `tabPath` where there is one, falling back to the tab's own
+        /// title for a virtual (C12) document — F6c's ER diagram opens as
+        /// `db-erd://<source>/erd.mmd`, which has no backing file
+        /// (`tabPath` empty) but a title ending `erd.mmd`, previewable the
+        /// same way a `.mmd` file on disk is.
+        #[qinvokable]
+        #[cxx_name = "previewPath"]
+        fn preview_path(self: &DocumentManager, tab_id: u64) -> QString;
+
         /// Which kind of page the tab needs: `app_core::TabKind`'s code —
         /// 0 text, 1 binary, 2 diff, 3 image (ADR-0020). The
         /// view builds a `CodeEditor`, a `HexViewer`, a `DiffView` or an
@@ -2342,6 +2375,21 @@ mod ffi {
             right_label: &QString,
             left_text: &QString,
             right_text: &QString,
+        ) -> u64;
+
+        /// Open a read-only virtual document — no backing file — under
+        /// `scheme`/`key` (C12's mechanism, generalised for F5b: an ER
+        /// diagram's Mermaid text, a schema-compare migration script).
+        /// Focuses the existing tab rather than duplicating one for the
+        /// same `(scheme, key)`. Returns the tab's id and emits
+        /// `tabOpened` for a genuinely new one, same as `openFile`.
+        #[qinvokable]
+        #[cxx_name = "openVirtualDocument"]
+        fn open_virtual_document(
+            self: Pin<&mut DocumentManager>,
+            scheme: &QString,
+            key: &QString,
+            text: &QString,
         ) -> u64;
 
         /// The left/right side labels a diff tab was opened with (e.g. two
@@ -2761,6 +2809,44 @@ mod ffi {
     }
 
     impl cxx_qt::Threading for PreviewProvider {}
+
+    /// Where a contributed tool window docks by default — mirrors
+    /// `plugin_api::ToolWindowArea`, this crate's own copy because a shared
+    /// type would put cxx-qt in `plugin-api`'s dependency tree.
+    enum FfiToolWindowArea {
+        Left,
+        Right,
+        Bottom,
+        Center,
+    }
+
+    /// One `tool-windows` contribution (the database-tools plan's G1):
+    /// `tool_window_factories.cpp`'s table looks a dock factory up by `id`,
+    /// and the View-menu action it wires carries `title` as-is (contributed
+    /// text, not a `tr()` literal).
+    struct FfiToolWindow {
+        /// The plugin that contributed it, for the "no native host" log
+        /// line when nothing in the factory table answers to `id`.
+        plugin_id: QString,
+        id: QString,
+        title: QString,
+        area: FfiToolWindowArea,
+    }
+
+    /// Mirrors `plugin_api::SettingsPageScope`, for the same reason
+    /// `FfiToolWindowArea` mirrors `ToolWindowArea`.
+    enum FfiSettingsPageScope {
+        Global,
+        Project,
+    }
+
+    /// One `settings-pages` contribution (the database-tools plan's G1).
+    struct FfiSettingsPage {
+        plugin_id: QString,
+        id: QString,
+        title: QString,
+        scope: FfiSettingsPageScope,
+    }
 
     extern "RustQt" {
         /// Settings-I/O adapter (L1 window geometry/state, C2 recent
@@ -3229,6 +3315,23 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "removeRegistry"]
         fn remove_registry(self: &AppSettings, id: &QString) -> FfiResult;
+
+        /// Every enabled plugin's `tool-windows` contribution (the
+        /// database-tools plan's G1), in registry (load) order — what used
+        /// to be the literal `wireBuildToolsDock`/`buildContainersDock`
+        /// calls in `main_window.cpp` before both migrated onto this point.
+        /// A disabled plugin's rows are absent, which is what makes
+        /// disabling one hide its dock and View-menu entry.
+        #[qinvokable]
+        #[cxx_name = "contributedToolWindows"]
+        fn contributed_tool_windows(self: &AppSettings) -> Vec<FfiToolWindow>;
+
+        /// Every enabled plugin's `settings-pages` contribution, same
+        /// ordering and disabled-filtering rule as
+        /// [`contributed_tool_windows`](Self::contributed_tool_windows).
+        #[qinvokable]
+        #[cxx_name = "contributedSettingsPages"]
+        fn contributed_settings_pages(self: &AppSettings) -> Vec<FfiSettingsPage>;
     }
 
     unsafe extern "RustQt" {
@@ -4186,6 +4289,15 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "caretCount"]
         fn caret_count(self: &EditorOps, tab_id: u64) -> u32;
+
+        /// The primary caret's byte offset into the tab's buffer — the same
+        /// unit `db_sql::split`'s spans use, so a caller can hand this
+        /// straight to `ConsoleService::execute`'s `caret` parameter without
+        /// its own UTF-16-to-byte conversion (database-tools-plan F3e).
+        /// `0` for a tab this object has never seen a caret move for.
+        #[qinvokable]
+        #[cxx_name = "caretOffset"]
+        fn caret_offset(self: &EditorOps, tab_id: u64) -> i64;
 
         /// Esc: back to the primary caret alone.
         #[qinvokable]
@@ -9764,6 +9876,1846 @@ mod ffi {
         #[cxx_name = "projectUrl"]
         fn project_url(self: &AppInfo) -> QString;
     }
+
+    // ---- database: F1 ----
+
+    /// One row the Settings > Database list shows — id/name/driver/group/
+    /// color plus which layer (`"global"`/`"project"`) it lives in
+    /// (Database Tools plan F1.6).
+    #[derive(Default)]
+    struct FfiDataSourceRow {
+        id: QString,
+        name: QString,
+        driver: QString,
+        group: QString,
+        color: QString,
+        scope: QString,
+    }
+
+    /// One driver `plugin_host::registry().database_drivers()` contributes,
+    /// for the dialog's driver combo box.
+    #[derive(Default)]
+    struct FfiDriverOption {
+        id: QString,
+        name: QString,
+        /// `"native"`, `"adbc"`, or `"odbc"` (F8b) — which status/field
+        /// group the Data Source dialog shows for this row.
+        backend: QString,
+    }
+
+    /// Every field `DataSourceEditor` edits — one struct rather than
+    /// nineteen separate getters, the same convention `FfiBuildToolsFields`
+    /// uses.
+    #[derive(Default)]
+    struct FfiDataSourceFields {
+        id: QString,
+        name: QString,
+        driver: QString,
+        group: QString,
+        color: QString,
+        host: QString,
+        port: QString,
+        database: QString,
+        user: QString,
+        auth: QString,
+        #[cxx_name = "readOnly"]
+        read_only: bool,
+        history: bool,
+        url: QString,
+        #[cxx_name = "sslMode"]
+        ssl_mode: QString,
+        #[cxx_name = "sslCaFile"]
+        ssl_ca_file: QString,
+        #[cxx_name = "sshHost"]
+        ssh_host: QString,
+        #[cxx_name = "sshPort"]
+        ssh_port: QString,
+        #[cxx_name = "sshUser"]
+        ssh_user: QString,
+        #[cxx_name = "sshAuth"]
+        ssh_auth: QString,
+        #[cxx_name = "sshKeyFile"]
+        ssh_key_file: QString,
+    }
+
+    /// Which field a `FfiDataSourceProblem` is about, for the dialog to
+    /// highlight — `settings_model::database::DataSourceField` crossed.
+    enum FfiDataSourceField {
+        Name,
+        Id,
+        Port,
+        Color,
+        SshUser,
+        FileSourcePath,
+    }
+
+    struct FfiDataSourceProblem {
+        field: FfiDataSourceField,
+        sentence: QString,
+    }
+
+    // ---- database: F7c ----
+    /// One family-specific connection option beyond the dialog's common
+    /// fields (`db_core::console::ExtraField`) — Mongo's replica set,
+    /// Redis's TLS toggle, Cassandra's local datacenter. `kind` is
+    /// `"text"` or `"bool"`, the widget the dialog builds for it; `key`
+    /// doubles as the stable label key the view maps to a `tr()`'d string
+    /// (the same convention `databaseFieldLabelKey` already uses).
+    struct FfiDbExtraField {
+        key: QString,
+        kind: QString,
+    }
+
+    extern "RustQt" {
+        /// Every data source, global and project merged by id
+        /// (Database Tools plan F1.6).
+        #[qinvokable]
+        #[cxx_name = "databaseSources"]
+        fn database_sources(self: &AppSettings) -> Vec<FfiDataSourceRow>;
+
+        #[qinvokable]
+        #[cxx_name = "removeDatabaseSource"]
+        fn remove_database_source(self: &AppSettings, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "duplicateDatabaseSource"]
+        fn duplicate_database_source(self: &AppSettings, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "databaseDrivers"]
+        fn database_drivers(self: &AppSettings) -> Vec<FfiDriverOption>;
+    }
+
+    extern "RustQt" {
+        /// The Add/Edit Data Source dialog's draft (Database Tools plan
+        /// F1.6), shaped after `BuildToolsEditor` but per-item.
+        #[qobject]
+        type DataSourceEditor = super::DataSourceEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &DataSourceEditor, id: &QString, scope: &QString);
+
+        #[qinvokable]
+        fn fields(self: &DataSourceEditor) -> FfiDataSourceFields;
+
+        #[qinvokable]
+        fn problems(self: &DataSourceEditor) -> Vec<FfiDataSourceProblem>;
+
+        #[qinvokable]
+        #[cxx_name = "setName"]
+        fn set_name(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setDriver"]
+        fn set_driver(self: &DataSourceEditor, value: &QString);
+
+        /// A stable key (`"database"`/`"auth_database"`/`"db_index"`/
+        /// `"keyspace"`) for what the "Database" field means for the
+        /// draft's current driver (F7b) — never shown verbatim, the
+        /// dialog maps it to a `tr()`'d label (ADR-0049).
+        #[qinvokable]
+        #[cxx_name = "databaseFieldLabelKey"]
+        fn database_field_label_key(self: &DataSourceEditor) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "setGroup"]
+        fn set_group(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setColor"]
+        fn set_color(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setHost"]
+        fn set_host(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setPort"]
+        fn set_port(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setDatabase"]
+        fn set_database(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setUser"]
+        fn set_user(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setAuth"]
+        fn set_auth(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setReadOnly"]
+        fn set_read_only(self: &DataSourceEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setHistory"]
+        fn set_history(self: &DataSourceEditor, value: bool);
+
+        #[qinvokable]
+        #[cxx_name = "setUrl"]
+        fn set_url(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSslMode"]
+        fn set_ssl_mode(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSslCaFile"]
+        fn set_ssl_ca_file(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshHost"]
+        fn set_ssh_host(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshPort"]
+        fn set_ssh_port(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshUser"]
+        fn set_ssh_user(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshAuth"]
+        fn set_ssh_auth(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "setSshKeyFile"]
+        fn set_ssh_key_file(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "isDirty"]
+        fn is_dirty(self: &DataSourceEditor) -> bool;
+
+        #[qinvokable]
+        fn commit(self: &DataSourceEditor) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "hasPassword"]
+        fn has_password(self: &DataSourceEditor) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setPassword"]
+        fn set_password(self: &DataSourceEditor, value: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "passwordHint"]
+        fn password_hint(self: &DataSourceEditor) -> QString;
+
+        /// Attempt a real connection off the UI thread; reports through
+        /// `testConnectionFinished`.
+        #[qinvokable]
+        #[cxx_name = "testConnection"]
+        fn test_connection(self: Pin<&mut DataSourceEditor>);
+
+        #[qsignal]
+        #[cxx_name = "testConnectionFinished"]
+        fn test_connection_finished(self: Pin<&mut DataSourceEditor>, ok: bool, message: QString);
+
+        // ---- database: F7b ----
+        /// A "Test connection" attempt over an SSH tunnel hit a host key
+        /// `~/.ssh/known_hosts` has never seen (`DbErrorCode::
+        /// HostKeyUnknown`) — the dialog shows the fingerprint and offers
+        /// "Accept and add to known_hosts" (`acceptHostKey`), which
+        /// retries the connection once accepted. A *changed* key
+        /// (`DbErrorCode::HostKeyMismatch`) never reaches this signal —
+        /// it reports through the ordinary `testConnectionFinished(false,
+        /// …)` failure path instead, with no accept affordance (this
+        /// module's own doc comment on why).
+        #[qsignal]
+        #[cxx_name = "hostKeyPrompt"]
+        fn host_key_prompt(
+            self: Pin<&mut DataSourceEditor>,
+            host: QString,
+            port: i32,
+            fingerprint: QString,
+        );
+
+        /// Answers a `hostKeyPrompt` with "Accept and add to
+        /// known_hosts": records the pending key `db_drivers::ssh`
+        /// stashed for the prompt's host/port, then re-runs
+        /// `testConnection`.
+        #[qinvokable]
+        #[cxx_name = "acceptHostKey"]
+        fn accept_host_key(self: Pin<&mut DataSourceEditor>) -> FfiResult;
+
+        // ---- database: F7c ----
+        /// The extra fields the draft's current driver's family needs
+        /// beyond the common ones (`db_core::console::extra_fields`) —
+        /// the dialog rebuilds its "Options" tab's family-specific rows
+        /// from this whenever the driver combo changes.
+        #[qinvokable]
+        #[cxx_name = "extraFields"]
+        fn extra_fields(self: &DataSourceEditor) -> Vec<FfiDbExtraField>;
+
+        /// The current draft's value for one extra field's `key` — empty
+        /// when unset. A bool field's value is the literal string
+        /// `"true"` when checked, empty when unchecked.
+        #[qinvokable]
+        fn option(self: &DataSourceEditor, key: &QString) -> QString;
+
+        /// Sets (or, given an empty `value`, clears) one extra field's
+        /// value on the draft.
+        #[qinvokable]
+        #[cxx_name = "setOption"]
+        fn set_option(self: &DataSourceEditor, key: &QString, value: &QString);
+    }
+
+    impl cxx_qt::Threading for DataSourceEditor {}
+
+    // ---- database: F2 ----
+
+    /// Where one connected data source stands (F2.5) — the same
+    /// disconnected/connecting/connected/error shape `FfiConnectionState`
+    /// already gives the Containers dock, its own enum since a data
+    /// source's states are never conflated with a container engine's.
+    enum FfiDbConnectionState {
+        Disconnected,
+        Connecting,
+        Connected,
+        Error,
+    }
+
+    /// One data source row, for the dock's own source list (its toolbar's
+    /// "New data source…"/status line, and the root of its tree).
+    struct FfiDbSourceRow {
+        id: QString,
+        name: QString,
+        driver: QString,
+        color: QString,
+        group: QString,
+        state: FfiDbConnectionState,
+        message: QString,
+    }
+
+    /// Which of a row's actions apply — `db_core::tree::actions_for`'s
+    /// `ActionSet` crossed as discrete bools, the same convention
+    /// `FfiNodeActions` already uses for the Containers dock so the view
+    /// never has to decode a bitfield.
+    #[derive(Default)]
+    struct FfiDbRowActions {
+        #[cxx_name = "canOpenConsole"]
+        can_open_console: bool,
+        #[cxx_name = "canEditData"]
+        can_edit_data: bool,
+        #[cxx_name = "canGoToDdl"]
+        can_go_to_ddl: bool,
+        #[cxx_name = "canCopyName"]
+        can_copy_name: bool,
+        #[cxx_name = "canCopyQualifiedName"]
+        can_copy_qualified_name: bool,
+        #[cxx_name = "canRefresh"]
+        can_refresh: bool,
+        #[cxx_name = "canRename"]
+        can_rename: bool,
+        #[cxx_name = "canDrop"]
+        can_drop: bool,
+        #[cxx_name = "canTruncate"]
+        can_truncate: bool,
+        #[cxx_name = "canComment"]
+        can_comment: bool,
+        #[cxx_name = "canGenerateDdl"]
+        can_generate_ddl: bool,
+        #[cxx_name = "canErDiagram"]
+        can_er_diagram: bool,
+        #[cxx_name = "canExportData"]
+        can_export_data: bool,
+        #[cxx_name = "canImportData"]
+        can_import_data: bool,
+        #[cxx_name = "canCopyTable"]
+        can_copy_table: bool,
+        /// Set only on the data source's own root row (F5b.3) — dump and
+        /// schema/data compare operate on a whole source, not one object,
+        /// so `db_core::tree::actions_for` never sees them.
+        #[cxx_name = "canDump"]
+        can_dump: bool,
+        #[cxx_name = "canCompare"]
+        can_compare: bool,
+        /// A Redis key's own actions (F7b) — never set on any other kind.
+        #[cxx_name = "canDeleteKey"]
+        can_delete_key: bool,
+        #[cxx_name = "canTtlSet"]
+        can_ttl_set: bool,
+        /// F4.4's object dialogs — set on a schema/catalog/keyspace root.
+        #[cxx_name = "canCreateTable"]
+        can_create_table: bool,
+        /// F4.4 — set on an existing table.
+        #[cxx_name = "canModifyTable"]
+        can_modify_table: bool,
+        #[cxx_name = "canAddColumn"]
+        can_add_column: bool,
+        #[cxx_name = "canCreateIndex"]
+        can_create_index: bool,
+        /// F4.4 — set on a schema/catalog/keyspace root, alongside
+        /// `canCreateTable`.
+        #[cxx_name = "canCreateUser"]
+        can_create_user: bool,
+    }
+
+    /// One flattened row of the Database dock's tree (database-tools-plan
+    /// F2.2/F2.5) — `db_core::tree::TreeRow` crossed the seam, `nodeId`
+    /// prefixed with its own source id (`bridge::database::tree::
+    /// to_ffi_row`) so one flat list can hold every connected source's
+    /// tree at once.
+    struct FfiDbTreeRow {
+        #[cxx_name = "sourceId"]
+        source_id: QString,
+        #[cxx_name = "nodeId"]
+        node_id: QString,
+        depth: i32,
+        /// The row's own kind, as a stable id (`table`, `view`, `column`,
+        /// `folder-tables`, …) — the view looks up its icon and context
+        /// menu by this, never by a translated word.
+        kind: QString,
+        label: QString,
+        detail: QString,
+        expandable: bool,
+        loaded: bool,
+        actions: FfiDbRowActions,
+        /// Whether this row is (part of) its table's primary key
+        /// (`db_core::tree::TreeRow::primary_key`) — the dock's own icon
+        /// lookup picks the PK key glyph for a column when this is set,
+        /// the plain column glyph otherwise.
+        #[cxx_name = "primaryKey"]
+        primary_key: bool,
+    }
+
+    extern "RustQt" {
+        /// The Database dock's adapter (database-tools-plan F2.5): one
+        /// `SessionWorker` per connected source, `db_core::tree::flatten`
+        /// re-run whenever a source's schema, filter or grouping changes.
+        /// Owns no rule: introspection levels/scopes, grouping, filters
+        /// and the action matrix are all `db_core`'s.
+        #[qobject]
+        type DatabaseService = super::DatabaseServiceRust;
+
+        /// Every configured data source, connected or not.
+        #[qinvokable]
+        fn sources(self: &DatabaseService) -> Vec<FfiDbSourceRow>;
+
+        /// Every visible row across every connected source, in render
+        /// order. Re-read after `rowsChanged`.
+        #[qinvokable]
+        fn rows(self: &DatabaseService) -> Vec<FfiDbTreeRow>;
+
+        /// Spawn `id`'s `SessionWorker` and fetch its root schema at
+        /// `Names` level. Named `connectSource` so it cannot shadow
+        /// `QObject::connect`.
+        #[qinvokable]
+        #[cxx_name = "connectSource"]
+        fn connect_source(self: Pin<&mut DatabaseService>, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "disconnectSource"]
+        fn disconnect_source(self: Pin<&mut DatabaseService>, id: &QString) -> FfiResult;
+
+        // ---- database: FX ----
+        /// A project opened (or reopened): `rows()` reads
+        /// `configured_sources()` fresh from disk on every call, but
+        /// nothing re-triggers that read on its own — this re-emits
+        /// `rowsChanged` so a source declared in the just-opened
+        /// project's own `.ide/settings.toml` actually shows up, the same
+        /// project-open lifecycle event `BuildToolsService::
+        /// projectOpened` already uses (`main_window.cpp` wires both to
+        /// `ProjectTreeModel::projectOpened`).
+        #[qinvokable]
+        #[cxx_name = "projectOpened"]
+        fn project_opened(self: Pin<&mut DatabaseService>, root: &QString);
+
+        /// Fetch `node_id`'s children at `Columns` level if not already
+        /// loaded (`TreeRow::loaded`) — a no-op, successful call for a
+        /// node that is already loaded or is not expandable.
+        #[qinvokable]
+        fn expand(self: Pin<&mut DatabaseService>, node_id: &QString) -> FfiResult;
+
+        /// Drop `node_id`'s own cached snapshot (its own `SessionWorker`'s
+        /// cache) — the next `expand` re-fetches it.
+        #[qinvokable]
+        fn refresh(self: Pin<&mut DatabaseService>, node_id: &QString, force: bool) -> FfiResult;
+
+        /// A plain substring, or a `kind:pattern`/`kind:-pattern` scoped
+        /// one (`db_core::tree::PatternFilter`); empty clears it.
+        #[qinvokable]
+        #[cxx_name = "setFilter"]
+        fn set_filter(self: Pin<&mut DatabaseService>, text: &QString);
+
+        /// `true` renders every object as a flat sibling list; `false`
+        /// (the default) groups tables/views/routines/… into per-kind
+        /// folders.
+        #[qinvokable]
+        #[cxx_name = "setGrouping"]
+        fn set_grouping(self: Pin<&mut DatabaseService>, flat: bool);
+
+        /// View options menu (FY.3): `true` folds a `Routine` into its own
+        /// "Procedures" folder rather than sharing "Tables"' grouping
+        /// sibling (`db_core::tree::FlattenOptions::separate_routines`).
+        #[qinvokable]
+        #[cxx_name = "setSeparateRoutines"]
+        fn set_separate_routines(self: Pin<&mut DatabaseService>, value: bool);
+
+        /// View options menu (FY.3): `true` sorts each folder's children
+        /// alphabetically (`table10` before `table2`); `false` (the
+        /// default) sorts naturally (`db_core::tree::SortOrder`).
+        #[qinvokable]
+        #[cxx_name = "setSort"]
+        fn set_sort(self: Pin<&mut DatabaseService>, alphabetical: bool);
+
+        /// The exact statement `runAction(node_id, action_id)` would run,
+        /// generated but never executed — a confirmation dialog shows this
+        /// rather than a generic English sentence (`FfiResult::message`
+        /// carries the text on success, same convention `objectDdlPreview`
+        /// uses for the F4.4 dialogs).
+        #[qinvokable]
+        #[cxx_name = "actionPreview"]
+        fn action_preview(
+            self: &DatabaseService,
+            node_id: &QString,
+            action_id: &QString,
+        ) -> FfiResult;
+
+        /// Run `action_id` (`db_core::tree::ActionSet`'s own names,
+        /// lower-`snake_case`: `"drop"`, `"truncate"`, `"rename:<new
+        /// name>"`, `"comment:<text>"`, …) against `node_id`'s object,
+        /// through its source's own session. Reports through
+        /// `actionFinished`, not the returned `FfiResult` — the exact
+        /// statement Rust generated is what a caller confirms *before*
+        /// calling this at all (`db_core::ddl`'s own doc comment), so a
+        /// refusal here is only ever "no such node"/"not connected", never
+        /// "the statement failed" (that is `actionFinished(false, …)`).
+        #[qinvokable]
+        #[cxx_name = "runAction"]
+        fn run_action(
+            self: Pin<&mut DatabaseService>,
+            node_id: &QString,
+            action_id: &QString,
+        ) -> FfiResult;
+
+        /// Fetch `node_id`'s DDL (the engine's own text, or
+        /// `db_core::ddl::synthesize`'s fallback) and open it through
+        /// `virtualDocumentOpened`.
+        #[qinvokable]
+        #[cxx_name = "goToDdl"]
+        fn go_to_ddl(self: Pin<&mut DatabaseService>, node_id: &QString) -> FfiResult;
+
+        /// A source connected/disconnected, its schema changed, or a
+        /// filter/grouping change — the view re-reads `rows()`.
+        #[qsignal]
+        #[cxx_name = "rowsChanged"]
+        fn rows_changed(self: Pin<&mut DatabaseService>);
+
+        #[qsignal]
+        #[cxx_name = "connectionStateChanged"]
+        fn connection_state_changed(
+            self: Pin<&mut DatabaseService>,
+            id: QString,
+            state: FfiDbConnectionState,
+            message: QString,
+        );
+
+        /// Mirrors `ContainerService::virtualDocumentOpened` exactly
+        /// (`editor_tabs.cpp` wires both the same way): `is_new` tells the
+        /// view whether to register a fresh tab or just focus the
+        /// existing one for this scheme/key.
+        #[qsignal]
+        #[cxx_name = "virtualDocumentOpened"]
+        fn virtual_document_opened(
+            self: Pin<&mut DatabaseService>,
+            tab_id: u64,
+            title: QString,
+            is_new: bool,
+        );
+
+        /// `runAction`'s own outcome, once the statement actually ran.
+        #[qsignal]
+        #[cxx_name = "actionFinished"]
+        fn action_finished(self: Pin<&mut DatabaseService>, ok: bool, message: QString);
+
+        /// "Open Console"/"Jump to console" (F3.1/F3.3): finds `node_id`'s
+        /// source's first existing console file under `db_core::console::
+        /// console_dir`, or creates `console1.sql` if none exist yet, and
+        /// reports its path through `consoleFileReady` — the two actions
+        /// are the same call, since "open or focus" is exactly what
+        /// `EditorTabs::openFile` already does for a real file.
+        #[qinvokable]
+        #[cxx_name = "openConsole"]
+        fn open_console(self: Pin<&mut DatabaseService>, node_id: &QString) -> FfiResult;
+
+        /// A console file is ready to be opened as a normal editor tab —
+        /// `editor_tabs.cpp` wires this straight to `openFile`, the same
+        /// direct wiring `virtualDocumentOpened` already gets there.
+        #[qsignal]
+        #[cxx_name = "consoleFileReady"]
+        fn console_file_ready(self: Pin<&mut DatabaseService>, path: QString, source_id: QString);
+
+        // ---- database: F4d ----
+
+        /// F4.4's create/modify object dialogs' own DDL preview: `kind` is
+        /// one of `runAction`'s own vocabulary widened with
+        /// `"create_table"`/`"alter_column"`/`"add_column"`/
+        /// `"drop_column"`/`"create_index"`/`"create_user"`; `spec_json`
+        /// is the dialog's own form state, compact JSON decoded straight
+        /// into the matching `db_core::ddl` spec struct (`TableSpec`/
+        /// `ColumnSpec`/`IndexSpec`/`UserSpec`) — the same "spec crosses
+        /// as JSON, decoded in Rust" pattern F4c's typed rows already
+        /// established. The generated statement text comes back in
+        /// `message` on success; a caller shows it before ever calling
+        /// `runObjectDdl` with the same arguments (`db_core::ddl`'s own
+        /// "never run what the user has not seen" rule).
+        #[qinvokable]
+        #[cxx_name = "objectDdlPreview"]
+        fn object_ddl_preview(
+            self: Pin<&mut DatabaseService>,
+            node_id: &QString,
+            kind: &QString,
+            spec_json: &QString,
+        ) -> FfiResult;
+
+        /// Runs `objectDdlPreview`'s own generated statement against
+        /// `node_id`'s source — same dispatch as `runAction`
+        /// (`SessionCommand::RunStatement`, reported through
+        /// `actionFinished`, not this call's own `FfiResult`), so a
+        /// successful create/alter/drop still only ever means "no such
+        /// node"/"not connected" here, and "the statement failed" through
+        /// `actionFinished(false, …)` exactly like `runAction`.
+        #[qinvokable]
+        #[cxx_name = "runObjectDdl"]
+        fn run_object_ddl(
+            self: Pin<&mut DatabaseService>,
+            node_id: &QString,
+            kind: &QString,
+            spec_json: &QString,
+        ) -> FfiResult;
+    }
+
+    impl cxx_qt::Threading for DatabaseService {}
+
+    // ---- database: F3 ----
+
+    /// Which console statement(s) to run (F3.3): `Statement` splits the
+    /// whole console buffer and runs only the one the caret sits in;
+    /// `Selection` splits and runs just the given text, in order; `File`
+    /// is `executeFile`'s own path (reads from disk), never a valid
+    /// `execute` argument.
+    enum FfiDbExecWhat {
+        Statement,
+        Selection,
+        File,
+    }
+
+    /// Auto commits every statement on its own; Manual opens a
+    /// transaction on the first statement, held open until `commit`/
+    /// `rollback`.
+    enum FfiDbTxMode {
+        Auto,
+        Manual,
+    }
+
+    /// How a multi-statement run responds to one statement failing.
+    #[derive(PartialEq, Eq)]
+    enum FfiDbScriptPolicy {
+        StopOnError,
+        Continue,
+        Ask,
+    }
+
+    enum FfiDbTextFormat {
+        Csv,
+        Tsv,
+        Json,
+        /// A GitHub-flavoured Markdown table — F4d's Text view export
+        /// (`ResultProvider::textView`'s own doc comment on why this
+        /// module already renders text formats itself rather than
+        /// reusing `db-exchange`'s exporters: those write a whole file
+        /// from a typed `RowBatch`, this reads the *already-fetched*
+        /// page straight from `display` text for an instant preview).
+        Markdown,
+    }
+
+    enum FfiDbAggOp {
+        Sum,
+        Avg,
+        Min,
+        Max,
+        Count,
+    }
+
+    /// `db_core::error::DbError` crossed the seam (ADR-0003): `code` is
+    /// `DbErrorCode`'s own discriminant, `line`/`col` are `-1` when the
+    /// backend gives no statement position for the failure. `code == 0`
+    /// (never a real `DbErrorCode` discriminant, `Unknown` is `0`... a
+    /// caller distinguishes "no error" by the signal's own `ok` bool, not
+    /// by this code, since `Unknown` legitimately shares `0`).
+    #[derive(Default)]
+    struct FfiDbError {
+        code: i32,
+        message: QString,
+        line: i32,
+        col: i32,
+    }
+
+    /// One result column (F3.4), 1:1 with `db_core::value::ColumnMeta`.
+    struct FfiDbColumn {
+        name: QString,
+        #[cxx_name = "typeName"]
+        type_name: QString,
+        nullable: bool,
+    }
+
+    /// One result row, already rendered (`Value::display`). `cells`/
+    /// `nulls` are `\u{1f}`-joined rather than `Vec<QString>` fields — a
+    /// `Vec` field on a shared struct is not a shape cxx supports (see
+    /// `FfiRunConfig::before_launch`'s own doc comment for the same
+    /// convention).
+    struct FfiDbRow {
+        cells: QString,
+        nulls: QString,
+        /// The data editor's own pending-change bits (F4.1): bit 0
+        /// edited, bit 1 deleted, bit 2 inserted, `0` for an untouched
+        /// row or a non-editable result — `db_core::dml::EditBuffer::
+        /// row_flags`'s own doc comment. The delegate's highlight.
+        flags: u8,
+    }
+
+    /// F4.3's FK navigation (`ConsoleService::cellNavigation`): one target
+    /// a cell offers, already resolved to a runnable statement — never a
+    /// raw table/column pair the view would have to assemble SQL from
+    /// itself (`CLAUDE.md`'s humble-view rule).
+    struct FfiDbNavTarget {
+        /// The context-menu label, e.g. `"Go to customers.id"` (forward)
+        /// or `"5 rows in orders.customer_id"` (reverse, `count` already
+        /// known).
+        label: QString,
+        /// A complete, already-bound `SELECT` — the cell's own value
+        /// rendered through `db_core::value::Value::sql_literal`, never
+        /// user-typed text (`ADR-0061` §1's "never interpolate untrusted
+        /// text" is unaffected: this value came from a result the driver
+        /// already returned, not from anything a user typed into this
+        /// call).
+        statement: QString,
+    }
+
+    // ---- database: F4d ----
+
+    /// The result grid's view modes (F4d): `Table` is the plain grid every
+    /// result already has; `Transpose`/`Text`/`Record` are offered only
+    /// when `ResultProvider::resultModes` says so — `Record` in
+    /// particular only makes sense once a row has nested structure to
+    /// flatten (`db_core::value::record_rows`), not for a plain scalar
+    /// row.
+    enum FfiDbViewMode {
+        Table,
+        Transpose,
+        Text,
+        Record,
+    }
+
+    /// Which view modes `resultId` supports, and which one to pre-select —
+    /// a Mongo result whose one column is a whole document defaults to
+    /// `Record` (closing F7b's "Document/Table toggle" gap), every other
+    /// result defaults to `Table`. Transpose/Text are always offered
+    /// (they work over any tabular result); `Record` only when at least
+    /// one column actually carries `Document`/`Array`/`Json` structure to
+    /// flatten.
+    struct FfiResultModes {
+        #[cxx_name = "canTranspose"]
+        can_transpose: bool,
+        #[cxx_name = "canText"]
+        can_text: bool,
+        #[cxx_name = "canRecord"]
+        can_record: bool,
+        #[cxx_name = "defaultMode"]
+        default_mode: FfiDbViewMode,
+    }
+
+    /// One line of the Record view's flattened field tree — see
+    /// `db_core::value::RecordRow`'s own doc comment (F4d), which this
+    /// mirrors field-for-field.
+    struct FfiRecordRow {
+        depth: u32,
+        key: QString,
+        value: QString,
+        #[cxx_name = "typeName"]
+        type_name: QString,
+    }
+
+    /// Whether `aggregateComputed`'s answer is the exact whole-result
+    /// value, or a same-shaped fallback computed over only the rows
+    /// fetched so far — `FetchedRowsOnly` when the result's own statement
+    /// cannot be wrapped as `SELECT op(col) FROM (stmt) t` (not a plain
+    /// `SELECT`, or a dialect with no derived-table concept at all —
+    /// Mongo/Redis).
+    enum FfiDbAggScope {
+        Exact,
+        FetchedRowsOnly,
+    }
+
+    /// `aggregateComputed`'s whole payload, bundled into one struct rather
+    /// than a signal with `clippy::too_many_arguments`' own ceiling worth
+    /// of scalar params — see that signal's own doc comment for what each
+    /// field means.
+    struct FfiDbAggregateOutcome {
+        ok: bool,
+        value: QString,
+        #[cxx_name = "rowCount"]
+        row_count: u64,
+        scope: FfiDbAggScope,
+        reason: QString,
+    }
+
+    extern "RustQt" {
+        /// One console tab's execution engine (F3.1/F3.3): a dedicated
+        /// `SessionWorker` per attached tab (never the Database dock's
+        /// tree worker — see `bridge::database::console`'s own doc
+        /// comment), read-only-guarded through `db_sql::classify::
+        /// SqlClassifier`.
+        #[qobject]
+        type ConsoleService = super::ConsoleServiceRust;
+
+        #[qinvokable]
+        fn attach(self: Pin<&mut ConsoleService>, tab_id: u64, source_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        fn detach(self: Pin<&mut ConsoleService>, tab_id: u64);
+
+        #[qinvokable]
+        #[cxx_name = "setTxMode"]
+        fn set_tx_mode(self: Pin<&mut ConsoleService>, tab_id: u64, mode: FfiDbTxMode)
+            -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "setScriptPolicy"]
+        fn set_script_policy(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            policy: FfiDbScriptPolicy,
+        );
+
+        /// See `ConsoleServiceRust`'s `script_policy`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "scriptPolicy"]
+        fn script_policy(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiDbScriptPolicy;
+
+        /// See `ConsoleService::schemas`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        fn schemas(self: Pin<&mut ConsoleService>, tab_id: u64) -> QStringList;
+
+        /// See `ConsoleService::set_schema`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        #[cxx_name = "setSchema"]
+        fn set_schema(self: Pin<&mut ConsoleService>, tab_id: u64, schema: &QString) -> FfiResult;
+
+        /// Runs a statement/selection against `tab_id`'s attached source —
+        /// see `FfiDbExecWhat`'s own doc comment for what `text`/`caret`
+        /// mean per variant.
+        #[qinvokable]
+        fn execute(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            text: &QString,
+            what: FfiDbExecWhat,
+            caret: u32,
+        ) -> FfiResult;
+
+        /// Runs `path`'s whole contents as a script against `source_id`
+        /// (F3.6's run configuration entry point); `tab_id` is `0` when no
+        /// console tab is involved.
+        #[qinvokable]
+        #[cxx_name = "executeFile"]
+        fn execute_file(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            path: &QString,
+            source_id: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        fn cancel(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiResult;
+
+        #[qinvokable]
+        fn commit(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiResult;
+
+        #[qinvokable]
+        fn rollback(self: Pin<&mut ConsoleService>, tab_id: u64) -> FfiResult;
+
+        /// Answers an `askContinue` — see `ConsoleService::resume`'s own
+        /// doc comment (`bridge::database::console`).
+        #[qinvokable]
+        fn resume(self: Pin<&mut ConsoleService>, result_id: u64, proceed: bool);
+
+        /// A source's execution history, statement text only, oldest
+        /// first — never a bound parameter value (ADR-0061 §1).
+        #[qinvokable]
+        fn history(self: Pin<&mut ConsoleService>, source_id: &QString) -> QStringList;
+
+        #[qinvokable]
+        #[cxx_name = "clearHistory"]
+        fn clear_history(self: Pin<&mut ConsoleService>, source_id: &QString) -> FfiResult;
+
+        /// See `ConsoleServiceRust::source_for_path`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "sourceForPath"]
+        fn source_for_path(self: Pin<&mut ConsoleService>, path: &QString) -> QString;
+
+        /// See `ConsoleServiceRust::available_sources`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "availableSources"]
+        fn available_sources(self: Pin<&mut ConsoleService>) -> Vec<FfiDbSourceRow>;
+
+        // ---- database: FX ----
+        /// A project opened (or reopened): `availableSources` reads
+        /// `configured_sources()` fresh from disk on every call, but
+        /// `DatabaseConsoleBar::sourceCombo_` is only ever populated once,
+        /// at construction — before any project is open — so a source
+        /// declared in the project this window eventually opens never
+        /// appears in the picker without this. Emits `sourcesChanged`,
+        /// the same "re-emit, the read itself is already live" shape
+        /// `DatabaseService::projectOpened` uses.
+        #[qinvokable]
+        #[cxx_name = "projectOpened"]
+        fn console_project_opened(self: Pin<&mut ConsoleService>, root: &QString);
+
+        #[qsignal]
+        #[cxx_name = "sourcesChanged"]
+        fn sources_changed(self: Pin<&mut ConsoleService>);
+
+        /// See `ConsoleService::dml_preview`'s own doc comment
+        /// (`bridge::database::console`) — F4.2's DML preview.
+        #[qinvokable]
+        #[cxx_name = "dmlPreview"]
+        fn dml_preview(self: Pin<&mut ConsoleService>, result_id: u64) -> FfiResult;
+
+        /// See `ConsoleService::submit`'s own doc comment
+        /// (`bridge::database::console`) — F4.2's submit; the outcome
+        /// arrives asynchronously through `submitFinished`.
+        #[qinvokable]
+        fn submit(self: Pin<&mut ConsoleService>, result_id: u64) -> FfiResult;
+
+        /// A statement started executing — `index`/`count` are 1-based
+        /// position within a multi-statement run (`1`/`1` for a lone
+        /// statement).
+        #[qsignal]
+        #[cxx_name = "executionStarted"]
+        fn execution_started(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            result_id: u64,
+            index: u32,
+            count: u32,
+        );
+
+        /// `count` more rows landed in `result_id`'s buffer, starting at
+        /// (0-based) `first` — the grid re-reads through `ResultProvider`.
+        #[qsignal]
+        #[cxx_name = "rowsAppended"]
+        fn rows_appended(self: Pin<&mut ConsoleService>, result_id: u64, first: u64, count: u64);
+
+        /// `result_id` is done: `affected` is the row count for a
+        /// `Rows`/`Affected` shape, `0` for a plain `Ok`. `error.code == 0`
+        /// alone never means success — read `ok`.
+        #[qsignal]
+        #[cxx_name = "executionFinished"]
+        fn execution_finished(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            ok: bool,
+            affected: u64,
+            elapsed_ms: u64,
+            error: FfiDbError,
+        );
+
+        /// A `StopOnError`/`Ask`-policy script hit a failing statement and
+        /// more remain — `message` is the failing statement's own error
+        /// text, for a confirmation dialog to show; the view offers
+        /// Continue/Stop, then calls `resume`.
+        #[qsignal]
+        #[cxx_name = "askContinue"]
+        fn ask_continue(self: Pin<&mut ConsoleService>, result_id: u64, message: QString);
+
+        /// Free-text status for the console's Output tab (attach/detach
+        /// outcomes, transaction errors) — never a substitute for
+        /// `executionFinished`'s typed error.
+        #[qsignal]
+        #[cxx_name = "outputAppended"]
+        fn output_appended(self: Pin<&mut ConsoleService>, tab_id: u64, text: QString);
+
+        /// A memory-cap-reached signal distinct from `executionFinished`
+        /// (F3.4's own "Fetch more" affordance) — the execution itself
+        /// still finishes normally right after this, since the statement
+        /// did complete, only paging further stopped.
+        #[qsignal]
+        #[cxx_name = "capReached"]
+        fn cap_reached_signal(self: Pin<&mut ConsoleService>, result_id: u64);
+
+        /// `result_id`'s editability decision is in (F4.1) — `reason` is
+        /// empty when `editable`. Fires once a candidate single-table
+        /// result's `Full`-level introspect lands, or immediately for a
+        /// read-only source / a statement that is not a single table.
+        #[qsignal]
+        #[cxx_name = "editabilityChanged"]
+        fn editability_changed(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            editable: bool,
+            reason: QString,
+        );
+
+        /// `result_id`'s `dmlPreview` opened a tab — same shape as
+        /// `DatabaseService::virtualDocumentOpened`, a separate signal
+        /// because it is a different `QObject`.
+        #[qsignal]
+        #[cxx_name = "virtualDocumentOpened"]
+        fn virtual_document_opened(
+            self: Pin<&mut ConsoleService>,
+            tab_id: u64,
+            title: QString,
+            is_new: bool,
+        );
+
+        /// `submit`'s own outcome (F4.2) — `message` is a human summary on
+        /// success, the failing statement's error text otherwise.
+        #[qsignal]
+        #[cxx_name = "submitFinished"]
+        fn submit_finished(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            ok: bool,
+            message: QString,
+        );
+
+        /// A successful submit's own refresh: `old_result_id`'s page is
+        /// stale, `new_result_id` is the freshly re-run replacement the
+        /// grid should switch to.
+        #[qsignal]
+        #[cxx_name = "resultRefreshed"]
+        fn result_refreshed(self: Pin<&mut ConsoleService>, old_result_id: u64, new_result_id: u64);
+
+        // ---- database: F4b ----
+
+        /// F4.3's exact aggregate: re-runs `column`'s `op` as `SELECT
+        /// op(col), COUNT(*) FROM (<result's own statement>) t` over its
+        /// own short-lived connection (`bridge::database::edit`'s own doc
+        /// comment on why not the console's shared worker) — the outcome
+        /// arrives asynchronously through `aggregateComputed`, unlike
+        /// `ResultProvider::aggregate`'s synchronous fetched-rows-only
+        /// estimate.
+        #[qinvokable]
+        #[cxx_name = "aggregateExact"]
+        fn aggregate_exact(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            column: &QString,
+            op: FfiDbAggOp,
+        ) -> FfiResult;
+
+        /// `aggregateExact`'s outcome: `value` is the aggregate's own
+        /// display text on success (`ok`) or an error message otherwise;
+        /// `row_count` is the whole result's row count (`COUNT(*)` over
+        /// the same derived table), for the footer's "computed over all N
+        /// rows" text. Carries no `column` — the caller already knows
+        /// which one it asked `aggregateExact` for; a footer that fires a
+        /// second request before the first answers is the caller's own
+        /// race to avoid, same as `dmlPreview`/`submit`'s single-slot
+        /// convention.
+        /// `scope`/`reason` (F4d): `FetchedRowsOnly` means the statement
+        /// could not be wrapped as a derived table at all — the footer
+        /// falls back to `ResultProvider::aggregate`'s own fetched-rows
+        /// estimate and shows `reason` as a caveat, rather than treating
+        /// this as a normal query failure (`ok` is `false` for that case
+        /// too, but `reason` is never empty, unlike a real query error's
+        /// `value`).
+        #[qsignal]
+        #[cxx_name = "aggregateComputed"]
+        fn aggregate_computed(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            op: FfiDbAggOp,
+            outcome: FfiDbAggregateOutcome,
+        );
+
+        /// F4.3's FK navigation, forward direction: every target
+        /// `row`/`column`'s cell offers, decided from the table's own
+        /// constraint detail (`db_core::schema::ConstraintKind`, F6c) —
+        /// empty when the result is not a single-table result, the column
+        /// is not part of a foreign key, or the constraint detail is not
+        /// in hand yet (the same `Full`-level introspect F4.1's
+        /// editability check already triggers backs this — a result
+        /// offers navigation exactly when it offers editing, since both
+        /// need the same snapshot).
+        #[qinvokable]
+        #[cxx_name = "cellNavigation"]
+        fn cell_navigation(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> Vec<FfiDbNavTarget>;
+
+        /// Runs `target`'s own statement (already bound — `db_core::ddl`'s
+        /// own "never interpolate" rule) as a fresh result on `result_id`'s
+        /// console, same as `applyClauses` — the new result id, in
+        /// `message`, same convention.
+        #[qinvokable]
+        #[cxx_name = "goToNavTarget"]
+        fn go_to_nav_target(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            target: &FfiDbNavTarget,
+        ) -> FfiResult;
+
+        /// Reverse FK navigation (F4d, the F4.3 follow-up
+        /// `database-tools.md` §4 tracked as open): "Show referencing
+        /// rows ▸ &lt;table.column&gt;" — every *other* table whose own
+        /// foreign key points back at this cell's `(table, column)`,
+        /// found from a whole-schema `Full`-level introspect run once per
+        /// source and cached (`db_core::schema::find_referencing_columns`
+        /// over that snapshot), not the single-table introspect
+        /// `cellNavigation` uses. Runs off the Qt thread (a whole-schema
+        /// introspect is not cheap) — the outcome arrives through
+        /// `referencingTargetsReady`, one `FfiDbNavTarget` per
+        /// referencing table with a bound `COUNT(*)`-derived label
+        /// (`"N rows in orders.customer_id"`).
+        #[qinvokable]
+        #[cxx_name = "referencingTargets"]
+        fn referencing_targets(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        /// `referencingTargets`' own outcome — see its doc comment.
+        #[qsignal]
+        #[cxx_name = "referencingTargetsReady"]
+        fn referencing_targets_ready(
+            self: Pin<&mut ConsoleService>,
+            result_id: u64,
+            column: QString,
+            targets: Vec<FfiDbNavTarget>,
+        );
+    }
+
+    impl cxx_qt::Threading for ConsoleService {}
+
+    extern "RustQt" {
+        /// A result's rows and text/aggregate views (F3.4/F3.5) — reads
+        /// `bridge::database::console::Shared`, the same state
+        /// `ConsoleService` populates, since cxx-qt gives two QObjects no
+        /// way to share a constructor argument (see that module's own doc
+        /// comment).
+        #[qobject]
+        type ResultProvider = super::ResultProviderRust;
+
+        #[qinvokable]
+        fn columns(self: Pin<&mut ResultProvider>, result_id: u64) -> Vec<FfiDbColumn>;
+
+        #[qinvokable]
+        #[cxx_name = "rowCount"]
+        fn row_count(self: Pin<&mut ResultProvider>, result_id: u64) -> u64;
+
+        #[qinvokable]
+        #[cxx_name = "rowPage"]
+        fn row_page(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            first: u64,
+            count: u64,
+        ) -> Vec<FfiDbRow>;
+
+        /// The same page `rowPage` reads, but every cell kept as its real
+        /// `Value` rather than rendered display text — one JSON-encoded
+        /// array string per row (`db_core::value::row_to_json`), not a
+        /// new cxx-qt struct: `Value`'s dozen scalar variants plus its
+        /// recursive `Array`/`Document` cases have no shape a cxx shared
+        /// struct accepts directly (database-tools-plan F4c). Consumed by
+        /// `ExchangeService::exportRowsToFile`/`exportRowsToText` so a
+        /// grid export is typed, and available to any future typed view
+        /// (a Record view's tree, F4c's still-open "view modes" row).
+        #[qinvokable]
+        #[cxx_name = "rowValues"]
+        fn row_values(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            first: u64,
+            count: u64,
+        ) -> QStringList;
+
+        /// Asks the parked stream for its next page — `Err` once the
+        /// result already finished (nothing left to fetch) or the console
+        /// detached underneath it.
+        #[qinvokable]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut ResultProvider>, result_id: u64) -> FfiResult;
+
+        /// See `ConsoleServiceRust::fetch_more_available`'s own doc
+        /// comment (`ResultProvider` reads the same shared state).
+        #[qinvokable]
+        #[cxx_name = "fetchMoreAvailable"]
+        fn fetch_more_available(self: Pin<&mut ResultProvider>, result_id: u64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setPageSize"]
+        fn set_page_size(self: Pin<&mut ResultProvider>, result_id: u64, size: u32);
+
+        #[qinvokable]
+        #[cxx_name = "textView"]
+        fn text_view(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            format: FfiDbTextFormat,
+        ) -> QString;
+
+        /// A best-effort aggregate over the rows fetched so far (this
+        /// type's own doc comment on `aggregate`'s ponytail note).
+        #[qinvokable]
+        fn aggregate(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            column: &QString,
+            op: FfiDbAggOp,
+        ) -> QString;
+
+        /// Re-executes the result's statement wrapped as a derived table
+        /// with `WHERE`/`ORDER BY` applied — a fresh execution, reported
+        /// through `ConsoleService`'s own signals (see this module's doc
+        /// comment on why `ResultProvider` cannot emit them itself).
+        #[qinvokable]
+        #[cxx_name = "applyClauses"]
+        fn apply_clauses(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            where_clause: &QString,
+            order_by: &QString,
+        ) -> FfiResult;
+
+        // ---- data editor (F4.1/F4.2) ----
+
+        /// See `EditState`'s own doc comment (`bridge::database::console`).
+        #[qinvokable]
+        #[cxx_name = "isEditable"]
+        fn is_editable(self: Pin<&mut ResultProvider>, result_id: u64) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "notEditableReason"]
+        fn not_editable_reason(self: Pin<&mut ResultProvider>, result_id: u64) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "pendingCount"]
+        fn pending_count(self: Pin<&mut ResultProvider>, result_id: u64) -> u64;
+
+        /// See `ResultProvider::set_cell`'s own doc comment
+        /// (`bridge::database::console`).
+        #[qinvokable]
+        #[cxx_name = "setCell"]
+        fn set_cell(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+            text: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "setNull"]
+        fn set_null(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "setDefault"]
+        fn set_default(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "revertCell"]
+        fn revert_cell(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+            column: &QString,
+        ) -> FfiResult;
+
+        /// See `ResultProvider::add_row`'s own doc comment — the new
+        /// row's grid index travels back in `FfiResult::message`.
+        #[qinvokable]
+        #[cxx_name = "addRow"]
+        fn add_row(self: Pin<&mut ResultProvider>, result_id: u64) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "cloneRow"]
+        fn clone_row(self: Pin<&mut ResultProvider>, result_id: u64, row: u64) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "deleteRows"]
+        fn delete_rows(self: Pin<&mut ResultProvider>, result_id: u64, rows: Vec<u64>)
+            -> FfiResult;
+
+        #[qinvokable]
+        fn revert(self: Pin<&mut ResultProvider>, result_id: u64);
+
+        /// See `db_core::value::pretty_json`'s own doc comment — the
+        /// value editor's JSON pretty-print toggle. Stateless (no
+        /// `result_id`): a plain text transform, not a per-result
+        /// question, kept on this `QObject` only because the value
+        /// editor already talks to it for everything else.
+        #[qinvokable]
+        #[cxx_name = "prettyJson"]
+        fn pretty_json(self: Pin<&mut ResultProvider>, text: &QString) -> FfiResult;
+
+        /// `ValueEditorDialog`'s own decision to open in its hex-edit
+        /// mode (F4c) — `true` for a `Value::Bytes` column
+        /// (`db_core::value::is_binary_type`).
+        #[qinvokable]
+        #[cxx_name = "isBinaryColumn"]
+        fn is_binary_column(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            column: &QString,
+        ) -> bool;
+
+        /// Live hex validation for the value editor's hex-edit mode —
+        /// see `db_core::value::validate_hex_text`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "validateHex"]
+        fn validate_hex(self: Pin<&mut ResultProvider>, text: &QString) -> FfiResult;
+
+        // ---- database: F4d ----
+
+        /// Which view modes `resultId` offers right now — see
+        /// `FfiResultModes`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "resultModes"]
+        fn result_modes(self: Pin<&mut ResultProvider>, result_id: u64) -> FfiResultModes;
+
+        /// The Record view's own data: `row`'s cells flattened into a
+        /// field tree (`db_core::value::record_rows`) — empty when `row`
+        /// is out of range.
+        #[qinvokable]
+        #[cxx_name = "recordRows"]
+        fn record_rows(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            row: u64,
+        ) -> Vec<FfiRecordRow>;
+    }
+
+    impl cxx_qt::Threading for ResultProvider {}
+
+    // ---- database: F8b ----
+
+    /// One `adbc`-backend `database-drivers` row's install status (F8.5,
+    /// `database-tools.md` §9) — plain text plus two booleans the dialog
+    /// needs to pick which button (if any) to show.
+    #[derive(Default)]
+    struct FfiDriverStatus {
+        text: QString,
+        installable: bool,
+        #[cxx_name = "canReenable"]
+        can_reenable: bool,
+    }
+
+    /// What the consent dialog names before an install: the pinned
+    /// artifact's own URL/sha256/publisher (domain), empty when this row
+    /// has no artifact for the current platform.
+    #[derive(Default)]
+    struct FfiDriverConsent {
+        url: QString,
+        sha256: QString,
+        publisher: QString,
+    }
+
+    extern "RustQt" {
+        /// Whether installing a driver contributed by a plugin other than
+        /// the built-in `database-tools` one is allowed (ADR-0061 §4,
+        /// `[database] allow_third_party_drivers`, default off).
+        #[qinvokable]
+        #[cxx_name = "allowThirdPartyDrivers"]
+        fn allow_third_party_drivers(self: &AppSettings) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setAllowThirdPartyDrivers"]
+        fn set_allow_third_party_drivers(self: &AppSettings, value: bool) -> FfiResult;
+    }
+
+    extern "RustQt" {
+        /// Drives `db_driver_adbc::{install,quarantine}` for one `adbc`
+        /// row at a time (F8.5): a status line, a consent-dialog summary,
+        /// installing off the UI thread, and re-enabling a quarantined
+        /// driver.
+        #[qobject]
+        type DriverInstallService = super::DriverInstallServiceRust;
+
+        #[qinvokable]
+        fn status(self: &DriverInstallService, driver_id: &QString) -> FfiDriverStatus;
+
+        #[qinvokable]
+        fn consent(self: &DriverInstallService, driver_id: &QString) -> FfiDriverConsent;
+
+        /// Downloads, verifies and installs this row's pinned artifact for
+        /// this platform, off the UI thread; reports through
+        /// `installFinished`. Refused immediately (no thread spawned) when
+        /// third-party installs are off for a non-builtin row, or when
+        /// this row has no artifact for this platform.
+        #[qinvokable]
+        fn install(self: Pin<&mut DriverInstallService>, driver_id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        fn reenable(self: &DriverInstallService, driver_id: &QString) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "installFinished"]
+        fn install_finished(
+            self: Pin<&mut DriverInstallService>,
+            driver_id: QString,
+            ok: bool,
+            message: QString,
+        );
+    }
+
+    impl cxx_qt::Threading for DriverInstallService {}
+
+    // ---- database: F5b ----
+
+    /// Every export format `db_exchange::export` offers, plus the two
+    /// text variants that need a per-format flag of their own (JSON
+    /// Lines vs. a single array, an `UPDATE` vs. an `INSERT` SQL body) —
+    /// folded into the format itself rather than a separate options bit,
+    /// since a dialog's format combo already has to name them as distinct
+    /// choices.
+    #[repr(i32)]
+    enum FfiExportFormat {
+        Csv,
+        Tsv,
+        Json,
+        JsonLines,
+        Markdown,
+        Html,
+        SqlInsert,
+        SqlUpdate,
+        Xlsx,
+    }
+
+    /// The knobs every export format reads a subset of
+    /// (`db_exchange::export::ExportOptions`'s own doc comment on why one
+    /// shared struct rather than one per format).
+    struct FfiExportOptions {
+        header: bool,
+        #[cxx_name = "nullText"]
+        null_text: QString,
+        #[cxx_name = "quoteAll"]
+        quote_all: bool,
+        /// A single character; empty defaults to `,` (CSV) / tab (TSV).
+        delimiter: QString,
+        #[cxx_name = "dateFormat"]
+        date_format: QString,
+        #[cxx_name = "tableName"]
+        table_name: QString,
+        /// Comma-separated key columns for `SqlUpdate`'s `WHERE` clause.
+        #[cxx_name = "keyColumns"]
+        key_columns: QString,
+    }
+
+    /// Source-parsing knobs for a CSV/XLSX import
+    /// (`db_exchange::import::ImportOptions` crossed the seam).
+    struct FfiImportOptions {
+        header: bool,
+        #[cxx_name = "nullText"]
+        null_text: QString,
+        delimiter: QString,
+        #[cxx_name = "dateFormat"]
+        date_format: QString,
+        /// Folded in here rather than two more `importRun` parameters —
+        /// `db_exchange::import::plan`'s own knobs, kept beside the rest
+        /// of this source's parsing options to keep `importRun` under
+        /// clippy's argument-count ceiling.
+        #[cxx_name = "createTable"]
+        create_table: bool,
+        #[cxx_name = "batchSize"]
+        batch_size: u32,
+    }
+
+    /// A sampled look at an import source (`db_exchange::import::
+    /// ImportPreview`): every column's detected type, alongside its own
+    /// name, so the dialog's mapping table has one row per source column
+    /// with no further round trip.
+    #[derive(Default)]
+    struct FfiImportPreview {
+        columns: QStringList,
+        /// The detected type per column, same order as `columns` — one
+        /// of `"int"`/`"float"`/`"bool"`/`"date"`/`"text"`.
+        #[cxx_name = "detectedTypes"]
+        detected_types: QStringList,
+        /// The sample rows, each `\u{1f}`-joined (same convention as
+        /// `FfiDbRow::cells`), one `QString` per row, capped at
+        /// `db_exchange::import::PREVIEW_SAMPLE_ROWS`.
+        #[cxx_name = "sampleRows"]
+        sample_rows: QStringList,
+    }
+
+    /// One mapped column of an import (`db_exchange::import::
+    /// ColumnMapping` crossed the seam) — the dialog's mapping table has
+    /// one editable row per source column, built from `type_coercion` as
+    /// plain text (`"int"`/`"float"`/`"bool"`/`"date"`/`"text"`) rather
+    /// than the Rust enum, so the view never needs a second copy of that
+    /// vocabulary.
+    struct FfiImportColumnMapping {
+        #[cxx_name = "sourceCol"]
+        source_col: QString,
+        #[cxx_name = "targetCol"]
+        target_col: QString,
+        #[cxx_name = "typeCoercion"]
+        type_coercion: QString,
+        skip: bool,
+    }
+
+    /// One row of a schema compare's summary (`db_exchange::
+    /// schema_compare::SchemaDiff`, flattened) — `kind` is one of
+    /// `"added-table"`/`"dropped-table"`/`"changed-table"`/`"view"`/
+    /// `"routine"`, `table`/`name` the same pair `ObjectRef` carries so
+    /// `openDdlDiff` can be handed exactly what it needs back.
+    struct FfiCompareRow {
+        kind: QString,
+        table: QString,
+        name: QString,
+    }
+
+    /// Two already-rendered texts for `DocumentManager::openDiffTab` —
+    /// `ExchangeService` computes the text, the dialog opens the tab, so
+    /// this crosses the seam once rather than the dialog re-deriving
+    /// either side itself.
+    #[derive(Default)]
+    struct FfiTextDiff {
+        left: QString,
+        right: QString,
+        label: QString,
+    }
+
+    /// A key-aligned data compare's outcome (`db_exchange::data_compare::
+    /// DataDiffSummary` plus its two canonical TSVs, one round trip).
+    #[derive(Default)]
+    struct FfiDataCompareResult {
+        #[cxx_name = "onlyLeft"]
+        only_left: u64,
+        #[cxx_name = "onlyRight"]
+        only_right: u64,
+        changed: u64,
+        equal: u64,
+        #[cxx_name = "leftText"]
+        left_text: QString,
+        #[cxx_name = "rightText"]
+        right_text: QString,
+    }
+
+    /// What a dump/restore run should cover
+    /// (`db_exchange::dump::DumpOptions` crossed the seam).
+    struct FfiDumpOptions {
+        #[cxx_name = "schemaOnly"]
+        schema_only: bool,
+        #[cxx_name = "dataOnly"]
+        data_only: bool,
+        /// Comma-separated; empty means every table.
+        tables: QString,
+        #[cxx_name = "outputFile"]
+        output_file: QString,
+    }
+
+    /// Whether this source's dump tool is on `PATH`, and what to tell the
+    /// user if not (`db_exchange::dump::{tool_available,install_hint}`).
+    #[derive(Default)]
+    struct FfiDumpToolStatus {
+        program: QString,
+        available: bool,
+        #[cxx_name = "installHint"]
+        install_hint: QString,
+    }
+
+    extern "RustQt" {
+        /// Export/import/dump/copy-table/ER-diagram/schema-and-data-
+        /// compare (database-tools-plan F5/F6, crate half in
+        /// `db-exchange`): every long-running operation runs on its own
+        /// thread and reports through `jobProgress`/`jobFinished`; every
+        /// short one (a preview, a diagram, a compare summary) answers
+        /// directly. Translation only, same as every other `bridge::
+        /// database` QObject — every rule lives in `db_exchange`/
+        /// `db_core`.
+        #[qobject]
+        type ExchangeService = super::ExchangeServiceRust;
+
+        /// Streams `SELECT * FROM` `objectPath` (already-qualified, as the
+        /// tree gives it) out to `destination` in `format`, never
+        /// materialising the whole result in memory. Returns a job id
+        /// immediately; `0` means it could not even start (see the
+        /// `jobFinished(0, ...)` this still emits before returning, so a
+        /// caller never has to special-case the synchronous-failure path).
+        #[qinvokable]
+        #[cxx_name = "exportTable"]
+        fn export_table(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            object_path: &QString,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+            destination: &QString,
+        ) -> u64;
+
+        /// The first `maxRows` of `objectPath`, rendered in `format` —
+        /// the export dialog's own preview pane.
+        #[qinvokable]
+        #[cxx_name = "exportPreviewText"]
+        fn export_preview_text(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            object_path: &QString,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+            max_rows: u32,
+        ) -> QString;
+
+        /// "Copy as"/"Export…" on an already-executed result grid: the
+        /// rows are already fetched, and kept typed the whole way —
+        /// `rows` is `ResultProvider::rowValues`'s own JSON-per-row
+        /// encoding, not `FfiDbRow`'s rendered display text (F4c closed
+        /// the gap the previous `ponytail` note here described: a
+        /// `SqlInsert`/`SqlUpdate`/XLSX/JSON export now quotes/types each
+        /// value from its real `Value`, never from text).
+        #[qinvokable]
+        #[cxx_name = "exportRowsToFile"]
+        fn export_rows_to_file(
+            self: Pin<&mut ExchangeService>,
+            columns: &QStringList,
+            rows: &QStringList,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+            destination: &QString,
+        ) -> FfiResult;
+
+        /// Same rendering as `exportRowsToFile`, returned as text for the
+        /// clipboard rather than written to a file.
+        #[qinvokable]
+        #[cxx_name = "exportRowsToText"]
+        fn export_rows_to_text(
+            self: Pin<&mut ExchangeService>,
+            columns: &QStringList,
+            rows: &QStringList,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+        ) -> QString;
+
+        /// Samples `path` (CSV or XLSX, by extension) and guesses each
+        /// column's type — `db_exchange::import::{csv,xlsx}::preview`.
+        #[qinvokable]
+        #[cxx_name = "importPreview"]
+        fn import_preview(
+            self: Pin<&mut ExchangeService>,
+            path: &QString,
+            options: FfiImportOptions,
+        ) -> FfiImportPreview;
+
+        /// Reads `path` fully, compiles it under `mapping` against
+        /// `targetTable`'s dialect, and runs it on `sourceId` — a job, the
+        /// same shape as `exportTable`.
+        #[qinvokable]
+        #[cxx_name = "importRun"]
+        fn import_run(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            path: &QString,
+            target_table: &QString,
+            mapping: Vec<FfiImportColumnMapping>,
+            options: FfiImportOptions,
+        ) -> u64;
+
+        /// Copies every row of `srcTable` (on `srcSource`) into
+        /// `dstTable` (on `dstSource`) — a job, `db_exchange::
+        /// copy_table::copy_table` on a fresh pair of connections.
+        #[qinvokable]
+        #[cxx_name = "copyTable"]
+        fn copy_table(
+            self: Pin<&mut ExchangeService>,
+            src_source: &QString,
+            src_table: &QString,
+            dst_source: &QString,
+            dst_table: &QString,
+            create_if_missing: bool,
+            batch_size: u32,
+        ) -> u64;
+
+        /// `sourceId`'s schema (or just `tableScope` plus its FK
+        /// neighbours, when non-empty) as Mermaid `erDiagram` text —
+        /// `db_exchange::er_diagram::to_mermaid`. The dialog opens it as
+        /// a read-only virtual document via `DocumentManager::
+        /// openVirtualDocument("mermaid", …)` itself.
+        #[qinvokable]
+        #[cxx_name = "erDiagramMermaid"]
+        fn er_diagram_mermaid(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            table_scope: &QString,
+        ) -> QString;
+
+        /// The same diagram, already rasterised at `widthPx` — the same
+        /// `FfiPreviewImage` shape `PreviewProvider::previewImages`
+        /// returns, so the dialog that shows it needs no second
+        /// `QImage`-building code path.
+        #[qinvokable]
+        #[cxx_name = "erDiagramImage"]
+        fn er_diagram_image(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            table_scope: &QString,
+            width_px: u32,
+        ) -> FfiPreviewImage;
+
+        /// Compares `leftSource`'s schema against `rightSource`'s
+        /// (`db_exchange::schema_compare::compare`), caching the diff (by
+        /// this same source pair) for `openDdlDiff`/`migrationScript` to
+        /// read back without re-introspecting either side.
+        #[qinvokable]
+        #[cxx_name = "schemaCompare"]
+        fn schema_compare(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            right_source: &QString,
+        ) -> Vec<FfiCompareRow>;
+
+        /// One changed object's before/after DDL text, from the diff
+        /// `schemaCompare` last cached for this exact source pair — the
+        /// dialog opens the returned texts with `DocumentManager::
+        /// openDiffTab` itself.
+        #[qinvokable]
+        #[cxx_name = "ddlDiffTexts"]
+        fn ddl_diff_texts(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            right_source: &QString,
+            table: &QString,
+            name: &QString,
+        ) -> FfiTextDiff;
+
+        /// The forward migration script (`leftSource` -> `rightSource`)
+        /// for the same cached diff, in `rightSource`'s dialect — the
+        /// dialog opens it as a virtual document
+        /// (`"db-migration"`/`.sql`) itself.
+        #[qinvokable]
+        #[cxx_name = "migrationScript"]
+        fn migration_script(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            right_source: &QString,
+        ) -> QString;
+
+        /// Key-aligned data compare (`db_exchange::data_compare::
+        /// compare`) between two tables, same source or different —
+        /// fetches both sides fully (F6.3's recorded scope: a caller
+        /// that needs a streamed compare over a huge table pages both
+        /// sides itself, per that module's own doc comment).
+        #[qinvokable]
+        #[cxx_name = "dataCompare"]
+        fn data_compare(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            left_table: &QString,
+            right_source: &QString,
+            right_table: &QString,
+            key_columns: &QString,
+            tolerance: f64,
+        ) -> FfiDataCompareResult;
+
+        /// The argv `dump`/`restore` would run, shell-quoted for display
+        /// only — `db_exchange::dump::preview`. Never includes a
+        /// password (the module's own guarantee).
+        #[qinvokable]
+        #[cxx_name = "dumpArgvPreview"]
+        fn dump_argv_preview(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            options: FfiDumpOptions,
+        ) -> QString;
+
+        /// Whether `sourceId`'s dump tool is on `PATH`, and an install
+        /// hint if not — `db_exchange::dump::{tool_available,
+        /// install_hint}`.
+        #[qinvokable]
+        #[cxx_name = "dumpToolStatus"]
+        fn dump_tool_status(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+        ) -> FfiDumpToolStatus;
+
+        /// Runs `sourceId`'s dump tool (`pg_dump`/`mysqldump`/
+        /// `mongodump`/`sqlite3 .dump`), streaming stderr lines through
+        /// `jobProgress` as they arrive and stdout to `options.
+        /// outputFile` (a tool that already writes its own output file,
+        /// `pg_dump`/`mongodump`, gets no stdout to speak of).
+        #[qinvokable]
+        fn dump(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            options: FfiDumpOptions,
+        ) -> u64;
+
+        /// The argv `restore` would run against `inputFile`, shell-quoted
+        /// for display only (F6c) — `db_exchange::dump::{restore_command,
+        /// preview}`.
+        #[qinvokable]
+        #[cxx_name = "restoreArgvPreview"]
+        fn restore_argv_preview(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            input_file: &QString,
+        ) -> QString;
+
+        /// Runs `sourceId`'s restore tool (`psql -f`/`mysql < file`/
+        /// `mongorestore --archive`/`sqlite3 < file`) against `inputFile`
+        /// (F6c), streaming stderr lines through `jobProgress` the same
+        /// way `dump` does.
+        #[qinvokable]
+        fn restore(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            input_file: &QString,
+        ) -> u64;
+
+        /// Best-effort: sets the job's cancel flag, checked between
+        /// batches/lines by whichever job is running. A job already
+        /// finished, or an unknown id, is a silent no-op.
+        #[qinvokable]
+        #[cxx_name = "cancelJob"]
+        fn cancel_job(self: Pin<&mut ExchangeService>, job_id: u64) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "jobProgress"]
+        fn job_progress(
+            self: Pin<&mut ExchangeService>,
+            job_id: u64,
+            done: u64,
+            total: u64,
+            message: QString,
+        );
+
+        #[qsignal]
+        #[cxx_name = "jobFinished"]
+        fn job_finished(
+            self: Pin<&mut ExchangeService>,
+            job_id: u64,
+            ok: bool,
+            message: QString,
+            #[cxx_name = "outputPath"] output_path: QString,
+        );
+    }
+
+    impl cxx_qt::Threading for ExchangeService {}
 
     unsafe extern "C++" {
         include!("main_window.h");

@@ -95,11 +95,16 @@ pub enum ScopedField {
     /// of this field at all, since `BuildToolsProjectSettings` has no such
     /// field to override with.
     BuildTools,
+    /// The `[database]` section's tuning knobs (`page_size`,
+    /// `memory_cap_mib`, …). The `sources` list itself is *not* resolved
+    /// through this field — see [`resolve_database_sources`], the same
+    /// merge-by-id shape [`resolve_layouts`] uses for named layouts.
+    Database,
 }
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 9] = [
+    pub const ALL: [ScopedField; 10] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
@@ -109,6 +114,7 @@ impl ScopedField {
         ScopedField::TabPadding,
         ScopedField::Containers,
         ScopedField::BuildTools,
+        ScopedField::Database,
     ];
 
     /// The stable id the view names this field by — the same string the
@@ -125,6 +131,7 @@ impl ScopedField {
             ScopedField::TabPadding => "tabPadding",
             ScopedField::Containers => "containers",
             ScopedField::BuildTools => "buildTools",
+            ScopedField::Database => "database",
         }
     }
 
@@ -215,6 +222,7 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::TabPadding => project.tab_padding.is_some(),
         ScopedField::Containers => project.containers.is_some(),
         ScopedField::BuildTools => project.build_tools.is_some(),
+        ScopedField::Database => project.database.is_some(),
     };
     if overridden {
         return Scope::Project;
@@ -316,7 +324,53 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
                 global.build_tools.maven.clone(),
             ) != (defaults.build_tools.gradle, defaults.build_tools.maven)
         }
+        // The tuning knobs only — `sources` is not this field's concern,
+        // same reasoning as `RunConfigs`/layouts: a collection merged by id
+        // has no single "set globally" answer.
+        ScopedField::Database => {
+            (
+                global.database.page_size,
+                global.database.memory_cap_mib,
+                global.database.idle_close_minutes,
+                global.database.history_cap,
+                global.database.allow_third_party_drivers,
+            ) != (
+                defaults.database.page_size,
+                defaults.database.memory_cap_mib,
+                defaults.database.idle_close_minutes,
+                defaults.database.history_cap,
+                defaults.database.allow_third_party_drivers,
+            )
+        }
     }
+}
+
+/// Every data source visible to the user, project entries shadowing global
+/// ones of the same id, ordered by id — the same union-by-key rule
+/// [`resolve_layouts`] uses for named layouts (ADR-0045 §2), applied to
+/// `[[database.sources]]` instead: a project adding one source must not
+/// hide the ones the user already configured for themselves.
+pub fn resolve_database_sources(
+    global: &Settings,
+    project: &ProjectSettings,
+) -> Vec<(app_config::database::DataSourceSetting, Scope)> {
+    let mut resolved: BTreeMap<&str, (&app_config::database::DataSourceSetting, Scope)> = global
+        .database
+        .sources
+        .iter()
+        .map(|source| (source.id.as_str(), (source, Scope::Global)))
+        .collect();
+    for source in project
+        .database
+        .iter()
+        .flat_map(|database| database.sources.iter())
+    {
+        resolved.insert(source.id.as_str(), (source, Scope::Project));
+    }
+    resolved
+        .into_values()
+        .map(|(source, scope)| (source.clone(), scope))
+        .collect()
 }
 
 #[cfg(test)]
@@ -489,10 +543,11 @@ mod tests {
         assert!(ScopedField::from_id("editorFontSize").is_none());
         assert_eq!(
             ScopedField::ALL.len(),
-            9,
+            10,
             "ADR-0022 names five areas, plus Analysis (the PHP tooling plan's B7), \
              TabPadding (tab padding, per-side, project-overridable), Containers \
-             (ADR-0055) and BuildTools (jvm-build-tools plan, ADR-0057 §3)"
+             (ADR-0055), BuildTools (jvm-build-tools plan, ADR-0057 §3) and Database \
+             (Database Tools plan, F1.4)"
         );
     }
 
@@ -904,6 +959,79 @@ mod tests {
                 .maven
                 .local_repository,
             Some(PathBuf::from("/project/repo"))
+        );
+    }
+
+    fn data_source(id: &str, name: &str) -> app_config::database::DataSourceSetting {
+        app_config::database::DataSourceSetting {
+            id: id.to_string(),
+            name: name.to_string(),
+            driver: "postgresql".to_string(),
+            ..app_config::database::DataSourceSetting::default()
+        }
+    }
+
+    fn with_sources(sources: Vec<app_config::database::DataSourceSetting>) -> Settings {
+        Settings {
+            database: app_config::database::DatabaseSettings {
+                sources,
+                ..app_config::database::DatabaseSettings::default()
+            },
+            ..Settings::default()
+        }
+    }
+
+    fn project_sources(sources: Vec<app_config::database::DataSourceSetting>) -> ProjectSettings {
+        ProjectSettings {
+            database: Some(app_config::database::DatabaseProjectSettings {
+                sources,
+                ..app_config::database::DatabaseProjectSettings::default()
+            }),
+            ..ProjectSettings::default()
+        }
+    }
+
+    #[test]
+    fn a_project_source_shadows_the_global_one_of_the_same_id() {
+        let resolved = resolve_database_sources(
+            &with_sources(vec![data_source("abc", "global-name")]),
+            &project_sources(vec![data_source("abc", "project-name")]),
+        );
+        assert_eq!(
+            resolved,
+            vec![(data_source("abc", "project-name"), Scope::Project)],
+            "the same id in both layers is one source, and the project's wins"
+        );
+    }
+
+    #[test]
+    fn sources_from_the_two_layers_are_merged_rather_than_replaced() {
+        let resolved = resolve_database_sources(
+            &with_sources(vec![data_source("global-only", "g")]),
+            &project_sources(vec![data_source("project-only", "p")]),
+        );
+        assert_eq!(
+            resolved
+                .iter()
+                .map(|(source, scope)| (source.id.as_str(), *scope))
+                .collect::<Vec<_>>(),
+            vec![
+                ("global-only", Scope::Global),
+                ("project-only", Scope::Project),
+            ],
+            "a project adding one source must not hide the user's own"
+        );
+    }
+
+    #[test]
+    fn a_silent_project_leaves_the_global_sources_alone() {
+        let resolved = resolve_database_sources(
+            &with_sources(vec![data_source("abc", "global-name")]),
+            &ProjectSettings::default(),
+        );
+        assert_eq!(
+            resolved,
+            vec![(data_source("abc", "global-name"), Scope::Global)]
         );
     }
 }

@@ -1,0 +1,297 @@
+# Hand-written, like builtin/php-tools/plugin.toml: no upstream package to
+# import here either. Contributes two `database-drivers` rows and two
+# `sql-dialects` rows rather than a `[wasm]` component — a database driver
+# and a dialect's keyword list are both metadata a native crate
+# (`db-drivers`/`db-sql`) reads by id, matching
+# `DatabaseDriverContribution`'s/`SqlDialectContribution`'s own doc
+# comments (database-tools.md §7).
+#
+# F1 lands sqlite and postgresql only; F7/F8 add a row per new backend
+# alongside its driver crate, per database-tools-plan.md's task list.
+id = "database-tools"
+name = "Database Tools"
+version = "1.0.0"
+api_version = 1
+license = "MIT"
+description = "Data sources, query consoles and a result grid for PostgreSQL, SQLite and more."
+
+[[contributes.database-drivers]]
+id = "sqlite"
+name = "SQLite"
+family = "sqlite"
+backend = "native"
+native-id = "sqlite"
+url-template = "sqlite://{database}"
+
+[[contributes.database-drivers]]
+id = "postgresql"
+name = "PostgreSQL"
+family = "postgresql"
+backend = "native"
+native-id = "postgresql"
+default-port = 5432
+dump-tool = "pg_dump"
+url-template = "postgresql://{user}@{host}:{port}/{database}"
+
+[[contributes.database-drivers]]
+id = "mysql"
+name = "MySQL"
+family = "mysql"
+backend = "native"
+native-id = "mysql"
+default-port = 3306
+dump-tool = "mysqldump"
+url-template = "mysql://{user}@{host}:{port}/{database}"
+
+[[contributes.database-drivers]]
+id = "mariadb"
+name = "MariaDB"
+family = "mysql"
+backend = "native"
+native-id = "mysql"
+default-port = 3306
+dump-tool = "mysqldump"
+url-template = "mysql://{user}@{host}:{port}/{database}"
+
+[[contributes.database-drivers]]
+id = "mongodb"
+name = "MongoDB"
+family = "mongodb"
+backend = "native"
+native-id = "mongodb"
+default-port = 27017
+url-template = "mongodb://{user}@{host}:{port}/{database}"
+
+[[contributes.database-drivers]]
+id = "redis"
+name = "Redis"
+family = "redis"
+backend = "native"
+native-id = "redis"
+default-port = 6379
+url-template = "redis://{host}:{port}/{database}"
+
+[[contributes.database-drivers]]
+id = "cassandra"
+name = "Cassandra/Scylla"
+family = "cassandra"
+backend = "native"
+native-id = "cassandra"
+default-port = 9042
+url-template = "cassandra://{user}@{host}:{port}/{database}"
+
+# F8.3/F8.4's spike (database-tools-plan.md, database-tools.md §11): one
+# row per ADBC driver looked at, with a pinned per-platform artifact where
+# the spike found a stable `https://` URL + published checksum, or an
+# install-hint where it didn't. No binaries are committed here — every
+# `sha256` was computed once by downloading the artifact during the spike.
+[[contributes.database-drivers]]
+id = "duckdb"
+name = "DuckDB"
+family = "duckdb"
+backend = "adbc"
+
+# DuckDB's own C API is the ADBC entrypoint (not a separate
+# apache/arrow-adbc driver) and exports `duckdb_adbc_init`.
+[contributes.database-drivers.adbc]
+manifest-name = "duckdb"
+entrypoint = "duckdb_adbc_init"
+
+[contributes.database-drivers.adbc.artifacts.linux_amd64]
+url = "https://github.com/duckdb/duckdb/releases/download/v1.5.5/libduckdb-linux-amd64.zip"
+sha256 = "1fb8ce388157d84a25abe685a8a2520bf00c00321821968e4bb398fd766e7abb"
+library = "libduckdb.so"
+
+[contributes.database-drivers.adbc.artifacts.windows_amd64]
+url = "https://github.com/duckdb/duckdb/releases/download/v1.5.5/libduckdb-windows-amd64.zip"
+sha256 = "8375eb1fcf2212e8a0817950354815d4dde9dd383c2d9fa7b8975b71e278c1bd"
+library = "duckdb.dll"
+
+[[contributes.database-drivers]]
+id = "snowflake"
+name = "Snowflake"
+family = "snowflake"
+backend = "adbc"
+
+# Official `apache/arrow-adbc` driver, published as a Python wheel whose
+# only payload worth extracting is the shared library.
+[contributes.database-drivers.adbc]
+manifest-name = "snowflake"
+entrypoint = "AdbcDriverInit"
+
+[contributes.database-drivers.adbc.artifacts.linux_amd64]
+url = "https://files.pythonhosted.org/packages/6f/26/baa44b8b9faaf26846dd8c0e513c7ce6862d7f35de46ee61175ac976699f/adbc_driver_snowflake-1.11.0-py3-none-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+sha256 = "7c7d7ecef7246303648a08cee3d78c383133bea8f2e1568cf6e8750ab94b5a57"
+library = "adbc_driver_snowflake/libadbc_driver_snowflake.so"
+
+[contributes.database-drivers.adbc.artifacts.windows_amd64]
+url = "https://files.pythonhosted.org/packages/e9/ca/542793fc9a164f013e3248061e922ac5d5246ce93718a5c0cb44bbd2219e/adbc_driver_snowflake-1.11.0-py3-none-win_amd64.whl"
+sha256 = "83b1a363a44ae4cb1e4956f9cc6c4e44dddd7c768a0f0a8b42d9cb8eb8906305"
+library = "adbc_driver_snowflake/libadbc_driver_snowflake.so"
+
+[[contributes.database-drivers]]
+id = "bigquery"
+name = "Google BigQuery"
+family = "bigquery"
+backend = "adbc"
+
+[contributes.database-drivers.adbc]
+manifest-name = "bigquery"
+entrypoint = "AdbcDriverInit"
+
+[contributes.database-drivers.adbc.artifacts.linux_amd64]
+url = "https://files.pythonhosted.org/packages/9e/0a/ce0b0772f479eb451993ed9a0d139fcdaddcab651d1ce09520003163aa54/adbc_driver_bigquery-1.11.0-py3-none-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+sha256 = "3067b90ccbb6801936567bddcc56e79540efb7e09023f0300e9f6090cb7245e1"
+library = "adbc_driver_bigquery/libadbc_driver_bigquery.so"
+
+[contributes.database-drivers.adbc.artifacts.windows_amd64]
+url = "https://files.pythonhosted.org/packages/f2/41/595bdc39a6e8eea2be3ccd043a10e68243b8a682d45f52b5d982674269f3/adbc_driver_bigquery-1.11.0-py3-none-win_amd64.whl"
+sha256 = "75ff98aa9071707419c300f9da74e19da375cd6524ecf09493c8131960e31c3c"
+library = "adbc_driver_bigquery/libadbc_driver_bigquery.so"
+
+[[contributes.database-drivers]]
+id = "mssql"
+name = "Microsoft SQL Server"
+family = "mssql"
+backend = "adbc"
+
+[contributes.database-drivers.adbc]
+manifest-name = "mssql"
+entrypoint = "AdbcDriverInit"
+install-hint = "No ADBC driver for SQL Server is published by apache/arrow-adbc or on PyPI/crates.io/GitHub Releases as of this spike. Use the built-in ODBC backend (\"ODBC Driver 18 for SQL Server\") instead."
+
+[[contributes.database-drivers]]
+id = "clickhouse"
+name = "ClickHouse"
+family = "clickhouse"
+backend = "adbc"
+
+[contributes.database-drivers.adbc]
+manifest-name = "clickhouse"
+entrypoint = "AdbcDriverInit"
+install-hint = "No stable, checksummed ADBC shared-library release for ClickHouse was found (only unofficial/unmaintained third-party packages, e.g. \"adbclick\" on PyPI, with no reproducible release process). Use the built-in ODBC backend with ClickHouse's own ODBC driver instead."
+
+[[contributes.database-drivers]]
+id = "trino"
+name = "Trino"
+family = "trino"
+backend = "adbc"
+
+[contributes.database-drivers.adbc]
+manifest-name = "trino"
+entrypoint = "AdbcDriverInit"
+install-hint = "No ADBC driver for Trino is published; apache/arrow-adbc's Flight SQL driver only helps if a Flight SQL gateway sits in front of Trino, which is not a given deployment. Use Trino's JDBC-via-ODBC bridge through the built-in ODBC backend instead."
+
+# A generic ODBC data source: any driver an OS driver-manager entry (a
+# system DSN or a driver name) already resolves, for engines F8b's ADBC
+# survey found no pinnable artifact for (mssql/clickhouse/trino above) and
+# anything else with only an ODBC driver.
+[[contributes.database-drivers]]
+id = "odbc"
+name = "ODBC data source"
+family = "generic"
+backend = "odbc"
+
+[[contributes.sql-dialects]]
+id = "sqlite"
+name = "SQLite"
+parser = "sql"
+identifier-quote = "double"
+param-style = "question"
+keywords = "dialects/sqlite.keywords"
+
+[[contributes.sql-dialects]]
+id = "postgresql"
+name = "PostgreSQL"
+parser = "sql"
+identifier-quote = "double"
+param-style = "dollar"
+keywords = "dialects/postgresql.keywords"
+
+[[contributes.sql-dialects]]
+id = "mysql"
+name = "MySQL/MariaDB"
+parser = "sql"
+identifier-quote = "backtick"
+param-style = "question"
+keywords = "dialects/mysql.keywords"
+
+[[contributes.sql-dialects]]
+id = "cql"
+name = "CQL"
+parser = "cql"
+identifier-quote = "double"
+param-style = "question"
+keywords = "dialects/cql.keywords"
+
+# F8b: one row per ADBC/ODBC-reachable engine above, `id` matching that
+# driver's `family` so the cross-plugin family/dialect join resolves.
+# `parser = "sql"` for all six (none needs `mongo-shell`/`cql`/
+# `redis-command`); `identifier-quote`/`param-style` follow each engine's
+# own grammar (matching the closest dedicated `sqlparser` dialect where
+# `db-sql` has one — DuckDB, Snowflake, BigQuery, MsSql and ClickHouse all
+# do; Trino does not, so it inherits ANSI double-quoting).
+[[contributes.sql-dialects]]
+id = "duckdb"
+name = "DuckDB"
+parser = "sql"
+identifier-quote = "double"
+param-style = "question"
+
+[[contributes.sql-dialects]]
+id = "snowflake"
+name = "Snowflake"
+parser = "sql"
+identifier-quote = "double"
+param-style = "question"
+
+[[contributes.sql-dialects]]
+id = "bigquery"
+name = "Google BigQuery"
+parser = "sql"
+identifier-quote = "backtick"
+param-style = "question"
+
+[[contributes.sql-dialects]]
+id = "mssql"
+name = "Microsoft SQL Server"
+parser = "sql"
+identifier-quote = "bracket"
+param-style = "question"
+
+[[contributes.sql-dialects]]
+id = "clickhouse"
+name = "ClickHouse"
+parser = "sql"
+identifier-quote = "backtick"
+param-style = "question"
+
+[[contributes.sql-dialects]]
+id = "trino"
+name = "Trino"
+parser = "sql"
+identifier-quote = "double"
+param-style = "question"
+
+# G1's generic point: the Settings > Database page is contributed, not
+# hard-wired, so disabling this plugin hides it the way disabling
+# `containers` hides Containers. The `databaseResults` dock joins as a
+# `tool-windows` row once F3's console/grid factory exists.
+[[contributes.settings-pages]]
+id = "database"
+title = "Database"
+scope = "project"
+
+# F2.5: the Database dock's native factory (`buildDatabaseDock`,
+# `tool_window_factories.cpp`).
+[[contributes.tool-windows]]
+id = "database"
+title = "Database"
+area = "right"
+
+# F3.4/F3.5: the console's Output/Result tabs, one native factory
+# (`buildDatabaseResultsDock`, `tool_window_factories.cpp`).
+[[contributes.tool-windows]]
+id = "databaseResults"
+title = "Database Results"
+area = "bottom"

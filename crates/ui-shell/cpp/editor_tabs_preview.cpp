@@ -97,7 +97,7 @@ void EditorTabs::togglePreviewMode()
         return;
     }
     const quint64 tabId = currentTabId();
-    const QString path = docManager_->tabPath(tabId);
+    const QString path = docManager_->previewPath(tabId);
     // Which file types have a preview at all is a plugin's contribution,
     // resolved in `app_core::preview` — asked here, never decided here.
     if (path.isEmpty() || !previewProvider_->hasPreview(path)) {
@@ -170,7 +170,7 @@ void EditorTabs::refreshPreviewMode(CodeEditor *editor)
         return;
     }
     const quint64 tabId = editor->property("tabId").toULongLong();
-    overlay->setCurrentTab(tabId, docManager_->tabPath(tabId), editor->toPlainText());
+    overlay->setCurrentTab(tabId, docManager_->previewPath(tabId), editor->toPlainText());
 }
 
 } // namespace ui_shell

@@ -1,0 +1,28 @@
+[package]
+name = "db-driver-odbc"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+db-core = { path = "../db-core" }
+chrono = "0.4"
+
+# `default-features = false`: odbc-api's default features pull in
+# `odbc_sys`'s "generate-bigint-for-numeric" and iodbc/narrow-linking
+# knobs this crate never needs; the plain unixODBC (Linux) / odbc32
+# (Windows) wide linking odbc-api ships without any features is all this
+# driver ever asks for. Feature-gated (`odbc`, default-on) so a box
+# without unixodbc-dev's header still builds the rest of the workspace
+# with `--no-default-features` (ADR-0058, database-tools-plan.md §13).
+odbc-api = { version = "29", default-features = false, optional = true }
+
+[features]
+default = ["odbc"]
+odbc = ["dep:odbc-api"]
+# Gates the SQLite-ODBC-driven integration tests in `tests/`; `make test`
+# never builds this feature (the same shape `db-drivers`'
+# `db-integration` already uses).
+db-integration = ["odbc"]
+
+[dev-dependencies]
+tempfile = "3"

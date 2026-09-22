@@ -83,6 +83,16 @@ impl RunConfigExt for RunConfig {
         // always did before C5 (ADR-0056's "unknown reads as the default"
         // rule, same as `toolchain`).
         let containers = context.containers.clone().unwrap_or_default();
+        // `Some("sql-script")` is spelled out on its own rather than
+        // folded into `_` below: a `sql-script` configuration has no
+        // process launch of its own at all (ADR-0056 shape) — it runs a
+        // `.sql` file against a data source, not a program.
+        // `RunService::launch` (`ui-shell::bridge::run::sql_script`)
+        // recognises this kind and never calls `to_launch_spec`/
+        // `to_launch_spec_in` for it; reaching `process_launch_spec`'s
+        // fallback below with this kind's empty `program` is inert, not a
+        // crash, if some future caller ever forgets that.
+        #[allow(clippy::match_same_arms)]
         match self.kind.as_deref() {
             Some("container-image") => {
                 crate::container_run::image_launch_spec(self, context, &containers)
@@ -93,6 +103,7 @@ impl RunConfigExt for RunConfig {
             Some("compose") => {
                 crate::container_run::compose_launch_spec(self, context, &containers)
             }
+            Some("sql-script") => None,
             _ => None,
         }
         .unwrap_or_else(|| {
@@ -204,6 +215,21 @@ mod tests {
     fn absent_cwd_stays_absent() {
         let spec = config().to_launch_spec(Path::new("/home/me/project"));
         assert_eq!(spec.cwd, None);
+    }
+
+    #[test]
+    fn a_sql_script_kind_falls_back_to_an_inert_empty_program() {
+        // `RunService::launch` never actually calls this for a
+        // `sql-script` configuration (this module's own doc comment) —
+        // this only proves the fallback stays harmless if some future
+        // caller forgets that.
+        let cfg = RunConfig {
+            program: String::new(),
+            kind: Some("sql-script".to_string()),
+            ..config()
+        };
+        let spec = cfg.to_launch_spec(Path::new("/home/me/project"));
+        assert_eq!(spec.program, "");
     }
 
     #[test]

@@ -5,6 +5,7 @@
 #include "build_tools_settings_page.h"
 #include "appearance_page.h"
 #include "containers_page.h"
+#include "database_settings_page.h"
 #include "language_page.h"
 #include "e2e_mark.h"
 #include "editor_page.h"
@@ -26,6 +27,7 @@
 #include <QAbstractButton>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDebug>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFont>
@@ -60,6 +62,31 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
 
     const FfiEditorFont originalFont = appSettings->editorFont();
 
+    // G1: which of the two plugin-contributed pages (database-tools plan)
+    // are actually enabled — a disabled plugin's row is simply absent from
+    // `contributedSettingsPages()`, which is what makes disabling it hide
+    // its category here. An id neither `buildTools` nor `containers` has no
+    // native page factory yet and is logged rather than guessed at.
+    const auto contributedPages = appSettings->contributedSettingsPages();
+    auto hasSettingsPage = [&contributedPages](const QString &id) {
+        for (const auto &page : contributedPages) {
+            if (page.id == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (const auto &page : contributedPages) {
+        if (page.id != QStringLiteral("buildTools") && page.id != QStringLiteral("database")
+            && page.id != QStringLiteral("containers")) {
+            qWarning().noquote() << QStringLiteral("settings page %1 from %2 needs a native host")
+                                        .arg(page.id, page.plugin_id);
+        }
+    }
+    const bool hasBuildToolsPage = hasSettingsPage(QStringLiteral("buildTools"));
+    const bool hasDatabasePage = hasSettingsPage(QStringLiteral("database"));
+    const bool hasContainersPage = hasSettingsPage(QStringLiteral("containers"));
+
     QDialog dialog(parent);
     dialog.setWindowTitle(QObject::tr("Settings"));
     // The pages' own minimums add up to roughly 740x510, which is enough to
@@ -92,8 +119,15 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
-    categoryList->addItem(QObject::tr("Build Tools"));
-    categoryList->addItem(QObject::tr("Containers"));
+    if (hasBuildToolsPage) {
+        categoryList->addItem(QObject::tr("Build Tools"));
+    }
+    if (hasDatabasePage) {
+        categoryList->addItem(QObject::tr("Database"));
+    }
+    if (hasContainersPage) {
+        categoryList->addItem(QObject::tr("Containers"));
+    }
     categoryList->addItem(QObject::tr("MCP"));
     // Derived from the widest category, floored at the blend spec's ~200px
     // nav width: the interface font scale below can make "Language Servers"
@@ -307,35 +341,60 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     // at least as often as of the person. `trusted_roots` alone stays
     // global-only (ADR-0057 §3) — `BuildToolsEditor` never shows or edits
     // it regardless of scope, see `bridge::build_tools`'s own doc comment.
-    context.buildToolsEditor->beginEdit(appSettings->settingsScope());
-    const int buildToolsIndex =
-      deferPage([&dialog, buildToolsEditor = context.buildToolsEditor, scopedPage]() {
-          return scopedPage(QStringLiteral("buildTools"),
-                            buildBuildToolsSettingsPage(&dialog, buildToolsEditor));
-      });
+    int buildToolsIndex = -1;
+    if (hasBuildToolsPage) {
+        context.buildToolsEditor->beginEdit(appSettings->settingsScope());
+        buildToolsIndex =
+          deferPage([&dialog, buildToolsEditor = context.buildToolsEditor, scopedPage]() {
+              return scopedPage(QStringLiteral("buildTools"),
+                                buildBuildToolsSettingsPage(&dialog, buildToolsEditor));
+          });
+    }
+
+    // Database Tools plan F1.6: global only, like Build Tools above — no
+    // dock or console exists yet to give a `DataSourceEditor` a longer
+    // lifetime than this dialog's own, so it is owned by the dialog
+    // itself rather than threaded through `SettingsDialogContext`
+    // (unlike `BuildToolsEditor`, which the Build Tools dock also needs).
+    int databaseIndex = -1;
+    if (hasDatabasePage) {
+        auto *dataSourceEditor = new DataSourceEditor(&dialog);
+        // F8.5: same "owned by the dialog itself" lifetime as `dataSourceEditor` above.
+        auto *driverInstallService = new DriverInstallService(&dialog);
+        databaseIndex = deferPage(
+          [&dialog, appSettings, dataSourceEditor, driverInstallService, scopedPage]() {
+              return scopedPage(QStringLiteral("database"),
+                                buildDatabaseSettingsPage(&dialog, appSettings, dataSourceEditor,
+                                                          driverInstallService));
+          });
+    }
 
     // Containers is project-scoped for the same reason Terminal/Tabs are:
     // which daemon a checkout talks to is a property of the project at
     // least as often as of the person. Held by shared_ptr like Terminal:
     // the scope rebuild below replaces the page (and the `commit` closure
     // bound to its widgets), and the OK branch has already been written to
-    // call one.
-    auto containersPage =
-      std::make_shared<ContainersPage>(buildContainersPage(&dialog, appSettings, context.runConfigEditor, context.containerService));
-    const int containersIndex =
-      pages->addWidget(scopedPage(QStringLiteral("containers"), containersPage->widget));
-    // C7 review follow-up: "Registry..."/registry-node "Edit..." open this
-    // page directly on its Registries tab rather than whichever tab was
-    // last shown — the page is built eagerly (unlike the `deferPage`
-    // categories above), so its `QTabWidget` (named in
-    // `buildContainersPage`) already exists to select a tab on.
-    if (!initialContainersTab.isEmpty()) {
-        if (auto *containersTabs =
-              containersPage->widget->findChild<QTabWidget *>(QStringLiteral("containersTabs"))) {
-            for (int i = 0; i < containersTabs->count(); ++i) {
-                if (containersTabs->tabText(i) == initialContainersTab) {
-                    containersTabs->setCurrentIndex(i);
-                    break;
+    // call one. Null when the plugin is disabled — every later use of it
+    // guards on `hasContainersPage`/`containersPage` first.
+    std::shared_ptr<ContainersPage> containersPage;
+    int containersIndex = -1;
+    if (hasContainersPage) {
+        containersPage = std::make_shared<ContainersPage>(
+          buildContainersPage(&dialog, appSettings, context.runConfigEditor, context.containerService));
+        containersIndex = pages->addWidget(scopedPage(QStringLiteral("containers"), containersPage->widget));
+        // C7 review follow-up: "Registry..."/registry-node "Edit..." open
+        // this page directly on its Registries tab rather than whichever
+        // tab was last shown — the page is built eagerly (unlike the
+        // `deferPage` categories above), so its `QTabWidget` (named in
+        // `buildContainersPage`) already exists to select a tab on.
+        if (!initialContainersTab.isEmpty()) {
+            if (auto *containersTabs =
+                  containersPage->widget->findChild<QTabWidget *>(QStringLiteral("containersTabs"))) {
+                for (int i = 0; i < containersTabs->count(); ++i) {
+                    if (containersTabs->tabText(i) == initialContainersTab) {
+                        containersTabs->setCurrentIndex(i);
+                        break;
+                    }
                 }
             }
         }
@@ -460,29 +519,31 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     // `containers_page.cpp` reports every later tab switch inside the page
     // on its own, since that has no such timing problem once the page
     // itself is already on screen.
-    QObject::connect(categoryList, &QListWidget::currentRowChanged, &dialog,
-                      [pages, containersIndex](int index) {
-                          if (index != containersIndex) {
-                              return;
-                          }
-                          QTimer::singleShot(0, pages, [pages, containersIndex]() {
-                              auto *testButton =
-                                pages->widget(containersIndex)->findChild<QPushButton *>(
-                                  QStringLiteral("containersTestConnectionButton"));
-                              if (testButton == nullptr) {
+    if (hasContainersPage) {
+        QObject::connect(categoryList, &QListWidget::currentRowChanged, &dialog,
+                          [pages, containersIndex](int index) {
+                              if (index != containersIndex) {
                                   return;
                               }
-                              const QRect rect = testButton->rect();
-                              const QPoint origin = testButton->mapToGlobal(rect.topLeft());
-                              e2eMark(QStringLiteral(
-                                        "{\"ev\":\"containers_settings_page_shown\","
-                                        "\"page\":\"Connections\",\"test_button_rect\":[%1,%2,%3,%4]}")
-                                        .arg(origin.x())
-                                        .arg(origin.y())
-                                        .arg(rect.width())
-                                        .arg(rect.height()));
+                              QTimer::singleShot(0, pages, [pages, containersIndex]() {
+                                  auto *testButton =
+                                    pages->widget(containersIndex)->findChild<QPushButton *>(
+                                      QStringLiteral("containersTestConnectionButton"));
+                                  if (testButton == nullptr) {
+                                      return;
+                                  }
+                                  const QRect rect = testButton->rect();
+                                  const QPoint origin = testButton->mapToGlobal(rect.topLeft());
+                                  e2eMark(QStringLiteral(
+                                            "{\"ev\":\"containers_settings_page_shown\","
+                                            "\"page\":\"Connections\",\"test_button_rect\":[%1,%2,%3,%4]}")
+                                            .arg(origin.x())
+                                            .arg(origin.y())
+                                            .arg(rect.width())
+                                            .arg(rect.height()));
+                              });
                           });
-                      });
+    }
     int initialRow = 0;
     for (int i = 0; i < categoryList->count(); ++i) {
         if (!initialCategory.isEmpty() && categoryList->item(i)->text() == initialCategory) {
@@ -560,7 +621,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
        analysisService = context.analysisService, analysisIndex, containersPage,
        containersIndex, &lazyBuilders, runConfigEditor = context.runConfigEditor,
        containerService = context.containerService,
-       buildToolsEditor = context.buildToolsEditor, buildToolsIndex]() {
+       buildToolsEditor = context.buildToolsEditor, buildToolsIndex, hasBuildToolsPage,
+       hasContainersPage]() {
           const QString scope = scopeBox->currentData().toString();
           appSettings->setSettingsScope(scope);
           scopeHint->setText(appSettings->hasProjectSettings()
@@ -612,13 +674,15 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
           pages->removeWidget(staleTabPadding);
           staleTabPadding->deleteLater();
 
-          QWidget *staleContainers = pages->widget(containersIndex);
-          *containersPage = buildContainersPage(&dialog, appSettings, runConfigEditor, containerService);
-          pages->insertWidget(
-            containersIndex,
-            scopedPage(QStringLiteral("containers"), containersPage->widget));
-          pages->removeWidget(staleContainers);
-          staleContainers->deleteLater();
+          if (hasContainersPage) {
+              QWidget *staleContainers = pages->widget(containersIndex);
+              *containersPage = buildContainersPage(&dialog, appSettings, runConfigEditor, containerService);
+              pages->insertWidget(
+                containersIndex,
+                scopedPage(QStringLiteral("containers"), containersPage->widget));
+              pages->removeWidget(staleContainers);
+              staleContainers->deleteLater();
+          }
 
           analysisEditor->beginEdit(scope);
           if (!lazyBuilders.contains(analysisIndex)) {
@@ -631,15 +695,17 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
               staleAnalysis->deleteLater();
           }
 
-          buildToolsEditor->beginEdit(scope);
-          if (!lazyBuilders.contains(buildToolsIndex)) {
-              QWidget *staleBuildTools = pages->widget(buildToolsIndex);
-              pages->insertWidget(
-                buildToolsIndex,
-                scopedPage(QStringLiteral("buildTools"),
-                           buildBuildToolsSettingsPage(&dialog, buildToolsEditor)));
-              pages->removeWidget(staleBuildTools);
-              staleBuildTools->deleteLater();
+          if (hasBuildToolsPage) {
+              buildToolsEditor->beginEdit(scope);
+              if (!lazyBuilders.contains(buildToolsIndex)) {
+                  QWidget *staleBuildTools = pages->widget(buildToolsIndex);
+                  pages->insertWidget(
+                    buildToolsIndex,
+                    scopedPage(QStringLiteral("buildTools"),
+                               buildBuildToolsSettingsPage(&dialog, buildToolsEditor)));
+                  pages->removeWidget(staleBuildTools);
+                  staleBuildTools->deleteLater();
+              }
           }
 
           pages->setCurrentIndex(current);
@@ -735,18 +801,30 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         // C10: the Containers category row, from the real index
         // `pages->addWidget` returned above — not a literal, unlike
         // `editingCategoryRect`/`editorCategoryRect`, since this file
-        // already has it.
-        const QRect containersCategoryRect(
-          categoryList->mapToGlobal(
-            categoryList->visualItemRect(categoryList->item(containersIndex)).topLeft()),
-          categoryList->visualItemRect(categoryList->item(containersIndex)).size());
+        // already has it. Empty when the plugin is disabled and the
+        // category was never added (G1).
+        const QRect containersCategoryRect = hasContainersPage
+          ? QRect(categoryList->mapToGlobal(
+                    categoryList->visualItemRect(categoryList->item(containersIndex)).topLeft()),
+                  categoryList->visualItemRect(categoryList->item(containersIndex)).size())
+          : QRect();
+        // G1.6: the Plugins category row, so an E2E flow can switch to it
+        // the same way `containersCategoryRect` already lets one switch to
+        // Containers — the sidebar `QListWidget` itself is laid out from
+        // the moment the dialog is shown regardless of which page is
+        // current, unlike a `QStackedWidget` page's own contents.
+        const QRect pluginsCategoryRect(
+          categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(9)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(9)).size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"settings_dialog\","
                                 "\"scope_rect\":%1,\"editing_category_rect\":%2,"
                                 "\"tab_width_rect\":%3,\"ok_rect\":%4,"
-                                "\"editor_category_rect\":%5,\"containers_category_rect\":%6}")
+                                "\"editor_category_rect\":%5,\"containers_category_rect\":%6,"
+                                "\"plugins_category_rect\":%7}")
                   .arg(rectJson(scopeRect), rectJson(editingCategoryRect), rectJson(tabWidthRect),
                        rectJson(okRect), rectJson(editorCategoryRect))
-                  .arg(rectJson(containersCategoryRect)));
+                  .arg(rectJson(containersCategoryRect))
+                  .arg(rectJson(pluginsCategoryRect)));
     });
     QObject::connect(&dialog, &QDialog::finished, &dialog, [](int result) {
         e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"settings_dialog\","
@@ -760,7 +838,9 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         language.commit();
         editor.commit();
         context.keymapEditor->commit();
-        context.buildToolsEditor->commit();
+        if (hasBuildToolsPage) {
+            context.buildToolsEditor->commit();
+        }
         applyKeymap(*context.actions, appSettings);
         context.terminalPanel->reapplyKeymap();
         terminalPage->commit();
@@ -770,7 +850,9 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         // `terminalFont()`/`terminalPaletteForTheme()` resolve to, so this
         // runs after both commits, unconditionally.
         context.terminalPanel->reapplyAppearance();
-        containersPage->commit();
+        if (containersPage) {
+            containersPage->commit();
+        }
         mcp.commit();
         // The AI draft was already committed by the OK handler above; this
         // is the chat session re-reading the provider, the mode and the

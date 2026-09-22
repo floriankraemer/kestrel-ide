@@ -3,6 +3,7 @@
 #include "container_target_wizard.h"
 #include "e2e_mark.h"
 #include "run_config_container_pages.h"
+#include "run_config_sql_page.h"
 
 #include <QAction>
 #include <QCheckBox>
@@ -97,7 +98,8 @@ void repaintList(QListWidget *list, RunConfigEditor *editor, int keepIndex)
 } // namespace
 
 void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
-                         ContainerService *containerService, const QString &selectConfigId)
+                         ContainerService *containerService, const QString &selectConfigId,
+                         ConsoleService *consoleService)
 {
     editor->beginEdit();
 
@@ -119,6 +121,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     QAction *addImageAction = containersMenu->addAction(QObject::tr("Container Image"));
     QAction *addContainerfileAction = containersMenu->addAction(QObject::tr("Containerfile"));
     QAction *addComposeAction = containersMenu->addAction(QObject::tr("Compose"));
+    QAction *addSqlScriptAction = addMenu->addAction(QObject::tr("SQL Script"));
     addButton->setMenu(addMenu);
     auto *removeButton = new QPushButton(QObject::tr("Remove"), &dialog);
     auto *listButtons = new QHBoxLayout();
@@ -161,6 +164,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     refreshRunOnCombo(QString());
 
     auto *containerPage = new ContainerOptionsPage(containerService, editor, &dialog);
+    auto *sqlPage = new SqlScriptOptionsPage(consoleService, &dialog);
+    sqlPage->setVisible(false);
 
     auto *commandPreviewEdit = new QPlainTextEdit(&dialog);
     commandPreviewEdit->setReadOnly(true);
@@ -186,6 +191,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     form->addWidget(new QLabel(QObject::tr("Environment:"), &dialog));
     form->addWidget(envEdit, 1);
     form->addWidget(containerPage, 1);
+    form->addWidget(sqlPage, 1);
     form->addWidget(new QLabel(QObject::tr("Command preview:"), &dialog));
     form->addWidget(commandPreviewEdit);
 
@@ -226,6 +232,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.before_launch = beforeLaunchEdit->toPlainText();
         form.kind = *currentKind;
         form.container = containerPage->options();
+        form.sql_script = sqlPage->options();
         form.run_on = runOnCombo->currentData().toString();
         editor->updateConfiguration(static_cast<quint32>(index), form);
     };
@@ -237,6 +244,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.args = argsEdit->text();
         form.kind = *currentKind;
         form.container = containerPage->options();
+        form.sql_script = sqlPage->options();
         const QString preview = editor->commandPreview(form);
         commandPreviewEdit->setPlainText(preview);
         e2eMark(QStringLiteral("{\"ev\":\"run_config_preview\",\"kind\":%1,\"preview\":%2}")
@@ -260,20 +268,23 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         beforeLaunchEdit->setPlainText(config.before_launch);
         parallelCheck->setChecked(config.allow_parallel);
         *currentKind = config.kind;
-        const bool isContainer = has && !config.kind.isEmpty();
-        // Program/Arguments/Working dir are meaningless for a container-kind
-        // configuration (its argv is compiled from the container page's own
-        // fields, not these) — disabled rather than left editable and
-        // ignored.
-        programEdit->setEnabled(has && !isContainer);
-        argsEdit->setEnabled(has && !isContainer);
-        cwdEdit->setEnabled(has && !isContainer);
+        const bool isSpecialKind = has && !config.kind.isEmpty();
+        // Program/Arguments/Working dir are meaningless for a container- or
+        // sql-script-kind configuration (its argv, or its script, is
+        // compiled from that kind's own page, not these) — disabled rather
+        // than left editable and ignored.
+        programEdit->setEnabled(has && !isSpecialKind);
+        argsEdit->setEnabled(has && !isSpecialKind);
+        cwdEdit->setEnabled(has && !isSpecialKind);
         // "Run on" only means something for a plain-process configuration —
-        // a container-kind one's launch already is a container launch.
-        runOnCombo->setVisible(!isContainer);
+        // a container- or sql-script-kind one's launch is not a "Run on
+        // this machine vs. a container" choice at all.
+        runOnCombo->setVisible(!isSpecialKind);
         refreshRunOnCombo(config.run_on);
         containerPage->setKind(config.kind);
         containerPage->setOptions(config.container);
+        sqlPage->setVisible(config.kind == QLatin1String("sql-script"));
+        sqlPage->setOptions(config.sql_script);
         refreshPreview();
     };
 
@@ -298,6 +309,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     });
 
     QObject::connect(containerPage, &ContainerOptionsPage::changed, &dialog, refreshPreview);
+    QObject::connect(sqlPage, &SqlScriptOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(programEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
     QObject::connect(argsEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
 
@@ -340,6 +352,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
                       [=]() { addWithKind(QStringLiteral("containerfile")); });
     QObject::connect(addComposeAction, &QAction::triggered, &dialog,
                       [=]() { addWithKind(QStringLiteral("compose")); });
+    QObject::connect(addSqlScriptAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QStringLiteral("sql-script")); });
 
     QObject::connect(removeButton, &QPushButton::clicked, &dialog, [=]() {
         const int index = list->currentRow();

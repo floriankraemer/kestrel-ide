@@ -41,6 +41,10 @@ pub enum ContributionPoint {
     Analyzers,
     TestFrameworks,
     BuildTools,
+    ToolWindows,
+    SettingsPages,
+    DatabaseDrivers,
+    SqlDialects,
 }
 
 impl ContributionPoint {
@@ -55,6 +59,10 @@ impl ContributionPoint {
             Self::Analyzers => "analyzers",
             Self::TestFrameworks => "test-frameworks",
             Self::BuildTools => "build-tools",
+            Self::ToolWindows => "tool-windows",
+            Self::SettingsPages => "settings-pages",
+            Self::DatabaseDrivers => "database-drivers",
+            Self::SqlDialects => "sql-dialects",
         }
     }
 }
@@ -323,6 +331,186 @@ pub struct BuildToolContribution {
     pub init_script: Option<PathBuf>,
 }
 
+/// Where a tool window docks by default (the database-tools plan's G1).
+///
+/// Free-standing rather than reusing some ADS-specific type: this crate
+/// never depends on cxx-qt or ADS (it must stay a leaf), so the four areas
+/// a dock can occupy are spelled out here as the neutral vocabulary the
+/// `ui-shell` seam translates into `ads::DockWidgetArea`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolWindowArea {
+    Left,
+    Right,
+    Bottom,
+    Center,
+}
+
+/// One tool window (dock) a plugin offers (the database-tools plan's G1).
+///
+/// Unlike [`CommandContribution`], this needs no `[wasm]` component: a wasm
+/// guest cannot draw a Qt widget (`wit/plugin.wit`), so a tool window is
+/// always rendered by a native factory the host already ships — a wasm
+/// plugin may still *declare* one, and is skipped with a Plugins-page
+/// warning until a `render-tool-window` WIT export exists (a later,
+/// `api_version` 2 change, deliberately deferred).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolWindowContribution {
+    /// Stable id: the dock id `DockRegistry` registers under, the View-menu
+    /// action's `view.<id>`, and the key `ui-shell`'s native factory table
+    /// looks the dock up by.
+    pub id: String,
+    /// What the View menu and the dock's own title bar show.
+    pub title: String,
+    pub area: ToolWindowArea,
+}
+
+/// Which settings layer a page's contributed section may live in (the
+/// database-tools plan's G1).
+///
+/// Mirrors [`ScopedField`]'s two real origins (`settings_model::Scope`) —
+/// this crate stays a leaf and does not depend on `settings-model`, so the
+/// join is a plain string both sides agree on, the same pattern
+/// [`BuildToolContribution::toolchain`] already uses for `run-core`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SettingsPageScope {
+    Global,
+    Project,
+}
+
+/// One settings page a plugin offers (the database-tools plan's G1).
+///
+/// Needs no `[wasm]` component either, for the same reason
+/// [`ToolWindowContribution`] doesn't: the page itself is a native Qt
+/// widget a wasm guest cannot draw.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsPageContribution {
+    /// Stable id: the key `ui-shell`'s native page-factory table looks the
+    /// page up by.
+    pub id: String,
+    /// What the settings dialog's page list shows.
+    pub title: String,
+    /// `scope = "project"` must join to an existing `ScopedField::from_id`
+    /// at the seam, or the page registers global-only with a log line —
+    /// the set of scoped fields can grow without a manifest format change,
+    /// so an id this build does not (yet) recognise is a seam-time
+    /// decision, not a load error.
+    pub scope: SettingsPageScope,
+}
+
+/// One platform's pinned ADBC artifact (F8b, additive over F1's single
+/// `url`/`sha256` pair): a driver whose install differs per platform — a
+/// different archive, a different library path inside it — lists one of
+/// these per platform key (`"linux_amd64"`, `"windows_amd64"`) under
+/// [`AdbcDriverSection::artifacts`] instead.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdbcArtifact {
+    pub url: String,
+    pub sha256: String,
+    /// The shared library's exact path inside the downloaded archive.
+    pub library: String,
+}
+
+/// The ADBC-specific half of a [`DatabaseDriverContribution`] whose
+/// `backend` is `"adbc"`: either a driver manager can resolve
+/// `manifest-name` on its own (a system-installed driver), or `url`/
+/// `sha256` (single-platform) or `artifacts` (per-platform, F8b) name a
+/// pinned, hash-verified download (ADR-0061 §4) —
+/// [`ContributionPoint::DatabaseDrivers`]'s validation requires at least
+/// one of `manifest-name`, `url`, or a non-empty `artifacts`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AdbcDriverSection {
+    #[serde(default, rename = "manifest-name")]
+    pub manifest_name: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub sha256: Option<String>,
+    /// The C entrypoint symbol this driver's shared library exports, when
+    /// it is not the ADBC-standard `AdbcDriverInit` (e.g. DuckDB's own
+    /// `duckdb_adbc_init`). Additive over F1, F8b.
+    #[serde(default)]
+    pub entrypoint: Option<String>,
+    /// Per-platform pinned artifacts, keyed by platform. Additive over
+    /// F1's single `url`/`sha256` pair, F8b.
+    #[serde(default)]
+    pub artifacts: BTreeMap<String, AdbcArtifact>,
+    /// What to tell the user when no pinnable artifact exists for this
+    /// driver at all (F8.5's install dialog shows this text verbatim).
+    /// Additive over F1, F8b.
+    #[serde(default, rename = "install-hint")]
+    pub install_hint: Option<String>,
+}
+
+/// One database backend a plugin makes connectable — joined to a
+/// [`SqlDialectContribution`] by `family`, and to `db_core`/`db-drivers`
+/// only at the `ui-shell` seam (this crate never depends on `db-core`,
+/// `database-tools.md` §7).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DatabaseDriverContribution {
+    pub id: String,
+    pub name: String,
+    /// The `sql-dialects` row this driver's SQL belongs to.
+    pub family: String,
+    /// `"native"`, `"adbc"`, or `"odbc"`.
+    pub backend: String,
+    /// `db_drivers::DriverRegistry` id this contribution names, required
+    /// when `backend = "native"`.
+    #[serde(default, rename = "native-id")]
+    pub native_id: Option<String>,
+    #[serde(default, rename = "default-port")]
+    pub default_port: Option<u16>,
+    /// A connection-string template for a driver that takes one instead of
+    /// host/port/database (e.g. `"sqlite://{database}"`); every `{…}`
+    /// placeholder must be one of the allow-listed names ADR-0058
+    /// validation checks.
+    #[serde(default, rename = "url-template")]
+    pub url_template: Option<String>,
+    /// The dump/restore tool name (`"pg_dump"`, `"mysqldump"`, …), for the
+    /// export path's tool lookup — absent when the backend has none.
+    #[serde(default, rename = "dump-tool")]
+    pub dump_tool: Option<String>,
+    #[serde(default)]
+    pub icon: Option<PathBuf>,
+    #[serde(default)]
+    pub adbc: Option<AdbcDriverSection>,
+}
+
+/// A url-template placeholder this backend may reference — anything else
+/// is refused so a driver row cannot smuggle an unbounded field into a
+/// connection string a consumer will build unescaped.
+const URL_TEMPLATE_PLACEHOLDERS: &[&str] = &["host", "port", "database", "user"];
+
+/// One SQL (or SQL-shaped) dialect a plugin describes for completion,
+/// formatting and identifier/parameter quoting — the plugin-manifest half
+/// of `db_core::dialect::Dialect`, joined to it at the `ui-shell` seam by
+/// plain strings (`database-tools.md` §7).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SqlDialectContribution {
+    pub id: String,
+    pub name: String,
+    /// `"sql"`, `"mongo-shell"`, `"cql"`, or `"redis-command"`.
+    pub parser: String,
+    /// `"double"`, `"backtick"`, `"bracket"`, or `"none"`.
+    #[serde(rename = "identifier-quote")]
+    pub identifier_quote: String,
+    /// `"question"`, `"dollar"`, `"colon"`, or `"none"`.
+    #[serde(rename = "param-style")]
+    pub param_style: String,
+    /// A keyword-list asset, relative to the plugin directory
+    /// (`dialects/postgres.keywords`, one keyword per line), for
+    /// completion/highlighting.
+    #[serde(default)]
+    pub keywords: Option<PathBuf>,
+}
+
 /// Everything a plugin contributes, by point.
 ///
 /// Deliberately *not* `deny_unknown_fields`: [`API_VERSION`]'s doc comment
@@ -331,6 +519,12 @@ pub struct BuildToolContribution {
 /// struct in this module enforces the opposite rule — a typo in a *known*
 /// field is still a load error. `unknown` is where a point this build has
 /// never heard of goes to be silently dropped; nothing reads it.
+///
+/// [`ToolWindows`](ContributionPoint::ToolWindows) and
+/// [`SettingsPages`](ContributionPoint::SettingsPages) below are additive
+/// like every point before them: an older host that does not know either
+/// key simply drops it into `unknown` above, so `api_version` stays `1`
+/// (the database-tools plan's decision 11).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct Contributes {
     #[serde(default, rename = "icon-themes")]
@@ -349,6 +543,14 @@ pub struct Contributes {
     pub test_frameworks: Vec<TestFrameworkContribution>,
     #[serde(default, rename = "build-tools")]
     pub build_tools: Vec<BuildToolContribution>,
+    #[serde(default, rename = "tool-windows")]
+    pub tool_windows: Vec<ToolWindowContribution>,
+    #[serde(default, rename = "settings-pages")]
+    pub settings_pages: Vec<SettingsPageContribution>,
+    #[serde(default, rename = "database-drivers")]
+    pub database_drivers: Vec<DatabaseDriverContribution>,
+    #[serde(default, rename = "sql-dialects")]
+    pub sql_dialects: Vec<SqlDialectContribution>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -366,6 +568,10 @@ impl Contributes {
             && self.analyzers.is_empty()
             && self.test_frameworks.is_empty()
             && self.build_tools.is_empty()
+            && self.tool_windows.is_empty()
+            && self.settings_pages.is_empty()
+            && self.database_drivers.is_empty()
+            && self.sql_dialects.is_empty()
     }
 }
 
@@ -624,6 +830,169 @@ impl PluginManifest {
 
         // A build tool is a native process too — no `[wasm]` component.
 
+        for window in &self.contributes.tool_windows {
+            check_camel_id("contributes.tool-windows.id", &window.id)?;
+            non_empty("contributes.tool-windows.title", &window.title)?;
+        }
+        check_unique(
+            ContributionPoint::ToolWindows,
+            self.contributes.tool_windows.iter().map(|w| w.id.as_str()),
+        )?;
+
+        for page in &self.contributes.settings_pages {
+            check_camel_id("contributes.settings-pages.id", &page.id)?;
+            non_empty("contributes.settings-pages.title", &page.title)?;
+        }
+        check_unique(
+            ContributionPoint::SettingsPages,
+            self.contributes
+                .settings_pages
+                .iter()
+                .map(|p| p.id.as_str()),
+        )?;
+
+        // Neither a tool window nor a settings page needs a `[wasm]`
+        // component: both are native Qt widgets a wasm guest cannot draw
+        // (`ToolWindowContribution`'s own doc comment).
+        for driver in &self.contributes.database_drivers {
+            check_id("contributes.database-drivers.id", &driver.id)?;
+            non_empty("contributes.database-drivers.name", &driver.name)?;
+            non_empty("contributes.database-drivers.family", &driver.family)?;
+            if !matches!(driver.backend.as_str(), "native" | "adbc" | "odbc") {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.database-drivers.backend `{}` must be one of `native`, `adbc`, `odbc`",
+                    driver.backend
+                )));
+            }
+            if driver.backend == "native" {
+                match &driver.native_id {
+                    Some(id) if !id.trim().is_empty() => {}
+                    _ => {
+                        return Err(LoadErrorKind::MalformedManifest(
+                            "contributes.database-drivers with backend `native` needs `native-id`"
+                                .to_string(),
+                        ))
+                    }
+                }
+            }
+            if driver.backend == "adbc" {
+                let has_manifest_name = driver
+                    .adbc
+                    .as_ref()
+                    .and_then(|adbc| adbc.manifest_name.as_deref())
+                    .is_some_and(|name| !name.trim().is_empty());
+                let has_artifact = driver
+                    .adbc
+                    .as_ref()
+                    .and_then(|adbc| adbc.url.as_deref())
+                    .is_some();
+                let has_artifacts_map = driver
+                    .adbc
+                    .as_ref()
+                    .is_some_and(|adbc| !adbc.artifacts.is_empty());
+                if !has_manifest_name && !has_artifact && !has_artifacts_map {
+                    return Err(LoadErrorKind::MalformedManifest(
+                        "contributes.database-drivers with backend `adbc` needs \
+                         `adbc.manifest-name`, `adbc.url`, or `adbc.artifacts`"
+                            .to_string(),
+                    ));
+                }
+                if let Some(adbc) = &driver.adbc {
+                    if let Some(url) = &adbc.url {
+                        check_adbc_artifact(
+                            "contributes.database-drivers.adbc",
+                            url,
+                            &adbc.sha256,
+                        )?;
+                    }
+                    for (platform, artifact) in &adbc.artifacts {
+                        non_empty(
+                            "contributes.database-drivers.adbc.artifacts platform",
+                            platform,
+                        )?;
+                        non_empty(
+                            "contributes.database-drivers.adbc.artifacts.library",
+                            &artifact.library,
+                        )?;
+                        check_adbc_artifact(
+                            "contributes.database-drivers.adbc.artifacts",
+                            &artifact.url,
+                            &Some(artifact.sha256.clone()),
+                        )?;
+                    }
+                }
+            }
+            if let Some(port) = driver.default_port {
+                if port == 0 {
+                    return Err(LoadErrorKind::MalformedManifest(
+                        "contributes.database-drivers.default-port must be between 1 and 65535"
+                            .to_string(),
+                    ));
+                }
+            }
+            if let Some(template) = &driver.url_template {
+                check_url_template(template)?;
+            }
+            if let Some(icon) = &driver.icon {
+                check_relative("contributes.database-drivers.icon", icon)?;
+            }
+        }
+        check_unique(
+            ContributionPoint::DatabaseDrivers,
+            self.contributes
+                .database_drivers
+                .iter()
+                .map(|d| d.id.as_str()),
+        )?;
+
+        // A database driver row is metadata a native/ADBC/ODBC crate reads
+        // by id — no `[wasm]` component, the same reasoning a build tool
+        // needs none.
+
+        for dialect in &self.contributes.sql_dialects {
+            check_id("contributes.sql-dialects.id", &dialect.id)?;
+            non_empty("contributes.sql-dialects.name", &dialect.name)?;
+            if !matches!(
+                dialect.parser.as_str(),
+                "sql" | "mongo-shell" | "cql" | "redis-command"
+            ) {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.sql-dialects.parser `{}` must be one of `sql`, `mongo-shell`, \
+                     `cql`, `redis-command`",
+                    dialect.parser
+                )));
+            }
+            if !matches!(
+                dialect.identifier_quote.as_str(),
+                "double" | "backtick" | "bracket" | "none"
+            ) {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.sql-dialects.identifier-quote `{}` must be one of `double`, \
+                     `backtick`, `bracket`, `none`",
+                    dialect.identifier_quote
+                )));
+            }
+            if !matches!(
+                dialect.param_style.as_str(),
+                "question" | "dollar" | "colon" | "none"
+            ) {
+                return Err(LoadErrorKind::MalformedManifest(format!(
+                    "contributes.sql-dialects.param-style `{}` must be one of `question`, \
+                     `dollar`, `colon`, `none`",
+                    dialect.param_style
+                )));
+            }
+            if let Some(keywords) = &dialect.keywords {
+                check_relative("contributes.sql-dialects.keywords", keywords)?;
+            }
+        }
+        check_unique(
+            ContributionPoint::SqlDialects,
+            self.contributes.sql_dialects.iter().map(|d| d.id.as_str()),
+        )?;
+
+        // A SQL dialect row is metadata too — no `[wasm]` component.
+
         if let Some(wasm) = &self.wasm {
             check_relative("wasm.component", &wasm.component)?;
         } else if !self.contributes.commands.is_empty() {
@@ -693,12 +1062,58 @@ fn check_id(field: &'static str, value: &str) -> Result<(), LoadErrorKind> {
     Ok(())
 }
 
+/// Tool-window and settings-page ids are dock ids and `ScopedField` keys,
+/// not directory names, so they follow the camelCase convention those
+/// already use (`"buildTools"`, `"tabPadding"`) rather than [`check_id`]'s
+/// kebab-case, directory-safe charset.
+fn check_camel_id(field: &'static str, value: &str) -> Result<(), LoadErrorKind> {
+    let malformed = || LoadErrorKind::MalformedId {
+        field,
+        value: value.to_string(),
+    };
+    if value.is_empty() || value.len() > ID_MAX_LEN {
+        return Err(malformed());
+    }
+    let mut chars = value.chars();
+    let first = chars.next().expect("id is not empty");
+    if !first.is_ascii_lowercase() {
+        return Err(malformed());
+    }
+    if chars.any(|c| !c.is_ascii_alphanumeric()) {
+        return Err(malformed());
+    }
+    Ok(())
+}
+
 fn non_empty(field: &'static str, value: &str) -> Result<(), LoadErrorKind> {
     if value.trim().is_empty() {
         Err(LoadErrorKind::EmptyField(field))
     } else {
         Ok(())
     }
+}
+
+/// One pinned ADBC artifact's `url`/`sha256` pair, shared by both the F1
+/// single-field form and F8b's per-platform `artifacts` map: `url` must be
+/// `https://`-only, and `sha256` a 64-character hex string.
+fn check_adbc_artifact(
+    field: &'static str,
+    url: &str,
+    sha256: &Option<String>,
+) -> Result<(), LoadErrorKind> {
+    if !url.starts_with("https://") {
+        return Err(LoadErrorKind::MalformedManifest(format!(
+            "{field}.url `{url}` must start with `https://`"
+        )));
+    }
+    let sha256 = sha256.as_deref().unwrap_or_default();
+    let valid_sha256 = sha256.len() == 64 && sha256.chars().all(|c| c.is_ascii_hexdigit());
+    if !valid_sha256 {
+        return Err(LoadErrorKind::MalformedManifest(format!(
+            "{field} with a url needs a 64-character hex sha256"
+        )));
+    }
+    Ok(())
 }
 
 /// A manifest may only ever point at files inside its own directory.
@@ -740,6 +1155,29 @@ fn check_capability_path(pattern: &str) -> Result<(), LoadErrorKind> {
     check_relative("capabilities.read-files", Path::new(rest)).map_err(|_| unscoped())
 }
 
+/// Every `{placeholder}` in `template` must be one
+/// [`URL_TEMPLATE_PLACEHOLDERS`] names — anything else is refused before a
+/// consumer ever builds a connection string from it.
+fn check_url_template(template: &str) -> Result<(), LoadErrorKind> {
+    let mut rest = template;
+    while let Some(start) = rest.find('{') {
+        let Some(end) = rest[start..].find('}') else {
+            return Err(LoadErrorKind::MalformedManifest(format!(
+                "contributes.database-drivers.url-template `{template}` has an unterminated `{{`"
+            )));
+        };
+        let placeholder = &rest[start + 1..start + end];
+        if !URL_TEMPLATE_PLACEHOLDERS.contains(&placeholder) {
+            return Err(LoadErrorKind::MalformedManifest(format!(
+                "contributes.database-drivers.url-template placeholder `{{{placeholder}}}` must \
+                 be one of {URL_TEMPLATE_PLACEHOLDERS:?}"
+            )));
+        }
+        rest = &rest[start + end + 1..];
+    }
+    Ok(())
+}
+
 fn check_unique<'a>(
     point: ContributionPoint,
     ids: impl Iterator<Item = &'a str>,
@@ -778,3 +1216,5 @@ fn check_extension(value: &str) -> Result<(), LoadErrorKind> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_database;

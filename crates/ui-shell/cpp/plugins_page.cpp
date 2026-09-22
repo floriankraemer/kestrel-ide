@@ -1,5 +1,6 @@
 #include "plugins_page.h"
 
+#include "e2e_mark.h"
 #include "theme.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
@@ -13,8 +14,10 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QStringList>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
+#include <QTreeWidgetItemIterator>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -97,6 +100,37 @@ void populate(QTreeWidget *tree, PluginCatalog *catalog, bool problemsOnly, cons
         }
     }
     tree->expandAll();
+
+    // G1.6: a row's rect is only valid once this page is actually the
+    // settings dialog's current one, which `deferPage`'s lazy build makes
+    // true one event-loop turn *after* this very call on a first switch to
+    // Plugins (`settings_dialog.cpp`'s own `editor_page_shown`/
+    // `containers_settings_page_shown` give the same reasoning) — a
+    // `QTimer::singleShot(0, …)` lands after that either way, first switch
+    // or a later reload/filter toggle alike.
+    QTimer::singleShot(0, tree, [tree]() {
+        QStringList rows;
+        for (auto it = QTreeWidgetItemIterator(tree); *it; ++it) {
+            QTreeWidgetItem *item = *it;
+            const QString id = item->data(kPluginColumn, kIdRole).toString();
+            if (id.isEmpty()) {
+                continue; // a source-group header, not a plugin row
+            }
+            const QRect rect = tree->visualItemRect(item);
+            if (!rect.isValid() || rect.isEmpty() || !tree->viewport()->rect().contains(rect)) {
+                continue;
+            }
+            const QPoint origin = tree->viewport()->mapToGlobal(rect.topLeft());
+            rows << QStringLiteral("{\"id\":%1,\"rect\":[%2,%3,%4,%5]}")
+                      .arg(e2eJson(id))
+                      .arg(origin.x())
+                      .arg(origin.y())
+                      .arg(rect.width())
+                      .arg(rect.height());
+        }
+        e2eMark(QStringLiteral("{\"ev\":\"plugins_page_rows\",\"rows\":[%1]}")
+                  .arg(rows.join(QLatin1Char(','))));
+    });
 }
 
 } // namespace
@@ -169,6 +203,22 @@ QWidget *buildPluginsPage(QWidget *parent,
         *toggleState = catalog->toggle(id);
         toggleButton->setText(toggleState->label);
         toggleButton->setEnabled(toggleState->enabled);
+        // G1.6: which way the toggle for the *selected* row currently
+        // goes, so an E2E flow (disable a plugin, relaunch, check its
+        // View-menu entry is gone) can find the button's own rect and
+        // confirm it read "Disable" before clicking, the same deferred-
+        // rect reasoning `populate`'s own `plugins_page_rows` mark gives.
+        QTimer::singleShot(0, toggleButton, [toggleButton, id, disable = toggleState->disable]() {
+            const QRect rect(toggleButton->mapToGlobal(QPoint(0, 0)), toggleButton->size());
+            e2eMark(QStringLiteral("{\"ev\":\"plugins_page_toggle\",\"id\":%1,"
+                                    "\"disable\":%2,\"rect\":[%3,%4,%5,%6]}")
+                      .arg(e2eJson(id))
+                      .arg(disable ? QLatin1String("true") : QLatin1String("false"))
+                      .arg(rect.x())
+                      .arg(rect.y())
+                      .arg(rect.width())
+                      .arg(rect.height()));
+        });
         const bool hasProblem = !current->sentence.isEmpty();
         details->setVisible(hasProblem);
         // A built-in has no directory on disk, so there is nothing to open.

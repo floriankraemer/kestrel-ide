@@ -5,6 +5,12 @@
 # `BuildToolContribution`'s doc comment (a wasm guest can neither spawn a
 # process nor be trusted with either tool's raw output).
 #
+# The `tool-windows`/`settings-pages` rows (database-tools plan G1) are what
+# used to be the literal `"buildTools"` dock id and `scopedPage("buildTools",
+# ...)` call in `main_window.cpp`/`settings_dialog.cpp` — migrated onto the
+# generic contribution points so disabling this plugin now actually hides
+# both, rather than leaving a Rust-side call nothing feeds.
+#
 # `ide-model.init.gradle` is the one asset this plugin ships: the script
 # `jvm_build_core::gradle` runs through the project's own wrapper to print a
 # JSON project model to a file, and the same script installs the TeamCity
@@ -17,6 +23,16 @@ version = "1.0.0"
 api_version = 1
 license = "MIT"
 description = "Gradle and Maven project sync, task tool window, JUnit results and build-file editing."
+
+[[contributes.tool-windows]]
+id = "buildTools"
+title = "Build Tools"
+area = "right"
+
+[[contributes.settings-pages]]
+id = "buildTools"
+title = "Build Tools"
+scope = "project"
 
 [[contributes.build-tools]]
 id = "gradle"

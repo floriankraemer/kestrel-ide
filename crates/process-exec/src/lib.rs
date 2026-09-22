@@ -256,13 +256,49 @@ impl Spawned {
 /// in — a test runner's TeamCity service messages — rather than parse a
 /// batch report after the process has already exited.
 pub fn spawn(program: &str, args: &[&str], work_dir: &Path) -> Result<Spawned, Failure> {
+    spawn_with_env(program, args, work_dir, &[])
+}
+
+/// Same as [`spawn`], with extra environment variables set on the child —
+/// what a `db-exchange` dump/restore command needs for `PGPASSWORD`/
+/// `MYSQL_PWD` (never passed as an argv word, which any other user on the
+/// box could read from `/proc/<pid>/cmdline`).
+pub fn spawn_with_env(
+    program: &str,
+    args: &[&str],
+    work_dir: &Path,
+    env: &[(&str, &str)],
+) -> Result<Spawned, Failure> {
+    spawn_with_stdin(program, args, work_dir, env, None)
+}
+
+/// Same as [`spawn_with_env`], optionally piping `stdin_file`'s contents
+/// into the child's stdin (`Stdio::null()` when `None`, as before) — what
+/// `mysql < dump.sql`/`mongorestore`'s stdin-fed tools need, since neither
+/// takes its input file as an argv word the way `psql -f`/`pg_restore`/
+/// `sqlite3` do.
+pub fn spawn_with_stdin(
+    program: &str,
+    args: &[&str],
+    work_dir: &Path,
+    env: &[(&str, &str)],
+    stdin_file: Option<&Path>,
+) -> Result<Spawned, Failure> {
     let host = ExecHost::for_path(work_dir);
     let resolved_program =
         host::resolve_program(&host, program, work_dir).unwrap_or_else(|| program.to_string());
 
-    let mut command = host.command(&resolved_program, args, work_dir, &[]);
+    let stdin = match stdin_file {
+        Some(path) => {
+            let file = std::fs::File::open(path).map_err(|e| Failure::Io(e.to_string()))?;
+            Stdio::from(file)
+        }
+        None => Stdio::null(),
+    };
+
+    let mut command = host.command(&resolved_program, args, work_dir, env);
     command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = command.spawn();
@@ -386,6 +422,58 @@ mod tests {
         assert_eq!(&buffer[..read], b"one\n");
         spawned.kill();
         let _ = spawned.wait();
+    }
+
+    #[test]
+    fn spawn_with_env_reaches_the_child() {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let spawned = spawn_with_env(
+            "sh",
+            &["-c", "echo $PROCESS_EXEC_TEST_VAR"],
+            dir.path(),
+            &[("PROCESS_EXEC_TEST_VAR", "set")],
+        )
+        .unwrap();
+        let mut stdout = spawned.take_stdout().unwrap();
+        let mut buffer = Vec::new();
+        stdout.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"set\n");
+        let _ = spawned.wait();
+    }
+
+    /// F6c's own reason `spawn_with_stdin` exists: `mysql < dump.sql`
+    /// pipes a file into the child rather than naming it on argv — proved
+    /// here with `cat`, standing in for any of those tools, since a real
+    /// one is not guaranteed to be on the test host's `PATH`.
+    #[test]
+    fn spawn_with_stdin_pipes_a_files_contents_to_the_child() {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let input_path = dir.path().join("dump.sql");
+        std::fs::write(&input_path, b"SELECT 1;\n").unwrap();
+        let spawned =
+            spawn_with_stdin("cat", &[], dir.path(), &[], Some(input_path.as_path())).unwrap();
+        let mut stdout = spawned.take_stdout().unwrap();
+        let mut buffer = Vec::new();
+        stdout.read_to_end(&mut buffer).unwrap();
+        assert_eq!(buffer, b"SELECT 1;\n");
+        let status = spawned.wait().unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn spawn_with_stdin_reports_a_missing_input_file_rather_than_spawning() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = spawn_with_stdin(
+            "cat",
+            &[],
+            dir.path(),
+            &[],
+            Some(dir.path().join("no-such-file.sql").as_path()),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Failure::Io(_)));
     }
 
     #[test]

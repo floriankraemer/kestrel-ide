@@ -17,15 +17,7 @@ serde_json = "1"
 # under `run-core`, `build-core` and `dap-core`, whose layering gate
 # forbids tokio anywhere in their tree.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
-# C7's credential store (`secrets.rs`). `linux-native` (kernel keyutils,
-# the pure-Rust `linux-keyutils` crate) rather than `sync-secret-service`/
-# `linux-native-sync-persistent` (both pull in D-Bus's `dbus-secret-service`,
-# which needs `libdbus-1-dev` + `pkg-config` just to *compile*): the
-# linux-builder image, CI, and a minimal desktop all lack a running D-Bus
-# Secret Service daemon (ADR-0021 already rejected `keyring` for
-# `ai-chat-core` on exactly this), and `linux-native` needs no system
-# package at all, so the build itself never depends on one being present.
-# `secrets.rs`'s own "unavailable" mapping is what still makes a
-# fully locked-down sandbox (keyutils syscalls themselves blocked) degrade
-# to the documented `docker login` fallback instead of erroring.
-keyring = { version = "3", default-features = false, features = ["linux-native", "windows-native", "apple-native"] }
+# C7's credential store (`secrets.rs`): the generic keychain mechanics are
+# `secret-store` (ADR-0058 §5); this crate only supplies the service name
+# and its own "unavailable" wording (the `docker login` fallback).
+secret-store = { path = "../secret-store" }

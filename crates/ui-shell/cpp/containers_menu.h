@@ -2,24 +2,17 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
-#include <QHash>
-#include <QString>
-
-class QAction;
-class QMainWindow;
-class QMenu;
-
 namespace ui_shell {
 
-class DockRegistry;
-
-// Containers plan C2: `view.containers` on the existing View menu — the
-// dock's own toolbar and context menus (`ContainersPanel`) cover every
-// action, so like Tests there is only the show-the-dock entry. C10: also
-// the one project-lifecycle hook the feature needs (see the .cpp).
-void buildContainersMenu(QMainWindow *window, AppSettings *appSettings,
-                         QHash<QString, QAction *> &actions, DockRegistry *docks,
-                         QMenu *viewMenu, ProjectTreeModel *treeModel,
-                         ContainerService *containerService);
+// C10: the one project-lifecycle hook the Containers feature needs —
+// `ContainerService` is built (and its dock's tree populated, empty) before
+// any project is open, so refreshing once a project opens is what lets a
+// project's own `[containers]` override (ADR-0022) take effect without a
+// manual Refresh. The `view.containers` action itself is no longer created
+// here: `tool_window_factories.cpp`'s `wireContributedToolWindowMenus`
+// covers every contributed tool window generically now (database-tools
+// plan G1) — the dock's own toolbar and context menus (`ContainersPanel`)
+// already cover every other action.
+void wireContainersProjectHook(ProjectTreeModel *treeModel, ContainerService *containerService);
 
 } // namespace ui_shell

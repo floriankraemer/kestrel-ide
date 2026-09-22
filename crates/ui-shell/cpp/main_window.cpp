@@ -51,8 +51,10 @@
 #include "status_bar.h"
 #include "containers_menu.h"
 #include "containers_panel.h"
+#include "database_panel.h"
 #include "tests_menu.h"
 #include "tests_panel.h"
+#include "tool_window_factories.h"
 #include "syntax_highlighter.h"
 #include "terminal_sessions_panel.h"
 #include "theme.h"
@@ -136,6 +138,7 @@ struct CentralWidgets
     MarkdownPreviewPanel *previewPanel;
     ContainersPanel *containersPanel;
     BuildToolsPanel *buildToolsPanel;
+    DatabasePanel *databasePanel;
 };
 
 CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeModel,
@@ -147,7 +150,9 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                    TestService *testService, PreviewProvider *previewProvider,
                                    AnalysisService *analysisService,
                                    ContainerService *containerService,
-                                   BuildToolsService *buildToolsService)
+                                   BuildToolsService *buildToolsService, DatabaseService *databaseService,
+                                   ExchangeService *exchangeService, ConsoleService *consoleService,
+                                   ResultProvider *resultProvider)
 {
     // Constructing with `window` (a QMainWindow) as parent makes the dock
     // manager install itself as the central widget automatically (ADS's own
@@ -234,7 +239,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     QTreeView *treeView = projectTreeDock.view;
     QAction *projectTreeLocateAction = projectTreeDock.locateAction;
 
-    auto *editorTabs = new EditorTabs(docManager, languageService, editorRoot, window, containerService);
+    auto *editorTabs = new EditorTabs(docManager, languageService, editorRoot, window, containerService, databaseService);
     auto *diagnosticsService =
       wireDiagnosticsService(window, languageService, buildService, analysisService, editorTabs);
 
@@ -380,8 +385,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
     buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
-    auto *containersPanel = buildContainersDock(dockManager, docks, bottomArea, containerService, terminalSupervisor, appSettings, openAt);
-    auto *buildToolsPanel = wireBuildToolsDock(dockManager, docks, rightArea, editorDock, buildToolsService, runService, treeModel, editorTabs);
+    auto [buildToolsPanel, containersPanel, databasePanel] = buildContributedToolWindows(
+      appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService, exchangeService, consoleService, resultProvider);
 
     // Structure tracks whatever tab is current: refresh on open, on
     // switch, and whenever a tab becomes clean. `tabModifiedChanged`
@@ -432,7 +437,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
           // at, the same restraint the Problems panel's first-diagnostic
           // auto-open already uses.
           const quint64 tabId = editorTabs->currentTabId();
-          const QString path = editorTabs->currentPath();
+          const QString path = editorTabs->currentPreviewPath();
           // While a tab renders itself in place (view mode,
           // editor_tabs_preview.cpp), the dock stands down: `PreviewProvider`
           // keys one render per tab id, so two panels asking for the same tab
@@ -468,7 +473,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
         if (editorTabs->previewModeActive(tabId)) {
             return;
         }
-        previewPanel->setCurrentTab(tabId, editorTabs->currentPath(), editorTabs->currentContent());
+        previewPanel->setCurrentTab(tabId, editorTabs->currentPreviewPath(), editorTabs->currentContent());
     });
     QObject::connect(docManager, &DocumentManager::tabModifiedChanged, structurePanel,
                       [structurePanel, editorTabs](quint64 tabId, bool modified) {
@@ -623,7 +628,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                            searchEverywhereDialog,
                            problemsPanel,    aiChatPanel,      changesPanel,
                            fileHistoryPanel, runConsolePanel,  buildPanel,
-                           debugPanel,       previewPanel,     containersPanel, buildToolsPanel};
+                           debugPanel,       previewPanel,     containersPanel, buildToolsPanel, databasePanel};
 }
 
 // Menu structure per US-5 acceptance criteria. "Open Folder..." and the
@@ -691,19 +696,16 @@ void buildMainWindow(AppSettings *appSettings,
     // per-window QObjects. It launches nothing until a project is opened and
     // a file of a configured language is opened in it.
     auto *languageService = new LanguageService(window);
-    // F3-12/F3-16: one Git adapter per window, discovering nothing until a
-    // project is opened, same as LanguageService.
-    auto *vcsService = new VcsService(window);
+    auto *vcsService = new VcsService(window); // F3-12/F3-16: discovers nothing until opened.
     auto *runService = new RunService(window);
-    // B1-6: one build adapter per window, like the others; it runs nothing
-    // until asked and knows no project until one is open.
-    auto *buildService = new BuildService(window);
-    // The PHP tooling plan's B8: one analysis adapter per window, the same
-    // "nothing runs until asked" rule as BuildService.
-    auto *analysisService = new AnalysisService(window);
-    // The PHP tooling plan's D4: one test-run adapter per window, same rule.
-    auto *testService = new TestService(window);
+    auto *buildService = new BuildService(window); // B1-6: runs nothing until asked.
+    auto *analysisService = new AnalysisService(window); // PHP tooling B8: same rule.
+    auto *testService = new TestService(window); // PHP tooling D4: same rule.
     auto *containerService = new ContainerService(window); // C2: connects nothing until asked.
+    auto *databaseService = new DatabaseService(window); // F2.5: connects nothing until asked.
+    auto *exchangeService = new ExchangeService(window); // F5b: export/import/dump/compare jobs.
+    auto *consoleService = new ConsoleService(window); // F3.1: console execution.
+    auto *resultProvider = new ResultProvider(window);  // F3.4: its result grid.
     auto *buildToolsService = new BuildToolsService(window); // B1: nothing runs until asked.
     auto *buildToolsEditor = new BuildToolsEditor(window); // B5: the Build Tools settings draft.
     // D3-1: one debug adapter per window. It owns the breakpoints, which
@@ -733,7 +735,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
                           buildService, debugService, testService, previewProvider,
-                          analysisService, containerService, buildToolsService);
+                          analysisService, containerService, buildToolsService, databaseService, exchangeService, consoleService, resultProvider);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5
@@ -873,16 +875,13 @@ void buildMainWindow(AppSettings *appSettings,
       central.terminalPanel,
       runConfigEditor, containerService,
     };
-    QObject::connect(preferencesAction, &QAction::triggered, window,
-                      [window, settingsContext, appSettings]() {
-                          appSettings->setSettingsScope(QStringLiteral("global"));
-                          showSettingsDialog(window, settingsContext);
-                      });
-    central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings](const QString &tab) {
-        appSettings->setSettingsScope(QStringLiteral("global"));
-        showSettingsDialog(window, settingsContext, QObject::tr("Containers"), tab);
-    });
-    central.containersPanel->setRunContext(runService, runConfigEditor, editorTabs); // C5
+    QObject::connect(preferencesAction, &QAction::triggered, window, [window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext); });
+    // G1.6: null when its plugin is disabled; an unconditional deref here used to segfault the next launch.
+    if (central.containersPanel != nullptr) {
+        central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings](const QString &tab) { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext, QObject::tr("Containers"), tab); });
+        central.containersPanel->setRunContext(runService, runConfigEditor, editorTabs); // C5
+    }
+    if (central.databasePanel != nullptr) { central.databasePanel->setOpenSettingsHandler([window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext, QObject::tr("Database")); }); }
     // The same dialog, opened on the project's own layer (ADR-0022): "configure
     // this project" and "configure my editor" are different intentions, and the
     // dialog's own scope selector is how you get from one to the other after.
@@ -1082,16 +1081,16 @@ void buildMainWindow(AppSettings *appSettings,
     buildVcsMenu(window, vcsService, appSettings, *actions, editorTabs, central.docks,
                  central.fileHistoryPanel, viewMenu);
     buildRunMenu(window, runService, runConfigEditor, appSettings, *actions, central.docks,
-                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService);
+                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService, consoleService);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu,
                    buildToolsService);
-    wireBuildToolsMenuAndSettings(window, appSettings, *actions, central.docks, viewMenu, central.buildToolsPanel,
-                                  [window, settingsContext, appSettings]() {
-                                      appSettings->setSettingsScope(QStringLiteral("global"));
-                                      showSettingsDialog(window, settingsContext, QObject::tr("Build Tools"));
-                                  });
+    wireContributedToolWindowMenus(appSettings, *actions, central.docks, viewMenu); // G1
+    wireBuildToolsSettings(central.buildToolsPanel, [window, settingsContext, appSettings]() {
+        appSettings->setSettingsScope(QStringLiteral("global"));
+        showSettingsDialog(window, settingsContext, QObject::tr("Build Tools"));
+    });
     buildTestsMenu(window, appSettings, *actions, central.docks, viewMenu);
-    buildContainersMenu(window, appSettings, *actions, central.docks, viewMenu, treeModel, containerService);
+    wireContainersProjectHook(treeModel, containerService);
     buildAnalysisMenu(window, analysisService, appSettings, *actions);
     // Last of the View entries, under everything it can rearrange.
     buildLayoutsMenu(viewMenu, window, appSettings, central.dockManager, central.docks,

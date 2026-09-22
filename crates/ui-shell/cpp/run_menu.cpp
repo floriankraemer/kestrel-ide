@@ -21,7 +21,8 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
                    AppSettings *appSettings, QHash<QString, QAction *> &actions,
                    DockRegistry *docks, RunConsolePanel *runConsolePanel,
                    ProjectTreeModel *treeModel, EditorTabs *editorTabs, BuildPanel *buildPanel,
-                   QMenu *viewMenu, ContainerService *containerService)
+                   QMenu *viewMenu, ContainerService *containerService,
+                   ConsoleService *consoleService)
 {
     // Detect run configurations (Cargo.toml, package.json, Makefile) the
     // moment a project opens, same lifecycle hook LanguageService and the
@@ -129,8 +130,9 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
       registerAction(runMenu, QStringLiteral("run.editConfigurations"),
                       QObject::tr("Edit Configurations..."), appSettings, actions);
     QObject::connect(editConfigsAction, &QAction::triggered, window,
-                      [window, runConfigEditor, containerService]() {
-                          showRunConfigDialog(window, runConfigEditor, containerService);
+                      [window, runConfigEditor, containerService, consoleService]() {
+                          showRunConfigDialog(window, runConfigEditor, containerService,
+                                             QString(), consoleService);
                       });
 
     QAction *viewRunConsoleAction =

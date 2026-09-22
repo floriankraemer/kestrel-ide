@@ -29,6 +29,11 @@ impl ffi::LanguageService {
         if self.as_mut().container_intentions(&path, line, character) {
             return;
         }
+        // F3.7: "Format SQL"/"Go to DDL" on a database-attached file need
+        // no server either.
+        if self.as_mut().database_intentions(&path, line, character) {
+            return;
+        }
         // D7: "Update to X" on a build-file dependency needs no server —
         // short-circuits here only when no real server is also configured
         // for this file (review fix #3). When one is, it returns `false`
@@ -90,6 +95,9 @@ impl ffi::LanguageService {
             return;
         };
         if self.as_mut().apply_container_intention(&intention.item) {
+            return;
+        }
+        if self.as_mut().apply_database_intention(&intention.item) {
             return;
         }
         let language_id = self.intentions_language.borrow().clone();

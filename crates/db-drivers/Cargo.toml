@@ -1,0 +1,183 @@
+[package]
+name = "db-drivers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+db-core = { path = "../db-core" }
+# `resp`'s RESP argv tokenizer + read-only command table (redis.rs) and
+# `mongo`'s sugar parser (mongodb.rs) — both pure/Qt-free/tokio-free, so
+# they live in `db-sql` alongside `split`/`classify` rather than being
+# re-implemented here (F7.2/F7.3).
+db-sql = { path = "../db-sql" }
+# The private `"db-io"` runtime every async driver's calls are `block_on`'d
+# against (ADR-0058 §1) — never the ambient kind, and never reached by
+# SQLite/Redis, which bypass it entirely (both have synchronous APIs).
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+# SQLite: `bundled` links its own vendored C sqlite3 rather than a system
+# package, the same "the build itself never depends on one being present"
+# reasoning `secret-store`'s `linux-native` keyring backend already uses.
+# Synchronous — bypasses the tokio runtime entirely.
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
+# PostgreSQL: async, `block_on`'d against the private runtime above.
+# `rustls`'s `ring` provider only (never `aws-lc-rs`, ADR-0061 §2/R2) —
+# `default-features = false` on every crate in this chain is what keeps
+# `aws-lc-rs` out; see F1.7's `cargo tree -i aws-lc-rs` gate.
+tokio-postgres = { version = "0.7", features = ["with-chrono-0_4", "with-uuid-1"], optional = true }
+tokio-postgres-rustls = { version = "0.13", default-features = false, optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"], optional = true }
+# `Prefer`/`Require`/`VerifyCa`/`VerifyFull` (F2 follow-up): PEM parsing for
+# a configured `ca_file` and, absent one, the OS trust store — never a new
+# crypto provider (both are provider-agnostic, `ring` stays the only one
+# in the tree).
+rustls-pemfile = { version = "2", optional = true }
+rustls-native-certs = { version = "0.7", optional = true }
+bytes = { version = "1", optional = true }
+uuid = { version = "1", optional = true }
+# Unconditional (not gated by any feature): `sqlite_tests.rs` uses it
+# directly regardless of which other backend features are on, and
+# `mysql.rs`'s `Value::Date`/`Time`/`DateTime` -> `mysql_async::Value`
+# conversion needs its `Datelike`/`Timelike` traits in scope, which
+# requires `chrono` to be *this* crate's own direct dependency (an
+# indirect one via `db-core` is not nameable in a `use` path).
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[features]
+default = ["sqlite", "postgres", "mysql", "mongodb", "redis", "cassandra", "ssh"]
+sqlite = ["dep:rusqlite"]
+postgres = ["dep:tokio-postgres", "dep:tokio-postgres-rustls", "dep:rustls", "dep:rustls-pemfile", "dep:rustls-native-certs", "dep:bytes", "dep:uuid", "dep:futures-util"]
+mysql = ["dep:mysql_async", "dep:futures-util", "dep:flate2", "flate2/rust_backend"]
+mongodb = ["dep:mongodb-driver", "dep:bson", "dep:futures-util", "dep:serde_json"]
+redis = ["dep:redis-driver"]
+cassandra = ["dep:scylla"]
+ssh = ["dep:russh"]
+# Gates the real-server tests in `postgres.rs`/`mongodb.rs`/`redis.rs`/
+# `cassandra.rs`/`ssh.rs` (env `IDE_DB_*_URL`/`IDE_DB_SSH_*`).
+# `make test`/`cargo test --workspace` never builds this feature —
+# `db-integration.md` runs it separately, the same shape `jvm-integration`
+# already uses for `jvm-build-core`.
+db-integration = []
+
+# MongoDB: async, `block_on`'d against the private runtime above, same as
+# `postgres` — never the crate's own `sync` feature, which would spin a
+# second, unmanaged tokio runtime of its own.
+#
+# R11 spike (database-tools-plan.md §13): 3.9.1's default `bson-2` feature
+# fails to compile under rustc 1.98.1 with E0659 ("`doc` is ambiguous") —
+# a name collision between the re-exported `bson::doc!` macro and the
+# built-in `#[doc]` attribute inside `mongodb`'s own `macro_magic`-based
+# `#[options_doc]`/`#[export_doc]` plumbing (`action/search_index.rs`).
+# Switching to the `bson-3` feature (bson 3.x, whose `doc!` macro no
+# longer collides) avoids it entirely — no crate downgrade needed.
+# `compat-3-3-0` is 3.9.1's own required forward-compat marker feature
+# (a hard `compile_error!` without it, unrelated to R11).
+[dependencies.mongodb-driver]
+package = "mongodb"
+version = "3.9.1"
+default-features = false
+features = ["rustls-tls", "dns-resolver", "bson-3", "compat-3-3-0"]
+optional = true
+
+[dependencies.bson]
+version = "3"
+features = ["serde"]
+optional = true
+
+[dependencies.serde_json]
+version = "1"
+optional = true
+
+# `TryStreamExt::try_next` to drain a `mongodb::Cursor` (a `Stream`) inside
+# `block_on` — already in the dependency graph transitively via `mongodb`
+# itself, named explicitly since `mongodb.rs` uses it directly; F3d's
+# `postgres.rs` pages `Client::query_raw`'s live stream with the same
+# `StreamExt::next`/`map`.
+[dependencies.futures-util]
+version = "0.3"
+default-features = false
+features = ["std"]
+optional = true
+
+# Redis: synchronous, bypasses the private runtime entirely (same as
+# `rusqlite`) — the `redis` crate's blocking API needs nothing from tokio.
+# `tls-rustls` gates rustls (never `tls-native-tls`/openssl).
+[dependencies.redis-driver]
+package = "redis"
+version = "0.27"
+default-features = false
+features = ["tls-rustls"]
+optional = true
+
+# Cassandra/Scylla: async, `block_on`'d against the private runtime.
+# `default-features = false`, no `rustls-023` feature, no TLS feature of
+# any kind: scylla 1.9.0's own `Cargo.toml` declares its `rustls`/
+# `tokio-rustls` dependencies with no `default-features = false` of their
+# own, so enabling `rustls-023` unconditionally turns rustls's default
+# `aws_lc_rs` crypto-provider feature on (verified straight from the
+# published `Cargo.toml.orig` for 1.9.0, and reproduced identically on
+# 1.8.0/1.7.0) — there is no ring-only TLS feature this crate can select
+# instead, since scylla's manifest gives a dependent no per-provider
+# choice at all (unlike postgres/mongodb/redis/russh above, whose
+# manifests each let a dependent pick `ring` explicitly). Building
+# without `rustls-023` at all avoids the aws-lc-rs leak entirely, at the
+# cost of Cassandra/Scylla connections staying plaintext-only —
+# `cassandra.rs`'s `connect` refuses any `SslMode` other than `Disable`
+# with `DbErrorCode::NotSupported`, tested. This is why `cassandra` can
+# stay a `default` feature (see above) while `cargo tree --all-features
+# -i aws-lc-rs` still gates strictly: nothing in this crate's own
+# dependency list can ever pull `aws_lc_rs` in, by construction, not by
+# opting a feature out. Revisit once scylla exposes a ring/provider-
+# agnostic rustls option upstream (`database-tools-plan.md`'s F7.4 row).
+[dependencies.scylla]
+version = "1.9"
+default-features = false
+optional = true
+
+# `RusshTunnel` (F7.5): the in-process SSH tunnel `db_core::tunnel::select`
+# falls back to when `ssh` is not on `PATH`, or the auth mode is a
+# password (`ssh -o BatchMode=yes` cannot prompt for one). `ring` only,
+# `default-features = false` drops the crate's own default `aws-lc-rs`
+# feature — unlike `scylla` above, russh's manifest genuinely lets a
+# dependent choose (`aws-lc-rs`/`ring` are each their own named feature,
+# neither implied by the other). `rsa` keeps RSA host/user keys
+# supported — still the most common key type in the wild even though this
+# codebase would default to Ed25519 for anything it generates itself.
+# `russh-keys` is not a separate dependency in 0.63: known-hosts checking,
+# key loading and the SSH-agent client all live in `russh::keys`, part of
+# this one crate.
+[dependencies.russh]
+version = "0.63"
+default-features = false
+features = ["ring", "rsa"]
+optional = true
+
+# MySQL/MariaDB: async, `block_on`'d against the private runtime, same as
+# `postgres`. `default-features = false` drops the crate's own default
+# `native-tls-tls`/`flate2/zlib` (a C zlib) selection; `rustls-tls` +
+# `ring` keeps the one crypto provider this tree allows (ADR-0061 §2/R2),
+# `flate2/rust_backend` keeps the compression codec pure Rust too (the
+# same "no C dependency this build doesn't already need" reasoning
+# `rusqlite`'s `bundled` comment gives, applied to the one place this
+# crate would otherwise pull in a second C library).
+[dependencies.mysql_async]
+version = "0.37"
+default-features = false
+features = ["rustls-tls", "ring"]
+optional = true
+
+# `mysql_async`'s own default compression codec is `flate2/zlib` (a C
+# zlib) — this crate's `mysql` feature line above re-selects
+# `flate2/rust_backend` (a pure-Rust `miniz_oxide` backend) instead, the
+# same "no C dependency this build doesn't already need" reasoning
+# `rusqlite`'s `bundled` comment gives, applied to the one transitive
+# dependency that would otherwise pull in libz.
+[dependencies.flate2]
+version = "1"
+default-features = false
+optional = true
+
+[dev-dependencies]
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }

@@ -89,13 +89,13 @@ constexpr int kTabKindImage = 3;
 class EditorTabs : public QObject
 {
 public:
-    // `containerService` is C3's Inspect/Files-open virtual tabs
-    // (`ContainerService::virtualDocumentOpened`, wired just like
-    // `languageService`'s own one below) — optional (may be `nullptr`)
-    // only so a future test harness building `EditorTabs` without one
-    // still compiles.
+    // `containerService`/`databaseService` are C3's/F2.3's Inspect/Files-open
+    // and Go to DDL virtual tabs (`virtualDocumentOpened`, wired just like
+    // `languageService`'s own one below) — optional (`nullptr`) only so a
+    // future test harness building `EditorTabs` without one still compiles.
     EditorTabs(DocumentManager *docManager, LanguageService *languageService, QSplitter *root,
-                QWidget *window, ContainerService *containerService = nullptr);
+                QWidget *window, ContainerService *containerService = nullptr,
+                DatabaseService *databaseService = nullptr);
 
     // Structure follows whatever tab is current; EditorTabs has no
     // Q_OBJECT (no moc target) so it hands out a callback rather than a
@@ -258,6 +258,13 @@ public:
     // commit.
     EditorOps *editorOps() const { return editorOps_; }
 
+    // The real Qt signal a tool window docks its own per-tab state on —
+    // `EditorTabs` itself is deliberately not a `Q_OBJECT` (this class's
+    // own doc comment), so a listener that needs `tabClosed`/`tabOpened`
+    // rather than a one-off callback connects to this directly
+    // (`DatabaseResultsPanel`'s own per-console tab strip, F3e).
+    DocumentManager *documentManager() const { return docManager_; }
+
     // Re-read the carets Rust holds for this editor and show them: the
     // primary becomes the widget's own cursor, the rest are painted.
     void refreshCarets(CodeEditor *editor);
@@ -326,6 +333,14 @@ public:
     QString selectedText() const;
 
     QString currentPath() const { return docManager_->tabPath(currentTabId()); }
+
+    // F6c: what the Preview dock keys its provider lookup and render call
+    // on — `currentPath()` plus a virtual (C12) tab's own extension-bearing
+    // title, so a virtual document like an ER diagram's `db-erd://.../
+    // erd.mmd` previews the same way a `.mmd` file on disk does. Never use
+    // this for anything that needs a *real* file path (LSP, VCS, AI chat
+    // attachments all keep using `currentPath()`).
+    QString currentPreviewPath() const { return docManager_->previewPath(currentTabId()); }
 
     QString currentContent() const;
 
@@ -710,8 +725,6 @@ private:
     // every page (the editor font, the editor colours) need this too.
     void forEachHexViewer(const std::function<void(HexViewer *)> &apply) const;
 
-    void focusTab(quint64 tabId);
-
     // One tab group: everything a group needs to behave like the single tab
     // strip used to, plus the context menu and the "clicking me activates
     // me" wiring.
@@ -929,6 +942,12 @@ private:
     // this class.
 public:
     void onTabOpened(quint64 tabId, const QString &title);
+
+    // Public for the same reason: `DatabaseResultsPanel` wires
+    // `ConsoleService::virtualDocumentOpened` itself (F4.2's DML preview)
+    // rather than growing `editor_tabs.cpp`'s own constructor, which is at
+    // its file-size ceiling.
+    void focusTab(quint64 tabId);
 
     // `diffPanel_`'s `DiffClosed` callback: pulls the editor back out of
     // `page` (the closed diff's tab, about to be deleted) and puts it back

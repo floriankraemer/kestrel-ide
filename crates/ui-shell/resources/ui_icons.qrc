@@ -52,5 +52,17 @@
         <file>icons/containers/disconnect.a8</file>
         <file>icons/containers/cleanup.a8</file>
         <file>icons/containers/filter.a8</file>
+        <file>icons/database/database.a8</file>
+        <file>icons/database/schema.a8</file>
+        <file>icons/database/table.a8</file>
+        <file>icons/database/view.a8</file>
+        <file>icons/database/column.a8</file>
+        <file>icons/database/key.a8</file>
+        <file>icons/database/index.a8</file>
+        <file>icons/database/routine.a8</file>
+        <file>icons/database/folder.a8</file>
+        <file>icons/database/collection.a8</file>
+        <file>icons/database/keyspace.a8</file>
+        <file>icons/database/redis-key.a8</file>
     </qresource>
 </RCC>

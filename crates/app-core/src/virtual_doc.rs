@@ -68,6 +68,19 @@ impl AppSession {
         }
     }
 
+    /// What the preview dock keys its provider lookup on: [`Self::tab_path`]
+    /// where there is one, falling back to the tab's own title for a
+    /// virtual (C12) document — a virtual document's `key` already carries
+    /// a real file-name-shaped last segment (`Document::title`'s own doc
+    /// comment: "doubles as the extension the highlighting/language
+    /// registry matches on"), so an ER diagram opened as
+    /// `db-erd://<source>/erd.mmd` is previewable the same way a `.mmd`
+    /// file on disk is, with no new provider-lookup path to grow (F6c).
+    pub fn tab_preview_path(&self, id: TabId) -> Option<std::path::PathBuf> {
+        self.tab_path(id)
+            .or_else(|| self.tab_title(id).map(std::path::PathBuf::from))
+    }
+
     /// The open tab for `(scheme, key)`, if any — the dedup/re-open key for
     /// a [`editor_core::DocumentSource::Virtual`] tab, the same role
     /// [`AppSession::find_tab_by_path`] plays for a file.
@@ -207,5 +220,20 @@ mod tests {
             .id;
         assert_eq!(session.tab_is_read_only(id), Some(false));
         assert_eq!(session.tab_is_read_only(TabId::from_raw(999)), None);
+    }
+
+    #[test]
+    fn tab_preview_path_falls_back_to_a_virtual_documents_title() {
+        let (project_dir, _config, mut session) = session_with_project();
+        let path = project_dir.path().join("a.txt");
+        let file_tab = session.open_file(&path).unwrap();
+        assert_eq!(session.tab_preview_path(file_tab.id), Some(path));
+
+        let virtual_tab = session.open_virtual_document("db-erd", "my-source/erd.mmd", "erDiagram");
+        assert_eq!(session.tab_path(virtual_tab.id), None);
+        assert_eq!(
+            session.tab_preview_path(virtual_tab.id),
+            Some(std::path::PathBuf::from("erd.mmd"))
+        );
     }
 }

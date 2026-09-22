@@ -85,6 +85,47 @@ pub(crate) const JVM_BUILD_TOOLS: BuiltinPlugin = BuiltinPlugin {
     )],
 };
 
+/// Migrates the Containers dock and settings page onto the generic
+/// `tool-windows`/`settings-pages` contribution points (database-tools plan
+/// G1) — first-party like the built-ins above, and contributing no files at
+/// all: unlike `JVM_BUILD_TOOLS`, neither point needs an asset, and the
+/// container integration's own code is not moving (ADR-0055 stands).
+pub(crate) const CONTAINERS: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/containers/plugin.toml"),
+    files: &[],
+};
+
+/// SQLite, PostgreSQL, MySQL/MariaDB, MongoDB, Redis and Cassandra/Scylla
+/// support (Database Tools plan F1.5/F7/FZ, ADR-0058), first-party like
+/// `jvm-build-tools` above. Ships the keyword-list assets its
+/// `sql-dialects` rows point `keywords` at; the drivers
+/// themselves are `db-drivers`' `DriverRegistry::builtin()`, not files
+/// this plugin carries — a `database-drivers` row only names a driver
+/// `ui-shell` already links in, the same "metadata, not the code" split
+/// `BuildToolContribution::toolchain` already draws for `run_core::
+/// ToolchainId`.
+pub(crate) const DATABASE_TOOLS: BuiltinPlugin = BuiltinPlugin {
+    manifest: include_str!("../builtin/database-tools/plugin.toml"),
+    files: &[
+        (
+            "dialects/sqlite.keywords",
+            include_bytes!("../builtin/database-tools/dialects/sqlite.keywords"),
+        ),
+        (
+            "dialects/postgresql.keywords",
+            include_bytes!("../builtin/database-tools/dialects/postgresql.keywords"),
+        ),
+        (
+            "dialects/cql.keywords",
+            include_bytes!("../builtin/database-tools/dialects/cql.keywords"),
+        ),
+        (
+            "dialects/mysql.keywords",
+            include_bytes!("../builtin/database-tools/dialects/mysql.keywords"),
+        ),
+    ],
+};
+
 /// The three colour themes that used to be hardcoded in `ui-shell`'s
 /// `theme.cpp` and `syntax-core`'s `theme.rs`, first-party like the
 /// Markdown preview above: a `color-themes` contribution needs no `[wasm]`

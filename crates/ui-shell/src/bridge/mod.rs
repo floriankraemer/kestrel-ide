@@ -47,6 +47,10 @@ pub mod build_tools;
 /// Containers dock (C2).
 pub mod containers;
 pub mod convert;
+/// Data sources (Database Tools plan F1.6): the Settings > Database
+/// accessors and `DataSourceEditor` (`settings.rs`), and the
+/// `DatabaseService` QObject (`mod.rs`) the settings page's list reads.
+pub mod database;
 pub mod debug;
 pub mod diagnostics;
 pub mod editor;
@@ -70,6 +74,7 @@ pub mod tab_padding;
 pub mod terminal;
 pub mod testing;
 pub mod theme;
+pub mod tool_windows;
 pub mod tree;
 pub mod vcs;
 pub mod window_state;

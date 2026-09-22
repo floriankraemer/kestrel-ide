@@ -181,3 +181,11 @@ optional = true
 [dev-dependencies]
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
+
+# Windows-only, and only for the SSH agent: `russh` reaches Pageant through
+# this crate (its own `cfg(windows)` dependency, same version), and the two
+# Windows agent transports have to be boxed behind one type before
+# `AgentClient::connect` takes them — which needs the concrete type named
+# here, since `russh` does not re-export it (`ssh.rs`'s `AgentStream`).
+[target.'cfg(windows)'.dependencies]
+pageant = "0.2"

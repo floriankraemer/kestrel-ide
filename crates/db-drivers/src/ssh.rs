@@ -249,6 +249,15 @@ async fn authenticate(
     }
 }
 
+/// Either Windows agent transport, behind one type — a named pipe and a
+/// Pageant stream are different types, and `AgentClient` is generic over
+/// exactly one of them.
+#[cfg(windows)]
+trait AgentStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+
+#[cfg(windows)]
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> AgentStream for T {}
+
 /// The public keys an agent's identity list offers, in the order the agent
 /// returned them — anything that is not a public key (a certificate, a
 /// future variant) is skipped rather than guessed at.
@@ -276,16 +285,24 @@ async fn authenticate_via_agent(
         .map_err(|error| tunnel_err(format!("could not reach ssh-agent: {error}")))?;
     #[cfg(windows)]
     let mut agent = {
+        // The two Windows transports are different stream types, so the one
+        // the connection ends up on is boxed behind `AgentStream` — the
+        // agent conversation below is identical either way.
         let pipe = std::env::var("SSH_AUTH_SOCK")
             .unwrap_or_else(|_| r"\\.\pipe\openssh-ssh-agent".to_string());
-        match AgentClient::connect_named_pipe(&pipe).await {
-            Ok(agent) => agent,
-            Err(pipe_error) => AgentClient::connect_pageant().await.map_err(|error| {
-                tunnel_err(format!(
-                    "could not reach an SSH agent: {pipe} ({pipe_error}), Pageant ({error})"
-                ))
-            })?,
-        }
+        let stream: Box<dyn AgentStream> =
+            match tokio::net::windows::named_pipe::ClientOptions::new().open(&pipe) {
+                Ok(named_pipe) => Box::new(named_pipe),
+                Err(pipe_error) => {
+                    Box::new(pageant::PageantStream::new().await.map_err(|error| {
+                        tunnel_err(format!(
+                            "could not reach an SSH agent: {pipe} ({pipe_error}), \
+                                 Pageant ({error})"
+                        ))
+                    })?)
+                }
+            };
+        AgentClient::connect(stream)
     };
     let identities = agent
         .request_identities()

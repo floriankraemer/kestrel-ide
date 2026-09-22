@@ -1,5 +1,6 @@
 #include "database_console_bar.h"
 
+#include "e2e_mark.h"
 #include "editor_tabs.h"
 
 #include <QAction>
@@ -9,6 +10,8 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QSignalBlocker>
+#include <QStringList>
+#include <QTimer>
 #include <QToolButton>
 #include <QVariant>
 
@@ -170,7 +173,17 @@ void DatabaseConsoleBar::refreshForCurrentTab()
         setVisible(false);
         return;
     }
+    const bool wasVisible = isVisible();
     setVisible(true);
+    if (!wasVisible) {
+        // E2E only: the bar starts (and stays, between `.sql` tabs)
+        // hidden — a mark taken any earlier, e.g. from the dock's own
+        // `visibilityChanged`, reports every button's pre-`setVisible`
+        // geometry, identical and wrong. This is the one place the bar
+        // actually becomes visible, so it is also the one place a mark
+        // taken a turn later is trustworthy.
+        QTimer::singleShot(0, this, [this]() { markE2eToolbarRects(); });
+    }
     if (tabId == currentTabId_ && path == currentPath_) {
         return;
     }
@@ -279,6 +292,35 @@ void DatabaseConsoleBar::cancelClicked()
     }
 }
 
+void DatabaseConsoleBar::markE2eToolbarRects() const
+{
+    struct ButtonEntry
+    {
+        const char *name;
+        QToolButton *button;
+    };
+    const ButtonEntry entries[] = {
+        { "run", runButton_ },
+        { "runScript", runScriptButton_ },
+        { "cancel", cancelButton_ },
+        { "commit", commitButton_ },
+        { "rollback", rollbackButton_ },
+    };
+    QStringList buttons;
+    for (const ButtonEntry &entry : entries) {
+        const QPoint origin = entry.button->mapToGlobal(QPoint(0, 0));
+        const QSize size = entry.button->size();
+        buttons << QStringLiteral("{\"name\":%1,\"rect\":[%2,%3,%4,%5]}")
+                      .arg(e2eJson(QString::fromUtf8(entry.name)))
+                      .arg(origin.x())
+                      .arg(origin.y())
+                      .arg(size.width())
+                      .arg(size.height());
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"database_console_toolbar_rects\",\"buttons\":[%1]}")
+              .arg(buttons.join(QLatin1Char(','))));
+}
+
 DatabaseConsoleBar *mountDatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *consoleService,
                                            AppSettings *appSettings, QWidget *parent)
 {
@@ -289,6 +331,11 @@ DatabaseConsoleBar *mountDatabaseConsoleBar(EditorTabs *editorTabs, ConsoleServi
     // of slots, so this needs no touch to that connection.
     QObject::connect(qApp, &QApplication::focusChanged, bar,
                       [bar](QWidget *, QWidget *) { bar->refreshForCurrentTab(); });
+    // FX: `ConsoleService::sourcesChanged` (`projectOpened`'s own signal —
+    // see its `ffi.rs` doc comment) — the combo is only ever populated
+    // once, at construction, before any project is open.
+    QObject::connect(consoleService, &ConsoleService::sourcesChanged, bar,
+                      [bar]() { bar->refreshSources(); });
     return bar;
 }
 

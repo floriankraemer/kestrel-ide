@@ -46,6 +46,10 @@ public:
     // conjure an empty console page.
     void followActiveTab(quint64 tabId);
 
+    // E2E only: `buildDatabaseResultsDock`'s own `visibilityChanged`
+    // hook needs this to re-mark the console bar's toolbar rects.
+    DatabaseConsoleBar *bar() const { return bar_; }
+
 private:
     struct ConsolePage
     {

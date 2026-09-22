@@ -675,6 +675,11 @@ impl ffi::ConsoleService {
             })
             .collect()
     }
+
+    /// See this method's own `ffi.rs` doc comment.
+    pub fn console_project_opened(mut self: Pin<&mut Self>, _root: &QString) {
+        self.as_mut().sources_changed();
+    }
 }
 
 /// The parts of `ConsoleService`'s slots too large to sit inline above.

@@ -408,9 +408,11 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
         return;
     }
     if (chosen == openConsole) {
-        // F3 wires this to the console dock; left as a stub per the
-        // database-tools-plan F2.5 handoff note.
-        qWarning() << "Database: Open Console is not wired yet (F3)";
+        // `DatabaseService::openConsole` resolves/creates the console
+        // file and reports it through `consoleFileReady`, already wired
+        // straight to `EditorTabs::openFile` (`editor_tabs.cpp`) — this
+        // call was the only piece F2.5's own handoff note left undone.
+        report(databaseService_->openConsole(nodeId));
     } else if (chosen == editData) {
         qWarning() << "Database: Edit Data is not wired yet (F4)";
     } else if (chosen == goToDdl) {

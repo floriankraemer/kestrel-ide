@@ -14,7 +14,7 @@ use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
 /// MongoDB document *and* a Redis value — `Document`/`Array` are the two
 /// recursive cases the NoSQL backends need and the SQL backends never
 /// produce.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
     Null,
     Bool(bool),
@@ -173,6 +173,27 @@ impl Value {
             }
         }
     }
+}
+
+/// Serialises one row's [`Value`]s losslessly (`serde`'s own tagged
+/// representation of the enum, not [`Value::display`] text) — the FFI
+/// seam's typed-row encoding (database-tools-plan F4c): a compact
+/// JSON-per-row string rather than a new cxx-qt struct, since `Value`'s
+/// recursive `Array`/`Document` cases and its dozen scalar variants have
+/// no shape cxx's shared-struct rules accept directly. `ui_shell::bridge::
+/// database::console::ResultProvider::row_values` produces this, `db_
+/// exchange`-backed export consumes it back through [`row_from_json`] —
+/// never rendered through `display` first, so a cell's real type (an
+/// `Int`, not the text `"42"`) survives the round trip.
+pub fn row_to_json(row: &[Value]) -> String {
+    serde_json::to_string(row).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// The inverse of [`row_to_json`]. `Err` (never a panic) on malformed
+/// JSON — the FFI caller already trusts its own encoder, but a corrupt or
+/// truncated string must still fail cleanly rather than unwrap.
+pub fn row_from_json(text: &str) -> Result<Vec<Value>, String> {
+    serde_json::from_str(text).map_err(|error| format!("not a valid encoded row: {error}"))
 }
 
 /// One column's shape, as introspection or an executed statement reports
@@ -617,5 +638,43 @@ mod tests {
     fn pretty_json_rejects_invalid_json_without_panicking() {
         assert!(pretty_json("{not json").is_err());
         assert!(pretty_json("").is_err());
+    }
+
+    #[test]
+    fn row_to_json_round_trips_every_variant_losslessly() {
+        let row = vec![
+            Value::Null,
+            Value::Bool(true),
+            Value::Int(-7),
+            Value::Float(1.5),
+            Value::Decimal("12345678901234567890.5".to_string()),
+            Value::Text("hé llo".to_string()),
+            Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            Value::Date(NaiveDate::from_ymd_opt(2026, 9, 21).unwrap()),
+            Value::Time(NaiveTime::from_hms_opt(13, 5, 9).unwrap()),
+            Value::DateTime(
+                NaiveDate::from_ymd_opt(2026, 9, 21)
+                    .unwrap()
+                    .and_hms_opt(13, 5, 9)
+                    .unwrap(),
+            ),
+            Value::Uuid(uuid::Uuid::nil()),
+            Value::Json("{\"a\":1}".to_string()),
+            Value::Array(vec![Value::Int(1), Value::Null]),
+            Value::Document(vec![("a".to_string(), Value::Int(1))]),
+            Value::Other {
+                type_name: "int4range".to_string(),
+                display: "[1,10)".to_string(),
+            },
+        ];
+        let encoded = row_to_json(&row);
+        let decoded = row_from_json(&encoded).unwrap();
+        assert_eq!(decoded, row);
+    }
+
+    #[test]
+    fn row_from_json_rejects_malformed_input_without_panicking() {
+        assert!(row_from_json("not json").is_err());
+        assert!(row_from_json("").is_err());
     }
 }

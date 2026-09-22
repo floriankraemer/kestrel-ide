@@ -26,6 +26,8 @@ pub mod exchange;
 pub mod edit;
 // ---- database: F4b ----
 pub mod navigate;
+// ---- database: F4c ----
+pub mod results;
 
 pub use service::DatabaseServiceRust;
 

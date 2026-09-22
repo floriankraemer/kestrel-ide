@@ -20,9 +20,10 @@ use crate::bridge::build::BuildServiceRust;
 use crate::bridge::build_tools::{BuildToolsEditorRust, BuildToolsServiceRust};
 use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
-use crate::bridge::database::console::{ConsoleServiceRust, ResultProviderRust};
+use crate::bridge::database::console::ConsoleServiceRust;
 use crate::bridge::database::drivers::DriverInstallServiceRust;
 use crate::bridge::database::exchange::ExchangeServiceRust;
+use crate::bridge::database::results::ResultProviderRust;
 use crate::bridge::database::settings::DataSourceEditorRust;
 use crate::bridge::database::DatabaseServiceRust;
 use crate::bridge::debug::DebugServiceRust;
@@ -10728,6 +10729,24 @@ mod ffi {
             count: u64,
         ) -> Vec<FfiDbRow>;
 
+        /// The same page `rowPage` reads, but every cell kept as its real
+        /// `Value` rather than rendered display text — one JSON-encoded
+        /// array string per row (`db_core::value::row_to_json`), not a
+        /// new cxx-qt struct: `Value`'s dozen scalar variants plus its
+        /// recursive `Array`/`Document` cases have no shape a cxx shared
+        /// struct accepts directly (database-tools-plan F4c). Consumed by
+        /// `ExchangeService::exportRowsToFile`/`exportRowsToText` so a
+        /// grid export is typed, and available to any future typed view
+        /// (a Record view's tree, F4c's still-open "view modes" row).
+        #[qinvokable]
+        #[cxx_name = "rowValues"]
+        fn row_values(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            first: u64,
+            count: u64,
+        ) -> QStringList;
+
         /// Asks the parked stream for its next page — `Err` once the
         /// result already finished (nothing left to fetch) or the console
         /// detached underneath it.
@@ -11131,19 +11150,18 @@ mod ffi {
         ) -> QString;
 
         /// "Copy as"/"Export…" on an already-executed result grid: the
-        /// rows are already fetched and rendered (`FfiDbRow`, the same
-        /// shape `ResultProvider::rowPage` returns), so this only
-        /// reformats and writes them — no session, no re-query.
-        /// ponytail: cells arrive pre-rendered as display text, not typed
-        /// `Value`s, so a `SqlInsert`/`SqlUpdate` export quotes every
-        /// value as text rather than its real type; upgrade once a typed
-        /// row accessor exists on the result (F4a's `results.rs` split).
+        /// rows are already fetched, and kept typed the whole way —
+        /// `rows` is `ResultProvider::rowValues`'s own JSON-per-row
+        /// encoding, not `FfiDbRow`'s rendered display text (F4c closed
+        /// the gap the previous `ponytail` note here described: a
+        /// `SqlInsert`/`SqlUpdate`/XLSX/JSON export now quotes/types each
+        /// value from its real `Value`, never from text).
         #[qinvokable]
         #[cxx_name = "exportRowsToFile"]
         fn export_rows_to_file(
             self: Pin<&mut ExchangeService>,
             columns: &QStringList,
-            rows: Vec<FfiDbRow>,
+            rows: &QStringList,
             format: FfiExportFormat,
             options: FfiExportOptions,
             destination: &QString,
@@ -11156,7 +11174,7 @@ mod ffi {
         fn export_rows_to_text(
             self: Pin<&mut ExchangeService>,
             columns: &QStringList,
-            rows: Vec<FfiDbRow>,
+            rows: &QStringList,
             format: FfiExportFormat,
             options: FfiExportOptions,
         ) -> QString;

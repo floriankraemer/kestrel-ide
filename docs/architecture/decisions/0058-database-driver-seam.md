@@ -2,8 +2,13 @@
 
 ## Status
 
-Proposed.
+Accepted.
 Implemented by [the database-tools plan](../database-tools-plan.md); this ADR covers the seam `db-core`/`db-drivers`/`db-driver-adbc`/`db-driver-odbc` establish, landed across F1 (native foundation), F7 (NoSQL) and F8 (ADBC/ODBC).
+
+**As delivered (F9 truth-up)**: the trait shape (`Driver`/`Connection`/`Execution`/`RowStream`/`CancelHandle`/`CancelToken`/`Capabilities`/`ExecOptions`) matches this ADR's design unchanged.
+Two deviations from the original plan, both intentional: SQL Server ships only through `db-driver-adbc`/`db-driver-odbc` — no pinnable ADBC artifact exists for it (F8.3 spike), so it is reached exclusively through the generic `odbc` manifest row.
+Cassandra/Scylla stays plaintext-only, permanently rather than provisionally — the `scylla` crate's own manifest gives no way to select rustls's `ring` provider over its default `aws_lc_rs` one, so `db-drivers::cassandra` never enables TLS rather than let `aws-lc-rs` into the tree (the `aws-lc-rs` strict gate this ADR's consequences section anticipated).
+`secret-store`'s extraction happened exactly as planned, ahead of F1, and is reused unchanged since.
 
 ## Context
 

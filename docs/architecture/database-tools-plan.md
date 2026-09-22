@@ -309,7 +309,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | G1.3 — `cpp/tool_window_factories.{h,cpp}`, `main_window.cpp:383-384` migrated to the factory-table loop | done | 4c0b133, c2d88a1 |
 | G1.4 — `settings_dialog.cpp` page-factory table, `l.72-97`/`l.311-326` migrated | partial (presence-guarded, not a generic page-factory table; scope-mismatch fallback unexercised — see `database-tools.md` §7) | f18e9a7 |
 | G1.5 — `jvm-build-tools/plugin.toml` gains `tool-windows`/`settings-pages` rows; new `builtin/containers/plugin.toml` (manifest-only, amends ADR-0055) | done | d3e0f5a |
-| G1.6 — `e2e_containers` assertion: disabling `containers` removes the View entry | open (deferred to wave-end E2E by the main session) |  |
+| G1.6 — `e2e_containers` assertion: disabling `containers` removes the View entry | done (FY) — extends `e2e_containers_settings_test_connection` (14 flows unchanged); compiles clean, unit/lint green; could not confirm green under `../mk e2e-repeat` in this phase's sandbox (`main_window_shown` timeout reproduces even on the pre-existing, unmodified test — sandbox contention, not this change, see `database-tools.md` §10); main session's wave-end E2E pass gives it its real run | 743da59, 4569b3a |
 
 ### F1 — foundation
 
@@ -336,6 +336,7 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F2 follow-up — 5 000-table SQLite `db-integration` NFR bench + §10 numbers | done (FX) | 98c131d |
 | F2 follow-up — Postgres TLS (`SslMode::{Prefer,Require,VerifyCa,VerifyFull}` via `rustls-pemfile`/`rustls-native-certs`, `ring` only) | done (FX) — `VerifyCa` handled identically to `VerifyFull` (both check chain + hostname; a chain-only/no-hostname verifier is a further follow-up), `Prefer`/`Require` via a named `DangerousNoVerify` (`ring` provider explicit); `cargo tree --all-features -i aws-lc-rs` stays empty | a104f79 |
 | F2 follow-up — ADBC/ODBC `IntrospectLevel` honoured (currently always fetch at existing depth) | open | |
+| F2 polish — dock icons (`.a8` masks replacing `QStyle` standard icons), colour tag, speed-search Esc-clear, view-options menu (grouping/separate routines/sort), exact-SQL confirmations + auto-refresh on rename/drop/truncate/comment | done (FY) | 0b16507 |
 
 ### F3 — console + grid
 
@@ -351,6 +352,8 @@ Every phase PR also updates the sections of `docs/architecture/database-tools.md
 | F3e — console UX gaps (caret run, `Ask` dialog, schema picker, dialect-aware WHERE/ORDER BY, tab-per-console dock, F3.6) | done | 0fb740e, a524355, 66a3c92, ca74d9f, 4a831b2, d6019f7 |
 | F3 follow-up — `db-drivers`' `SqliteConnection`/`PgConnection::execute` eagerly drain the whole `Rows` result before returning instead of streaming (found this phase, out of its file list — see database-tools.md §4/§11) | done — F3c (`SqliteConnection`, live cursor over a second read-only connection) + F3d (`PgConnection`, live `Client::query_raw` stream) | 83e925b, 95a22ad |
 | F3 follow-up — `e2e_database` part 2 (console → run → grid → 1M rows → cancel) and the first-row/1M-row-paging/cancel NFR bench numbers in §10 | done (FX) — `e2e_database_console_runs_query_and_pages_grid`, budget 14/16; first-row timing measured live; grid paging beyond one sample and the busy-query cancel sub-flow left out, documented in database-tools.md §10 | 0f57ca8 |
+| F3 follow-up — `edit-ops` bracket-skip bug FX found (typed `)` after an auto-inserted `)` inserted a second one) | done (FY) — `PairTracker::type_char` types over an identical non-quote closer under the caret whether or not this session inserted it; unit-tested | 0782a10 |
+| F3 follow-up — busy-query cancel sub-flow, click-driven | open — the bracket-skip fix above removes the one editor-level obstacle FX's own note named, but reliably getting a second statement into an already-run console under this harness needs more than that fix; this phase's budget went to the F2 polish/G1.6 rows instead | |
 | F3e follow-up — `db_core::readonly::Guard::check` refuses every `Write`/`Ddl`/`Unknown` statement unconditionally; it has no notion of whether the *source* is actually read-only. `bridge::run::sql_script` gates its own call on the source's `read_only` flag, but `bridge::database::console`'s `attach()` builds and checks the same `Guard` for *every* console regardless of that flag — found this phase, out of its file list, not fixed | done | 0e6a8cf |
 
 | F3 follow-up — caret-based "run statement at caret" (`EditorTabs` has no caret byte-offset accessor yet; `console.rs`'s `statement_at_caret`/`FfiDbExecWhat::Statement` are implemented and unit-tested, just unreachable from the console bar) | done (F3e) | a524355, 66a3c92, ca74d9f, 0fb740e |

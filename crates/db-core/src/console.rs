@@ -1,8 +1,55 @@
 //! Console file paths (database-tools.md §8): `<config_dir>/consoles/
-//! <source-id>/console*.sql`, and `source_of`, the reverse lookup a
+//! <source-id>/console*.<ext>`, and `source_of`, the reverse lookup a
 //! console tab uses to find which data source it defaults to.
+//!
+//! [`Family`] is the console's own query language, one step coarser than
+//! `db_core::dialect::Dialect` (every SQL dialect shares one console file
+//! extension and highlighting) — [`extension`] is the one place that
+//! family maps to a file extension, so a console file always opens under
+//! the language `syntax-core`'s catalog already highlights it with
+//! (`.mongodb` → the `javascript` grammar, close enough to the sugar's own
+//! `db.coll.method(...)` shape and JSON documents; `.redis` → no grammar
+//! registered, so it renders as plain text; `.cql` → the `sql` grammar,
+//! CQL being SQL-*like* enough for `sqlparser`'s generic dialect to
+//! tokenize usefully, the same call `db_sql::dialects`'s own doc comment
+//! already makes for splitting/classification).
 
 use std::path::{Path, PathBuf};
+
+/// A console's query language family — coarser than `Dialect` (every SQL
+/// dialect is one `Family::Sql`), and named after the driver id
+/// (`plugin.toml`'s `family = "..."`/`native-id`) that decides it rather
+/// than duplicating a second dialect enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Family {
+    Sql,
+    Mongo,
+    Redis,
+    Cql,
+}
+
+/// Which [`Family`] a driver id's console belongs to — every built-in
+/// native driver id not named here is a SQL dialect (`sqlite`,
+/// `postgresql`, and every ADBC/ODBC row `plugin.toml` contributes).
+pub fn family_for_driver(driver: &str) -> Family {
+    match driver {
+        "mongodb" => Family::Mongo,
+        "redis" => Family::Redis,
+        "cassandra" => Family::Cql,
+        _ => Family::Sql,
+    }
+}
+
+/// The console file extension a [`Family`] opens under — see this
+/// module's own doc comment for why each one is what it is.
+pub fn extension(family: Family) -> &'static str {
+    match family {
+        Family::Sql => "sql",
+        Family::Mongo => "mongodb",
+        Family::Redis => "redis",
+        Family::Cql => "cql",
+    }
+}
 
 /// The directory a source's console files live under.
 pub fn console_dir(config_dir: &Path, source_id: &str) -> PathBuf {
@@ -11,9 +58,9 @@ pub fn console_dir(config_dir: &Path, source_id: &str) -> PathBuf {
 
 /// A fresh console file's path within its source's directory — callers
 /// pick `index` (the next unused number) themselves; this only spells the
-/// name.
-pub fn console_file(config_dir: &Path, source_id: &str, index: u32) -> PathBuf {
-    console_dir(config_dir, source_id).join(format!("console{index}.sql"))
+/// name, with `family`'s own extension (see this module's doc comment).
+pub fn console_file(config_dir: &Path, source_id: &str, index: u32, family: Family) -> PathBuf {
+    console_dir(config_dir, source_id).join(format!("console{index}.{}", extension(family)))
 }
 
 /// Which source id a console file belongs to, if `path` sits under
@@ -46,8 +93,32 @@ mod tests {
 
     #[test]
     fn console_file_names_by_index() {
-        let file = console_file(Path::new("/cfg"), "abc123", 2);
+        let file = console_file(Path::new("/cfg"), "abc123", 2, Family::Sql);
         assert_eq!(file, Path::new("/cfg/consoles/abc123/console2.sql"));
+    }
+
+    #[test]
+    fn each_nosql_family_opens_its_own_extension() {
+        assert_eq!(extension(Family::Sql), "sql");
+        assert_eq!(extension(Family::Mongo), "mongodb");
+        assert_eq!(extension(Family::Redis), "redis");
+        assert_eq!(extension(Family::Cql), "cql");
+    }
+
+    #[test]
+    fn console_file_uses_the_family_s_extension() {
+        let file = console_file(Path::new("/cfg"), "src1", 1, Family::Mongo);
+        assert_eq!(file, Path::new("/cfg/consoles/src1/console1.mongodb"));
+    }
+
+    #[test]
+    fn family_for_driver_recognises_every_nosql_backend() {
+        assert!(matches!(family_for_driver("mongodb"), Family::Mongo));
+        assert!(matches!(family_for_driver("redis"), Family::Redis));
+        assert!(matches!(family_for_driver("cassandra"), Family::Cql));
+        assert!(matches!(family_for_driver("postgresql"), Family::Sql));
+        assert!(matches!(family_for_driver("sqlite"), Family::Sql));
+        assert!(matches!(family_for_driver("odbc"), Family::Sql));
     }
 
     #[test]

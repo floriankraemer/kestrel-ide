@@ -13,14 +13,17 @@
 //! itself is an ordinary blocking constructor from every other crate's
 //! point of view.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use russh::client::{self, Handle};
 use russh::keys::agent::client::AgentClient;
 use russh::keys::agent::AgentIdentity;
 use russh::keys::{
-    known_hosts, load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate,
+    known_hosts, load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKey,
+    PublicKeyOrCertificate,
 };
 use russh::{ChannelMsg, Disconnect};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -84,6 +87,24 @@ struct HostKeyRecorder {
     outcome: HostKeyOutcome,
 }
 
+/// Every host key a connection attempt has seen rejected, by `(host,
+/// port)`, so [`accept_host_key`] (F7b's host-key prompt) can look the
+/// actual key material back up once the user consents — a [`DbError`]
+/// only carries a code plus a message (ADR-0003), never a key, so the
+/// fingerprint in [`HostKeyOutcome::into_error`]'s message cannot itself
+/// be turned back into a `known_hosts` line. A process-wide table rather
+/// than a per-tunnel-attempt handle: the failed [`RusshTunnel::open`] call
+/// that recorded it has already returned by the time a UI prompt resolves
+/// (database-tools.md §4's host-key-prompt flow spans a user decision in
+/// between).
+/// ponytail: entries are never evicted — a host that is never retried
+/// leaves one small `(String, PublicKey)` behind; revisit with a TTL if a
+/// long-running session accumulates many distinct unreachable hosts.
+fn pending_host_keys() -> &'static Mutex<HashMap<(String, u16), PublicKey>> {
+    static PENDING: OnceLock<Mutex<HashMap<(String, u16), PublicKey>>> = OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 impl client::Handler for HostKeyRecorder {
     type Error = russh::Error;
 
@@ -105,15 +126,76 @@ impl client::Handler for HostKeyRecorder {
             Ok(true) => Ok(true),
             Ok(false) => {
                 self.outcome.record(HostKeyProblem::Unknown { fingerprint });
+                pending_host_keys()
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert((self.host.clone(), self.port), key.clone());
                 Ok(false)
             }
             Err(_) => {
                 self.outcome
                     .record(HostKeyProblem::Mismatch { fingerprint });
+                pending_host_keys()
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .insert((self.host.clone(), self.port), key.clone());
                 Ok(false)
             }
         }
     }
+}
+
+/// Appends `host`/`port`'s public `key` to the OpenSSH `known_hosts` file
+/// at `path`, in the same format `ssh`/`ssh-keyscan` write (F7b) — a thin
+/// wrapper over `russh`'s own `learn_known_hosts_path` (the crate already
+/// used for the read half, `check_known_hosts`, above) rather than a
+/// hand-rolled writer.
+pub fn append_known_host(host: &str, port: u16, key: &PublicKey, path: &Path) -> Result<(), DbError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| tunnel_err(format!("could not create {}: {error}", parent.display())))?;
+    }
+    known_hosts::learn_known_hosts_path(host, port, key, path)
+        .map_err(|error| tunnel_err(format!("could not update known_hosts: {error}")))
+}
+
+/// The default `known_hosts` path a real (non-test) caller writes to —
+/// `~/.ssh/known_hosts`, the same file `ssh`'s own CLI fallback
+/// (`tunnel::select`) and every OpenSSH client read from.
+pub fn default_known_hosts_path() -> Option<PathBuf> {
+    Some(dirs_home()?.join(".ssh").join("known_hosts"))
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// The host-key prompt's "Accept and add to known_hosts" answer (F7b):
+/// looks up the key [`HostKeyRecorder::check_server_key`] stashed for
+/// `host`/`port` the last time a connect attempt rejected it, appends it
+/// to `path`, and removes the pending entry either way (a stale key is
+/// never worth retrying silently a second time). The caller retries the
+/// connect afterwards — this only fixes `known_hosts`, it does not itself
+/// reopen a tunnel. Split from [`accept_host_key`] so a test exercises the
+/// whole "consume the pending entry, then write" path against a temp file
+/// instead of the real `~/.ssh/known_hosts`.
+pub fn accept_host_key_at(host: &str, port: u16, path: &Path) -> Result<(), DbError> {
+    let key = pending_host_keys()
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .remove(&(host.to_string(), port))
+        .ok_or_else(|| {
+            tunnel_err("no pending host key for this host — try connecting again first")
+        })?;
+    append_known_host(host, port, &key, path)
+}
+
+/// [`accept_host_key_at`] against the real `~/.ssh/known_hosts` — what the
+/// host-key prompt's UI actually calls.
+pub fn accept_host_key(host: &str, port: u16) -> Result<(), DbError> {
+    let path = default_known_hosts_path()
+        .ok_or_else(|| tunnel_err("could not resolve the home directory for known_hosts"))?;
+    accept_host_key_at(host, port, &path)
 }
 
 async fn authenticate(
@@ -391,6 +473,79 @@ mod tests {
     fn host_key_outcome_starts_empty() {
         let outcome = HostKeyOutcome::default();
         assert!(outcome.into_error().is_none());
+    }
+
+    /// A real, fixed Ed25519 test key in OpenSSH format — parsed rather
+    /// than freshly generated: `append_known_host`/`accept_host_key` only
+    /// need *a* valid `PublicKey`, and parsing one is deterministic where
+    /// generating one needs a CSPRNG dependency this crate has no other
+    /// use for.
+    fn test_public_key() -> PublicKey {
+        // A real Ed25519 public key (russh's own `known_hosts` test
+        // fixture upstream), not a hand-typed base64 string — a made-up
+        // one can parse as syntactically well-formed and still fail the
+        // exact-bytes equality `check_known_hosts_path` does.
+        PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ",
+        )
+        .expect("a valid test Ed25519 public key")
+    }
+
+    #[test]
+    fn append_known_host_writes_a_line_the_check_recognises() {
+        let dir = std::env::temp_dir().join(format!("ide-known-hosts-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("known_hosts");
+        let key = test_public_key();
+
+        append_known_host("example.test", 22, &key, &path).expect("append succeeds");
+
+        let contents = std::fs::read_to_string(&path).expect("file was written");
+        assert!(contents.contains("example.test"));
+        assert!(known_hosts::check_known_hosts_path("example.test", 22, &key, &path).unwrap_or(false));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn append_known_host_creates_missing_parent_directories() {
+        let dir = std::env::temp_dir().join(format!("ide-known-hosts-nested-{}", std::process::id()));
+        let path = dir.join(".ssh").join("known_hosts");
+        let key = test_public_key();
+
+        append_known_host("example.test", 22, &key, &path).expect("append creates parents");
+        assert!(path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn accept_host_key_at_with_nothing_pending_is_refused() {
+        let dir = std::env::temp_dir().join(format!("ide-known-hosts-none-{}", std::process::id()));
+        let path = dir.join("known_hosts");
+        let error = accept_host_key_at("no-such-host.invalid", 2222, &path).unwrap_err();
+        assert_eq!(error.code, DbErrorCode::TunnelFailed);
+    }
+
+    #[test]
+    fn accept_host_key_at_writes_the_pending_key_and_consumes_it_once() {
+        let host = format!("pending-test-host-{}.invalid", std::process::id());
+        let key = test_public_key();
+        pending_host_keys()
+            .lock()
+            .unwrap()
+            .insert((host.clone(), 22), key.clone());
+        let dir = std::env::temp_dir().join(format!("ide-known-hosts-accept-{}", std::process::id()));
+        let path = dir.join("known_hosts");
+
+        accept_host_key_at(&host, 22, &path).expect("accept succeeds");
+        assert!(known_hosts::check_known_hosts_path(&host, 22, &key, &path).unwrap_or(false));
+
+        // Consumed: a second accept with nothing pending is refused.
+        assert!(pending_host_keys().lock().unwrap().get(&(host.clone(), 22)).is_none());
+        assert!(accept_host_key_at(&host, 22, &path).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

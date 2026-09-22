@@ -658,6 +658,12 @@ impl ffi::DatabaseService {
             return errors::failure(errors::CODE_INVALID_ARGUMENT, "malformed node id");
         };
         let source_id = source_id.to_string();
+        let family = configured_sources()
+            .into_iter()
+            .find(|s| s.id == source_id)
+            .map(|s| db_core::console::family_for_driver(&s.driver))
+            .unwrap_or(db_core::console::Family::Sql);
+        let extension = db_core::console::extension(family);
         let config_dir = app_core::resolve_config_dir();
         let dir = db_core::console::console_dir(&config_dir, &source_id);
         if let Err(error) = std::fs::create_dir_all(&dir) {
@@ -668,7 +674,7 @@ impl ffi::DatabaseService {
                 entries
                     .flatten()
                     .map(|entry| entry.path())
-                    .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
+                    .filter(|path| path.extension().is_some_and(|ext| ext == extension))
                     .collect()
             })
             .unwrap_or_default();
@@ -676,7 +682,7 @@ impl ffi::DatabaseService {
         let path = match existing.into_iter().next() {
             Some(path) => path,
             None => {
-                let path = db_core::console::console_file(&config_dir, &source_id, 1);
+                let path = db_core::console::console_file(&config_dir, &source_id, 1, family);
                 if let Err(error) = std::fs::write(&path, "") {
                     return errors::failure(errors::CODE_SETTINGS_IO, error.to_string());
                 }

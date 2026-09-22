@@ -154,37 +154,43 @@ impl CassandraConnection {
             .map_err(map_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_err)?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                let mut columns = row.columns.into_iter();
-                let name = match columns.next()? {
-                    Some(CqlValue::Text(text)) | Some(CqlValue::Ascii(text)) => text,
-                    _ => return None,
-                };
-                let type_name = match columns.next()? {
-                    Some(CqlValue::Text(text)) | Some(CqlValue::Ascii(text)) => Some(text),
-                    _ => None,
-                };
-                let key_kind = match columns.next()? {
-                    Some(CqlValue::Text(text)) | Some(CqlValue::Ascii(text)) => text,
-                    _ => String::new(),
-                };
-                let is_key = key_kind == "partition_key" || key_kind == "clustering";
-                Some(
-                    Node::leaf(name, ObjectKind::Column).with_detail(NodeDetail {
-                        type_name,
-                        // `primary_key` doubles here for "part of the
-                        // partition or clustering key" — CQL's own two-role
-                        // key model doesn't need a second bit alongside the
-                        // relational backends' single `PRIMARY KEY`.
-                        primary_key: is_key,
-                        ..NodeDetail::default()
-                    }),
-                )
-            })
-            .collect())
+        Ok(column_rows_to_nodes(rows))
     }
+}
+
+/// [`CassandraConnection::columns_of`]'s own row-to-`Node` mapping, pulled
+/// out so a unit test can feed it hand-built [`Row`]s (a public struct with
+/// no query behind it) without a live `Session`.
+fn column_rows_to_nodes(rows: Vec<Row>) -> Vec<Node> {
+    rows.into_iter()
+        .filter_map(|row| {
+            let mut columns = row.columns.into_iter();
+            let name = match columns.next()? {
+                Some(CqlValue::Text(text)) | Some(CqlValue::Ascii(text)) => text,
+                _ => return None,
+            };
+            let type_name = match columns.next()? {
+                Some(CqlValue::Text(text)) | Some(CqlValue::Ascii(text)) => Some(text),
+                _ => None,
+            };
+            let key_kind = match columns.next()? {
+                Some(CqlValue::Text(text)) | Some(CqlValue::Ascii(text)) => text,
+                _ => String::new(),
+            };
+            let is_key = key_kind == "partition_key" || key_kind == "clustering";
+            Some(
+                Node::leaf(name, ObjectKind::Column).with_detail(NodeDetail {
+                    type_name,
+                    // `primary_key` doubles here for "part of the
+                    // partition or clustering key" — CQL's own two-role
+                    // key model doesn't need a second bit alongside the
+                    // relational backends' single `PRIMARY KEY`.
+                    primary_key: is_key,
+                    ..NodeDetail::default()
+                }),
+            )
+        })
+        .collect()
 }
 
 fn cql_to_value(value: Option<CqlValue>) -> Value {
@@ -509,6 +515,159 @@ mod tests {
             CqlValue::Int(2),
         ])));
         assert_eq!(value, Value::Array(vec![Value::Int(1), Value::Int(2)]));
+    }
+
+    #[test]
+    fn cql_to_value_maps_every_scalar_and_id_type() {
+        assert_eq!(
+            cql_to_value(Some(CqlValue::Ascii("a".to_string()))),
+            Value::Text("a".to_string())
+        );
+        assert_eq!(
+            cql_to_value(Some(CqlValue::Blob(vec![1, 2]))),
+            Value::Bytes(vec![1, 2])
+        );
+        assert_eq!(cql_to_value(Some(CqlValue::Double(1.5))), Value::Float(1.5));
+        assert_eq!(
+            cql_to_value(Some(CqlValue::Float(1.5))),
+            Value::Float(1.5f32 as f64)
+        );
+        assert_eq!(cql_to_value(Some(CqlValue::BigInt(9))), Value::Int(9));
+        assert_eq!(cql_to_value(Some(CqlValue::SmallInt(9))), Value::Int(9));
+        assert_eq!(cql_to_value(Some(CqlValue::TinyInt(9))), Value::Int(9));
+        assert_eq!(
+            cql_to_value(Some(CqlValue::Counter(scylla::value::Counter(3)))),
+            Value::Int(3)
+        );
+        let uuid = uuid::Uuid::nil();
+        assert_eq!(
+            cql_to_value(Some(CqlValue::Uuid(uuid))),
+            Value::Text(uuid.to_string())
+        );
+        let inet: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+        assert_eq!(
+            cql_to_value(Some(CqlValue::Inet(inet))),
+            Value::Text(inet.to_string())
+        );
+        assert_eq!(
+            cql_to_value(Some(CqlValue::Timeuuid(scylla::value::CqlTimeuuid::from(
+                uuid
+            )))),
+            Value::Text(uuid.to_string())
+        );
+    }
+
+    #[test]
+    fn cql_to_value_maps_decimal_and_varint_to_the_decimal_variant() {
+        match cql_to_value(Some(CqlValue::Varint(
+            scylla::value::CqlVarint::from_signed_bytes_be(vec![5]),
+        ))) {
+            Value::Decimal(_) => {}
+            other => panic!("expected Decimal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cql_to_value_falls_back_to_other_for_an_unmodelled_type() {
+        match cql_to_value(Some(CqlValue::Duration(scylla::value::CqlDuration {
+            months: 0,
+            days: 0,
+            nanoseconds: 0,
+        }))) {
+            Value::Other { type_name, .. } => assert_eq!(type_name, "cql"),
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cql_to_value_maps_sets_maps_tuples_and_udts() {
+        let set = cql_to_value(Some(CqlValue::Set(vec![CqlValue::Int(1)])));
+        assert_eq!(set, Value::Array(vec![Value::Int(1)]));
+
+        let map = cql_to_value(Some(CqlValue::Map(vec![(
+            CqlValue::Text("k".to_string()),
+            CqlValue::Int(1),
+        )])));
+        match map {
+            Value::Document(fields) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(fields[0].1, Value::Int(1));
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+
+        let tuple = cql_to_value(Some(CqlValue::Tuple(vec![Some(CqlValue::Int(1)), None])));
+        assert_eq!(tuple, Value::Array(vec![Value::Int(1), Value::Null]));
+
+        let udt = cql_to_value(Some(CqlValue::UserDefinedType {
+            keyspace: "ks".to_string(),
+            name: "addr".to_string(),
+            fields: vec![("city".to_string(), Some(CqlValue::Text("NYC".to_string())))],
+        }));
+        match udt {
+            Value::Document(fields) => {
+                assert_eq!(
+                    fields,
+                    vec![("city".to_string(), Value::Text("NYC".to_string()))]
+                );
+            }
+            other => panic!("expected Document, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn column_rows_to_nodes_flags_partition_and_clustering_keys() {
+        let rows = vec![
+            Row {
+                columns: vec![
+                    Some(CqlValue::Text("id".to_string())),
+                    Some(CqlValue::Text("uuid".to_string())),
+                    Some(CqlValue::Text("partition_key".to_string())),
+                ],
+            },
+            Row {
+                columns: vec![
+                    Some(CqlValue::Ascii("created_at".to_string())),
+                    Some(CqlValue::Text("timestamp".to_string())),
+                    Some(CqlValue::Text("clustering".to_string())),
+                ],
+            },
+            Row {
+                columns: vec![
+                    Some(CqlValue::Text("name".to_string())),
+                    Some(CqlValue::Text("text".to_string())),
+                    Some(CqlValue::Text("regular".to_string())),
+                ],
+            },
+        ];
+        let nodes = column_rows_to_nodes(rows);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(nodes[0].name, "id");
+        assert!(nodes[0].detail.primary_key);
+        assert_eq!(nodes[1].name, "created_at");
+        assert!(nodes[1].detail.primary_key);
+        assert_eq!(nodes[2].name, "name");
+        assert!(!nodes[2].detail.primary_key);
+        assert_eq!(nodes[2].detail.type_name, Some("text".to_string()));
+    }
+
+    #[test]
+    fn column_rows_to_nodes_skips_a_row_with_no_name_column() {
+        let rows = vec![Row {
+            columns: vec![None],
+        }];
+        assert!(column_rows_to_nodes(rows).is_empty());
+    }
+
+    #[test]
+    fn eager_rows_yields_its_batch_once_then_none() {
+        let batch = RowBatch {
+            columns: vec![],
+            rows: vec![],
+        };
+        let mut rows = EagerRows(Some(batch));
+        assert!(rows.next_batch().unwrap().is_some());
+        assert!(rows.next_batch().unwrap().is_none());
     }
 
     #[test]

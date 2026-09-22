@@ -503,6 +503,170 @@ mod integration_tests {
 mod tests {
     use super::*;
 
+    /// Every test below that mutates the process-wide `HOME` env var takes
+    /// this lock first — `cargo test` runs the crate's tests on multiple
+    /// threads in one process, and an unguarded `set_var`/`remove_var`
+    /// pair here would race with another thread's own `HOME` read.
+    fn home_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn default_known_hosts_path_uses_home_dot_ssh() {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let home = std::env::var_os("HOME");
+        std::env::set_var("HOME", "/tmp/ide-ssh-test-home");
+        let path = default_known_hosts_path().expect("HOME is set");
+        assert_eq!(
+            path,
+            std::path::PathBuf::from("/tmp/ide-ssh-test-home/.ssh/known_hosts")
+        );
+        match home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    #[test]
+    fn default_known_hosts_path_is_none_without_home() {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let home = std::env::var_os("HOME");
+        std::env::remove_var("HOME");
+        assert!(default_known_hosts_path().is_none());
+        if let Some(value) = home {
+            std::env::set_var("HOME", value);
+        }
+    }
+
+    /// `check_server_key`'s two failure branches (unknown/mismatched host
+    /// key) each go through the real `~/.ssh/known_hosts` file
+    /// `known_hosts::check_known_hosts` reads, so `HOME` is redirected to a
+    /// scratch directory for the duration of the lock.
+    #[test]
+    fn check_server_key_records_unknown_for_a_first_seen_host() {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let home = std::env::var_os("HOME");
+        let dir =
+            std::env::temp_dir().join(format!("ide-ssh-check-unknown-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("HOME", &dir);
+
+        let outcome = HostKeyOutcome::default();
+        let mut recorder = HostKeyRecorder {
+            host: "unknown-host.invalid".to_string(),
+            port: 22,
+            outcome: outcome.clone(),
+        };
+        let key = test_public_key();
+        let poc = PublicKeyOrCertificate::PublicKey {
+            key: key.clone(),
+            hash_alg: None,
+        };
+        let accepted = crate::runtime()
+            .block_on(<HostKeyRecorder as client::Handler>::check_server_key(
+                &mut recorder,
+                &poc,
+            ))
+            .unwrap();
+        assert!(!accepted);
+        let error = outcome.into_error().expect("an error was recorded");
+        assert_eq!(error.code, DbErrorCode::HostKeyUnknown);
+        assert!(pending_host_keys()
+            .lock()
+            .unwrap()
+            .contains_key(&("unknown-host.invalid".to_string(), 22)));
+
+        match home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_server_key_records_mismatch_for_a_changed_host_key() {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let home = std::env::var_os("HOME");
+        let dir =
+            std::env::temp_dir().join(format!("ide-ssh-check-mismatch-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("HOME", &dir);
+
+        // Record a *different* key for this host first, so the real one
+        // below reads back as changed rather than merely unrecorded.
+        let known_hosts_path = dir.join(".ssh").join("known_hosts");
+        let recorded_key = PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA/M39PGxLQGf0lwSFHilzXH01/4L1qYnSaWvQPz1UYo",
+        )
+        .expect("a second valid test Ed25519 key");
+        append_known_host("changed-host.invalid", 22, &recorded_key, &known_hosts_path)
+            .expect("seed known_hosts");
+
+        let outcome = HostKeyOutcome::default();
+        let mut recorder = HostKeyRecorder {
+            host: "changed-host.invalid".to_string(),
+            port: 22,
+            outcome: outcome.clone(),
+        };
+        let poc = PublicKeyOrCertificate::PublicKey {
+            key: test_public_key(),
+            hash_alg: None,
+        };
+        let accepted = crate::runtime()
+            .block_on(<HostKeyRecorder as client::Handler>::check_server_key(
+                &mut recorder,
+                &poc,
+            ))
+            .unwrap();
+        assert!(!accepted);
+        let error = outcome.into_error().expect("an error was recorded");
+        assert_eq!(error.code, DbErrorCode::HostKeyMismatch);
+
+        match home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn check_server_key_accepts_a_key_already_recorded() {
+        let _guard = home_lock().lock().unwrap_or_else(|p| p.into_inner());
+        let home = std::env::var_os("HOME");
+        let dir = std::env::temp_dir().join(format!("ide-ssh-check-known-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("HOME", &dir);
+
+        let known_hosts_path = dir.join(".ssh").join("known_hosts");
+        let key = test_public_key();
+        append_known_host("known-host.invalid", 22, &key, &known_hosts_path)
+            .expect("seed known_hosts");
+
+        let mut recorder = HostKeyRecorder {
+            host: "known-host.invalid".to_string(),
+            port: 22,
+            outcome: HostKeyOutcome::default(),
+        };
+        let poc = PublicKeyOrCertificate::PublicKey {
+            key,
+            hash_alg: None,
+        };
+        let accepted = crate::runtime()
+            .block_on(<HostKeyRecorder as client::Handler>::check_server_key(
+                &mut recorder,
+                &poc,
+            ))
+            .unwrap();
+        assert!(accepted);
+
+        match home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn host_key_outcome_starts_empty() {
         let outcome = HostKeyOutcome::default();

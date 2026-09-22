@@ -139,19 +139,7 @@ impl RedisConnection {
             }
         }
         keys.truncate(self.scan_limit);
-
-        let mut by_namespace: std::collections::BTreeMap<Option<String>, Vec<(String, String)>> =
-            std::collections::BTreeMap::new();
-        for key in keys {
-            let namespace = key
-                .split_once(self.key_separator.as_str())
-                .map(|(prefix, _)| prefix.to_string());
-            let leaf = match &namespace {
-                Some(prefix) => key[prefix.len() + self.key_separator.len()..].to_string(),
-                None => key.clone(),
-            };
-            by_namespace.entry(namespace).or_default().push((leaf, key));
-        }
+        let by_namespace = group_keys_by_namespace(keys, &self.key_separator);
 
         let mut roots = Vec::with_capacity(by_namespace.len());
         for (namespace, entries) in by_namespace {
@@ -183,6 +171,28 @@ impl RedisConnection {
         }
         Ok(roots)
     }
+}
+
+/// [`RedisConnection::scan_keys`]'s own one-level namespace grouping —
+/// pulled out of the `SCAN`/`TYPE`/`TTL` round trips so a unit test can
+/// feed it a plain key list with no live connection.
+fn group_keys_by_namespace(
+    keys: Vec<String>,
+    separator: &str,
+) -> std::collections::BTreeMap<Option<String>, Vec<(String, String)>> {
+    let mut by_namespace: std::collections::BTreeMap<Option<String>, Vec<(String, String)>> =
+        std::collections::BTreeMap::new();
+    for key in keys {
+        let namespace = key
+            .split_once(separator)
+            .map(|(prefix, _)| prefix.to_string());
+        let leaf = match &namespace {
+            Some(prefix) => key[prefix.len() + separator.len()..].to_string(),
+            None => key.clone(),
+        };
+        by_namespace.entry(namespace).or_default().push((leaf, key));
+    }
+    by_namespace
 }
 
 /// Every row of a `next_batch` call is already in memory — a Redis reply
@@ -563,6 +573,104 @@ mod tests {
             batch.rows,
             vec![vec![Value::Text("k".to_string()), Value::Int(1)]]
         );
+    }
+
+    #[test]
+    fn scalar_maps_every_reply_variant() {
+        assert_eq!(scalar(RedisValue::Nil), Value::Null);
+        assert_eq!(scalar(RedisValue::Int(7)), Value::Int(7));
+        assert_eq!(scalar(RedisValue::Double(1.5)), Value::Float(1.5));
+        assert_eq!(scalar(RedisValue::Boolean(true)), Value::Bool(true));
+        assert_eq!(
+            scalar(RedisValue::BulkString(b"hi".to_vec())),
+            Value::Text("hi".to_string())
+        );
+        assert_eq!(
+            scalar(RedisValue::SimpleString("ok".to_string())),
+            Value::Text("ok".to_string())
+        );
+        assert_eq!(
+            scalar(RedisValue::VerbatimString {
+                format: redis_driver::VerbatimFormat::Text,
+                text: "v".to_string(),
+            }),
+            Value::Text("v".to_string())
+        );
+        assert_eq!(scalar(RedisValue::Okay), Value::Text("OK".to_string()));
+        assert_eq!(
+            scalar(RedisValue::BigNumber(3.into())),
+            Value::Text("3".to_string())
+        );
+        match scalar(RedisValue::Push {
+            kind: redis_driver::PushKind::Message,
+            data: vec![],
+        }) {
+            Value::Other { type_name, .. } => assert_eq!(type_name, "redis"),
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_set_reply_is_treated_like_an_array() {
+        let batch = value_to_batch(
+            RedisValue::Set(vec![RedisValue::Int(1), RedisValue::Int(2)]),
+            false,
+        );
+        assert_eq!(batch.rows, vec![vec![Value::Int(1)], vec![Value::Int(2)]]);
+    }
+
+    #[test]
+    fn an_odd_length_array_is_not_treated_as_a_hash_even_when_flat_pairs_as_map() {
+        let batch = value_to_batch(
+            RedisValue::Array(vec![
+                RedisValue::Int(1),
+                RedisValue::Int(2),
+                RedisValue::Int(3),
+            ]),
+            true,
+        );
+        assert_eq!(batch.columns.len(), 1);
+        assert_eq!(batch.rows.len(), 3);
+    }
+
+    #[test]
+    fn group_keys_by_namespace_splits_on_the_first_separator() {
+        let grouped = group_keys_by_namespace(
+            vec![
+                "users:1".to_string(),
+                "users:2".to_string(),
+                "config".to_string(),
+            ],
+            ":",
+        );
+        assert_eq!(
+            grouped.get(&Some("users".to_string())),
+            Some(&vec![
+                ("1".to_string(), "users:1".to_string()),
+                ("2".to_string(), "users:2".to_string()),
+            ])
+        );
+        assert_eq!(
+            grouped.get(&None),
+            Some(&vec![("config".to_string(), "config".to_string())])
+        );
+    }
+
+    #[test]
+    fn group_keys_by_namespace_keeps_only_the_first_level() {
+        let grouped = group_keys_by_namespace(vec!["a:b:c".to_string()], ":");
+        assert_eq!(
+            grouped.get(&Some("a".to_string())),
+            Some(&vec![("b:c".to_string(), "a:b:c".to_string())])
+        );
+    }
+
+    #[test]
+    fn redis_row_stream_yields_its_batch_once_then_none() {
+        let batch = value_to_batch(RedisValue::Int(1), false);
+        let mut stream = RedisRowStream(Some(batch));
+        assert!(stream.next_batch().unwrap().is_some());
+        assert!(stream.next_batch().unwrap().is_none());
     }
 
     #[test]

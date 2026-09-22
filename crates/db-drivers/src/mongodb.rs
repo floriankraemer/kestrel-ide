@@ -193,6 +193,60 @@ pub fn flatten_documents(documents: &[Document]) -> RowBatch {
     RowBatch { columns, rows }
 }
 
+/// [`MongoConnection::sample_fields`]'s own per-field type histogram —
+/// pulled out so a unit test can feed it hand-built documents without a
+/// live `find()` cursor. Each field's summary lists its observed BSON
+/// types, most common first, as `"type (NN%)"` of the sample.
+fn documents_to_field_nodes(documents: &[Document]) -> Vec<Node> {
+    let total = documents.len().max(1);
+    let mut field_types: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
+    for document in documents {
+        for (key, value) in document {
+            *field_types
+                .entry(key.clone())
+                .or_default()
+                .entry(bson_type_name(value))
+                .or_insert(0) += 1;
+        }
+    }
+
+    field_types
+        .into_iter()
+        .map(|(name, counts)| {
+            let mut counts: Vec<(&str, usize)> = counts.into_iter().collect();
+            counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+            let summary = counts
+                .iter()
+                .map(|(type_name, count)| format!("{type_name} ({}%)", count * 100 / total))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Node::leaf(name, ObjectKind::Field).with_detail(NodeDetail {
+                type_name: Some(summary),
+                ..NodeDetail::default()
+            })
+        })
+        .collect()
+}
+
+/// [`MongoConnection::list_indexes`]'s own name-resolution mapping — an
+/// index's declared name if it has one (`IndexOptions::name`), else the
+/// same underscore-joined key-list fallback the `mongo`/`mongosh` shells
+/// use. Pulled out so a unit test can feed it hand-built `IndexModel`s
+/// without a live `list_indexes()` cursor.
+fn index_models_to_nodes(indexes: Vec<IndexModel>) -> Vec<Node> {
+    indexes
+        .into_iter()
+        .map(|index| {
+            let name = index
+                .options
+                .as_ref()
+                .and_then(|options| options.name.clone())
+                .unwrap_or_else(|| index.keys.keys().cloned().collect::<Vec<_>>().join("_"));
+            Node::leaf(name, ObjectKind::Index)
+        })
+        .collect()
+}
+
 fn documents_batch(documents: Vec<Document>) -> RowBatch {
     RowBatch {
         columns: vec![ColumnMeta {
@@ -288,34 +342,7 @@ impl MongoConnection {
             Ok::<(), DbError>(())
         })?;
 
-        let total = documents.len().max(1);
-        let mut field_types: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
-        for document in &documents {
-            for (key, value) in document {
-                *field_types
-                    .entry(key.clone())
-                    .or_default()
-                    .entry(bson_type_name(value))
-                    .or_insert(0) += 1;
-            }
-        }
-
-        Ok(field_types
-            .into_iter()
-            .map(|(name, counts)| {
-                let mut counts: Vec<(&str, usize)> = counts.into_iter().collect();
-                counts.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-                let summary = counts
-                    .iter()
-                    .map(|(type_name, count)| format!("{type_name} ({}%)", count * 100 / total))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                Node::leaf(name, ObjectKind::Field).with_detail(NodeDetail {
-                    type_name: Some(summary),
-                    ..NodeDetail::default()
-                })
-            })
-            .collect())
+        Ok(documents_to_field_nodes(&documents))
     }
 
     fn list_indexes(&self, collection: &str) -> Result<Vec<Node>, DbError> {
@@ -329,17 +356,7 @@ impl MongoConnection {
             }
             Ok::<(), DbError>(())
         })?;
-        Ok(indexes
-            .into_iter()
-            .map(|index| {
-                let name = index
-                    .options
-                    .as_ref()
-                    .and_then(|options| options.name.clone())
-                    .unwrap_or_else(|| index.keys.keys().cloned().collect::<Vec<_>>().join("_"));
-                Node::leaf(name, ObjectKind::Index)
-            })
-            .collect())
+        Ok(index_models_to_nodes(indexes))
     }
 
     fn dispatch(&self, command: MongoCommand, options: &ExecOptions) -> Result<Execution, DbError> {
@@ -763,5 +780,158 @@ mod tests {
         assert_eq!(batch.columns.len(), 1);
         assert_eq!(batch.columns[0].name, "document");
         assert!(matches!(batch.rows[0][0], Value::Document(_)));
+    }
+
+    #[test]
+    fn build_uri_with_user_and_no_password() {
+        let spec = ConnectSpec {
+            driver: "mongodb".to_string(),
+            host: "db.internal".to_string(),
+            port: None,
+            database: String::new(),
+            user: "app".to_string(),
+            url: String::new(),
+            password: None,
+            ssl: db_core::datasource::SslConfig::default(),
+        };
+        assert_eq!(build_uri(&spec), "mongodb://app@db.internal:27017");
+    }
+
+    #[test]
+    fn build_uri_defaults_the_host_when_empty() {
+        let spec = ConnectSpec {
+            driver: "mongodb".to_string(),
+            host: String::new(),
+            port: None,
+            database: String::new(),
+            user: String::new(),
+            url: String::new(),
+            password: None,
+            ssl: db_core::datasource::SslConfig::default(),
+        };
+        assert_eq!(build_uri(&spec), "mongodb://127.0.0.1:27017");
+    }
+
+    #[test]
+    fn bson_to_value_maps_ids_dates_decimals_and_binary() {
+        let id = bson::oid::ObjectId::new();
+        assert_eq!(bson_to_value(Bson::ObjectId(id)), Value::Text(id.to_hex()));
+        assert_eq!(
+            bson_to_value(Bson::Decimal128(bson::Decimal128::from_bytes([0u8; 16]))),
+            Value::Decimal(bson::Decimal128::from_bytes([0u8; 16]).to_string())
+        );
+        assert_eq!(
+            bson_to_value(Bson::Binary(bson::Binary {
+                subtype: bson::spec::BinarySubtype::Generic,
+                bytes: vec![1, 2, 3],
+            })),
+            Value::Bytes(vec![1, 2, 3])
+        );
+        assert_eq!(bson_to_value(Bson::Int64(9)), Value::Int(9));
+    }
+
+    #[test]
+    fn bson_to_value_falls_back_to_other_for_exotic_types() {
+        let value = bson_to_value(Bson::MinKey);
+        match value {
+            Value::Other { type_name, .. } => assert_eq!(type_name, "minKey"),
+            other => panic!("expected Other, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bson_type_name_covers_every_variant() {
+        assert_eq!(bson_type_name(&Bson::Double(1.0)), "double");
+        assert_eq!(bson_type_name(&Bson::String(String::new())), "string");
+        assert_eq!(bson_type_name(&Bson::Array(vec![])), "array");
+        assert_eq!(bson_type_name(&Bson::Document(Document::new())), "object");
+        assert_eq!(bson_type_name(&Bson::Boolean(true)), "bool");
+        assert_eq!(bson_type_name(&Bson::Null), "null");
+        assert_eq!(bson_type_name(&Bson::Int32(1)), "int32");
+        assert_eq!(bson_type_name(&Bson::Int64(1)), "int64");
+        assert_eq!(
+            bson_type_name(&Bson::ObjectId(bson::oid::ObjectId::new())),
+            "objectId"
+        );
+        assert_eq!(
+            bson_type_name(&Bson::Decimal128(bson::Decimal128::from_bytes([0u8; 16]))),
+            "decimal128"
+        );
+        assert_eq!(
+            bson_type_name(&Bson::Binary(bson::Binary {
+                subtype: bson::spec::BinarySubtype::Generic,
+                bytes: vec![],
+            })),
+            "binary"
+        );
+        assert_eq!(bson_type_name(&Bson::Symbol(String::new())), "symbol");
+        assert_eq!(bson_type_name(&Bson::Undefined), "undefined");
+        assert_eq!(bson_type_name(&Bson::MaxKey), "maxKey");
+        assert_eq!(bson_type_name(&Bson::MinKey), "minKey");
+    }
+
+    #[test]
+    fn json_array_to_documents_converts_each_element() {
+        let documents = json_array_to_documents(&json!([{"a": 1}, {"b": 2}])).unwrap();
+        assert_eq!(documents, vec![doc! {"a": 1i64}, doc! {"b": 2i64}]);
+    }
+
+    #[test]
+    fn json_array_to_documents_rejects_a_non_array() {
+        assert!(json_array_to_documents(&json!({"a": 1})).is_err());
+    }
+
+    #[test]
+    fn json_array_to_documents_rejects_a_non_object_element() {
+        assert!(json_array_to_documents(&json!([1, 2])).is_err());
+    }
+
+    #[test]
+    fn eager_rows_yields_its_batch_once_then_none() {
+        let mut rows = EagerRows::one(documents_batch(vec![doc! {"a": 1}]));
+        assert!(rows.next_batch().unwrap().is_some());
+        assert!(rows.next_batch().unwrap().is_none());
+    }
+
+    #[test]
+    fn documents_to_field_nodes_reports_a_percentage_summary_per_type() {
+        let documents = vec![doc! {"a": 1, "b": "x"}, doc! {"a": 2}, doc! {"a": "text"}];
+        let nodes = documents_to_field_nodes(&documents);
+        let a = nodes.iter().find(|n| n.name == "a").unwrap();
+        // 3 documents saw field "a": 2 int32, 1 string — int32 sorts first
+        // (higher count).
+        assert_eq!(
+            a.detail.type_name,
+            Some("int32 (66%), string (33%)".to_string())
+        );
+        let b = nodes.iter().find(|n| n.name == "b").unwrap();
+        // "b" only appears in one of the three sampled documents.
+        assert_eq!(b.detail.type_name, Some("string (33%)".to_string()));
+    }
+
+    #[test]
+    fn documents_to_field_nodes_on_an_empty_sample_yields_no_fields() {
+        assert!(documents_to_field_nodes(&[]).is_empty());
+    }
+
+    #[test]
+    fn index_models_to_nodes_prefers_the_declared_name() {
+        let index = IndexModel::builder()
+            .keys(doc! {"email": 1})
+            .options(
+                mongodb_driver::options::IndexOptions::builder()
+                    .name("email_idx".to_string())
+                    .build(),
+            )
+            .build();
+        let nodes = index_models_to_nodes(vec![index]);
+        assert_eq!(nodes[0].name, "email_idx");
+    }
+
+    #[test]
+    fn index_models_to_nodes_falls_back_to_the_joined_key_list() {
+        let index = IndexModel::builder().keys(doc! {"a": 1, "b": -1}).build();
+        let nodes = index_models_to_nodes(vec![index]);
+        assert_eq!(nodes[0].name, "a_b");
     }
 }

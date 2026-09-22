@@ -666,11 +666,7 @@ impl Connection for MySqlConnection {
     }
 
     fn ddl_of(&mut self, object: &ObjectRef) -> Result<String, DbError> {
-        let ident = Dialect::MySql.quote_ident(&object.name);
-        let (statement, column_index) = match object.kind {
-            Some(ObjectKind::View) => (format!("SHOW CREATE VIEW {ident}"), 1),
-            _ => (format!("SHOW CREATE TABLE {ident}"), 1),
-        };
+        let (statement, column_index) = show_create_statement_for(object);
         self.with_conn(|conn| {
             let row: Option<mysql_async::Row> = crate::runtime()
                 .block_on(conn.query_first(statement))
@@ -701,6 +697,17 @@ impl Connection for MySqlConnection {
 
     fn close(&mut self) -> Result<(), DbError> {
         Ok(())
+    }
+}
+
+/// [`MySqlConnection::ddl_of`]'s own `SHOW CREATE ...` statement/column-
+/// index choice — pulled out (pure string building, no connection) so a
+/// unit test can drive both the view and table/default branches.
+fn show_create_statement_for(object: &ObjectRef) -> (String, usize) {
+    let ident = Dialect::MySql.quote_ident(&object.name);
+    match object.kind {
+        Some(ObjectKind::View) => (format!("SHOW CREATE VIEW {ident}"), 1),
+        _ => (format!("SHOW CREATE TABLE {ident}"), 1),
     }
 }
 
@@ -742,22 +749,7 @@ impl MySqlConnection {
                 ))
                 .map_err(io_err)
         })?;
-        let mut children: Vec<Node> = rows
-            .into_iter()
-            .map(
-                |(column_name, column_type, is_nullable, column_key, extra, default, comment)| {
-                    Node::leaf(column_name, ObjectKind::Column).with_detail(NodeDetail {
-                        type_name: Some(column_type),
-                        nullable: Some(is_nullable == "YES"),
-                        default,
-                        primary_key: column_key == "PRI",
-                        auto_increment: Some(extra.contains("auto_increment")),
-                        comment: (!comment.is_empty()).then_some(comment),
-                        ..NodeDetail::default()
-                    })
-                },
-            )
-            .collect();
+        let mut children: Vec<Node> = columns_to_nodes(rows);
         if level == IntrospectLevel::Full {
             children.extend(self.index_nodes(schema, name)?);
             children.extend(self.constraint_nodes(schema, name)?);
@@ -780,35 +772,13 @@ impl MySqlConnection {
                 ))
                 .map_err(io_err)
         })?;
-        Ok(rows
-            .into_iter()
-            .map(|(index_name, unique, method, columns)| {
-                Node::leaf(index_name, ObjectKind::Index).with_detail(NodeDetail {
-                    index: Some(IndexDetail {
-                        columns: columns.split(',').map(str::to_string).collect(),
-                        unique,
-                        method,
-                    }),
-                    ..NodeDetail::default()
-                })
-            })
-            .collect())
+        Ok(index_rows_to_nodes(rows))
     }
 
     /// `IntrospectLevel::Full`'s own constraints, via [`CONSTRAINTS_QUERY`]
     /// (PK/unique/FK) plus [`CHECKS_QUERY`] (CHECK, a separate round trip —
     /// see that query's own comment).
     fn constraint_nodes(&self, schema: &str, name: &str) -> Result<Vec<Node>, DbError> {
-        type ConstraintRow = (
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        );
         let rows: Vec<ConstraintRow> = self.with_conn(|conn| {
             crate::runtime()
                 .block_on(
@@ -816,236 +786,133 @@ impl MySqlConnection {
                 )
                 .map_err(io_err)
         })?;
-        let mut nodes = Vec::new();
-        for (
-            constraint_name,
-            constraint_type,
-            columns,
-            ref_schema,
-            ref_table,
-            ref_columns,
-            on_update,
-            on_delete,
-        ) in rows
-        {
-            let columns: Vec<String> = columns.split(',').map(str::to_string).collect();
-            let kind = match constraint_type.as_str() {
-                "PRIMARY KEY" => ConstraintKind::PrimaryKey { columns },
-                "UNIQUE" => ConstraintKind::Unique { columns },
-                "FOREIGN KEY" => {
-                    let mut reference =
-                        ObjectRef::new(ref_table.unwrap_or_default()).with_kind(ObjectKind::Table);
-                    if let Some(ref_schema) = ref_schema {
-                        reference = reference.with_schema(ref_schema);
-                    }
-                    ConstraintKind::ForeignKey {
-                        columns,
-                        ref_table: reference,
-                        ref_columns: ref_columns
-                            .map(|cols| cols.split(',').map(str::to_string).collect())
-                            .unwrap_or_default(),
-                        on_delete: on_delete.filter(|rule| rule != "NO ACTION"),
-                        on_update: on_update.filter(|rule| rule != "NO ACTION"),
-                    }
-                }
-                _ => continue,
-            };
-            nodes.push(
-                Node::leaf(constraint_name, ObjectKind::Constraint).with_detail(NodeDetail {
-                    constraint: Some(kind),
-                    ..NodeDetail::default()
-                }),
-            );
-        }
+        let mut nodes = constraint_rows_to_nodes(rows);
 
         let checks: Vec<(String, String)> = self.with_conn(|conn| {
             crate::runtime()
                 .block_on(conn.exec_map(CHECKS_QUERY, (schema, name), |row| row))
                 .map_err(io_err)
         })?;
-        for (constraint_name, check_clause) in checks {
-            nodes.push(
-                Node::leaf(constraint_name, ObjectKind::Constraint).with_detail(NodeDetail {
-                    constraint: Some(ConstraintKind::Check { expr: check_clause }),
-                    ..NodeDetail::default()
-                }),
-            );
-        }
+        nodes.extend(check_rows_to_nodes(checks));
         Ok(nodes)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// One `mysql_constraints.sql` row, before it becomes a `Node` — a module
+/// level alias (rather than local to [`MySqlConnection::constraint_nodes`])
+/// so [`constraint_rows_to_nodes`] can share it with a unit test that feeds
+/// hand-built rows, no server needed.
+type ConstraintRow = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
-    #[test]
-    fn driver_id_and_capabilities() {
-        let driver = MySqlDriver;
-        assert_eq!(driver.id(), "mysql");
-        assert!(driver.capabilities().contains(Capabilities::TRANSACTIONS));
-        assert!(driver
-            .capabilities()
-            .contains(Capabilities::SERVER_SIDE_CANCEL));
-    }
-
-    #[test]
-    fn build_opts_defaults_the_port_to_3306() {
-        let spec = ConnectSpec {
-            driver: "mysql".to_string(),
-            host: "localhost".to_string(),
-            port: None,
-            database: "shop".to_string(),
-            user: "root".to_string(),
-            url: String::new(),
-            password: None,
-            ssl: SslConfig {
-                mode: SslMode::Disable,
-                ca_file: None,
+/// [`MySqlConnection::table_node`]'s own row-to-`Node` mapping, pulled out
+/// so a unit test can feed it hand-built [`ColumnRow`]s without a live
+/// `Conn` — the same "separate the query from the row shape it feeds"
+/// split this module already applies to its `Value` conversions.
+fn columns_to_nodes(rows: Vec<ColumnRow>) -> Vec<Node> {
+    rows.into_iter()
+        .map(
+            |(column_name, column_type, is_nullable, column_key, extra, default, comment)| {
+                Node::leaf(column_name, ObjectKind::Column).with_detail(NodeDetail {
+                    type_name: Some(column_type),
+                    nullable: Some(is_nullable == "YES"),
+                    default,
+                    primary_key: column_key == "PRI",
+                    auto_increment: Some(extra.contains("auto_increment")),
+                    comment: (!comment.is_empty()).then_some(comment),
+                    ..NodeDetail::default()
+                })
             },
-        };
-        let opts = build_opts(&spec);
-        assert_eq!(opts.tcp_port(), 3306);
-        assert_eq!(opts.db_name(), Some("shop"));
-    }
-
-    #[test]
-    fn introspection_fixture_text_shapes_the_expected_columns() {
-        assert!(NAMES_QUERY.contains("information_schema.tables"));
-        assert!(NAMES_QUERY.contains("table_schema"));
-        assert!(COLUMNS_QUERY.contains("information_schema.columns"));
-        assert!(COLUMNS_QUERY.contains("column_key"));
-        assert!(COLUMNS_QUERY.contains("extra"));
-        assert!(INDEXES_QUERY.contains("information_schema.statistics"));
-        assert!(INDEXES_QUERY.contains("GROUP_CONCAT"));
-        assert!(CONSTRAINTS_QUERY.contains("information_schema.table_constraints"));
-        assert!(CONSTRAINTS_QUERY.contains("referential_constraints"));
-        assert!(CHECKS_QUERY.contains("check_constraints"));
-    }
-
-    #[test]
-    fn to_mysql_value_maps_every_scalar_variant() {
-        assert!(matches!(
-            to_mysql_value(&Value::Null),
-            mysql_async::Value::NULL
-        ));
-        assert!(matches!(
-            to_mysql_value(&Value::Int(42)),
-            mysql_async::Value::Int(42)
-        ));
-        assert!(matches!(
-            to_mysql_value(&Value::Bool(true)),
-            mysql_async::Value::Int(1)
-        ));
-    }
-
-    /// Both real-server tests below run this same body once per engine
-    /// (`IDE_DB_MYSQL_URL` and `IDE_DB_MARIADB_URL`) rather than one test
-    /// function apiece — the plan asks both engines be exercised, and a
-    /// shared body is the one place that stays true if either changes.
-    #[cfg(feature = "db-integration")]
-    fn for_each_configured_engine(run: impl Fn(&str, db_core::datasource::ConnectSpec)) {
-        let mut any = false;
-        for env_var in ["IDE_DB_MYSQL_URL", "IDE_DB_MARIADB_URL"] {
-            match crate::testsupport::mysql_test_spec(env_var) {
-                Some(spec) => {
-                    any = true;
-                    run(env_var, spec);
-                }
-                None => eprintln!("{env_var} not set — skipping"),
-            }
-        }
-        if !any {
-            eprintln!("neither IDE_DB_MYSQL_URL nor IDE_DB_MARIADB_URL is set — skipping entirely");
-        }
-    }
-
-    #[cfg(feature = "db-integration")]
-    #[test]
-    fn connect_execute_and_introspect_against_a_real_server() {
-        for_each_configured_engine(|env_var, spec| {
-            let mut conn = MySqlDriver.connect(&spec).unwrap_or_else(|e| {
-                panic!("{env_var}: connect failed: {e:?}");
-            });
-            let Execution::Rows(mut stream) = conn
-                .execute(&Statement::sql("SELECT 1"), &ExecOptions::default())
-                .expect("execute")
-            else {
-                panic!("{env_var}: expected rows");
-            };
-            let batch = stream.next_batch().expect("batch").expect("some rows");
-            assert_eq!(batch.rows, vec![vec![Value::Int(1)]]);
-
-            let snapshot = conn
-                .introspect(&IntrospectScope::default(), IntrospectLevel::Names)
-                .expect("introspect");
-            assert_eq!(snapshot.level, IntrospectLevel::Names);
-        });
-    }
-
-    #[cfg(feature = "db-integration")]
-    #[test]
-    fn a_million_row_recursive_cte_streams_a_fast_first_batch() {
-        for_each_configured_engine(|env_var, spec| {
-            let mut conn = MySqlDriver.connect(&spec).expect("connect");
-            // MySQL's own default `cte_max_recursion_depth` is 1000 —
-            // MariaDB has no such variable at all (unlimited by default),
-            // so this `SET` is allowed to fail there; either way the
-            // actual query below is what this test cares about.
-            let _ = conn.execute(
-                &Statement::sql("SET SESSION cte_max_recursion_depth = 1000000"),
-                &ExecOptions::default(),
-            );
-            let options = ExecOptions {
-                fetch_size: 200,
-                ..ExecOptions::default()
-            };
-            let Execution::Rows(mut stream) = conn
-                .execute(
-                    &Statement::sql(
-                        "WITH RECURSIVE seq(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 1000000) \
-                         SELECT n FROM seq",
-                    ),
-                    &options,
-                )
-                .expect("execute")
-            else {
-                panic!("{env_var}: expected rows");
-            };
-            let started = std::time::Instant::now();
-            let first = stream
-                .next_batch()
-                .expect("first batch")
-                .expect("some rows");
-            assert_eq!(first.rows.len(), 200);
-            assert!(
-                started.elapsed() < std::time::Duration::from_millis(300),
-                "{env_var}: first batch took {:?}",
-                started.elapsed()
-            );
-        });
-    }
-
-    #[cfg(feature = "db-integration")]
-    #[test]
-    fn cancel_stops_a_sleeping_query_within_a_second_and_a_half() {
-        for_each_configured_engine(|env_var, spec| {
-            let mut conn = MySqlDriver.connect(&spec).expect("connect");
-            let cancel = conn
-                .cancel_handle()
-                .expect("mysql supports server-side cancel");
-            let started = std::time::Instant::now();
-            let handle = std::thread::spawn(move || {
-                conn.execute(&Statement::sql("SELECT SLEEP(30)"), &ExecOptions::default())
-            });
-            std::thread::sleep(std::time::Duration::from_millis(300));
-            cancel.cancel().expect("cancel");
-            let _ = handle.join().expect("thread joins");
-            assert!(
-                started.elapsed() < std::time::Duration::from_millis(1500),
-                "{env_var}: cancel took {:?}",
-                started.elapsed()
-            );
-        });
-    }
+        )
+        .collect()
 }
+
+/// [`MySqlConnection::index_nodes`]'s own row-to-`Node` mapping.
+fn index_rows_to_nodes(rows: Vec<(String, bool, Option<String>, String)>) -> Vec<Node> {
+    rows.into_iter()
+        .map(|(index_name, unique, method, columns)| {
+            Node::leaf(index_name, ObjectKind::Index).with_detail(NodeDetail {
+                index: Some(IndexDetail {
+                    columns: columns.split(',').map(str::to_string).collect(),
+                    unique,
+                    method,
+                }),
+                ..NodeDetail::default()
+            })
+        })
+        .collect()
+}
+
+/// [`MySqlConnection::constraint_nodes`]'s own PK/unique/FK row-to-`Node`
+/// mapping — `CHECK` constraints are a separate query/row shape, see
+/// [`check_rows_to_nodes`].
+fn constraint_rows_to_nodes(rows: Vec<ConstraintRow>) -> Vec<Node> {
+    let mut nodes = Vec::new();
+    for (
+        constraint_name,
+        constraint_type,
+        columns,
+        ref_schema,
+        ref_table,
+        ref_columns,
+        on_update,
+        on_delete,
+    ) in rows
+    {
+        let columns: Vec<String> = columns.split(',').map(str::to_string).collect();
+        let kind = match constraint_type.as_str() {
+            "PRIMARY KEY" => ConstraintKind::PrimaryKey { columns },
+            "UNIQUE" => ConstraintKind::Unique { columns },
+            "FOREIGN KEY" => {
+                let mut reference =
+                    ObjectRef::new(ref_table.unwrap_or_default()).with_kind(ObjectKind::Table);
+                if let Some(ref_schema) = ref_schema {
+                    reference = reference.with_schema(ref_schema);
+                }
+                ConstraintKind::ForeignKey {
+                    columns,
+                    ref_table: reference,
+                    ref_columns: ref_columns
+                        .map(|cols| cols.split(',').map(str::to_string).collect())
+                        .unwrap_or_default(),
+                    on_delete: on_delete.filter(|rule| rule != "NO ACTION"),
+                    on_update: on_update.filter(|rule| rule != "NO ACTION"),
+                }
+            }
+            _ => continue,
+        };
+        nodes.push(
+            Node::leaf(constraint_name, ObjectKind::Constraint).with_detail(NodeDetail {
+                constraint: Some(kind),
+                ..NodeDetail::default()
+            }),
+        );
+    }
+    nodes
+}
+
+/// [`MySqlConnection::constraint_nodes`]'s own `CHECK`-constraint row-to-
+/// `Node` mapping (a separate query from the PK/unique/FK one above).
+fn check_rows_to_nodes(checks: Vec<(String, String)>) -> Vec<Node> {
+    checks
+        .into_iter()
+        .map(|(constraint_name, check_clause)| {
+            Node::leaf(constraint_name, ObjectKind::Constraint).with_detail(NodeDetail {
+                constraint: Some(ConstraintKind::Check { expr: check_clause }),
+                ..NodeDetail::default()
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+#[path = "mysql_tests.rs"]
+mod tests;

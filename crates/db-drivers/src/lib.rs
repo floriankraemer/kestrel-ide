@@ -18,6 +18,8 @@ use db_core::driver::Driver;
 pub mod cassandra;
 #[cfg(feature = "mongodb")]
 pub mod mongodb;
+#[cfg(feature = "mysql")]
+pub mod mysql;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 #[cfg(feature = "redis")]
@@ -27,7 +29,11 @@ pub mod sqlite;
 #[cfg(feature = "ssh")]
 pub mod ssh;
 
-#[cfg(all(test, feature = "db-integration", feature = "postgres"))]
+#[cfg(all(
+    test,
+    feature = "db-integration",
+    any(feature = "postgres", feature = "mysql")
+))]
 mod testsupport;
 
 #[cfg(all(test, feature = "db-integration", feature = "sqlite"))]
@@ -79,6 +85,8 @@ impl DriverRegistry {
         drivers.push(Box::new(sqlite::SqliteDriver));
         #[cfg(feature = "postgres")]
         drivers.push(Box::new(postgres::PostgresDriver));
+        #[cfg(feature = "mysql")]
+        drivers.push(Box::new(mysql::MySqlDriver));
         #[cfg(feature = "mongodb")]
         drivers.push(Box::new(mongodb::MongoDriver));
         #[cfg(feature = "redis")]
@@ -112,6 +120,8 @@ mod tests {
         assert!(ids.contains(&"sqlite"));
         #[cfg(feature = "postgres")]
         assert!(ids.contains(&"postgresql"));
+        #[cfg(feature = "mysql")]
+        assert!(ids.contains(&"mysql"));
     }
 
     #[test]

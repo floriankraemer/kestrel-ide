@@ -95,8 +95,8 @@ pub(crate) const CONTAINERS: BuiltinPlugin = BuiltinPlugin {
     files: &[],
 };
 
-/// SQLite, PostgreSQL, MongoDB, Redis and Cassandra/Scylla support
-/// (Database Tools plan F1.5/F7, ADR-0058), first-party like
+/// SQLite, PostgreSQL, MySQL/MariaDB, MongoDB, Redis and Cassandra/Scylla
+/// support (Database Tools plan F1.5/F7/FZ, ADR-0058), first-party like
 /// `jvm-build-tools` above. Ships the keyword-list assets its
 /// `sql-dialects` rows point `keywords` at; the drivers
 /// themselves are `db-drivers`' `DriverRegistry::builtin()`, not files
@@ -118,6 +118,10 @@ pub(crate) const DATABASE_TOOLS: BuiltinPlugin = BuiltinPlugin {
         (
             "dialects/cql.keywords",
             include_bytes!("../builtin/database-tools/dialects/cql.keywords"),
+        ),
+        (
+            "dialects/mysql.keywords",
+            include_bytes!("../builtin/database-tools/dialects/mysql.keywords"),
         ),
     ],
 };

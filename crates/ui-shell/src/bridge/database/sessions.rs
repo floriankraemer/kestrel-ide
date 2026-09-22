@@ -28,13 +28,87 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
-use db_core::driver::{CancelHandle, ExecOptions, RowStream, Statement};
-use db_core::error::DbError;
+use db_core::driver::{CancelHandle, Connection, ExecOptions, RowStream, Statement};
+use db_core::error::{DbError, DbErrorCode};
 use db_core::schema::{IntrospectLevel, IntrospectScope, ObjectRef, SchemaSnapshot};
-use db_core::session::Session;
+use db_core::session::{Session, TxMode};
 use db_core::tunnel::Tunnel;
 use db_core::value::{ColumnMeta, Value};
+
+/// Reopens a connection (and its tunnel, if any) exactly the way it was
+/// first opened — `bridge::database::open_session`'s own closure, so a
+/// data source's SSH tunnel/TLS/auth settings never need re-deriving
+/// here. Used only by the idle-close reconnect below (database-tools-plan
+/// FZ); every other caller passes `None` through [`SessionWorker::spawn`]
+/// and never grows an idle timer at all.
+pub type Reconnect =
+    Box<dyn Fn() -> Result<(Box<dyn Connection>, Option<Box<dyn Tunnel>>), DbError> + Send>;
+
+/// A placeholder connection an idle-closed [`Session`] holds between the
+/// moment its real connection was dropped (freeing the socket/tunnel) and
+/// the next command that actually needs one — every method reports
+/// `ConnectionFailed` except `close`, which is already a no-op the real
+/// close path already ran. `run`'s own loop always reconnects (or reports
+/// this error) *before* ever handing a command to the session, so none of
+/// these bodies are reachable in practice; they exist only so `Session`
+/// never holds a dangling `Box<dyn Connection>`.
+struct ClosedConnection;
+
+impl Connection for ClosedConnection {
+    fn dialect(&self) -> db_core::dialect::Dialect {
+        db_core::dialect::Dialect::Sqlite
+    }
+    fn server_info(&self) -> String {
+        "closed (idle) — reconnecting on next use".to_string()
+    }
+    fn introspect(
+        &mut self,
+        _scope: &IntrospectScope,
+        _level: IntrospectLevel,
+    ) -> Result<SchemaSnapshot, DbError> {
+        Err(closed_err())
+    }
+    fn execute(
+        &mut self,
+        _statement: &Statement,
+        _options: &ExecOptions,
+    ) -> Result<db_core::driver::Execution, DbError> {
+        Err(closed_err())
+    }
+    fn begin(&mut self) -> Result<(), DbError> {
+        Err(closed_err())
+    }
+    fn commit(&mut self) -> Result<(), DbError> {
+        Err(closed_err())
+    }
+    fn rollback(&mut self) -> Result<(), DbError> {
+        Err(closed_err())
+    }
+    fn set_read_only(&mut self, _read_only: bool) -> Result<(), DbError> {
+        Err(closed_err())
+    }
+    fn cancel_handle(&self) -> Option<Box<dyn CancelHandle>> {
+        None
+    }
+    fn ddl_of(&mut self, _object: &ObjectRef) -> Result<String, DbError> {
+        Err(closed_err())
+    }
+    fn apply(&mut self, _statements: &[Statement]) -> Result<u64, DbError> {
+        Err(closed_err())
+    }
+    fn close(&mut self) -> Result<(), DbError> {
+        Ok(())
+    }
+}
+
+fn closed_err() -> DbError {
+    DbError::new(
+        DbErrorCode::ConnectionFailed,
+        "this connection was closed for being idle and could not be reopened",
+    )
+}
 
 /// One request a [`SessionWorker`]'s thread runs against its `Session`.
 pub enum SessionCommand {
@@ -186,14 +260,80 @@ fn next_batch_outcome(stream: &mut Box<dyn RowStream>) -> BatchOutcome {
     }
 }
 
+/// How often the idle-close loop wakes up to check the clock — a `recv_
+/// timeout` tick, not a second thread (database-tools-plan FZ: "the
+/// worker's own `recv_timeout` loop, no extra thread"). Short enough that
+/// a 1-second test setting (see the tests below) still closes promptly,
+/// long enough not to spin a channel-idle worker thread.
+const IDLE_CHECK_TICK: Duration = Duration::from_millis(200);
+
+#[allow(clippy::too_many_arguments)]
 fn run(
     mut session: Session,
+    mut tunnel: Option<Box<dyn Tunnel>>,
     receiver: std::sync::mpsc::Receiver<SessionCommand>,
+    idle_timeout: Option<Duration>,
+    reconnect: Option<Reconnect>,
+    cancel_handle: Arc<Mutex<Option<Box<dyn CancelHandle>>>>,
     on_event: impl Fn(SessionEvent) + Send + 'static,
 ) {
     let mut cache: Vec<CacheEntry> = Vec::new();
     let mut parked_stream: Option<Box<dyn RowStream>> = None;
-    while let Ok(command) = receiver.recv() {
+    // `None` (`idle_close_minutes_or_default`'s own "0 = never" contract,
+    // `app-config::database`, mapped to `None` by the caller) and "no
+    // reconnect closure at all" (every existing `SessionWorker::spawn`
+    // caller) both disable the timer.
+    let idle_timeout = reconnect.is_some().then_some(idle_timeout).flatten();
+    let mut last_used = Instant::now();
+    let mut closed = false;
+
+    loop {
+        let command = match receiver.recv_timeout(IDLE_CHECK_TICK) {
+            Ok(command) => command,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                // Manual tx and a parked cursor each pin a connection —
+                // matching decision #9 in database-tools-plan.md §3 — so
+                // idle-close only ever fires on an otherwise-quiescent
+                // Auto-mode session.
+                if !closed
+                    && parked_stream.is_none()
+                    && session.tx_mode() == TxMode::Auto
+                    && idle_timeout.is_some_and(|timeout| last_used.elapsed() >= timeout)
+                {
+                    let _ = session.close();
+                    session.replace_connection(Box::new(ClosedConnection));
+                    tunnel = None;
+                    *cancel_handle.lock().unwrap() = None;
+                    cache.clear();
+                    closed = true;
+                }
+                continue;
+            }
+        };
+        if matches!(command, SessionCommand::Shutdown) {
+            break;
+        }
+        last_used = Instant::now();
+        if closed {
+            // Lazily reopen — through the very same `open_session`
+            // construction path the worker was originally spawned with,
+            // so an SSH tunnel comes back too, never just the bare
+            // connection.
+            let reconnect_fn = reconnect.as_ref().expect("idle_timeout implies Some");
+            match reconnect_fn() {
+                Ok((connection, new_tunnel)) => {
+                    session.replace_connection(connection);
+                    *cancel_handle.lock().unwrap() = session.cancel_handle();
+                    tunnel = new_tunnel;
+                    closed = false;
+                }
+                Err(error) => {
+                    report_reconnect_failure(&command, session.generation(), error, &on_event);
+                    continue;
+                }
+            }
+        }
         match command {
             SessionCommand::Shutdown => break,
             SessionCommand::Execute { statement, options } => {
@@ -339,6 +479,60 @@ fn run(
         }
     }
     let _ = session.close();
+    // Explicit, not relying on parameter declaration order (which drops
+    // in reverse — `tunnel` before `session` — the opposite of what this
+    // module's own doc comment requires): the connection must be fully
+    // dropped *before* the tunnel it was using, never the other way
+    // around, or the tunnel severs a port the connection is still on.
+    drop(session);
+    drop(tunnel);
+}
+
+/// [`SessionCommand`]'s matching failure [`SessionEvent`], reported when a
+/// lazy reconnect fails instead of ever handing the command to the
+/// session — every variant maps to exactly the event its own arm below
+/// would have emitted on an `Err` from the connection itself, so a caller
+/// sees "this command failed", never a hang or a silently dropped reply.
+/// `DropCached`/`Shutdown` need no event: the former never emitted one to
+/// begin with, and the latter can never reach this function (`run`
+/// handles it before ever checking `closed`).
+fn report_reconnect_failure(
+    command: &SessionCommand,
+    generation: u64,
+    error: DbError,
+    on_event: &impl Fn(SessionEvent),
+) {
+    match command {
+        SessionCommand::Introspect { .. } => on_event(SessionEvent::Introspected {
+            generation,
+            result: Err(error),
+        }),
+        SessionCommand::DdlOf { .. } => on_event(SessionEvent::Ddl {
+            generation,
+            result: Err(error),
+        }),
+        SessionCommand::RunStatement { .. } => on_event(SessionEvent::Ran {
+            generation,
+            result: Err(error),
+        }),
+        SessionCommand::Execute { .. } | SessionCommand::FetchMore => {
+            on_event(SessionEvent::Batch {
+                generation,
+                outcome: BatchOutcome::Error(error),
+            })
+        }
+        SessionCommand::BeginManual | SessionCommand::Commit | SessionCommand::Rollback => {
+            on_event(SessionEvent::TxChanged {
+                generation,
+                result: Err(error),
+            })
+        }
+        SessionCommand::Apply { .. } => on_event(SessionEvent::Applied {
+            generation,
+            result: Err(error),
+        }),
+        SessionCommand::DropCached { .. } | SessionCommand::Shutdown => {}
+    }
 }
 
 /// A live connection's own worker thread. Dropping this joins the thread
@@ -377,12 +571,60 @@ impl SessionWorker {
         tunnel: Option<Box<dyn Tunnel>>,
         on_event: impl Fn(SessionEvent) + Send + 'static,
     ) -> Self {
+        Self::spawn_with_idle_close(session, tunnel, 0, None, on_event)
+    }
+
+    /// [`Self::spawn`] plus an idle-close timer (database-tools-plan FZ,
+    /// `app_config::database::idle_close_minutes`): after `idle_close_
+    /// minutes` of no command at all, the worker drops the real
+    /// connection (and `tunnel`) to free the socket, and lazily reopens
+    /// one — via `reconnect` — the next time a command actually needs it.
+    /// `idle_close_minutes == 0` or `reconnect: None` disables the timer
+    /// entirely, which is exactly what [`Self::spawn`] passes, so every
+    /// existing caller is unaffected.
+    ///
+    /// Manual tx and a parked cursor each pin a connection regardless of
+    /// how long it has sat idle (decision #9, database-tools-plan.md §3)
+    /// — `run`'s own loop is what actually enforces that, not this
+    /// constructor.
+    pub fn spawn_with_idle_close(
+        session: Session,
+        tunnel: Option<Box<dyn Tunnel>>,
+        idle_close_minutes: u32,
+        reconnect: Option<Reconnect>,
+        on_event: impl Fn(SessionEvent) + Send + 'static,
+    ) -> Self {
+        let idle_timeout =
+            (idle_close_minutes > 0).then(|| Duration::from_secs(idle_close_minutes as u64 * 60));
+        Self::spawn_with_idle_timeout(session, tunnel, idle_timeout, reconnect, on_event)
+    }
+
+    /// [`Self::spawn_with_idle_close`], but taking the idle timeout as a
+    /// `Duration` directly rather than whole minutes — the seam the tests
+    /// below use to exercise a sub-minute timeout without waiting a real
+    /// minute for it; production code always goes through
+    /// [`Self::spawn_with_idle_close`].
+    fn spawn_with_idle_timeout(
+        session: Session,
+        tunnel: Option<Box<dyn Tunnel>>,
+        idle_timeout: Option<Duration>,
+        reconnect: Option<Reconnect>,
+        on_event: impl Fn(SessionEvent) + Send + 'static,
+    ) -> Self {
         let generation = session.generation_handle();
         let cancel_handle = Arc::new(Mutex::new(session.cancel_handle()));
+        let cancel_handle_for_thread = Arc::clone(&cancel_handle);
         let (sender, receiver) = std::sync::mpsc::channel();
         let thread = std::thread::spawn(move || {
-            run(session, receiver, on_event);
-            drop(tunnel);
+            run(
+                session,
+                tunnel,
+                receiver,
+                idle_timeout,
+                reconnect,
+                cancel_handle_for_thread,
+                on_event,
+            );
         });
         Self {
             sender,
@@ -445,722 +687,5 @@ impl Drop for SessionWorker {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use db_core::driver::{CancelHandle, Connection, Execution};
-    use db_core::schema::{Children, Node, ObjectKind};
-    use std::sync::Mutex;
-
-    /// A canned two-batch `RowStream`: `[1, 2]` then `[3]`, then exhausted.
-    struct FakeRowStream {
-        remaining: Vec<Vec<Value>>,
-    }
-
-    impl RowStream for FakeRowStream {
-        fn next_batch(&mut self) -> Result<Option<db_core::value::RowBatch>, DbError> {
-            if self.remaining.is_empty() {
-                return Ok(None);
-            }
-            let row = self.remaining.remove(0);
-            Ok(Some(db_core::value::RowBatch {
-                columns: vec![ColumnMeta {
-                    name: "n".to_string(),
-                    type_name: "int".to_string(),
-                    nullable: false,
-                    origin: None,
-                }],
-                rows: vec![row],
-            }))
-        }
-    }
-
-    struct FakeCancelHandle(Arc<AtomicU64>);
-    impl CancelHandle for FakeCancelHandle {
-        fn cancel(&self) -> Result<(), DbError> {
-            self.0.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    /// A `Connection` double whose `introspect` counts every call it
-    /// receives — proves the worker's own cache actually avoids a repeat
-    /// query, which a mock that just returns canned data could not.
-    /// `execute` also recognises `"SELECT ROWS"` (a two-batch
-    /// [`FakeRowStream`]) and offers a [`FakeCancelHandle`] that counts how
-    /// many times it was invoked.
-    struct CountingConnection {
-        introspect_calls: Arc<AtomicU64>,
-        cancel_calls: Arc<AtomicU64>,
-    }
-
-    impl Connection for CountingConnection {
-        fn dialect(&self) -> db_core::dialect::Dialect {
-            db_core::dialect::Dialect::Sqlite
-        }
-        fn server_info(&self) -> String {
-            "counting".to_string()
-        }
-        fn introspect(
-            &mut self,
-            _scope: &IntrospectScope,
-            level: IntrospectLevel,
-        ) -> Result<SchemaSnapshot, DbError> {
-            self.introspect_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(SchemaSnapshot::new(
-                level,
-                vec![Node::leaf("t", ObjectKind::Table)],
-            ))
-        }
-        fn execute(
-            &mut self,
-            statement: &Statement,
-            _options: &ExecOptions,
-        ) -> Result<Execution, DbError> {
-            if statement.text.contains("FAIL") {
-                return Err(DbError::new(
-                    db_core::error::DbErrorCode::InvalidStatement,
-                    "boom",
-                ));
-            }
-            if statement.text.contains("ROWS") {
-                return Ok(Execution::Rows(Box::new(FakeRowStream {
-                    remaining: vec![vec![Value::Int(1)], vec![Value::Int(2)]],
-                })));
-            }
-            Ok(Execution::Affected(0))
-        }
-        fn begin(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn commit(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn rollback(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn set_read_only(&mut self, _read_only: bool) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn cancel_handle(&self) -> Option<Box<dyn CancelHandle>> {
-            Some(Box::new(FakeCancelHandle(Arc::clone(&self.cancel_calls))))
-        }
-        fn ddl_of(&mut self, object: &ObjectRef) -> Result<String, DbError> {
-            Ok(format!("CREATE TABLE {}", object.name))
-        }
-        fn apply(&mut self, _statements: &[Statement]) -> Result<u64, DbError> {
-            Ok(0)
-        }
-        fn close(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-    }
-
-    fn worker_with_events() -> (SessionWorker, Arc<Mutex<Vec<u64>>>, Arc<AtomicU64>) {
-        let calls = Arc::new(AtomicU64::new(0));
-        let session = Session::new(Box::new(CountingConnection {
-            introspect_calls: Arc::clone(&calls),
-            cancel_calls: Arc::new(AtomicU64::new(0)),
-        }));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = Arc::clone(&received);
-        let worker = SessionWorker::spawn(session, None, move |event| {
-            if let SessionEvent::Introspected { generation, .. } = event {
-                received_clone.lock().unwrap().push(generation);
-            }
-        });
-        (worker, received, calls)
-    }
-
-    /// Blocks until `predicate` sees at least `n` items — the worker
-    /// thread runs asynchronously, so a test polls its shared sink rather
-    /// than asserting immediately after `send`.
-    fn wait_for<T>(shared: &Mutex<Vec<T>>, n: usize) {
-        for _ in 0..200 {
-            if shared.lock().unwrap().len() >= n {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        panic!("timed out waiting for {n} event(s)");
-    }
-
-    #[test]
-    fn a_second_introspect_of_the_same_scope_is_served_from_cache() {
-        let (worker, received, calls) = worker_with_events();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn a_forced_introspect_bypasses_the_cache() {
-        let (worker, received, calls) = worker_with_events();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: true,
-            })
-            .unwrap();
-        wait_for(&received, 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn dropping_a_cached_scope_makes_the_next_request_a_real_query_again() {
-        let (worker, received, calls) = worker_with_events();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 1);
-        worker
-            .send(SessionCommand::DropCached {
-                scope: IntrospectScope::default(),
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn a_names_level_cache_entry_does_not_satisfy_a_columns_level_request() {
-        let (worker, received, calls) = worker_with_events();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Columns,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn a_columns_level_cache_entry_satisfies_a_names_level_request() {
-        let (worker, received, calls) = worker_with_events();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Columns,
-                force: false,
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 2);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn ddl_of_and_run_statement_round_trip_through_the_worker() {
-        let calls = Arc::new(AtomicU64::new(0));
-        let session = Session::new(Box::new(CountingConnection {
-            introspect_calls: calls,
-            cancel_calls: Arc::new(AtomicU64::new(0)),
-        }));
-        let ddls = Arc::new(Mutex::new(Vec::new()));
-        let ran = Arc::new(Mutex::new(Vec::new()));
-        let ddls_clone = Arc::clone(&ddls);
-        let ran_clone = Arc::clone(&ran);
-        let worker = SessionWorker::spawn(session, None, move |event| match event {
-            SessionEvent::Ddl { result, .. } => ddls_clone.lock().unwrap().push(result),
-            SessionEvent::Ran { result, .. } => ran_clone.lock().unwrap().push(result),
-            SessionEvent::Introspected { .. }
-            | SessionEvent::Batch { .. }
-            | SessionEvent::TxChanged { .. }
-            | SessionEvent::Applied { .. } => {}
-        });
-        worker
-            .send(SessionCommand::DdlOf {
-                object: ObjectRef::new("t"),
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::RunStatement {
-                statement: Statement::sql("DROP TABLE t"),
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::RunStatement {
-                statement: Statement::sql("FAIL"),
-            })
-            .unwrap();
-        wait_for(&ddls, 1);
-        wait_for(&ran, 2);
-        assert_eq!(ddls.lock().unwrap()[0].as_deref(), Ok("CREATE TABLE t"));
-        assert!(ran.lock().unwrap()[0].is_ok());
-        assert!(ran.lock().unwrap()[1].is_err());
-    }
-
-    #[test]
-    fn invalidate_bumps_the_generation_the_worker_reports() {
-        let (worker, _received, _calls) = worker_with_events();
-        let before = worker.generation();
-        let after = worker.invalidate();
-        assert_eq!(after, before + 1);
-        assert_eq!(worker.generation(), after);
-    }
-
-    #[test]
-    fn events_carry_the_generation_at_dispatch_time() {
-        let (worker, received, _calls) = worker_with_events();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 1);
-        assert_eq!(received.lock().unwrap()[0], 0);
-    }
-
-    #[test]
-    fn dropping_the_worker_stops_its_thread_without_a_panic() {
-        let (worker, _received, _calls) = worker_with_events();
-        drop(worker);
-    }
-
-    #[test]
-    fn a_scope_that_never_matches_is_a_no_op_cache_drop() {
-        let (worker, received, calls) = worker_with_events();
-        worker
-            .send(SessionCommand::DropCached {
-                scope: IntrospectScope::for_schema("nothing-cached-yet"),
-            })
-            .unwrap();
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 1);
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn schema_snapshot_children_survive_the_cache_round_trip() {
-        let calls = Arc::new(AtomicU64::new(0));
-        let session = Session::new(Box::new(CountingConnection {
-            introspect_calls: calls,
-            cancel_calls: Arc::new(AtomicU64::new(0)),
-        }));
-        let received = Arc::new(Mutex::new(Vec::new()));
-        let received_clone = Arc::clone(&received);
-        let worker = SessionWorker::spawn(session, None, move |event| {
-            if let SessionEvent::Introspected { result, .. } = event {
-                received_clone.lock().unwrap().push(result);
-            }
-        });
-        worker
-            .send(SessionCommand::Introspect {
-                scope: IntrospectScope::default(),
-                level: IntrospectLevel::Names,
-                force: false,
-            })
-            .unwrap();
-        wait_for(&received, 1);
-        let snapshot = received.lock().unwrap().remove(0).unwrap();
-        assert!(matches!(snapshot.roots[0].children, Children::NotLoaded));
-    }
-
-    fn batches_worker() -> (SessionWorker, Arc<Mutex<Vec<BatchOutcome>>>) {
-        let session = Session::new(Box::new(CountingConnection {
-            introspect_calls: Arc::new(AtomicU64::new(0)),
-            cancel_calls: Arc::new(AtomicU64::new(0)),
-        }));
-        let batches = Arc::new(Mutex::new(Vec::new()));
-        let batches_clone = Arc::clone(&batches);
-        let worker = SessionWorker::spawn(session, None, move |event| {
-            if let SessionEvent::Batch { outcome, .. } = event {
-                batches_clone.lock().unwrap().push(outcome);
-            }
-        });
-        (worker, batches)
-    }
-
-    #[test]
-    fn executing_a_rows_statement_parks_the_stream_and_reports_the_first_page() {
-        let (worker, batches) = batches_worker();
-        worker
-            .send(SessionCommand::Execute {
-                statement: Statement::sql("SELECT ROWS"),
-                options: ExecOptions::default(),
-            })
-            .unwrap();
-        wait_for(&batches, 1);
-        let guard = batches.lock().unwrap();
-        match &guard[0] {
-            BatchOutcome::Rows { rows, done, .. } => {
-                assert_eq!(rows, &vec![vec![Value::Int(1)]]);
-                assert!(!done);
-            }
-            _ => panic!("expected a Rows batch"),
-        }
-    }
-
-    #[test]
-    fn fetch_more_pages_the_parked_stream_until_it_is_exhausted() {
-        let (worker, batches) = batches_worker();
-        worker
-            .send(SessionCommand::Execute {
-                statement: Statement::sql("SELECT ROWS"),
-                options: ExecOptions::default(),
-            })
-            .unwrap();
-        worker.send(SessionCommand::FetchMore).unwrap();
-        worker.send(SessionCommand::FetchMore).unwrap();
-        wait_for(&batches, 3);
-        let batches = batches.lock().unwrap();
-        assert!(
-            matches!(&batches[1], BatchOutcome::Rows { rows, done: false, .. } if rows == &vec![vec![Value::Int(2)]])
-        );
-        assert!(matches!(&batches[2], BatchOutcome::Rows { done: true, .. }));
-    }
-
-    #[test]
-    fn fetch_more_with_nothing_parked_reports_an_error() {
-        let (worker, batches) = batches_worker();
-        worker.send(SessionCommand::FetchMore).unwrap();
-        wait_for(&batches, 1);
-        assert!(matches!(
-            &batches.lock().unwrap()[0],
-            BatchOutcome::Error(_)
-        ));
-    }
-
-    #[test]
-    fn a_non_rows_execute_reports_affected_directly_with_nothing_parked() {
-        let (worker, batches) = batches_worker();
-        worker
-            .send(SessionCommand::Execute {
-                statement: Statement::sql("UPDATE t SET x = 1"),
-                options: ExecOptions::default(),
-            })
-            .unwrap();
-        wait_for(&batches, 1);
-        assert!(matches!(
-            batches.lock().unwrap()[0],
-            BatchOutcome::Affected(0)
-        ));
-        // Nothing was parked — a follow-up `FetchMore` is refused, not
-        // silently served from a previous statement's leftover stream.
-        worker.send(SessionCommand::FetchMore).unwrap();
-        wait_for(&batches, 2);
-        assert!(matches!(batches.lock().unwrap()[1], BatchOutcome::Error(_)));
-    }
-
-    #[test]
-    fn cancel_now_invokes_the_connections_cancel_handle_from_outside_the_command_queue() {
-        let cancel_calls = Arc::new(AtomicU64::new(0));
-        let session = Session::new(Box::new(CountingConnection {
-            introspect_calls: Arc::new(AtomicU64::new(0)),
-            cancel_calls: Arc::clone(&cancel_calls),
-        }));
-        let worker = SessionWorker::spawn(session, None, |_event| {});
-        worker.cancel_now().unwrap();
-        assert_eq!(cancel_calls.load(Ordering::SeqCst), 1);
-    }
-
-    /// A `Connection` double for [`SessionCommand::Apply`]'s own tests:
-    /// records every `begin`/`commit`/`rollback`/`apply` call in order, and
-    /// `apply` fails when any statement's text contains `"FAIL"`.
-    #[derive(Default)]
-    struct ApplyConnection {
-        calls: Arc<Mutex<Vec<&'static str>>>,
-        fail: bool,
-    }
-
-    impl Connection for ApplyConnection {
-        fn dialect(&self) -> db_core::dialect::Dialect {
-            db_core::dialect::Dialect::Sqlite
-        }
-        fn server_info(&self) -> String {
-            "apply".to_string()
-        }
-        fn introspect(
-            &mut self,
-            _scope: &IntrospectScope,
-            _level: IntrospectLevel,
-        ) -> Result<SchemaSnapshot, DbError> {
-            unimplemented!("not exercised by the Apply tests")
-        }
-        fn execute(
-            &mut self,
-            _statement: &Statement,
-            _options: &ExecOptions,
-        ) -> Result<Execution, DbError> {
-            unimplemented!("not exercised by the Apply tests")
-        }
-        fn begin(&mut self) -> Result<(), DbError> {
-            self.calls.lock().unwrap().push("begin");
-            Ok(())
-        }
-        fn commit(&mut self) -> Result<(), DbError> {
-            self.calls.lock().unwrap().push("commit");
-            Ok(())
-        }
-        fn rollback(&mut self) -> Result<(), DbError> {
-            self.calls.lock().unwrap().push("rollback");
-            Ok(())
-        }
-        fn set_read_only(&mut self, _read_only: bool) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn cancel_handle(&self) -> Option<Box<dyn CancelHandle>> {
-            None
-        }
-        fn ddl_of(&mut self, _object: &ObjectRef) -> Result<String, DbError> {
-            unimplemented!("not exercised by the Apply tests")
-        }
-        fn apply(&mut self, statements: &[Statement]) -> Result<u64, DbError> {
-            self.calls.lock().unwrap().push("apply");
-            if self.fail || statements.iter().any(|s| s.text.contains("FAIL")) {
-                return Err(DbError::new(
-                    db_core::error::DbErrorCode::InvalidStatement,
-                    "boom",
-                ));
-            }
-            Ok(statements.len() as u64)
-        }
-        fn close(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn apply_in_auto_mode_wraps_a_begin_and_commit_around_it() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let session = Session::new(Box::new(ApplyConnection {
-            calls: Arc::clone(&calls),
-            fail: false,
-        }));
-        let results = Arc::new(Mutex::new(Vec::new()));
-        let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, None, move |event| {
-            if let SessionEvent::Applied { result, .. } = event {
-                results_clone.lock().unwrap().push(result);
-            }
-        });
-        worker
-            .send(SessionCommand::Apply {
-                statements: vec![Statement::sql("UPDATE t SET x = 1")],
-            })
-            .unwrap();
-        wait_for(&results, 1);
-        assert_eq!(*calls.lock().unwrap(), vec!["begin", "apply", "commit"]);
-        assert_eq!(results.lock().unwrap()[0], Ok(1));
-    }
-
-    #[test]
-    fn apply_in_auto_mode_rolls_back_on_failure_and_reports_the_error() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let session = Session::new(Box::new(ApplyConnection {
-            calls: Arc::clone(&calls),
-            fail: true,
-        }));
-        let results = Arc::new(Mutex::new(Vec::new()));
-        let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, None, move |event| {
-            if let SessionEvent::Applied { result, .. } = event {
-                results_clone.lock().unwrap().push(result);
-            }
-        });
-        worker
-            .send(SessionCommand::Apply {
-                statements: vec![Statement::sql("UPDATE t SET x = 1")],
-            })
-            .unwrap();
-        wait_for(&results, 1);
-        assert_eq!(*calls.lock().unwrap(), vec!["begin", "apply", "rollback"]);
-        assert!(results.lock().unwrap()[0].is_err());
-    }
-
-    #[test]
-    fn apply_in_manual_mode_neither_begins_nor_commits_its_own_transaction() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let mut session = Session::new(Box::new(ApplyConnection {
-            calls: Arc::clone(&calls),
-            fail: false,
-        }));
-        session.begin_manual().unwrap();
-        calls.lock().unwrap().clear();
-        let results = Arc::new(Mutex::new(Vec::new()));
-        let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, None, move |event| {
-            if let SessionEvent::Applied { result, .. } = event {
-                results_clone.lock().unwrap().push(result);
-            }
-        });
-        worker
-            .send(SessionCommand::Apply {
-                statements: vec![Statement::sql("UPDATE t SET x = 1")],
-            })
-            .unwrap();
-        wait_for(&results, 1);
-        // Only the apply itself — no begin/commit of its own, since a
-        // manual transaction is already open.
-        assert_eq!(*calls.lock().unwrap(), vec!["apply"]);
-        assert_eq!(results.lock().unwrap()[0], Ok(1));
-    }
-
-    #[test]
-    fn begin_commit_rollback_report_through_tx_changed() {
-        let session = Session::new(Box::new(CountingConnection {
-            introspect_calls: Arc::new(AtomicU64::new(0)),
-            cancel_calls: Arc::new(AtomicU64::new(0)),
-        }));
-        let results = Arc::new(Mutex::new(Vec::new()));
-        let results_clone = Arc::clone(&results);
-        let worker = SessionWorker::spawn(session, None, move |event| {
-            if let SessionEvent::TxChanged { result, .. } = event {
-                results_clone.lock().unwrap().push(result);
-            }
-        });
-        worker.send(SessionCommand::BeginManual).unwrap();
-        worker.send(SessionCommand::Commit).unwrap();
-        worker.send(SessionCommand::Rollback).unwrap();
-        wait_for(&results, 3);
-        let results = results.lock().unwrap();
-        assert!(results[0].is_ok());
-        assert!(results[1].is_ok());
-        // A `Rollback` right after a `Commit` re-opened auto mode: the fake
-        // connection accepts it (it only counts calls), proving `run` wires
-        // the command through rather than the outcome mattering here.
-        assert!(results[2].is_ok());
-    }
-
-    /// A fake tunnel that records into a shared log on `Drop` — proves
-    /// [`SessionWorker::spawn`]'s drop order (F7c): the connection must
-    /// close before the tunnel it was routed through does, never after.
-    struct LoggingTunnel {
-        log: Arc<Mutex<Vec<&'static str>>>,
-    }
-
-    impl Tunnel for LoggingTunnel {
-        fn local_port(&self) -> u16 {
-            12345
-        }
-    }
-
-    impl Drop for LoggingTunnel {
-        fn drop(&mut self) {
-            self.log.lock().unwrap().push("tunnel");
-        }
-    }
-
-    /// A `Connection` double whose `close` records into the same log —
-    /// paired with [`LoggingTunnel`] below.
-    struct LoggingConnection {
-        log: Arc<Mutex<Vec<&'static str>>>,
-    }
-
-    impl Connection for LoggingConnection {
-        fn dialect(&self) -> db_core::dialect::Dialect {
-            db_core::dialect::Dialect::Sqlite
-        }
-        fn server_info(&self) -> String {
-            "logging".to_string()
-        }
-        fn introspect(
-            &mut self,
-            _scope: &IntrospectScope,
-            level: IntrospectLevel,
-        ) -> Result<SchemaSnapshot, DbError> {
-            Ok(SchemaSnapshot::new(level, Vec::new()))
-        }
-        fn execute(
-            &mut self,
-            _statement: &Statement,
-            _options: &ExecOptions,
-        ) -> Result<Execution, DbError> {
-            Ok(Execution::Ok)
-        }
-        fn begin(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn commit(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn rollback(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn set_read_only(&mut self, _read_only: bool) -> Result<(), DbError> {
-            Ok(())
-        }
-        fn cancel_handle(&self) -> Option<Box<dyn CancelHandle>> {
-            None
-        }
-        fn ddl_of(&mut self, _object: &ObjectRef) -> Result<String, DbError> {
-            unimplemented!("not exercised by this test")
-        }
-        fn apply(&mut self, _statements: &[Statement]) -> Result<u64, DbError> {
-            unimplemented!("not exercised by this test")
-        }
-        fn close(&mut self) -> Result<(), DbError> {
-            Ok(())
-        }
-    }
-
-    impl Drop for LoggingConnection {
-        fn drop(&mut self) {
-            self.log.lock().unwrap().push("connection");
-        }
-    }
-
-    #[test]
-    fn dropping_the_worker_closes_the_connection_before_the_tunnel() {
-        let log = Arc::new(Mutex::new(Vec::new()));
-        let session = Session::new(Box::new(LoggingConnection { log: log.clone() }));
-        let tunnel: Box<dyn Tunnel> = Box::new(LoggingTunnel { log: log.clone() });
-        let worker = SessionWorker::spawn(session, Some(tunnel), |_event| {});
-        drop(worker); // sends Shutdown and joins the thread (see the Drop impl)
-        assert_eq!(*log.lock().unwrap(), vec!["connection", "tunnel"]);
-    }
-}
+#[path = "sessions_tests.rs"]
+mod tests;

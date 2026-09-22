@@ -13,7 +13,8 @@ use db_core::driver::{
 };
 use db_core::error::{DbError, DbErrorCode};
 use db_core::schema::{
-    IntrospectLevel, IntrospectScope, Node, NodeDetail, ObjectKind, ObjectRef, SchemaSnapshot,
+    ConstraintKind, IntrospectLevel, IntrospectScope, Node, NodeDetail, ObjectKind, ObjectRef,
+    SchemaSnapshot,
 };
 use db_core::value::{ColumnMeta, RowBatch, Value};
 
@@ -501,9 +502,32 @@ impl SqliteConnection {
         let mut children = self.column_nodes(name)?;
         if level == IntrospectLevel::Full {
             children.extend(self.index_nodes(name)?);
+            children.extend(self.constraint_nodes(name)?);
             children.extend(self.trigger_nodes(name)?);
         }
         Ok(Node::with_children(name, object_kind, children))
+    }
+
+    /// Whether `table`'s own `CREATE TABLE` text uses the
+    /// `INTEGER PRIMARY KEY AUTOINCREMENT` form — the only case SQLite
+    /// auto-generates a column's value (a plain `INTEGER PRIMARY KEY`
+    /// aliases `rowid` but never guarantees monotonic reuse-free values).
+    /// A single substring search on `sqlite_master.sql`, not a parse —
+    /// good enough for the one keyword this needs and never mistaken for
+    /// column-level detail no cheaper query would give us anyway.
+    fn table_has_autoincrement(&self, table: &str) -> bool {
+        use rusqlite::OptionalExtension;
+        self.conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name = ?1 AND type = 'table'",
+                [table],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .flatten()
+            .is_some_and(|sql| sql.to_uppercase().contains("AUTOINCREMENT"))
     }
 
     fn column_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
@@ -526,6 +550,11 @@ impl SqliteConnection {
             .map_err(map_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_err)?;
+        // AUTOINCREMENT only ever applies to a single-column INTEGER
+        // PRIMARY KEY, so this is cheap to compute once per table rather
+        // than per column.
+        let single_int_pk = columns.iter().filter(|(_, _, _, _, pk)| *pk > 0).count() == 1;
+        let has_autoincrement = single_int_pk && self.table_has_autoincrement(table);
         Ok(columns
             .into_iter()
             .map(|(name, type_name, not_null, default, pk)| {
@@ -534,13 +563,20 @@ impl SqliteConnection {
                     nullable: Some(not_null == 0),
                     default,
                     primary_key: pk > 0,
-                    ttl_seconds: None,
+                    auto_increment: (pk > 0).then_some(has_autoincrement),
+                    ..NodeDetail::default()
                 })
             })
             .collect())
     }
 
-    fn index_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
+    /// One index's row from `PRAGMA index_list`: name, whether it is
+    /// unique, and its `origin` (`c` a plain `CREATE INDEX`, `u` a
+    /// `UNIQUE` column/table constraint, `pk` the primary key's own
+    /// index) — `constraint_nodes` uses `origin` to avoid reporting a
+    /// `UNIQUE` constraint's backing index twice, once as an index and
+    /// once as a constraint with no columns of its own.
+    fn index_rows(&self, table: &str) -> Result<Vec<(String, bool, String)>, DbError> {
         let mut stmt = self
             .conn
             .prepare(&format!(
@@ -548,15 +584,172 @@ impl SqliteConnection {
                 Dialect::Sqlite.quote_ident(table)
             ))
             .map_err(map_err)?;
-        let names = stmt
-            .query_map([], |row| row.get::<_, String>(1))
+        let rows = stmt
+            .query_map([], |row| {
+                let name: String = row.get(1)?;
+                let unique: i64 = row.get(2)?;
+                let origin: String = row.get(3)?;
+                Ok((name, unique != 0, origin))
+            })
             .map_err(map_err)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(map_err)?;
-        Ok(names
-            .into_iter()
-            .map(|name| Node::leaf(name, ObjectKind::Index))
-            .collect())
+        Ok(rows)
+    }
+
+    fn index_columns(&self, index: &str) -> Result<Vec<String>, DbError> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!(
+                "PRAGMA index_info({})",
+                Dialect::Sqlite.quote_ident(index)
+            ))
+            .map_err(map_err)?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(2))
+            .map_err(map_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+        Ok(columns)
+    }
+
+    fn index_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
+        let mut nodes = Vec::new();
+        for (name, unique, _origin) in self.index_rows(table)? {
+            let columns = self.index_columns(&name)?;
+            nodes.push(Node::leaf(name, ObjectKind::Index).with_detail(NodeDetail {
+                index: Some(db_core::schema::IndexDetail {
+                    columns,
+                    unique,
+                    method: Some("btree".to_string()),
+                }),
+                ..NodeDetail::default()
+            }));
+        }
+        Ok(nodes)
+    }
+
+    /// Primary key, unique and foreign key constraints as `Constraint`
+    /// nodes — SQLite exposes no `CHECK` constraint listing short of
+    /// parsing `sqlite_master.sql` itself, so `Check` constraints are
+    /// left out here (database-tools.md §11).
+    fn constraint_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
+        let mut nodes = Vec::new();
+
+        let pk_columns: Vec<String> = {
+            let mut stmt = self
+                .conn
+                .prepare(&format!(
+                    "PRAGMA table_info({})",
+                    Dialect::Sqlite.quote_ident(table)
+                ))
+                .map_err(map_err)?;
+            let mut ordered = stmt
+                .query_map([], |row| {
+                    let name: String = row.get(1)?;
+                    let pk: i64 = row.get(5)?;
+                    Ok((pk, name))
+                })
+                .map_err(map_err)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(map_err)?;
+            ordered.retain(|(pk, _)| *pk > 0);
+            ordered.sort_by_key(|(pk, _)| *pk);
+            ordered.into_iter().map(|(_, name)| name).collect()
+        };
+        if !pk_columns.is_empty() {
+            nodes.push(
+                Node::leaf(format!("{table}_pkey"), ObjectKind::Constraint).with_detail(
+                    NodeDetail {
+                        constraint: Some(ConstraintKind::PrimaryKey {
+                            columns: pk_columns,
+                        }),
+                        ..NodeDetail::default()
+                    },
+                ),
+            );
+        }
+
+        for (name, unique, origin) in self.index_rows(table)? {
+            if origin == "u" && unique {
+                let columns = self.index_columns(&name)?;
+                nodes.push(
+                    Node::leaf(name, ObjectKind::Constraint).with_detail(NodeDetail {
+                        constraint: Some(ConstraintKind::Unique { columns }),
+                        ..NodeDetail::default()
+                    }),
+                );
+            }
+        }
+
+        let mut fk_stmt = self
+            .conn
+            .prepare(&format!(
+                "PRAGMA foreign_key_list({})",
+                Dialect::Sqlite.quote_ident(table)
+            ))
+            .map_err(map_err)?;
+        let fk_rows = fk_stmt
+            .query_map([], |row| {
+                let id: i64 = row.get(0)?;
+                let seq: i64 = row.get(1)?;
+                let ref_table: String = row.get(2)?;
+                let from: String = row.get(3)?;
+                let to: String = row.get(4)?;
+                let on_update: String = row.get(5)?;
+                let on_delete: String = row.get(6)?;
+                Ok((id, seq, ref_table, from, to, on_update, on_delete))
+            })
+            .map_err(map_err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(map_err)?;
+        struct FkGroup {
+            ref_table: String,
+            columns: Vec<(i64, String, String)>,
+            on_update: String,
+            on_delete: String,
+        }
+        let mut by_id: std::collections::BTreeMap<i64, FkGroup> = std::collections::BTreeMap::new();
+        for (id, seq, ref_table, from, to, on_update, on_delete) in fk_rows {
+            let entry = by_id.entry(id).or_insert_with(|| FkGroup {
+                ref_table,
+                columns: Vec::new(),
+                on_update,
+                on_delete,
+            });
+            entry.columns.push((seq, from, to));
+        }
+        for (
+            id,
+            FkGroup {
+                ref_table,
+                mut columns,
+                on_update,
+                on_delete,
+            },
+        ) in by_id
+        {
+            columns.sort_by_key(|(seq, _, _)| *seq);
+            let cols = columns;
+            let columns: Vec<String> = cols.iter().map(|(_, from, _)| from.clone()).collect();
+            let ref_columns: Vec<String> = cols.iter().map(|(_, _, to)| to.clone()).collect();
+            let none_action = |a: &str| a.is_empty() || a.eq_ignore_ascii_case("NO ACTION");
+            nodes.push(
+                Node::leaf(format!("{table}_fk_{id}"), ObjectKind::Constraint).with_detail(
+                    NodeDetail {
+                        constraint: Some(ConstraintKind::ForeignKey {
+                            columns,
+                            ref_table: ObjectRef::new(ref_table).with_kind(ObjectKind::Table),
+                            ref_columns,
+                            on_delete: (!none_action(&on_delete)).then_some(on_delete),
+                            on_update: (!none_action(&on_update)).then_some(on_update),
+                        }),
+                        ..NodeDetail::default()
+                    },
+                ),
+            );
+        }
+        Ok(nodes)
     }
 
     fn trigger_nodes(&self, table: &str) -> Result<Vec<Node>, DbError> {
@@ -761,6 +954,148 @@ mod tests {
         assert!(children
             .iter()
             .any(|c| c.kind == ObjectKind::Trigger && c.name == "users_ai"));
+    }
+
+    /// F6c: a schema with two foreign keys, a composite primary key and
+    /// a unique index — the full structural detail `IntrospectLevel::Full`
+    /// is meant to carry, not just presence-only nodes.
+    #[test]
+    fn full_introspect_carries_fk_composite_pk_and_unique_index_detail() {
+        let mut conn = connect();
+        for ddl in [
+            "CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT UNIQUE)",
+            "CREATE TABLE products (id INTEGER PRIMARY KEY)",
+            "CREATE TABLE order_items (\
+               order_id INTEGER, \
+               product_id INTEGER, \
+               user_id INTEGER, \
+               PRIMARY KEY (order_id, product_id), \
+               FOREIGN KEY (product_id) REFERENCES products(id), \
+               FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE\
+             )",
+        ] {
+            conn.execute(&Statement::sql(ddl), &ExecOptions::default())
+                .unwrap();
+        }
+
+        let snapshot = conn
+            .introspect(&IntrospectScope::default(), IntrospectLevel::Full)
+            .unwrap();
+
+        // The unique index on users.email carries its column and
+        // uniqueness, not just a bare name.
+        let users = snapshot.roots.iter().find(|n| n.name == "users").unwrap();
+        let Children::Loaded(users_children) = &users.children else {
+            panic!("expected loaded children");
+        };
+        let email_index = users_children
+            .iter()
+            .find(|c| {
+                c.kind == ObjectKind::Index && c.detail.index.as_ref().is_some_and(|d| d.unique)
+            })
+            .expect("expected the auto-created unique index for email");
+        let index_detail = email_index.detail.index.as_ref().unwrap();
+        assert_eq!(index_detail.columns, vec!["email".to_string()]);
+        assert!(index_detail.unique);
+        // ... and the same uniqueness is also visible as a Unique
+        // constraint node (not just an index).
+        assert!(users_children.iter().any(|c| c.kind
+            == ObjectKind::Constraint
+            && matches!(
+                &c.detail.constraint,
+                Some(ConstraintKind::Unique { columns }) if columns == &vec!["email".to_string()]
+            )));
+
+        let order_items = snapshot
+            .roots
+            .iter()
+            .find(|n| n.name == "order_items")
+            .unwrap();
+        let Children::Loaded(children) = &order_items.children else {
+            panic!("expected loaded children");
+        };
+
+        let pk = children
+            .iter()
+            .find(|c| {
+                c.kind == ObjectKind::Constraint
+                    && matches!(
+                        &c.detail.constraint,
+                        Some(ConstraintKind::PrimaryKey { .. })
+                    )
+            })
+            .expect("expected a primary key constraint node");
+        match pk.detail.constraint.as_ref().unwrap() {
+            ConstraintKind::PrimaryKey { columns } => {
+                assert_eq!(
+                    columns,
+                    &vec!["order_id".to_string(), "product_id".to_string()]
+                )
+            }
+            other => panic!("expected PrimaryKey, got {other:?}"),
+        }
+
+        let foreign_keys: Vec<&ConstraintKind> = children
+            .iter()
+            .filter_map(|c| c.detail.constraint.as_ref())
+            .filter(|k| matches!(k, ConstraintKind::ForeignKey { .. }))
+            .collect();
+        assert_eq!(foreign_keys.len(), 2);
+        let to_users = foreign_keys
+            .iter()
+            .find_map(|k| match k {
+                ConstraintKind::ForeignKey {
+                    columns,
+                    ref_table,
+                    ref_columns,
+                    on_delete,
+                    on_update,
+                } if ref_table.name == "users" => Some((
+                    columns.clone(),
+                    ref_columns.clone(),
+                    on_delete.clone(),
+                    on_update.clone(),
+                )),
+                _ => None,
+            })
+            .expect("expected a foreign key to users");
+        assert_eq!(to_users.0, vec!["user_id".to_string()]);
+        assert_eq!(to_users.1, vec!["id".to_string()]);
+        assert_eq!(to_users.2, Some("CASCADE".to_string()));
+        assert_eq!(to_users.3, None);
+    }
+
+    #[test]
+    fn auto_increment_is_true_only_for_a_single_column_integer_primary_key_with_the_keyword() {
+        let mut conn = connect();
+        for ddl in [
+            "CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT)",
+            "CREATE TABLE plain (id INTEGER PRIMARY KEY, name TEXT)",
+        ] {
+            conn.execute(&Statement::sql(ddl), &ExecOptions::default())
+                .unwrap();
+        }
+        let snapshot = conn
+            .introspect(&IntrospectScope::default(), IntrospectLevel::Columns)
+            .unwrap();
+        let users = snapshot.roots.iter().find(|n| n.name == "users").unwrap();
+        let Children::Loaded(users_children) = &users.children else {
+            panic!("expected loaded children")
+        };
+        assert_eq!(
+            users_children[0].detail.auto_increment,
+            Some(true),
+            "AUTOINCREMENT keyword present"
+        );
+        let plain = snapshot.roots.iter().find(|n| n.name == "plain").unwrap();
+        let Children::Loaded(plain_children) = &plain.children else {
+            panic!("expected loaded children")
+        };
+        assert_eq!(
+            plain_children[0].detail.auto_increment,
+            Some(false),
+            "no AUTOINCREMENT keyword"
+        );
     }
 
     #[test]

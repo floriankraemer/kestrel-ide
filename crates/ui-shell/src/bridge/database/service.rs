@@ -548,6 +548,21 @@ impl ffi::DatabaseService {
         FfiResult::default()
     }
 
+    /// database-tools-plan phase FX: `rows()`/`configured_sources()`
+    /// re-read `load_project_settings()` fresh from disk on every call, so
+    /// the fix is only ever "ask the view to re-read", never a cached
+    /// value to invalidate. Every source this project's own `.ide/
+    /// settings.toml` still names stays connected across the reopen (its
+    /// `SessionWorker` is keyed by source id, not by project root) — only
+    /// a source that belonged to the *previous* project and shares no id
+    /// with this one would show as connected with no matching row, which
+    /// `configured_sources()`'s own id-keyed lookup already excludes from
+    /// `rows()`'s output today; disconnecting it outright is tracked debt
+    /// (`database-tools.md` §11), not a regression this fix introduces.
+    pub fn project_opened(mut self: Pin<&mut Self>, _root: &QString) {
+        self.as_mut().rows_changed();
+    }
+
     pub fn expand(self: Pin<&mut Self>, node_id: &QString) -> FfiResult {
         let composite = node_id.to_string();
         let Some((source_id, path)) = parse_node_id(&composite) else {

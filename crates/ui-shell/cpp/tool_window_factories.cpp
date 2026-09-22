@@ -86,6 +86,12 @@ ContributedToolWindows buildContributedToolWindows(
             built.database = static_cast<DatabasePanel *>(panel);
         }
     }
+    // FX: `databaseService->rows()` re-reads `configured_sources()` fresh
+    // every call, but this dock's tree is only ever built once, before any
+    // project is open — so a source in the project this window eventually
+    // opens never shows without this.
+    QObject::connect(treeModel, &ProjectTreeModel::projectOpened, databaseService,
+                      [databaseService](const QString &root) { databaseService->projectOpened(root); });
     return built;
 }
 

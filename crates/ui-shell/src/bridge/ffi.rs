@@ -10273,6 +10273,19 @@ mod ffi {
         #[cxx_name = "disconnectSource"]
         fn disconnect_source(self: Pin<&mut DatabaseService>, id: &QString) -> FfiResult;
 
+        // ---- database: FX ----
+        /// A project opened (or reopened): `rows()` reads
+        /// `configured_sources()` fresh from disk on every call, but
+        /// nothing re-triggers that read on its own — this re-emits
+        /// `rowsChanged` so a source declared in the just-opened
+        /// project's own `.ide/settings.toml` actually shows up, the same
+        /// project-open lifecycle event `BuildToolsService::
+        /// projectOpened` already uses (`main_window.cpp` wires both to
+        /// `ProjectTreeModel::projectOpened`).
+        #[qinvokable]
+        #[cxx_name = "projectOpened"]
+        fn project_opened(self: Pin<&mut DatabaseService>, root: &QString);
+
         /// Fetch `node_id`'s children at `Columns` level if not already
         /// loaded (`TreeRow::loaded`) — a no-op, successful call for a
         /// node that is already loaded or is not expandable.

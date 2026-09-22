@@ -4,6 +4,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 #include <functional>
@@ -47,9 +48,25 @@ public:
 
     void setOpenSettingsHandler(OpenSettings handler);
 
+    // E2E only (`crates/app/tests/e2e_database.rs`): re-report the tree's
+    // row rects now that the dock is actually on screen and laid out —
+    // `buildDatabaseDock` calls this once per `visibilityChanged(true)`,
+    // the same reasoning `ContainersPanel::refreshE2eRects` gives.
+    void refreshE2eRects() const;
+
 private:
+    // Every row's own screen rect, id- and kind-keyed — a collapsed or
+    // scrolled-away row is filtered out, the same contract
+    // `ContainersPanel::rowRectsJson` documents.
+    QStringList rowRectsJson() const;
     void rebuildTree();
     void onItemExpanded(QTreeWidgetItem *item);
+    // A `source` row has no toolbar/menu affordance of its own to connect
+    // it — double-click is the same gesture `ContainersPanel` uses for its
+    // `connection`-kind rows, and the only one a `source` row's own
+    // `expandable` flag does not already cover (expanding it is a no-op
+    // per `DatabaseService::expand`'s own `$root` short-circuit).
+    void onItemDoubleClicked(QTreeWidgetItem *item);
     void showContextMenu(const QPoint &pos);
     void onConnectionStateChanged(const QString &id, FfiDbConnectionState state,
                                   const QString &message);
@@ -82,6 +99,7 @@ private:
     {
         QString label;
         QString sourceId;
+        QString kind;
         bool isSourceRoot = false;
         bool canOpenConsole = false;
         bool canEditData = false;

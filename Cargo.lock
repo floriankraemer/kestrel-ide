@@ -250,6 +250,7 @@ dependencies = [
  "base64 0.22.1",
  "e2e",
  "flate2",
+ "rusqlite",
  "serde_json",
  "tempfile",
  "ui-shell",

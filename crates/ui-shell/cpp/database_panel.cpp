@@ -3,6 +3,7 @@
 #include "database_exchange_actions.h"
 #include "db_object_dialogs.h"
 #include "dock_layout.h"
+#include "e2e_mark.h"
 
 #include "DockAreaWidget.h"
 #include "DockManager.h"
@@ -13,12 +14,14 @@
 #include <QDebug>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -152,9 +155,22 @@ DatabasePanel::DatabasePanel(DatabaseService *databaseService, ExchangeService *
     tree_ = new QTreeWidget(this);
     tree_->setColumnCount(2);
     tree_->setHeaderLabels({tr("Name"), tr("Detail")});
+    // Without an explicit resize mode, Qt's default column widths (each
+    // section's own `sizeHintForColumn`, computed against whatever size
+    // this widget had before ADS ever placed it in a narrow right-area
+    // dock) can add up to more than the dock ever actually shows — a
+    // `QTreeWidget` happily lets a row's columns overflow its own
+    // viewport, no horizontal scrollbar needed to notice, since nothing
+    // before this reads a row's rect back. `ContainersPanel`'s tree sets
+    // the same pair for the same reason (`Stretch` on the label column,
+    // `ResizeToContents` on the rest), so total column width can never
+    // exceed the viewport's own.
+    tree_->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    tree_->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     tree_->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(tree_, &QTreeWidget::customContextMenuRequested, this, &DatabasePanel::showContextMenu);
     connect(tree_, &QTreeWidget::itemExpanded, this, &DatabasePanel::onItemExpanded);
+    connect(tree_, &QTreeWidget::itemDoubleClicked, this, &DatabasePanel::onItemDoubleClicked);
     layout->addWidget(tree_, 1);
 
     statusLabel_ = new QLabel(this);
@@ -212,7 +228,8 @@ void DatabasePanel::rebuildTree()
         RowInfo info;
         info.label = QString(row.label);
         info.sourceId = QString(row.sourceId);
-        info.isSourceRoot = QString(row.kind) == QLatin1String("source");
+        info.kind = QString(row.kind);
+        info.isSourceRoot = info.kind == QLatin1String("source");
         info.canOpenConsole = row.actions.canOpenConsole;
         info.canEditData = row.actions.canEditData;
         info.canGoToDdl = row.actions.canGoToDdl;
@@ -244,6 +261,42 @@ void DatabasePanel::rebuildTree()
         }
     }
     tree_->blockSignals(false);
+
+    e2eMark(QStringLiteral("{\"ev\":\"database_tree_changed\",\"nodes\":%1,\"rows\":[%2]}")
+              .arg(itemsById_.size())
+              .arg(rowRectsJson().join(QLatin1Char(','))));
+}
+
+// See `ContainersPanel::rowRectsJson`'s own doc comment for why this is
+// filtered the way it is (collapsed/scrolled-away rows report a rect an
+// E2E click could never land on).
+QStringList DatabasePanel::rowRectsJson() const
+{
+    QStringList rects;
+    for (auto it = itemsById_.constBegin(); it != itemsById_.constEnd(); ++it) {
+        QTreeWidgetItem *item = it.value();
+        const QRect rect = tree_->visualItemRect(item);
+        if (!rect.isValid() || rect.isEmpty() || !tree_->viewport()->rect().contains(rect)) {
+            continue;
+        }
+        const QPoint origin = tree_->viewport()->mapToGlobal(rect.topLeft());
+        const auto info = rowInfoById_.constFind(it.key());
+        const QString kind = info == rowInfoById_.constEnd() ? QString() : info->kind;
+        rects << QStringLiteral("{\"id\":%1,\"kind\":%2,\"rect\":[%3,%4,%5,%6]}")
+                    .arg(e2eJson(it.key()), e2eJson(kind))
+                    .arg(origin.x())
+                    .arg(origin.y())
+                    .arg(rect.width())
+                    .arg(rect.height());
+    }
+    return rects;
+}
+
+void DatabasePanel::refreshE2eRects() const
+{
+    e2eMark(QStringLiteral("{\"ev\":\"database_tree_changed\",\"nodes\":%1,\"rows\":[%2]}")
+              .arg(itemsById_.size())
+              .arg(rowRectsJson().join(QLatin1Char(','))));
 }
 
 void DatabasePanel::onItemExpanded(QTreeWidgetItem *item)
@@ -252,6 +305,25 @@ void DatabasePanel::onItemExpanded(QTreeWidgetItem *item)
     if (!nodeId.isEmpty()) {
         report(databaseService_->expand(nodeId));
     }
+    // E2E only (`crates/app/tests/e2e_database.rs`): a synthetic grouping
+    // folder (`kind` starting `folder-`, `db_core::tree::flatten`'s own
+    // by-object-type grouping) has every child item already built —
+    // expanding it is a plain `QTreeWidgetItem::setExpanded`, no backend
+    // round trip and so no `rows_changed`/`database_tree_changed` of its
+    // own to reveal the children's rects. A node that *does* still need
+    // fetching harmlessly gets this same remark twice — once here, once
+    // more from `rebuildTree` once that fetch's reply lands.
+    QTimer::singleShot(0, this, [this]() { refreshE2eRects(); });
+}
+
+void DatabasePanel::onItemDoubleClicked(QTreeWidgetItem *item)
+{
+    const QString nodeId = item ? item->data(0, Qt::UserRole).toString() : QString();
+    const auto found = rowInfoById_.constFind(nodeId);
+    if (found == rowInfoById_.constEnd() || !found->isSourceRoot) {
+        return;
+    }
+    report(databaseService_->connectSource(found->sourceId));
 }
 
 QString DatabasePanel::selectedNodeId() const
@@ -326,6 +398,11 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
         return;
     }
 
+    // E2E only (`crates/app/tests/e2e_database.rs`): the tree's own
+    // context menu has no keymap shortcut for most of its actions (Go to
+    // DDL included) — the same problem `e2eMarkMenuActions` solves for
+    // every other on-demand popup in this codebase.
+    e2eMarkMenuActions(&menu, "database_context_menu_action");
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
     if (chosen == nullptr) {
         return;
@@ -428,15 +505,38 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
     }
 }
 
+namespace {
+QString connectionStateName(FfiDbConnectionState state)
+{
+    switch (state) {
+    case FfiDbConnectionState::Disconnected:
+        return QStringLiteral("disconnected");
+    case FfiDbConnectionState::Connecting:
+        return QStringLiteral("connecting");
+    case FfiDbConnectionState::Connected:
+        return QStringLiteral("connected");
+    case FfiDbConnectionState::Error:
+        return QStringLiteral("error");
+    }
+    return QString();
+}
+} // namespace
+
 void DatabasePanel::onConnectionStateChanged(const QString &id, FfiDbConnectionState state,
                                              const QString &message)
 {
-    Q_UNUSED(id);
     if (state == FfiDbConnectionState::Error && !message.isEmpty()) {
         statusLabel_->setText(message);
     } else {
         statusLabel_->clear();
     }
+    // E2E only (`crates/app/tests/e2e_database.rs`): the tree's own
+    // `database_tree_changed` rows carry no connection state, so a flow
+    // that double-clicks a `source` row to connect it needs its own
+    // marker to wait on — the same `containers_connection_state` shape
+    // `ContainersPanel` already reports.
+    e2eMark(QStringLiteral("{\"ev\":\"database_connection_state\",\"id\":%1,\"state\":%2}")
+              .arg(e2eJson(id), e2eJson(connectionStateName(state))));
 }
 
 void DatabasePanel::onActionFinished(bool ok, const QString &message)
@@ -474,6 +574,13 @@ DatabasePanel *buildDatabaseDock(ads::CDockManager *dockManager, DockRegistry *d
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("database"), dock, ads::RightDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("database"));
+    // E2E only — see `ContainersPanel::refreshE2eRects`'s own doc comment
+    // for why this waits a turn of the event loop past `visibilityChanged`.
+    QObject::connect(dock, &ads::CDockWidget::visibilityChanged, panel, [panel](bool visible) {
+        if (visible) {
+            QTimer::singleShot(0, panel, [panel]() { panel->refreshE2eRects(); });
+        }
+    });
     return panel;
 }
 

@@ -1816,6 +1816,7 @@ dependencies = [
  "futures-util",
  "mongodb",
  "mysql_async",
+ "pageant",
  "redis",
  "rusqlite",
  "russh",

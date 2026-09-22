@@ -249,13 +249,61 @@ async fn authenticate(
     }
 }
 
+/// Either Windows agent transport, behind one type — a named pipe and a
+/// Pageant stream are different types, and `AgentClient` is generic over
+/// exactly one of them.
+#[cfg(windows)]
+trait AgentStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+
+#[cfg(windows)]
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> AgentStream for T {}
+
+/// The public keys an agent's identity list offers, in the order the agent
+/// returned them — anything that is not a public key (a certificate, a
+/// future variant) is skipped rather than guessed at.
+fn agent_public_keys(identities: Vec<AgentIdentity>) -> Vec<PublicKey> {
+    identities
+        .into_iter()
+        .filter_map(|identity| match identity {
+            AgentIdentity::PublicKey { key, .. } => Some(key),
+            _ => None,
+        })
+        .collect()
+}
+
 async fn authenticate_via_agent(
     handle: &mut Handle<HostKeyRecorder>,
     user: &str,
 ) -> Result<russh::client::AuthResult, DbError> {
+    // `AgentClient::connect_env` is `#[cfg(unix)]` in russh — Windows has no
+    // `SSH_AUTH_SOCK` socket, it has OpenSSH's agent named pipe (overridable
+    // through `SSH_AUTH_SOCK` all the same) and Pageant. Only the connection
+    // differs; everything below is the same conversation on both platforms.
+    #[cfg(unix)]
     let mut agent = AgentClient::connect_env()
         .await
         .map_err(|error| tunnel_err(format!("could not reach ssh-agent: {error}")))?;
+    #[cfg(windows)]
+    let mut agent = {
+        // The two Windows transports are different stream types, so the one
+        // the connection ends up on is boxed behind `AgentStream` — the
+        // agent conversation below is identical either way.
+        let pipe = std::env::var("SSH_AUTH_SOCK")
+            .unwrap_or_else(|_| r"\\.\pipe\openssh-ssh-agent".to_string());
+        let stream: Box<dyn AgentStream> =
+            match tokio::net::windows::named_pipe::ClientOptions::new().open(&pipe) {
+                Ok(named_pipe) => Box::new(named_pipe),
+                Err(pipe_error) => {
+                    Box::new(pageant::PageantStream::new().await.map_err(|error| {
+                        tunnel_err(format!(
+                            "could not reach an SSH agent: {pipe} ({pipe_error}), \
+                                 Pageant ({error})"
+                        ))
+                    })?)
+                }
+            };
+        AgentClient::connect(stream)
+    };
     let identities = agent
         .request_identities()
         .await
@@ -265,10 +313,7 @@ async fn authenticate_via_agent(
         .await
         .map_err(|error| tunnel_err(format!("SSH handshake failed: {error}")))?
         .flatten();
-    for identity in identities {
-        let AgentIdentity::PublicKey { key, .. } = identity else {
-            continue;
-        };
+    for key in agent_public_keys(identities) {
         let result = handle
             .authenticate_publickey_with(user, key, hash_alg, &mut agent)
             .await
@@ -665,6 +710,28 @@ mod tests {
             None => std::env::remove_var("HOME"),
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn agent_public_keys_keeps_only_public_keys_in_order() {
+        let first = test_public_key();
+        let second = test_public_key();
+        let keys = agent_public_keys(vec![
+            AgentIdentity::PublicKey {
+                key: first.clone(),
+                comment: "first".to_string(),
+            },
+            AgentIdentity::PublicKey {
+                key: second.clone(),
+                comment: "second".to_string(),
+            },
+        ]);
+        assert_eq!(keys, vec![first, second]);
+    }
+
+    #[test]
+    fn agent_public_keys_of_nothing_is_empty() {
+        assert!(agent_public_keys(Vec::new()).is_empty());
     }
 
     #[test]

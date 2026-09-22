@@ -471,12 +471,28 @@ fn stage_via_checkbox(ide: &Ide, mark: Mark, path: &str) -> Mark {
 /// shape `git_fixture`'s own closure uses, pulled out here because G9's
 /// three tests below all set up history beyond what `git_fixture` builds.
 fn git(root: &std::path::Path, args: &[&str]) {
-    let status = std::process::Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .status()
-        .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
-    assert!(status.success(), "git {args:?} failed");
+    // The running app refreshes `git status` on every tree change, which
+    // briefly holds `.git/index.lock`; a fixture-side `git add` landing in
+    // that window fails with "Unable to create index.lock" — retry a few
+    // times rather than let the harness race decide the flow (seen once in
+    // a full `make e2e` run, 4/4 green in isolation).
+    let mut last = String::new();
+    for _ in 0..10 {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(root)
+            .output()
+            .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
+        if output.status.success() {
+            return;
+        }
+        last = String::from_utf8_lossy(&output.stderr).into_owned();
+        if !last.contains("index.lock") {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    panic!("git {args:?} failed: {last}");
 }
 
 /// Double-clicking a row in the Changes dock opens that file.

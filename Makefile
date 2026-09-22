@@ -100,10 +100,12 @@ jvm-ci: ## Inner half of `test-jvm` — run inside the image
 # stage yet — that lands in F8.6 alongside the ODBC client-tools install;
 # for now the compose service is reached over `--network host`, the same
 # loopback-only posture `docker/db-compose.yml` publishes it under).
-test-db: linux-image ## Bring up docker/db-compose.yml and run the real-server integration tests (postgres, mongo, redis, scylla, sshd)
+test-db: linux-image ## Bring up docker/db-compose.yml and run the real-server integration tests (postgres, mysql, mariadb, mongo, redis, scylla, sshd)
 	docker compose -f docker/db-compose.yml up -d --wait
 	$(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) --network host \
 		-e IDE_DB_POSTGRES_URL=postgres://ide:ide@127.0.0.1:55432/ide_test \
+		-e IDE_DB_MYSQL_URL=mysql://ide:ide@127.0.0.1:53306/ide_test \
+		-e IDE_DB_MARIADB_URL=mysql://ide:ide@127.0.0.1:53307/ide_test \
 		-e IDE_DB_MONGO_URL=mongodb://127.0.0.1:55017 \
 		-e IDE_DB_REDIS_URL=redis://127.0.0.1:56379 \
 		-e IDE_DB_CASSANDRA_HOSTS=127.0.0.1:59042 \

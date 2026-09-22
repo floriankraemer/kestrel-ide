@@ -2,8 +2,8 @@
 # (docs/architecture/db-integration.md). Nightly/on-demand only — never a
 # per-PR gate, the same `lsp-conformance`/`jvm-integration` reasoning.
 #
-# F1 lands PostgreSQL; F7 adds Mongo/Redis/Scylla/sshd (this file); MySQL/
-# MariaDB and SQL Server (F8) still need their own services added.
+# F1 lands PostgreSQL; F7 adds Mongo/Redis/Scylla/sshd; FZ adds MySQL/
+# MariaDB (this file). SQL Server (F8) still needs its own service added.
 #
 # Every version is pinned (docs/architecture/db-integration.md's "why every
 # version is pinned"): bumping one is a deliberate commit with its own
@@ -23,6 +23,42 @@ services:
       - "127.0.0.1:55432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ide -d ide_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # FZ: `IDE_DB_MYSQL_URL=mysql://ide:ide@127.0.0.1:53306/ide_test`.
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_USER: ide
+      MYSQL_PASSWORD: ide
+      MYSQL_DATABASE: ide_test
+      MYSQL_ROOT_PASSWORD: ide
+    ports:
+      - "127.0.0.1:53306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u ide -pide"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # FZ: `IDE_DB_MARIADB_URL=mysql://ide:ide@127.0.0.1:53307/ide_test`.
+  mariadb:
+    image: mariadb:11
+    environment:
+      MARIADB_USER: ide
+      MARIADB_PASSWORD: ide
+      MARIADB_DATABASE: ide_test
+      MARIADB_ROOT_PASSWORD: ide
+    ports:
+      - "127.0.0.1:53307:3306"
+    healthcheck:
+      # `mariadb:11`'s image ships `mariadb-admin`, not the `mysqladmin`
+      # name the upstream `mysql:8.4` image still symlinks (verified
+      # against the running container: `mysqladmin` is not on `$PATH`
+      # here at all).
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u ide -pide"]
       interval: 2s
       timeout: 2s
       retries: 30

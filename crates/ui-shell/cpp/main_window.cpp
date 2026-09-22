@@ -876,12 +876,12 @@ void buildMainWindow(AppSettings *appSettings,
       runConfigEditor, containerService,
     };
     QObject::connect(preferencesAction, &QAction::triggered, window, [window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext); });
-    central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings](const QString &tab) {
-        appSettings->setSettingsScope(QStringLiteral("global"));
-        showSettingsDialog(window, settingsContext, QObject::tr("Containers"), tab);
-    });
-    central.containersPanel->setRunContext(runService, runConfigEditor, editorTabs); // C5
-    central.databasePanel->setOpenSettingsHandler([window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext, QObject::tr("Database")); });
+    // G1.6: null when its plugin is disabled; an unconditional deref here used to segfault the next launch.
+    if (central.containersPanel != nullptr) {
+        central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings](const QString &tab) { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext, QObject::tr("Containers"), tab); });
+        central.containersPanel->setRunContext(runService, runConfigEditor, editorTabs); // C5
+    }
+    if (central.databasePanel != nullptr) { central.databasePanel->setOpenSettingsHandler([window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext, QObject::tr("Database")); }); }
     // The same dialog, opened on the project's own layer (ADR-0022): "configure
     // this project" and "configure my editor" are different intentions, and the
     // dialog's own scope selector is how you get from one to the other after.

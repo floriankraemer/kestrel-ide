@@ -5,10 +5,13 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QColor>
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QKeySequence>
 #include <QLabel>
+#include <QPainter>
+#include <QPixmap>
 #include <QSignalBlocker>
 #include <QStringList>
 #include <QTimer>
@@ -151,12 +154,37 @@ DatabaseConsoleBar::DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *c
     refreshForCurrentTab();
 }
 
+namespace {
+
+// A small solid swatch for the source combo's own colour tag (F2 polish)
+// — a plain filled square, not a mask: this is the source's own chosen
+// colour verbatim, never tinted to the active theme the way `maskIcon`'s
+// glyphs are.
+QIcon colorSwatch(const QColor &color)
+{
+    QPixmap pixmap(12, 12);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(color);
+    painter.drawRoundedRect(pixmap.rect(), 2, 2);
+    return QIcon(pixmap);
+}
+
+} // namespace
+
 void DatabaseConsoleBar::refreshSources()
 {
     sourceCombo_->clear();
     const ::rust::Vec<FfiDbSourceRow> sources = consoleService_->availableSources();
     for (const FfiDbSourceRow &source : sources) {
-        sourceCombo_->addItem(QString(source.name), QString(source.id));
+        const QString colorName = QString(source.color);
+        if (!colorName.isEmpty() && QColor::isValidColorName(colorName)) {
+            sourceCombo_->addItem(colorSwatch(QColor(colorName)), QString(source.name),
+                                  QString(source.id));
+        } else {
+            sourceCombo_->addItem(QString(source.name), QString(source.id));
+        }
     }
 }
 

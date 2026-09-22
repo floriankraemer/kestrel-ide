@@ -88,6 +88,12 @@ BuildToolsPanel *wireBuildToolsDock(ads::CDockManager *dockManager, DockRegistry
 
 void wireBuildToolsSettings(BuildToolsPanel *panel, std::function<void()> openSettings)
 {
+    // G1.6: null when `jvm-build-tools` is disabled (`buildContributedToolWindows`'
+    // factory loop never ran for it) — the same crash class this phase's
+    // own E2E flow found for `containers`/`database` in `main_window.cpp`.
+    if (panel == nullptr) {
+        return;
+    }
     panel->setOpenSettingsHandler(std::move(openSettings));
 }
 

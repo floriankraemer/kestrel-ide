@@ -152,6 +152,11 @@ pub struct TreeRow {
     /// "Go to DDL" never has to guess which `/`-separated segment of
     /// `node_id` was a folder label and which was a real object name.
     pub object_path: Vec<String>,
+    /// Whether this row is (part of) its table's primary key — carried
+    /// straight from `Node::detail::primary_key` so the dock can pick the
+    /// dedicated PK icon for a column without re-deriving the notion of
+    /// "primary key" itself. `false` for every non-column row.
+    pub primary_key: bool,
 }
 
 /// A tree row is either a real schema object or a synthetic grouping
@@ -601,6 +606,7 @@ fn push_children(
                     // A folder is never a real object — its children's
                     // own ancestry picks up exactly where it left off.
                     object_path: object_path.to_vec(),
+                    primary_key: false,
                 });
                 for node in bucket {
                     push_node(node, &folder_id, object_path, depth + 1, options, out);
@@ -643,6 +649,7 @@ fn push_node(
         expandable,
         loaded,
         object_path: child_path.clone(),
+        primary_key: node.kind == ObjectKind::Column && node.detail.primary_key,
     });
     if let Some(children) = children {
         let mut refs: Vec<&Node> = children.iter().collect();
@@ -722,6 +729,34 @@ mod tests {
         let rows = flatten(&roots, &options);
         assert!(!rows.iter().any(|r| matches!(r.kind, RowKind::Folder(_))));
         assert_eq!(rows.iter().filter(|r| r.depth == 0).count(), 2);
+    }
+
+    #[test]
+    fn a_primary_key_column_row_carries_primary_key_true_and_a_plain_one_does_not() {
+        let mut node = table("users", vec!["id", "name"]);
+        let Children::Loaded(children) = &mut node.children else {
+            unreachable!()
+        };
+        children[0].detail.primary_key = true;
+        let rows = flatten(&[node], &FlattenOptions::default());
+        let id = rows.iter().find(|r| r.label == "id").expect("id column");
+        let name = rows
+            .iter()
+            .find(|r| r.label == "name")
+            .expect("name column");
+        assert!(id.primary_key);
+        assert!(!name.primary_key);
+    }
+
+    #[test]
+    fn a_folder_row_is_never_a_primary_key() {
+        let roots = vec![table("users", vec!["id"])];
+        let rows = flatten(&roots, &FlattenOptions::default());
+        let folder = rows
+            .iter()
+            .find(|r| matches!(r.kind, RowKind::Folder(_)))
+            .expect("a Tables folder");
+        assert!(!folder.primary_key);
     }
 
     #[test]

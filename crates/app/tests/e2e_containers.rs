@@ -2,8 +2,10 @@
 //! the dock connecting to a canned engine and showing its tree, a
 //! lifecycle action reaching the engine and the Log tab opening on
 //! selection, a compose run configuration's command preview, the
-//! Dockerfile/compose gutter and compose lenses, and Settings' Containers
-//! page Test connection.
+//! Dockerfile/compose gutter and compose lenses, Settings' Containers
+//! page Test connection, and (database-tools-plan G1.6) disabling the
+//! `containers` plugin from the same Settings dialog and relaunching to
+//! confirm its View-menu entry is gone.
 //!
 //! Its own test binary for the reason `e2e_run.rs`'s doc comment gives —
 //! `e2e.rs` sits at its ratcheted size ceiling — and `make e2e` runs it
@@ -538,7 +540,10 @@ fn e2e_containers_gutter_and_compose_lenses() {
     assert_eq!(ide.quit(), 0);
 }
 
-// --- (f): Settings > Containers > Test connection -------------------------
+// --- (f): Settings > Containers > Test connection, plus G1.6's own
+// disable-and-relaunch-removes-the-View-menu-entry proof, folded into the
+// same flow rather than a fifteenth one — both start from the same
+// Preferences dialog, and per-PR budget stays 14 flows either way.
 
 #[test]
 #[ignore = "E2E: needs an X server; run via `make e2e`"]
@@ -591,11 +596,71 @@ fn e2e_containers_settings_test_connection() {
         e["ev"] == "containers_test_connection_result" && e["ok"] == true
     });
 
+    // G1.6: disabling the `containers` plugin from this same dialog and
+    // relaunching removes its View-menu entry — the tool-windows
+    // contribution point (G1.1/G1.3) only reads `disabled_plugins` at
+    // startup, so a live toggle is not expected to change the menu until
+    // the next launch, and this is that flow's own click-driven proof.
+    let (plx, ply) = rect_centre(&dialog["plugins_category_rect"]);
+    ide.click_at(plx, ply, 1);
+    let rows = ide.wait_for_event(mark, "the Plugins page's own rows", |e| {
+        e["ev"] == "plugins_page_rows"
+            && e["rows"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().any(|row| row["id"] == "containers"))
+    });
+    let containers_row = rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == "containers")
+        .expect("the containers row, just asserted present");
+    let (rx, ry) = rect_centre(&containers_row["rect"]);
+    ide.click_at(rx, ry, 1);
+    let toggle = ide.wait_for_event(mark, "the toggle for the selected containers row", |e| {
+        e["ev"] == "plugins_page_toggle" && e["id"] == "containers"
+    });
+    assert_eq!(
+        toggle["disable"], true,
+        "containers starts enabled, so its own toggle offers to disable it"
+    );
+    let (tx, ty) = rect_centre(&toggle["rect"]);
+    ide.click_at(tx, ty, 1);
+    let toggled = ide.wait_for_event(
+        mark,
+        "the toggle to flip once containers is disabled",
+        |e| e["ev"] == "plugins_page_toggle" && e["id"] == "containers" && e["disable"] == false,
+    );
+    let _ = toggled;
+
     ide.key("Escape");
     ide.wait_for_event(mark, "the settings dialog to close", |e| {
         e["ev"] == "dialog_closed" && e["name"] == "settings_dialog"
     });
     ide.focus_main();
+
+    assert_eq!(ide.quit(), 0);
+
+    ide.relaunch();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    let mark = ide.mark();
+    ide.key("alt+v"); // "&View"
+                      // Something else in the View menu is always there (Structure has no
+                      // plugin/contribution gate at all) — proof the menu actually opened
+                      // and reported its actions, so an *absent* Containers entry below
+                      // means the entry is really gone, not that the mark never fired.
+    ide.wait_for_event(mark, "the View menu to report its actions", |e| {
+        e["ev"] == "view_menu_action" && e["label"] == "Structure"
+    });
+    let view_actions = ide.events_since_of(mark, "view_menu_action");
+    assert!(
+        view_actions.iter().all(|e| e["label"] != "Containers"),
+        "disabling containers before the relaunch above must drop its View-menu entry, got: {view_actions:?}"
+    );
+    // The menu is still open (`view_menu_action`'s own `aboutToShow` never
+    // closed it) — `ctrl+q` below is a global shortcut, but an open popup
+    // menu still eats the keystroke before it reaches the window.
+    ide.key("Escape");
 
     assert_eq!(ide.quit(), 0);
 }

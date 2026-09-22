@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QColor>
 #include <QHash>
 #include <QString>
 #include <QStringList>
@@ -54,6 +55,12 @@ public:
     // the same reasoning `ContainersPanel::refreshE2eRects` gives.
     void refreshE2eRects() const;
 
+protected:
+    // Esc clears the speed-search filter edit without leaving this
+    // widget's own key handling to notice a focus-scoped shortcut buried
+    // in `QLineEdit` — installed on `filterEdit_` only.
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     // Every row's own screen rect, id- and kind-keyed — a collapsed or
     // scrolled-away row is filtered out, the same contract
@@ -73,6 +80,17 @@ private:
     void onActionFinished(bool ok, const QString &message);
     void report(const FfiResult &result);
     QString selectedNodeId() const;
+    // Rename/Drop/Truncate/Comment (F2 polish): show the exact statement
+    // `DatabaseService::actionPreview` generated and only dispatch
+    // `runAction` once the user has confirmed that literal text — the
+    // same "never run what the user has not seen" gate
+    // `db_object_dialogs.cpp::previewConfirmAndRun` already gives the
+    // F4.4 dialogs. `refreshScopeId` is the node whose subtree is stale
+    // once the action succeeds (the row's own parent for rename/drop,
+    // since those change what that parent's children list shows; the row
+    // itself for truncate/comment, which change no name).
+    void confirmPreviewAndRunAction(const QString &nodeId, const QString &actionId,
+                                    const QString &title, const QString &refreshScopeId);
 
     DatabaseService *databaseService_;
     ExchangeService *exchangeService_;
@@ -83,10 +101,22 @@ private:
     QToolButton *refreshButton_ = nullptr;
     QToolButton *forceRefreshButton_ = nullptr;
     QToolButton *goToDdlButton_ = nullptr;
-    QToolButton *groupingButton_ = nullptr;
+    QToolButton *viewOptionsButton_ = nullptr;
     QLineEdit *filterEdit_ = nullptr;
     QLabel *statusLabel_ = nullptr;
     QTreeWidget *tree_ = nullptr;
+
+    // View options menu state (FY.3) — `db_core::tree::FlattenOptions`'
+    // own knobs, mirrored here only so a menu reopen shows the same
+    // checkmarks it last closed with.
+    bool flatGrouping_ = false;
+    bool separateRoutines_ = false;
+    bool alphabeticalSort_ = false;
+
+    // A connected source's own colour tag (`FfiDbSourceRow::color`,
+    // Data Source dialog F1.6), refreshed whenever `sources()` changes —
+    // `rebuildTree` paints it on column 0 of every row that source owns.
+    QHash<QString, QColor> sourceColorById_;
 
     // Rebuilt wholesale on every `rowsChanged`, like `ContainersPanel`;
     // expansion and selection carry across by node id.
@@ -100,6 +130,7 @@ private:
         QString label;
         QString sourceId;
         QString kind;
+        int depth = 0;
         bool isSourceRoot = false;
         bool canOpenConsole = false;
         bool canEditData = false;

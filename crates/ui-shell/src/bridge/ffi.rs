@@ -10275,6 +10275,12 @@ mod ffi {
         expandable: bool,
         loaded: bool,
         actions: FfiDbRowActions,
+        /// Whether this row is (part of) its table's primary key
+        /// (`db_core::tree::TreeRow::primary_key`) — the dock's own icon
+        /// lookup picks the PK key glyph for a column when this is set,
+        /// the plain column glyph otherwise.
+        #[cxx_name = "primaryKey"]
+        primary_key: bool,
     }
 
     extern "RustQt" {
@@ -10342,6 +10348,33 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "setGrouping"]
         fn set_grouping(self: Pin<&mut DatabaseService>, flat: bool);
+
+        /// View options menu (FY.3): `true` folds a `Routine` into its own
+        /// "Procedures" folder rather than sharing "Tables"' grouping
+        /// sibling (`db_core::tree::FlattenOptions::separate_routines`).
+        #[qinvokable]
+        #[cxx_name = "setSeparateRoutines"]
+        fn set_separate_routines(self: Pin<&mut DatabaseService>, value: bool);
+
+        /// View options menu (FY.3): `true` sorts each folder's children
+        /// alphabetically (`table10` before `table2`); `false` (the
+        /// default) sorts naturally (`db_core::tree::SortOrder`).
+        #[qinvokable]
+        #[cxx_name = "setSort"]
+        fn set_sort(self: Pin<&mut DatabaseService>, alphabetical: bool);
+
+        /// The exact statement `runAction(node_id, action_id)` would run,
+        /// generated but never executed — a confirmation dialog shows this
+        /// rather than a generic English sentence (`FfiResult::message`
+        /// carries the text on success, same convention `objectDdlPreview`
+        /// uses for the F4.4 dialogs).
+        #[qinvokable]
+        #[cxx_name = "actionPreview"]
+        fn action_preview(
+            self: &DatabaseService,
+            node_id: &QString,
+            action_id: &QString,
+        ) -> FfiResult;
 
         /// Run `action_id` (`db_core::tree::ActionSet`'s own names,
         /// lower-`snake_case`: `"drop"`, `"truncate"`, `"rename:<new

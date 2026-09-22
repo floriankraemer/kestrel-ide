@@ -4,23 +4,27 @@
 #include "db_object_dialogs.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
+#include "theme.h"
 
 #include "DockAreaWidget.h"
 #include "DockManager.h"
 #include "DockWidget.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QClipboard>
 #include <QDebug>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QLabel>
+#include <QLinearGradient>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
-#include <QStyle>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -54,34 +58,53 @@ QString parentNodeId(const QString &nodeId, int depth)
     return sourceId + QStringLiteral(":") + path.left(lastSlash);
 }
 
-QIcon rowIcon(const QWidget *widget, const QString &kind)
+// The row's own `kind` string (`bridge::database::tree::kind_id`'s
+// vocabulary) to the `.a8` mask that paints it — the same lookup-table
+// precedent `containers_panel.cpp`'s `maskForIconKey` sets, not a
+// decision of this view's own. A kind with no dedicated glyph (`type`,
+// `role`, `user`, `trigger`, `constraint`, `sequence`, `group`) falls back
+// to the plain table glyph rather than growing the icon set for a row this
+// dock's own actions matrix barely distinguishes today.
+const char *maskForIconKey(const QString &kind)
 {
-    // ponytail: standard `QStyle` icons in place of the F2.5 spec's own
-    // `.a8` mask set under `resources/icons/database/` — a real icon per
-    // kind (database/schema/table/view/column/key/index/routine/folder)
-    // is a follow-up, not deferred for a technical reason.
-    const QStyle *style = widget->style();
-    if (kind == QLatin1String("source")) {
-        return style->standardIcon(QStyle::SP_DriveNetIcon);
-    }
-    if (kind.startsWith(QLatin1String("folder-"))) {
-        return style->standardIcon(QStyle::SP_DirIcon);
-    }
-    if (kind == QLatin1String("column") || kind == QLatin1String("field")) {
-        return style->standardIcon(QStyle::SP_FileIcon);
-    }
-    // Keyspace/KeyNamespace (F7b): both are schema-like grouping nodes —
-    // a Cassandra keyspace groups tables the way a folder does, a Redis
-    // key namespace groups keys the same `:`-delimited way. Neither is
-    // backend-reported the way a `Schema` is, but visually they play the
-    // same "directory of objects" role.
-    if (kind == QLatin1String("keyspace") || kind == QLatin1String("key-namespace")) {
-        return style->standardIcon(QStyle::SP_DirIcon);
-    }
-    if (kind == QLatin1String("key")) {
-        return style->standardIcon(QStyle::SP_FileIcon);
-    }
-    return style->standardIcon(QStyle::SP_FileDialogDetailedView);
+    static const QHash<QString, const char *> masks = {
+      {QStringLiteral("source"), ":/ui/icons/database/database.a8"},
+      {QStringLiteral("catalog"), ":/ui/icons/database/schema.a8"},
+      {QStringLiteral("schema"), ":/ui/icons/database/schema.a8"},
+      {QStringLiteral("table"), ":/ui/icons/database/table.a8"},
+      {QStringLiteral("view"), ":/ui/icons/database/view.a8"},
+      {QStringLiteral("materialized-view"), ":/ui/icons/database/view.a8"},
+      {QStringLiteral("column"), ":/ui/icons/database/column.a8"},
+      {QStringLiteral("field"), ":/ui/icons/database/column.a8"},
+      {QStringLiteral("index"), ":/ui/icons/database/index.a8"},
+      {QStringLiteral("routine"), ":/ui/icons/database/routine.a8"},
+      {QStringLiteral("collection"), ":/ui/icons/database/collection.a8"},
+      // Keyspace/KeyNamespace (F7b): both are schema-like grouping nodes —
+      // a Cassandra keyspace groups tables the way a folder does, a Redis
+      // key namespace groups keys the same `:`-delimited way.
+      {QStringLiteral("keyspace"), ":/ui/icons/database/keyspace.a8"},
+      {QStringLiteral("key-namespace"), ":/ui/icons/database/keyspace.a8"},
+      {QStringLiteral("key"), ":/ui/icons/database/redis-key.a8"},
+      {QStringLiteral("folder-tables"), ":/ui/icons/database/folder.a8"},
+      {QStringLiteral("folder-views"), ":/ui/icons/database/folder.a8"},
+      {QStringLiteral("folder-materialized-views"), ":/ui/icons/database/folder.a8"},
+      {QStringLiteral("folder-procedures"), ":/ui/icons/database/folder.a8"},
+      {QStringLiteral("folder-functions"), ":/ui/icons/database/folder.a8"},
+      {QStringLiteral("folder-sequences"), ":/ui/icons/database/folder.a8"},
+      {QStringLiteral("folder-types"), ":/ui/icons/database/folder.a8"},
+    };
+    return masks.value(kind, ":/ui/icons/database/table.a8");
+}
+
+QIcon rowIcon(const QString &kind, bool primaryKey)
+{
+    // A primary-key column gets the dedicated key glyph in place of the
+    // plain column one — `db_core::tree::TreeRow::primary_key`'s own
+    // answer, never re-derived here.
+    const char *mask = (kind == QLatin1String("column") && primaryKey)
+      ? ":/ui/icons/database/key.a8"
+      : maskForIconKey(kind);
+    return maskIcon(mask, chromePaletteForTheme(activeThemeName()).textDim);
 }
 
 } // namespace
@@ -138,15 +161,61 @@ DatabasePanel::DatabasePanel(DatabaseService *databaseService, ExchangeService *
     });
     toolbar->addWidget(goToDdlButton_);
 
-    groupingButton_ = new QToolButton(this);
-    groupingButton_->setText(tr("Flat"));
-    groupingButton_->setCheckable(true);
-    connect(groupingButton_, &QToolButton::toggled, this,
-            [this](bool flat) { databaseService_->setGrouping(flat); });
-    toolbar->addWidget(groupingButton_);
+    // View options (FY.3): grouping, whether Procedures/Functions split,
+    // and sort — three independent knobs on one menu rather than three
+    // toolbar toggles, the same way a crowded toolbar sheds a rarely-hit
+    // control anywhere else in this codebase.
+    viewOptionsButton_ = new QToolButton(this);
+    viewOptionsButton_->setText(tr("View options"));
+    viewOptionsButton_->setPopupMode(QToolButton::InstantPopup);
+    auto *viewOptionsMenu = new QMenu(viewOptionsButton_);
+
+    auto *groupAction = viewOptionsMenu->addAction(tr("Group by Object Type"));
+    groupAction->setCheckable(true);
+    groupAction->setChecked(!flatGrouping_);
+    auto *flatAction = viewOptionsMenu->addAction(tr("Flat"));
+    flatAction->setCheckable(true);
+    flatAction->setChecked(flatGrouping_);
+    auto *groupModeGroup = new QActionGroup(viewOptionsMenu);
+    groupModeGroup->setExclusive(true);
+    groupModeGroup->addAction(groupAction);
+    groupModeGroup->addAction(flatAction);
+    connect(flatAction, &QAction::toggled, this, [this](bool flat) {
+        flatGrouping_ = flat;
+        databaseService_->setGrouping(flat);
+    });
+
+    viewOptionsMenu->addSeparator();
+    auto *separateRoutinesAction = viewOptionsMenu->addAction(tr("Separate Procedures and Functions"));
+    separateRoutinesAction->setCheckable(true);
+    separateRoutinesAction->setChecked(separateRoutines_);
+    connect(separateRoutinesAction, &QAction::toggled, this, [this](bool value) {
+        separateRoutines_ = value;
+        databaseService_->setSeparateRoutines(value);
+    });
+
+    viewOptionsMenu->addSeparator();
+    auto *naturalSortAction = viewOptionsMenu->addAction(tr("Sort Natural"));
+    naturalSortAction->setCheckable(true);
+    naturalSortAction->setChecked(!alphabeticalSort_);
+    auto *alphaSortAction = viewOptionsMenu->addAction(tr("Sort Alphabetical"));
+    alphaSortAction->setCheckable(true);
+    alphaSortAction->setChecked(alphabeticalSort_);
+    auto *sortGroup = new QActionGroup(viewOptionsMenu);
+    sortGroup->setExclusive(true);
+    sortGroup->addAction(naturalSortAction);
+    sortGroup->addAction(alphaSortAction);
+    connect(alphaSortAction, &QAction::toggled, this, [this](bool alphabetical) {
+        alphabeticalSort_ = alphabetical;
+        databaseService_->setSort(alphabetical);
+    });
+
+    viewOptionsButton_->setMenu(viewOptionsMenu);
+    toolbar->addWidget(viewOptionsButton_);
 
     filterEdit_ = new QLineEdit(this);
     filterEdit_->setPlaceholderText(tr("Filter (e.g. table:-payment_.*)"));
+    filterEdit_->installEventFilter(this);
     connect(filterEdit_, &QLineEdit::textChanged, this,
             [this](const QString &text) { databaseService_->setFilter(text); });
     toolbar->addWidget(filterEdit_, 1);
@@ -191,6 +260,18 @@ void DatabasePanel::setOpenSettingsHandler(OpenSettings handler)
     openSettings_ = std::move(handler);
 }
 
+bool DatabasePanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == filterEdit_ && event->type() == QEvent::KeyPress) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent->key() == Qt::Key_Escape && !filterEdit_->text().isEmpty()) {
+            filterEdit_->clear();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void DatabasePanel::rebuildTree()
 {
     QHash<QString, bool> expandedById;
@@ -198,6 +279,14 @@ void DatabasePanel::rebuildTree()
         expandedById.insert(it.key(), it.value()->isExpanded());
     }
     const QString selected = selectedNodeId();
+
+    sourceColorById_.clear();
+    for (const FfiDbSourceRow &source : databaseService_->sources()) {
+        const QString color = QString(source.color);
+        if (!color.isEmpty() && QColor::isValidColorName(color)) {
+            sourceColorById_.insert(QString(source.id), QColor(color));
+        }
+    }
 
     tree_->blockSignals(true);
     tree_->clear();
@@ -212,8 +301,25 @@ void DatabasePanel::rebuildTree()
         auto *item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
         item->setText(0, QString(row.label));
         item->setText(1, QString(row.detail));
-        item->setIcon(0, rowIcon(this, QString(row.kind)));
+        item->setIcon(0, rowIcon(QString(row.kind), row.primaryKey));
         item->setData(0, Qt::UserRole, nodeId);
+        // Colour tag (F2 polish): the source's own `color` (Data Source
+        // dialog, F1.6) as a thin bar down the left edge of column 0 — a
+        // left-anchored gradient on that column's background brush,
+        // `containers_panel.cpp` having no per-row tint precedent of its
+        // own to follow instead. `QTreeWidgetItem` offers no per-pixel
+        // paint short of a delegate, and a whole-cell tint would fight
+        // the selection highlight this dock already uses; a few percent
+        // of the column's own width reads as a bar without either.
+        const auto colorIt = sourceColorById_.constFind(QString(row.sourceId));
+        if (colorIt != sourceColorById_.constEnd()) {
+            QLinearGradient gradient(0, 0, 1, 0);
+            gradient.setCoordinateMode(QGradient::ObjectMode);
+            gradient.setColorAt(0.0, *colorIt);
+            gradient.setColorAt(0.04, *colorIt);
+            gradient.setColorAt(0.041, Qt::transparent);
+            item->setBackground(0, QBrush(gradient));
+        }
         // A node the bridge already fetched shows its children right
         // away; one that has not been asked for yet still reports
         // `childIndicatorPolicy` so the user can expand it, which is what
@@ -229,6 +335,7 @@ void DatabasePanel::rebuildTree()
         info.label = QString(row.label);
         info.sourceId = QString(row.sourceId);
         info.kind = QString(row.kind);
+        info.depth = row.depth;
         info.isSourceRoot = info.kind == QLatin1String("source");
         info.canOpenConsole = row.actions.canOpenConsole;
         info.canEditData = row.actions.canEditData;
@@ -426,26 +533,24 @@ void DatabasePanel::showContextMenu(const QPoint &pos)
         const QString text = QInputDialog::getText(this, tr("Rename"), tr("New name:"),
                                                     QLineEdit::Normal, info.label, &ok);
         if (ok && !text.isEmpty()) {
-            report(databaseService_->runAction(nodeId, QStringLiteral("rename:%1").arg(text)));
+            // Renaming changes what the parent's own children list shows —
+            // that scope, not the (about to be stale) node id itself, is
+            // what needs refreshing on success.
+            confirmPreviewAndRunAction(nodeId, QStringLiteral("rename:%1").arg(text), tr("Rename"),
+                                       parentNodeId(nodeId, info.depth));
         }
     } else if (chosen == dropAction) {
-        if (QMessageBox::question(this, tr("Drop"),
-                                  tr("Drop '%1'? This cannot be undone.").arg(info.label))
-            == QMessageBox::Yes) {
-            report(databaseService_->runAction(nodeId, QStringLiteral("drop")));
-        }
+        confirmPreviewAndRunAction(nodeId, QStringLiteral("drop"), tr("Drop"),
+                                   parentNodeId(nodeId, info.depth));
     } else if (chosen == truncateAction) {
-        if (QMessageBox::question(this, tr("Truncate"),
-                                  tr("Truncate '%1'? Every row will be deleted.").arg(info.label))
-            == QMessageBox::Yes) {
-            report(databaseService_->runAction(nodeId, QStringLiteral("truncate")));
-        }
+        confirmPreviewAndRunAction(nodeId, QStringLiteral("truncate"), tr("Truncate"), nodeId);
     } else if (chosen == commentAction) {
         bool ok = false;
         const QString text =
           QInputDialog::getMultiLineText(this, tr("Comment"), tr("Comment:"), QString(), &ok);
         if (ok) {
-            report(databaseService_->runAction(nodeId, QStringLiteral("comment:%1").arg(text)));
+            confirmPreviewAndRunAction(nodeId, QStringLiteral("comment:%1").arg(text), tr("Comment"),
+                                       nodeId);
         }
     } else if (chosen == exportData) {
         showExportDataDialog(this, exchangeService_, info.sourceId, info.label);
@@ -549,14 +654,37 @@ void DatabasePanel::onActionFinished(bool ok, const QString &message)
         return;
     }
     statusLabel_->clear();
-    // F4.4: refresh the scope a just-run object-DDL dialog affected —
-    // `showContextMenu`'s own dispatch sets this right before the dialog
-    // ran; every other `runAction` path (rename/drop/…) leaves it empty,
-    // unchanged (`database-tools.md` §11's own tracked debt on those).
+    // Refresh the scope a just-run mutating action affected — F4.4's own
+    // object-DDL dialogs set this right before dispatch;
+    // `confirmPreviewAndRunAction` does the same for rename/drop/
+    // truncate/comment (F2 polish, generalised from F4.4's precedent
+    // rather than each path growing its own refresh call).
     if (!ddlRefreshNodeId_.isEmpty()) {
         report(databaseService_->refresh(ddlRefreshNodeId_, false));
         ddlRefreshNodeId_.clear();
     }
+}
+
+void DatabasePanel::confirmPreviewAndRunAction(const QString &nodeId, const QString &actionId,
+                                               const QString &title, const QString &refreshScopeId)
+{
+    const FfiResult preview = databaseService_->actionPreview(nodeId, actionId);
+    if (preview.code != 0) {
+        statusLabel_->setText(QString(preview.message));
+        return;
+    }
+    if (QMessageBox::question(this, title,
+                              tr("Run this statement?\n\n%1").arg(QString(preview.message)))
+        != QMessageBox::Yes) {
+        return;
+    }
+    const FfiResult result = databaseService_->runAction(nodeId, actionId);
+    // Only arm the refresh when dispatch itself succeeded — a synchronous
+    // failure (bad node id, not connected) never reaches `actionFinished`
+    // at all, and a stale armed id would refresh the wrong node the next
+    // time some *other* action finishes.
+    ddlRefreshNodeId_ = result.code == 0 ? refreshScopeId : QString();
+    report(result);
 }
 
 void DatabasePanel::report(const FfiResult &result)

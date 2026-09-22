@@ -163,6 +163,20 @@ impl Session {
         self.connection.close()
     }
 
+    /// Swaps this session's live connection for `connection` — `ui-shell`'s
+    /// idle-close reconnect (database-tools-plan FZ, `bridge::database::
+    /// sessions::SessionWorker`): after a period of inactivity the worker
+    /// drops the real connection to free the socket/tunnel, and lazily
+    /// reopens one the next time a command actually needs it. This
+    /// `Session`'s generation counter and transaction mode are untouched —
+    /// only the underlying connection changes, and the caller resets
+    /// `tx_mode` itself first if a fresh connection should not inherit a
+    /// manual transaction that can no longer mean anything (a brand new
+    /// connection has none open).
+    pub fn replace_connection(&mut self, connection: Box<dyn Connection>) {
+        self.connection = connection;
+    }
+
     pub fn execute_script(
         &mut self,
         script: &str,

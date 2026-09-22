@@ -10349,6 +10349,11 @@ mod ffi {
     struct FfiDbRow {
         cells: QString,
         nulls: QString,
+        /// The data editor's own pending-change bits (F4.1): bit 0
+        /// edited, bit 1 deleted, bit 2 inserted, `0` for an untouched
+        /// row or a non-editable result — `db_core::dml::EditBuffer::
+        /// row_flags`'s own doc comment. The delegate's highlight.
+        flags: u8,
     }
 
     extern "RustQt" {

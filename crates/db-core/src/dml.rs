@@ -231,6 +231,30 @@ impl EditBuffer {
         self.pending_count() == 0
     }
 
+    /// This grid row's own pending-change bits (bit 0 edited, bit 1
+    /// deleted, bit 2 inserted) — the value grid a row's own highlight
+    /// renders from (F4.1's own "edited cells rendered with a highlight
+    /// from the flags byte"). An inserted row is never also "edited" in
+    /// this bitset even if some of its own cells were staged after
+    /// `add_row`/`clone_row` — the whole row is new, "edited" is the
+    /// weaker signal for an existing row's changed cell.
+    pub fn row_flags(&self, row: usize) -> u8 {
+        const EDITED: u8 = 1 << 0;
+        const DELETED: u8 = 1 << 1;
+        const INSERTED: u8 = 1 << 2;
+        if row < self.rows.len() {
+            let mut flags = 0u8;
+            if self.deleted.contains(&row) {
+                flags |= DELETED;
+            } else if self.edits.keys().any(|(r, _)| *r == row) {
+                flags |= EDITED;
+            }
+            flags
+        } else {
+            INSERTED
+        }
+    }
+
     /// Discards every staged edit/add/delete — a submit's own cleanup, or
     /// an explicit "Revert" (F4.2).
     pub fn clear(&mut self) {
@@ -257,6 +281,13 @@ impl EditBuffer {
     /// addressing).
     pub fn fetched_row_count(&self) -> usize {
         self.rows.len()
+    }
+
+    /// How many rows are currently staged for insert — the grid's own
+    /// "rows past the fetched count" tail (this module's own doc comment
+    /// on grid row addressing).
+    pub fn inserted_row_count(&self) -> usize {
+        self.inserted.len()
     }
 
     /// The `WHERE`-clause fragment (text + params, appended to `params`)
@@ -721,5 +752,32 @@ mod tests {
         let plan = buffer.to_dml_plan(Dialect::Postgres);
         assert_eq!(plan.statements.len(), 1);
         assert!(plan.statements[0].params.contains(&Value::Int(2)));
+    }
+
+    #[test]
+    fn row_flags_reports_zero_for_an_untouched_row() {
+        assert_eq!(buffer_with_key().row_flags(0), 0);
+    }
+
+    #[test]
+    fn row_flags_reports_edited_for_a_row_with_a_staged_cell() {
+        let mut buffer = buffer_with_key();
+        buffer.stage(0, "name", Value::Text("x".to_string()));
+        assert_eq!(buffer.row_flags(0), 0b001);
+    }
+
+    #[test]
+    fn row_flags_reports_deleted_and_not_edited_for_a_deleted_row() {
+        let mut buffer = buffer_with_key();
+        buffer.stage(0, "name", Value::Text("x".to_string()));
+        buffer.delete_row(0);
+        assert_eq!(buffer.row_flags(0), 0b010);
+    }
+
+    #[test]
+    fn row_flags_reports_inserted_for_an_added_row() {
+        let mut buffer = buffer_with_key();
+        let new_row = buffer.add_row(vec![Value::Int(2), Value::Null, Value::Null]);
+        assert_eq!(buffer.row_flags(new_row), 0b100);
     }
 }

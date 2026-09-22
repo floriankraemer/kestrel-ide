@@ -983,7 +983,7 @@ impl Default for ResultProviderRust {
     }
 }
 
-fn row_to_ffi(row: &[Value], format: &db_core::value::FormatRules) -> FfiDbRow {
+fn row_to_ffi(row: &[Value], format: &db_core::value::FormatRules, flags: u8) -> FfiDbRow {
     let mut cells = String::new();
     let mut nulls = String::new();
     for (i, value) in row.iter().enumerate() {
@@ -1001,6 +1001,7 @@ fn row_to_ffi(row: &[Value], format: &db_core::value::FormatRules) -> FfiDbRow {
     FfiDbRow {
         cells: QString::from(cells.as_str()),
         nulls: QString::from(nulls.as_str()),
+        flags,
     }
 }
 
@@ -1029,7 +1030,14 @@ impl ffi::ResultProvider {
         shared
             .results
             .get(&result_id)
-            .map(|result| result.set.row_count() as u64)
+            .map(|result| {
+                let fetched = result.set.row_count() as u64;
+                let inserted = match &result.edit {
+                    EditState::Editable(buffer) => buffer.inserted_row_count() as u64,
+                    _ => 0,
+                };
+                fetched + inserted
+            })
             .unwrap_or(0)
     }
 
@@ -1051,22 +1059,54 @@ impl ffi::ResultProvider {
         };
         let format = db_core::value::FormatRules::default();
         let count = count.min(MAX_ROWS_PER_REQUEST);
+        let fetched_count = result.set.row_count() as u64;
         let mut out = Vec::with_capacity(count as usize);
         let mut skipped = 0u64;
-        for batch in result.set.batches() {
-            let batch_len = batch.rows.len() as u64;
-            if skipped + batch_len <= first {
-                skipped += batch_len;
-                continue;
-            }
-            let start_in_batch = first.saturating_sub(skipped) as usize;
-            for row in &batch.rows[start_in_batch..] {
-                if out.len() as u64 >= count {
-                    return out;
+        let mut grid_row = first;
+        if first < fetched_count {
+            'batches: for batch in result.set.batches() {
+                let batch_len = batch.rows.len() as u64;
+                if skipped + batch_len <= first {
+                    skipped += batch_len;
+                    continue;
                 }
-                out.push(row_to_ffi(row, &format));
+                let start_in_batch = first.saturating_sub(skipped) as usize;
+                for row in &batch.rows[start_in_batch..] {
+                    if out.len() as u64 >= count {
+                        break 'batches;
+                    }
+                    let flags = match &result.edit {
+                        EditState::Editable(buffer) => buffer.row_flags(grid_row as usize),
+                        _ => 0,
+                    };
+                    out.push(row_to_ffi(row, &format, flags));
+                    grid_row += 1;
+                }
+                skipped += batch_len;
             }
-            skipped += batch_len;
+        }
+        // Rows staged past the fetched count (`addRow`/`cloneRow`) — read
+        // straight from the buffer, one column at a time, since they were
+        // never fetched from a driver at all.
+        if let EditState::Editable(buffer) = &result.edit {
+            let total = fetched_count + buffer.inserted_row_count() as u64;
+            while (out.len() as u64) < count && grid_row < total {
+                let values: Vec<Value> = result
+                    .columns
+                    .iter()
+                    .map(|c| {
+                        buffer
+                            .current_value(grid_row as usize, &c.name)
+                            .unwrap_or(Value::Null)
+                    })
+                    .collect();
+                out.push(row_to_ffi(
+                    &values,
+                    &format,
+                    buffer.row_flags(grid_row as usize),
+                ));
+                grid_row += 1;
+            }
         }
         out
     }

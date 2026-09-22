@@ -475,7 +475,10 @@ mod tests {
 
         tracker.invalidate();
         let closed = tracker.type_char(lang("rust"), &text, &opened.selection, '"');
-        assert_eq!(closed.transaction.apply(&text).expect("applies"), "s = \"\"\"");
+        assert_eq!(
+            closed.transaction.apply(&text).expect("applies"),
+            "s = \"\"\""
+        );
     }
 
     #[test]

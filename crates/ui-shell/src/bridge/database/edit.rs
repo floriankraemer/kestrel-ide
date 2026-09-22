@@ -695,6 +695,34 @@ impl ffi::ResultProvider {
             Err(message) => errors::failure(errors::CODE_INVALID_ARGUMENT, message),
         }
     }
+
+    /// `true` when `column` is a `Value::Bytes` column (`db_core::value::
+    /// is_binary_type`'s own doc comment) — `ValueEditorDialog`'s own
+    /// decision to open in its hex-edit mode (F4c). `false` for an
+    /// unknown result/column, the same as every other "can't answer"
+    /// case this file reports through a plain default rather than an
+    /// error (there is no destructive action behind this one to refuse).
+    pub fn is_binary_column(self: Pin<&mut Self>, result_id: u64, column: &QString) -> bool {
+        let column = column.to_string();
+        self.shared
+            .borrow()
+            .results
+            .get(&result_id)
+            .and_then(|result| result.columns.iter().find(|c| c.name == column))
+            .is_some_and(|c| db_core::value::is_binary_type(&c.type_name))
+    }
+
+    /// Live-validates hex text for the value editor's hex-edit mode —
+    /// `Err` (as `FfiResult::code != 0`) carries the exact message
+    /// `setCell` would reject the same text with, so a user sees the
+    /// problem as they type rather than only once they hit Save
+    /// (`db_core::value::validate_hex_text`'s own doc comment).
+    pub fn validate_hex(self: Pin<&mut Self>, text: &QString) -> FfiResult {
+        match db_core::value::validate_hex_text(&text.to_string()) {
+            Ok(()) => FfiResult::default(),
+            Err(message) => errors::failure(errors::CODE_INVALID_ARGUMENT, message),
+        }
+    }
 }
 
 /// The F4a residual (database-tools-plan's "F4a follow-up" row,

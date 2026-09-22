@@ -10875,6 +10875,23 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "prettyJson"]
         fn pretty_json(self: Pin<&mut ResultProvider>, text: &QString) -> FfiResult;
+
+        /// `ValueEditorDialog`'s own decision to open in its hex-edit
+        /// mode (F4c) — `true` for a `Value::Bytes` column
+        /// (`db_core::value::is_binary_type`).
+        #[qinvokable]
+        #[cxx_name = "isBinaryColumn"]
+        fn is_binary_column(
+            self: Pin<&mut ResultProvider>,
+            result_id: u64,
+            column: &QString,
+        ) -> bool;
+
+        /// Live hex validation for the value editor's hex-edit mode —
+        /// see `db_core::value::validate_hex_text`'s own doc comment.
+        #[qinvokable]
+        #[cxx_name = "validateHex"]
+        fn validate_hex(self: Pin<&mut ResultProvider>, text: &QString) -> FfiResult;
     }
 
     impl cxx_qt::Threading for ResultProvider {}

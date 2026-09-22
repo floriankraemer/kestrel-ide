@@ -304,16 +304,7 @@ pub fn parse_text(text: &str, type_name: &str) -> Result<Value, String> {
             .map_err(|error| format!("'{text}' is not valid JSON: {error}"));
     }
     if contains("blob") || contains("bytea") || contains("binary") || contains("varbinary") {
-        let trimmed = text
-            .trim()
-            .trim_start_matches("0x")
-            .trim_start_matches("\\x");
-        if trimmed.is_empty() {
-            return Ok(Value::Bytes(Vec::new()));
-        }
-        return parse_hex(trimmed)
-            .map(Value::Bytes)
-            .ok_or_else(|| format!("'{text}' is not valid hex"));
+        return hex_text_to_bytes(text).map(Value::Bytes);
     }
     if contains("timestamp") || contains("datetime") {
         if let Ok(dt) = DateTime::parse_from_rfc3339(text.trim()) {
@@ -335,6 +326,46 @@ pub fn parse_text(text: &str, type_name: &str) -> Result<Value, String> {
             .map_err(|_| format!("'{text}' is not a time (expected HH:MM:SS)"));
     }
     Ok(Value::Text(text.to_string()))
+}
+
+/// `true` for a column `type_name` [`parse_text`] coerces through
+/// [`parse_hex`] — the same vocabulary that function's own `blob`/
+/// `bytea`/`binary`/`varbinary` branch matches, exposed so a caller
+/// outside this module (the value editor's own hex-edit mode, F4c) can
+/// ask "does this column need hex, not plain text" without re-deriving
+/// that vocabulary itself (the exact re-derivation `ColumnMeta::origin`'s
+/// own doc comment already rules out for a different question). Matched
+/// case-insensitively, same as `parse_text`.
+pub fn is_binary_type(type_name: &str) -> bool {
+    let type_name = type_name.to_ascii_lowercase();
+    ["blob", "bytea", "binary", "varbinary"]
+        .iter()
+        .any(|needle| type_name.contains(needle))
+}
+
+/// [`parse_text`]'s own hex-decoding step, factored out so the value
+/// editor's hex-edit mode (F4c) can validate what a user is typing
+/// against the exact same rule `parse_text` binds with — never a second,
+/// slightly different regex/parser that could accept text `parse_text`
+/// would then reject at Save time.
+fn hex_text_to_bytes(text: &str) -> Result<Vec<u8>, String> {
+    let trimmed = text
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("\\x");
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    parse_hex(trimmed).ok_or_else(|| format!("'{text}' is not valid hex"))
+}
+
+/// The value editor's own live-validation step for a binary (`Bytes`)
+/// cell (F4c, closing the gap `ValueEditorDialog`'s own doc comment used
+/// to describe): `Err` carries the same message [`parse_text`] would
+/// reject the same text with, so a user sees the problem as they type
+/// rather than only once they hit Save.
+pub fn validate_hex_text(text: &str) -> Result<(), String> {
+    hex_text_to_bytes(text).map(|_| ())
 }
 
 /// `text.len()` alone is a *byte* length, and byte-index slicing a `&str`
@@ -676,5 +707,37 @@ mod tests {
     fn row_from_json_rejects_malformed_input_without_panicking() {
         assert!(row_from_json("not json").is_err());
         assert!(row_from_json("").is_err());
+    }
+
+    #[test]
+    fn is_binary_type_matches_every_blob_like_type_name_case_insensitively() {
+        for type_name in ["BLOB", "bytea", "VARBINARY(255)", "binary(16)"] {
+            assert!(is_binary_type(type_name), "{type_name} should be binary");
+        }
+        for type_name in ["int4", "text", "TIMESTAMP"] {
+            assert!(
+                !is_binary_type(type_name),
+                "{type_name} should not be binary"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_hex_text_accepts_what_parse_text_would_also_accept() {
+        for text in ["deadbeef", "0xDEADBEEF", "\\xdead", "", "  "] {
+            assert!(validate_hex_text(text).is_ok(), "{text} should validate");
+            assert!(parse_text(text, "bytea").is_ok());
+        }
+    }
+
+    #[test]
+    fn validate_hex_text_rejects_what_parse_text_would_also_reject() {
+        for text in ["zz", "abc", "1€2€"] {
+            let hex_err = validate_hex_text(text);
+            let parse_err = parse_text(text, "bytea");
+            assert!(hex_err.is_err(), "{text} should not validate");
+            assert!(parse_err.is_err());
+            assert_eq!(hex_err.unwrap_err(), parse_err.unwrap_err());
+        }
     }
 }

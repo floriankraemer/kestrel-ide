@@ -3,9 +3,11 @@
 #include <QDialogButtonBox>
 #include <QFile>
 #include <QFileDialog>
+#include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QTextStream>
@@ -21,6 +23,7 @@ ValueEditorDialog::ValueEditorDialog(ResultProvider *provider, quint64 resultId,
   , resultId_(resultId)
   , row_(row)
   , column_(column)
+  , isBinary_(provider->isBinaryColumn(resultId, column))
   , rawText_(initialText)
 {
     setWindowTitle(tr("Edit Value — %1").arg(column));
@@ -28,13 +31,28 @@ ValueEditorDialog::ValueEditorDialog(ResultProvider *provider, quint64 resultId,
 
     auto *layout = new QVBoxLayout(this);
 
+    if (isBinary_) {
+        hexHintLabel_ =
+          new QLabel(tr("Hex bytes, e.g. deadbeef or 0xdeadbeef (empty means zero-length)"), this);
+        layout->addWidget(hexHintLabel_);
+    }
+
     editor_ = new QPlainTextEdit(this);
     editor_->setPlainText(initialText);
+    if (isBinary_) {
+        QFont monospace(QStringLiteral("monospace"));
+        monospace.setStyleHint(QFont::Monospace);
+        editor_->setFont(monospace);
+        connect(editor_, &QPlainTextEdit::textChanged, this, &ValueEditorDialog::validateHexAsTyped);
+    }
     layout->addWidget(editor_, 1);
 
     statusLabel_ = new QLabel(this);
     statusLabel_->setWordWrap(true);
     layout->addWidget(statusLabel_);
+    if (isBinary_) {
+        validateHexAsTyped();
+    }
 
     auto *buttonRow = new QHBoxLayout();
     auto *nullButton = new QPushButton(tr("NULL"), this);
@@ -128,6 +146,16 @@ void ValueEditorDialog::loadFromFile()
     QTextStream stream(&file);
     editor_->setPlainText(stream.readAll());
     prettyShown_ = false;
+}
+
+void ValueEditorDialog::validateHexAsTyped()
+{
+    const FfiResult result = provider_->validateHex(editor_->toPlainText());
+    if (result.code == 0) {
+        statusLabel_->setText(tr("Valid hex."));
+    } else {
+        statusLabel_->setText(QString(result.message));
+    }
 }
 
 void ValueEditorDialog::saveToFile()

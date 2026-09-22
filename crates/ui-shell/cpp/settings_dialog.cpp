@@ -808,13 +808,23 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                     categoryList->visualItemRect(categoryList->item(containersIndex)).topLeft()),
                   categoryList->visualItemRect(categoryList->item(containersIndex)).size())
           : QRect();
+        // G1.6: the Plugins category row, so an E2E flow can switch to it
+        // the same way `containersCategoryRect` already lets one switch to
+        // Containers — the sidebar `QListWidget` itself is laid out from
+        // the moment the dialog is shown regardless of which page is
+        // current, unlike a `QStackedWidget` page's own contents.
+        const QRect pluginsCategoryRect(
+          categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(9)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(9)).size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"settings_dialog\","
                                 "\"scope_rect\":%1,\"editing_category_rect\":%2,"
                                 "\"tab_width_rect\":%3,\"ok_rect\":%4,"
-                                "\"editor_category_rect\":%5,\"containers_category_rect\":%6}")
+                                "\"editor_category_rect\":%5,\"containers_category_rect\":%6,"
+                                "\"plugins_category_rect\":%7}")
                   .arg(rectJson(scopeRect), rectJson(editingCategoryRect), rectJson(tabWidthRect),
                        rectJson(okRect), rectJson(editorCategoryRect))
-                  .arg(rectJson(containersCategoryRect)));
+                  .arg(rectJson(containersCategoryRect))
+                  .arg(rectJson(pluginsCategoryRect)));
     });
     QObject::connect(&dialog, &QDialog::finished, &dialog, [](int result) {
         e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"settings_dialog\","

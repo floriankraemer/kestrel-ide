@@ -762,6 +762,44 @@ impl ffi::ExchangeService {
         job_id
     }
 
+    pub fn restore_argv_preview(
+        self: Pin<&mut Self>,
+        source_id: &QString,
+        input_file: &QString,
+    ) -> QString {
+        match build_restore_command(&source_id.to_string(), &input_file.to_string()) {
+            Ok(command) => QString::from(dump::preview(&command).as_str()),
+            Err(error) => QString::from(format!("error: {error}").as_str()),
+        }
+    }
+
+    pub fn restore(mut self: Pin<&mut Self>, source_id: &QString, input_file: &QString) -> u64 {
+        let (job_id, _cancel) = self.as_mut().start_job();
+        let source_id_owned = source_id.to_string();
+        let input_file_owned = input_file.to_string();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let outcome = run_restore(&source_id_owned, &input_file_owned, job_id, &qt_thread);
+            let _ = qt_thread.queue(
+                move |mut service: Pin<&mut ffi::ExchangeService>| match outcome {
+                    Ok(()) => service.as_mut().job_finished(
+                        job_id,
+                        true,
+                        QString::from("restore finished"),
+                        QString::default(),
+                    ),
+                    Err(error) => service.as_mut().job_finished(
+                        job_id,
+                        false,
+                        QString::from(error.as_str()),
+                        QString::default(),
+                    ),
+                },
+            );
+        });
+        job_id
+    }
+
     pub fn cancel_job(self: Pin<&mut Self>, job_id: u64) -> ffi::FfiResult {
         if let Some(flag) = self.jobs.borrow().cancel.get(&job_id) {
             flag.store(true, Ordering::Relaxed);
@@ -1120,6 +1158,48 @@ fn build_dump_command(source_id: &str, options: &FfiDumpOptions) -> Result<dump:
     }
 }
 
+fn build_restore_command(source_id: &str, input_file: &str) -> Result<dump::Command, String> {
+    let source = data_source_for(source_id)?;
+    let secrets = secrets_for(source_id);
+    let credentials = dump::Credentials {
+        password: secrets.password,
+    };
+    dump::restore_command(&source.driver, &source, &credentials, input_file)
+        .map_err(|e| e.to_string())
+}
+
+fn run_restore(
+    source_id: &str,
+    input_file: &str,
+    job_id: u64,
+    qt_thread: &cxx_qt::CxxQtThread<ffi::ExchangeService>,
+) -> Result<(), String> {
+    let command = build_restore_command(source_id, input_file)?;
+    let work_dir = std::env::current_dir().unwrap_or_default();
+    let spawned = dump::spawn(&command, &work_dir).map_err(|e| format!("{e:?}"))?;
+
+    // A restore's stdout is its own tool's progress chatter (`psql`'s
+    // `COPY`/`CREATE TABLE` echoes, `mongorestore`'s summary) — there is
+    // no output file to write it to the way `run_dump` writes a dump's
+    // stdout, so it reports through `jobProgress` line by line, same as
+    // stderr. Read one pipe to EOF before the other, same sequential
+    // trade-off `run_dump` already accepts for its own two pipes — sound
+    // here too, since every restore tool this dispatches to writes a
+    // bounded amount of progress text, not a multi-gigabyte stream.
+    if let Some(stdout) = spawned.take_stdout() {
+        report_lines(stdout, job_id, qt_thread);
+    }
+    if let Some(stderr) = spawned.take_stderr() {
+        report_lines(stderr, job_id, qt_thread);
+    }
+    let status = spawned.wait().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("restore exited with status {status}"))
+    }
+}
+
 fn run_dump(
     source_id: &str,
     options: &FfiDumpOptions,
@@ -1141,21 +1221,32 @@ fn run_dump(
         }
     }
     if let Some(stderr) = spawned.take_stderr() {
-        use std::io::{BufRead, BufReader};
-        let progress_thread = qt_thread.clone();
-        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-            let _ = progress_thread.queue(move |mut service: Pin<&mut ffi::ExchangeService>| {
-                service
-                    .as_mut()
-                    .job_progress(job_id, 0, 0, QString::from(line.as_str()));
-            });
-        }
+        report_lines(stderr, job_id, qt_thread);
     }
     let status = spawned.wait().map_err(|e| e.to_string())?;
     if status.success() {
         Ok(output_file)
     } else {
         Err(format!("dump exited with status {status}"))
+    }
+}
+
+/// Reads `stream` line by line and forwards each one through
+/// `jobProgress`, `run_dump`'s stderr handling generalised so `run_restore`
+/// can reuse it for both of its own pipes (F6c).
+fn report_lines(
+    stream: impl std::io::Read,
+    job_id: u64,
+    qt_thread: &cxx_qt::CxxQtThread<ffi::ExchangeService>,
+) {
+    use std::io::{BufRead, BufReader};
+    let progress_thread = qt_thread.clone();
+    for line in BufReader::new(stream).lines().map_while(Result::ok) {
+        let _ = progress_thread.queue(move |mut service: Pin<&mut ffi::ExchangeService>| {
+            service
+                .as_mut()
+                .job_progress(job_id, 0, 0, QString::from(line.as_str()));
+        });
     }
 }
 

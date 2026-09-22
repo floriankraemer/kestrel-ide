@@ -39,6 +39,10 @@ void showCopyTableDialog(QWidget *parent, ExchangeService *exchange, const QStri
 // Data source row's "Dump…".
 void showDumpDialog(QWidget *parent, ExchangeService *exchange, const QString &sourceId);
 
+// Data source row's "Restore…" (F6c): picks a dump file, previews the
+// restore tool's argv, and confirms before writing into this source.
+void showRestoreDialog(QWidget *parent, ExchangeService *exchange, const QString &sourceId);
+
 // Table row's "ER Diagram" and the data source row's "ER Diagram" (whole
 // schema) — `tableScope` empty means the whole schema.
 void showErDiagramDialog(QWidget *parent, ExchangeService *exchange, DocumentManager *documentManager,

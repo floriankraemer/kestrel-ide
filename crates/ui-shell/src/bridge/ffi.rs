@@ -11076,14 +11076,34 @@ mod ffi {
         /// `mongodump`/`sqlite3 .dump`), streaming stderr lines through
         /// `jobProgress` as they arrive and stdout to `options.
         /// outputFile` (a tool that already writes its own output file,
-        /// `pg_dump`/`mongodump`, gets no stdout to speak of). Restore is
-        /// not implemented in this pass — see `database-tools.md` §4's
-        /// recorded gap.
+        /// `pg_dump`/`mongodump`, gets no stdout to speak of).
         #[qinvokable]
         fn dump(
             self: Pin<&mut ExchangeService>,
             source_id: &QString,
             options: FfiDumpOptions,
+        ) -> u64;
+
+        /// The argv `restore` would run against `inputFile`, shell-quoted
+        /// for display only (F6c) — `db_exchange::dump::{restore_command,
+        /// preview}`.
+        #[qinvokable]
+        #[cxx_name = "restoreArgvPreview"]
+        fn restore_argv_preview(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            input_file: &QString,
+        ) -> QString;
+
+        /// Runs `sourceId`'s restore tool (`psql -f`/`mysql < file`/
+        /// `mongorestore --archive`/`sqlite3 < file`) against `inputFile`
+        /// (F6c), streaming stderr lines through `jobProgress` the same
+        /// way `dump` does.
+        #[qinvokable]
+        fn restore(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            input_file: &QString,
         ) -> u64;
 
         /// Best-effort: sets the job's cancel flag, checked between

@@ -49,6 +49,7 @@ container-registry = { path = "../container-registry" }
 # for container-core/jvm-build-core.
 db-core = { path = "../db-core" }
 db-drivers = { path = "../db-drivers" }
+db-exchange = { path = "../db-exchange" }
 db-sql = { path = "../db-sql" }
 # F8b: backend selection at the seam (bridge/database/backend.rs) — ADBC
 # and ODBC join db-drivers as the two other backends a `database-drivers`

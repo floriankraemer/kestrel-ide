@@ -33,6 +33,18 @@ impl ActionSet {
     pub const COMMENT: ActionSet = ActionSet(1 << 9);
     pub const GENERATE_DDL: ActionSet = ActionSet(1 << 10);
     pub const ER_DIAGRAM: ActionSet = ActionSet(1 << 11);
+    /// Export the row's data (database-tools-plan F5b.3) — a relation's
+    /// rows out to CSV/TSV/JSON/Markdown/SQL/XLSX. Offered whether or not
+    /// the source is read-only: reading rows out is never a write.
+    pub const EXPORT_DATA: ActionSet = ActionSet(1 << 12);
+    /// Import rows into the table from a file (F5b.3) — a write, so gated
+    /// by `!caps.read_only` like `EDIT_DATA`.
+    pub const IMPORT_DATA: ActionSet = ActionSet(1 << 13);
+    /// Copy the table's rows to another table, same or a different source
+    /// (F5b.3) — reads this table and writes the destination, so gated by
+    /// the *destination*'s capabilities in the dialog, not this row's; the
+    /// row itself only needs to be a real table to offer the entry.
+    pub const COPY_TABLE: ActionSet = ActionSet(1 << 14);
 
     pub const fn contains(self, other: ActionSet) -> bool {
         self.0 & other.0 == other.0
@@ -394,6 +406,12 @@ pub fn actions_for(kind: ObjectKind, caps: SourceCapabilities) -> ActionSet {
     if matches!(kind, Table | Collection) {
         actions = actions | ActionSet::EDIT_DATA | ActionSet::ER_DIAGRAM;
     }
+    if is_relation {
+        actions = actions | ActionSet::EXPORT_DATA;
+    }
+    if matches!(kind, Table) {
+        actions = actions | ActionSet::COPY_TABLE;
+    }
     if is_routine {
         actions = actions | ActionSet::GO_TO_DDL | ActionSet::GENERATE_DDL;
     }
@@ -403,7 +421,7 @@ pub fn actions_for(kind: ObjectKind, caps: SourceCapabilities) -> ActionSet {
             actions = actions | ActionSet::RENAME | ActionSet::DROP;
         }
         if matches!(kind, Table) {
-            actions = actions | ActionSet::TRUNCATE;
+            actions = actions | ActionSet::TRUNCATE | ActionSet::IMPORT_DATA;
         }
         if (is_relation || is_routine) && caps.supports_comment {
             actions = actions | ActionSet::COMMENT;
@@ -782,6 +800,31 @@ mod tests {
         assert!(actions.contains(ActionSet::TRUNCATE));
         assert!(actions.contains(ActionSet::COMMENT));
         assert!(actions.contains(ActionSet::ER_DIAGRAM));
+        assert!(actions.contains(ActionSet::EXPORT_DATA));
+        assert!(actions.contains(ActionSet::COPY_TABLE));
+        assert!(actions.contains(ActionSet::IMPORT_DATA));
+    }
+
+    #[test]
+    fn a_read_only_source_still_offers_export_and_copy_but_not_import() {
+        let read_only = SourceCapabilities {
+            read_only: true,
+            supports_comment: true,
+        };
+        let actions = actions_for(ObjectKind::Table, read_only);
+        // Reading rows out, or copying them elsewhere, never writes this
+        // source — only importing *into* it does.
+        assert!(actions.contains(ActionSet::EXPORT_DATA));
+        assert!(actions.contains(ActionSet::COPY_TABLE));
+        assert!(!actions.contains(ActionSet::IMPORT_DATA));
+    }
+
+    #[test]
+    fn a_view_offers_export_but_no_import_or_copy_table() {
+        let actions = actions_for(ObjectKind::View, caps());
+        assert!(actions.contains(ActionSet::EXPORT_DATA));
+        assert!(!actions.contains(ActionSet::IMPORT_DATA));
+        assert!(!actions.contains(ActionSet::COPY_TABLE));
     }
 
     #[test]

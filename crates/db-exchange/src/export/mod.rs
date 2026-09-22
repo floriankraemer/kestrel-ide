@@ -13,7 +13,7 @@
 use std::io;
 
 use db_core::dialect::Dialect;
-use db_core::value::{FormatRules, RowBatch};
+use db_core::value::{ColumnMeta, FormatRules, RowBatch};
 
 pub mod csv;
 pub mod html;
@@ -96,6 +96,42 @@ impl ExportOptions {
             datetime_format: format!("{} %H:%M:%S", self.date_format),
             bytes_preview_len: usize::MAX,
         }
+    }
+}
+
+/// Every format this module offers, for a caller (F5b's `ExchangeService`)
+/// that picks one at runtime from a dialog's combo box rather than
+/// calling one module's `write` directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Csv,
+    Tsv,
+    Json,
+    Markdown,
+    Html,
+    Sql,
+    Xlsx,
+}
+
+/// Dispatch to the one format module `format` names — every format
+/// module shares this exact signature (see each module's own doc
+/// comment), so this is the whole dispatch, not a wrapper hiding
+/// per-format special cases.
+pub fn write_format(
+    format: Format,
+    columns: &[ColumnMeta],
+    rows: RowSource,
+    writer: &mut dyn io::Write,
+    options: &ExportOptions,
+) -> io::Result<()> {
+    match format {
+        Format::Csv => csv::write(columns, rows, writer, options),
+        Format::Tsv => tsv::write(columns, rows, writer, options),
+        Format::Json => json::write(columns, rows, writer, options),
+        Format::Markdown => markdown::write(columns, rows, writer, options),
+        Format::Html => html::write(columns, rows, writer, options),
+        Format::Sql => sql::write(columns, rows, writer, options),
+        Format::Xlsx => xlsx::write(columns, rows, writer, options),
     }
 }
 

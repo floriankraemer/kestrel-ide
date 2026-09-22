@@ -181,7 +181,12 @@ baseline() {
 	# `ResultProvider` construction and threading (2 lines each in the
 	# signature/call sites), offset by compacting five single-line
 	# per-window-QObject comments into their own construction lines.
-	crates/ui-shell/cpp/main_window.cpp) echo 1239 ;;
+	# Raised from 1239 by 2 lines for F5b: one `ExchangeService`
+	# construction line (with its own explanatory comment) — the single
+	# factory-registration line the database-tools-plan agent brief
+	# allows here, threaded through to `buildCentralWidget`/
+	# `buildContributedToolWindows` (both defined elsewhere).
+	crates/ui-shell/cpp/main_window.cpp) echo 1241 ;;
 	# Raised from the 1200 ceiling by 3 lines for the jvm-build-tools
 	# plan's B4, review fix 4: a save of an open build file also reaches
 	# BuildToolsService::fileSaved, right where saveTab already forwards

@@ -2,6 +2,7 @@
 
 #include "database_console_bar.h"
 #include "database_dialogs.h"
+#include "database_exchange_actions.h"
 #include "dock_layout.h"
 #include "editor_tabs.h"
 #include "result_grid_view.h"
@@ -12,7 +13,9 @@
 
 #include <QApplication>
 #include <QFileInfo>
+#include <QHBoxLayout>
 #include <QPlainTextEdit>
+#include <QPushButton>
 #include <QTabWidget>
 #include <QVBoxLayout>
 
@@ -20,11 +23,13 @@ namespace ui_shell {
 
 DatabaseResultsPanel::DatabaseResultsPanel(EditorTabs *editorTabs, ConsoleService *consoleService,
                                            ResultProvider *resultProvider,
+                                           ExchangeService *exchangeService,
                                            AppSettings *appSettings, QWidget *parent)
   : QWidget(parent)
   , editorTabs_(editorTabs)
   , consoleService_(consoleService)
   , resultProvider_(resultProvider)
+  , exchangeService_(exchangeService)
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -73,6 +78,11 @@ DatabaseResultsPanel::ConsolePage &DatabaseResultsPanel::pageFor(quint64 tabId)
     page.root = new QWidget(consoleTabs_);
     auto *layout = new QVBoxLayout(page.root);
     layout->setContentsMargins(0, 0, 0, 0);
+    auto *toolbar = new QHBoxLayout();
+    auto *exportButton = new QPushButton(tr("Export / Copy As…"), page.root);
+    toolbar->addWidget(exportButton);
+    toolbar->addStretch(1);
+    layout->addLayout(toolbar);
     page.subTabs = new QTabWidget(page.root);
     page.output = new QPlainTextEdit(page.root);
     page.output->setReadOnly(true);
@@ -80,6 +90,10 @@ DatabaseResultsPanel::ConsolePage &DatabaseResultsPanel::pageFor(quint64 tabId)
     page.grid = new ResultGridView(resultProvider_, page.root);
     page.subTabs->addTab(page.grid, tr("Result"));
     layout->addWidget(page.subTabs);
+
+    connect(exportButton, &QPushButton::clicked, this, [this, tabId]() {
+        exportCurrentResult(tabId);
+    });
 
     const QString path = editorTabs_->documentManager()->tabPath(tabId);
     const QString title = QFileInfo(path).fileName();
@@ -123,6 +137,7 @@ void DatabaseResultsPanel::onExecutionStarted(quint64 tabId, quint64 resultId, q
     Q_UNUSED(count);
     resultTab_.insert(resultId, tabId);
     ConsolePage &page = pageFor(tabId);
+    page.currentResultId = resultId;
     page.grid->setResultId(resultId);
     page.subTabs->setCurrentWidget(page.grid);
     consoleTabs_->setCurrentWidget(page.root);
@@ -149,16 +164,49 @@ void DatabaseResultsPanel::onExecutionFinished(quint64 resultId, bool ok, quint6
     }
 }
 
+void DatabaseResultsPanel::exportCurrentResult(quint64 tabId)
+{
+    const auto it = pages_.find(tabId);
+    if (it == pages_.end() || it.value().currentResultId == 0) {
+        return;
+    }
+    const quint64 resultId = it.value().currentResultId;
+    QStringList columns;
+    for (const FfiDbColumn &column : resultProvider_->columns(resultId)) {
+        columns.append(QString(column.name));
+    }
+    // ponytail: the whole result is pulled into memory for this dialog
+    // (capped at 100k rows) rather than streamed the way `exportTable`
+    // is — a grid export starts from rows the grid already fetched, not
+    // a fresh session read, so there is no cursor here to stream from;
+    // upgrade if a huge already-fetched result set ever makes this a
+    // real problem.
+    const quint64 rowCount = qMin<quint64>(resultProvider_->rowCount(resultId), 100000);
+    ::rust::Vec<FfiDbRow> rows;
+    for (quint64 first = 0; first < rowCount;) {
+        const auto page = resultProvider_->rowPage(resultId, first, 1000);
+        if (page.empty()) {
+            break;
+        }
+        for (const FfiDbRow &row : page) {
+            rows.push_back(row);
+        }
+        first += page.size();
+    }
+    showExportRowsDialog(this, exchangeService_, columns, rows);
+}
+
 DatabaseResultsPanel *buildDatabaseResultsDock(ads::CDockManager *dockManager,
                                                DockRegistry *docks,
                                                ads::CDockAreaWidget *relativeTo,
                                                EditorTabs *editorTabs,
                                                ConsoleService *consoleService,
                                                ResultProvider *resultProvider,
+                                               ExchangeService *exchangeService,
                                                AppSettings *appSettings)
 {
     auto *panel = new DatabaseResultsPanel(editorTabs, consoleService, resultProvider,
-                                           appSettings, dockManager);
+                                           exchangeService, appSettings, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Database Results"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("databaseResults"), dock, ads::BottomDockWidgetArea,

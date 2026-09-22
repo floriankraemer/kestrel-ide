@@ -22,6 +22,7 @@ use crate::bridge::containers::ContainerServiceRust;
 use crate::bridge::convert::{new_syntax_highlighter, syntax_scope_names, SyntaxHighlighterHandle};
 use crate::bridge::database::console::{ConsoleServiceRust, ResultProviderRust};
 use crate::bridge::database::drivers::DriverInstallServiceRust;
+use crate::bridge::database::exchange::ExchangeServiceRust;
 use crate::bridge::database::settings::DataSourceEditorRust;
 use crate::bridge::database::DatabaseServiceRust;
 use crate::bridge::debug::DebugServiceRust;
@@ -2363,6 +2364,21 @@ mod ffi {
             right_label: &QString,
             left_text: &QString,
             right_text: &QString,
+        ) -> u64;
+
+        /// Open a read-only virtual document — no backing file — under
+        /// `scheme`/`key` (C12's mechanism, generalised for F5b: an ER
+        /// diagram's Mermaid text, a schema-compare migration script).
+        /// Focuses the existing tab rather than duplicating one for the
+        /// same `(scheme, key)`. Returns the tab's id and emits
+        /// `tabOpened` for a genuinely new one, same as `openFile`.
+        #[qinvokable]
+        #[cxx_name = "openVirtualDocument"]
+        fn open_virtual_document(
+            self: Pin<&mut DocumentManager>,
+            scheme: &QString,
+            key: &QString,
+            text: &QString,
         ) -> u64;
 
         /// The left/right side labels a diff tab was opened with (e.g. two
@@ -10126,6 +10142,19 @@ mod ffi {
         can_generate_ddl: bool,
         #[cxx_name = "canErDiagram"]
         can_er_diagram: bool,
+        #[cxx_name = "canExportData"]
+        can_export_data: bool,
+        #[cxx_name = "canImportData"]
+        can_import_data: bool,
+        #[cxx_name = "canCopyTable"]
+        can_copy_table: bool,
+        /// Set only on the data source's own root row (F5b.3) — dump and
+        /// schema/data compare operate on a whole source, not one object,
+        /// so `db_core::tree::actions_for` never sees them.
+        #[cxx_name = "canDump"]
+        can_dump: bool,
+        #[cxx_name = "canCompare"]
+        can_compare: bool,
     }
 
     /// One flattened row of the Database dock's tree (database-tools-plan
@@ -10663,6 +10692,419 @@ mod ffi {
     }
 
     impl cxx_qt::Threading for DriverInstallService {}
+
+    // ---- database: F5b ----
+
+    /// Every export format `db_exchange::export` offers, plus the two
+    /// text variants that need a per-format flag of their own (JSON
+    /// Lines vs. a single array, an `UPDATE` vs. an `INSERT` SQL body) —
+    /// folded into the format itself rather than a separate options bit,
+    /// since a dialog's format combo already has to name them as distinct
+    /// choices.
+    #[repr(i32)]
+    enum FfiExportFormat {
+        Csv,
+        Tsv,
+        Json,
+        JsonLines,
+        Markdown,
+        Html,
+        SqlInsert,
+        SqlUpdate,
+        Xlsx,
+    }
+
+    /// The knobs every export format reads a subset of
+    /// (`db_exchange::export::ExportOptions`'s own doc comment on why one
+    /// shared struct rather than one per format).
+    struct FfiExportOptions {
+        header: bool,
+        #[cxx_name = "nullText"]
+        null_text: QString,
+        #[cxx_name = "quoteAll"]
+        quote_all: bool,
+        /// A single character; empty defaults to `,` (CSV) / tab (TSV).
+        delimiter: QString,
+        #[cxx_name = "dateFormat"]
+        date_format: QString,
+        #[cxx_name = "tableName"]
+        table_name: QString,
+        /// Comma-separated key columns for `SqlUpdate`'s `WHERE` clause.
+        #[cxx_name = "keyColumns"]
+        key_columns: QString,
+    }
+
+    /// Source-parsing knobs for a CSV/XLSX import
+    /// (`db_exchange::import::ImportOptions` crossed the seam).
+    struct FfiImportOptions {
+        header: bool,
+        #[cxx_name = "nullText"]
+        null_text: QString,
+        delimiter: QString,
+        #[cxx_name = "dateFormat"]
+        date_format: QString,
+        /// Folded in here rather than two more `importRun` parameters —
+        /// `db_exchange::import::plan`'s own knobs, kept beside the rest
+        /// of this source's parsing options to keep `importRun` under
+        /// clippy's argument-count ceiling.
+        #[cxx_name = "createTable"]
+        create_table: bool,
+        #[cxx_name = "batchSize"]
+        batch_size: u32,
+    }
+
+    /// A sampled look at an import source (`db_exchange::import::
+    /// ImportPreview`): every column's detected type, alongside its own
+    /// name, so the dialog's mapping table has one row per source column
+    /// with no further round trip.
+    #[derive(Default)]
+    struct FfiImportPreview {
+        columns: QStringList,
+        /// The detected type per column, same order as `columns` — one
+        /// of `"int"`/`"float"`/`"bool"`/`"date"`/`"text"`.
+        #[cxx_name = "detectedTypes"]
+        detected_types: QStringList,
+        /// The sample rows, each `\u{1f}`-joined (same convention as
+        /// `FfiDbRow::cells`), one `QString` per row, capped at
+        /// `db_exchange::import::PREVIEW_SAMPLE_ROWS`.
+        #[cxx_name = "sampleRows"]
+        sample_rows: QStringList,
+    }
+
+    /// One mapped column of an import (`db_exchange::import::
+    /// ColumnMapping` crossed the seam) — the dialog's mapping table has
+    /// one editable row per source column, built from `type_coercion` as
+    /// plain text (`"int"`/`"float"`/`"bool"`/`"date"`/`"text"`) rather
+    /// than the Rust enum, so the view never needs a second copy of that
+    /// vocabulary.
+    struct FfiImportColumnMapping {
+        #[cxx_name = "sourceCol"]
+        source_col: QString,
+        #[cxx_name = "targetCol"]
+        target_col: QString,
+        #[cxx_name = "typeCoercion"]
+        type_coercion: QString,
+        skip: bool,
+    }
+
+    /// One row of a schema compare's summary (`db_exchange::
+    /// schema_compare::SchemaDiff`, flattened) — `kind` is one of
+    /// `"added-table"`/`"dropped-table"`/`"changed-table"`/`"view"`/
+    /// `"routine"`, `table`/`name` the same pair `ObjectRef` carries so
+    /// `openDdlDiff` can be handed exactly what it needs back.
+    struct FfiCompareRow {
+        kind: QString,
+        table: QString,
+        name: QString,
+    }
+
+    /// Two already-rendered texts for `DocumentManager::openDiffTab` —
+    /// `ExchangeService` computes the text, the dialog opens the tab, so
+    /// this crosses the seam once rather than the dialog re-deriving
+    /// either side itself.
+    #[derive(Default)]
+    struct FfiTextDiff {
+        left: QString,
+        right: QString,
+        label: QString,
+    }
+
+    /// A key-aligned data compare's outcome (`db_exchange::data_compare::
+    /// DataDiffSummary` plus its two canonical TSVs, one round trip).
+    #[derive(Default)]
+    struct FfiDataCompareResult {
+        #[cxx_name = "onlyLeft"]
+        only_left: u64,
+        #[cxx_name = "onlyRight"]
+        only_right: u64,
+        changed: u64,
+        equal: u64,
+        #[cxx_name = "leftText"]
+        left_text: QString,
+        #[cxx_name = "rightText"]
+        right_text: QString,
+    }
+
+    /// What a dump/restore run should cover
+    /// (`db_exchange::dump::DumpOptions` crossed the seam).
+    struct FfiDumpOptions {
+        #[cxx_name = "schemaOnly"]
+        schema_only: bool,
+        #[cxx_name = "dataOnly"]
+        data_only: bool,
+        /// Comma-separated; empty means every table.
+        tables: QString,
+        #[cxx_name = "outputFile"]
+        output_file: QString,
+    }
+
+    /// Whether this source's dump tool is on `PATH`, and what to tell the
+    /// user if not (`db_exchange::dump::{tool_available,install_hint}`).
+    #[derive(Default)]
+    struct FfiDumpToolStatus {
+        program: QString,
+        available: bool,
+        #[cxx_name = "installHint"]
+        install_hint: QString,
+    }
+
+    extern "RustQt" {
+        /// Export/import/dump/copy-table/ER-diagram/schema-and-data-
+        /// compare (database-tools-plan F5/F6, crate half in
+        /// `db-exchange`): every long-running operation runs on its own
+        /// thread and reports through `jobProgress`/`jobFinished`; every
+        /// short one (a preview, a diagram, a compare summary) answers
+        /// directly. Translation only, same as every other `bridge::
+        /// database` QObject — every rule lives in `db_exchange`/
+        /// `db_core`.
+        #[qobject]
+        type ExchangeService = super::ExchangeServiceRust;
+
+        /// Streams `SELECT * FROM` `objectPath` (already-qualified, as the
+        /// tree gives it) out to `destination` in `format`, never
+        /// materialising the whole result in memory. Returns a job id
+        /// immediately; `0` means it could not even start (see the
+        /// `jobFinished(0, ...)` this still emits before returning, so a
+        /// caller never has to special-case the synchronous-failure path).
+        #[qinvokable]
+        #[cxx_name = "exportTable"]
+        fn export_table(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            object_path: &QString,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+            destination: &QString,
+        ) -> u64;
+
+        /// The first `maxRows` of `objectPath`, rendered in `format` —
+        /// the export dialog's own preview pane.
+        #[qinvokable]
+        #[cxx_name = "exportPreviewText"]
+        fn export_preview_text(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            object_path: &QString,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+            max_rows: u32,
+        ) -> QString;
+
+        /// "Copy as"/"Export…" on an already-executed result grid: the
+        /// rows are already fetched and rendered (`FfiDbRow`, the same
+        /// shape `ResultProvider::rowPage` returns), so this only
+        /// reformats and writes them — no session, no re-query.
+        /// ponytail: cells arrive pre-rendered as display text, not typed
+        /// `Value`s, so a `SqlInsert`/`SqlUpdate` export quotes every
+        /// value as text rather than its real type; upgrade once a typed
+        /// row accessor exists on the result (F4a's `results.rs` split).
+        #[qinvokable]
+        #[cxx_name = "exportRowsToFile"]
+        fn export_rows_to_file(
+            self: Pin<&mut ExchangeService>,
+            columns: &QStringList,
+            rows: Vec<FfiDbRow>,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+            destination: &QString,
+        ) -> FfiResult;
+
+        /// Same rendering as `exportRowsToFile`, returned as text for the
+        /// clipboard rather than written to a file.
+        #[qinvokable]
+        #[cxx_name = "exportRowsToText"]
+        fn export_rows_to_text(
+            self: Pin<&mut ExchangeService>,
+            columns: &QStringList,
+            rows: Vec<FfiDbRow>,
+            format: FfiExportFormat,
+            options: FfiExportOptions,
+        ) -> QString;
+
+        /// Samples `path` (CSV or XLSX, by extension) and guesses each
+        /// column's type — `db_exchange::import::{csv,xlsx}::preview`.
+        #[qinvokable]
+        #[cxx_name = "importPreview"]
+        fn import_preview(
+            self: Pin<&mut ExchangeService>,
+            path: &QString,
+            options: FfiImportOptions,
+        ) -> FfiImportPreview;
+
+        /// Reads `path` fully, compiles it under `mapping` against
+        /// `targetTable`'s dialect, and runs it on `sourceId` — a job, the
+        /// same shape as `exportTable`.
+        #[qinvokable]
+        #[cxx_name = "importRun"]
+        fn import_run(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            path: &QString,
+            target_table: &QString,
+            mapping: Vec<FfiImportColumnMapping>,
+            options: FfiImportOptions,
+        ) -> u64;
+
+        /// Copies every row of `srcTable` (on `srcSource`) into
+        /// `dstTable` (on `dstSource`) — a job, `db_exchange::
+        /// copy_table::copy_table` on a fresh pair of connections.
+        #[qinvokable]
+        #[cxx_name = "copyTable"]
+        fn copy_table(
+            self: Pin<&mut ExchangeService>,
+            src_source: &QString,
+            src_table: &QString,
+            dst_source: &QString,
+            dst_table: &QString,
+            create_if_missing: bool,
+            batch_size: u32,
+        ) -> u64;
+
+        /// `sourceId`'s schema (or just `tableScope` plus its FK
+        /// neighbours, when non-empty) as Mermaid `erDiagram` text —
+        /// `db_exchange::er_diagram::to_mermaid`. The dialog opens it as
+        /// a read-only virtual document via `DocumentManager::
+        /// openVirtualDocument("mermaid", …)` itself.
+        #[qinvokable]
+        #[cxx_name = "erDiagramMermaid"]
+        fn er_diagram_mermaid(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            table_scope: &QString,
+        ) -> QString;
+
+        /// The same diagram, already rasterised at `widthPx` — the same
+        /// `FfiPreviewImage` shape `PreviewProvider::previewImages`
+        /// returns, so the dialog that shows it needs no second
+        /// `QImage`-building code path.
+        #[qinvokable]
+        #[cxx_name = "erDiagramImage"]
+        fn er_diagram_image(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            table_scope: &QString,
+            width_px: u32,
+        ) -> FfiPreviewImage;
+
+        /// Compares `leftSource`'s schema against `rightSource`'s
+        /// (`db_exchange::schema_compare::compare`), caching the diff (by
+        /// this same source pair) for `openDdlDiff`/`migrationScript` to
+        /// read back without re-introspecting either side.
+        #[qinvokable]
+        #[cxx_name = "schemaCompare"]
+        fn schema_compare(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            right_source: &QString,
+        ) -> Vec<FfiCompareRow>;
+
+        /// One changed object's before/after DDL text, from the diff
+        /// `schemaCompare` last cached for this exact source pair — the
+        /// dialog opens the returned texts with `DocumentManager::
+        /// openDiffTab` itself.
+        #[qinvokable]
+        #[cxx_name = "ddlDiffTexts"]
+        fn ddl_diff_texts(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            right_source: &QString,
+            table: &QString,
+            name: &QString,
+        ) -> FfiTextDiff;
+
+        /// The forward migration script (`leftSource` -> `rightSource`)
+        /// for the same cached diff, in `rightSource`'s dialect — the
+        /// dialog opens it as a virtual document
+        /// (`"db-migration"`/`.sql`) itself.
+        #[qinvokable]
+        #[cxx_name = "migrationScript"]
+        fn migration_script(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            right_source: &QString,
+        ) -> QString;
+
+        /// Key-aligned data compare (`db_exchange::data_compare::
+        /// compare`) between two tables, same source or different —
+        /// fetches both sides fully (F6.3's recorded scope: a caller
+        /// that needs a streamed compare over a huge table pages both
+        /// sides itself, per that module's own doc comment).
+        #[qinvokable]
+        #[cxx_name = "dataCompare"]
+        fn data_compare(
+            self: Pin<&mut ExchangeService>,
+            left_source: &QString,
+            left_table: &QString,
+            right_source: &QString,
+            right_table: &QString,
+            key_columns: &QString,
+            tolerance: f64,
+        ) -> FfiDataCompareResult;
+
+        /// The argv `dump`/`restore` would run, shell-quoted for display
+        /// only — `db_exchange::dump::preview`. Never includes a
+        /// password (the module's own guarantee).
+        #[qinvokable]
+        #[cxx_name = "dumpArgvPreview"]
+        fn dump_argv_preview(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            options: FfiDumpOptions,
+        ) -> QString;
+
+        /// Whether `sourceId`'s dump tool is on `PATH`, and an install
+        /// hint if not — `db_exchange::dump::{tool_available,
+        /// install_hint}`.
+        #[qinvokable]
+        #[cxx_name = "dumpToolStatus"]
+        fn dump_tool_status(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+        ) -> FfiDumpToolStatus;
+
+        /// Runs `sourceId`'s dump tool (`pg_dump`/`mysqldump`/
+        /// `mongodump`/`sqlite3 .dump`), streaming stderr lines through
+        /// `jobProgress` as they arrive and stdout to `options.
+        /// outputFile` (a tool that already writes its own output file,
+        /// `pg_dump`/`mongodump`, gets no stdout to speak of). Restore is
+        /// not implemented in this pass — see `database-tools.md` §4's
+        /// recorded gap.
+        #[qinvokable]
+        fn dump(
+            self: Pin<&mut ExchangeService>,
+            source_id: &QString,
+            options: FfiDumpOptions,
+        ) -> u64;
+
+        /// Best-effort: sets the job's cancel flag, checked between
+        /// batches/lines by whichever job is running. A job already
+        /// finished, or an unknown id, is a silent no-op.
+        #[qinvokable]
+        #[cxx_name = "cancelJob"]
+        fn cancel_job(self: Pin<&mut ExchangeService>, job_id: u64) -> FfiResult;
+
+        #[qsignal]
+        #[cxx_name = "jobProgress"]
+        fn job_progress(
+            self: Pin<&mut ExchangeService>,
+            job_id: u64,
+            done: u64,
+            total: u64,
+            message: QString,
+        );
+
+        #[qsignal]
+        #[cxx_name = "jobFinished"]
+        fn job_finished(
+            self: Pin<&mut ExchangeService>,
+            job_id: u64,
+            ok: bool,
+            message: QString,
+            #[cxx_name = "outputPath"] output_path: QString,
+        );
+    }
+
+    impl cxx_qt::Threading for ExchangeService {}
 
     unsafe extern "C++" {
         include!("main_window.h");

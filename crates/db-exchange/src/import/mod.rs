@@ -86,7 +86,13 @@ pub struct ImportPreview {
     pub detected_types: Vec<DetectedType>,
 }
 
-pub(crate) fn build_preview(
+/// Build an [`ImportPreview`] from an already-read `(columns, rows)` pair
+/// — `csv::preview`/`xlsx::preview`'s own shared tail, made `pub` rather
+/// than `pub(crate)` so a caller that already called `read` for `plan`'s
+/// sake (`ui-shell`'s `ExchangeService::importRun`, which needs the full
+/// row set `preview` alone never reads) is not forced to read the source
+/// twice just to get the same [`ImportPreview`] `plan` takes.
+pub fn build_preview(
     columns: Vec<String>,
     rows: &[Vec<String>],
     options: &ImportOptions,

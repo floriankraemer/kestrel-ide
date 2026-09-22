@@ -10093,6 +10093,33 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "testConnectionFinished"]
         fn test_connection_finished(self: Pin<&mut DataSourceEditor>, ok: bool, message: QString);
+
+        // ---- database: F7b ----
+        /// A "Test connection" attempt over an SSH tunnel hit a host key
+        /// `~/.ssh/known_hosts` has never seen (`DbErrorCode::
+        /// HostKeyUnknown`) — the dialog shows the fingerprint and offers
+        /// "Accept and add to known_hosts" (`acceptHostKey`), which
+        /// retries the connection once accepted. A *changed* key
+        /// (`DbErrorCode::HostKeyMismatch`) never reaches this signal —
+        /// it reports through the ordinary `testConnectionFinished(false,
+        /// …)` failure path instead, with no accept affordance (this
+        /// module's own doc comment on why).
+        #[qsignal]
+        #[cxx_name = "hostKeyPrompt"]
+        fn host_key_prompt(
+            self: Pin<&mut DataSourceEditor>,
+            host: QString,
+            port: i32,
+            fingerprint: QString,
+        );
+
+        /// Answers a `hostKeyPrompt` with "Accept and add to
+        /// known_hosts": records the pending key `db_drivers::ssh`
+        /// stashed for the prompt's host/port, then re-runs
+        /// `testConnection`.
+        #[qinvokable]
+        #[cxx_name = "acceptHostKey"]
+        fn accept_host_key(self: Pin<&mut DataSourceEditor>) -> FfiResult;
     }
 
     impl cxx_qt::Threading for DataSourceEditor {}
@@ -10165,6 +10192,11 @@ mod ffi {
         can_dump: bool,
         #[cxx_name = "canCompare"]
         can_compare: bool,
+        /// A Redis key's own actions (F7b) — never set on any other kind.
+        #[cxx_name = "canDeleteKey"]
+        can_delete_key: bool,
+        #[cxx_name = "canTtlSet"]
+        can_ttl_set: bool,
     }
 
     /// One flattened row of the Database dock's tree (database-tools-plan

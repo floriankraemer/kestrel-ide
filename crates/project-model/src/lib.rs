@@ -412,13 +412,18 @@ impl ProjectSession {
     /// the caller's job, same as it is off of [`open_folder`]'s pure half,
     /// `open_folder_sorted`.
     ///
-    /// Returns whatever project was previously current (`None` if none
-    /// was), so the caller can drop it off the Qt thread: a huge previous
-    /// tree's frees and its watcher's OS-level teardown must not block
-    /// paint of the just-installed one any more than the walk that built
-    /// it did (plan step 4).
-    pub fn install_project(&mut self, project: Project) -> Option<Project> {
-        self.current.replace(project)
+    /// Returns whatever project and watcher were previously current, so the
+    /// caller can drop them off the Qt thread: a huge previous tree's frees
+    /// and its watcher's OS-level teardown must not block paint of the
+    /// just-installed one any more than the walk that built it did (plan
+    /// step 4). The old watcher goes out here rather than when the new
+    /// one finishes registering: until then it would keep routing the old
+    /// project's events into full re-walks of the new one.
+    pub fn install_project(
+        &mut self,
+        project: Project,
+    ) -> (Option<Project>, Option<ProjectWatcher>) {
+        (self.current.replace(project), self.watcher.take())
     }
 
     /// Install a watcher that finished registering off the Qt thread (plan
@@ -659,7 +664,9 @@ mod tests {
 
         let mut session = ProjectSession::new();
         assert!(session.current().is_none());
-        assert!(session.install_project(project).is_none());
+        let (replaced, replaced_watcher) = session.install_project(project);
+        assert!(replaced.is_none());
+        assert!(replaced_watcher.is_none());
         assert_eq!(session.current().unwrap().root.path(), dir.path());
     }
 
@@ -673,11 +680,30 @@ mod tests {
         let mut session = ProjectSession::new();
         session
             .install_project(open_folder_sorted(first_dir.path(), SortOrder::Ascending).unwrap());
-        let replaced = session
+        let (replaced, _) = session
             .install_project(open_folder_sorted(second_dir.path(), SortOrder::Ascending).unwrap());
 
         assert_eq!(replaced.unwrap().root.path(), first_dir.path());
         assert_eq!(session.current().unwrap().root.path(), second_dir.path());
+    }
+
+    #[test]
+    fn install_project_hands_back_the_previous_watcher() {
+        let first_dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(first_dir.path());
+        let second_dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(second_dir.path());
+
+        let mut session = ProjectSession::new();
+        session
+            .install_project(open_folder_sorted(first_dir.path(), SortOrder::Ascending).unwrap());
+        let watcher = ProjectWatcher::start(first_dir.path(), false, |_, _| {}).unwrap();
+        assert!(session.install_watcher(first_dir.path(), watcher).is_ok());
+
+        let (_, replaced_watcher) = session
+            .install_project(open_folder_sorted(second_dir.path(), SortOrder::Ascending).unwrap());
+
+        assert!(replaced_watcher.is_some());
     }
 
     #[test]

@@ -15,9 +15,12 @@ impl AppSession {
     /// Install an already walked-and-sorted project as current, replacing
     /// any previous one — the swap-in half of "Open Folder" when the walk
     /// itself ran off the Qt thread (`ui-shell`'s async worker). Returns the
-    /// previous project, if there was one, so the caller can drop it off
+    /// previous project and watcher, if any, so the caller can drop them off
     /// the Qt thread instead of blocking paint on freeing a huge tree.
-    pub fn install_opened_project(&mut self, project: Project) -> Option<Project> {
+    pub fn install_opened_project(
+        &mut self,
+        project: Project,
+    ) -> (Option<Project>, Option<ProjectWatcher>) {
         self.project.install_project(project)
     }
 
@@ -69,9 +72,10 @@ mod tests {
             project_model::SortOrder::Ascending,
         )
         .unwrap();
-        let replaced = session.install_opened_project(project);
+        let (replaced, replaced_watcher) = session.install_opened_project(project);
 
         assert!(replaced.is_none());
+        assert!(replaced_watcher.is_none());
         assert_eq!(session.root_path().unwrap(), project_dir.path());
     }
 

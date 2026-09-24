@@ -328,8 +328,7 @@ impl ffi::ProjectTreeModel {
                     let _ = project_model::persist_last_project(&config_dir, project.root.path());
                     let root = project.root.path().to_path_buf();
                     let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                        let previous_project =
-                            model.session.borrow_mut().install_opened_project(project);
+                        let previous = model.session.borrow_mut().install_opened_project(project);
                         // Borrow scoped tightly: `endResetModel` synchronously
                         // re-enters `rowCount`/`data`, which take their own
                         // borrow of the session.
@@ -339,9 +338,9 @@ impl ffi::ProjectTreeModel {
                         }
                         // Tree paints here. Freeing the previous project's
                         // tree (hundreds of thousands of nodes, for a big
-                        // one) must not delay that paint, so it happens on
-                        // a throwaway thread instead of inline.
-                        std::thread::spawn(move || drop(previous_project));
+                        // one) and tearing down its watcher must not delay
+                        // that paint, so both go on a throwaway thread.
+                        std::thread::spawn(move || drop(previous));
 
                         let qt_thread = model.qt_thread();
                         let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {

@@ -383,12 +383,6 @@ impl AppSession {
         self.project.reopen_last(&self.config_dir).unwrap_or(false)
     }
 
-    /// Re-snapshot the current project's tree from disk (after a watcher
-    /// event reported a structural change).
-    pub fn rebuild_tree(&mut self) -> Result<(), AppError> {
-        self.project.rebuild_tree().map_err(AppError::TreeRebuild)
-    }
-
     // --- tab commands -----------------------------------------------------
 
     /// Open `path` as a new tab, or focus the existing tab if the file is
@@ -619,21 +613,22 @@ impl AppSession {
             .collect()
     }
 
-    /// Every node in the open project's tree (path + is_dir), skipping the
-    /// invisible root — mirrors what `ProjectTreeModel`'s rows show (MCP's
+    /// Every file and folder in the open project, gitignore-aware (MCP's
     /// `list_project_tree` tool, M4). Empty when no project is open.
+    ///
+    /// A fresh `ignore::WalkBuilder` walk of the project root, not a read of
+    /// `ProjectSession`'s own `DirectoryTree` (`project_model::DirectoryTree`,
+    /// the lazy arena `ProjectTreeModel`'s rows come from): that arena is
+    /// partial by design (plan step 6, ADR-0062's "Decision 2") — only
+    /// directories the user has actually expanded in the sidebar are ever
+    /// loaded, so reading it here would silently hide everything under a
+    /// still-collapsed folder from a caller that needs the whole project.
+    /// Safe to call from any thread — see `project_model::walk_all_entries`.
     pub fn project_tree_entries(&self) -> Vec<(PathBuf, bool)> {
-        let Some(project) = self.project.current() else {
+        let Some(root) = self.root_path() else {
             return Vec::new();
         };
-        let tree = &project.tree;
-        (0..tree.len())
-            .filter(|&id| id != tree.root_id())
-            .map(|id| {
-                let node = tree.node(id);
-                (node.path.clone(), node.is_dir)
-            })
-            .collect()
+        project_model::walk_all_entries(root)
     }
 
     /// Forward the view's own cursor position for `id` (M4). Nothing here
@@ -715,33 +710,39 @@ impl AppSession {
 
     // --- tree mutations ---------------------------------------------------
 
-    /// Create an empty file named `name` inside `parent_dir` and re-snapshot
-    /// the tree (US-2b).
+    /// Create an empty file named `name` inside `parent_dir` (US-2b). The
+    /// tree itself is no longer re-snapshotted here: `ui-shell`'s
+    /// `ProjectTreeModel` refreshes the affected (Loaded) directory
+    /// incrementally, through the exact same `list_dir` → diff → ranged
+    /// model update path a watcher event uses — see the plan's "Step 3",
+    /// "OR" alternative. A full rebuild-and-reset would also throw away the
+    /// tree's expand state, which is the whole point of the lazy tree.
     pub fn create_file(&mut self, parent_dir: &Path, name: &str) -> Result<(), AppError> {
         project_model::create_file(parent_dir, name).map_err(AppError::FileOp)?;
-        self.rebuild_tree()
+        Ok(())
     }
 
-    /// Create an empty folder named `name` inside `parent_dir` and
-    /// re-snapshot the tree (US-2b).
+    /// Create an empty folder named `name` inside `parent_dir` (US-2b); see
+    /// [`Self::create_file`]'s doc comment for why the tree isn't
+    /// re-snapshotted here any more.
     pub fn create_folder(&mut self, parent_dir: &Path, name: &str) -> Result<(), AppError> {
         project_model::create_folder(parent_dir, name).map_err(AppError::FileOp)?;
-        self.rebuild_tree()
+        Ok(())
     }
 
-    /// Rename `path` (file or folder) to `new_name` in place, re-snapshot
-    /// the tree, and — if `path` has an open tab — retarget that tab at the
-    /// new path so future saves land there (US-2b). The new path is computed
-    /// here, in one place, from the rename result; the view never
-    /// reconstructs it. The retargeted path is recorded so the watcher's
-    /// echo of the rename isn't reported as an external change.
+    /// Rename `path` (file or folder) to `new_name` in place, and — if
+    /// `path` has an open tab — retarget that tab at the new path so future
+    /// saves land there (US-2b). The new path is computed here, in one
+    /// place, from the rename result; the view never reconstructs it. The
+    /// retargeted path is recorded so the watcher's echo of the rename isn't
+    /// reported as an external change. See [`Self::create_file`]'s doc
+    /// comment for why the tree isn't re-snapshotted here any more.
     pub fn rename_entry(
         &mut self,
         path: &Path,
         new_name: &str,
     ) -> Result<Option<RetitledTab>, AppError> {
         let new_path = project_model::rename_path(path, new_name).map_err(AppError::FileOp)?;
-        self.rebuild_tree()?;
         let Some(id) = self.find_tab_by_path(path) else {
             return Ok(None);
         };
@@ -754,14 +755,14 @@ impl AppSession {
         Ok(Some(RetitledTab { id, title }))
     }
 
-    /// Delete `path` (recursively if it's a folder), re-snapshot the tree,
-    /// and — if `path` has an open tab — flag that tab deleted, which blocks
-    /// further silent saves and adds the "(deleted)" title suffix (US-2b).
-    /// The old two-step C++ protocol (delete, then remember to notify the
-    /// tab) is collapsed into this one command.
+    /// Delete `path` (recursively if it's a folder), and — if `path` has an
+    /// open tab — flag that tab deleted, which blocks further silent saves
+    /// and adds the "(deleted)" title suffix (US-2b). The old two-step C++
+    /// protocol (delete, then remember to notify the tab) is collapsed into
+    /// this one command. See [`Self::create_file`]'s doc comment for why the
+    /// tree isn't re-snapshotted here any more.
     pub fn delete_entry(&mut self, path: &Path) -> Result<Option<RetitledTab>, AppError> {
         project_model::delete_path(path).map_err(AppError::FileOp)?;
-        self.rebuild_tree()?;
         let Some(id) = self.find_tab_by_path(path) else {
             return Ok(None);
         };
@@ -1413,20 +1414,18 @@ mod tests {
         );
     }
 
+    // The tree itself is no longer re-snapshotted by `AppSession` (see
+    // `create_file`'s doc comment) — `ui-shell`'s `ProjectTreeModel`
+    // refreshes the affected directory incrementally instead, off the Qt
+    // thread. This only pins down the filesystem side of the command.
     #[test]
-    fn create_file_and_folder_rebuild_the_tree() {
+    fn create_file_and_folder_land_on_disk() {
         let (project_dir, _config, mut session) = session_with_project();
         session.create_file(project_dir.path(), "new.txt").unwrap();
         session.create_folder(project_dir.path(), "newdir").unwrap();
 
-        let tree = &session.project().unwrap().tree;
-        let names: Vec<&str> = tree
-            .children(tree.root_id())
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert!(names.contains(&"new.txt"));
-        assert!(names.contains(&"newdir"));
+        assert!(project_dir.path().join("new.txt").is_file());
+        assert!(project_dir.path().join("newdir").is_dir());
     }
 
     #[test]

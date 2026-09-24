@@ -139,6 +139,16 @@ impl AppSession {
     /// first operation succeeds a later failure cannot be undone; it is
     /// reported as [`ResourceOpError::Partial`] naming how far it got, rather
     /// than pretending nothing happened.
+    ///
+    /// The tree is not re-snapshotted here: a workspace edit's file
+    /// operations are driven by a language server (a rename-symbol-and-
+    /// rename-file refactor, say), not the sidebar's own context menu, so
+    /// the responsiveness case the plan's "Step 3" calls out ("the user just
+    /// clicked New File, they expect to see it now") doesn't apply the same
+    /// way here — the real filesystem watcher's own incremental,
+    /// per-directory refresh (`ui-shell`'s `ProjectTreeModel`) picks up
+    /// every path this touched once its event arrives, the plan's
+    /// explicitly-allowed simpler alternative for this caller.
     pub fn apply_file_ops(&mut self, ops: &[FileOp]) -> Result<Vec<RetitledTab>, AppError> {
         self.validate_file_ops(ops)?;
 
@@ -152,7 +162,6 @@ impl AppSession {
                 }));
             }
         }
-        self.rebuild_tree()?;
         Ok(retitled)
     }
 

@@ -1,11 +1,13 @@
 use core::pin::Pin;
 use std::cell::RefCell;
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use app_core::{AppError, AppSession};
 use cxx_qt::Threading;
 use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use project_model::{DirDiffOp, ListedEntry, LoadState};
 
 use crate::bridge::convert::{push_recent_project, to_ffi_result};
 use crate::bridge::ffi::{self, FfiResult, Roles};
@@ -17,12 +19,15 @@ use crate::bridge::registry::{shared_icons, shared_session, SharedIcons};
 pub struct ProjectTreeModelRust {
     session: Rc<RefCell<AppSession>>,
     icons: Rc<SharedIcons>,
-    /// Whether a watcher event may start a tree rebuild, or belongs behind
-    /// the one already walking (`project_model::RebuildCoalescer`). Touched
-    /// only from the Qt thread — every `request`/`finished` call sits either
-    /// in a slot or in a `qt_thread.queue`d closure — so a `RefCell` is the
-    /// right cell here, as elsewhere in this adapter.
-    rebuild: RefCell<project_model::RebuildCoalescer>,
+    /// One [`project_model::RefreshCoalescer`] per directory currently
+    /// being refreshed by a watcher-driven event burst — see
+    /// `request_watcher_refresh`'s doc comment. An entry is removed once its
+    /// coalescer goes idle (no refresh running, none queued), so this stays
+    /// bounded by "directories with recent activity", not every directory
+    /// ever loaded. Touched only from the Qt thread — every read/write sits
+    /// either in a slot or in a `qt_thread.queue`d closure — so a `RefCell`
+    /// is the right cell here, as elsewhere in this adapter.
+    dir_refresh: RefCell<HashMap<PathBuf, project_model::RefreshCoalescer>>,
 }
 
 impl Default for ProjectTreeModelRust {
@@ -42,7 +47,7 @@ impl Default for ProjectTreeModelRust {
         Self {
             session,
             icons: shared_icons(),
-            rebuild: RefCell::new(project_model::RebuildCoalescer::new()),
+            dir_refresh: RefCell::new(HashMap::new()),
         }
     }
 }
@@ -139,15 +144,113 @@ impl ffi::ProjectTreeModel {
         if parent_id == tree.root_id() {
             return QModelIndex::default();
         }
-        let parent_node = tree.node(parent_id);
-        // parent_id != root_id, so parent_node.parent is always Some.
-        let grandparent_id = parent_node.parent.expect("non-root node has a parent");
-        let row = tree
-            .children(grandparent_id)
-            .iter()
-            .position(|&id| id == parent_id)
-            .expect("parent_id must be one of its own parent's children") as i32;
+        // O(1): `index_in_parent` is kept correct on every insert/remove,
+        // rather than searching the grandparent's children for `parent_id`.
+        let row = tree.index_in_parent(parent_id) as i32;
         unsafe { self.create_index(row, 0, parent_id) }
+    }
+
+    /// A directory reports it may have children until it's actually been
+    /// loaded and found empty (see [`LoadState`]'s doc comment) — a file
+    /// never has children, so it always reports `false` regardless of load
+    /// state (files don't carry a meaningful one, see `TreeNode`'s own
+    /// field doc).
+    pub fn has_children(&self, parent: &QModelIndex) -> bool {
+        let session = self.session.borrow();
+        let Some(project) = session.project() else {
+            return false;
+        };
+        let tree = &project.tree;
+        let id = if parent.is_valid() {
+            parent.internal_id()
+        } else {
+            tree.root_id()
+        };
+        if !tree.is_dir(id) {
+            return false;
+        }
+        match tree.load_state(id) {
+            LoadState::Loaded => !tree.children(id).is_empty(),
+            LoadState::Unloaded | LoadState::Loading => true,
+        }
+    }
+
+    /// `true` iff `parent` is a directory whose children have never been
+    /// read from disk.
+    pub fn can_fetch_more(&self, parent: &QModelIndex) -> bool {
+        let session = self.session.borrow();
+        let Some(project) = session.project() else {
+            return false;
+        };
+        let tree = &project.tree;
+        let id = if parent.is_valid() {
+            parent.internal_id()
+        } else {
+            tree.root_id()
+        };
+        tree.is_dir(id) && tree.load_state(id) == LoadState::Unloaded
+    }
+
+    /// Load `parent`'s children off the Qt thread — the lazy tree's actual
+    /// "expand this folder" path (plan "Step 2"). Marks `parent` as
+    /// [`LoadState::Loading`] synchronously before spawning, so a second
+    /// `fetchMore` call for the same row while the first is still in flight
+    /// (Qt's own view prefetching can do this) sees `canFetchMore() ==
+    /// false` and never spawns a second worker for the same directory.
+    pub fn fetch_more(mut self: Pin<&mut Self>, parent: &QModelIndex) {
+        let found = {
+            let session = self.session.borrow();
+            let Some(project) = session.project() else {
+                return;
+            };
+            let tree = &project.tree;
+            let id = if parent.is_valid() {
+                parent.internal_id()
+            } else {
+                tree.root_id()
+            };
+            if tree.load_state(id) != LoadState::Unloaded {
+                return;
+            }
+            (
+                project.root.path().to_path_buf(),
+                id,
+                tree.node(id).path.clone(),
+            )
+        };
+        let (root, dir_id, dir_path) = found;
+        self.session
+            .borrow_mut()
+            .mark_tree_dir_loading(&root, dir_id);
+        self.as_mut().spawn_attach(dir_path);
+    }
+
+    /// Load whichever ancestors of `path` are still unloaded, then emit
+    /// `pathReady(path)` once every ancestor down to (not including) `path`
+    /// itself is loaded — see `ffi.rs`'s doc comment on the invokable.
+    pub fn ensure_path_loaded(mut self: Pin<&mut Self>, path: &QString) {
+        let target = std::path::PathBuf::from(path.to_string());
+        self.as_mut().load_next_ancestor(target);
+    }
+
+    fn load_next_ancestor(mut self: Pin<&mut Self>, target: std::path::PathBuf) {
+        let next_unloaded = {
+            let session = self.session.borrow();
+            let Some(project) = session.project() else {
+                return;
+            };
+            if !target.starts_with(project.root.path()) {
+                return;
+            }
+            project.tree.first_unloaded_ancestor(&target)
+        };
+        match next_unloaded {
+            Some(dir) => self.as_mut().spawn_attach_then(dir, target),
+            None => {
+                self.as_mut()
+                    .path_ready(QString::from(target.to_string_lossy().as_ref()));
+            }
+        }
     }
 
     pub fn data(&self, index: &QModelIndex, role: i32) -> QVariant {
@@ -443,12 +546,17 @@ impl ffi::ProjectTreeModel {
                     // once, rather than in every listener.
                     let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
                     let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                        if routing.rebuild_tree {
-                            // Off the Qt thread (ADR-0037): a `git checkout` of
-                            // a branch with many new files re-walks the whole
-                            // tree here, and that walk must not block the UI
-                            // any more than the initial "Open Folder" walk does.
-                            model.as_mut().rebuild_tree_async();
+                        if routing.refresh_tree {
+                            // The directory the changed path lives in, not
+                            // the whole tree (plan "Step 3", ADR-0062
+                            // "Decision 2"): a `git checkout` of a branch
+                            // with many new files now costs one `list_dir`
+                            // per *currently expanded* directory it touched,
+                            // not a re-walk of the entire project repeated
+                            // for every event in the burst.
+                            if let Some(dir) = changed_path.parent() {
+                                model.as_mut().request_watcher_refresh(dir.to_path_buf());
+                            }
                         }
                         let path = QString::from(changed_path.to_string_lossy().as_ref());
                         model
@@ -489,74 +597,255 @@ impl ffi::ProjectTreeModel {
         });
     }
 
-    /// A structural filesystem-watcher event says the tree may have moved.
-    ///
-    /// Rebuilds are coalesced rather than spawned one per event: a rebuild
-    /// re-walks the entire project, and the events arrive in bursts of
-    /// thousands (a `git checkout`, a `cargo build`, the watcher's own
-    /// registration sweep) that all ask the same question. Spawning a thread
-    /// each — which this used to do — put hundreds of concurrent full walks
-    /// on the machine, each holding its own copy of the tree: measured at 205
-    /// threads and 30 GB of resident memory within fifty seconds of opening
-    /// this repository, which the OOM killer then ended. See
-    /// `project_model::RebuildCoalescer`.
-    fn rebuild_tree_async(self: Pin<&mut Self>) {
-        let start = self.rebuild.borrow_mut().request();
-        if start {
-            self.spawn_tree_rebuild();
+    /// The `QModelIndex` for arena node `id` — the root's own invisible
+    /// index (`QModelIndex::default()`) if `id` is the tree's root,
+    /// otherwise built from `id`'s row within its own parent.
+    fn model_index_for(&self, id: usize) -> QModelIndex {
+        let session = self.session.borrow();
+        let Some(project) = session.project() else {
+            return QModelIndex::default();
+        };
+        if id == project.tree.root_id() {
+            return QModelIndex::default();
         }
+        let row = project.tree.index_in_parent(id) as i32;
+        unsafe { self.create_index(row, 0, id) }
     }
 
-    /// Re-walk the current project's tree off the Qt thread and reset the
-    /// model once it lands — the rebuild half of `open_folder_async`'s
-    /// worker-thread shape (ADR-0037). A no-op if no project is open by the
-    /// time this runs (the watcher was about to be replaced or stopped
-    /// anyway).
-    ///
-    /// Only ever called with the coalescer already holding the "running"
-    /// slot, and every path out of here reports back to it — including the
-    /// no-project and walk-failed paths, since a slot never given back would
-    /// silently drop every later rebuild for the life of the process.
-    fn spawn_tree_rebuild(mut self: Pin<&mut Self>) {
-        let root = self.session.borrow().root_path().map(Path::to_path_buf);
-        let Some(root) = root else {
-            self.as_mut().finish_tree_rebuild();
+    /// List `dir` off the Qt thread and insert the result as its children —
+    /// the worker half of `fetchMore`, and of `ensurePathLoaded`'s per-level
+    /// chain (`spawn_attach_then`, below, is the version that continues the
+    /// chain once this lands).
+    fn spawn_attach(mut self: Pin<&mut Self>, dir: std::path::PathBuf) {
+        let Some((root, order)) = self.root_and_order() else {
             return;
         };
-        let order = self.session.borrow().tree_sort_order();
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
-            let rebuilt = project_model::rebuild_tree_sorted(&root, order);
-            // A failed `queue` means the Qt thread is gone (the app is
-            // shutting down), so there is no later rebuild left to drop.
+            let entries = project_model::list_dir(&dir, order).unwrap_or_default();
             let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                if let Ok(tree) = rebuilt {
-                    // `false` means the open project changed while this
-                    // rebuild was in flight (a fresh `openFolder` landed
-                    // first) — the stale result is dropped rather than
-                    // stomping the newer tree.
-                    let applied = model.session.borrow_mut().install_rebuilt_tree(&root, tree);
-                    if applied {
-                        unsafe {
-                            model.as_mut().begin_reset_model();
-                            model.as_mut().end_reset_model();
-                        }
-                    }
-                }
-                model.as_mut().finish_tree_rebuild();
+                model.as_mut().apply_attach_children(root, dir, entries);
             });
         });
     }
 
-    /// Hand the coalescer's "running" slot back, and start the one catch-up
-    /// rebuild it asks for when events arrived while this walk was running.
-    fn finish_tree_rebuild(self: Pin<&mut Self>) {
-        // The borrow ends before the call: the catch-up re-enters
-        // `spawn_tree_rebuild`, which reaches this same `RefCell` again.
-        let again = self.rebuild.borrow_mut().finished();
-        if again {
-            self.spawn_tree_rebuild();
+    /// Same worker as [`Self::spawn_attach`], but continues
+    /// `ensurePathLoaded`'s chain (`load_next_ancestor`) once this level
+    /// lands, instead of stopping here.
+    fn spawn_attach_then(
+        mut self: Pin<&mut Self>,
+        dir: std::path::PathBuf,
+        target: std::path::PathBuf,
+    ) {
+        let Some((root, order)) = self.root_and_order() else {
+            return;
+        };
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let entries = project_model::list_dir(&dir, order).unwrap_or_default();
+            let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                model.as_mut().apply_attach_children(root, dir, entries);
+                model.as_mut().load_next_ancestor(target);
+            });
+        });
+    }
+
+    /// Insert an off-thread `list_dir` result as `dir`'s children and, if
+    /// any rows were inserted, bracket it with `beginInsertRows`/
+    /// `endInsertRows`. A no-op (correctly: nothing to show) if `dir` no
+    /// longer resolves in the tree — see
+    /// `AppSession::attach_tree_children`'s doc comment on why it's
+    /// resolved fresh by path rather than trusting an id captured before
+    /// the listing ran.
+    fn apply_attach_children(
+        mut self: Pin<&mut Self>,
+        root: std::path::PathBuf,
+        dir: std::path::PathBuf,
+        entries: Vec<ListedEntry>,
+    ) {
+        let dir_id = {
+            let session = self.session.borrow();
+            session
+                .project()
+                .filter(|p| p.root.path() == root)
+                .and_then(|p| p.tree.node_by_path(&dir))
+        };
+        let Some(dir_id) = dir_id else {
+            return;
+        };
+        let count = entries.len();
+        self.session
+            .borrow_mut()
+            .attach_tree_children(&root, &dir, entries);
+        if count == 0 {
+            return;
         }
+        let parent_index = self.model_index_for(dir_id);
+        unsafe {
+            self.as_mut()
+                .begin_insert_rows(&parent_index, 0, (count - 1) as i32);
+            self.as_mut().end_insert_rows();
+        }
+    }
+
+    /// A structural filesystem-watcher event says `dir`'s contents may have
+    /// changed. Refreshes are coalesced per directory rather than spawned
+    /// one per event: the events arrive in bursts of thousands (a `git
+    /// checkout`, a `cargo build`, the watcher's own registration sweep)
+    /// that can all name the same directory, and each only needs answering
+    /// once. See `project_model::RefreshCoalescer`'s doc comment for the
+    /// history of what unbounded spawning here used to cost.
+    ///
+    /// A no-op if `dir` isn't currently loaded in the tree at all — nothing
+    /// is shown there, so there's nothing to refresh (and no `list_dir` call
+    /// worth spending on a directory the user hasn't even opened).
+    fn request_watcher_refresh(mut self: Pin<&mut Self>, dir: std::path::PathBuf) {
+        let is_loaded = {
+            let session = self.session.borrow();
+            session
+                .project()
+                .and_then(|p| p.tree.node_by_path(&dir).map(|id| p.tree.load_state(id)))
+                == Some(LoadState::Loaded)
+        };
+        if !is_loaded {
+            return;
+        }
+        let start = self
+            .dir_refresh
+            .borrow_mut()
+            .entry(dir.clone())
+            .or_default()
+            .request();
+        if start {
+            self.as_mut().spawn_coalesced_refresh(dir);
+        }
+    }
+
+    fn spawn_coalesced_refresh(mut self: Pin<&mut Self>, dir: std::path::PathBuf) {
+        let Some((root, order)) = self.root_and_order() else {
+            return;
+        };
+        let qt_thread = self.as_mut().qt_thread();
+        let dir_for_worker = dir.clone();
+        std::thread::spawn(move || {
+            let entries = project_model::list_dir(&dir_for_worker, order).unwrap_or_default();
+            let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                model
+                    .as_mut()
+                    .apply_dir_refresh(root, dir_for_worker.clone(), entries);
+                model.as_mut().finish_coalesced_refresh(dir_for_worker);
+            });
+        });
+    }
+
+    /// Hand the directory's coalescer its "running" slot back, and start the
+    /// one catch-up refresh it asks for when events arrived while this
+    /// listing was in flight. Removes the coalescer entirely once it goes
+    /// idle, so `dir_refresh` stays bounded by directories with recent
+    /// activity rather than growing for the life of the process.
+    fn finish_coalesced_refresh(self: Pin<&mut Self>, dir: std::path::PathBuf) {
+        let again = {
+            let mut map = self.dir_refresh.borrow_mut();
+            let Some(coalescer) = map.get_mut(&dir) else {
+                return;
+            };
+            let again = coalescer.finished();
+            if !again {
+                map.remove(&dir);
+            }
+            again
+        };
+        if again {
+            self.spawn_coalesced_refresh(dir);
+        }
+    }
+
+    /// The uncoalesced sibling of the watcher path — a single refresh of
+    /// `dir`, used right after a tree-context-menu create/rename/delete
+    /// mutation, so the user sees the result immediately rather than
+    /// waiting on watcher latency (plan "Step 3"). A later watcher echo of
+    /// the same change is a no-op diff, since `refresh_dir` diffs against
+    /// what's actually on disk. A no-op if `dir` isn't currently loaded, same
+    /// as [`Self::request_watcher_refresh`].
+    fn refresh_dir_async(mut self: Pin<&mut Self>, dir: std::path::PathBuf) {
+        let is_loaded = {
+            let session = self.session.borrow();
+            session
+                .project()
+                .and_then(|p| p.tree.node_by_path(&dir).map(|id| p.tree.load_state(id)))
+                == Some(LoadState::Loaded)
+        };
+        if !is_loaded {
+            return;
+        }
+        let Some((root, order)) = self.root_and_order() else {
+            return;
+        };
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let entries = project_model::list_dir(&dir, order).unwrap_or_default();
+            let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                model.as_mut().apply_dir_refresh(root, dir, entries);
+            });
+        });
+    }
+
+    /// Diff an off-thread `list_dir` result against `dir`'s current children
+    /// and apply the result as ranged `beginRemoveRows`/`beginInsertRows`
+    /// pairs — never a model reset, so the view's expansion state and
+    /// selection elsewhere in the tree survive. Shared by the watcher path
+    /// and the mutation path (`refresh_dir_async`) so there is exactly one
+    /// code path for "a loaded directory's contents changed on disk".
+    fn apply_dir_refresh(
+        mut self: Pin<&mut Self>,
+        root: std::path::PathBuf,
+        dir: std::path::PathBuf,
+        entries: Vec<ListedEntry>,
+    ) {
+        let dir_id = {
+            let session = self.session.borrow();
+            session
+                .project()
+                .filter(|p| p.root.path() == root)
+                .and_then(|p| p.tree.node_by_path(&dir))
+        };
+        let Some(dir_id) = dir_id else {
+            return;
+        };
+        let Some(diff) = self
+            .session
+            .borrow_mut()
+            .refresh_tree_dir(&root, &dir, entries)
+        else {
+            return;
+        };
+        if diff.ops.is_empty() {
+            return;
+        }
+        let parent_index = self.model_index_for(dir_id);
+        for op in diff.ops {
+            match op {
+                DirDiffOp::Remove { first, last } => unsafe {
+                    self.as_mut()
+                        .begin_remove_rows(&parent_index, first as i32, last as i32);
+                    self.as_mut().end_remove_rows();
+                },
+                DirDiffOp::Insert { first, last } => unsafe {
+                    self.as_mut()
+                        .begin_insert_rows(&parent_index, first as i32, last as i32);
+                    self.as_mut().end_insert_rows();
+                },
+            }
+        }
+    }
+
+    /// The open project's root path and the tree's current sort order, or
+    /// `None` if no project is open — the pair every off-thread `list_dir`
+    /// worker above needs before it can spawn.
+    fn root_and_order(&self) -> Option<(std::path::PathBuf, project_model::SortOrder)> {
+        let session = self.session.borrow();
+        let project = session.project()?;
+        Some((project.root.path().to_path_buf(), session.tree_sort_order()))
     }
 
     pub fn root_path(&self) -> QString {
@@ -605,7 +894,8 @@ impl ffi::ProjectTreeModel {
             .session
             .borrow_mut()
             .create_file(&parent, &name.to_string());
-        self.as_mut().finish_mutation(result.map(|()| None))
+        self.as_mut()
+            .finish_mutation(result.map(|()| None), vec![parent])
     }
 
     pub fn create_folder(
@@ -618,40 +908,47 @@ impl ffi::ProjectTreeModel {
             .session
             .borrow_mut()
             .create_folder(&parent, &name.to_string());
-        self.as_mut().finish_mutation(result.map(|()| None))
+        self.as_mut()
+            .finish_mutation(result.map(|()| None), vec![parent])
     }
 
     pub fn rename_path(mut self: Pin<&mut Self>, path: &QString, new_name: &QString) -> FfiResult {
         let path = std::path::PathBuf::from(path.to_string());
+        // `project_model::rename_path` always joins `new_name` onto `path`'s
+        // own parent, so the affected directory is the same before and
+        // after the rename — never two different ones to refresh.
+        let parent = path.parent().map(Path::to_path_buf);
         let result = self
             .session
             .borrow_mut()
             .rename_entry(&path, &new_name.to_string());
-        self.as_mut().finish_mutation(result)
+        self.as_mut()
+            .finish_mutation(result, parent.into_iter().collect())
     }
 
     pub fn delete_path(mut self: Pin<&mut Self>, path: &QString) -> FfiResult {
         let path = std::path::PathBuf::from(path.to_string());
+        let parent = path.parent().map(Path::to_path_buf);
         let result = self.session.borrow_mut().delete_entry(&path);
-        self.as_mut().finish_mutation(result)
+        self.as_mut()
+            .finish_mutation(result, parent.into_iter().collect())
     }
 
-    /// Shared tail for the four tree-mutation slots above: reset the model
-    /// so the view re-reads the rebuilt tree, and relay any retitled tab to
-    /// the tab strip. The model is also reset when only the tree re-snapshot
-    /// failed (`TreeRebuild`) — the disk mutation itself succeeded, so the
-    /// stale rows must still be dropped (same behavior as before the
-    /// refactoring). Full reset, no incremental diffing — consistent with
-    /// the reset-based approach at MVP scope.
+    /// Shared tail for the four tree-mutation slots above: on success,
+    /// trigger an immediate incremental refresh of every directory the
+    /// mutation touched (through the exact same `list_dir` → diff → ranged
+    /// model update path a watcher event uses — see `refresh_dir_async`),
+    /// and relay any retitled tab to the tab strip. No model reset: the
+    /// whole point of the lazy tree is that a "New File" in one expanded
+    /// folder doesn't collapse every other one.
     fn finish_mutation(
         mut self: Pin<&mut Self>,
         result: Result<Option<app_core::RetitledTab>, AppError>,
+        affected_dirs: Vec<std::path::PathBuf>,
     ) -> FfiResult {
-        let mutated_disk = matches!(&result, Ok(_) | Err(AppError::TreeRebuild(_)));
-        if mutated_disk {
-            unsafe {
-                self.as_mut().begin_reset_model();
-                self.as_mut().end_reset_model();
+        if result.is_ok() {
+            for dir in affected_dirs {
+                self.as_mut().refresh_dir_async(dir);
             }
         }
         match result {

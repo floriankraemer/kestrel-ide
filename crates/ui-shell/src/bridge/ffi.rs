@@ -1889,14 +1889,51 @@ mod ffi {
         /// # Safety
         ///
         /// Inherited `beginResetModel`/`endResetModel` from the base class —
-        /// bracket any full-tree replacement (open, mutation refresh, or a
-        /// structural watcher event).
+        /// bracket a full-tree replacement (opening a project, or the
+        /// sort-direction toggle). Every other tree change (a directory's
+        /// own first load, a watcher-driven or mutation-driven refresh) uses
+        /// the ranged insert/remove pairs below instead, precisely so it
+        /// does *not* reset the whole model and lose the view's expand
+        /// state.
         #[inherit]
         #[cxx_name = "beginResetModel"]
         unsafe fn begin_reset_model(self: Pin<&mut ProjectTreeModel>);
         #[inherit]
         #[cxx_name = "endResetModel"]
         unsafe fn end_reset_model(self: Pin<&mut ProjectTreeModel>);
+
+        /// # Safety
+        ///
+        /// Inherited `beginInsertRows`/`endInsertRows` from the base class —
+        /// bracket a directory's first load (`fetchMore`) or the "new rows"
+        /// half of an incremental refresh's diff.
+        #[inherit]
+        #[cxx_name = "beginInsertRows"]
+        unsafe fn begin_insert_rows(
+            self: Pin<&mut ProjectTreeModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[inherit]
+        #[cxx_name = "endInsertRows"]
+        unsafe fn end_insert_rows(self: Pin<&mut ProjectTreeModel>);
+
+        /// # Safety
+        ///
+        /// Inherited `beginRemoveRows`/`endRemoveRows` from the base class —
+        /// bracket the "removed rows" half of an incremental refresh's diff.
+        #[inherit]
+        #[cxx_name = "beginRemoveRows"]
+        unsafe fn begin_remove_rows(
+            self: Pin<&mut ProjectTreeModel>,
+            parent: &QModelIndex,
+            first: i32,
+            last: i32,
+        );
+        #[inherit]
+        #[cxx_name = "endRemoveRows"]
+        unsafe fn end_remove_rows(self: Pin<&mut ProjectTreeModel>);
     }
 
     extern "RustQt" {
@@ -1931,6 +1968,53 @@ mod ffi {
         #[cxx_override]
         #[cxx_name = "roleNames"]
         fn role_names(self: &ProjectTreeModel) -> QHash_i32_QByteArray;
+
+        /// The lazy tree's own trio (plan "Step 2"): a directory reports it
+        /// *may* have children until it's actually been loaded and found
+        /// empty, so the view still draws an expand arrow for something
+        /// unopened — never for a file, and never for a directory that
+        /// turned out empty once loaded.
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "hasChildren"]
+        fn has_children(self: &ProjectTreeModel, parent: &QModelIndex) -> bool;
+
+        /// `true` iff `parent` is a directory whose children have never been
+        /// read from disk — the Qt view calls this to decide whether
+        /// `fetchMore` is worth calling at all.
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "canFetchMore"]
+        fn can_fetch_more(self: &ProjectTreeModel, parent: &QModelIndex) -> bool;
+
+        /// Load `parent`'s children off the Qt thread and insert them once
+        /// the listing lands — the lazy tree's actual "expand this folder"
+        /// path. A no-op if `parent` isn't currently
+        /// `project_model::LoadState::Unloaded` (already loading, or
+        /// already loaded): Qt's own view prefetching can call this twice
+        /// in a row for the same row.
+        #[qinvokable]
+        #[cxx_override]
+        #[cxx_name = "fetchMore"]
+        fn fetch_more(self: Pin<&mut ProjectTreeModel>, parent: &QModelIndex);
+
+        /// Load whichever ancestors of `path` are still unloaded, one
+        /// `list_dir` per level, off the Qt thread — then emit `pathReady`
+        /// once every ancestor down to (not including) `path` itself is
+        /// loaded. Used to reveal a file several levels into a part of the
+        /// tree the user has never expanded (the "Locate in Project Tree"
+        /// button, and revealing the active editor's file).
+        #[qinvokable]
+        #[cxx_name = "ensurePathLoaded"]
+        fn ensure_path_loaded(self: Pin<&mut ProjectTreeModel>, path: &QString);
+
+        /// Emitted once `ensurePathLoaded(path)`'s chain of loads has
+        /// finished — `path`'s own immediate parent is now loaded, so `path`
+        /// can be found among its children (if it still exists) the same
+        /// way `revealPathInTree`'s descent always has.
+        #[qsignal]
+        #[cxx_name = "pathReady"]
+        fn path_ready(self: Pin<&mut ProjectTreeModel>, path: QString);
 
         /// Whether the tree currently sorts descending (folders still lead
         /// either way — this only flips the name comparison within each

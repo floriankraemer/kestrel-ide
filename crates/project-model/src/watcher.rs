@@ -42,7 +42,7 @@ pub fn is_structural_change(kind: &EventKind) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChangeRouting {
     /// Rebuild and reset the project tree model.
-    pub rebuild_tree: bool,
+    pub refresh_tree: bool,
     /// Trigger a VCS (`git status`) refresh.
     pub refresh_vcs: bool,
 }
@@ -86,7 +86,7 @@ pub fn route_change(root: &Path, kind: &EventKind, path: &Path) -> ChangeRouting
         .and_then(|relative| relative.components().next())
         .is_some_and(|first| first.as_os_str() == crate::INDEX_DIR_NAME);
     ChangeRouting {
-        rebuild_tree: inside_root
+        refresh_tree: inside_root
             && is_structural_change(kind)
             && git_path == GitPathKind::NotGit
             && !is_index_dir,
@@ -371,7 +371,7 @@ mod route_change_tests {
         assert_eq!(
             routing,
             ChangeRouting {
-                rebuild_tree: true,
+                refresh_tree: true,
                 refresh_vcs: true
             }
         );
@@ -391,7 +391,7 @@ mod route_change_tests {
         assert_eq!(
             routing,
             ChangeRouting {
-                rebuild_tree: false,
+                refresh_tree: false,
                 refresh_vcs: true
             }
         );
@@ -412,7 +412,7 @@ mod route_change_tests {
         assert_eq!(
             routing,
             ChangeRouting {
-                rebuild_tree: false,
+                refresh_tree: false,
                 refresh_vcs: true
             }
         );
@@ -433,7 +433,7 @@ mod route_change_tests {
             assert_eq!(
                 routing,
                 ChangeRouting {
-                    rebuild_tree: false,
+                    refresh_tree: false,
                     refresh_vcs: false
                 },
                 "expected {kind:?} on .git/index.lock to suppress both"
@@ -458,7 +458,7 @@ mod route_change_tests {
             assert_eq!(
                 routing,
                 ChangeRouting {
-                    rebuild_tree: false,
+                    refresh_tree: false,
                     refresh_vcs: false
                 },
                 "expected {kind:?} on .ide-index/meta.json to suppress both"
@@ -481,7 +481,7 @@ mod route_change_tests {
         assert_eq!(
             routing,
             ChangeRouting {
-                rebuild_tree: false,
+                refresh_tree: false,
                 refresh_vcs: true
             }
         );
@@ -500,7 +500,7 @@ mod route_change_tests {
         assert_eq!(
             routing,
             ChangeRouting {
-                rebuild_tree: true,
+                refresh_tree: true,
                 refresh_vcs: true
             }
         );

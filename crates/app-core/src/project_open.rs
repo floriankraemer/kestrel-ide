@@ -1,13 +1,14 @@
-//! The swap-in half of an off-thread project open/rebuild (ADR-0037).
+//! The swap-in half of an off-thread project open/watcher-registration/
+//! directory-refresh (ADR-0037, ADR-0062).
 //!
-//! `ui-shell`'s worker thread does the actual filesystem walk with
-//! `project_model::open_folder_sorted`/`rebuild_tree_sorted` — both pure
-//! functions, no `AppSession`, safe to run off the Qt thread — and hands the
-//! result back here to install.
+//! `ui-shell`'s worker threads do the actual filesystem I/O with
+//! `project_model::open_folder_sorted`/`list_dir` — both pure functions, no
+//! `AppSession`, safe to run off the Qt thread — and hand the result back
+//! here to install.
 
 use std::path::Path;
 
-use project_model::{DirectoryTree, Project, ProjectWatcher};
+use project_model::{DirDiff, ListedEntry, Project, ProjectWatcher};
 
 use crate::AppSession;
 
@@ -35,13 +36,35 @@ impl AppSession {
         self.project.install_watcher(root, watcher)
     }
 
-    /// Swap in an already re-walked tree for the still-current project
-    /// root, e.g. after a filesystem-watcher rebuild ran off the Qt thread.
-    /// Returns whether it was applied — `false` means `root` no longer
-    /// names the open project (it changed while the rebuild was in
-    /// flight), so the caller should not reset its view.
-    pub fn install_rebuilt_tree(&mut self, root: &Path, tree: DirectoryTree) -> bool {
-        self.project.install_tree(root, tree)
+    /// Mark a directory as having a `list_dir` worker already in flight for
+    /// it (the `fetchMore` re-entrancy guard) — see
+    /// `project_model::ProjectSession::mark_dir_loading`.
+    pub fn mark_tree_dir_loading(&mut self, root: &Path, dir_id: usize) {
+        self.project.mark_dir_loading(root, dir_id);
+    }
+
+    /// Insert an off-thread `list_dir` result as `dir_path`'s children (a
+    /// `fetchMore` landing); see
+    /// `project_model::ProjectSession::attach_dir_children`.
+    pub fn attach_tree_children(
+        &mut self,
+        root: &Path,
+        dir_path: &Path,
+        entries: Vec<ListedEntry>,
+    ) -> Option<Vec<usize>> {
+        self.project.attach_dir_children(root, dir_path, entries)
+    }
+
+    /// Diff an off-thread `list_dir` result against `dir_path`'s current
+    /// children (a watcher-driven or mutation-driven incremental refresh);
+    /// see `project_model::ProjectSession::refresh_dir`.
+    pub fn refresh_tree_dir(
+        &mut self,
+        root: &Path,
+        dir_path: &Path,
+        entries: Vec<ListedEntry>,
+    ) -> Option<DirDiff> {
+        self.project.refresh_dir(root, dir_path, entries)
     }
 }
 
@@ -102,19 +125,64 @@ mod tests {
     }
 
     #[test]
-    fn install_rebuilt_tree_is_dropped_when_the_root_no_longer_matches() {
+    fn attach_tree_children_is_dropped_when_the_root_no_longer_matches() {
         let (project_dir, _config, mut session) = session_with_project();
-        fs::write(project_dir.path().join("c.txt"), "gamma").unwrap();
-        let tree =
-            project_model::rebuild_tree_sorted(project_dir.path(), session.tree_sort_order())
+        fs::create_dir(project_dir.path().join("sub")).unwrap();
+        let entries =
+            project_model::list_dir(&project_dir.path().join("sub"), session.tree_sort_order())
                 .unwrap();
 
         let other_dir = tempfile::tempdir().unwrap();
-        assert!(!session.install_rebuilt_tree(other_dir.path(), tree));
+        assert!(session
+            .attach_tree_children(other_dir.path(), &project_dir.path().join("sub"), entries)
+            .is_none());
+    }
 
-        let tree =
-            project_model::rebuild_tree_sorted(project_dir.path(), session.tree_sort_order())
+    #[test]
+    fn attach_tree_children_applies_for_the_still_open_root() {
+        // `sub` must exist before the project opens, so `open_root`'s own
+        // root-level listing already has a node for it — `attach_dir_children`
+        // resolves its target by path against nodes the tree already knows
+        // about, the same as the real `fetchMore` flow (expand a directory
+        // that's already a visible row).
+        let project_dir = tempfile::tempdir().unwrap();
+        let config_dir = tempfile::tempdir().unwrap();
+        fs::create_dir(project_dir.path().join("sub")).unwrap();
+        fs::write(project_dir.path().join("sub/f.txt"), "").unwrap();
+        let mut session = AppSession::with_config_dir(config_dir.path().to_path_buf());
+        session.open_project(project_dir.path()).unwrap();
+
+        let entries =
+            project_model::list_dir(&project_dir.path().join("sub"), session.tree_sort_order())
                 .unwrap();
-        assert!(session.install_rebuilt_tree(project_dir.path(), tree));
+        let inserted = session
+            .attach_tree_children(project_dir.path(), &project_dir.path().join("sub"), entries)
+            .unwrap();
+        assert_eq!(inserted.len(), 1);
+    }
+
+    #[test]
+    fn refresh_tree_dir_is_dropped_when_the_root_no_longer_matches() {
+        let (project_dir, _config, mut session) = session_with_project();
+        let entries =
+            project_model::list_dir(project_dir.path(), session.tree_sort_order()).unwrap();
+
+        let other_dir = tempfile::tempdir().unwrap();
+        assert!(session
+            .refresh_tree_dir(other_dir.path(), project_dir.path(), entries)
+            .is_none());
+    }
+
+    #[test]
+    fn refresh_tree_dir_applies_for_the_still_open_root() {
+        let (project_dir, _config, mut session) = session_with_project();
+        fs::write(project_dir.path().join("b.txt"), "beta").unwrap();
+        let entries =
+            project_model::list_dir(project_dir.path(), session.tree_sort_order()).unwrap();
+
+        let diff = session
+            .refresh_tree_dir(project_dir.path(), project_dir.path(), entries)
+            .unwrap();
+        assert!(!diff.ops.is_empty());
     }
 }

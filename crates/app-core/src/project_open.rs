@@ -7,16 +7,29 @@
 
 use std::path::Path;
 
-use project_model::{DirectoryTree, Project};
+use project_model::{DirectoryTree, Project, ProjectWatcher};
 
 use crate::AppSession;
 
 impl AppSession {
     /// Install an already walked-and-sorted project as current, replacing
     /// any previous one — the swap-in half of "Open Folder" when the walk
-    /// itself ran off the Qt thread (`ui-shell`'s async worker).
-    pub fn install_opened_project(&mut self, project: Project) {
-        self.project.install_project(project);
+    /// itself ran off the Qt thread (`ui-shell`'s async worker). Returns the
+    /// previous project, if there was one, so the caller can drop it off
+    /// the Qt thread instead of blocking paint on freeing a huge tree.
+    pub fn install_opened_project(&mut self, project: Project) -> Option<Project> {
+        self.project.install_project(project)
+    }
+
+    /// Install a watcher that finished registering off the Qt thread; see
+    /// `project_model::ProjectSession::install_watcher` for the stale-root
+    /// guard this forwards to.
+    pub fn install_watcher(
+        &mut self,
+        root: &Path,
+        watcher: ProjectWatcher,
+    ) -> Result<Option<ProjectWatcher>, ProjectWatcher> {
+        self.project.install_watcher(root, watcher)
     }
 
     /// Swap in an already re-walked tree for the still-current project
@@ -56,9 +69,32 @@ mod tests {
             project_model::SortOrder::Ascending,
         )
         .unwrap();
-        session.install_opened_project(project);
+        let replaced = session.install_opened_project(project);
 
+        assert!(replaced.is_none());
         assert_eq!(session.root_path().unwrap(), project_dir.path());
+    }
+
+    #[test]
+    fn install_watcher_is_rejected_for_a_stale_root() {
+        let (project_dir, _config, mut session) = session_with_project();
+        let watcher =
+            project_model::ProjectWatcher::start(project_dir.path(), false, |_, _| {}).unwrap();
+
+        let other_dir = tempfile::tempdir().unwrap();
+        assert!(session.install_watcher(other_dir.path(), watcher).is_err());
+    }
+
+    #[test]
+    fn install_watcher_applies_for_the_still_open_root() {
+        let (project_dir, _config, mut session) = session_with_project();
+        let watcher =
+            project_model::ProjectWatcher::start(project_dir.path(), false, |_, _| {}).unwrap();
+
+        let Ok(none_replaced) = session.install_watcher(project_dir.path(), watcher) else {
+            panic!("root still matches");
+        };
+        assert!(none_replaced.is_none());
     }
 
     #[test]

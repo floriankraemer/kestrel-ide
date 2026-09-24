@@ -38,7 +38,7 @@ pub fn is_structural_change(kind: &EventKind) -> bool {
 /// What a filesystem-watcher event should cause, decided once here rather
 /// than as inline business logic in `ui-shell`'s adapter — `bridge.rs`
 /// QObjects are translation only (CLAUDE.md), so the two-boolean answer
-/// this crate hands back is all `ProjectTreeModel::start_watcher` may read.
+/// this crate hands back is all `ProjectTreeModel::start_watcher_async` may read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ChangeRouting {
     /// Rebuild and reset the project tree model.

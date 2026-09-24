@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+§3 ("Startup sequencing waits for the outcome instead of blocking on it") is superseded by [ADR-0062](0062-lazy-project-tree-and-off-ui-thread-project-open.md): the open sequence itself was still blocking the tree's first paint on watcher registration and the `projectOpened` slot chain even after this ADR moved the walk off-thread; ADR-0062 reorders it so the tree paints first. The rest of this ADR (the worker-thread shape, the stale-root guard pattern, the watcher's own off-thread rebuild) is unchanged and still in force.
 
 ## Context
 

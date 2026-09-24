@@ -75,7 +75,6 @@
 #include <QFont>
 #include <QHash>
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -1178,9 +1177,12 @@ int run_app()
 {
     // Startup timing: captured before anything else runs, so
     // `main_window_shown`'s `elapsed_ms` below is wall-clock time from
-    // process entry to interactive, not an estimate. Free when
-    // `IDE_E2E_EVENTS` is unset, like every other e2eMark.
-    const auto startupBegan = std::chrono::steady_clock::now();
+    // process entry to interactive, not an estimate. Shared via
+    // `e2eElapsedMs()` (`e2e_mark.h`) rather than a local variable so other
+    // markers — the project tree's own paint marker, for the fast project
+    // open plan's E2E timing — can report a timestamp on the same clock.
+    // Free when `IDE_E2E_EVENTS` is unset, like every other e2eMark.
+    e2eMarkStartupBegin();
 
     int argc = 0;
     QApplication app(argc, nullptr);
@@ -1220,19 +1222,16 @@ int run_app()
     buildMainWindow(
       appSettings,
       [&splash](int step, const QString &text) { splash.setStage(step, text); },
-      [&splash, appSettings, startupBegan](QMainWindow *window) {
+      [&splash, appSettings](QMainWindow *window) {
           showRestored(window, appSettings);
           applyNativeWindowChrome(window);
           // Closes the splash the moment the main window is up — no timer,
           // no gap, and no wait on the reopened project's directory walk
           // either: that runs on its own worker thread and settles later.
           splash.finish(window);
-          const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now() - startupBegan)
-                                    .count();
           e2eMark(QStringLiteral("{\"ev\":\"main_window_shown\",\"maximized\":%1,\"elapsed_ms\":%2}")
                     .arg(window->isMaximized() ? "true" : "false")
-                    .arg(elapsedMs));
+                    .arg(e2eElapsedMs()));
       });
 
     return QApplication::exec();

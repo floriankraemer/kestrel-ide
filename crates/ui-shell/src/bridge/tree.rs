@@ -303,6 +303,17 @@ impl ffi::ProjectTreeModel {
     /// VCS, there is never more than one project-open in flight that
     /// matters — a second one simply replaces whatever the first would have
     /// installed once both land.
+    ///
+    /// The queued install itself is split into two hops (plan step 4,
+    /// "open sequence reorder"): everything the tree needs to paint runs in
+    /// the first — install, `beginResetModel`/`endResetModel` — and nothing
+    /// else. A second `qt_thread.queue` then carries the rest (watcher
+    /// registration kickoff, `projectOpened` and everything its slots do:
+    /// several `settings.toml` parses, a WSL analysis probe). Queuing again
+    /// rather than calling straight through lets the event loop actually
+    /// paint the reset tree first — a directly-chained call runs before Qt
+    /// gets to process a paint event, so the tree would still sit blank
+    /// behind however long that second half takes.
     fn open_folder_async(mut self: Pin<&mut Self>, path: std::path::PathBuf) {
         Self::apply_remote_wsl_setting();
         let order = self.session.borrow().tree_sort_order();
@@ -317,7 +328,8 @@ impl ffi::ProjectTreeModel {
                     let _ = project_model::persist_last_project(&config_dir, project.root.path());
                     let root = project.root.path().to_path_buf();
                     let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
-                        model.session.borrow_mut().install_opened_project(project);
+                        let previous_project =
+                            model.session.borrow_mut().install_opened_project(project);
                         // Borrow scoped tightly: `endResetModel` synchronously
                         // re-enters `rowCount`/`data`, which take their own
                         // borrow of the session.
@@ -325,9 +337,27 @@ impl ffi::ProjectTreeModel {
                             model.as_mut().begin_reset_model();
                             model.as_mut().end_reset_model();
                         }
-                        model.as_mut().start_watcher();
-                        model.as_mut().emit_project_opened();
-                        push_recent_project(root);
+                        // Tree paints here. Freeing the previous project's
+                        // tree (hundreds of thousands of nodes, for a big
+                        // one) must not delay that paint, so it happens on
+                        // a throwaway thread instead of inline.
+                        std::thread::spawn(move || drop(previous_project));
+
+                        let qt_thread = model.qt_thread();
+                        let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                            model.as_mut().start_watcher_async(root.clone());
+                            model.as_mut().emit_project_opened();
+                            // Settings I/O, not moved to the worker thread
+                            // above alongside `persist_last_project`: unlike
+                            // that write (a different file, one open at a
+                            // time in practice), this reads-modifies-writes
+                            // the *shared* `settings.toml`, and running it
+                            // here keeps it serialized on the single Qt
+                            // thread — moving it to a fresh worker thread
+                            // per open would let two rapid opens race the
+                            // same load-then-save and drop an update.
+                            push_recent_project(root);
+                        });
                     });
                 }
                 Err(err) => {
@@ -354,17 +384,33 @@ impl ffi::ProjectTreeModel {
         }
     }
 
-    /// (Re)start the filesystem watcher for whatever project is now
-    /// current, replacing any previous watcher (single watcher). Each fs
-    /// event queues a closure onto this `ProjectTreeModel`'s own Qt thread —
-    /// the one cross-thread hop in the whole design — which reads
+    /// (Re)start the filesystem watcher for `root` — the project that was
+    /// just installed — replacing any previous watcher (single watcher).
+    ///
+    /// Registration itself (`ProjectWatcher::start`'s own `ignore` walk plus
+    /// one blocking `notify::Watcher::watch()` per directory) runs on a
+    /// background thread rather than here (plan step 4): on a large tree,
+    /// or a WSL root where `watch()` stat-scans each directory over 9P, that
+    /// walk alone used to freeze the UI for seconds — in front of the paint
+    /// this method now runs well after. The finished watcher is installed
+    /// back via `qt_thread.queue`, guarded by
+    /// `AppSession::install_watcher`'s stale-root check: if a different
+    /// project was opened while registration was still running, the
+    /// watcher this call started is simply dropped instead of replacing the
+    /// newer project's own.
+    ///
+    /// Each fs event queues a closure onto this `ProjectTreeModel`'s own Qt
+    /// thread — the one cross-thread hop in the whole design — which reads
     /// `project_model::route_change`'s two-boolean answer for the event:
     /// `rebuild_tree` resets the model, `refresh_vcs` emits
     /// `filesChangedExternally(path)` for `main_window.cpp` to relay to
     /// `DocumentManager` via an ordinary (already-on-the-Qt-thread) signal
     /// connection, so US-3's reload/keep prompt for an open tab's content
     /// change keeps working. That relay is why `project-model`'s watcher
-    /// only ever needs one `CxxQtThread` handle, not two.
+    /// only ever needs one `CxxQtThread` handle, not two. An event routed
+    /// here before the watcher itself finishes installing is harmless: the
+    /// tree it would rebuild was just loaded fresh by the open this watcher
+    /// belongs to.
     ///
     /// Root cause of the "saving a file collapses the sidebar" bug: this
     /// used to reset the model on *every* fs event unconditionally,
@@ -375,30 +421,24 @@ impl ffi::ProjectTreeModel {
     /// on the event kind here fixes both the app's own saves and genuinely
     /// external content-only edits (no reason to reset for either), while
     /// still fully rebuilding for real structural changes (US-2).
-    fn start_watcher(mut self: Pin<&mut Self>) {
+    fn start_watcher_async(mut self: Pin<&mut Self>, root: std::path::PathBuf) {
         let qt_thread = self.qt_thread();
+        let install_thread = self.as_mut().qt_thread();
         // W6-1 (ADR-0052): the classification lives here, past the
         // domain/support boundary `project-model`/`app-core` stay below —
-        // see `ProjectSession::start_watcher`'s doc comment.
-        let root = crate::bridge::convert::current_project_root();
-        let is_remote = root
-            .as_ref()
-            .map(|root| lsp_core::ExecHost::for_path(root).is_remote())
-            .unwrap_or(false);
-        let result =
-            self.session
-                .borrow_mut()
-                .start_watcher(is_remote, move |kind, changed_path| {
+        // see `ProjectWatcher::start`'s doc comment.
+        let is_remote = lsp_core::ExecHost::for_path(&root).is_remote();
+        std::thread::spawn(move || {
+            let event_root = root.clone();
+            let result = project_model::ProjectWatcher::start(
+                &root,
+                is_remote,
+                move |kind, changed_path| {
                     // `project_model::route_change` (issue #285) is the
                     // whole decision: `bridge.rs` only reads its answer,
                     // never re-derives it — see CLAUDE.md's "translation
                     // only" rule for this file.
-                    let Some(root) = root.as_deref() else {
-                        // No project open — the watcher shouldn't be running
-                        // at all in this state, so there is nothing to route.
-                        return;
-                    };
-                    let routing = project_model::route_change(root, &kind, &changed_path);
+                    let routing = project_model::route_change(&event_root, &kind, &changed_path);
                     // C5: the same event, mapped onto LSP's `FileChangeType` for
                     // `LanguageService::watchedFileChanged` — computed here,
                     // once, rather than in every listener.
@@ -419,16 +459,35 @@ impl ffi::ProjectTreeModel {
                             model.as_mut().files_changed_externally(path);
                         }
                     });
-                });
-        // The project itself is already open; a failed watch only means
-        // external changes (a terminal `git pull`/`checkout`/commit, an
-        // edit made outside the app) won't be noticed until it's reopened.
-        // Surfaced rather than left silent (`.ok()` used to swallow this) —
-        // see `AppError::WatcherFailed`.
-        if let Err(err) = result {
-            let result = to_ffi_result(Err(err));
-            self.as_mut().watcher_failed(result);
-        }
+                },
+            );
+            match result {
+                Ok(watcher) => {
+                    let _ = install_thread.queue(move |model: Pin<&mut Self>| {
+                        let outcome = model.session.borrow_mut().install_watcher(&root, watcher);
+                        // Either the previous watcher this one replaces, or
+                        // (a newer project having been opened meanwhile)
+                        // this now-stale one itself: dropped off the Qt
+                        // thread either way, since tearing down hundreds of
+                        // OS-level watches synchronously is exactly what
+                        // registering them off-thread exists to avoid.
+                        let to_drop = outcome.unwrap_or_else(Some);
+                        std::thread::spawn(move || drop(to_drop));
+                    });
+                }
+                Err(err) => {
+                    // The project itself is already open; a failed watch
+                    // only means external changes (a terminal `git
+                    // pull`/`checkout`/commit, an edit made outside the
+                    // app) won't be noticed until it's reopened. Surfaced
+                    // rather than left silent — see `AppError::WatcherFailed`.
+                    let result = to_ffi_result(Err(AppError::WatcherFailed(err.to_string())));
+                    let _ = install_thread.queue(move |mut model: Pin<&mut Self>| {
+                        model.as_mut().watcher_failed(result);
+                    });
+                }
+            }
+        });
     }
 
     /// A structural filesystem-watcher event says the tree may have moved.

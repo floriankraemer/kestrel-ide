@@ -7,8 +7,10 @@
 #include <QRect>
 #include <QTimer>
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 
 namespace {
 
@@ -26,7 +28,32 @@ std::FILE *markStream()
     return stream;
 }
 
+// Mutable, unlike `markStream()`'s stream handle: `e2eMarkStartupBegin()`
+// sets this once, from `run_app()`, well before any marker that wants
+// `e2eElapsedMs()` can fire.
+std::optional<std::chrono::steady_clock::time_point> &startupBegin()
+{
+    static std::optional<std::chrono::steady_clock::time_point> begin;
+    return begin;
+}
+
 } // namespace
+
+void e2eMarkStartupBegin()
+{
+    startupBegin() = std::chrono::steady_clock::now();
+}
+
+qint64 e2eElapsedMs()
+{
+    const auto &begin = startupBegin();
+    if (!begin.has_value()) {
+        return 0;
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+             std::chrono::steady_clock::now() - *begin)
+      .count();
+}
 
 void e2eMark(const char *json)
 {

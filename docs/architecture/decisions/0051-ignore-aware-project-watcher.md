@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+Amended by [ADR-0062](0062-lazy-project-tree-and-off-ui-thread-project-open.md): `ProjectWatcher::start` itself is unchanged, but the caller now runs it on a background thread instead of the Qt thread, since its own `ignore::WalkBuilder` walk plus one blocking `watch()` per directory could otherwise freeze the UI in front of the tree's first paint (worse on a WSL root, where `watch()` stat-scans over a 9P share).
 
 ## Context
 

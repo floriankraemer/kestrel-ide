@@ -355,8 +355,11 @@ pub struct ProjectSession {
     current: Option<Project>,
     /// The single watcher for the current project root (plan §2: one
     /// `notify` instance, replaced — not added to — on a new project open).
-    /// `None` until `start_watcher` is called, or after a project with no
-    /// watcher started yet.
+    /// `None` until [`Self::install_watcher`] is called, or after a project
+    /// with no watcher started yet. Registration itself
+    /// (`ProjectWatcher::start`) now runs off this session entirely — see
+    /// `ProjectTreeModel::start_watcher_async` (`ui-shell`) — so this field
+    /// only ever receives an already-built watcher.
     watcher: Option<ProjectWatcher>,
     /// Persists across "Open Folder" and tree rebuilds, so a mutation or a
     /// watcher-triggered refresh doesn't silently reset the user's chosen
@@ -381,40 +384,6 @@ impl ProjectSession {
         if let Some(project) = self.current.as_mut() {
             project.tree.apply_sort_order(order);
         }
-    }
-
-    /// (Re)start the filesystem watcher for the current project root,
-    /// replacing any previous watcher (single-watcher-per-session — the
-    /// previous one is dropped, which stops it). No-op (returning `Ok`) if
-    /// no project is open. `on_change` runs on `notify`'s background
-    /// thread; the caller (`ui-shell`) is responsible for marshaling any
-    /// Qt-object updates onto the Qt thread from within it. The
-    /// `notify::EventKind` is passed through (not collapsed to just a path)
-    /// so the caller can tell a structural change (create/remove/rename)
-    /// apart from a content-only write to a file that already exists in
-    /// the tree.
-    ///
-    /// Returns the `notify` error on failure rather than swallowing it —
-    /// previously this discarded the error via `.ok()`, so a failed watch
-    /// (e.g. the platform's watch-descriptor limit) left the Changes dock
-    /// and the tree silently stale with no way to tell why.
-    ///
-    /// `is_remote` (W6-1, ADR-0052) passes straight through to
-    /// [`ProjectWatcher::start`].
-    pub fn start_watcher(
-        &mut self,
-        is_remote: bool,
-        on_change: impl Fn(notify::EventKind, PathBuf) + Send + 'static,
-    ) -> notify::Result<()> {
-        self.watcher = None;
-        if let Some(project) = &self.current {
-            self.watcher = Some(ProjectWatcher::start(
-                project.root.path(),
-                is_remote,
-                on_change,
-            )?);
-        }
-        Ok(())
     }
 
     pub fn current(&self) -> Option<&Project> {
@@ -442,8 +411,46 @@ impl ProjectSession {
     /// itself ran off the Qt thread (ADR-0037). Persisting "last opened" is
     /// the caller's job, same as it is off of [`open_folder`]'s pure half,
     /// `open_folder_sorted`.
-    pub fn install_project(&mut self, project: Project) {
-        self.current = Some(project);
+    ///
+    /// Returns whatever project and watcher were previously current, so the
+    /// caller can drop them off the Qt thread: a huge previous tree's frees
+    /// and its watcher's OS-level teardown must not block paint of the
+    /// just-installed one any more than the walk that built it did (plan
+    /// step 4). The old watcher goes out here rather than when the new
+    /// one finishes registering: until then it would keep routing the old
+    /// project's events into full re-walks of the new one.
+    pub fn install_project(
+        &mut self,
+        project: Project,
+    ) -> (Option<Project>, Option<ProjectWatcher>) {
+        (self.current.replace(project), self.watcher.take())
+    }
+
+    /// Install a watcher that finished registering off the Qt thread (plan
+    /// step 4): `ProjectWatcher::start`'s own `ignore` walk plus one
+    /// blocking `watch()` per directory can take seconds on a large tree or
+    /// a WSL/9P root, so registration itself now runs on a background
+    /// thread and only the result is handed back here.
+    ///
+    /// `root` is the root the watcher was started for; it must still match
+    /// the currently open project's root, exactly the guard
+    /// [`Self::install_tree`] applies for a rebuilt tree. A mismatch means
+    /// a different project was opened while registration was in flight, so
+    /// `watcher` is handed back in `Err` for the caller to drop instead of
+    /// installing a watcher for a project that is no longer open. On
+    /// success, the watcher it replaces (if any) comes back in `Ok` for the
+    /// same off-thread-drop treatment — this crate makes no assumption
+    /// about which thread calls `install_watcher`, so it never drops
+    /// anything itself.
+    pub fn install_watcher(
+        &mut self,
+        root: &Path,
+        watcher: ProjectWatcher,
+    ) -> Result<Option<ProjectWatcher>, ProjectWatcher> {
+        match &self.current {
+            Some(project) if project.root.path() == root => Ok(self.watcher.replace(watcher)),
+            _ => Err(watcher),
+        }
     }
 
     /// Swap in an already re-walked tree for the still-current project, e.g.
@@ -657,8 +664,92 @@ mod tests {
 
         let mut session = ProjectSession::new();
         assert!(session.current().is_none());
-        session.install_project(project);
+        let (replaced, replaced_watcher) = session.install_project(project);
+        assert!(replaced.is_none());
+        assert!(replaced_watcher.is_none());
         assert_eq!(session.current().unwrap().root.path(), dir.path());
+    }
+
+    #[test]
+    fn install_project_hands_back_the_project_it_replaced() {
+        let first_dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(first_dir.path());
+        let second_dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(second_dir.path());
+
+        let mut session = ProjectSession::new();
+        session
+            .install_project(open_folder_sorted(first_dir.path(), SortOrder::Ascending).unwrap());
+        let (replaced, _) = session
+            .install_project(open_folder_sorted(second_dir.path(), SortOrder::Ascending).unwrap());
+
+        assert_eq!(replaced.unwrap().root.path(), first_dir.path());
+        assert_eq!(session.current().unwrap().root.path(), second_dir.path());
+    }
+
+    #[test]
+    fn install_project_hands_back_the_previous_watcher() {
+        let first_dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(first_dir.path());
+        let second_dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(second_dir.path());
+
+        let mut session = ProjectSession::new();
+        session
+            .install_project(open_folder_sorted(first_dir.path(), SortOrder::Ascending).unwrap());
+        let watcher = ProjectWatcher::start(first_dir.path(), false, |_, _| {}).unwrap();
+        assert!(session.install_watcher(first_dir.path(), watcher).is_ok());
+
+        let (_, replaced_watcher) = session
+            .install_project(open_folder_sorted(second_dir.path(), SortOrder::Ascending).unwrap());
+
+        assert!(replaced_watcher.is_some());
+    }
+
+    #[test]
+    fn install_watcher_is_rejected_when_no_project_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let watcher = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
+
+        let mut session = ProjectSession::new();
+        assert!(session.install_watcher(dir.path(), watcher).is_err());
+    }
+
+    #[test]
+    fn install_watcher_is_rejected_when_the_root_no_longer_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(dir.path());
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut session = ProjectSession::new();
+        session.open_folder(dir.path(), config_dir.path()).unwrap();
+
+        let other_dir = tempfile::tempdir().unwrap();
+        let watcher = ProjectWatcher::start(other_dir.path(), false, |_, _| {}).unwrap();
+
+        // A different project opened while registration was in flight — the
+        // watcher started for `other_dir` must not be installed for `dir`.
+        assert!(session.install_watcher(other_dir.path(), watcher).is_err());
+    }
+
+    #[test]
+    fn install_watcher_applies_and_returns_the_watcher_it_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        make_fixture_tree(dir.path());
+        let config_dir = tempfile::tempdir().unwrap();
+        let mut session = ProjectSession::new();
+        session.open_folder(dir.path(), config_dir.path()).unwrap();
+
+        let first = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
+        let Ok(none_replaced) = session.install_watcher(dir.path(), first) else {
+            panic!("root still matches");
+        };
+        assert!(none_replaced.is_none());
+
+        let second = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
+        let Ok(replaced) = session.install_watcher(dir.path(), second) else {
+            panic!("root still matches");
+        };
+        assert!(replaced.is_some());
     }
 
     #[test]

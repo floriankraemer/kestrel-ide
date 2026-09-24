@@ -113,7 +113,13 @@ void markVisibleRows(QTreeView *treeView)
                   .arg(rect.height()));
         ++count;
     }
-    e2eMark(QStringLiteral("{\"ev\":\"project_tree_rows\",\"count\":%1}").arg(count));
+    // `elapsed_ms` on the same clock as `main_window_shown`'s (`e2e_mark.h`'s
+    // `e2eElapsedMs()`), so an E2E timing probe can compute time-to-first-
+    // tree-row relative to time-to-shown without racing the marker stream
+    // (fast project open plan, PR1).
+    e2eMark(QStringLiteral("{\"ev\":\"project_tree_rows\",\"count\":%1,\"elapsed_ms\":%2}")
+              .arg(count)
+              .arg(e2eElapsedMs()));
 }
 
 // Re-emit the row markers after anything that can move a row, coalesced onto

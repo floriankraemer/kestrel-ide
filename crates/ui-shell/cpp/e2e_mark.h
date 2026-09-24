@@ -18,6 +18,18 @@
 void e2eMark(const char *json);
 void e2eMark(const QString &json);
 
+// Call once, as early as possible in `run_app()`, so `e2eElapsedMs()` has a
+// process-entry origin to measure from. A no-op call before this (or when
+// `IDE_E2E_EVENTS` is unset) simply means `e2eElapsedMs()` answers 0 — never
+// a crash, since nothing reads it outside E2E anyway.
+void e2eMarkStartupBegin();
+
+// Milliseconds since `e2eMarkStartupBegin()`, for any marker that wants a
+// timestamp comparable to `main_window_shown`'s own `elapsed_ms` — e.g. the
+// project tree's own paint marker, to measure time-to-first-tree-row against
+// time-to-shown from the same origin (fast project open plan, PR1).
+qint64 e2eElapsedMs();
+
 // Reports every action in a menu — label, enabled state and screen rect —
 // once the menu is actually laid out.
 //

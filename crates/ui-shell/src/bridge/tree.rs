@@ -28,6 +28,13 @@ pub struct ProjectTreeModelRust {
     /// either in a slot or in a `qt_thread.queue`d closure — so a `RefCell`
     /// is the right cell here, as elsewhere in this adapter.
     dir_refresh: RefCell<HashMap<PathBuf, project_model::RefreshCoalescer>>,
+    /// The open project's scope (ADR-0064), rebuilt (synchronously, on the
+    /// Qt thread — cheap: one small settings read through
+    /// `resolved_cache`, no walk) whenever it might have changed: on every
+    /// successful project open and after `rescope`. `data()`'s `IsExcluded`
+    /// role reads this rather than re-resolving settings per row. `None`
+    /// before any project has been opened.
+    scope: RefCell<Option<project_model::ProjectScope>>,
 }
 
 impl Default for ProjectTreeModelRust {
@@ -46,6 +53,7 @@ impl Default for ProjectTreeModelRust {
             session,
             icons: shared_icons(),
             dir_refresh: RefCell::new(HashMap::new()),
+            scope: RefCell::new(None),
         }
     }
 }
@@ -267,6 +275,14 @@ impl ffi::ProjectTreeModel {
                 QVariant::from(&QString::from(node.path.to_string_lossy().as_ref()))
             }
             r if r == user_role(Roles::IsDir) => QVariant::from(&node.is_dir),
+            r if r == user_role(Roles::IsExcluded) => {
+                let excluded = self
+                    .scope
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|scope| scope.is_excluded(&node.path, node.is_dir));
+                QVariant::from(&excluded)
+            }
             r if r == user_role(Roles::IconKey) => {
                 // B7 (ADR-0057): a synced Gradle/Maven source root paints
                 // as the icon pack's own src/test/resources art, by role
@@ -327,6 +343,7 @@ impl ffi::ProjectTreeModel {
         roles.insert(user_role(Roles::Path), QByteArray::from("path"));
         roles.insert(user_role(Roles::IsDir), QByteArray::from("isDir"));
         roles.insert(user_role(Roles::IconKey), QByteArray::from("iconKey"));
+        roles.insert(user_role(Roles::IsExcluded), QByteArray::from("isExcluded"));
         roles
     }
 
@@ -445,6 +462,7 @@ impl ffi::ProjectTreeModel {
 
                         let qt_thread = model.qt_thread();
                         let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                            model.rebuild_scope(&root);
                             model.as_mut().start_watcher_async(root.clone());
                             model.as_mut().emit_project_opened();
                             // Settings I/O, not moved to the worker thread
@@ -941,6 +959,98 @@ impl ffi::ProjectTreeModel {
             .finish_mutation(result, parent.into_iter().collect())
     }
 
+    /// `path` relative to the open project's root, in the slash-separated
+    /// form `app_config::project_settings::toggle_excluded` and
+    /// `ProjectScope` both expect — `None` when no project is open.
+    fn relative_to_root(&self, path: &Path) -> Option<String> {
+        let session = self.session.borrow();
+        let root = session.root_path()?;
+        Some(
+            path.strip_prefix(root)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned(),
+        )
+    }
+
+    /// Whether `path` (a folder) is excluded from the project scope
+    /// (ADR-0064), itself or through an ancestor. `false` when no project
+    /// is open — the context menu that reads this never fires without one.
+    pub fn is_excluded(&self, path: &QString) -> bool {
+        let path = std::path::PathBuf::from(path.to_string());
+        self.scope
+            .borrow()
+            .as_ref()
+            .is_some_and(|scope| scope.is_excluded(&path, true))
+    }
+
+    /// Flip whether `path` is excluded, save the project settings, and
+    /// rescope. `path` must be a folder inside the open project and not the
+    /// project root itself — `project_tree_dock.cpp` never offers the
+    /// action otherwise, and a root exclusion would leave nothing to index.
+    pub fn toggle_excluded(mut self: Pin<&mut Self>, path: &QString) -> FfiResult {
+        let path = std::path::PathBuf::from(path.to_string());
+        let Some(relative) = self.relative_to_root(&path) else {
+            return crate::bridge::errors::failure(
+                crate::bridge::errors::CODE_NO_PROJECT,
+                "Open a project before excluding a folder from it.",
+            );
+        };
+        // `app_config::resolved_cache::scope_changed`'s call site (see its
+        // own doc comment): saving `excluded` always changes it in
+        // practice, but going through the same before/after check
+        // `commit_to_project`'s future callers (the Project Scope settings
+        // page, T5) will also need keeps this the one Qt-free decision
+        // point for "does this settings save need a rescope".
+        let before = crate::bridge::convert::load_resolved_settings();
+        let result = crate::bridge::settings::commit_to_project(|settings| {
+            app_config::project_settings::toggle_excluded(settings, &relative);
+        });
+        if result.code == crate::bridge::errors::CODE_OK {
+            let after = crate::bridge::convert::load_resolved_settings();
+            if app_config::resolved_cache::scope_changed(&before, &after) {
+                self.as_mut().rescope();
+            }
+        }
+        result
+    }
+
+    /// Rebuild the cached `ProjectScope` from the now-current settings,
+    /// restart the watcher against it, and tell `main_window.cpp`
+    /// (`projectRescoped`) to reopen the text index — the full ADR-0064
+    /// rescope: a delta walk that indexes newly in-scope files and purges
+    /// newly excluded ones, plus a watcher whose watch set matches again.
+    ///
+    /// No model reset: rescoping never adds or removes a row (the tree
+    /// still lists an excluded folder's contents, JetBrains-style —
+    /// `ProjectScope` only ever prunes a *walk*, `fs::read_dir`-backed
+    /// `fetchMore` doesn't consult it), only `IsExcluded`'s answer for rows
+    /// already there. `project_tree_dock.cpp` repaints the view on
+    /// `projectRescoped` instead, the same as `VcsService::statusChanged`
+    /// already does for VCS colours.
+    fn rescope(mut self: Pin<&mut Self>) {
+        let Some(root) = self.session.borrow().root_path().map(Path::to_path_buf) else {
+            return;
+        };
+        self.as_mut().rebuild_scope(&root);
+        self.as_mut().start_watcher_async(root.clone());
+        self.as_mut()
+            .project_rescoped(QString::from(root.to_string_lossy().as_ref()));
+    }
+
+    /// (Re)build the cached scope for `root` from the currently resolved
+    /// settings. Safe to call on the Qt thread — `load_resolved_settings`
+    /// goes through `resolved_cache`, so this is one file-stamp check, not
+    /// a re-parse, on every call after the first.
+    fn rebuild_scope(&self, root: &Path) {
+        let resolved = crate::bridge::convert::load_resolved_settings();
+        *self.scope.borrow_mut() = Some(project_model::ProjectScope::new(
+            root,
+            &resolved.excluded,
+            &resolved.ignored_names,
+        ));
+    }
+
     /// Shared tail for the four tree-mutation slots above: on success,
     /// trigger an immediate incremental refresh of every directory the
     /// mutation touched (through the exact same `list_dir` → diff → ranged
@@ -992,6 +1102,7 @@ mod tests {
             ("Path", Roles::Path),
             ("IsDir", Roles::IsDir),
             ("IconKey", Roles::IconKey),
+            ("IsExcluded", Roles::IsExcluded),
         ];
         for (name, role) in roles {
             assert!(

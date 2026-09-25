@@ -5,6 +5,7 @@
 #include "ai_chat_panel.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
+#include "excluded_color_proxy.h"
 #include "icon_cache.h"
 #include "icon_decoration_proxy.h"
 #include "vcs_status_color_proxy.h"
@@ -286,7 +287,8 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
                                        ads::CDockAreaWidget *editorArea,
                                        ProjectTreeModel *treeModel,
                                        DockRegistry *docks,
-                                       VcsService *vcsService)
+                                       VcsService *vcsService,
+                                       SearchModel *searchModel)
 {
     auto *treeView = new QTreeView();
     // The style's small-icon metric rather than a literal 16: it already
@@ -315,7 +317,15 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
       new VcsStatusColorProxy(vcsService, treeRole(ProjectTreeModel::Roles::Path), treeView);
     colorProxy->setSourceModel(iconProxy);
 
-    treeView->setModel(colorProxy);
+    // Chained on top of the VCS colour proxy: an excluded folder's own
+    // colour wins over whatever VCS status its contents might otherwise
+    // paint (ADR-0064) — `ExcludedColorProxy` falls through to `colorProxy`
+    // for every row that isn't excluded. See excluded_color_proxy.h.
+    auto *excludedProxy =
+      new ExcludedColorProxy(treeRole(ProjectTreeModel::Roles::IsExcluded), treeView);
+    excludedProxy->setSourceModel(colorProxy);
+
+    treeView->setModel(excludedProxy);
     treeView->setHeaderHidden(true);
     if (vcsService != nullptr) {
         // A stage/unstage/commit/pull changes what every row's colour
@@ -324,6 +334,19 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
         QObject::connect(vcsService, &VcsService::statusChanged, treeView,
                           [treeView]() { treeView->viewport()->update(); });
     }
+    // A rescope (ADR-0064) changes which rows `IsExcluded` answers true
+    // for; `ExcludedColorProxy` re-reads the role on demand, same as VCS
+    // status above, so a repaint is all a rescope needs here too.
+    QObject::connect(treeModel, &ProjectTreeModel::projectRescoped, treeView,
+                      [treeView]() { treeView->viewport()->update(); });
+    // Reopens the index the same way `main_window.cpp` relays `projectOpened`
+    // to it — `openIndex` is already a delta reopen against whatever is on
+    // disk, so calling it again is the whole rescope for the index side.
+    // Wired here rather than alongside `projectOpened` in `main_window.cpp`
+    // only to stay under that file's line ceiling (see `wireProjectTree`'s
+    // own doc comment on the same reason).
+    QObject::connect(treeModel, &ProjectTreeModel::projectRescoped, searchModel,
+                      [searchModel](const QString &rootPath) { searchModel->openIndex(rootPath); });
 
     // Toolbar above the tree: the sort toggle (moved off the dock's title
     // bar) and the locate-in-tree button, so both stay visible even when
@@ -463,6 +486,7 @@ void wireProjectTree(QTreeView *treeView,
           QAction *renameAction = nullptr;
           QAction *deleteAction = nullptr;
           QAction *compareAction = nullptr;
+          QAction *excludeAction = nullptr;
           QAction *addToChatAction = nullptr;
           QAction *addToNewChatAction = nullptr;
           if (hasItem) {
@@ -474,6 +498,16 @@ void wireProjectTree(QTreeView *treeView,
                   // Files only: every entry under it is about one blob's
                   // history or one blob's changes.
                   appendGitSubmenu(menu, itemPath, actions);
+              } else {
+                  // Folders only (ADR-0064); the project root has no row of
+                  // its own to right-click (R6), so it is never offered
+                  // here. Which label applies is `ProjectTreeModel::
+                  // isExcluded`'s answer, read from `ProjectScope` — this
+                  // view holds no rule about what counts as excluded.
+                  excludeAction =
+                    menu.addAction(treeModel->isExcluded(itemPath)
+                                      ? QObject::tr("Cancel Exclusion")
+                                      : QObject::tr("Mark Directory as Excluded"));
               }
               // A folder attaches its contents, which is why the two entries
               // read the same for a file and a folder: what differs is the
@@ -556,6 +590,12 @@ void wireProjectTree(QTreeView *treeView,
                 window, QObject::tr("Compare \"%1\" With…").arg(QFileInfo(itemPath).fileName()));
               if (!otherPath.isEmpty()) {
                   actions.compareFiles(itemPath, otherPath);
+              }
+          } else if (chosen == excludeAction) {
+              const auto result = treeModel->toggleExcluded(itemPath);
+              if (result.code != 0) {
+                  QMessageBox::critical(window, QObject::tr("Cannot change exclusion"),
+                                         result.message);
               }
           } else if (chosen == addToChatAction || chosen == addToNewChatAction) {
               if (chosen == addToNewChatAction) {

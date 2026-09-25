@@ -188,6 +188,22 @@ pub fn invalidate() {
     cache().invalidate();
 }
 
+/// Whether a project's scope (ADR-0064) — what the index, the watcher and
+/// the project tree consider part of the project — would answer
+/// differently between two resolved [`Settings`] snapshots this cache
+/// handed out.
+///
+/// The only two fields that feed `project_model::ProjectScope`: `excluded`
+/// (project) and `ignored_names` (global). Every other field a save might
+/// touch (theme, fonts, run configs, ...) leaves the scope alone, so the
+/// caller — the bridge adapter, after a project- or global-settings save —
+/// uses this to decide whether the open project needs a rescope (index
+/// delta reopen + watcher restart) at all, rather than paying for one on
+/// every unrelated settings save.
+pub fn scope_changed(before: &Settings, after: &Settings) -> bool {
+    before.excluded != after.excluded || before.ignored_names != after.ignored_names
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,6 +221,32 @@ mod tests {
     fn write(path: &Path, body: &str) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, body).unwrap();
+    }
+
+    #[test]
+    fn scope_changed_only_on_excluded_or_ignored_names() {
+        let before = Settings {
+            excluded: vec!["lib".to_string()],
+            ignored_names: vec![".git".to_string()],
+            theme: "light".to_string(),
+            ..Settings::default()
+        };
+
+        assert!(!scope_changed(&before, &before.clone()));
+
+        let mut excluded_changed = before.clone();
+        excluded_changed.excluded.push("vendor".to_string());
+        assert!(scope_changed(&before, &excluded_changed));
+
+        let mut ignored_names_changed = before.clone();
+        ignored_names_changed
+            .ignored_names
+            .push("*.pyc".to_string());
+        assert!(scope_changed(&before, &ignored_names_changed));
+
+        let mut unrelated_changed = before.clone();
+        unrelated_changed.theme = "dark".to_string();
+        assert!(!scope_changed(&before, &unrelated_changed));
     }
 
     #[test]

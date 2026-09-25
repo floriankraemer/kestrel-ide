@@ -1861,6 +1861,12 @@ mod ffi {
         /// for the tree view, and P6's tab strip and result lists read the
         /// same keys straight off `IconProvider`.
         IconKey,
+        /// Whether the node is excluded from the project scope (ADR-0064),
+        /// itself or through an ancestor (`bool`). `ExcludedColorProxy`
+        /// (`cpp/excluded_color_proxy.h`) turns this into the themed
+        /// "excluded" foreground colour, the same split `VcsStatusColorProxy`
+        /// uses for VCS status.
+        IsExcluded,
     }
 
     extern "RustQt" {
@@ -2103,6 +2109,24 @@ mod ffi {
         #[cxx_name = "deletePath"]
         fn delete_path(self: Pin<&mut ProjectTreeModel>, path: &QString) -> FfiResult;
 
+        /// Whether `path` (a folder) is excluded from the project scope
+        /// (ADR-0064), itself or through an ancestor — what the tree
+        /// context menu's "Mark Directory as Excluded"/"Cancel Exclusion"
+        /// label choice reads (C++ holds no rule of its own, per
+        /// `CLAUDE.md`'s "humble view").
+        #[qinvokable]
+        #[cxx_name = "isExcluded"]
+        fn is_excluded(self: &ProjectTreeModel, path: &QString) -> bool;
+
+        /// Flip whether `path` (a folder, never the project root) is
+        /// excluded: saves `.ide/settings.toml`'s `excluded` list
+        /// (`app_config::project_settings::toggle_excluded`) and, since that
+        /// always changes the project scope, rescopes the open project —
+        /// an index delta reopen plus a watcher restart (ADR-0064).
+        #[qinvokable]
+        #[cxx_name = "toggleExcluded"]
+        fn toggle_excluded(self: Pin<&mut ProjectTreeModel>, path: &QString) -> FfiResult;
+
         /// Reopen the last-persisted project (US-1's "relaunch reopens the
         /// last project" criterion) and start its filesystem watcher.
         /// Fire-and-forget like `openFolder` (ADR-0037): the walk itself
@@ -2177,6 +2201,16 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "watcherFailed"]
         fn watcher_failed(self: Pin<&mut ProjectTreeModel>, result: FfiResult);
+
+        /// Emitted after `toggleExcluded` (or, later, the Project Scope
+        /// settings page) changes the project's scope and the watcher has
+        /// been restarted for it — `main_window.cpp` relays this to
+        /// `SearchModel::openIndex` the same way it relays `projectOpened`,
+        /// so the index's delta reopen picks up the new `excluded`/
+        /// `ignoredNames` (ADR-0064).
+        #[qsignal]
+        #[cxx_name = "projectRescoped"]
+        fn project_rescoped(self: Pin<&mut ProjectTreeModel>, root_path: QString);
     }
 
     // Enables `self.qt_thread()` on `ProjectTreeModel`, giving the

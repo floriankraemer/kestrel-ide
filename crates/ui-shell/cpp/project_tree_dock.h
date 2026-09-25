@@ -6,6 +6,7 @@
 
 class AiChat;
 class ProjectTreeModel;
+class SearchModel;
 class VcsService;
 
 class QAction;
@@ -86,7 +87,8 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
                                       ads::CDockAreaWidget *editorArea,
                                       ProjectTreeModel *treeModel,
                                       DockRegistry *docks,
-                                      VcsService *vcsService);
+                                      VcsService *vcsService,
+                                      SearchModel *searchModel);
 
 // Wires the tree's gestures: click to open, right-click for the
 // create/rename/delete/attach menu (US-2b), and the locate action's reveal-

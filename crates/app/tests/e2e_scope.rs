@@ -73,6 +73,156 @@ fn git_fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
     dir
 }
 
+/// The centre of a `[x, y, w, h]` marker field, so a flow never computes a
+/// click point from window geometry or font metrics. Duplicated from
+/// `e2e_vcs.rs`, the same per-binary judgement this file's own module doc
+/// already makes about `git_fixture`.
+fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
+    let rect: Vec<i64> = rect
+        .as_array()
+        .expect("the marker carries a rect")
+        .iter()
+        .map(|v| v.as_i64().expect("an integer"))
+        .collect();
+    (
+        (rect[0] + rect[2] / 2) as i32,
+        (rect[1] + rect[3] / 2) as i32,
+    )
+}
+
+/// Right-click `folder`'s row in the project tree, click the context-menu
+/// action labelled `label`, and wait for the menu to have closed having
+/// accepted it. Collapsed from `e2e_vcs.rs`'s `open_tree_git_submenu` +
+/// `click_labelled_action` pair into one call: the exclusion actions are
+/// top-level entries, with no submenu to hover into first.
+fn click_tree_menu_action(
+    ide: &Ide,
+    settle_file: &str,
+    folder_path: &std::path::Path,
+    label: &str,
+) {
+    // Forces a fresh tree layout report the same way `e2e_vcs.rs`'s
+    // `open_tree_git_submenu` does — a row's rect from the tree's very
+    // first layout pass is stale by the time the dock has its final size.
+    let mark = ide.mark();
+    std::fs::write(ide.project_root().join(settle_file), "settle\n")
+        .expect("writing a file to force a fresh tree layout report");
+    let folder_path_str = folder_path.to_string_lossy().into_owned();
+    let row = ide.wait_for_event(
+        mark,
+        &format!("a settled tree row for {folder_path_str}"),
+        |e| e["ev"] == "project_tree_row" && e["path"] == folder_path_str,
+    );
+
+    let (row_x, row_y) = rect_centre(&row["rect"]);
+    ide.focus_main();
+    ide.click_at(row_x, row_y, 1);
+    ide.click_at(row_x, row_y, 3);
+    ide.wait_for_event(mark, "the tree context menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "project_tree_context_menu"
+    });
+
+    let action = ide.wait_for_event(mark, &format!("{label} in the tree menu"), |e| {
+        e["ev"] == "project_tree_menu_action" && e["label"] == label
+    });
+    let (action_x, action_y) = rect_centre(&action["rect"]);
+    ide.click_at(action_x, action_y, 1);
+    ide.wait_for_event(mark, "the tree context menu to close", |e| {
+        e["ev"] == "dialog_closed"
+            && e["name"] == "project_tree_context_menu"
+            && e["accepted"] == true
+    });
+}
+
+/// `find_files`, retried: a rescope (ADR-0064) flips the index briefly to
+/// "not ready" while it reopens against the new scope
+/// (`SearchModel::openIndex`'s delta reopen), and `Mcp::call` would panic
+/// on that transient RPC error — `try_call` plus `e2e::wait_for` is the
+/// same "wait for a transition, never a duration" rule `wait_for_index`
+/// already follows, just tolerant of the index being briefly unavailable
+/// mid-poll rather than only "not yet ready the first time".
+fn find_files(mcp: &Mcp, query: &str) -> Vec<String> {
+    let result = e2e::wait_for("the index to answer find_files", || {
+        mcp.try_call("find_files", json!({"query": query})).ok()
+    });
+    result["files"]
+        .as_array()
+        .expect("find_files returns a files array")
+        .iter()
+        .filter_map(|file| file["path"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Marking a folder Excluded (ADR-0064) drops every file under it from the
+/// index — Go to File (Search Everywhere) can no longer find it — and
+/// Cancel Exclusion brings it back. Drives the whole seam: the tree
+/// context menu → `ProjectTreeModel::toggleExcluded` → `.ide/settings.toml`
+/// → rescope → `SearchModel::openIndex`'s delta reopen.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_marking_a_folder_excluded_drops_it_from_search_and_cancelling_restores_it() {
+    let workspace = git_fixture(&[
+        ("README.md", "root\n"),
+        ("lib/Widget.php", "<?php\nclass Widget {}\n"),
+    ]);
+
+    let name = "e2e_marking_a_folder_excluded_drops_it_from_search_and_cancelling_restores_it";
+    // `Ide::launch` copies the fixture into its own fresh project root
+    // (`crates/e2e/src/lib.rs`'s `launch_with_env`) rather than running the
+    // app straight out of `workspace` — every path the flow drives against
+    // (the tree row, `.ide/settings.toml`) has to be `ide.project_root()`'s,
+    // not the fixture's own, or the tree row wait times out.
+    let mut ide = Ide::launch(name, APP, workspace.path());
+    drop(workspace);
+    let lib_path = ide.project_root().join("lib");
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    assert!(
+        find_files(&mcp, "Widget.php")
+            .iter()
+            .any(|path| path.ends_with("Widget.php")),
+        "Widget.php should be found before lib/ is excluded"
+    );
+
+    click_tree_menu_action(
+        &ide,
+        "zzz-settle-1.txt",
+        &lib_path,
+        "Mark Directory as Excluded",
+    );
+
+    let settings = std::fs::read_to_string(ide.project_root().join(".ide/settings.toml"))
+        .expect("reading .ide/settings.toml after excluding lib/");
+    assert!(
+        settings.contains("excluded") && settings.contains("lib"),
+        ".ide/settings.toml should record lib/ as excluded, got:\n{settings}"
+    );
+
+    let after_exclude = e2e::wait_for("Widget.php to drop out of the index", || {
+        let files = find_files(&mcp, "Widget.php");
+        (!files.iter().any(|path| path.ends_with("Widget.php"))).then_some(files)
+    });
+    assert!(
+        after_exclude.is_empty(),
+        "excluding lib/ should drop Widget.php from find_files, got {after_exclude:?}"
+    );
+
+    click_tree_menu_action(&ide, "zzz-settle-2.txt", &lib_path, "Cancel Exclusion");
+
+    let after_cancel = e2e::wait_for("Widget.php to come back into the index", || {
+        let files = find_files(&mcp, "Widget.php");
+        files
+            .iter()
+            .any(|path| path.ends_with("Widget.php"))
+            .then_some(files)
+    });
+    assert!(after_cancel.iter().any(|path| path.ends_with("Widget.php")));
+
+    assert_eq!(ide.quit(), 0);
+}
+
 /// `dist/app.js` is a `.gitignore`d build artifact and `.github/workflows/
 /// ci.yml` a dotfile nested under a dot-directory — under the old
 /// `.gitignore`/hidden-file rules neither was ever reachable by Go to File.

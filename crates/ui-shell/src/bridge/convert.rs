@@ -480,8 +480,9 @@ pub(crate) fn symbol_kind_word(kind: Option<syntax_core::SymbolKind>) -> &'stati
 }
 
 pub(crate) fn load_settings() -> app_config::Settings {
-    app_config::resolved_cache::global_settings(|| {
-        app_config::load(&app_core::resolve_config_dir()).unwrap_or_default()
+    let config_dir = app_core::resolve_config_dir();
+    app_config::resolved_cache::global_settings(&config_dir, || {
+        app_config::load(&config_dir).unwrap_or_default()
     })
 }
 
@@ -536,7 +537,8 @@ fn project_settings_and_resolved(
     app_config::project_settings::ProjectSettings,
     app_config::Settings,
 ) {
-    app_config::resolved_cache::project_settings_and_resolved(root, || {
+    let config_dir = app_core::resolve_config_dir();
+    app_config::resolved_cache::project_settings_and_resolved(&config_dir, root, || {
         let project_settings = app_config::project_settings::load(root).unwrap_or_default();
         let resolved = settings_model::scope::resolve(&load_settings(), &project_settings);
         (project_settings, resolved)

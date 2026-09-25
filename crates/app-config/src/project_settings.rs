@@ -39,7 +39,7 @@ use crate::{
 
 /// Directory holding a project's IDE files, inside the project root.
 pub const PROJECT_DIR: &str = ".ide";
-const PROJECT_SETTINGS_FILE: &str = "settings.toml";
+pub(crate) const PROJECT_SETTINGS_FILE: &str = "settings.toml";
 const TEMP_PROJECT_SETTINGS_FILE: &str = "settings.toml.tmp";
 const PROJECT_GITIGNORE: &str = ".gitignore";
 

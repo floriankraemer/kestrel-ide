@@ -543,19 +543,6 @@ impl ffi::ProjectTreeModel {
                     // `LanguageService::watchedFileChanged` — computed here,
                     // once, rather than in every listener.
                     let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
-                    // An external edit of the project's own settings layer
-                    // (a `git checkout`, a hand edit, another IDE instance)
-                    // must not leave `app_config::resolved_cache` serving
-                    // what was resolved before it — the same staleness rule
-                    // the settings dialog's own save path keeps by calling
-                    // `app_config::project_settings::save`, which invalidates
-                    // it directly. This is the one edit path that bypasses
-                    // that function, so it invalidates here instead. Runs on
-                    // this watcher thread, not the Qt thread — the cache is
-                    // a plain `Mutex`, no hop needed.
-                    if changed_path == event_root.join(".ide").join("settings.toml") {
-                        app_config::resolved_cache::invalidate();
-                    }
                     let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
                         if routing.refresh_tree {
                             // The directory the changed path lives in, not

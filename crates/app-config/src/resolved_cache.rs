@@ -15,11 +15,14 @@
 //! closure, the same shape `std::sync::OnceLock`/`HashMap::entry` already
 //! use in the standard library for "compute once, reuse after". What this
 //! module owns is the one rule every consumer must share: a cached answer
-//! is only ever as good as the last write, so [`invalidate`] must be called
-//! by every path that writes either file — [`crate::save`]/[`crate::update`]
-//! and [`crate::project_settings::save`]/[`crate::project_settings::update`]
-//! all do, and so does an external edit the caller detects (a filesystem
-//! watcher event on `.ide/settings.toml`).
+//! is only ever as good as the last write. Every hit re-stats the files it
+//! was built from (one `stat` each, microseconds, against a TOML parse) and
+//! misses if either changed, so an edit from outside this process — a hand
+//! edit, a `git checkout`, a second IDE instance saving its recents — is
+//! seen on the next read with no watcher involved. [`crate::save`]/
+//! [`crate::update`] and [`crate::project_settings::save`]/
+//! [`crate::project_settings::update`] also call [`invalidate`], for a
+//! filesystem whose mtime is too coarse to tell two quick writes apart.
 //!
 //! One entry for the global layer, one for the currently open project's
 //! layer plus its resolved combination — never a map keyed by every root
@@ -29,9 +32,32 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
-use crate::project_settings::ProjectSettings;
-use crate::Settings;
+use crate::project_settings::{ProjectSettings, PROJECT_DIR, PROJECT_SETTINGS_FILE};
+use crate::{Settings, SETTINGS_FILE};
+
+/// What a settings file looked like on disk when a cached answer was built
+/// from it: modification time and length, or `None` for a missing or
+/// unreadable file — "absent" is a state too, and creating the file must
+/// miss the cache just like editing it.
+type FileStamp = Option<(SystemTime, u64)>;
+
+fn stamp(path: &Path) -> FileStamp {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
+}
+
+fn global_stamp(config_dir: &Path) -> FileStamp {
+    stamp(&config_dir.join(SETTINGS_FILE))
+}
+
+fn project_stamps(config_dir: &Path, root: &Path) -> [FileStamp; 2] {
+    [
+        global_stamp(config_dir),
+        stamp(&root.join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)),
+    ]
+}
 
 /// How many times a loader actually ran (a cache miss) since process start —
 /// a measurement hook for `fast_project_open_timing.rs`'s E2E probe (plan
@@ -55,14 +81,20 @@ fn record_miss(file: &str) {
     }
 }
 
+struct GlobalEntry {
+    stamp: FileStamp,
+    settings: Settings,
+}
+
 struct ProjectEntry {
     root: PathBuf,
+    stamps: [FileStamp; 2],
     project_settings: ProjectSettings,
     resolved: Settings,
 }
 
 struct Cache {
-    global: Mutex<Option<Settings>>,
+    global: Mutex<Option<GlobalEntry>>,
     project: Mutex<Option<ProjectEntry>>,
 }
 
@@ -74,38 +106,47 @@ fn cache() -> &'static Cache {
     })
 }
 
-/// The cached global `settings.toml`, computing it with `load` (and caching
-/// the result) the first time, or after [`invalidate`].
-pub fn global_settings(load: impl FnOnce() -> Settings) -> Settings {
+/// The cached global `<config_dir>/settings.toml`, computing it with `load`
+/// (and caching the result) the first time, after [`invalidate`], or once
+/// the file changed on disk.
+pub fn global_settings(config_dir: &Path, load: impl FnOnce() -> Settings) -> Settings {
+    let stamp = global_stamp(config_dir);
     let mut guard = cache().global.lock().unwrap();
-    if let Some(settings) = guard.as_ref() {
-        return settings.clone();
+    if let Some(entry) = guard.as_ref().filter(|entry| entry.stamp == stamp) {
+        return entry.settings.clone();
     }
     record_miss("settings.toml");
     let settings = load();
-    *guard = Some(settings.clone());
+    *guard = Some(GlobalEntry {
+        stamp,
+        settings: settings.clone(),
+    });
     settings
 }
 
 /// The cached `(project_settings, resolved_settings)` pair for `root`,
 /// computing both with `load` (and caching the result) if nothing is
-/// cached yet, or if what's cached belongs to a different root — opening a
-/// different project is not "stale", it's simply a cache miss for its own
-/// root, the same way [`invalidate`] leaves the *next* call a miss too.
+/// cached yet, if what's cached belongs to a different root, or if either
+/// `<config_dir>/settings.toml` or `<root>/.ide/settings.toml` changed on
+/// disk since — the resolved answer depends on both.
 pub fn project_settings_and_resolved(
+    config_dir: &Path,
     root: &Path,
     load: impl FnOnce() -> (ProjectSettings, Settings),
 ) -> (ProjectSettings, Settings) {
+    let stamps = project_stamps(config_dir, root);
     let mut guard = cache().project.lock().unwrap();
-    if let Some(entry) = guard.as_ref() {
-        if entry.root == root {
-            return (entry.project_settings.clone(), entry.resolved.clone());
-        }
+    if let Some(entry) = guard
+        .as_ref()
+        .filter(|entry| entry.root == root && entry.stamps == stamps)
+    {
+        return (entry.project_settings.clone(), entry.resolved.clone());
     }
     record_miss(".ide/settings.toml");
     let (project_settings, resolved) = load();
     *guard = Some(ProjectEntry {
         root: root.to_path_buf(),
+        stamps,
         project_settings: project_settings.clone(),
         resolved: resolved.clone(),
     });
@@ -125,95 +166,131 @@ pub fn invalidate() {
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use std::path::Path;
+
+    fn themed(theme: &str) -> Settings {
+        Settings {
+            theme: theme.to_string(),
+            ..Settings::default()
+        }
+    }
+
+    /// Rewrite `path` so its stamp is guaranteed to differ: a different
+    /// length, since two writes inside one mtime tick look identical.
+    fn write(path: &Path, body: &str) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
 
     #[test]
     fn global_settings_computes_once_then_serves_the_cached_value() {
         invalidate();
+        let config = tempfile::tempdir().unwrap();
         let calls = Cell::new(0);
         let load = || {
             calls.set(calls.get() + 1);
-            Settings {
-                theme: "dark".to_string(),
-                ..Settings::default()
-            }
+            themed("dark")
         };
-        let first = global_settings(load);
-        let second = global_settings(|| {
-            calls.set(calls.get() + 1);
-            Settings::default()
-        });
+        let first = global_settings(config.path(), load);
+        let second = global_settings(config.path(), load);
         assert_eq!(first, second);
         assert_eq!(calls.get(), 1, "second call must not re-load");
     }
 
     #[test]
-    fn project_settings_recomputes_for_a_different_root() {
+    fn global_settings_reloads_after_an_external_edit() {
         invalidate();
-        let root_a = Path::new("/projects/a");
-        let root_b = Path::new("/projects/b");
-        let calls = Cell::new(0);
-
-        let (_, resolved_a) = project_settings_and_resolved(root_a, || {
-            calls.set(calls.get() + 1);
-            (
-                ProjectSettings::default(),
-                Settings {
-                    theme: "a".to_string(),
-                    ..Settings::default()
-                },
-            )
-        });
-        let (_, resolved_a_again) = project_settings_and_resolved(root_a, || {
-            calls.set(calls.get() + 1);
-            (ProjectSettings::default(), Settings::default())
-        });
-        assert_eq!(resolved_a, resolved_a_again);
-        assert_eq!(calls.get(), 1, "same root must hit the cache");
-
-        let (_, resolved_b) = project_settings_and_resolved(root_b, || {
-            calls.set(calls.get() + 1);
-            (
-                ProjectSettings::default(),
-                Settings {
-                    theme: "b".to_string(),
-                    ..Settings::default()
-                },
-            )
-        });
-        assert_eq!(calls.get(), 2, "a different root must miss the cache");
-        assert_ne!(resolved_a, resolved_b);
-    }
-
-    #[test]
-    fn invalidate_forces_the_next_call_to_recompute() {
-        invalidate();
-        let root = Path::new("/projects/c");
-        let calls = Cell::new(0);
-        let load = || {
-            calls.set(calls.get() + 1);
-            (ProjectSettings::default(), Settings::default())
-        };
-        project_settings_and_resolved(root, load);
-        project_settings_and_resolved(root, load);
-        assert_eq!(calls.get(), 1);
-
-        invalidate();
-        project_settings_and_resolved(root, load);
-        assert_eq!(calls.get(), 2, "invalidate must force a fresh load");
-    }
-
-    #[test]
-    fn invalidate_clears_the_global_cache_too() {
-        invalidate();
+        let config = tempfile::tempdir().unwrap();
         let calls = Cell::new(0);
         let load = || {
             calls.set(calls.get() + 1);
             Settings::default()
         };
-        global_settings(load);
+        global_settings(config.path(), load);
+        write(&config.path().join(SETTINGS_FILE), "theme = \"light\"\n");
+        global_settings(config.path(), load);
+        assert_eq!(
+            calls.get(),
+            2,
+            "a file created or edited behind the cache's back must miss"
+        );
+    }
+
+    #[test]
+    fn project_settings_recomputes_for_a_different_root() {
         invalidate();
-        global_settings(load);
+        let config = tempfile::tempdir().unwrap();
+        let root_a = tempfile::tempdir().unwrap();
+        let root_b = tempfile::tempdir().unwrap();
+        let calls = Cell::new(0);
+        let load = |theme: &'static str| {
+            let calls = &calls;
+            move || {
+                calls.set(calls.get() + 1);
+                (ProjectSettings::default(), themed(theme))
+            }
+        };
+
+        let (_, resolved_a) =
+            project_settings_and_resolved(config.path(), root_a.path(), load("a"));
+        let (_, resolved_a_again) =
+            project_settings_and_resolved(config.path(), root_a.path(), load("x"));
+        assert_eq!(resolved_a, resolved_a_again);
+        assert_eq!(calls.get(), 1, "same root must hit the cache");
+
+        let (_, resolved_b) =
+            project_settings_and_resolved(config.path(), root_b.path(), load("b"));
+        assert_eq!(calls.get(), 2, "a different root must miss the cache");
+        assert_ne!(resolved_a, resolved_b);
+    }
+
+    #[test]
+    fn project_settings_reload_after_either_file_changes() {
+        invalidate();
+        let config = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let calls = Cell::new(0);
+        let load = || {
+            calls.set(calls.get() + 1);
+            (ProjectSettings::default(), Settings::default())
+        };
+        project_settings_and_resolved(config.path(), root.path(), load);
+
+        write(
+            &root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE),
+            "x = 1\n",
+        );
+        project_settings_and_resolved(config.path(), root.path(), load);
+        assert_eq!(calls.get(), 2, "project layer edit must miss");
+
+        write(&config.path().join(SETTINGS_FILE), "theme = \"light\"\n");
+        project_settings_and_resolved(config.path(), root.path(), load);
+        assert_eq!(calls.get(), 3, "global layer edit must miss");
+
+        project_settings_and_resolved(config.path(), root.path(), load);
+        assert_eq!(calls.get(), 3, "unchanged files must hit");
+    }
+
+    #[test]
+    fn invalidate_forces_the_next_call_to_recompute() {
+        invalidate();
+        let config = tempfile::tempdir().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let calls = Cell::new(0);
+        let load = || {
+            calls.set(calls.get() + 1);
+            (ProjectSettings::default(), Settings::default())
+        };
+        let global_load = || {
+            calls.set(calls.get() + 1);
+            Settings::default()
+        };
+        project_settings_and_resolved(config.path(), root.path(), load);
+        global_settings(config.path(), global_load);
         assert_eq!(calls.get(), 2);
+
+        invalidate();
+        project_settings_and_resolved(config.path(), root.path(), load);
+        global_settings(config.path(), global_load);
+        assert_eq!(calls.get(), 4, "invalidate must force a fresh load of both");
     }
 }

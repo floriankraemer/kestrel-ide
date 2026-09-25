@@ -330,6 +330,76 @@ pub fn toggle_excluded(settings: &mut ProjectSettings, relative_dir: &str) -> bo
     }
 }
 
+/// Validate and normalize a folder-picker/settings-page entry for
+/// `excluded`. Reuses [`normalize_relative_dir`]. A blank (or
+/// whitespace-only) entry is silently skipped (`Ok(None)`) rather than
+/// treated as an error, since a settings-page "Add" click with an empty
+/// field is not a mistake worth surfacing. An absolute path (leading `/` or
+/// `\`, or a Windows drive prefix such as `C:`) or a path that escapes the
+/// project root (a `..` component once normalized) is rejected with a
+/// message meant for the person editing the list.
+fn validate_excluded_entry(relative_dir: &str) -> Result<Option<String>, String> {
+    let trimmed = relative_dir.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || trimmed
+            .as_bytes()
+            .get(1)
+            .is_some_and(|&b| b == b':' && trimmed.as_bytes()[0].is_ascii_alphabetic())
+    {
+        return Err(format!(
+            "\"{trimmed}\" is an absolute path; enter a path relative to the project root"
+        ));
+    }
+    let normalized = normalize_relative_dir(trimmed);
+    if Path::new(&normalized)
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(format!(
+            "\"{trimmed}\" escapes the project root; enter a path inside the project"
+        ));
+    }
+    Ok(Some(normalized))
+}
+
+/// Add `relative_dir` to `excluded`, validating and deduping first. Returns
+/// `Ok(true)` if the list changed, `Ok(false)` for a blank entry or one
+/// already present, `Err` for an invalid entry (see
+/// [`validate_excluded_entry`]). Same `Option`-stays-`Some`-once-touched
+/// rule as [`toggle_excluded`].
+pub fn add_excluded(settings: &mut ProjectSettings, relative_dir: &str) -> Result<bool, String> {
+    let Some(normalized) = validate_excluded_entry(relative_dir)? else {
+        return Ok(false);
+    };
+    let list = settings.excluded.get_or_insert_with(Vec::new);
+    if list.iter().any(|entry| entry == &normalized) {
+        return Ok(false);
+    }
+    list.push(normalized);
+    Ok(true)
+}
+
+/// Remove `relative_dir` from `excluded` if present. Returns whether the
+/// list changed. A no-op (`false`) when `excluded` is absent or does not
+/// contain the (normalized) entry.
+pub fn remove_excluded(settings: &mut ProjectSettings, relative_dir: &str) -> bool {
+    let normalized = normalize_relative_dir(relative_dir);
+    match &mut settings.excluded {
+        Some(list) => match list.iter().position(|entry| entry == &normalized) {
+            Some(pos) => {
+                list.remove(pos);
+                true
+            }
+            None => false,
+        },
+        None => false,
+    }
+}
+
 /// Record that the folders in `dirs` were offered by the "Found N ignored
 /// but not excluded folders" notification (ADR-0064) and the user chose
 /// *not* to exclude them, so they are not offered again on the next project
@@ -792,6 +862,75 @@ mod tests {
             settings.excluded,
             Some(vec!["build".to_string()]),
             "an odd number of toggles ends excluded"
+        );
+    }
+
+    #[test]
+    fn add_excluded_skips_blank_entries() {
+        let mut settings = ProjectSettings::default();
+        assert_eq!(add_excluded(&mut settings, "   "), Ok(false));
+        assert_eq!(settings.excluded, None);
+    }
+
+    #[test]
+    fn add_excluded_rejects_absolute_unix_paths() {
+        let mut settings = ProjectSettings::default();
+        assert!(add_excluded(&mut settings, "/etc/passwd").is_err());
+        assert_eq!(settings.excluded, None);
+    }
+
+    #[test]
+    fn add_excluded_rejects_absolute_windows_paths() {
+        let mut settings = ProjectSettings::default();
+        assert!(add_excluded(&mut settings, "C:\\Windows").is_err());
+        assert_eq!(settings.excluded, None);
+    }
+
+    #[test]
+    fn add_excluded_rejects_a_parent_dir_escape() {
+        let mut settings = ProjectSettings::default();
+        assert!(add_excluded(&mut settings, "../escape").is_err());
+        assert_eq!(settings.excluded, None);
+    }
+
+    #[test]
+    fn add_excluded_rejects_an_escape_hidden_behind_a_nested_path() {
+        let mut settings = ProjectSettings::default();
+        assert!(add_excluded(&mut settings, "sub/../../escape").is_err());
+        assert_eq!(settings.excluded, None);
+    }
+
+    #[test]
+    fn add_excluded_accepts_an_ordinary_nested_path() {
+        let mut settings = ProjectSettings::default();
+        assert_eq!(add_excluded(&mut settings, "build/output"), Ok(true));
+        assert_eq!(settings.excluded, Some(vec!["build/output".to_string()]));
+    }
+
+    #[test]
+    fn add_excluded_is_a_no_op_on_a_duplicate() {
+        let mut settings = ProjectSettings::default();
+        assert_eq!(add_excluded(&mut settings, "build"), Ok(true));
+        assert_eq!(add_excluded(&mut settings, "build"), Ok(false));
+        assert_eq!(settings.excluded, Some(vec!["build".to_string()]));
+    }
+
+    #[test]
+    fn remove_excluded_of_an_absent_entry_is_a_no_op() {
+        let mut settings = ProjectSettings::default();
+        assert!(!remove_excluded(&mut settings, "build"));
+        assert_eq!(settings.excluded, None);
+    }
+
+    #[test]
+    fn add_then_remove_excluded_round_trips_like_toggle() {
+        let mut settings = ProjectSettings::default();
+        assert_eq!(add_excluded(&mut settings, "build"), Ok(true));
+        assert!(remove_excluded(&mut settings, "build"));
+        assert_eq!(
+            settings.excluded,
+            Some(vec![]),
+            "removing the last entry leaves an explicit empty list, not None"
         );
     }
 

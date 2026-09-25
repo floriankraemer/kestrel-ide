@@ -34,10 +34,10 @@ See [the fast project open plan](../fast-project-open-plan.md) for the full root
 
 Watcher registration itself (`ProjectWatcher::start`) moves to a plain `std::thread::spawn`, matching the shape ADR-0037 already established for the directory walk.
 The finished watcher is handed back via `qt_thread.queue` and installed through a new Qt-free method, `ProjectSession::install_watcher(root, watcher) -> Result<Option<ProjectWatcher>, ProjectWatcher>`: `Ok(previous)` when `root` still names the currently open project (the normal case — `previous` is whatever watcher it replaces, `None` on a fresh open), `Err(watcher)` when a different project was opened while registration was still running, in which case the caller drops `watcher` instead of installing it.
-This is the same stale-result guard `ProjectSession::install_tree` already applies to an off-thread tree rebuild — one rule, tested once, in the Qt-free crate, per CLAUDE.md's "business rules in Qt-free crates" rule.
+This is the same stale-result guard `ProjectSession::attach_dir_children`/`refresh_dir` apply to an off-thread directory listing (Decision 2, below) — one rule, tested once, in the Qt-free crate, per CLAUDE.md's "business rules in Qt-free crates" rule.
 Either the previous watcher or a stale one is dropped on a throwaway thread, same as the previous project.
 
-A watcher event routed before the new watcher has finished installing is harmless: it can only rebuild a tree that was just loaded fresh by the open this watcher belongs to, so a redundant rebuild costs nothing a real one wouldn't have anyway.
+A watcher event routed before the new watcher has finished installing is harmless: it can only refresh a directory that was just loaded fresh by the open this watcher belongs to, so a redundant refresh costs nothing a real one wouldn't have anyway.
 
 `push_recent_project` (a `settings.toml` read-modify-write) stays on the Qt thread rather than moving to the worker thread alongside `persist_last_project`: the Qt thread's event loop already serializes it against a second rapid open the way it always has, while a fresh worker thread per open would let two such opens race the same load-then-save and silently drop one project from the recent list.
 It is not the bottleneck — one small settings file, not a directory walk or a per-directory `watch()` call — so nothing is gained by risking that race for it.

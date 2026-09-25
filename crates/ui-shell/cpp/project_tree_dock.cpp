@@ -19,6 +19,7 @@
 #include <QAbstractItemModel>
 #include <QEvent>
 #include <QAction>
+#include <QColor>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QHBoxLayout>
@@ -105,14 +106,27 @@ void markVisibleRows(QTreeView *treeView)
         const QRect rect = treeView->visualRect(index);
         const QPoint origin =
           rect.isEmpty() ? QPoint() : treeView->viewport()->mapToGlobal(rect.topLeft());
+        // `Qt::ForegroundRole` goes through the same view-model chain a real
+        // paint does (`VcsStatusColorProxy` sits on top of the Rust model),
+        // so an E2E flow can tell a row that got a VCS-status colour override
+        // apart from one that didn't — without ever comparing pixels
+        // (ADR-0024). Absent (a null/invalid QVariant) rather than a
+        // hardcoded fallback string: "no override" must stay distinguishable
+        // from "overridden to some specific colour".
+        const QVariant foreground = model->data(index, Qt::ForegroundRole);
+        const QString color =
+          foreground.canConvert<QColor>() && foreground.value<QColor>().isValid()
+          ? foreground.value<QColor>().name()
+          : QString();
         e2eMark(QStringLiteral("{\"ev\":\"project_tree_row\",\"path\":%1,"
-                                "\"rect\":[%2,%3,%4,%5]}")
+                                "\"rect\":[%2,%3,%4,%5],\"color\":%6}")
                   .arg(e2eJson(model->data(index, treeRole(ProjectTreeModel::Roles::Path))
                                   .toString()))
                   .arg(origin.x())
                   .arg(origin.y())
                   .arg(rect.width())
-                  .arg(rect.height()));
+                  .arg(rect.height())
+                  .arg(e2eJson(color)));
         ++count;
     }
     // `elapsed_ms` on the same clock as `main_window_shown`'s (`e2e_mark.h`'s
@@ -343,6 +357,33 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
     toolbarLayout->addWidget(sortButton);
     toolbarLayout->addWidget(locateButton);
     toolbarLayout->addStretch(1);
+
+    // Same reasoning as `markVisibleRows`: an E2E flow cannot click a
+    // toolbar button whose position it can only guess from layout margins.
+    // Resize-tracked via the same `ViewportResizeRelay` the tree's own rows
+    // use, not a one-shot: a button's *first* layout pass (like a row's) is
+    // still stale by the time the dock has its final size, so a bare
+    // `QTimer::singleShot(0, ...)` reports a placeholder `[0,0,100,30]`
+    // rather than the button's real screen position.
+    auto *toolbarCoalesce = new QTimer(toolbar);
+    toolbarCoalesce->setSingleShot(true);
+    toolbarCoalesce->setInterval(0);
+    QObject::connect(toolbarCoalesce, &QTimer::timeout, toolbar, [sortButton, locateButton]() {
+        const auto globalRect = [](QToolButton *button) {
+            const QRect rect = button->rect();
+            const QPoint origin = button->mapToGlobal(rect.topLeft());
+            return QStringLiteral("[%1,%2,%3,%4]")
+              .arg(origin.x())
+              .arg(origin.y())
+              .arg(rect.width())
+              .arg(rect.height());
+        };
+        e2eMark(QStringLiteral("{\"ev\":\"project_tree_toolbar\",\"sortRect\":%1,\"locateRect\":%2}")
+                  .arg(globalRect(sortButton))
+                  .arg(globalRect(locateButton)));
+    });
+    sortButton->installEventFilter(new ViewportResizeRelay(toolbarCoalesce));
+    locateButton->installEventFilter(new ViewportResizeRelay(toolbarCoalesce));
 
     auto *container = new QWidget();
     auto *containerLayout = new QVBoxLayout(container);

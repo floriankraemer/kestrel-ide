@@ -89,8 +89,9 @@ const INDEX_DIR_NAME: &str = ".ide-index";
 /// changing: an existing index is then rebuilt instead of serving symbols
 /// the old extraction missed. 2: Java/C/C++ `type_identifier`, PHP type
 /// positions, Zig anchored variable names. 3: one symbol document per
-/// (file, name) instead of one per occurrence.
-const EXTRACTION_VERSION: u32 = 3;
+/// (file, name) instead of one per occurrence. 4: PHP enums, enum cases and
+/// constants as definitions, `Foo::` scopes as references.
+const EXTRACTION_VERSION: u32 = 4;
 const EXTRACTION_VERSION_FILE: &str = "extraction.version";
 
 /// Tantivy's own writer-lock file inside the index directory. Named here so
@@ -1291,32 +1292,36 @@ impl TextIndex {
         let mut unchanged: Vec<(PathBuf, String, FileStamp)> = Vec::new();
         let mut stale: Vec<(PathBuf, String, FileStamp)> = Vec::new();
 
-        let mut walker = ignore::WalkBuilder::new(&self.root);
-        if let Some(overrides) = exclude_overrides(&self.root, &self.options.excludes) {
-            walker.overrides(overrides);
-        }
-        for entry in walker.build() {
-            let Ok(entry) = entry else { continue };
-            let path = entry.path();
-            if path.starts_with(&index_dir) {
-                continue;
-            }
-            // The walker already stat'ed this entry; re-stat'ing it here was
-            // a second syscall per file for the same two numbers.
-            let Ok(metadata) = entry.metadata() else {
-                continue;
-            };
-            if !metadata.is_file() {
-                continue;
-            }
-            let key = path.to_string_lossy().into_owned();
-            let stamp = stamp_from(&metadata);
-            if known.get(&key) == Some(&stamp) {
-                unchanged.push((path.to_path_buf(), key, stamp));
-            } else {
-                stale.push((path.to_path_buf(), key, stamp));
-            }
-        }
+        let overrides = exclude_overrides(&self.root, &self.options.excludes);
+        project_model::walk_project(
+            &self.root,
+            |walker| {
+                if let Some(overrides) = &overrides {
+                    walker.overrides(overrides.clone());
+                }
+            },
+            |entry| {
+                let path = entry.path();
+                if path.starts_with(&index_dir) {
+                    return;
+                }
+                // The walker already stat'ed this entry; re-stat'ing it here was
+                // a second syscall per file for the same two numbers.
+                let Ok(metadata) = entry.metadata() else {
+                    return;
+                };
+                if !metadata.is_file() {
+                    return;
+                }
+                let key = path.to_string_lossy().into_owned();
+                let stamp = stamp_from(&metadata);
+                if known.get(&key) == Some(&stamp) {
+                    unchanged.push((path.to_path_buf(), key, stamp));
+                } else {
+                    stale.push((path.to_path_buf(), key, stamp));
+                }
+            },
+        );
 
         let total = stale.len();
         progress(IndexProgress { done: 0, total });

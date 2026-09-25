@@ -356,6 +356,45 @@ fn e2e_search_everywhere_jump() {
     assert_eq!(ide.quit(), 0);
 }
 
+/// A workspace whose `.gitignore` hides the repositories checked out inside
+/// it: Search Everywhere still finds their files and symbols, by exact name.
+///
+/// The layout is the everyday one — an outer repository listing `/projects/`
+/// so it does not track the nested checkouts — and the query a PHP enum case,
+/// which matches no file name, so only the symbol index can answer it.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_search_everywhere_finds_symbols_in_a_nested_ignored_repository() {
+    let workspace = git_fixture(&[(".gitignore", "/projects/\n"), ("README.md", "outer\n")]);
+    let backend = workspace.path().join("projects/backend");
+    std::fs::create_dir_all(backend.join("src")).expect("nested repository dir");
+    std::fs::write(
+        backend.join("src/SortOrder.php"),
+        "<?php\nenum SortOrder: string {\n    case Asc = 'asc';\n}\n",
+    )
+    .expect("nested repository file");
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&backend)
+        .status()
+        .expect("running git init");
+    assert!(status.success(), "git init of the nested repository failed");
+
+    let name = "e2e_search_everywhere_finds_symbols_in_a_nested_ignored_repository";
+    let mut ide = Ide::launch(name, APP, workspace.path());
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    let mark = open_search_popup(&ide, "ctrl+shift+e");
+    accept_top_hit(&ide, mark, "Asc");
+    ide.wait_for_event(mark, "a tab for the nested repository's file", |e| {
+        e["ev"] == "tab_added" && e["title"] == "SortOrder.php"
+    });
+
+    assert_eq!(ide.quit(), 0);
+}
+
 fn cursor(mcp: &Mcp, tab_id: u64) -> (u32, u32) {
     let position = mcp.call("get_cursor_position", json!({ "tab_id": tab_id }));
     (

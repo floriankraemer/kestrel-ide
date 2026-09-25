@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Superseded by [ADR-0064](0064-project-scope-explicit-exclusions.md): `.gitignore` no longer decides what is walked, so a nested repository needs no special case.
 Amends [ADR-0008](0008-project-index.md) and [ADR-0051](0051-ignore-aware-project-watcher.md): both walks stay gitignore-aware, but an outer `.gitignore` no longer hides a nested repository.
 
 ## Context

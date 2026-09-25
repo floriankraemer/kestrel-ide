@@ -8,11 +8,11 @@
 //! # What a project may configure
 //!
 //! A project may configure the project, not you. [`ScopedField`] is the whole
-//! list — editing behaviour, language servers, run configurations and index
-//! excludes — and it is an enum rather than a convention so that "is this
-//! overridable?" is a question the compiler answers. Theme, fonts, keymap and
-//! AI providers are deliberately absent: a project that forces your colour
-//! scheme on you is hostile.
+//! list — editing behaviour, language servers, run configurations and its
+//! own excluded folders — and it is an enum rather than a convention so that
+//! "is this overridable?" is a question the compiler answers. Theme, fonts,
+//! keymap and AI providers are deliberately absent: a project that forces
+//! your colour scheme on you is hostile.
 //!
 //! Widening the list later is additive. Narrowing it is a breaking change to
 //! a file people have already committed, which is why the line is drawn
@@ -78,8 +78,11 @@ pub enum ScopedField {
     LanguageServers,
     /// The `[[run_config]]` blocks.
     RunConfigs,
-    /// The index's exclude patterns.
-    IndexExcludes,
+    /// The project's `excluded` folders (ADR-0064) — project-scoped, no
+    /// global counterpart, same reasoning as [`ScopedField::RunConfigs`].
+    Excluded,
+    /// The global `ignored_names` list (ADR-0064).
+    IgnoredNames,
     /// The `[terminal]` section: shell, start directory and environment.
     Terminal,
     /// The `[[analyzer]]` overrides (the PHP tooling plan's B7).
@@ -104,11 +107,12 @@ pub enum ScopedField {
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 10] = [
+    pub const ALL: [ScopedField; 11] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
-        ScopedField::IndexExcludes,
+        ScopedField::Excluded,
+        ScopedField::IgnoredNames,
         ScopedField::Terminal,
         ScopedField::Analysis,
         ScopedField::TabPadding,
@@ -125,7 +129,8 @@ impl ScopedField {
             ScopedField::Editing => "editing",
             ScopedField::LanguageServers => "languageServers",
             ScopedField::RunConfigs => "runConfigs",
-            ScopedField::IndexExcludes => "indexExcludes",
+            ScopedField::Excluded => "excluded",
+            ScopedField::IgnoredNames => "ignoredNames",
             ScopedField::Terminal => "terminal",
             ScopedField::Analysis => "analysis",
             ScopedField::TabPadding => "tabPadding",
@@ -161,9 +166,14 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     if let Some(servers) = &project.language_servers {
         resolved.language_servers = servers.clone();
     }
-    if let Some(excludes) = &project.index_excludes {
-        resolved.index_excludes = excludes.clone();
-    }
+    // Excluded has no global counterpart at all (ADR-0064, same reasoning
+    // as run configurations below): the project's own list, or none if the
+    // project has never touched it, is the only answer there is. Unlike run
+    // configurations, `Settings::excluded` exists as a resolve-only,
+    // never-persisted field, because — unlike run configs — consumers
+    // (`project_model::ProjectScope`) need it through the same resolved
+    // `Settings` every other scoped field comes back through.
+    resolved.excluded = project.excluded.clone().unwrap_or_default();
     if let Some(terminal) = &project.terminal {
         resolved.terminal = terminal.clone();
     }
@@ -216,7 +226,10 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::Editing => project.editing.is_some(),
         ScopedField::LanguageServers => project.language_servers.is_some(),
         ScopedField::RunConfigs => project.run_configs.is_some(),
-        ScopedField::IndexExcludes => project.index_excludes.is_some(),
+        ScopedField::Excluded => project.excluded.is_some(),
+        // The project layer has no `ignored_names` field to override with
+        // (ADR-0064: it is a global-only list) — never "from project".
+        ScopedField::IgnoredNames => false,
         ScopedField::Terminal => project.terminal.is_some(),
         ScopedField::Analysis => project.analysis.is_some(),
         ScopedField::TabPadding => project.tab_padding.is_some(),
@@ -309,7 +322,10 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
         // project that has none is at its default rather than inheriting
         // one.
         ScopedField::RunConfigs => false,
-        ScopedField::IndexExcludes => global.index_excludes != defaults.index_excludes,
+        // Excluded has no global field at all — same "never from global"
+        // answer as run configurations, for the same reason.
+        ScopedField::Excluded => false,
+        ScopedField::IgnoredNames => global.ignored_names != defaults.ignored_names,
         ScopedField::Terminal => global.terminal != defaults.terminal,
         ScopedField::Analysis => global.analysis != defaults.analysis,
         ScopedField::TabPadding => global.tab_padding != defaults.tab_padding,
@@ -391,7 +407,7 @@ mod tests {
     #[test]
     fn a_project_that_says_nothing_resolves_to_the_global_layer_exactly() {
         let global = Settings {
-            index_excludes: vec!["target/".to_string()],
+            ignored_names: vec!["target".to_string()],
             editing: EditingSettings {
                 tab_width: 8,
                 ..EditingSettings::default()
@@ -408,7 +424,7 @@ mod tests {
     fn a_project_overriding_one_area_leaves_the_rest_showing_through() {
         let global = Settings {
             theme: "Dark".to_string(),
-            index_excludes: vec!["scratch/".to_string()],
+            ignored_names: vec!["scratch".to_string()],
             editing: EditingSettings {
                 tab_width: 8,
                 ..EditingSettings::default()
@@ -421,9 +437,64 @@ mod tests {
         assert_eq!(resolved.editing.tab_width, 2, "the project's own answer");
         assert_eq!(resolved.theme, "Dark", "untouched by the project layer");
         assert_eq!(
-            resolved.index_excludes,
-            vec!["scratch/".to_string()],
-            "an area the project did not mention still comes from global"
+            resolved.ignored_names,
+            vec!["scratch".to_string()],
+            "an area the project has no field to override at all still comes from global"
+        );
+    }
+
+    #[test]
+    fn a_project_that_excludes_a_folder_is_reflected_on_the_resolved_settings() {
+        let project = ProjectSettings {
+            excluded: Some(vec!["build".to_string()]),
+            ..ProjectSettings::default()
+        };
+
+        let resolved = resolve(&Settings::default(), &project);
+
+        assert_eq!(resolved.excluded, vec!["build".to_string()]);
+        assert_eq!(
+            origin(ScopedField::Excluded, &Settings::default(), &project),
+            Scope::Project
+        );
+    }
+
+    #[test]
+    fn a_silent_project_resolves_to_no_excluded_folders() {
+        let resolved = resolve(&Settings::default(), &ProjectSettings::default());
+        assert!(resolved.excluded.is_empty());
+        assert_eq!(
+            origin(
+                ScopedField::Excluded,
+                &Settings::default(),
+                &ProjectSettings::default()
+            ),
+            Scope::Default,
+            "excluded has no global field to fall back to, same as run configurations"
+        );
+    }
+
+    #[test]
+    fn ignored_names_is_never_from_project_since_the_project_layer_has_no_field_for_it() {
+        let global = Settings {
+            ignored_names: vec!["scratch".to_string()],
+            ..Settings::default()
+        };
+        assert_eq!(
+            origin(
+                ScopedField::IgnoredNames,
+                &global,
+                &ProjectSettings::default()
+            ),
+            Scope::Global
+        );
+        assert_eq!(
+            origin(
+                ScopedField::IgnoredNames,
+                &Settings::default(),
+                &ProjectSettings::default()
+            ),
+            Scope::Default
         );
     }
 
@@ -543,35 +614,39 @@ mod tests {
         assert!(ScopedField::from_id("editorFontSize").is_none());
         assert_eq!(
             ScopedField::ALL.len(),
-            10,
-            "ADR-0022 names five areas, plus Analysis (the PHP tooling plan's B7), \
-             TabPadding (tab padding, per-side, project-overridable), Containers \
-             (ADR-0055), BuildTools (jvm-build-tools plan, ADR-0057 §3) and Database \
-             (Database Tools plan, F1.4)"
+            11,
+            "ADR-0022 names five areas (run configurations, editing, language \
+             servers, terminal, and what ADR-0064 split index excludes into: \
+             Excluded and IgnoredNames), plus Analysis (the PHP tooling plan's \
+             B7), TabPadding (tab padding, per-side, project-overridable), \
+             Containers (ADR-0055), BuildTools (jvm-build-tools plan, \
+             ADR-0057 §3) and Database (Database Tools plan, F1.4)"
         );
     }
 
     #[test]
-    fn an_empty_override_is_not_the_same_as_no_override() {
-        let global = Settings {
-            index_excludes: vec!["target/".to_string()],
-            ..Settings::default()
-        };
-
+    fn an_explicit_empty_excluded_override_is_still_the_projects_own_answer() {
+        // Excluded has no global field to inherit from (ADR-0064), so
+        // silence and an explicit empty list resolve to the same visible
+        // (empty) list — but `origin` still tells them apart, the same way
+        // it does for run configurations.
+        let global = Settings::default();
         let silent = ProjectSettings::default();
         let explicit = ProjectSettings {
-            index_excludes: Some(Vec::new()),
+            excluded: Some(Vec::new()),
             ..ProjectSettings::default()
         };
 
+        assert!(resolve(&global, &silent).excluded.is_empty());
+        assert!(resolve(&global, &explicit).excluded.is_empty());
         assert_eq!(
-            resolve(&global, &silent).index_excludes,
-            vec!["target/".to_string()],
-            "silence inherits"
+            origin(ScopedField::Excluded, &global, &silent),
+            Scope::Default
         );
-        assert!(
-            resolve(&global, &explicit).index_excludes.is_empty(),
-            "an explicit empty list overrides the global one"
+        assert_eq!(
+            origin(ScopedField::Excluded, &global, &explicit),
+            Scope::Project,
+            "an explicit empty list is still the project's own answer"
         );
     }
 

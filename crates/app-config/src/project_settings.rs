@@ -150,9 +150,9 @@ pub struct ProjectSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remote_attach: Option<RemoteAttachSetting>,
 
-    /// Gitignore-syntax patterns the project index skips, on top of the
-    /// `.gitignore` rules the walker already honours (ADR-0022's fourth
-    /// project-scoped area).
+    /// Folders the user marked "Mark Directory as Excluded" (ADR-0064),
+    /// root-anchored gitignore-syntax entries fed to
+    /// `project_model::ProjectScope`.
     ///
     /// Project-shaped by construction: which of *this* tree's directories
     /// are generated output is a property of the project, and a checked-out
@@ -162,12 +162,30 @@ pub struct ProjectSettings {
     /// excludes", which is a different answer from `Some(vec![])` — the
     /// project explicitly excluding nothing, and so overriding a global
     /// list.
+    ///
+    /// `#[serde(alias = "index_exclude")]` reads a file written before
+    /// ADR-0064 under its old key and old rename.
     #[serde(
         default,
-        rename = "index_exclude",
+        rename = "excluded",
+        alias = "index_exclude",
         skip_serializing_if = "Option::is_none"
     )]
-    pub index_excludes: Option<Vec<String>>,
+    pub excluded: Option<Vec<String>>,
+
+    /// Gitignored folders the user was offered on project open (ADR-0064's
+    /// "Found N ignored but not excluded folders" notification) and chose
+    /// *not* to exclude — so the notification does not offer them again on
+    /// the next open.
+    ///
+    /// Not sparse like the rest of this struct: there is no "the project
+    /// says nothing" state worth distinguishing from "the project has
+    /// reviewed nothing yet", so this is a plain `Vec` skipped from the
+    /// file when empty, the same as every other `Vec<String>` field would
+    /// be if this struct did not otherwise favour `Option` for its sparse
+    /// fields.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reviewed_not_excluded: Vec<String>,
 
     /// The project's `[terminal]` overrides — which shell a terminal opened
     /// in this checkout spawns, where it starts, and what it adds to the
@@ -261,12 +279,67 @@ impl ProjectSettings {
             && self.run_configs.is_none()
             && self.debug_adapters.is_none()
             && self.remote_attach.is_none()
-            && self.index_excludes.is_none()
+            && self.excluded.is_none()
+            && self.reviewed_not_excluded.is_empty()
             && self.terminal.is_none()
             && self.layouts.is_none()
             && self.analysis.is_none()
             && self.tab_padding.is_none()
             && self.unknown.is_empty()
+    }
+}
+
+/// Normalize a path fragment coming from the project tree ("Mark Directory
+/// as Excluded"/"Cancel Exclusion") into the form `excluded` and
+/// `reviewed_not_excluded` entries are stored in: backslashes (a
+/// Windows-typed path) become `/`, and a trailing slash is dropped so the
+/// same directory always normalizes to the same string regardless of how it
+/// was typed or which platform typed it.
+fn normalize_relative_dir(relative_dir: &str) -> String {
+    relative_dir
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Toggle whether `relative_dir` (relative to the project root, either
+/// separator accepted) is excluded: adds it if absent, removes it if
+/// present. Returns the new state — `true` if `relative_dir` is excluded
+/// after the call, `false` otherwise. Idempotent either way: toggling twice
+/// in a row (or normalizing to the same entry a second time) returns to the
+/// state before the first call.
+///
+/// Once toggled at least once, `excluded` stays `Some` even after the last
+/// entry is removed again (`Some(vec![])`, not back to `None`): `None`
+/// means "the project has never said anything about excludes", and a user
+/// who explicitly excluded and then un-excluded a folder through the
+/// project tree *has* said something — a settings file recording an
+/// explicit, empty list is the honest state, not silence.
+pub fn toggle_excluded(settings: &mut ProjectSettings, relative_dir: &str) -> bool {
+    let normalized = normalize_relative_dir(relative_dir);
+    let list = settings.excluded.get_or_insert_with(Vec::new);
+    match list.iter().position(|entry| entry == &normalized) {
+        Some(pos) => {
+            list.remove(pos);
+            false
+        }
+        None => {
+            list.push(normalized);
+            true
+        }
+    }
+}
+
+/// Record that the folders in `dirs` were offered by the "Found N ignored
+/// but not excluded folders" notification (ADR-0064) and the user chose
+/// *not* to exclude them, so they are not offered again on the next project
+/// open. Idempotent: a folder already recorded is not duplicated.
+pub fn mark_reviewed(settings: &mut ProjectSettings, dirs: impl IntoIterator<Item = String>) {
+    for dir in dirs {
+        let normalized = normalize_relative_dir(&dir);
+        if !settings.reviewed_not_excluded.contains(&normalized) {
+            settings.reviewed_not_excluded.push(normalized);
+        }
     }
 }
 
@@ -649,11 +722,110 @@ mod tests {
     fn absent_terminal_key_falls_back_to_none() {
         let root = project();
         update(root.path(), |s| {
-            s.index_excludes = Some(vec!["target/".into()]);
+            s.excluded = Some(vec!["target/".into()]);
         })
         .unwrap();
 
         assert!(load(root.path()).unwrap().terminal.is_none());
+    }
+
+    #[test]
+    fn the_old_index_exclude_key_is_read_as_an_alias() {
+        let root = project();
+        write_settings(root.path(), "version = 1\nindex_exclude = [\"scratch/\"]\n");
+        let loaded = load(root.path()).unwrap();
+        assert_eq!(loaded.excluded, Some(vec!["scratch/".to_string()]));
+    }
+
+    #[test]
+    fn excluded_round_trips_under_its_new_key() {
+        let root = project();
+        update(root.path(), |s| {
+            s.excluded = Some(vec!["build/".into()]);
+        })
+        .unwrap();
+
+        let body =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        assert!(body.contains("excluded"), "{body}");
+        assert!(!body.contains("index_exclude"), "{body}");
+
+        let loaded = load(root.path()).unwrap();
+        assert_eq!(loaded.excluded, Some(vec!["build/".to_string()]));
+    }
+
+    #[test]
+    fn toggle_excluded_adds_then_removes_and_reports_the_new_state() {
+        let mut settings = ProjectSettings::default();
+
+        assert!(toggle_excluded(&mut settings, "build"));
+        assert_eq!(settings.excluded, Some(vec!["build".to_string()]));
+
+        assert!(!toggle_excluded(&mut settings, "build"));
+        assert_eq!(
+            settings.excluded,
+            Some(vec![]),
+            "removing the last entry leaves an explicit empty list, not None"
+        );
+    }
+
+    #[test]
+    fn toggle_excluded_normalizes_separators_and_trailing_slashes() {
+        let mut settings = ProjectSettings::default();
+
+        assert!(toggle_excluded(&mut settings, "sub\\dir\\"));
+        assert_eq!(settings.excluded, Some(vec!["sub/dir".to_string()]));
+
+        // The same directory, typed with the other separator and a
+        // trailing slash, is the same entry — toggling it again removes it.
+        assert!(!toggle_excluded(&mut settings, "sub/dir/"));
+        assert_eq!(settings.excluded, Some(vec![]));
+    }
+
+    #[test]
+    fn toggle_excluded_is_idempotent_across_repeated_calls() {
+        let mut settings = ProjectSettings::default();
+        toggle_excluded(&mut settings, "build");
+        toggle_excluded(&mut settings, "build");
+        toggle_excluded(&mut settings, "build");
+        assert_eq!(
+            settings.excluded,
+            Some(vec!["build".to_string()]),
+            "an odd number of toggles ends excluded"
+        );
+    }
+
+    #[test]
+    fn mark_reviewed_records_each_folder_once() {
+        let mut settings = ProjectSettings::default();
+
+        mark_reviewed(&mut settings, ["dist".to_string(), "dist\\".to_string()]);
+        assert_eq!(
+            settings.reviewed_not_excluded,
+            vec!["dist".to_string()],
+            "the same folder normalized two ways is recorded once"
+        );
+
+        mark_reviewed(&mut settings, ["build".to_string()]);
+        assert_eq!(
+            settings.reviewed_not_excluded,
+            vec!["dist".to_string(), "build".to_string()]
+        );
+    }
+
+    #[test]
+    fn reviewed_not_excluded_is_part_of_is_empty_and_round_trips() {
+        let root = project();
+        assert!(ProjectSettings::default().is_empty());
+
+        update(root.path(), |s| {
+            mark_reviewed(s, ["dist".to_string()]);
+        })
+        .unwrap();
+
+        let loaded = load(root.path()).unwrap();
+        assert!(!loaded.is_empty());
+        assert_eq!(loaded.reviewed_not_excluded, vec!["dist".to_string()]);
     }
 
     #[test]

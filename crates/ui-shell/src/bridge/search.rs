@@ -200,8 +200,13 @@ impl ffi::SearchModel {
             // walk reaches a directory. Which layer the patterns came from
             // is `settings_model::scope`'s answer (ADR-0022); all
             // `index-core` gets is the list.
+            // `excluded` only (not `ignored_names` too) keeps this call's
+            // behaviour exactly what it was before ADR-0064: `index-core`
+            // still walks with `ignore::WalkBuilder`'s own `.gitignore`
+            // awareness, unchanged here. Folding both lists through
+            // `project_model::ProjectScope` is T3's job.
             let options = index_core::IndexOptions {
-                excludes: crate::bridge::convert::load_resolved_settings_for(&root).index_excludes,
+                excludes: crate::bridge::convert::load_resolved_settings_for(&root).excluded,
             };
             // One cross-thread hop per file would cost more than the file
             // took to index, so the closure reports at most every

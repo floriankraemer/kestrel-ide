@@ -20,9 +20,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod coalesce;
+/// What is part of the project, independent of `.gitignore` (ADR-0064).
+pub mod scope;
 mod walk;
 mod watcher;
 pub use coalesce::RefreshCoalescer;
+pub use scope::ProjectScope;
 pub use walk::walk_project;
 pub use watcher::{route_change, ChangeRouting, EventKind, ProjectWatcher};
 

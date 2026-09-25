@@ -22,6 +22,9 @@ pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
 pub mod containers;
 pub mod database; // Data sources, no secrets (ADR-0061 §1).
+mod ignored_names; // `Settings::ignored_names`'s default list + `Default` impl (ADR-0064).
+use ignored_names::default_ignored_names;
+pub use ignored_names::DEFAULT_IGNORED_NAMES;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
 /// The `[file_associations]` section: which handler a file pattern opens
@@ -161,7 +164,7 @@ impl Default for MinimapSettings {
 /// Structured application settings, round-tripped to `settings.toml` in the
 /// config directory. Every field is `#[serde(default)]` so old or partially
 /// written settings files still parse.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Settings {
     #[serde(default)]
     pub theme: String,
@@ -386,16 +389,15 @@ pub struct Settings {
     pub build_tools: BuildToolsSettings,
     #[serde(default, skip_serializing_if = "database::is_default")]
     pub database: database::DatabaseSettings,
-    /// Gitignore-syntax patterns the project index skips, on top of the
-    /// `.gitignore` rules its walker already honours.
-    ///
-    /// Global here means "the user's own habitual excludes" — a scratch
-    /// directory they keep in every checkout. The project's own excludes
-    /// live in [`project_settings::ProjectSettings::index_excludes`], and
-    /// which of the two applies is `settings_model::scope`'s answer, not
-    /// this crate's.
-    #[serde(default)]
-    pub index_excludes: Vec<String>,
+    /// Gitignore-syntax names the project scope skips at any depth
+    /// (ADR-0064); see [`DEFAULT_IGNORED_NAMES`]. Global; the project's own
+    /// excludes are [`project_settings::ProjectSettings::excluded`] instead.
+    #[serde(default = "default_ignored_names", alias = "index_excludes")]
+    pub ignored_names: Vec<String>,
+    /// `settings_model::scope::resolve`'s output only (ADR-0064): empty on
+    /// a `Settings` loaded straight from the global file, never persisted.
+    #[serde(skip)]
+    pub excluded: Vec<String>,
     /// Stable ids of languages the user turned off. A disabled language is
     /// still *listed* by the Languages page — otherwise it could never be
     /// switched back on — but the registry refuses to resolve it, so its
@@ -959,7 +961,8 @@ mod tests {
             editor_colors: colors,
             recent_projects: vec![PathBuf::from("/home/user/project-a")],
             recent_files: vec![PathBuf::from("/home/user/project-a/src/main.rs")],
-            index_excludes: vec!["scratch/".to_string()],
+            ignored_names: vec!["scratch/".to_string()],
+            excluded: Vec::new(),
             window_geometry: WindowGeometry {
                 x: 10,
                 y: 20,

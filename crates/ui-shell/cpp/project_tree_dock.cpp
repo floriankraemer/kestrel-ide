@@ -10,6 +10,7 @@
 #include "icon_decoration_proxy.h"
 #include "vcs_status_color_proxy.h"
 #include "keymap_page.h"
+#include "scope_review_notice.h"
 #include "ui_tokens.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
@@ -420,6 +421,15 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
 
     docks->registerDock(QStringLiteral("projectTree"), treeDock, ads::LeftDockWidgetArea,
                         editorArea);
+
+    // T6, ADR-0064: the "Found N ignored but not excluded folders" notice
+    // floats over the whole window, not this dock — `dockManager`'s own
+    // parent is the top-level `QMainWindow` (`buildCentralWidget` builds it
+    // with `window` as parent), which is the same top-level every other
+    // window-wide popup in this file (context menus aside) ultimately
+    // floats over.
+    installScopeReviewNotice(dockManager->window(), treeModel);
+
     return ProjectTreeDock{treeView, locateAction};
 }
 

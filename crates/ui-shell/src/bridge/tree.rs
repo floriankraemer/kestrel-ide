@@ -540,8 +540,8 @@ impl ffi::ProjectTreeModel {
         let Some(scope) = self.scope.borrow().clone() else {
             return;
         };
-        let reviewed_not_excluded = crate::bridge::convert::load_project_settings()
-            .reviewed_not_excluded;
+        let reviewed_not_excluded =
+            crate::bridge::convert::load_project_settings().reviewed_not_excluded;
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
             let candidates = scope_candidates_for(&root, &scope, &reviewed_not_excluded);

@@ -38,12 +38,12 @@ The work ships as three PRs:
   This is the PR that actually fixes first paint on a huge project — PR1 alone still pays the eager walk's cost, just no longer in front of the watcher and the slot chain.
 - **PR3** trims the remaining UI-thread work in the `projectOpened` slot chain itself: sharing one resolved-settings read across LSP/build-tools/analysis/search instead of each re-parsing, and resolving the WSL analysis-label program on a worker instead of spawning `wsl.exe` on the Qt thread.
 
-See the ADR below for the two decisions this plan makes: the open-sequence reorder (PR1, accepted and delivered) and the lazy tree (PR2, accepted, not yet delivered).
+See the ADR below for the two decisions this plan makes: the open-sequence reorder (PR1, accepted and delivered) and the lazy tree (PR2, accepted and delivered).
 
 ## Progress
 
 | Task | Status | Commit |
 |---|---|---|
 | PR1 — Step 4 open reorder + watcher off UI thread | done | a51a23b (#328) |
-| PR2 — Steps 1+2+3+6 lazy tree, incremental refresh, full-tree consumers | done | this commit |
+| PR2 — Steps 1+2+3+6 lazy tree, incremental refresh, full-tree consumers | done | 583c9a0 (#329) |
 | PR3 — Step 5 trim `projectOpened` UI-thread work | not started | |

@@ -480,7 +480,10 @@ pub(crate) fn symbol_kind_word(kind: Option<syntax_core::SymbolKind>) -> &'stati
 }
 
 pub(crate) fn load_settings() -> app_config::Settings {
-    app_config::load(&app_core::resolve_config_dir()).unwrap_or_default()
+    let config_dir = app_core::resolve_config_dir();
+    app_config::resolved_cache::global_settings(&config_dir, || {
+        app_config::load(&config_dir).unwrap_or_default()
+    })
 }
 
 /// The root of the open project, if there is one.
@@ -503,9 +506,10 @@ pub(crate) fn current_project_root() -> Option<std::path::PathBuf> {
 /// (ADR-0022 §6). The settings dialog is the surface that shows that error;
 /// a keystroke asking for its tab width is not.
 pub(crate) fn load_project_settings() -> app_config::project_settings::ProjectSettings {
-    current_project_root()
-        .and_then(|root| app_config::project_settings::load(&root).ok())
-        .unwrap_or_default()
+    match current_project_root() {
+        Some(root) => project_settings_and_resolved(&root).0,
+        None => Default::default(),
+    }
 }
 
 /// The settings actually in force: the global layer with the open project's
@@ -516,7 +520,29 @@ pub(crate) fn load_project_settings() -> app_config::project_settings::ProjectSe
 /// settings a project may not touch (theme, fonts, keymap, AI providers),
 /// and for the pages that edit the global file itself.
 pub(crate) fn load_resolved_settings() -> app_config::Settings {
-    settings_model::scope::resolve(&load_settings(), &load_project_settings())
+    match current_project_root() {
+        Some(root) => project_settings_and_resolved(&root).1,
+        None => settings_model::scope::resolve(&load_settings(), &Default::default()),
+    }
+}
+
+/// Both files' answer for `root`, through the shared cache
+/// (`app_config::resolved_cache`, fast-project-open-plan step 5): every
+/// caller in the `projectOpened` slot chain used to parse both
+/// `settings.toml` and `<root>/.ide/settings.toml` itself, once each —
+/// this is the one place that still does, and only on a cache miss.
+fn project_settings_and_resolved(
+    root: &Path,
+) -> (
+    app_config::project_settings::ProjectSettings,
+    app_config::Settings,
+) {
+    let config_dir = app_core::resolve_config_dir();
+    app_config::resolved_cache::project_settings_and_resolved(&config_dir, root, || {
+        let project_settings = app_config::project_settings::load(root).unwrap_or_default();
+        let resolved = settings_model::scope::resolve(&load_settings(), &project_settings);
+        (project_settings, resolved)
+    })
 }
 
 /// The `TabKind` hint `AppSession::open_file_with_hint` needs for `path`,
@@ -550,8 +576,7 @@ pub(crate) fn resolve_open_hint(path: &Path) -> Option<app_core::TabKind> {
 /// that already knows which project it is opening (it was handed the root)
 /// has no need to ask the shared session anyway.
 pub(crate) fn load_resolved_settings_for(root: &Path) -> app_config::Settings {
-    let project_settings = app_config::project_settings::load(root).unwrap_or_default();
-    settings_model::scope::resolve(&load_settings(), &project_settings)
+    project_settings_and_resolved(root).1
 }
 
 /// `editor_core::diff::Hunk`s as `DiffView`'s change ribbon reads them

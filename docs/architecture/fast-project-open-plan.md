@@ -45,5 +45,5 @@ See the ADR below for the two decisions this plan makes: the open-sequence reord
 | Task | Status | Commit |
 |---|---|---|
 | PR1 — Step 4 open reorder + watcher off UI thread | done | a51a23b (#328) |
-| PR2 — Steps 1+2+3+6 lazy tree, incremental refresh, full-tree consumers | done | 583c9a0 (#329) |
-| PR3 — Step 5 trim `projectOpened` UI-thread work | not started | |
+| PR2 — Steps 1+2+3+6 lazy tree, incremental refresh, full-tree consumers | done | 2d20d5d (#329), E2E follow-up #330 |
+| PR3 — Step 5 trim `projectOpened` UI-thread work | done | this commit |

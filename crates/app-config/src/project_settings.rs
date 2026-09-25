@@ -39,7 +39,7 @@ use crate::{
 
 /// Directory holding a project's IDE files, inside the project root.
 pub const PROJECT_DIR: &str = ".ide";
-const PROJECT_SETTINGS_FILE: &str = "settings.toml";
+pub(crate) const PROJECT_SETTINGS_FILE: &str = "settings.toml";
 const TEMP_PROJECT_SETTINGS_FILE: &str = "settings.toml.tmp";
 const PROJECT_GITIGNORE: &str = ".gitignore";
 
@@ -339,7 +339,9 @@ pub fn load(project_root: &Path) -> Result<ProjectSettings, ConfigError> {
 }
 
 /// Save to `<project_root>/.ide/settings.toml`, creating `.ide` (and seeding
-/// its `.gitignore`) if needed. Atomic, like the global layer.
+/// its `.gitignore`) if needed. Atomic, like the global layer. Invalidates
+/// [`crate::resolved_cache`] on success — the settings dialog's save path
+/// must never leave a consumer reading the value from before this write.
 pub fn save(project_root: &Path, settings: &ProjectSettings) -> Result<(), ConfigError> {
     let dir = project_dir(project_root)?;
     fs::create_dir_all(&dir)?;
@@ -350,11 +352,14 @@ pub fn save(project_root: &Path, settings: &ProjectSettings) -> Result<(), Confi
         &dir.join(PROJECT_SETTINGS_FILE),
         &dir.join(TEMP_PROJECT_SETTINGS_FILE),
         &to_write,
-    )
+    )?;
+    crate::resolved_cache::invalidate();
+    Ok(())
 }
 
 /// Load, edit, save. Aborts on a load failure rather than writing defaults
-/// over a file it could not read.
+/// over a file it could not read. Invalidates [`crate::resolved_cache`] on
+/// success, same reason as [`save`].
 pub fn update(
     project_root: &Path,
     edit: impl FnOnce(&mut ProjectSettings),
@@ -369,7 +374,9 @@ pub fn update(
             edit(s);
             s.version = Some(CURRENT_VERSION);
         },
-    )
+    )?;
+    crate::resolved_cache::invalidate();
+    Ok(())
 }
 
 /// Seed `.ide/.gitignore` if it is not already there.

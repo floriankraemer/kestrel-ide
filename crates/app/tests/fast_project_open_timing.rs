@@ -94,3 +94,48 @@ fn open_large_project_paints_tree_before_watcher_settles() {
 
     ide.quit();
 }
+
+/// Manual probe for PR3 (plan step 5, "trim `projectOpened`'s own UI-thread
+/// work"): counts how many times `app_config::resolved_cache` actually
+/// parsed `settings.toml`/`.ide/settings.toml` for one project open — every
+/// `projectOpened` listener that resolves settings (search, LSP, build
+/// tools, the analysis label) used to parse both files itself, once each.
+/// `resolved_cache::record_miss` prints one `ide-settings-parse <file>` line
+/// per real parse to stderr when `IDE_E2E_EVENTS` is set, which
+/// `Ide::spawn` always does — see that function's doc comment.
+#[test]
+#[ignore]
+fn project_open_resolves_settings_once_per_root() {
+    // `runnable`, not `tiny`: it ships a `.ide/settings.toml` (a run
+    // configuration), so the project-settings half of the cache is
+    // exercised the same way a real project with overrides would be, not
+    // just the "no project file" default path.
+    let mut ide = Ide::launch("fast_project_open_settings_cache", APP, fixture("runnable"));
+
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    // The analysis label's async refresh is the last of the known
+    // `projectOpened` listeners to settle (it's the one this PR moved off
+    // the Qt thread) — waiting for it bounds how long the whole chain had
+    // to run before the settings files are read at most once.
+    ide.wait_for_ev(Mark::start(), "analyzer_status_ready");
+
+    let stderr = ide.stderr();
+    let global_parses = stderr.matches("ide-settings-parse settings.toml").count();
+    let project_parses = stderr
+        .matches("ide-settings-parse .ide/settings.toml")
+        .count();
+    eprintln!(
+        "settings.toml parsed {global_parses} time(s), .ide/settings.toml parsed \
+         {project_parses} time(s) for one project open"
+    );
+    assert!(
+        global_parses <= 1,
+        "global settings.toml must be parsed at most once per open, was parsed {global_parses} times"
+    );
+    assert!(
+        project_parses <= 1,
+        ".ide/settings.toml must be parsed at most once per open, was parsed {project_parses} times"
+    );
+
+    ide.quit();
+}

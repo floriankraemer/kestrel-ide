@@ -36,9 +36,7 @@ impl Default for ProjectTreeModelRust {
         // Seed the shared session's sort order from the persisted setting
         // before any tree gets built — `reopenLastProject`'s startup call
         // must land in the right order the first time, not flip after.
-        let descending = app_config::load(&app_core::resolve_config_dir())
-            .unwrap_or_default()
-            .project_tree_sort_descending;
+        let descending = crate::bridge::convert::load_settings().project_tree_sort_descending;
         if descending {
             session
                 .borrow_mut()
@@ -374,7 +372,7 @@ impl ffi::ProjectTreeModel {
     /// (`process_exec::host`'s doc comment on why), so this one read at the
     /// one place every project open passes through keeps it current.
     fn apply_remote_wsl_setting() {
-        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+        let settings = crate::bridge::convert::load_settings();
         lsp_core::set_remote_wsl_enabled(settings.remote_wsl_or_default());
     }
 

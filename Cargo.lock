@@ -124,6 +124,7 @@ dependencies = [
  "editor-core",
  "ignore",
  "lsp-core",
+ "project-model",
  "reqwest",
  "serde",
  "serde_json",

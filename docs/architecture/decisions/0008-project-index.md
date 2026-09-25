@@ -3,6 +3,7 @@
 ## Status
 
 Accepted.
+Amended by [ADR-0064](0064-project-scope-explicit-exclusions.md): what the index walks is now `project_model::ProjectScope`'s *Excluded*/*Ignored names* lists, not `ignore::WalkBuilder`'s `.gitignore` awareness.
 The `windows-artifact` Docker target (MXE cross-build to `x86_64-pc-windows-gnu`) built
 `app.exe` clean with `index-core` (tantivy + `zstd-sys` + ripgrep crates + `ignore`) in the
 dependency tree, no Dockerfile changes needed. Verified via the resulting binary's PE import

@@ -22,11 +22,9 @@ use std::path::{Path, PathBuf};
 mod coalesce;
 /// What is part of the project, independent of `.gitignore` (ADR-0064).
 pub mod scope;
-mod walk;
 mod watcher;
 pub use coalesce::RefreshCoalescer;
 pub use scope::ProjectScope;
-pub use walk::walk_project;
 pub use watcher::{route_change, ChangeRouting, EventKind, ProjectWatcher};
 
 /// File name used to persist the last-opened project path, per the plan's
@@ -657,39 +655,33 @@ pub fn open_folder(path: impl AsRef<Path>) -> Result<Project, OpenFolderError> {
     open_folder_sorted(path, SortOrder::Ascending)
 }
 
-/// Every file and folder currently reachable under `root`, gitignore-aware,
-/// skipping the project's own search index — for a caller that needs the
-/// *whole* project tree flattened (MCP's `list_project_tree`, the AI
-/// agent's own tool) rather than whatever the lazy on-screen arena happens
-/// to have loaded so far. Runs its own fresh walk rather than reading
+/// Every file and folder currently reachable under `root`, per the
+/// [`ProjectScope`] `excluded`/`ignored_names` build (ADR-0064), skipping
+/// the project's own search index — for a caller that needs the *whole*
+/// project tree flattened (MCP's `list_project_tree`, the AI agent's own
+/// tool) rather than whatever the lazy on-screen arena happens to have
+/// loaded so far. Runs its own fresh walk rather than reading
 /// [`DirectoryTree`] precisely because that arena is partial by design; safe
-/// to call from any thread (a plain `ignore::WalkBuilder` walk, no shared
+/// to call from any thread (a plain [`ProjectScope::walk`], no shared
 /// state), which is what lets both consumers run it on their own
 /// already-off-the-Qt-thread worker.
-pub fn walk_all_entries(root: &Path) -> Vec<(PathBuf, bool)> {
+pub fn walk_all_entries(
+    root: &Path,
+    excluded: &[String],
+    ignored_names: &[String],
+) -> Vec<(PathBuf, bool)> {
+    let scope = ProjectScope::new(root, excluded, ignored_names);
+    let index_dir = root.join(INDEX_DIR_NAME);
     let mut entries = Vec::new();
-    walk_project(
-        root,
-        |builder| {
-            builder
-                .hidden(false)
-                .git_ignore(true)
-                .git_global(true)
-                .git_exclude(true)
-                // A `.gitignore` should apply even in a project that isn't (yet) a
-                // git repository itself — `require_git` defaults to `true`, which
-                // would otherwise silently stop honoring it the moment there's no
-                // `.git` directory to find.
-                .require_git(false)
-                .filter_entry(|entry| entry.file_name() != INDEX_DIR_NAME);
-        },
-        |entry| {
-            if entry.path() != root {
-                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-                entries.push((entry.into_path(), is_dir));
-            }
-        },
-    );
+    scope.walk(|entry| {
+        if entry.path().starts_with(&index_dir) {
+            return;
+        }
+        if entry.path() != root {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            entries.push((entry.into_path(), is_dir));
+        }
+    });
     entries
 }
 

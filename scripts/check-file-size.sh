@@ -32,7 +32,13 @@ exempt() {
 # by the time they were enforced.
 baseline() {
 	case "$1" in
-	crates/index-core/src/lib.rs) echo 3995 ;;         # ratcheted down: replace_in_files/preview_replacements moved to replace_preview.rs (F3-15)
+	# Raised from 3995 by 1 line for ProjectScope::new's third argument
+	# (ADR-0064): every mutating entry point (sync_from_disk/reindex_file/
+	# sync_paths) now re-checks the scope through the private `scope()`
+	# helper rather than the old `excludes.rs` override-set builder, which
+	# is why the net is one line rather than the whole feature's size — the
+	# ADR-0064 tests themselves moved to tests/scope.rs. No split planned.
+	crates/index-core/src/lib.rs) echo 3996 ;;
 	# Raised from 2572 by 10 lines for `Scope::from_id` (C9) — the inverse of
 	# `Scope::id`, needed to rebuild a `Scope` from the raw id a
 	# `FfiHighlightSpan` carries back across the seam when overlaying
@@ -40,7 +46,12 @@ baseline() {
 	# `overlay_semantic_tokens`). No split planned otherwise.
 	crates/syntax-core/src/lib.rs) echo 2582 ;;
 	crates/mcp-server/src/lib.rs) echo 1836 ;;         # no split planned; ratcheted so it cannot grow
-	crates/ai-chat-core/src/context.rs) echo 1608 ;;   # no split planned; ratcheted so it cannot grow
+	# Raised from 1608 by 35 lines for ADR-0064: `expand_folder` gained the
+	# `excluded`/`ignored_names` parameters and now prunes its walk with
+	# `project_model::ProjectScope::is_excluded` instead of `ignore`'s
+	# `.gitignore`-only defaults, plus the tests proving the new rule. No
+	# split planned.
+	crates/ai-chat-core/src/context.rs) echo 1643 ;;
 	# Raised from 1553 by 16 lines for the ResourceOp error variant, its FFI
 	# code and the file_ops module declaration — the parts that must live
 	# beside AppError. The operation itself, its 12 tests and its Display

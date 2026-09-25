@@ -21,6 +21,7 @@ use ignore::{DirEntry, WalkBuilder};
 /// need "does this path or any ancestor match either list", and the
 /// `ignore` crate already answers that question efficiently for one
 /// matcher.
+#[derive(Clone)]
 pub struct ProjectScope {
     root: PathBuf,
     matcher: Gitignore,

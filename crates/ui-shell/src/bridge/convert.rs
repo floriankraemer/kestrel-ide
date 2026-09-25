@@ -339,10 +339,11 @@ pub(crate) fn dispatch_editor_command(
             let _ = respond.send(buffers);
         }
         mcp_server::EditorCommand::ListProjectTree(respond) => {
+            let resolved = load_resolved_settings();
             let entries = doc_manager
                 .session
                 .borrow()
-                .project_tree_entries()
+                .project_tree_entries(&resolved.excluded, &resolved.ignored_names)
                 .into_iter()
                 .map(|(path, is_dir)| mcp_server::ProjectTreeEntry {
                     path: path.to_string_lossy().into_owned(),

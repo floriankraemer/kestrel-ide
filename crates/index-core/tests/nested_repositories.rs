@@ -1,5 +1,10 @@
 //! Search Everywhere over a workspace that checks several repositories out
-//! side by side and lists them in its own `.gitignore`.
+//! side by side.
+//!
+//! ADR-0064 deleted ADR-0063's depth-bounded search for nested `.git`
+//! directories: a nested repository is simply part of the project unless
+//! explicitly excluded, `.gitignore` no longer hides it (or its own
+//! `vendor/`) from the index at all.
 //!
 //! An integration test because the promise is about the whole build — a
 //! layout on disk in, a file and a symbol Search Everywhere can find out.
@@ -16,7 +21,7 @@ fn write(root: &Path, relative: &str, contents: &str) {
 }
 
 #[test]
-fn files_and_symbols_of_a_nested_repository_the_outer_gitignore_hides_are_found() {
+fn files_and_symbols_of_a_nested_repository_are_found_gitignore_notwithstanding() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     fs::create_dir_all(root.join(".git")).unwrap();
@@ -35,9 +40,10 @@ fn files_and_symbols_of_a_nested_repository_the_outer_gitignore_hides_are_found(
     let files = index.find_files("SortOrder.php", 10);
     assert_eq!(files.len(), 1, "{files:?}");
     assert_eq!(files[0].relative, "projects/backend/src/SortOrder.php");
-    assert!(
-        index.find_files("Dependency.php", 10).is_empty(),
-        "the nested repository's own .gitignore still applies"
+    assert_eq!(
+        index.find_files("Dependency.php", 10).len(),
+        1,
+        "a nested repository's own .gitignore no longer hides its files"
     );
     let symbols = index.find_definitions_exact("SortOrder").unwrap();
     assert_eq!(symbols.len(), 1, "{symbols:?}");

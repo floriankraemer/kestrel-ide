@@ -530,8 +530,17 @@ impl ffi::ProjectTreeModel {
         let is_remote = lsp_core::ExecHost::for_path(&root).is_remote();
         std::thread::spawn(move || {
             let event_root = root.clone();
-            let result = project_model::ProjectWatcher::start(
+            // Same off-Qt-thread settings read `SearchModel::open_index`
+            // already does (ADR-0037): the watch set is exactly the scope
+            // `index-core` built its index from (ADR-0064).
+            let resolved = crate::bridge::convert::load_resolved_settings_for(&root);
+            let scope = project_model::ProjectScope::new(
                 &root,
+                &resolved.excluded,
+                &resolved.ignored_names,
+            );
+            let result = project_model::ProjectWatcher::start(
+                &scope,
                 is_remote,
                 move |kind, changed_path| {
                     // `project_model::route_change` (issue #285) is the

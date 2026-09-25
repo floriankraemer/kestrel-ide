@@ -560,9 +560,18 @@ impl ffi::AiChat {
         };
 
         let expansion = {
+            let resolved = crate::bridge::convert::load_resolved_settings_for(&root);
             let mut counter = self.counter.borrow_mut();
             let budget = self.context_budget(&config, &mut counter);
-            match context::expand_folder(&config, &mut counter, &root, &folder, budget) {
+            match context::expand_folder(
+                &config,
+                &mut counter,
+                &root,
+                &folder,
+                budget,
+                &resolved.excluded,
+                &resolved.ignored_names,
+            ) {
                 Ok(expansion) => expansion,
                 Err(error) => return to_chat_result(error),
             }

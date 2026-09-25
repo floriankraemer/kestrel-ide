@@ -696,7 +696,6 @@ fn line_and_col_from(starts: &[usize], offset: usize) -> (usize, usize) {
     (line, offset - starts[line - 1])
 }
 
-use excludes::exclude_overrides;
 pub use excludes::IndexOptions;
 use lifecycle::no_progress;
 pub use lifecycle::{IndexProgress, IndexSlot};
@@ -1292,36 +1291,27 @@ impl TextIndex {
         let mut unchanged: Vec<(PathBuf, String, FileStamp)> = Vec::new();
         let mut stale: Vec<(PathBuf, String, FileStamp)> = Vec::new();
 
-        let overrides = exclude_overrides(&self.root, &self.options.excludes);
-        project_model::walk_project(
-            &self.root,
-            |walker| {
-                if let Some(overrides) = &overrides {
-                    walker.overrides(overrides.clone());
-                }
-            },
-            |entry| {
-                let path = entry.path();
-                if path.starts_with(&index_dir) {
-                    return;
-                }
-                // The walker already stat'ed this entry; re-stat'ing it here was
-                // a second syscall per file for the same two numbers.
-                let Ok(metadata) = entry.metadata() else {
-                    return;
-                };
-                if !metadata.is_file() {
-                    return;
-                }
-                let key = path.to_string_lossy().into_owned();
-                let stamp = stamp_from(&metadata);
-                if known.get(&key) == Some(&stamp) {
-                    unchanged.push((path.to_path_buf(), key, stamp));
-                } else {
-                    stale.push((path.to_path_buf(), key, stamp));
-                }
-            },
-        );
+        self.scope().walk(|entry| {
+            let path = entry.path();
+            if path.starts_with(&index_dir) {
+                return;
+            }
+            // The walker already stat'ed this entry; re-stat'ing it here was
+            // a second syscall per file for the same two numbers.
+            let Ok(metadata) = entry.metadata() else {
+                return;
+            };
+            if !metadata.is_file() {
+                return;
+            }
+            let key = path.to_string_lossy().into_owned();
+            let stamp = stamp_from(&metadata);
+            if known.get(&key) == Some(&stamp) {
+                unchanged.push((path.to_path_buf(), key, stamp));
+            } else {
+                stale.push((path.to_path_buf(), key, stamp));
+            }
+        });
 
         let total = stale.len();
         progress(IndexProgress { done: 0, total });
@@ -1436,23 +1426,46 @@ impl TextIndex {
         path.starts_with(&self.index_dir)
     }
 
+    /// This build's [`project_model::ProjectScope`] (ADR-0064) — every
+    /// mutating entry point re-checks it, not just the initial walk.
+    fn scope(&self) -> project_model::ProjectScope {
+        project_model::ProjectScope::new(
+            &self.root,
+            &self.options.excluded,
+            &self.options.ignored_names,
+        )
+    }
+
     /// Number of files currently held in the file-name tier.
     pub fn indexed_file_count(&self) -> usize {
         self.files.len()
     }
 
-    /// Re-index a single file: drops any existing entry for `path` — its
-    /// text doc *and* every symbol/reference doc it produced, since they
-    /// all share the `path` term — and re-adds it from disk if it
-    /// currently exists and is readable UTF-8 text, including a fresh
-    /// symbol/reference pass. Callers (the eventual `ui-shell` watcher
-    /// integration) pass the same path form used when the file was first
-    /// indexed.
+    /// Drop any doc `path` has — its text doc *and* every symbol/reference
+    /// doc it produced, since they all share the `path` term — without
+    /// committing.
+    fn delete_doc(&mut self, path: &Path) {
+        let key = path.to_string_lossy().into_owned();
+        self.writer
+            .delete_term(Term::from_field_text(self.fields.path, &key));
+    }
+
+    /// Re-index a single file: drops any existing entry (see
+    /// [`Self::delete_doc`]) and re-adds it from disk if it currently
+    /// exists, is in scope (ADR-0064) and is readable UTF-8 text. A path the
+    /// scope now excludes is dropped exactly like one gone from disk.
+    /// Callers (the watcher integration) pass the same path form used when
+    /// the file was first indexed.
     pub fn reindex_file(&mut self, path: &Path) -> Result<(), IndexError> {
         if self.is_index_internal(path) {
             return Ok(());
         }
-        let indexable = self.write_file_doc(path, stamp_of(path))?;
+        let indexable = if self.scope().is_excluded(path, path.is_dir()) {
+            self.delete_doc(path);
+            false
+        } else {
+            self.write_file_doc(path, stamp_of(path))?
+        };
         self.writer.commit()?;
         self.reader.reload()?;
         self.track_file(path, indexable);
@@ -1460,25 +1473,28 @@ impl TextIndex {
     }
 
     /// Bring a batch of paths up to date in one pass: each path that still
-    /// exists is re-indexed, each that does not is dropped, and the whole
+    /// exists and is in scope (ADR-0064) is re-indexed, each that does not —
+    /// gone from disk, or newly out of scope — is dropped, and the whole
     /// batch shares a single commit and reader reload.
     ///
     /// This is what the filesystem watcher should call. One save can produce
     /// several events, and a commit per event is both the expensive part and
     /// a write lock the whole application waits behind.
     pub fn sync_paths(&mut self, paths: &[PathBuf]) -> Result<(), IndexError> {
+        let scope = self.scope();
         let mut touched: Vec<(PathBuf, bool)> = Vec::with_capacity(paths.len());
         for path in paths {
             if self.is_index_internal(path) {
                 continue;
             }
-            if path.exists() {
+            if scope.is_excluded(path, path.is_dir()) {
+                self.delete_doc(path);
+                touched.push((path.clone(), false));
+            } else if path.exists() {
                 let indexable = self.write_file_doc(path, stamp_of(path))?;
                 touched.push((path.clone(), indexable));
             } else {
-                let key = path.to_string_lossy().into_owned();
-                self.writer
-                    .delete_term(Term::from_field_text(self.fields.path, &key));
+                self.delete_doc(path);
                 touched.push((path.clone(), false));
             }
         }
@@ -2703,28 +2719,10 @@ mod tests {
         assert_eq!(matches[1].line, 3);
     }
 
-    #[test]
-    fn gitignored_files_are_excluded_from_the_index() {
-        let dir = tempfile::tempdir().unwrap();
-        // `ignore::WalkBuilder` only honors `.gitignore` inside an actual
-        // git work tree by default (matching git's/ripgrep's own
-        // behavior) — a bare `.gitignore` file with no `.git` directory
-        // next to it is not enough.
-        std::process::Command::new("git")
-            .arg("init")
-            .arg("-q")
-            .arg(dir.path())
-            .status()
-            .unwrap();
-        write(dir.path(), ".gitignore", "ignored.txt\n");
-        write(dir.path(), "ignored.txt", "needle here");
-        write(dir.path(), "kept.txt", "needle here too");
-        let index = TextIndex::build(dir.path()).unwrap();
-
-        let matches = index.search("needle", false, true).unwrap();
-        assert_eq!(matches.len(), 1);
-        assert!(matches[0].path.ends_with("kept.txt"));
-    }
+    // ADR-0064's scope rules (gitignore no longer matters, an excluded
+    // folder/ignored name does, a rescope purges) are integration-tested in
+    // `tests/scope.rs` rather than here — this file is grandfathered at a
+    // ratcheted line-count ceiling that may only shrink.
 
     #[test]
     fn reindex_file_picks_up_modified_content() {
@@ -2808,6 +2806,9 @@ mod tests {
         assert_eq!(index.find_definitions_exact("added").unwrap().len(), 1);
         assert_eq!(index.indexed_file_count(), 2);
     }
+
+    // `sync_paths` refusing a now-excluded path is integration-tested in
+    // `tests/scope.rs` alongside the rest of ADR-0064's rules.
 
     #[test]
     fn reopening_an_unchanged_project_writes_nothing_at_all() {

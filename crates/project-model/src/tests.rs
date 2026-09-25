@@ -388,7 +388,12 @@ fn install_project_hands_back_the_previous_watcher() {
 
     let mut session = ProjectSession::new();
     session.install_project(open_folder_sorted(first_dir.path(), SortOrder::Ascending).unwrap());
-    let watcher = ProjectWatcher::start(first_dir.path(), false, |_, _| {}).unwrap();
+    let watcher = ProjectWatcher::start(
+        &ProjectScope::new(first_dir.path(), &[], &[]),
+        false,
+        |_, _| {},
+    )
+    .unwrap();
     assert!(session.install_watcher(first_dir.path(), watcher).is_ok());
 
     let (_, replaced_watcher) = session
@@ -400,7 +405,8 @@ fn install_project_hands_back_the_previous_watcher() {
 #[test]
 fn install_watcher_is_rejected_when_no_project_is_open() {
     let dir = tempfile::tempdir().unwrap();
-    let watcher = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
+    let watcher =
+        ProjectWatcher::start(&ProjectScope::new(dir.path(), &[], &[]), false, |_, _| {}).unwrap();
 
     let mut session = ProjectSession::new();
     assert!(session.install_watcher(dir.path(), watcher).is_err());
@@ -415,7 +421,12 @@ fn install_watcher_is_rejected_when_the_root_no_longer_matches() {
     session.open_folder(dir.path(), config_dir.path()).unwrap();
 
     let other_dir = tempfile::tempdir().unwrap();
-    let watcher = ProjectWatcher::start(other_dir.path(), false, |_, _| {}).unwrap();
+    let watcher = ProjectWatcher::start(
+        &ProjectScope::new(other_dir.path(), &[], &[]),
+        false,
+        |_, _| {},
+    )
+    .unwrap();
 
     // A different project opened while registration was in flight — the
     // watcher started for `other_dir` must not be installed for `dir`.
@@ -430,13 +441,15 @@ fn install_watcher_applies_and_returns_the_watcher_it_replaced() {
     let mut session = ProjectSession::new();
     session.open_folder(dir.path(), config_dir.path()).unwrap();
 
-    let first = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
+    let first =
+        ProjectWatcher::start(&ProjectScope::new(dir.path(), &[], &[]), false, |_, _| {}).unwrap();
     let Ok(none_replaced) = session.install_watcher(dir.path(), first) else {
         panic!("root still matches");
     };
     assert!(none_replaced.is_none());
 
-    let second = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
+    let second =
+        ProjectWatcher::start(&ProjectScope::new(dir.path(), &[], &[]), false, |_, _| {}).unwrap();
     let Ok(replaced) = session.install_watcher(dir.path(), second) else {
         panic!("root still matches");
     };
@@ -680,7 +693,7 @@ fn walk_all_entries_lists_everything_except_the_search_index() {
     fs::create_dir(dir.path().join(".ide-index")).unwrap();
     fs::write(dir.path().join(".ide-index/meta.json"), "{}").unwrap();
 
-    let entries = walk_all_entries(dir.path());
+    let entries = walk_all_entries(dir.path(), &[], &[]);
     let paths: Vec<PathBuf> = entries.iter().map(|(p, _)| p.clone()).collect();
     assert!(paths.contains(&dir.path().join("src/main.rs")));
     assert!(paths.contains(&dir.path().join("src/lib.rs")));
@@ -693,18 +706,26 @@ fn walk_all_entries_lists_everything_except_the_search_index() {
     );
 }
 
+// ADR-0064: `.gitignore` no longer affects what `walk_all_entries` returns —
+// only the `excluded`/`ignored_names` lists it is handed do.
 #[test]
-fn walk_all_entries_respects_gitignore() {
+fn walk_all_entries_ignores_gitignore_but_honours_its_own_lists() {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
     fs::create_dir(dir.path().join("ignored")).unwrap();
     fs::write(dir.path().join("ignored/x.txt"), "").unwrap();
+    fs::create_dir(dir.path().join("excluded")).unwrap();
+    fs::write(dir.path().join("excluded/y.txt"), "").unwrap();
     fs::write(dir.path().join("tracked.txt"), "").unwrap();
 
-    let entries = walk_all_entries(dir.path());
+    let entries = walk_all_entries(dir.path(), &["excluded".to_string()], &[]);
     let paths: Vec<PathBuf> = entries.iter().map(|(p, _)| p.clone()).collect();
     assert!(paths.contains(&dir.path().join("tracked.txt")));
+    assert!(
+        paths.contains(&dir.path().join("ignored/x.txt")),
+        "a gitignored file is still walked"
+    );
     assert!(!paths
         .iter()
-        .any(|p| p.starts_with(dir.path().join("ignored"))));
+        .any(|p| p.starts_with(dir.path().join("excluded"))));
 }

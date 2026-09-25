@@ -388,3 +388,128 @@ fn e2e_cancelling_project_scope_settings_discards_the_draft() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// A point on a review-dialog row's checkbox glyph — `e2e_vcs.rs`'s own
+/// `checkbox_point`, duplicated for the reason this file's other helpers
+/// already are (each E2E binary is its own crate).
+fn checkbox_point(rect: &serde_json::Value) -> (i32, i32) {
+    let rect: Vec<i64> = rect
+        .as_array()
+        .expect("the marker carries a rect")
+        .iter()
+        .map(|v| v.as_i64().expect("an integer"))
+        .collect();
+    (rect[0] as i32 + 10, (rect[1] + rect[3] / 2) as i32)
+}
+
+/// T6: `.gitignore` lists `dist/` and `tmp/`, neither excluded nor
+/// reviewed yet, so the "Found N ignored but not excluded folders" notice
+/// offers both — both pre-checked (`suggestExclude`, since neither holds a
+/// nested `.git`). Unchecking `tmp/` before OK excludes `dist/` and
+/// records `tmp/` as reviewed-not-excluded: `.ide/settings.toml` gets both
+/// entries, Go to File stops finding `dist/bundle.js` but still finds
+/// `tmp/scratch.txt`, and — the "not offered again" half of the ADR — a
+/// second look at `ProjectTreeModel::scope_candidates` right after this
+/// commit is already empty, proving the notification does not re-arm
+/// itself on its own; the actual "not offered on the next launch" property
+/// is what `commit_scope_review`'s and `candidate_folders`'s own unit
+/// tests (`reviewed_not_excluded`/`excluded` both feed the rule) already
+/// cover for a fresh open.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_reviewing_ignored_folders_excludes_one_and_remembers_the_other() {
+    let workspace = git_fixture(&[
+        (".gitignore", "dist/\ntmp/\n"),
+        ("README.md", "root\n"),
+        ("dist/bundle.js", "console.log('bundled');\n"),
+        ("tmp/scratch.txt", "scratch\n"),
+    ]);
+
+    let name = "e2e_reviewing_ignored_folders_excludes_one_and_remembers_the_other";
+    let mut ide = Ide::launch(name, APP, workspace.path());
+    drop(workspace);
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    assert!(
+        find_files(&mcp, "bundle.js")
+            .iter()
+            .any(|path| path.ends_with("bundle.js")),
+        "dist/bundle.js should be found before the review"
+    );
+    assert!(
+        find_files(&mcp, "scratch.txt")
+            .iter()
+            .any(|path| path.ends_with("scratch.txt")),
+        "tmp/scratch.txt should be found before the review"
+    );
+
+    // `Mark::start()`, not a fresh `ide.mark()`: `scope_notice_shown` is
+    // computed off the Qt thread right after `projectOpened` (never
+    // delaying the paint or the index build `wait_for_index` above just
+    // waited out), so by the time that wait returns the notice has very
+    // likely already fired — a mark taken now would start after it.
+    let notice = ide.wait_for_event(Mark::start(), "the scope notice", |e| {
+        e["ev"] == "scope_notice_shown"
+    });
+    assert_eq!(notice["count"], 2, "both dist/ and tmp/ should be offered");
+    let (review_x, review_y) = rect_centre(&notice["review_rect"]);
+    let mark = ide.mark();
+    ide.click_at(review_x, review_y, 1);
+
+    let dialog = ide.wait_for_event(mark, "the review dialog", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "scope_review_dialog"
+    });
+    let rows = dialog["rows"].as_array().expect("the dialog carries a row per candidate");
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        let path = row["path"].as_str().expect("a row's path");
+        assert_eq!(
+            row["checked"], true,
+            "row {path} should start pre-checked — neither dist/ nor tmp/ holds a nested .git"
+        );
+        if path == "tmp" {
+            let (x, y) = checkbox_point(&row["rect"]);
+            ide.click_at(x, y, 1);
+        }
+    }
+
+    let (ok_x, ok_y) = rect_centre(&dialog["ok_rect"]);
+    ide.click_at(ok_x, ok_y, 1);
+    ide.wait_for_event(mark, "the review dialog to accept", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "scope_review_dialog" && e["accepted"] == true
+    });
+    ide.focus_main();
+
+    let settings = e2e::wait_for("settings.toml to record the review's answer", || {
+        std::fs::read_to_string(ide.project_root().join(".ide/settings.toml"))
+            .ok()
+            .filter(|text| text.contains("excluded") && text.contains("reviewed_not_excluded"))
+    });
+    assert!(
+        settings.contains("dist"),
+        "expected dist recorded as excluded, got:\n{settings}"
+    );
+    assert!(
+        settings.contains("tmp"),
+        "expected tmp recorded as reviewed_not_excluded, got:\n{settings}"
+    );
+
+    let after = e2e::wait_for("bundle.js to drop out of the index", || {
+        let files = find_files(&mcp, "bundle.js");
+        (!files.iter().any(|path| path.ends_with("bundle.js"))).then_some(files)
+    });
+    assert!(
+        after.is_empty(),
+        "excluding dist/ should drop bundle.js from find_files, got {after:?}"
+    );
+    assert!(
+        find_files(&mcp, "scratch.txt")
+            .iter()
+            .any(|path| path.ends_with("scratch.txt")),
+        "tmp/ was only reviewed, not excluded — scratch.txt should still be found"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}

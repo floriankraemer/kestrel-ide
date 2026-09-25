@@ -14,9 +14,12 @@
 #include <QListWidgetItem>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QPoint>
+#include <QRect>
 #include <QResizeEvent>
 #include <QScrollArea>
 #include <QStringList>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -36,6 +39,23 @@ void warnOnFailure(QWidget *parent, const FfiResult &result)
     if (result.code != 0) {
         QMessageBox::warning(parent, QObject::tr("Project Scope"), result.message);
     }
+}
+
+// `[x,y,w,h]`, global coordinates — the same rect shape every other E2E
+// marker in this codebase uses (`project_scope_settings_page.cpp`'s
+// `rectOf`, `settings_dialog.cpp`'s `rectJson`).
+QString rectJson(const QRect &rect)
+{
+    return QStringLiteral("[%1,%2,%3,%4]")
+      .arg(rect.x())
+      .arg(rect.y())
+      .arg(rect.width())
+      .arg(rect.height());
+}
+
+QRect globalRect(QWidget *widget)
+{
+    return QRect(widget->mapToGlobal(QPoint(0, 0)), widget->size());
 }
 
 // The review dialog: one checkbox row per candidate, pre-checked per
@@ -73,6 +93,41 @@ public:
         layout->addWidget(buttons);
         connect(buttons, &QDialogButtonBox::accepted, this, &ScopeReviewDialog::commit);
         connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+        // `dialog_shown`/`dialog_closed`, the same convention
+        // `search_everywhere_dialog.cpp`/`settings_dialog.cpp` mark
+        // themselves with. Modal `exec()` blocks the caller, so the rects
+        // (one per row, `Qt::Checked`/`Qt::Unchecked` folded in so a flow
+        // can assert the pre-checked state without a second read) have to
+        // fire from a zero-delay timer once the modal loop is actually
+        // running — `settings_dialog.cpp`'s own comment on why `exec()`
+        // itself is too early.
+        QPushButton *okButton = buttons->button(QDialogButtonBox::Ok);
+        QListWidget *list = list_;
+        QTimer::singleShot(0, this, [this, list, okButton]() {
+            QStringList rows;
+            for (int i = 0; i < list->count(); ++i) {
+                QListWidgetItem *item = list->item(i);
+                const QRect itemRect = list->visualItemRect(item);
+                const QPoint origin = list->viewport()->mapToGlobal(itemRect.topLeft());
+                rows << QStringLiteral("{\"path\":%1,\"checked\":%2,\"rect\":%3}")
+                          .arg(e2eJson(item->text()))
+                          .arg(item->checkState() == Qt::Checked ? QLatin1String("true")
+                                                                  : QLatin1String("false"))
+                          .arg(rectJson(QRect(origin, itemRect.size())));
+            }
+            e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"scope_review_dialog\","
+                                    "\"ok_rect\":%1,\"rows\":[%2]}")
+                      .arg(rectJson(globalRect(okButton)), rows.join(QLatin1Char(','))));
+        });
+    }
+
+    void done(int result) override
+    {
+        QDialog::done(result);
+        e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"scope_review_dialog\","
+                                "\"accepted\":%1}")
+                  .arg(result == QDialog::Accepted ? QLatin1String("true") : QLatin1String("false")));
     }
 
 private:
@@ -112,7 +167,7 @@ public:
                         .arg(tokens::kRadiusPanel));
 
         label_ = new QLabel(this);
-        auto *reviewButton = new QPushButton(tr("Review…"), this);
+        reviewButton_ = new QPushButton(tr("Review…"), this);
         closeButton_ = new QToolButton(this);
         closeButton_->setText(QStringLiteral("✕"));
         closeButton_->setToolTip(tr("Dismiss"));
@@ -121,10 +176,10 @@ public:
         auto *layout = new QHBoxLayout(this);
         layout->setContentsMargins(tokens::kSp3, tokens::kSp2, tokens::kSp2, tokens::kSp2);
         layout->addWidget(label_);
-        layout->addWidget(reviewButton);
+        layout->addWidget(reviewButton_);
         layout->addWidget(closeButton_);
 
-        connect(reviewButton, &QPushButton::clicked, this, &ScopeNoticeBar::review);
+        connect(reviewButton_, &QPushButton::clicked, this, &ScopeNoticeBar::review);
         connect(closeButton_, &QToolButton::clicked, this, &ScopeNoticeBar::hide);
 
         parentWidget()->installEventFilter(this);
@@ -137,7 +192,9 @@ public:
         reposition();
         show();
         raise();
-        e2eMark(QStringLiteral("{\"ev\":\"scope_notice_shown\",\"count\":%1}").arg(count));
+        e2eMark(QStringLiteral("{\"ev\":\"scope_notice_shown\",\"count\":%1,\"review_rect\":%2}")
+                  .arg(count)
+                  .arg(rectJson(globalRect(reviewButton_))));
     }
 
 protected:
@@ -169,6 +226,7 @@ private:
 
     ProjectTreeModel *treeModel_;
     QLabel *label_ = nullptr;
+    QPushButton *reviewButton_ = nullptr;
     QToolButton *closeButton_ = nullptr;
 };
 

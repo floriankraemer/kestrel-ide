@@ -787,17 +787,13 @@ const MAX_BYTES_PER_TOKEN: u64 = 8;
 ///
 /// Confinement comes first and short-circuits everything: a folder outside
 /// the project is refused before a single directory is opened, because a
-/// walk is itself a read (ADR-0021 §1). The walk that follows is
-/// `ignore`'s, the same one `index_core::TextIndex::build` uses, so
-/// `.gitignore` means the same thing to an attachment as it does to search;
-/// symlinks are not followed, which is what keeps a link inside the project
-/// from walking out of it.
-///
-/// Two deviations from the index's walk, both deliberate: hidden entries
-/// are *not* skipped, because a user attaching a config directory means the
-/// dotfiles in it and the secret gate below is what makes that safe; and
-/// `.git` is skipped explicitly, since including it means attaching the
-/// object store.
+/// walk is itself a read (ADR-0021 §1). The walk is pruned by
+/// `project_model::ProjectScope::is_excluded`, the same rule `index-core`
+/// and the project watcher apply (ADR-0064): `excluded`/`ignored_names`
+/// decide what is part of the project, `.gitignore` plays no part, and
+/// symlinks are not followed. `.git` is always pruned too, caller lists
+/// notwithstanding — the secret gate below is what makes attaching the rest
+/// of a dotfile-holding directory safe, not a blanket hidden-file skip.
 ///
 /// Nothing is dropped silently. Every file the walk saw is either attached,
 /// in `skipped` with a reason, or counted in `stopped_at_budget` — the
@@ -806,22 +802,34 @@ const MAX_BYTES_PER_TOKEN: u64 = 8;
 /// The budget is measured over file *text*, not over the rendered blocks;
 /// [`render_context`] applies the real budget to what is actually sent, and
 /// would rather be handed a few files too few than a request it has to cut.
+#[allow(clippy::too_many_arguments)]
 pub fn expand_folder(
     config: &ProviderConfig,
     counter: &mut TokenCounter,
     root: &Path,
     folder: &Path,
     budget_tokens: u32,
+    excluded: &[String],
+    ignored_names: &[String],
 ) -> Result<FolderExpansion, ChatError> {
     let folder = within_project_root(root, folder)?;
     let index_dir = resolve_as_far_as_it_exists(root).join(INDEX_DIR_NAME);
+    // Anchored at `root`, like every other `ProjectScope` consumer:
+    // `excluded`'s patterns are root-anchored (ADR-0064), so building the
+    // scope at `folder` would silently change their meaning below the root.
+    let mut names = ignored_names.to_vec();
+    names.push(".git".to_string());
+    let scope = project_model::ProjectScope::new(root, excluded, &names);
 
     let mut paths: Vec<PathBuf> = Vec::new();
     let walk = ignore::WalkBuilder::new(&folder)
-        .hidden(false)
-        .filter_entry(move |entry| {
-            entry.file_name() != std::ffi::OsStr::new(".git")
-                && entry.file_name() != std::ffi::OsStr::new(INDEX_DIR_NAME)
+        .standard_filters(false)
+        .filter_entry({
+            let scope = scope.clone();
+            move |entry| {
+                let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
+                entry.depth() == 0 || !scope.is_excluded(entry.path(), is_dir)
+            }
         })
         .build();
     for entry in walk {
@@ -1400,9 +1408,28 @@ mod tests {
     }
 
     fn expand(root: &Path, folder: &Path, budget: u32) -> FolderExpansion {
+        expand_scoped(root, folder, budget, &[], &[])
+    }
+
+    fn expand_scoped(
+        root: &Path,
+        folder: &Path,
+        budget: u32,
+        excluded: &[String],
+        ignored_names: &[String],
+    ) -> FolderExpansion {
         let config = config_for(ProviderKind::OpenAi);
         let mut counter = TokenCounter::new();
-        expand_folder(&config, &mut counter, root, folder, budget).expect("the folder is inside")
+        expand_folder(
+            &config,
+            &mut counter,
+            root,
+            folder,
+            budget,
+            excluded,
+            ignored_names,
+        )
+        .expect("the folder is inside")
     }
 
     #[test]
@@ -1419,6 +1446,8 @@ mod tests {
             project.path(),
             elsewhere.path(),
             10_000,
+            &[],
+            &[],
         )
         .expect_err("a folder outside the project must not be walked");
 
@@ -1440,28 +1469,34 @@ mod tests {
         );
     }
 
+    // ADR-0064: `.gitignore` plays no part any more (a gitignored file is
+    // still attachable), but the two `ProjectScope` lists do — the same
+    // rule `index-core` and the watcher apply.
     #[test]
-    fn a_gitignored_file_is_no_more_attachable_than_it_is_searchable() {
+    fn scope_not_gitignore_decides_what_is_attachable() {
         let project = a_project();
-        write_file(project.path(), ".gitignore", "build/\nnotes.log\n");
+        write_file(project.path(), ".gitignore", "notes.log\n");
         write_file(project.path(), "src/main.rs", "fn main() {}\n");
         write_file(project.path(), "notes.log", "noise");
         write_file(project.path(), "build/artifact.txt", "generated");
+        write_file(project.path(), "node_modules/pkg/index.js", "noise");
 
-        let expansion = expand(project.path(), project.path(), 100_000);
+        let expansion = expand_scoped(
+            project.path(),
+            project.path(),
+            100_000,
+            &["build".to_string()],
+            &["node_modules".to_string()],
+        );
 
         let names = expanded_names(&expansion);
         assert!(names.contains(&"main.rs".to_string()), "{names:?}");
+        assert!(names.contains(&"notes.log".to_string()), "{names:?}");
         assert!(
             !names
                 .iter()
-                .any(|name| name == "notes.log" || name == "artifact.txt"),
-            "the walk honours .gitignore exactly as the index does: {names:?}"
-        );
-        assert!(
-            expansion.skipped.is_empty(),
-            "an ignored file was never a candidate, so it is not a skip to report: {:?}",
-            expansion.skipped
+                .any(|name| name == "artifact.txt" || name == "index.js"),
+            "the excluded folder and the ignored name are both skipped: {names:?}"
         );
     }
 

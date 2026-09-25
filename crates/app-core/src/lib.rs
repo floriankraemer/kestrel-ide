@@ -624,11 +624,22 @@ impl AppSession {
     /// loaded, so reading it here would silently hide everything under a
     /// still-collapsed folder from a caller that needs the whole project.
     /// Safe to call from any thread — see `project_model::walk_all_entries`.
-    pub fn project_tree_entries(&self) -> Vec<(PathBuf, bool)> {
+    ///
+    /// `excluded`/`ignored_names` are `project_model::ProjectScope`'s two
+    /// lists (ADR-0064), resolved by the caller: this crate may not depend
+    /// on `app-config`/`settings-model` (below the support layer,
+    /// `docs/architecture/layering.md`), so `ui-shell` resolves the layered
+    /// settings and hands the two plain lists in rather than a settings
+    /// type.
+    pub fn project_tree_entries(
+        &self,
+        excluded: &[String],
+        ignored_names: &[String],
+    ) -> Vec<(PathBuf, bool)> {
         let Some(root) = self.root_path() else {
             return Vec::new();
         };
-        project_model::walk_all_entries(root)
+        project_model::walk_all_entries(root, excluded, ignored_names)
     }
 
     /// Forward the view's own cursor position for `id` (M4). Nothing here
@@ -1198,7 +1209,7 @@ mod tests {
     #[test]
     fn project_tree_entries_lists_every_node_except_the_root() {
         let (project_dir, _config, session) = session_with_project();
-        let mut entries = session.project_tree_entries();
+        let mut entries = session.project_tree_entries(&[], &[]);
         entries.sort();
 
         let mut expected = vec![
@@ -1213,7 +1224,7 @@ mod tests {
     fn project_tree_entries_is_empty_with_no_project_open() {
         let config_dir = tempfile::tempdir().unwrap();
         let session = AppSession::with_config_dir(config_dir.path().to_path_buf());
-        assert!(session.project_tree_entries().is_empty());
+        assert!(session.project_tree_entries(&[], &[]).is_empty());
     }
 
     #[test]

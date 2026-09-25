@@ -560,10 +560,11 @@ impl ffi::AiChat {
                 }
             }
             "list_project_tree" => {
+                let resolved = crate::bridge::convert::load_resolved_settings();
                 let entries: Vec<serde_json::Value> = self
                     .session
                     .borrow()
-                    .project_tree_entries()
+                    .project_tree_entries(&resolved.excluded, &resolved.ignored_names)
                     .into_iter()
                     .map(|(path, is_dir)| {
                         serde_json::json!({ "path": path.to_string_lossy(), "is_dir": is_dir })

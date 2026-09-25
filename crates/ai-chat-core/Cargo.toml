@@ -19,9 +19,11 @@ tiktoken-rs = "0.6"
 # `rustls-tls` rather than the default `native-tls` so the MXE Windows
 # cross-build never has to vendor OpenSSL.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
-# Folder attach walks the project gitignore-aware, the same walker
-# `index_core::TextIndex::build` uses — one walk rule for the whole IDE.
+# Folder attach walks with `ignore::WalkBuilder`, pruned by
+# `project_model::ProjectScope::is_excluded` (ADR-0064) rather than
+# `.gitignore` — the same rule `index-core` and the project watcher walk by.
 ignore = "0.4"
+project-model = { path = "../project-model" }
 # `looks_binary_file` is the one place the binary/text rule lives; both
 # crates are Qt-free, so this pairing costs the layering nothing (it is
 # exactly the pair `index-core` already depends on).

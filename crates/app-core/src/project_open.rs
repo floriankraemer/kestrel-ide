@@ -105,8 +105,12 @@ mod tests {
     #[test]
     fn install_watcher_is_rejected_for_a_stale_root() {
         let (project_dir, _config, mut session) = session_with_project();
-        let watcher =
-            project_model::ProjectWatcher::start(project_dir.path(), false, |_, _| {}).unwrap();
+        let watcher = project_model::ProjectWatcher::start(
+            &project_model::ProjectScope::new(project_dir.path(), &[], &[]),
+            false,
+            |_, _| {},
+        )
+        .unwrap();
 
         let other_dir = tempfile::tempdir().unwrap();
         assert!(session.install_watcher(other_dir.path(), watcher).is_err());
@@ -115,8 +119,12 @@ mod tests {
     #[test]
     fn install_watcher_applies_for_the_still_open_root() {
         let (project_dir, _config, mut session) = session_with_project();
-        let watcher =
-            project_model::ProjectWatcher::start(project_dir.path(), false, |_, _| {}).unwrap();
+        let watcher = project_model::ProjectWatcher::start(
+            &project_model::ProjectScope::new(project_dir.path(), &[], &[]),
+            false,
+            |_, _| {},
+        )
+        .unwrap();
 
         let Ok(none_replaced) = session.install_watcher(project_dir.path(), watcher) else {
             panic!("root still matches");

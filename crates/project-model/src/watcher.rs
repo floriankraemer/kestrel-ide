@@ -129,46 +129,6 @@ fn classify_git_path(root: &Path, path: &Path) -> GitPathKind {
     }
 }
 
-/// Whether `path` should be excluded from the watch because it matches the
-/// project's own `.gitignore` rules — `target/`, `node_modules/`, and
-/// similar build/dependency output.
-///
-/// A project's own build output routinely runs into the tens of thousands
-/// of directories (this repo's own `target/` alone is 10k+), and watching
-/// all of it can exhaust the platform's watch budget — inotify's
-/// `max_user_watches` on Linux, `ReadDirectoryChangesW`'s fixed event
-/// buffer on Windows — after which *every* watch on the project, `.git`
-/// included, silently stops delivering events. That is the root cause of
-/// the Changes dock going stale under real build activity: nothing told it
-/// its watch had been starved out. `.git` is never matched by a project's
-/// own `.gitignore` (nothing excludes ignoring it there), so it needs no
-/// special-casing to stay watched.
-fn is_ignored(matcher: &ignore::gitignore::Gitignore, path: &Path) -> bool {
-    matcher.matched(path, true).is_ignore()
-}
-
-/// A `.gitignore`-only matcher, built once per watcher and reused for every
-/// directory later created under `root` (see the `Create` handling in
-/// [`ProjectWatcher::start`]).
-///
-/// Deliberately narrower than [`ignore::WalkBuilder`]'s full semantics
-/// (nested `.gitignore` files elsewhere in the tree, the global git
-/// excludes file, `.git/info/exclude`) — the *initial* watch set below is
-/// built with the fully correct `WalkBuilder`, which already keeps this
-/// repo's `target/` and friends off the watch from the start. This
-/// root-`.gitignore`-only matcher only has to cover the much smaller case
-/// of a directory created *after* the watcher started; missing an edge
-/// case there means, at worst, briefly over-watching one new directory
-/// until the project is reopened, not the exhaustion this fix exists to
-/// prevent.
-fn root_gitignore_matcher(root: &Path) -> ignore::gitignore::Gitignore {
-    let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
-    let _ = builder.add(root.join(".gitignore"));
-    builder
-        .build()
-        .unwrap_or_else(|_| ignore::gitignore::Gitignore::empty())
-}
-
 /// A running watcher for one project root. Kept alive for as long as the
 /// project is open; dropping it (e.g. when a different project is opened)
 /// stops watching — `notify`'s `Drop` impl tears down the OS-level watches.
@@ -201,17 +161,16 @@ pub struct ProjectWatcher {
 const POLL_INTERVAL: Duration = Duration::from_secs(4);
 
 impl ProjectWatcher {
-    /// Start watching `root`. Rather than one blanket
-    /// `RecursiveMode::Recursive` watch on `root` (which asks the OS to
-    /// watch literally everything below it, `target/` included — see
-    /// [`is_ignored`]), this walks `root` once with `ignore::WalkBuilder`
-    /// (the same gitignore-aware traversal `index-core` already uses for
-    /// its own search index, kept non-hidden here since `.git` and other
-    /// dotdirs must stay watched) and registers one non-recursive watch per
-    /// directory found. A later `Create` of a new directory is checked
-    /// against a lightweight root-`.gitignore` matcher and, if not ignored,
-    /// gets its own watch added dynamically — so the watch set stays
-    /// current without ever descending into a freshly created `target/`.
+    /// Start watching `scope`'s root. Rather than one blanket
+    /// `RecursiveMode::Recursive` watch on the root (which asks the OS to
+    /// watch literally everything below it, `target/` included), this walks
+    /// the root once with [`crate::ProjectScope::walk`] (the same rule
+    /// `index-core` applies to its own search index, ADR-0064) and registers
+    /// one non-recursive watch per in-scope directory found. A later
+    /// `Create` of a new directory is checked against the same scope and, if
+    /// still in scope, gets its own watch added dynamically — so the watch
+    /// set stays current without ever descending into a freshly created
+    /// `target/` or excluded folder.
     ///
     /// `on_change` is invoked (on `notify`'s background thread, not the
     /// caller's thread) once per changed path reported by an event, along
@@ -230,12 +189,12 @@ impl ProjectWatcher {
     /// (already past that boundary, ADR-0052's other seams) does the
     /// classification and hands back a plain bool.
     pub fn start(
-        root: &Path,
+        scope: &crate::ProjectScope,
         is_remote: bool,
         on_change: impl Fn(EventKind, PathBuf) + Send + 'static,
     ) -> notify::Result<Self> {
         let slot: Arc<Mutex<Option<Box<dyn notify::Watcher + Send>>>> = Arc::new(Mutex::new(None));
-        let incremental_matcher = root_gitignore_matcher(root);
+        let incremental_scope = scope.clone();
 
         // A newly created directory can't be handed to `Watcher::watch`
         // from inside this closure itself: this closure runs *on* the
@@ -252,7 +211,7 @@ impl ProjectWatcher {
             let Ok(event) = res else { return };
             if matches!(event.kind, EventKind::Create(_)) {
                 for path in &event.paths {
-                    if path.is_dir() && !is_ignored(&incremental_matcher, path) {
+                    if path.is_dir() && !incremental_scope.is_excluded(path, true) {
                         let _ = new_dirs_tx.send(path.clone());
                     }
                 }
@@ -274,29 +233,18 @@ impl ProjectWatcher {
             Box::new(notify::recommended_watcher(handler)?)
         };
 
-        // `WalkBuilder` itself already skips descending into an ignored
-        // directory (`target/` never gets yielded at all), so every
-        // directory it does yield is one to watch — no separate ignore
-        // check needed here, unlike the single-path check the `new_dirs_rx`
-        // loop below needs.
-        crate::walk_project(
-            root,
-            |walker| {
-                walker
-                    .hidden(false)
-                    .git_ignore(true)
-                    .git_global(true)
-                    .git_exclude(true);
-            },
-            |entry| {
-                let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
-                if is_dir {
-                    // One bad directory (permission denied, removed mid-walk)
-                    // must not stop the rest of the project from being watched.
-                    let _ = watcher.watch(entry.path(), RecursiveMode::NonRecursive);
-                }
-            },
-        );
+        // `ProjectScope::walk` already prunes an excluded directory entirely
+        // (it never gets yielded at all), so every directory it does yield
+        // is one to watch — no separate exclusion check needed here, unlike
+        // the single-path check the `new_dirs_rx` loop below needs.
+        scope.walk(|entry| {
+            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+            if is_dir {
+                // One bad directory (permission denied, removed mid-walk)
+                // must not stop the rest of the project from being watched.
+                let _ = watcher.watch(entry.path(), RecursiveMode::NonRecursive);
+            }
+        });
 
         *slot.lock().expect("watcher slot poisoned") = Some(watcher);
 
@@ -514,9 +462,16 @@ mod route_change_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProjectScope;
     use std::fs;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    /// An empty-lists scope for `root` — the "watch everything" case every
+    /// test but the exclusion-specific ones below needs.
+    fn open_scope(root: &Path) -> ProjectScope {
+        ProjectScope::new(root, &[], &[])
+    }
 
     // `notify`'s OS-level event delivery is inherently timing-dependent, so
     // this polls with a short timeout rather than asserting on a fixed
@@ -526,7 +481,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = mpsc::channel::<PathBuf>();
 
-        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
+        let _watcher = ProjectWatcher::start(&open_scope(dir.path()), false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();
@@ -555,7 +510,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (tx, rx) = mpsc::channel::<PathBuf>();
 
-        let _watcher = ProjectWatcher::start(dir.path(), true, move |_kind, path| {
+        let _watcher = ProjectWatcher::start(&open_scope(dir.path()), true, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();
@@ -590,7 +545,7 @@ mod tests {
         fs::write(&file, "original").unwrap();
 
         let (tx, rx) = mpsc::channel::<EventKind>();
-        let _watcher = ProjectWatcher::start(dir.path(), false, move |kind, path| {
+        let _watcher = ProjectWatcher::start(&open_scope(dir.path()), false, move |kind, path| {
             if path == file {
                 let _ = tx.send(kind);
             }
@@ -644,17 +599,18 @@ mod tests {
 
     // Regression test for the root cause of the Changes dock going stale:
     // a blanket recursive watch on the whole project root, `target/`
-    // included, could exhaust the platform's watch budget. A directory a
-    // `.gitignore` excludes must not get a watch registered for it at all.
+    // included, could exhaust the platform's watch budget. A directory the
+    // scope excludes (ADR-0064: an *Excluded* folder or an *Ignored name*,
+    // not `.gitignore`) must not get a watch registered for it at all.
     #[test]
-    fn a_gitignored_directory_is_not_watched() {
+    fn an_excluded_directory_is_not_watched() {
         let dir = tempfile::tempdir().unwrap();
-        fs::write(dir.path().join(".gitignore"), "ignored/\n").unwrap();
         fs::create_dir(dir.path().join("ignored")).unwrap();
         fs::create_dir(dir.path().join("tracked")).unwrap();
+        let scope = ProjectScope::new(dir.path(), &[], &["ignored".to_string()]);
 
         let (tx, rx) = mpsc::channel::<PathBuf>();
-        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
+        let _watcher = ProjectWatcher::start(&scope, false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();
@@ -669,11 +625,35 @@ mod tests {
         // *anything* would also "pass" the negative assertion below.
         assert!(
             wait_for_path(&rx, &tracked_file, Duration::from_secs(5)),
-            "expected a watcher event for the non-ignored directory"
+            "expected a watcher event for the non-excluded directory"
         );
         assert!(
             !wait_for_path(&rx, &ignored_file, Duration::from_millis(500)),
-            "a gitignored directory must not be watched"
+            "an ignored-name directory must not be watched"
+        );
+    }
+
+    // ADR-0064's own point: `.gitignore` no longer decides what is watched,
+    // so a gitignored directory the scope does not otherwise exclude IS
+    // watched.
+    #[test]
+    fn a_gitignored_directory_not_otherwise_excluded_is_watched() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "tracked/\n").unwrap();
+        fs::create_dir(dir.path().join("tracked")).unwrap();
+
+        let (tx, rx) = mpsc::channel::<PathBuf>();
+        let _watcher = ProjectWatcher::start(&open_scope(dir.path()), false, move |_kind, path| {
+            let _ = tx.send(path);
+        })
+        .unwrap();
+
+        let tracked_file = dir.path().join("tracked").join("new.txt");
+        fs::write(&tracked_file, "hello").unwrap();
+
+        assert!(
+            wait_for_path(&rx, &tracked_file, Duration::from_secs(5)),
+            "a gitignored directory is watched unless the scope also excludes it"
         );
     }
 
@@ -687,7 +667,7 @@ mod tests {
         fs::create_dir(dir.path().join(".git")).unwrap();
 
         let (tx, rx) = mpsc::channel::<PathBuf>();
-        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
+        let _watcher = ProjectWatcher::start(&open_scope(dir.path()), false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();
@@ -710,7 +690,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let (tx, rx) = mpsc::channel::<PathBuf>();
-        let _watcher = ProjectWatcher::start(dir.path(), false, move |_kind, path| {
+        let _watcher = ProjectWatcher::start(&open_scope(dir.path()), false, move |_kind, path| {
             let _ = tx.send(path);
         })
         .unwrap();

@@ -6,7 +6,9 @@ use std::rc::Rc;
 
 use app_core::{AppError, AppSession};
 use cxx_qt::Threading;
-use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use cxx_qt_lib::{
+    QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant,
+};
 use project_model::{DirDiffOp, ListedEntry, LoadState};
 
 use crate::bridge::convert::{push_recent_project, to_ffi_result};
@@ -35,6 +37,20 @@ pub struct ProjectTreeModelRust {
     /// role reads this rather than re-resolving settings per row. `None`
     /// before any project has been opened.
     scope: RefCell<Option<project_model::ProjectScope>>,
+    /// The Project Scope settings page's in-memory draft (T5), `None`
+    /// until `begin_scope_edit` is called. See that method's own doc
+    /// comment for the begin/edit/commit shape this follows.
+    scope_draft: RefCell<Option<ScopeDraft>>,
+}
+
+/// The Project Scope settings page's draft: both lists it edits, held in
+/// memory until `commit_scope_edit` writes them for real. A plain struct
+/// rather than two loose `Vec<String>` fields on `ProjectTreeModelRust`
+/// itself — `Option<ScopeDraft>` is one flag for "is there a draft at all",
+/// where two `Option<Vec<String>>`s would let the two halves disagree.
+struct ScopeDraft {
+    excluded: Vec<String>,
+    ignored_names: Vec<String>,
 }
 
 impl Default for ProjectTreeModelRust {
@@ -54,6 +70,7 @@ impl Default for ProjectTreeModelRust {
             icons: shared_icons(),
             dir_refresh: RefCell::new(HashMap::new()),
             scope: RefCell::new(None),
+            scope_draft: RefCell::new(None),
         }
     }
 }
@@ -1038,6 +1055,218 @@ impl ffi::ProjectTreeModel {
             .project_rescoped(QString::from(root.to_string_lossy().as_ref()));
     }
 
+    /// Load the Project Scope settings page's draft fresh from disk —
+    /// `excluded` from the project layer, `ignored_names` from the global
+    /// one. Called once per dialog open, the moment the page is actually
+    /// built (`project_scope_settings_page.cpp`'s first line), the same
+    /// "begin, edit, commit" shape `EditingEditorRust`/
+    /// `LanguageServerEditorRust` already use elsewhere in this dialog —
+    /// unlike T4's tree-action `toggleExcluded`, this page has an OK/Cancel
+    /// of its own, so nothing here may write or rescope until `OK` calls
+    /// [`commit_scope_edit`](Self::commit_scope_edit). A second `begin`
+    /// (the dialog reopened) simply overwrites whatever draft was there,
+    /// which is what makes Cancel a no-op: nothing ever reads the discarded
+    /// draft again.
+    pub fn begin_scope_edit(&self) {
+        let excluded = crate::bridge::convert::load_project_settings()
+            .excluded
+            .unwrap_or_default();
+        let ignored_names = crate::bridge::convert::load_settings().ignored_names;
+        *self.scope_draft.borrow_mut() = Some(ScopeDraft {
+            excluded,
+            ignored_names,
+        });
+    }
+
+    /// The draft's current `excluded` entries — empty before
+    /// [`begin_scope_edit`](Self::begin_scope_edit) or if the project
+    /// overrides nothing.
+    pub fn excluded_draft(&self) -> QStringList {
+        self.scope_draft
+            .borrow()
+            .as_ref()
+            .map(|draft| draft.excluded.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| QString::from(entry.as_str()))
+            .collect()
+    }
+
+    /// The draft's current `ignored_names` list.
+    pub fn ignored_names_draft(&self) -> QStringList {
+        self.scope_draft
+            .borrow()
+            .as_ref()
+            .map(|draft| draft.ignored_names.as_slice())
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| QString::from(entry.as_str()))
+            .collect()
+    }
+
+    /// Validate and add `relative_path` to the draft's `excluded` list —
+    /// nothing is written or rescoped yet. Reuses
+    /// `app_config::project_settings::add_excluded` against a scratch
+    /// `ProjectSettings` seeded with the draft's own list, rather than
+    /// duplicating its validation/dedupe rule here: this is the same
+    /// function `commit_scope_edit` will eventually call for real, just
+    /// applied to memory instead of disk so a bad entry can refuse
+    /// immediately, at Add time, the way a settings-page validation error
+    /// should. Accepts either an absolute path under the project root (the
+    /// folder picker's own answer) or one already relative — both
+    /// normalize the same way through `relative_to_root`.
+    pub fn add_excluded_draft(&self, relative_path: &QString) -> FfiResult {
+        let path = std::path::PathBuf::from(relative_path.to_string());
+        let relative = self
+            .relative_to_root(&path)
+            .unwrap_or_else(|| relative_path.to_string());
+        let mut draft_ref = self.scope_draft.borrow_mut();
+        let Some(draft) = draft_ref.as_mut() else {
+            return FfiResult::default();
+        };
+        let mut scratch = app_config::project_settings::ProjectSettings {
+            excluded: Some(draft.excluded.clone()),
+            ..Default::default()
+        };
+        match app_config::project_settings::add_excluded(&mut scratch, &relative) {
+            Ok(_changed) => {
+                draft.excluded = scratch.excluded.unwrap_or_default();
+                FfiResult::default()
+            }
+            Err(message) => {
+                crate::bridge::errors::failure(crate::bridge::errors::CODE_REFUSED, message)
+            }
+        }
+    }
+
+    /// Remove `relative_path` from the draft's `excluded` list. Never
+    /// refuses — removing an entry that normalizes to nothing present is a
+    /// no-op, same as [`app_config::project_settings::remove_excluded`].
+    pub fn remove_excluded_draft(&self, relative_path: &QString) -> FfiResult {
+        let path = std::path::PathBuf::from(relative_path.to_string());
+        let relative = self
+            .relative_to_root(&path)
+            .unwrap_or_else(|| relative_path.to_string());
+        if let Some(draft) = self.scope_draft.borrow_mut().as_mut() {
+            let mut scratch = app_config::project_settings::ProjectSettings {
+                excluded: Some(draft.excluded.clone()),
+                ..Default::default()
+            };
+            app_config::project_settings::remove_excluded(&mut scratch, &relative);
+            draft.excluded = scratch.excluded.unwrap_or_default();
+        }
+        FfiResult::default()
+    }
+
+    /// Add `pattern` to the draft's `ignored_names` list — same
+    /// scratch-`Settings` reuse of `app_config::ignored_names::
+    /// add_ignored_name` as [`add_excluded_draft`](Self::add_excluded_draft)
+    /// makes of `add_excluded`. Never refuses: a blank pattern is silently
+    /// skipped, per that function's own rule.
+    pub fn add_ignored_name_draft(&self, pattern: &QString) -> FfiResult {
+        let pattern = pattern.to_string();
+        if let Some(draft) = self.scope_draft.borrow_mut().as_mut() {
+            let mut scratch = app_config::Settings {
+                ignored_names: draft.ignored_names.clone(),
+                ..app_config::Settings::default()
+            };
+            app_config::ignored_names::add_ignored_name(&mut scratch, &pattern);
+            draft.ignored_names = scratch.ignored_names;
+        }
+        FfiResult::default()
+    }
+
+    /// Remove `pattern` from the draft's `ignored_names` list.
+    pub fn remove_ignored_name_draft(&self, pattern: &QString) -> FfiResult {
+        let pattern = pattern.to_string();
+        if let Some(draft) = self.scope_draft.borrow_mut().as_mut() {
+            let mut scratch = app_config::Settings {
+                ignored_names: draft.ignored_names.clone(),
+                ..app_config::Settings::default()
+            };
+            app_config::ignored_names::remove_ignored_name(&mut scratch, &pattern);
+            draft.ignored_names = scratch.ignored_names;
+        }
+        FfiResult::default()
+    }
+
+    /// Reset the draft's `ignored_names` list to
+    /// `app_config::DEFAULT_IGNORED_NAMES` — the confirmation dialog is the
+    /// view's job, this call is unconditional once it happens.
+    pub fn reset_ignored_names_draft(&self) {
+        if let Some(draft) = self.scope_draft.borrow_mut().as_mut() {
+            let mut scratch = app_config::Settings::default();
+            app_config::ignored_names::reset_ignored_names_to_defaults(&mut scratch);
+            draft.ignored_names = scratch.ignored_names;
+        }
+    }
+
+    /// Write the draft's two lists for real — `excluded` to the project
+    /// layer (skipped entirely when no project is open, which is when the
+    /// Excluded group is disabled and its half of the draft can only be
+    /// empty), `ignored_names` to the global one — and rescope **once**
+    /// for the whole page's changes together, not once per list, if the
+    /// resolved scope actually differs from before either write. Called
+    /// from the Settings dialog's OK handler; Cancel simply never calls
+    /// this, which is the whole of what makes Cancel work (the draft is
+    /// dropped, unwritten, the next time `begin_scope_edit` runs).
+    pub fn commit_scope_edit(mut self: Pin<&mut Self>) -> FfiResult {
+        let Some(draft) = self.scope_draft.borrow_mut().take() else {
+            return FfiResult::default();
+        };
+        let before = crate::bridge::convert::load_resolved_settings();
+        // Written only when the draft actually differs from what is on
+        // disk — a no-op OK (the page was visited but nothing added or
+        // removed) should not rewrite `.ide/settings.toml`, the same
+        // "sparse unless touched" rule every other editor's `commit` in
+        // this dialog already follows.
+        if self.session.borrow().root_path().is_some()
+            && draft.excluded
+                != crate::bridge::convert::load_project_settings()
+                    .excluded
+                    .unwrap_or_default()
+        {
+            let excluded = draft.excluded;
+            let result = crate::bridge::settings::commit_to_project(move |settings| {
+                settings.excluded = Some(excluded);
+            });
+            if result.code != crate::bridge::errors::CODE_OK {
+                return result;
+            }
+        }
+        if draft.ignored_names != crate::bridge::convert::load_settings().ignored_names {
+            let ignored_names = draft.ignored_names;
+            let result = commit_to_global(move |settings| {
+                settings.ignored_names = ignored_names;
+            });
+            if result.code != crate::bridge::errors::CODE_OK {
+                return result;
+            }
+        }
+        let after = crate::bridge::convert::load_resolved_settings();
+        if app_config::resolved_cache::scope_changed(&before, &after) {
+            self.as_mut().rescope();
+        }
+        FfiResult::default()
+    }
+
+    /// [`index_core::excludes::content_rule_limits`]'s byte cap, in MiB, for the
+    /// Project Scope settings page's note label.
+    pub fn max_indexed_file_size_mib(&self) -> u32 {
+        let (max_bytes, _) = index_core::excludes::content_rule_limits();
+        // ADR-0064's note states this as a whole number of MiB; if the
+        // constant ever stops dividing evenly, this getter's return type
+        // needs to change to carry the remainder too.
+        (max_bytes / (1024 * 1024)) as u32
+    }
+
+    /// [`index_core::excludes::content_rule_limits`]'s binary-sniff window, in KiB,
+    /// for the same note label.
+    pub fn binary_sniff_kib(&self) -> u32 {
+        let (_, sniff_bytes) = index_core::excludes::content_rule_limits();
+        (sniff_bytes / 1024) as u32
+    }
+
     /// (Re)build the cached scope for `root` from the currently resolved
     /// settings. Safe to call on the Qt thread — `load_resolved_settings`
     /// goes through `resolved_cache`, so this is one file-stamp check, not
@@ -1081,6 +1310,23 @@ impl ffi::ProjectTreeModel {
                 message: QString::from(err.to_string().as_str()),
             },
         }
+    }
+}
+
+/// Write one global-scoped change into `settings.toml` — load, edit, save,
+/// the same three-step dance every plain global write in `settings.rs`
+/// repeats individually. `crate::bridge::settings::commit_to_project`'s
+/// sibling for the layer that has no project to be missing; kept here
+/// (its only caller) rather than in `settings.rs`, which is already at its
+/// size baseline.
+fn commit_to_global(edit: impl FnOnce(&mut app_config::Settings)) -> FfiResult {
+    let config_dir = app_core::resolve_config_dir();
+    match app_config::update(&config_dir, edit) {
+        Ok(()) => FfiResult::default(),
+        Err(error) => crate::bridge::errors::failure(
+            crate::bridge::errors::CODE_SETTINGS_IO,
+            error.to_string(),
+        ),
     }
 }
 

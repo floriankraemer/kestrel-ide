@@ -2127,6 +2127,83 @@ mod ffi {
         #[cxx_name = "toggleExcluded"]
         fn toggle_excluded(self: Pin<&mut ProjectTreeModel>, path: &QString) -> FfiResult;
 
+        /// Load the Project Scope settings page's draft fresh from disk.
+        /// Called once, the moment the page is actually built — see the
+        /// Rust side's own doc comment for the begin/edit/commit shape.
+        #[qinvokable]
+        #[cxx_name = "beginScopeEdit"]
+        fn begin_scope_edit(self: &ProjectTreeModel);
+
+        /// The draft's current `excluded` entries, for the Project Scope
+        /// settings page's list. Empty before `beginScopeEdit` or if the
+        /// project overrides nothing.
+        #[qinvokable]
+        #[cxx_name = "excludedDraft"]
+        fn excluded_draft(self: &ProjectTreeModel) -> QStringList;
+
+        /// The draft's current `ignoredNames` list.
+        #[qinvokable]
+        #[cxx_name = "ignoredNamesDraft"]
+        fn ignored_names_draft(self: &ProjectTreeModel) -> QStringList;
+
+        /// Validate and add `relative_path` (an absolute folder-picker path
+        /// or a path already relative to the project root —
+        /// `relative_to_root` normalizes either) to the draft's `excluded`
+        /// list. Nothing is written or rescoped yet — that is
+        /// `commitScopeEdit`'s job, on OK. Refuses (`CODE_REFUSED`) an
+        /// absolute path outside the project or one that escapes the root
+        /// (`app_config::project_settings::add_excluded`), surfaced
+        /// immediately rather than deferred to OK.
+        #[qinvokable]
+        #[cxx_name = "addExcludedDraft"]
+        fn add_excluded_draft(self: &ProjectTreeModel, relative_path: &QString) -> FfiResult;
+
+        /// Remove `relative_path` from the draft's `excluded` list.
+        #[qinvokable]
+        #[cxx_name = "removeExcludedDraft"]
+        fn remove_excluded_draft(self: &ProjectTreeModel, relative_path: &QString) -> FfiResult;
+
+        /// Add `pattern` to the draft's `ignoredNames` list.
+        #[qinvokable]
+        #[cxx_name = "addIgnoredNameDraft"]
+        fn add_ignored_name_draft(self: &ProjectTreeModel, pattern: &QString) -> FfiResult;
+
+        /// Remove `pattern` from the draft's `ignoredNames` list.
+        #[qinvokable]
+        #[cxx_name = "removeIgnoredNameDraft"]
+        fn remove_ignored_name_draft(self: &ProjectTreeModel, pattern: &QString) -> FfiResult;
+
+        /// Reset the draft's `ignoredNames` list to
+        /// `app_config::DEFAULT_IGNORED_NAMES`. The confirmation prompt is
+        /// the view's job; this call is unconditional once it happens.
+        #[qinvokable]
+        #[cxx_name = "resetIgnoredNamesDraft"]
+        fn reset_ignored_names_draft(self: &ProjectTreeModel);
+
+        /// Write the draft's `excluded` (project layer, skipped when no
+        /// project is open) and `ignoredNames` (global layer) for real, and
+        /// rescope once for the whole page's changes together if the
+        /// resolved scope actually differs from before either write.
+        /// Called from the Settings dialog's OK handler; Cancel never calls
+        /// this, which is what makes it a no-op — the draft is discarded,
+        /// unwritten, the next `beginScopeEdit`.
+        #[qinvokable]
+        #[cxx_name = "commitScopeEdit"]
+        fn commit_scope_edit(self: Pin<&mut ProjectTreeModel>) -> FfiResult;
+
+        /// `index_core::content_rule_limits()`'s byte cap, in MiB, for the
+        /// Project Scope settings page's note label. Computed from the
+        /// index-core constant rather than a separate literal.
+        #[qinvokable]
+        #[cxx_name = "maxIndexedFileSizeMib"]
+        fn max_indexed_file_size_mib(self: &ProjectTreeModel) -> u32;
+
+        /// `index_core::content_rule_limits()`'s binary-sniff window, in
+        /// KiB, for the same note label.
+        #[qinvokable]
+        #[cxx_name = "binarySniffKib"]
+        fn binary_sniff_kib(self: &ProjectTreeModel) -> u32;
+
         /// Reopen the last-persisted project (US-1's "relaunch reopens the
         /// last project" criterion) and start its filesystem watcher.
         /// Fire-and-forget like `openFolder` (ADR-0037): the walk itself

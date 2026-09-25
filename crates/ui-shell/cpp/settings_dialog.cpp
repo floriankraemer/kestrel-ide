@@ -17,6 +17,7 @@
 #include "languages_page.h"
 #include "mcp_page.h"
 #include "plugins_page.h"
+#include "project_scope_settings_page.h"
 #include "icon_decoration_proxy.h"
 #include "syntax_colors_page.h"
 #include "tab_padding_page.h"
@@ -116,6 +117,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("AI Providers"));
     categoryList->addItem(QObject::tr("Plugins"));
     categoryList->addItem(QObject::tr("File Associations"));
+    categoryList->addItem(QObject::tr("Project Scope"));
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
@@ -306,6 +308,17 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     deferPage([&dialog, fileAssociationsEditor = context.fileAssociationsEditor]() {
         return buildFileAssociationsPage(&dialog, fileAssociationsEditor);
     });
+
+    // Project Scope (T5, ADR-0064) needs no draft either, for the same
+    // reason File Associations/Plugins/Languages need none: every add/
+    // remove writes through `ProjectTreeModel` at once. Not `scopedPage`-
+    // wrapped: both `excluded` (always project) and `ignored_names`
+    // (always global) are single-layer fields, never one this dialog's own
+    // scope selector affects.
+    const int projectScopeIndex =
+      deferPage([&dialog, projectTreeModel = context.projectTreeModel]() {
+          return buildProjectScopeSettingsPage(&dialog, projectTreeModel);
+      });
 
     // Terminal is project-scoped, so it is rebuilt when the scope changes
     // like Editing and Language Servers. Held by handle rather than by
@@ -816,15 +829,24 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         const QRect pluginsCategoryRect(
           categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(9)).topLeft()),
           categoryList->visualItemRect(categoryList->item(9)).size());
+        // T5: the Project Scope category row, from the real index
+        // `deferPage` returned above — not a literal, same reason
+        // `containersCategoryRect` isn't one.
+        const QRect projectScopeCategoryRect(
+          categoryList->mapToGlobal(
+            categoryList->visualItemRect(categoryList->item(projectScopeIndex)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(projectScopeIndex)).size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"settings_dialog\","
                                 "\"scope_rect\":%1,\"editing_category_rect\":%2,"
                                 "\"tab_width_rect\":%3,\"ok_rect\":%4,"
                                 "\"editor_category_rect\":%5,\"containers_category_rect\":%6,"
-                                "\"plugins_category_rect\":%7}")
+                                "\"plugins_category_rect\":%7,"
+                                "\"project_scope_category_rect\":%8}")
                   .arg(rectJson(scopeRect), rectJson(editingCategoryRect), rectJson(tabWidthRect),
                        rectJson(okRect), rectJson(editorCategoryRect))
                   .arg(rectJson(containersCategoryRect))
-                  .arg(rectJson(pluginsCategoryRect)));
+                  .arg(rectJson(pluginsCategoryRect))
+                  .arg(rectJson(projectScopeCategoryRect)));
     });
     QObject::connect(&dialog, &QDialog::finished, &dialog, [](int result) {
         e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"settings_dialog\","
@@ -860,6 +882,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         context.aiChat->applyAiSettings();
         context.languageServerEditor->commit();
         context.analysisEditor->commit();
+        // One save and at most one rescope for both Project Scope lists.
+        context.projectTreeModel->commitScopeEdit();
         // Reconciling is the Rust side's decision: it stops what the new
         // settings no longer describe and leaves the rest running, and the
         // re-announcement below starts the replacements.

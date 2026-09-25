@@ -258,3 +258,133 @@ fn e2e_go_to_file_finds_a_gitignored_file_and_a_dotdir_file() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// T5: adding `generated` to the global Ignored Names list through the
+/// Project Scope settings page drops a `generated/marker.txt` file out of
+/// the index — the settings-page mirror of T4's own tree-action test.
+///
+/// The `mcp` handle taken before Settings opens is reused after OK on
+/// purpose: OK must not restart an MCP server whose settings did not
+/// change (a restart re-binds and re-tokens, cutting off connected
+/// clients), so a stale handle here fails with `ECONNREFUSED` if that
+/// regresses.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_adding_generated_to_ignored_names_through_settings_drops_it_from_the_index() {
+    let workspace = git_fixture(&[("README.md", "root\n"), ("generated/marker.txt", "built\n")]);
+
+    let name = "e2e_adding_generated_to_ignored_names_through_settings_drops_it_from_the_index";
+    let mut ide = Ide::launch(name, APP, workspace.path());
+    drop(workspace);
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    assert!(
+        find_files(&mcp, "marker.txt")
+            .iter()
+            .any(|path| path.ends_with("marker.txt")),
+        "generated/marker.txt should be found before generated is ignored"
+    );
+
+    let mark = ide.mark();
+    ide.key("ctrl+comma");
+    let shown = ide.wait_for_event(mark, "the Settings dialog to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "settings_dialog"
+    });
+    let (cx, cy) = rect_centre(&shown["project_scope_category_rect"]);
+    ide.click_at(cx, cy, 1);
+    let page = ide.wait_for_event(mark, "the Project Scope page's own rects", |e| {
+        e["ev"] == "project_scope_page_shown"
+    });
+
+    let (input_x, input_y) = rect_centre(&page["ignored_input_rect"]);
+    ide.click_at(input_x, input_y, 1);
+    ide.type_text("generated");
+    let (add_x, add_y) = rect_centre(&page["add_ignored_rect"]);
+    ide.click_at(add_x, add_y, 1);
+
+    let (ok_x, ok_y) = rect_centre(&shown["ok_rect"]);
+    ide.click_at(ok_x, ok_y, 1);
+    ide.wait_for_event(mark, "the dialog to accept", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "settings_dialog" && e["accepted"] == true
+    });
+    ide.focus_main();
+
+    let settings = e2e::wait_for("settings.toml to record generated", || {
+        std::fs::read_to_string(ide.config_dir().join("settings.toml"))
+            .ok()
+            .filter(|text| text.contains("generated"))
+    });
+    assert!(
+        settings.contains("generated"),
+        "settings.toml should record generated as ignored, got:\n{settings}"
+    );
+
+    let after_ok = e2e::wait_for("marker.txt to drop out of the index", || {
+        let files = find_files(&mcp, "marker.txt");
+        (!files.iter().any(|path| path.ends_with("marker.txt"))).then_some(files)
+    });
+    assert!(
+        after_ok.is_empty(),
+        "ignoring generated should drop marker.txt from find_files, got {after_ok:?}"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// T5 review follow-up: Cancel must actually discard the draft. Adds
+/// `generated` to Ignored Names through the page (as the test above does)
+/// but closes with Cancel (`Escape`) instead of OK — `settings.toml` must
+/// not record it, and `generated/marker.txt` must still be in the index,
+/// proving nothing was ever written or rescoped.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_cancelling_project_scope_settings_discards_the_draft() {
+    let workspace = git_fixture(&[("README.md", "root\n"), ("generated/marker.txt", "built\n")]);
+
+    let name = "e2e_cancelling_project_scope_settings_discards_the_draft";
+    let mut ide = Ide::launch(name, APP, workspace.path());
+    drop(workspace);
+    let mcp = ide.mcp();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&mcp);
+
+    let mark = ide.mark();
+    ide.key("ctrl+comma");
+    let shown = ide.wait_for_event(mark, "the Settings dialog to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "settings_dialog"
+    });
+    let (cx, cy) = rect_centre(&shown["project_scope_category_rect"]);
+    ide.click_at(cx, cy, 1);
+    let page = ide.wait_for_event(mark, "the Project Scope page's own rects", |e| {
+        e["ev"] == "project_scope_page_shown"
+    });
+
+    let (input_x, input_y) = rect_centre(&page["ignored_input_rect"]);
+    ide.click_at(input_x, input_y, 1);
+    ide.type_text("generated");
+    let (add_x, add_y) = rect_centre(&page["add_ignored_rect"]);
+    ide.click_at(add_x, add_y, 1);
+
+    ide.key("Escape");
+    ide.wait_for_event(mark, "the dialog to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "settings_dialog" && e["accepted"] == false
+    });
+    ide.focus_main();
+
+    let settings =
+        std::fs::read_to_string(ide.config_dir().join("settings.toml")).unwrap_or_default();
+    assert!(
+        !settings.contains("generated"),
+        "Cancel should not have written generated to settings.toml, got:\n{settings}"
+    );
+    assert!(
+        find_files(&mcp, "marker.txt")
+            .iter()
+            .any(|path| path.ends_with("marker.txt")),
+        "Cancel should leave the index untouched — marker.txt should still be found"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}

@@ -22,7 +22,7 @@ pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0
 /// The `[containers]` section: Docker/Podman connections (ADR-0055).
 pub mod containers;
 pub mod database; // Data sources, no secrets (ADR-0061 §1).
-mod ignored_names; // `Settings::ignored_names`'s default list + `Default` impl (ADR-0064).
+pub mod ignored_names; // `Settings::ignored_names`'s default list, `Default` impl and add/remove/reset rules (ADR-0064).
 use ignored_names::default_ignored_names;
 pub use ignored_names::DEFAULT_IGNORED_NAMES;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.

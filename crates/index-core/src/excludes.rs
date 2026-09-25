@@ -23,3 +23,12 @@ pub struct IndexOptions {
     /// Global *Ignored names*, gitignore syntax, matched at any depth.
     pub ignored_names: Vec<String>,
 }
+
+/// `lib.rs`'s `MAX_INDEXED_BYTES` and `BINARY_SNIFF_BYTES` — the content
+/// rules the Project Scope settings page (ADR-0064) states in its note —
+/// exposed as values only, so `ui-shell` never duplicates the constants as
+/// separate literals. Placed here rather than in `lib.rs` for the same
+/// size-baseline reason as [`IndexOptions`] above.
+pub fn content_rule_limits() -> (u64, usize) {
+    (crate::MAX_INDEXED_BYTES, crate::BINARY_SNIFF_BYTES)
+}

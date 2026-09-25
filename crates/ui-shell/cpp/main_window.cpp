@@ -234,7 +234,8 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     editorArea->style()->unpolish(editorArea);
     editorArea->style()->polish(editorArea);
 
-    const ProjectTreeDock projectTreeDock = createProjectTreeDock(dockManager, editorArea, treeModel, docks, vcsService);
+    const ProjectTreeDock projectTreeDock =
+      createProjectTreeDock(dockManager, editorArea, treeModel, docks, vcsService, searchModel);
     QTreeView *treeView = projectTreeDock.view;
     QAction *projectTreeLocateAction = projectTreeDock.locateAction;
 

@@ -632,6 +632,9 @@ fn main() {
         // Q_OBJECT, so its header needs moc too.
         .cpp_file("cpp/vcs_status_color_proxy.h")
         .cpp_file("cpp/vcs_status_color_proxy.cpp")
+        // Same reason: declares Q_OBJECT, so its header needs moc too.
+        .cpp_file("cpp/excluded_color_proxy.h")
+        .cpp_file("cpp/excluded_color_proxy.cpp")
         .cpp_file("cpp/recent_projects_menu.cpp")
         .cpp_file("cpp/project_tree_dock.cpp")
         .cpp_file("cpp/search_results_panel.cpp")

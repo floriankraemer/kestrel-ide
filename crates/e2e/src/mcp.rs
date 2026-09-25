@@ -39,6 +39,16 @@ impl Mcp {
 
     /// One JSON-RPC call over the flat method surface, returning `result`.
     pub fn call(&self, method: &str, params: Value) -> Value {
+        self.try_call(method, params)
+            .unwrap_or_else(|error| panic!("MCP {method} failed: {error}"))
+    }
+
+    /// Same as [`call`](Self::call), but hands back the JSON-RPC error
+    /// object instead of panicking on one — for a call a flow *expects* to
+    /// fail transiently (`find_files`/`search_text` while a rescope's index
+    /// reopen is still running) and wants to retry with `e2e::wait_for`
+    /// rather than treat as fatal.
+    pub fn try_call(&self, method: &str, params: Value) -> Result<Value, Value> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let body =
             json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string();
@@ -46,12 +56,12 @@ impl Mcp {
         let parsed: Value = serde_json::from_str(&response)
             .unwrap_or_else(|e| panic!("MCP {method} returned {response:?}: {e}"));
         if let Some(error) = parsed.get("error").filter(|e| !e.is_null()) {
-            panic!("MCP {method} failed: {error}");
+            return Err(error.clone());
         }
-        parsed
+        Ok(parsed
             .get("result")
             .cloned()
-            .unwrap_or_else(|| panic!("MCP {method} returned no result: {parsed}"))
+            .unwrap_or_else(|| panic!("MCP {method} returned no result: {parsed}")))
     }
 
     // A hand-rolled HTTP/1.1 POST rather than a client crate: `Connection:

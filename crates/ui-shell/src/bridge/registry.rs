@@ -261,6 +261,23 @@ pub(crate) fn push_lsp_job(job: LspJob) -> bool {
 pub(crate) struct McpControl {
     pub(crate) stop: tokio::sync::oneshot::Sender<()>,
     pub(crate) thread: std::thread::JoinHandle<()>,
+    /// The configured port this server was started for (0 = automatic),
+    /// so re-applying unchanged settings can leave a live server alone.
+    pub(crate) configured_port: u16,
+}
+
+/// Whether a server is already running for `configured_port` — the case
+/// in which applying settings must not restart it: a restart re-binds
+/// (an automatic port changes) and mints a new token, cutting off every
+/// connected client for a Settings OK that changed nothing about MCP.
+pub(crate) fn mcp_running_for(configured_port: u16) -> bool {
+    mcp_control()
+        .lock()
+        .expect("MCP control lock poisoned")
+        .as_ref()
+        .is_some_and(|control| {
+            control.configured_port == configured_port && !control.thread.is_finished()
+        })
 }
 
 /// There is one MCP server per process, and the QObject that owns its

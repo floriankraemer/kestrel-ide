@@ -59,9 +59,10 @@ McpPage buildMcpPage(QWidget *parent, AppSettings *appSettings, DocumentManager 
       [appSettings, docManager, mcpEnabledCheck, mcpPortSpin]() {
           appSettings->saveMcpSettings(mcpEnabledCheck->isChecked(),
                                         static_cast<quint16>(mcpPortSpin->value()));
-          // Unconditional: applyMcpSettings is idempotent, and working out
-          // whether anything changed here would be the view deciding
-          // something the Rust side already decides.
+          // Unconditional: applyMcpSettings leaves a server already running
+          // for these settings alone (a restart would re-bind and re-token,
+          // cutting off connected clients), and working out whether
+          // anything changed here would be the view deciding it instead.
           docManager->applyMcpSettings();
       },
     };

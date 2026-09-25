@@ -14,7 +14,7 @@ use crate::bridge::convert::{
 };
 use crate::bridge::ffi::{self, FfiOpenResult, FfiResult};
 use crate::bridge::registry::{
-    index_slot, mcp_control, shared_session, stop_mcp_server, McpControl,
+    index_slot, mcp_control, mcp_running_for, shared_session, stop_mcp_server, McpControl,
 };
 
 /// Rust side of the `DocumentManager` QObject: a handle to the shared
@@ -549,14 +549,16 @@ impl ffi::DocumentManager {
     }
 
     pub fn apply_mcp_settings(mut self: Pin<&mut Self>) {
-        stop_mcp_server();
-
         let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+        let port = settings.mcp_port;
+        if settings.mcp_enabled_or_default() && mcp_running_for(port) {
+            return;
+        }
+        stop_mcp_server();
         if !settings.mcp_enabled_or_default() {
             self.as_mut().mcp_stopped();
             return;
         }
-        let port = settings.mcp_port;
 
         let qt_thread = self.qt_thread();
         let index = index_slot();
@@ -616,6 +618,7 @@ impl ffi::DocumentManager {
         *mcp_control().lock().expect("MCP control lock poisoned") = Some(McpControl {
             stop: stop_tx,
             thread,
+            configured_port: port,
         });
     }
 

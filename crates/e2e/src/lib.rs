@@ -332,13 +332,6 @@ impl Ide {
         })
     }
 
-    /// [`mcp`](Self::mcp), for a flow that just drove the Settings dialog
-    /// to an OK — see [`mcp::Mcp::reconnect`]'s own doc comment for why a
-    /// handle grabbed before the dialog opened cannot simply be reused.
-    pub fn reconnect_mcp(&self) -> mcp::Mcp {
-        mcp::Mcp::reconnect(&self.config_dir())
-    }
-
     /// Drain the Qt event loop. Editor-touching MCP commands are marshalled
     /// onto the GUI thread, so a reply proves everything queued before the
     /// request has already run — which is what lets a test assert that

@@ -461,7 +461,9 @@ fn e2e_reviewing_ignored_folders_excludes_one_and_remembers_the_other() {
     let dialog = ide.wait_for_event(mark, "the review dialog", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "scope_review_dialog"
     });
-    let rows = dialog["rows"].as_array().expect("the dialog carries a row per candidate");
+    let rows = dialog["rows"]
+        .as_array()
+        .expect("the dialog carries a row per candidate");
     assert_eq!(rows.len(), 2);
     for row in rows {
         let path = row["path"].as_str().expect("a row's path");

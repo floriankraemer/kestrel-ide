@@ -71,6 +71,11 @@ struct SettingsContext
     // same two collaborators `run_config_dialog.cpp` already threads to it.
     RunConfigEditor *runConfigEditor;
     ContainerService *containerService;
+    // Project Scope (T5, ADR-0064): excluded folders and ignored names both
+    // live on `ProjectTreeModel` (it already owns `isExcluded`/
+    // `toggleExcluded` from T4), so the settings page reuses that same
+    // QObject rather than adding a second one for two more lists.
+    ProjectTreeModel *projectTreeModel;
 };
 
 // Settings dialog (S1: category list + stacked detail pane). One page per

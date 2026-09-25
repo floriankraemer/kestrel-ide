@@ -17,6 +17,7 @@
 #include "languages_page.h"
 #include "mcp_page.h"
 #include "plugins_page.h"
+#include "project_scope_settings_page.h"
 #include "icon_decoration_proxy.h"
 #include "syntax_colors_page.h"
 #include "tab_padding_page.h"
@@ -116,6 +117,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("AI Providers"));
     categoryList->addItem(QObject::tr("Plugins"));
     categoryList->addItem(QObject::tr("File Associations"));
+    categoryList->addItem(QObject::tr("Project Scope"));
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
@@ -305,6 +307,16 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     // at once, there is nothing left to promise on OK.
     deferPage([&dialog, fileAssociationsEditor = context.fileAssociationsEditor]() {
         return buildFileAssociationsPage(&dialog, fileAssociationsEditor);
+    });
+
+    // Project Scope (T5, ADR-0064) needs no draft either, for the same
+    // reason File Associations/Plugins/Languages need none: every add/
+    // remove writes through `ProjectTreeModel` at once. Not `scopedPage`-
+    // wrapped: both `excluded` (always project) and `ignored_names`
+    // (always global) are single-layer fields, never one this dialog's own
+    // scope selector affects.
+    deferPage([&dialog, projectTreeModel = context.projectTreeModel]() {
+        return buildProjectScopeSettingsPage(&dialog, projectTreeModel);
     });
 
     // Terminal is project-scoped, so it is rebuilt when the scope changes

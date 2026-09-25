@@ -873,7 +873,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildToolsEditor,
       uiFontTargets,
       central.terminalPanel,
-      runConfigEditor, containerService,
+      runConfigEditor, containerService, treeModel,
     };
     QObject::connect(preferencesAction, &QAction::triggered, window, [window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext); });
     // G1.6: null when its plugin is disabled; an unconditional deref here used to segfault the next launch.

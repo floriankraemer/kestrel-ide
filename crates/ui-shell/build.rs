@@ -536,6 +536,9 @@ fn main() {
         .cpp_file("cpp/languages_page.cpp")
         .cpp_file("cpp/plugins_page.cpp")
         .cpp_file("cpp/file_associations_page.cpp")
+        // T5, ADR-0064: the Project Scope settings page, Q_OBJECT-free like
+        // the pages above.
+        .cpp_file("cpp/project_scope_settings_page.cpp")
         .cpp_file("cpp/appearance_page.cpp")
         .cpp_file("cpp/language_page.cpp")
         .cpp_file("cpp/i18n_startup.cpp")

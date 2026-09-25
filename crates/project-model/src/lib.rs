@@ -20,8 +20,10 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 mod coalesce;
+mod walk;
 mod watcher;
 pub use coalesce::RefreshCoalescer;
+pub use walk::walk_project;
 pub use watcher::{route_change, ChangeRouting, EventKind, ProjectWatcher};
 
 /// File name used to persist the last-opened project path, per the plan's
@@ -662,27 +664,30 @@ pub fn open_folder(path: impl AsRef<Path>) -> Result<Project, OpenFolderError> {
 /// state), which is what lets both consumers run it on their own
 /// already-off-the-Qt-thread worker.
 pub fn walk_all_entries(root: &Path) -> Vec<(PathBuf, bool)> {
-    let mut builder = ignore::WalkBuilder::new(root);
-    builder
-        .hidden(false)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        // A `.gitignore` should apply even in a project that isn't (yet) a
-        // git repository itself — `require_git` defaults to `true`, which
-        // would otherwise silently stop honoring it the moment there's no
-        // `.git` directory to find.
-        .require_git(false)
-        .filter_entry(|entry| entry.file_name() != INDEX_DIR_NAME);
-    builder
-        .build()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path() != root)
-        .map(|entry| {
-            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-            (entry.into_path(), is_dir)
-        })
-        .collect()
+    let mut entries = Vec::new();
+    walk_project(
+        root,
+        |builder| {
+            builder
+                .hidden(false)
+                .git_ignore(true)
+                .git_global(true)
+                .git_exclude(true)
+                // A `.gitignore` should apply even in a project that isn't (yet) a
+                // git repository itself — `require_git` defaults to `true`, which
+                // would otherwise silently stop honoring it the moment there's no
+                // `.git` directory to find.
+                .require_git(false)
+                .filter_entry(|entry| entry.file_name() != INDEX_DIR_NAME);
+        },
+        |entry| {
+            if entry.path() != root {
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                entries.push((entry.into_path(), is_dir));
+            }
+        },
+    );
+    entries
 }
 
 /// Persist `project_path` as the last-opened project: one plain-text line

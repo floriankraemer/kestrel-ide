@@ -4332,6 +4332,7 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "nucleo-matcher",
+ "project-model",
  "rayon",
  "regex-syntax",
  "syntax-core",

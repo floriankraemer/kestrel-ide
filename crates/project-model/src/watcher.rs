@@ -279,20 +279,24 @@ impl ProjectWatcher {
         // directory it does yield is one to watch — no separate ignore
         // check needed here, unlike the single-path check the `new_dirs_rx`
         // loop below needs.
-        let mut walker = ignore::WalkBuilder::new(root);
-        walker
-            .hidden(false)
-            .git_ignore(true)
-            .git_global(true)
-            .git_exclude(true);
-        for entry in walker.build().filter_map(Result::ok) {
-            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
-            if is_dir {
-                // One bad directory (permission denied, removed mid-walk)
-                // must not stop the rest of the project from being watched.
-                let _ = watcher.watch(entry.path(), RecursiveMode::NonRecursive);
-            }
-        }
+        crate::walk_project(
+            root,
+            |walker| {
+                walker
+                    .hidden(false)
+                    .git_ignore(true)
+                    .git_global(true)
+                    .git_exclude(true);
+            },
+            |entry| {
+                let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+                if is_dir {
+                    // One bad directory (permission denied, removed mid-walk)
+                    // must not stop the rest of the project from being watched.
+                    let _ = watcher.watch(entry.path(), RecursiveMode::NonRecursive);
+                }
+            },
+        );
 
         *slot.lock().expect("watcher slot poisoned") = Some(watcher);
 

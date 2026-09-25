@@ -13,6 +13,9 @@ ignore = "0.4"
 # documents for many files at once.
 rayon = "1"
 editor-core = { path = "../editor-core" }
+# `walk_project`: the index walks nested repositories an outer `.gitignore`
+# hides, by the same rule the project watcher uses.
+project-model = { path = "../project-model" }
 syntax-core = { path = "../syntax-core" }
 nucleo-matcher = "0.3.1"
 # R8: literal-prefix extraction from a Find in Files regex, for ngram

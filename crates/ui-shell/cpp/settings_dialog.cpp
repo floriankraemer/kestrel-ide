@@ -315,9 +315,10 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     // wrapped: both `excluded` (always project) and `ignored_names`
     // (always global) are single-layer fields, never one this dialog's own
     // scope selector affects.
-    deferPage([&dialog, projectTreeModel = context.projectTreeModel]() {
-        return buildProjectScopeSettingsPage(&dialog, projectTreeModel);
-    });
+    const int projectScopeIndex =
+      deferPage([&dialog, projectTreeModel = context.projectTreeModel]() {
+          return buildProjectScopeSettingsPage(&dialog, projectTreeModel);
+      });
 
     // Terminal is project-scoped, so it is rebuilt when the scope changes
     // like Editing and Language Servers. Held by handle rather than by
@@ -828,15 +829,24 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         const QRect pluginsCategoryRect(
           categoryList->mapToGlobal(categoryList->visualItemRect(categoryList->item(9)).topLeft()),
           categoryList->visualItemRect(categoryList->item(9)).size());
+        // T5: the Project Scope category row, from the real index
+        // `deferPage` returned above — not a literal, same reason
+        // `containersCategoryRect` isn't one.
+        const QRect projectScopeCategoryRect(
+          categoryList->mapToGlobal(
+            categoryList->visualItemRect(categoryList->item(projectScopeIndex)).topLeft()),
+          categoryList->visualItemRect(categoryList->item(projectScopeIndex)).size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"settings_dialog\","
                                 "\"scope_rect\":%1,\"editing_category_rect\":%2,"
                                 "\"tab_width_rect\":%3,\"ok_rect\":%4,"
                                 "\"editor_category_rect\":%5,\"containers_category_rect\":%6,"
-                                "\"plugins_category_rect\":%7}")
+                                "\"plugins_category_rect\":%7,"
+                                "\"project_scope_category_rect\":%8}")
                   .arg(rectJson(scopeRect), rectJson(editingCategoryRect), rectJson(tabWidthRect),
                        rectJson(okRect), rectJson(editorCategoryRect))
                   .arg(rectJson(containersCategoryRect))
-                  .arg(rectJson(pluginsCategoryRect)));
+                  .arg(rectJson(pluginsCategoryRect))
+                  .arg(rectJson(projectScopeCategoryRect)));
     });
     QObject::connect(&dialog, &QDialog::finished, &dialog, [](int result) {
         e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"settings_dialog\","

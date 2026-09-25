@@ -1,5 +1,6 @@
 #include "project_scope_settings_page.h"
 
+#include "e2e_mark.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <QFileDialog>
@@ -12,6 +13,7 @@
 #include <QPushButton>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -154,6 +156,40 @@ QWidget *buildProjectScopeSettingsPage(QWidget *parent, ProjectTreeModel *treeMo
         const FfiResult result = treeModel->resetIgnoredNames();
         warnOnFailure(page, result);
         reloadStringList(ignoredList, treeModel->ignoredNamesList());
+    });
+
+    // T5 E2E: the ignored-names input, its Add/Remove buttons and each
+    // current row's rect — enough for a flow to add a pattern or remove an
+    // existing one and confirm the rescope. See `plugins_page.cpp`'s own
+    // `plugins_page_rows` marker for why this waits a turn: a page built by
+    // `deferPage` has no real layout until the event loop runs once more
+    // after the category switch that built it.
+    QTimer::singleShot(0, page, [ignoredInput, addIgnoredButton, removeIgnoredButton, ignoredList]() {
+        const auto rectOf = [](QWidget *widget) {
+            const QPoint origin = widget->mapToGlobal(QPoint(0, 0));
+            return QStringLiteral("[%1,%2,%3,%4]")
+              .arg(origin.x())
+              .arg(origin.y())
+              .arg(widget->width())
+              .arg(widget->height());
+        };
+        QStringList rows;
+        for (int i = 0; i < ignoredList->count(); ++i) {
+            QListWidgetItem *item = ignoredList->item(i);
+            const QRect itemRect = ignoredList->visualItemRect(item);
+            const QPoint origin = ignoredList->viewport()->mapToGlobal(itemRect.topLeft());
+            rows << QStringLiteral("{\"name\":%1,\"rect\":[%2,%3,%4,%5]}")
+                      .arg(e2eJson(item->text()))
+                      .arg(origin.x())
+                      .arg(origin.y())
+                      .arg(itemRect.width())
+                      .arg(itemRect.height());
+        }
+        e2eMark(QStringLiteral("{\"ev\":\"project_scope_page_shown\","
+                                "\"ignored_input_rect\":%1,\"add_ignored_rect\":%2,"
+                                "\"remove_ignored_rect\":%3,\"ignored_rows\":[%4]}")
+                  .arg(rectOf(ignoredInput), rectOf(addIgnoredButton), rectOf(removeIgnoredButton))
+                  .arg(rows.join(QLatin1Char(','))));
     });
 
     // Content rules the index applies on top of both lists (ADR-0064) —

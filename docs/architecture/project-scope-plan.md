@@ -9,8 +9,8 @@ Design recorded in [ADR-0064](decisions/0064-project-scope-explicit-exclusions.m
 
 | Task | Status | Commit |
 |---|---|---|
-| T1 | done | (this PR) |
-| T2 | open | |
+| T1 | done | d8093ed |
+| T2 | done | (this PR) |
 | T3 | open | |
 | T4 | open | |
 | T5 | open | |

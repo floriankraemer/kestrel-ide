@@ -3257,7 +3257,7 @@ mod ffi {
         /// Where one scoped field's effective value comes from, as the word
         /// the badge shows: "from project", "from global" or "default".
         /// `field_id` is a `settings_model::ScopedField` id — `"editing"`,
-        /// `"languageServers"`, `"runConfigs"`, `"indexExcludes"`.
+        /// `"languageServers"`, `"runConfigs"`, `"excluded"`, `"ignoredNames"`.
         ///
         /// The view displays this and never re-derives it (ADR-0022): a
         /// badge computed apart from the value it labels eventually lies.

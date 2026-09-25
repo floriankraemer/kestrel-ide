@@ -21,6 +21,12 @@ namespace ui_shell {
 
 namespace {
 
+// Neither list should grow the dialog around it, and an empty Excluded list
+// (the common case — most projects exclude nothing) should not leave a
+// stretched, mostly-void box either. Both lists share one cap so the two
+// group boxes read as a matched pair rather than one dwarfing the other.
+constexpr int kListMaxHeight = 140;
+
 void reloadStringList(QListWidget *list, const QStringList &entries)
 {
     list->clear();
@@ -46,18 +52,42 @@ QString selectedText(QListWidget *list)
 
 QWidget *buildProjectScopeSettingsPage(QWidget *parent, ProjectTreeModel *treeModel)
 {
+    // T5 review follow-up: the page edits an in-memory draft
+    // (`ProjectTreeModel::beginScopeEdit`/`*Draft` invokables/
+    // `commitScopeEdit`, the same begin/edit/commit shape Editing/Language
+    // Servers already use in this dialog) rather than writing through on
+    // every click — Cancel has to actually discard what was typed, and
+    // nothing here may rescope until the dialog's OK handler commits.
+    treeModel->beginScopeEdit();
+
     auto *page = new QWidget(parent);
     auto *layout = new QVBoxLayout(page);
     layout->setContentsMargins(0, 0, 0, 0);
 
     const bool projectOpen = !treeModel->rootPath().isEmpty();
 
-    // Excluded folders (per project).
-    auto *excludedGroup = new QGroupBox(QObject::tr("Excluded Folders"), page);
+    // Excluded folders — always the project layer, regardless of which
+    // layer the dialog's own scope selector is currently showing (ADR-0064:
+    // `excluded` has no global counterpart to switch to).
+    auto *excludedGroup = new QGroupBox(QObject::tr("Excluded Folders — this project"), page);
     auto *excludedLayout = new QVBoxLayout(excludedGroup);
     auto *excludedList = new QListWidget(excludedGroup);
-    reloadStringList(excludedList, treeModel->excludedList());
-    excludedLayout->addWidget(excludedList, 1);
+    excludedList->setMaximumHeight(kListMaxHeight);
+    excludedLayout->addWidget(excludedList);
+
+    auto *excludedEmptyHint = new QLabel(
+      QObject::tr("No excluded folders. Use Add… or right-click a folder in the Project "
+                  "tree → Mark Directory as Excluded."),
+      excludedGroup);
+    excludedEmptyHint->setWordWrap(true);
+    excludedEmptyHint->setEnabled(false);
+    excludedLayout->addWidget(excludedEmptyHint);
+
+    const auto reloadExcluded = [treeModel, excludedList, excludedEmptyHint]() {
+        reloadStringList(excludedList, treeModel->excludedDraft());
+        excludedEmptyHint->setVisible(excludedList->count() == 0);
+    };
+    reloadExcluded();
 
     if (!projectOpen) {
         auto *noProjectLabel =
@@ -75,35 +105,41 @@ QWidget *buildProjectScopeSettingsPage(QWidget *parent, ProjectTreeModel *treeMo
     excludedButtons->addStretch(1);
     excludedLayout->addLayout(excludedButtons);
     excludedGroup->setEnabled(projectOpen);
-    layout->addWidget(excludedGroup, 1);
+    layout->addWidget(excludedGroup);
 
-    QObject::connect(addExcludedButton, &QPushButton::clicked, page, [page, treeModel, excludedList]() {
-        const QString dir = QFileDialog::getExistingDirectory(
-          page, QObject::tr("Choose a Folder to Exclude"), treeModel->rootPath());
-        if (dir.isEmpty()) {
-            return;
-        }
-        const FfiResult result = treeModel->addExcluded(dir);
-        warnOnFailure(page, result);
-        reloadStringList(excludedList, treeModel->excludedList());
-    });
+    QObject::connect(addExcludedButton, &QPushButton::clicked, page,
+                     [page, treeModel, reloadExcluded]() {
+                         const QString dir = QFileDialog::getExistingDirectory(
+                           page, QObject::tr("Choose a Folder to Exclude"), treeModel->rootPath());
+                         if (dir.isEmpty()) {
+                             return;
+                         }
+                         // Validated (and, on success, added to the draft)
+                         // immediately — an absolute-path/root-escape
+                         // refusal has to surface at Add time, not wait for
+                         // OK, or the user has no idea which entry it was.
+                         const FfiResult result = treeModel->addExcludedDraft(dir);
+                         warnOnFailure(page, result);
+                         reloadExcluded();
+                     });
     QObject::connect(removeExcludedButton, &QPushButton::clicked, page,
-                     [page, treeModel, excludedList]() {
+                     [treeModel, excludedList, reloadExcluded]() {
                          const QString selected = selectedText(excludedList);
                          if (selected.isEmpty()) {
                              return;
                          }
-                         const FfiResult result = treeModel->removeExcluded(selected);
-                         warnOnFailure(page, result);
-                         reloadStringList(excludedList, treeModel->excludedList());
+                         treeModel->removeExcludedDraft(selected);
+                         reloadExcluded();
                      });
 
-    // Ignored names (global).
-    auto *ignoredGroup = new QGroupBox(QObject::tr("Ignored Names"), page);
+    // Ignored names — always the global layer, for the same reason
+    // Excluded Folders above is pinned to the project one.
+    auto *ignoredGroup = new QGroupBox(QObject::tr("Ignored Names — all projects"), page);
     auto *ignoredLayout = new QVBoxLayout(ignoredGroup);
     auto *ignoredList = new QListWidget(ignoredGroup);
-    reloadStringList(ignoredList, treeModel->ignoredNamesList());
-    ignoredLayout->addWidget(ignoredList, 1);
+    ignoredList->setMaximumHeight(kListMaxHeight);
+    reloadStringList(ignoredList, treeModel->ignoredNamesDraft());
+    ignoredLayout->addWidget(ignoredList);
 
     auto *ignoredInputRow = new QHBoxLayout();
     auto *ignoredInput = new QLineEdit(ignoredGroup);
@@ -120,47 +156,48 @@ QWidget *buildProjectScopeSettingsPage(QWidget *parent, ProjectTreeModel *treeMo
     ignoredButtons->addStretch(1);
     ignoredButtons->addWidget(resetIgnoredButton);
     ignoredLayout->addLayout(ignoredButtons);
-    layout->addWidget(ignoredGroup, 1);
+    layout->addWidget(ignoredGroup);
 
-    const auto addIgnored = [page, treeModel, ignoredList, ignoredInput]() {
+    const auto reloadIgnored = [treeModel, ignoredList]() {
+        reloadStringList(ignoredList, treeModel->ignoredNamesDraft());
+    };
+    const auto addIgnored = [treeModel, ignoredInput, reloadIgnored]() {
         const QString pattern = ignoredInput->text();
         if (pattern.trimmed().isEmpty()) {
             return;
         }
-        const FfiResult result = treeModel->addIgnoredName(pattern);
-        warnOnFailure(page, result);
-        reloadStringList(ignoredList, treeModel->ignoredNamesList());
+        treeModel->addIgnoredNameDraft(pattern);
+        reloadIgnored();
         ignoredInput->clear();
     };
     QObject::connect(addIgnoredButton, &QPushButton::clicked, page, addIgnored);
     QObject::connect(ignoredInput, &QLineEdit::returnPressed, page, addIgnored);
     QObject::connect(removeIgnoredButton, &QPushButton::clicked, page,
-                     [page, treeModel, ignoredList]() {
+                     [treeModel, ignoredList, reloadIgnored]() {
                          const QString selected = selectedText(ignoredList);
                          if (selected.isEmpty()) {
                              return;
                          }
-                         const FfiResult result = treeModel->removeIgnoredName(selected);
-                         warnOnFailure(page, result);
-                         reloadStringList(ignoredList, treeModel->ignoredNamesList());
+                         treeModel->removeIgnoredNameDraft(selected);
+                         reloadIgnored();
                      });
-    QObject::connect(resetIgnoredButton, &QPushButton::clicked, page, [page, treeModel, ignoredList]() {
-        const auto answer = QMessageBox::question(
-          page, QObject::tr("Reset Ignored Names"),
-          QObject::tr("Restore the default ignored-names list? Any names you added or removed "
-                      "are lost."),
-          QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
-        if (answer != QMessageBox::Yes) {
-            return;
-        }
-        const FfiResult result = treeModel->resetIgnoredNames();
-        warnOnFailure(page, result);
-        reloadStringList(ignoredList, treeModel->ignoredNamesList());
-    });
+    QObject::connect(resetIgnoredButton, &QPushButton::clicked, page,
+                     [page, treeModel, reloadIgnored]() {
+                         const auto answer = QMessageBox::question(
+                           page, QObject::tr("Reset Ignored Names"),
+                           QObject::tr("Restore the default ignored-names list? Any names you "
+                                       "added or removed are lost."),
+                           QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel);
+                         if (answer != QMessageBox::Yes) {
+                             return;
+                         }
+                         treeModel->resetIgnoredNamesDraft();
+                         reloadIgnored();
+                     });
 
     // T5 E2E: the ignored-names input, its Add/Remove buttons and each
     // current row's rect — enough for a flow to add a pattern or remove an
-    // existing one and confirm the rescope. See `plugins_page.cpp`'s own
+    // existing one and confirm OK commits it. See `plugins_page.cpp`'s own
     // `plugins_page_rows` marker for why this waits a turn: a page built by
     // `deferPage` has no real layout until the event loop runs once more
     // after the category switch that built it.
@@ -203,6 +240,7 @@ QWidget *buildProjectScopeSettingsPage(QWidget *parent, ProjectTreeModel *treeMo
     note->setWordWrap(true);
     note->setEnabled(false);
     layout->addWidget(note);
+    layout->addStretch(1);
 
     return page;
 }

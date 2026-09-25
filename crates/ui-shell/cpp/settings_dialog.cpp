@@ -573,9 +573,26 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     QObject::connect(
       buttons, &QDialogButtonBox::accepted, &dialog,
       [&dialog, aiProviderEditor = context.aiProviderEditor,
-       editingEditor = context.editingEditor, tabPaddingPage]() {
+       editingEditor = context.editingEditor, tabPaddingPage,
+       projectTreeModel = context.projectTreeModel]() {
           if (commitAiProvidersPage(&dialog, aiProviderEditor)
               && commitEditingPage(&dialog, editingEditor) && tabPaddingPage->commit()) {
+              // T5 review follow-up: committed here — inside the OK
+              // button's own click handling, still nested in this modal
+              // dialog's own `exec()` — rather than after `dialog.exec()`
+              // returns down in the accept branch below, where every
+              // other unconditional `*->commit()` lives. Moved here after
+              // a real, repeatable crash: a rescope this draft's commit
+              // triggers (`ProjectTreeModel::rescope`, the same call T4's
+              // tree-menu `toggleExcluded` already makes safely) reliably
+              // brought the whole process down when started *after*
+              // `dialog.exec()` had already returned and this dialog's
+              // dozen pages were mid-teardown — never reproducible under
+              // a debugger, which serializes execution enough to hide the
+              // race, but 100% reproducible without one. Committing here,
+              // before the dialog even starts closing, avoids whatever
+              // that race actually is.
+              projectTreeModel->commitScopeEdit();
               dialog.accept();
           }
       });

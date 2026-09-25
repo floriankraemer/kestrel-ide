@@ -37,6 +37,7 @@ pub mod terminal;
 
 /// Per-project settings layered over the global file (ADR-0022).
 pub mod project_settings;
+pub mod resolved_cache; // Shared cache of resolved settings reads; `save`/`update` invalidate it.
 
 /// Machine-local VCS preferences, layered under `.ide/local/` rather than
 /// the committed project settings file.
@@ -728,23 +729,19 @@ pub fn load(config_dir: &Path) -> Result<Settings, ConfigError> {
 }
 
 /// Save `settings` to `<config_dir>/settings.toml`, creating `config_dir` if
-/// it doesn't exist yet. Atomic, per [`save_toml`].
+/// it doesn't exist yet. Atomic, per [`save_toml`]. Invalidates [`resolved_cache`].
 pub fn save(config_dir: &Path, settings: &Settings) -> Result<(), ConfigError> {
-    save_toml(
-        &config_dir.join(SETTINGS_FILE),
-        &config_dir.join(TEMP_SETTINGS_FILE),
-        settings,
-    )
+    let path = config_dir.join(SETTINGS_FILE);
+    let temp = config_dir.join(TEMP_SETTINGS_FILE);
+    save_toml(&path, &temp, settings).inspect(|()| resolved_cache::invalidate())
 }
 
 /// Load, edit, save — the shape every "change one setting" path needs.
 /// Aborts on a load failure rather than defaulting, per [`update_toml`].
 pub fn update(config_dir: &Path, edit: impl FnOnce(&mut Settings)) -> Result<(), ConfigError> {
-    update_toml(
-        &config_dir.join(SETTINGS_FILE),
-        &config_dir.join(TEMP_SETTINGS_FILE),
-        edit,
-    )
+    let path = config_dir.join(SETTINGS_FILE);
+    let temp = config_dir.join(TEMP_SETTINGS_FILE);
+    update_toml(&path, &temp, edit).inspect(|()| resolved_cache::invalidate())
 }
 
 #[cfg(test)]

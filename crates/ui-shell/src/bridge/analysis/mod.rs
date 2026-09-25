@@ -25,7 +25,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -82,57 +82,114 @@ fn analysis_draft() -> settings_model::analysis::AnalysisDraft {
     )
 }
 
+/// One `FfiAnalyzerRow` per `draft` row: joins its configuration to its
+/// live detection status against `root` (`analysis_core::status`'s PATH
+/// lookup, composer.json parse, and — on a WSL root — `ExecHost`'s
+/// `wsl.exe` probe, `process_exec::host::resolve_program`).
+///
+/// A free function, not a method, so it can run identically on the Qt
+/// thread (`analyzer_rows`, the settings page's always-fresh getter) or on
+/// a worker thread (`refresh_analyzer_status_async`, the status label's
+/// off-thread path) — the same split `AppSession`'s `install_*` methods use
+/// between "do it yourself" and "hand me the already-computed answer".
+fn build_analyzer_rows(
+    root: &Path,
+    draft: &settings_model::analysis::AnalysisDraft,
+    contributions: &[plugin_api::AnalyzerContribution],
+) -> Vec<ffi::FfiAnalyzerRow> {
+    draft
+        .rows()
+        .iter()
+        .map(|row| {
+            let candidates = contributions
+                .iter()
+                .find(|c| c.id == row.id)
+                .map(|c| c.program_candidates.clone())
+                .unwrap_or_default();
+            // Composer-package matching (which package name explains a
+            // tool that resolves to nothing): `analysis_core::php`'s
+            // id->package table (C2), covering the built-in php-tools
+            // analyzers. An id with no entry (a future non-PHP analyzer)
+            // passes an empty slice, same as the pre-C2 stub.
+            let packages: Vec<&str> = analysis_core::composer_package(&row.id)
+                .into_iter()
+                .collect();
+            let status = analysis_core::status(&candidates, root, &packages);
+            let status_kind = match status {
+                analysis_core::AnalyzerStatus::Detected { .. } => {
+                    ffi::FfiAnalyzerStatusKind::Detected
+                }
+                analysis_core::AnalyzerStatus::DeclaredNotInstalled { .. } => {
+                    ffi::FfiAnalyzerStatusKind::DeclaredNotInstalled
+                }
+                analysis_core::AnalyzerStatus::NotDetected => {
+                    ffi::FfiAnalyzerStatusKind::NotDetected
+                }
+            };
+            ffi::FfiAnalyzerRow {
+                id: QString::from(row.id.as_str()),
+                name: QString::from(row.name.as_str()),
+                enabled: row.enabled,
+                trigger_id: QString::from(row.trigger.id()),
+                trigger_label: QString::from(row.trigger.label()),
+                status_kind,
+                status_text: QString::from(status.describe(&row.name).as_str()),
+            }
+        })
+        .collect()
+}
+
 impl ffi::AnalysisService {
     /// One row per contributed analyzer: its configuration (enabled,
     /// trigger) and its live detection status against the open project.
-    /// The status bar and the Analysis settings page (B9) both read this
-    /// rather than keeping their own copies.
+    /// The Analysis settings page (B9) reads this — always a fresh
+    /// detection pass, so a plugin enabled/disabled or a tool installed
+    /// mid-session shows up without a restart. The status bar's label
+    /// reads `refreshAnalyzerStatusAsync`'s cached answer instead
+    /// (`analyzerStatusReady`), not this: opening the settings page is a
+    /// deliberate, occasional action, unlike every `projectOpened`.
     pub fn analyzer_rows(&self) -> Vec<ffi::FfiAnalyzerRow> {
         let Some(root) = current_project_root() else {
             return Vec::new();
         };
         let draft = analysis_draft();
         let contributions = contributed_analyzers();
-        draft
-            .rows()
-            .iter()
-            .map(|row| {
-                let candidates = contributions
-                    .iter()
-                    .find(|c| c.id == row.id)
-                    .map(|c| c.program_candidates.clone())
-                    .unwrap_or_default();
-                // Composer-package matching (which package name explains a
-                // tool that resolves to nothing): `analysis_core::php`'s
-                // id->package table (C2), covering the built-in php-tools
-                // analyzers. An id with no entry (a future non-PHP analyzer)
-                // passes an empty slice, same as the pre-C2 stub.
-                let packages: Vec<&str> = analysis_core::composer_package(&row.id)
-                    .into_iter()
-                    .collect();
-                let status = analysis_core::status(&candidates, &root, &packages);
-                let status_kind = match status {
-                    analysis_core::AnalyzerStatus::Detected { .. } => {
-                        ffi::FfiAnalyzerStatusKind::Detected
-                    }
-                    analysis_core::AnalyzerStatus::DeclaredNotInstalled { .. } => {
-                        ffi::FfiAnalyzerStatusKind::DeclaredNotInstalled
-                    }
-                    analysis_core::AnalyzerStatus::NotDetected => {
-                        ffi::FfiAnalyzerStatusKind::NotDetected
-                    }
-                };
-                ffi::FfiAnalyzerRow {
-                    id: QString::from(row.id.as_str()),
-                    name: QString::from(row.name.as_str()),
-                    enabled: row.enabled,
-                    trigger_id: QString::from(row.trigger.id()),
-                    trigger_label: QString::from(row.trigger.label()),
-                    status_kind,
-                    status_text: QString::from(status.describe(&row.name).as_str()),
+        build_analyzer_rows(&root, &draft, &contributions)
+    }
+
+    /// `analyzer_rows`'s answer, computed off the Qt thread and delivered
+    /// via `analyzerStatusReady` (fast-project-open-plan step 5).
+    ///
+    /// `analysis_core::status`'s program-candidate probe used to run
+    /// inline as part of the `projectOpened` slot chain; on a WSL project
+    /// root it spawns `wsl.exe` per candidate
+    /// (`process_exec::host::resolve_program`), which can freeze the Qt
+    /// thread for seconds. The result crosses back guarded by a stale-root
+    /// check — the same shape `ProjectTreeModel::start_watcher_async` uses
+    /// for its own off-thread result — so a project switched away from
+    /// while this was running never overwrites the new project's own
+    /// label.
+    pub fn refresh_analyzer_status_async(mut self: Pin<&mut Self>) {
+        let Some(root) = current_project_root() else {
+            return;
+        };
+        let contributions = contributed_analyzers();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            // The explicit-root, cache-backed reader (ADR-0037's
+            // `SearchModel::open_index` shape): `load_resolved_settings`
+            // reads the thread-local `shared_session`, sound only on the
+            // Qt thread.
+            let settings = crate::bridge::convert::load_resolved_settings_for(&root);
+            let draft = settings_model::analysis::AnalysisDraft::new(&settings, &contributions);
+            let rows = build_analyzer_rows(&root, &draft, &contributions);
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+                if current_project_root().as_deref() != Some(root.as_path()) {
+                    return;
                 }
-            })
-            .collect()
+                service.as_mut().analyzer_status_ready(rows);
+            });
+        });
     }
 
     /// Whether a project-wide run is currently in flight — the "Inspect

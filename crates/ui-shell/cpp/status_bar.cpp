@@ -1,6 +1,7 @@
 #include "status_bar.h"
 
 #include "dock_layout.h"
+#include "e2e_mark.h"
 #include "editor_tabs.h"
 #include "problems_panel.h"
 #include "theme.h"
@@ -15,6 +16,8 @@
 #include <QStatusBar>
 #include <QToolButton>
 #include <QTreeView>
+
+#include <memory>
 
 namespace ui_shell {
 
@@ -205,8 +208,18 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     // decision made in `cpp/` — see `FfiAnalyzerStatusKind`'s doc comment.
     auto *analysisLabel = new QLabel(statusBar);
     analysisLabel->setVisible(false);
-    const auto updateAnalysisLabel = [analysisLabel, analysisService]() {
-        const ::rust::Vec<FfiAnalyzerRow> rows = analysisService->analyzerRows();
+    // The last batch `AnalysisService::analyzerStatusReady` delivered —
+    // `analysisStarted`/`analysisFinished` (an "Inspect Project" run
+    // starting/stopping) re-render from this same snapshot rather than
+    // asking `analyzerRows()` again, since a run doesn't change which
+    // programs are installed. Populated only via `refreshAnalyzerStatusAsync`
+    // (fast-project-open-plan step 5): the detection pass it runs — a PATH
+    // lookup, a composer.json parse, and on a WSL root a `wsl.exe` probe —
+    // used to run inline on `projectOpened`, freezing the window for
+    // however long that took.
+    auto lastAnalyzerRows = std::make_shared<::rust::Vec<FfiAnalyzerRow>>();
+    const auto updateAnalysisLabel = [analysisLabel, analysisService, lastAnalyzerRows]() {
+        const ::rust::Vec<FfiAnalyzerRow> &rows = *lastAnalyzerRows;
         if (rows.empty()) {
             analysisLabel->setVisible(false);
             return;
@@ -242,7 +255,19 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
         analysisLabel->setVisible(true);
     };
     updateAnalysisLabel();
-    QObject::connect(treeModel, &ProjectTreeModel::projectOpened, statusBar, updateAnalysisLabel);
+    QObject::connect(analysisService, &AnalysisService::analyzerStatusReady, statusBar,
+                      [lastAnalyzerRows, updateAnalysisLabel](const ::rust::Vec<FfiAnalyzerRow> &rows) {
+                          *lastAnalyzerRows = rows;
+                          updateAnalysisLabel();
+                          // fast-project-open-plan step 5's own timing probe:
+                          // how long the off-thread program-resolution pass
+                          // (`refreshAnalyzerStatusAsync`) took to land, from
+                          // `projectOpened`.
+                          e2eMark(QStringLiteral("{\"ev\":\"analyzer_status_ready\",\"count\":%1}")
+                                    .arg(rows.size()));
+                      });
+    QObject::connect(treeModel, &ProjectTreeModel::projectOpened, statusBar,
+                      [analysisService]() { analysisService->refreshAnalyzerStatusAsync(); });
     QObject::connect(analysisService, &AnalysisService::analysisStarted, statusBar,
                       updateAnalysisLabel);
     QObject::connect(analysisService, &AnalysisService::analysisFinished, statusBar,

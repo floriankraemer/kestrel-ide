@@ -5630,10 +5630,19 @@ mod ffi {
         type AnalysisService = super::AnalysisServiceRust;
 
         /// Every contributed analyzer's configuration and live detection
-        /// status, for the settings page and the status bar.
+        /// status, for the Analysis settings page. The status bar's label
+        /// uses `refreshAnalyzerStatusAsync`/`analyzerStatusReady` instead
+        /// — see that pair's doc comment for why.
         #[qinvokable]
         #[cxx_name = "analyzerRows"]
         fn analyzer_rows(self: &AnalysisService) -> Vec<FfiAnalyzerRow>;
+
+        /// Same answer as `analyzerRows`, computed off the Qt thread and
+        /// delivered via `analyzerStatusReady` once ready (fire-and-forget,
+        /// like `ProjectTreeModel::openFolder`).
+        #[qinvokable]
+        #[cxx_name = "refreshAnalyzerStatusAsync"]
+        fn refresh_analyzer_status_async(self: Pin<&mut AnalysisService>);
 
         /// Whether "Inspect Project" is already running.
         #[qinvokable]
@@ -5686,6 +5695,14 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "diagnosticsChanged"]
         fn diagnostics_changed(self: Pin<&mut AnalysisService>);
+
+        /// `refreshAnalyzerStatusAsync`'s answer. Never fired for a project
+        /// that is no longer the open one by the time the worker finishes
+        /// — see that method's doc comment. `status_bar.cpp` connects this
+        /// (not `analyzerRows`) to its per-analyzer summary label.
+        #[qsignal]
+        #[cxx_name = "analyzerStatusReady"]
+        fn analyzer_status_ready(self: Pin<&mut AnalysisService>, rows: Vec<FfiAnalyzerRow>);
     }
 
     impl cxx_qt::Threading for AnalysisService {}

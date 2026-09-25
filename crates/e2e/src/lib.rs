@@ -229,6 +229,16 @@ impl Ide {
         read_events(&self.events_path)
     }
 
+    /// The app's stderr so far, as text — for a probe that greps a
+    /// diagnostic line rather than a structured marker (e.g.
+    /// `fast_project_open_timing.rs`'s settings-parse count). Empty if the
+    /// file isn't there yet or can't be read, the same tolerance
+    /// [`Ide::events`]'s own reader has for a marker file that doesn't exist
+    /// yet.
+    pub fn stderr(&self) -> String {
+        std::fs::read_to_string(&self.stderr_path).unwrap_or_default()
+    }
+
     /// A position in the marker stream. Taken *before* a gesture, so what
     /// follows can be asserted about without the app's startup marks — or a
     /// previous step's — answering the question by accident.

@@ -36,9 +36,7 @@ impl Default for ProjectTreeModelRust {
         // Seed the shared session's sort order from the persisted setting
         // before any tree gets built — `reopenLastProject`'s startup call
         // must land in the right order the first time, not flip after.
-        let descending = app_config::load(&app_core::resolve_config_dir())
-            .unwrap_or_default()
-            .project_tree_sort_descending;
+        let descending = crate::bridge::convert::load_settings().project_tree_sort_descending;
         if descending {
             session
                 .borrow_mut()
@@ -374,7 +372,7 @@ impl ffi::ProjectTreeModel {
     /// (`process_exec::host`'s doc comment on why), so this one read at the
     /// one place every project open passes through keeps it current.
     fn apply_remote_wsl_setting() {
-        let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+        let settings = crate::bridge::convert::load_settings();
         lsp_core::set_remote_wsl_enabled(settings.remote_wsl_or_default());
     }
 
@@ -545,6 +543,19 @@ impl ffi::ProjectTreeModel {
                     // `LanguageService::watchedFileChanged` — computed here,
                     // once, rather than in every listener.
                     let watched_kind = lsp_core::watched_files::FileChangeKind::from(kind) as i32;
+                    // An external edit of the project's own settings layer
+                    // (a `git checkout`, a hand edit, another IDE instance)
+                    // must not leave `app_config::resolved_cache` serving
+                    // what was resolved before it — the same staleness rule
+                    // the settings dialog's own save path keeps by calling
+                    // `app_config::project_settings::save`, which invalidates
+                    // it directly. This is the one edit path that bypasses
+                    // that function, so it invalidates here instead. Runs on
+                    // this watcher thread, not the Qt thread — the cache is
+                    // a plain `Mutex`, no hop needed.
+                    if changed_path == event_root.join(".ide").join("settings.toml") {
+                        app_config::resolved_cache::invalidate();
+                    }
                     let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
                         if routing.refresh_tree {
                             // The directory the changed path lives in, not

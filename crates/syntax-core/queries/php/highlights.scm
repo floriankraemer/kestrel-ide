@@ -25,6 +25,7 @@
 (class_declaration name: (name) @type)
 (interface_declaration name: (name) @type)
 (trait_declaration name: (name) @type)
+(enum_declaration name: (name) @type)
 (object_creation_expression (name) @type)
 
 (function_definition name: (name) @function)

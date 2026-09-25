@@ -15,6 +15,9 @@
 (class_declaration name: (name) @definition)
 (interface_declaration name: (name) @definition)
 (trait_declaration name: (name) @definition)
+(enum_declaration name: (name) @definition)
+(enum_case name: (name) @definition)
+(const_element (name) @definition)
 (function_definition name: (name) @definition)
 (method_declaration name: (name) @definition)
 (simple_parameter name: (variable_name) @definition)
@@ -24,6 +27,10 @@
 (function_call_expression function: (name) @reference)
 (member_call_expression name: (name) @reference)
 (scoped_call_expression name: (name) @reference)
+; `Foo::bar()`, `Foo::BAR`, `Suit::Hearts`: the class named in front of `::`
+; and the constant or case after it.
+(scoped_call_expression scope: (name) @reference)
+(class_constant_access_expression (name) @reference)
 (object_creation_expression (name) @reference)
 ; Type positions: `extends`/`implements` lists and the `(named_type (name))`
 ; wrapper around parameter, return, and property types. Without these a

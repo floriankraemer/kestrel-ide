@@ -89,8 +89,9 @@ const INDEX_DIR_NAME: &str = ".ide-index";
 /// changing: an existing index is then rebuilt instead of serving symbols
 /// the old extraction missed. 2: Java/C/C++ `type_identifier`, PHP type
 /// positions, Zig anchored variable names. 3: one symbol document per
-/// (file, name) instead of one per occurrence.
-const EXTRACTION_VERSION: u32 = 3;
+/// (file, name) instead of one per occurrence. 4: PHP enums, enum cases and
+/// constants as definitions, `Foo::` scopes as references.
+const EXTRACTION_VERSION: u32 = 4;
 const EXTRACTION_VERSION_FILE: &str = "extraction.version";
 
 /// Tantivy's own writer-lock file inside the index directory. Named here so

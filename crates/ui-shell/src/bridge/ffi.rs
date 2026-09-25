@@ -2127,53 +2127,69 @@ mod ffi {
         #[cxx_name = "toggleExcluded"]
         fn toggle_excluded(self: Pin<&mut ProjectTreeModel>, path: &QString) -> FfiResult;
 
-        /// The open project's current `excluded` entries (ADR-0064), for the
-        /// Project Scope settings page's list. Empty when no project is
-        /// open or the project overrides nothing.
+        /// Load the Project Scope settings page's draft fresh from disk.
+        /// Called once, the moment the page is actually built — see the
+        /// Rust side's own doc comment for the begin/edit/commit shape.
         #[qinvokable]
-        #[cxx_name = "excludedList"]
-        fn excluded_list(self: &ProjectTreeModel) -> QStringList;
+        #[cxx_name = "beginScopeEdit"]
+        fn begin_scope_edit(self: &ProjectTreeModel);
 
-        /// Add `relative_path` (an absolute folder-picker path or a path
-        /// already relative to the project root — `relative_to_root`
-        /// normalizes either) to `excluded`, then rescope if it changed the
-        /// scope. Refuses (`CODE_REFUSED`) an absolute path outside the
-        /// project or one that escapes the root
-        /// (`app_config::project_settings::add_excluded`).
+        /// The draft's current `excluded` entries, for the Project Scope
+        /// settings page's list. Empty before `beginScopeEdit` or if the
+        /// project overrides nothing.
         #[qinvokable]
-        #[cxx_name = "addExcluded"]
-        fn add_excluded(self: Pin<&mut ProjectTreeModel>, relative_path: &QString) -> FfiResult;
+        #[cxx_name = "excludedDraft"]
+        fn excluded_draft(self: &ProjectTreeModel) -> QStringList;
 
-        /// Remove `relative_path` from `excluded`, then rescope if it
-        /// changed the scope.
+        /// The draft's current `ignoredNames` list.
         #[qinvokable]
-        #[cxx_name = "removeExcluded"]
-        fn remove_excluded(self: Pin<&mut ProjectTreeModel>, relative_path: &QString) -> FfiResult;
+        #[cxx_name = "ignoredNamesDraft"]
+        fn ignored_names_draft(self: &ProjectTreeModel) -> QStringList;
 
-        /// The global `ignored_names` list (ADR-0064), for the Project Scope
-        /// settings page.
+        /// Validate and add `relative_path` (an absolute folder-picker path
+        /// or a path already relative to the project root —
+        /// `relative_to_root` normalizes either) to the draft's `excluded`
+        /// list. Nothing is written or rescoped yet — that is
+        /// `commitScopeEdit`'s job, on OK. Refuses (`CODE_REFUSED`) an
+        /// absolute path outside the project or one that escapes the root
+        /// (`app_config::project_settings::add_excluded`), surfaced
+        /// immediately rather than deferred to OK.
         #[qinvokable]
-        #[cxx_name = "ignoredNamesList"]
-        fn ignored_names_list(self: &ProjectTreeModel) -> QStringList;
+        #[cxx_name = "addExcludedDraft"]
+        fn add_excluded_draft(self: &ProjectTreeModel, relative_path: &QString) -> FfiResult;
 
-        /// Add `pattern` to the global `ignored_names` list, then rescope
-        /// the open project (if any) if it changed the scope.
+        /// Remove `relative_path` from the draft's `excluded` list.
         #[qinvokable]
-        #[cxx_name = "addIgnoredName"]
-        fn add_ignored_name(self: Pin<&mut ProjectTreeModel>, pattern: &QString) -> FfiResult;
+        #[cxx_name = "removeExcludedDraft"]
+        fn remove_excluded_draft(self: &ProjectTreeModel, relative_path: &QString) -> FfiResult;
 
-        /// Remove `pattern` from the global `ignored_names` list, then
-        /// rescope the open project (if any) if it changed the scope.
+        /// Add `pattern` to the draft's `ignoredNames` list.
         #[qinvokable]
-        #[cxx_name = "removeIgnoredName"]
-        fn remove_ignored_name(self: Pin<&mut ProjectTreeModel>, pattern: &QString) -> FfiResult;
+        #[cxx_name = "addIgnoredNameDraft"]
+        fn add_ignored_name_draft(self: &ProjectTreeModel, pattern: &QString) -> FfiResult;
 
-        /// Reset the global `ignored_names` list to
-        /// `app_config::DEFAULT_IGNORED_NAMES`, then rescope the open
-        /// project (if any) if it changed the scope.
+        /// Remove `pattern` from the draft's `ignoredNames` list.
         #[qinvokable]
-        #[cxx_name = "resetIgnoredNames"]
-        fn reset_ignored_names(self: Pin<&mut ProjectTreeModel>) -> FfiResult;
+        #[cxx_name = "removeIgnoredNameDraft"]
+        fn remove_ignored_name_draft(self: &ProjectTreeModel, pattern: &QString) -> FfiResult;
+
+        /// Reset the draft's `ignoredNames` list to
+        /// `app_config::DEFAULT_IGNORED_NAMES`. The confirmation prompt is
+        /// the view's job; this call is unconditional once it happens.
+        #[qinvokable]
+        #[cxx_name = "resetIgnoredNamesDraft"]
+        fn reset_ignored_names_draft(self: &ProjectTreeModel);
+
+        /// Write the draft's `excluded` (project layer, skipped when no
+        /// project is open) and `ignoredNames` (global layer) for real, and
+        /// rescope once for the whole page's changes together if the
+        /// resolved scope actually differs from before either write.
+        /// Called from the Settings dialog's OK handler; Cancel never calls
+        /// this, which is what makes it a no-op — the draft is discarded,
+        /// unwritten, the next `beginScopeEdit`.
+        #[qinvokable]
+        #[cxx_name = "commitScopeEdit"]
+        fn commit_scope_edit(self: Pin<&mut ProjectTreeModel>) -> FfiResult;
 
         /// `index_core::content_rule_limits()`'s byte cap, in MiB, for the
         /// Project Scope settings page's note label. Computed from the

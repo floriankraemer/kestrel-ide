@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Kestrel
+GenericName=IDE
+Comment=Kestrel IDE
+Exec=ide
+Icon=ide
+Categories=Development;IDE;
+Terminal=false

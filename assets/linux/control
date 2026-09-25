@@ -1,0 +1,9 @@
+Package: ide
+Version: @VERSION@
+Section: devel
+Priority: optional
+Architecture: amd64
+Maintainer: Florian Kraemer <floriankraemer@users.noreply.github.com>
+Homepage: https://github.com/floriankraemer/kestrel-ide
+Description: Kestrel IDE
+ Kestrel is a cross-platform IDE built with Rust and Qt6.

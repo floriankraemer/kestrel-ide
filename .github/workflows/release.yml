@@ -255,9 +255,14 @@ jobs:
       # build.rs (which defaults to looking for `qmake6` on PATH) needs the
       # QMAKE env var pointed at it explicitly. PATH also gets Qt's bin/ so
       # `macdeployqt` is reachable in the bundling step below.
-      - name: Install Qt6
+      #
+      # unixodbc: db-driver-odbc links libodbc (same as unixodbc-dev on
+      # Linux, docker/Dockerfile) — without it `cargo build` fails at the
+      # final link step with "library 'odbc' not found" (confirmed on this
+      # job's first real run; everything else compiled clean).
+      - name: Install Qt6 + unixODBC
         run: |
-          brew install qt
+          brew install qt unixodbc
           echo "QMAKE=$(brew --prefix qt)/bin/qmake" >> "$GITHUB_ENV"
           echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
 

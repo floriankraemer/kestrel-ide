@@ -2127,6 +2127,67 @@ mod ffi {
         #[cxx_name = "toggleExcluded"]
         fn toggle_excluded(self: Pin<&mut ProjectTreeModel>, path: &QString) -> FfiResult;
 
+        /// The open project's current `excluded` entries (ADR-0064), for the
+        /// Project Scope settings page's list. Empty when no project is
+        /// open or the project overrides nothing.
+        #[qinvokable]
+        #[cxx_name = "excludedList"]
+        fn excluded_list(self: &ProjectTreeModel) -> QStringList;
+
+        /// Add `relative_path` (an absolute folder-picker path or a path
+        /// already relative to the project root — `relative_to_root`
+        /// normalizes either) to `excluded`, then rescope if it changed the
+        /// scope. Refuses (`CODE_REFUSED`) an absolute path outside the
+        /// project or one that escapes the root
+        /// (`app_config::project_settings::add_excluded`).
+        #[qinvokable]
+        #[cxx_name = "addExcluded"]
+        fn add_excluded(self: Pin<&mut ProjectTreeModel>, relative_path: &QString) -> FfiResult;
+
+        /// Remove `relative_path` from `excluded`, then rescope if it
+        /// changed the scope.
+        #[qinvokable]
+        #[cxx_name = "removeExcluded"]
+        fn remove_excluded(self: Pin<&mut ProjectTreeModel>, relative_path: &QString) -> FfiResult;
+
+        /// The global `ignored_names` list (ADR-0064), for the Project Scope
+        /// settings page.
+        #[qinvokable]
+        #[cxx_name = "ignoredNamesList"]
+        fn ignored_names_list(self: &ProjectTreeModel) -> QStringList;
+
+        /// Add `pattern` to the global `ignored_names` list, then rescope
+        /// the open project (if any) if it changed the scope.
+        #[qinvokable]
+        #[cxx_name = "addIgnoredName"]
+        fn add_ignored_name(self: Pin<&mut ProjectTreeModel>, pattern: &QString) -> FfiResult;
+
+        /// Remove `pattern` from the global `ignored_names` list, then
+        /// rescope the open project (if any) if it changed the scope.
+        #[qinvokable]
+        #[cxx_name = "removeIgnoredName"]
+        fn remove_ignored_name(self: Pin<&mut ProjectTreeModel>, pattern: &QString) -> FfiResult;
+
+        /// Reset the global `ignored_names` list to
+        /// `app_config::DEFAULT_IGNORED_NAMES`, then rescope the open
+        /// project (if any) if it changed the scope.
+        #[qinvokable]
+        #[cxx_name = "resetIgnoredNames"]
+        fn reset_ignored_names(self: Pin<&mut ProjectTreeModel>) -> FfiResult;
+
+        /// `index_core::content_rule_limits()`'s byte cap, in MiB, for the
+        /// Project Scope settings page's note label. Computed from the
+        /// index-core constant rather than a separate literal.
+        #[qinvokable]
+        #[cxx_name = "maxIndexedFileSizeMib"]
+        fn max_indexed_file_size_mib(self: &ProjectTreeModel) -> u32;
+
+        /// `index_core::content_rule_limits()`'s binary-sniff window, in
+        /// KiB, for the same note label.
+        #[qinvokable]
+        #[cxx_name = "binarySniffKib"]
+        fn binary_sniff_kib(self: &ProjectTreeModel) -> u32;
+
         /// Reopen the last-persisted project (US-1's "relaunch reopens the
         /// last project" criterion) and start its filesystem watcher.
         /// Fire-and-forget like `openFolder` (ADR-0037): the walk itself

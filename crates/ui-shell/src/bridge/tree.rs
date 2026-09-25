@@ -6,7 +6,9 @@ use std::rc::Rc;
 
 use app_core::{AppError, AppSession};
 use cxx_qt::Threading;
-use cxx_qt_lib::{QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
+use cxx_qt_lib::{
+    QByteArray, QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QStringList, QVariant,
+};
 use project_model::{DirDiffOp, ListedEntry, LoadState};
 
 use crate::bridge::convert::{push_recent_project, to_ffi_result};
@@ -1038,6 +1040,146 @@ impl ffi::ProjectTreeModel {
             .project_rescoped(QString::from(root.to_string_lossy().as_ref()));
     }
 
+    /// The open project's current `excluded` entries (ADR-0064), for the
+    /// Project Scope settings page. Empty when no project is open or the
+    /// project overrides nothing.
+    pub fn excluded_list(&self) -> QStringList {
+        crate::bridge::convert::load_project_settings()
+            .excluded
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| QString::from(entry.as_str()))
+            .collect()
+    }
+
+    /// Add `relative_path` to `excluded` and rescope on success. Accepts
+    /// either an absolute path under the project root (as the settings
+    /// page's folder picker hands over) or one already relative — both
+    /// normalize the same way through `relative_to_root`.
+    pub fn add_excluded(mut self: Pin<&mut Self>, relative_path: &QString) -> FfiResult {
+        let path = std::path::PathBuf::from(relative_path.to_string());
+        let relative = self
+            .relative_to_root(&path)
+            .unwrap_or_else(|| relative_path.to_string());
+        self.as_mut().commit_scope_change(|settings| {
+            app_config::project_settings::add_excluded(settings, &relative)
+                .map(|_changed| ())
+                .map_err(|message| {
+                    crate::bridge::errors::failure(crate::bridge::errors::CODE_REFUSED, message)
+                })
+        })
+    }
+
+    /// Remove `relative_path` from `excluded` and rescope on success.
+    pub fn remove_excluded(mut self: Pin<&mut Self>, relative_path: &QString) -> FfiResult {
+        let path = std::path::PathBuf::from(relative_path.to_string());
+        let relative = self
+            .relative_to_root(&path)
+            .unwrap_or_else(|| relative_path.to_string());
+        self.as_mut().commit_scope_change(|settings| {
+            app_config::project_settings::remove_excluded(settings, &relative);
+            Ok(())
+        })
+    }
+
+    /// The global `ignored_names` list, for the Project Scope settings page.
+    pub fn ignored_names_list(&self) -> QStringList {
+        crate::bridge::convert::load_settings()
+            .ignored_names
+            .iter()
+            .map(|entry| QString::from(entry.as_str()))
+            .collect()
+    }
+
+    /// Add `pattern` to the global `ignored_names` list and rescope the open
+    /// project (if any) on success.
+    pub fn add_ignored_name(mut self: Pin<&mut Self>, pattern: &QString) -> FfiResult {
+        let pattern = pattern.to_string();
+        self.as_mut().commit_global_scope_change(|settings| {
+            app_config::ignored_names::add_ignored_name(settings, &pattern);
+        })
+    }
+
+    /// Remove `pattern` from the global `ignored_names` list and rescope the
+    /// open project (if any) on success.
+    pub fn remove_ignored_name(mut self: Pin<&mut Self>, pattern: &QString) -> FfiResult {
+        let pattern = pattern.to_string();
+        self.as_mut().commit_global_scope_change(|settings| {
+            app_config::ignored_names::remove_ignored_name(settings, &pattern);
+        })
+    }
+
+    /// Reset the global `ignored_names` list to
+    /// `app_config::DEFAULT_IGNORED_NAMES` and rescope the open project (if
+    /// any) on success.
+    pub fn reset_ignored_names(mut self: Pin<&mut Self>) -> FfiResult {
+        self.as_mut()
+            .commit_global_scope_change(app_config::ignored_names::reset_ignored_names_to_defaults)
+    }
+
+    /// [`index_core::excludes::content_rule_limits`]'s byte cap, in MiB, for the
+    /// Project Scope settings page's note label.
+    pub fn max_indexed_file_size_mib(&self) -> u32 {
+        let (max_bytes, _) = index_core::excludes::content_rule_limits();
+        // ADR-0064's note states this as a whole number of MiB; if the
+        // constant ever stops dividing evenly, this getter's return type
+        // needs to change to carry the remainder too.
+        (max_bytes / (1024 * 1024)) as u32
+    }
+
+    /// [`index_core::excludes::content_rule_limits`]'s binary-sniff window, in KiB,
+    /// for the same note label.
+    pub fn binary_sniff_kib(&self) -> u32 {
+        let (_, sniff_bytes) = index_core::excludes::content_rule_limits();
+        (sniff_bytes / 1024) as u32
+    }
+
+    /// Edit the project's `ProjectSettings` through `commit_to_project`,
+    /// then rescope if the edit changed the resolved scope. `edit` returns
+    /// `Err(FfiResult)` to refuse before anything is written (validation),
+    /// or `Ok(())` to proceed — the shared before/after `scope_changed` +
+    /// `rescope()` dance `toggle_excluded` established, generalised for
+    /// every excluded-list mutation the settings page makes.
+    fn commit_scope_change(
+        mut self: Pin<&mut Self>,
+        edit: impl FnOnce(&mut app_config::project_settings::ProjectSettings) -> Result<(), FfiResult>,
+    ) -> FfiResult {
+        let mut refusal = None;
+        let before = crate::bridge::convert::load_resolved_settings();
+        let result = crate::bridge::settings::commit_to_project(|settings| {
+            if let Err(err) = edit(settings) {
+                refusal = Some(err);
+            }
+        });
+        if let Some(refusal) = refusal {
+            return refusal;
+        }
+        if result.code == crate::bridge::errors::CODE_OK {
+            let after = crate::bridge::convert::load_resolved_settings();
+            if app_config::resolved_cache::scope_changed(&before, &after) {
+                self.as_mut().rescope();
+            }
+        }
+        result
+    }
+
+    /// Same shape as [`commit_scope_change`](Self::commit_scope_change) for
+    /// the global `ignored_names` list, whose edit never refuses.
+    fn commit_global_scope_change(
+        mut self: Pin<&mut Self>,
+        edit: impl FnOnce(&mut app_config::Settings),
+    ) -> FfiResult {
+        let before = crate::bridge::convert::load_resolved_settings();
+        let result = commit_to_global(edit);
+        if result.code == crate::bridge::errors::CODE_OK {
+            let after = crate::bridge::convert::load_resolved_settings();
+            if app_config::resolved_cache::scope_changed(&before, &after) {
+                self.as_mut().rescope();
+            }
+        }
+        result
+    }
+
     /// (Re)build the cached scope for `root` from the currently resolved
     /// settings. Safe to call on the Qt thread — `load_resolved_settings`
     /// goes through `resolved_cache`, so this is one file-stamp check, not
@@ -1081,6 +1223,23 @@ impl ffi::ProjectTreeModel {
                 message: QString::from(err.to_string().as_str()),
             },
         }
+    }
+}
+
+/// Write one global-scoped change into `settings.toml` — load, edit, save,
+/// the same three-step dance every plain global write in `settings.rs`
+/// repeats individually. `crate::bridge::settings::commit_to_project`'s
+/// sibling for the layer that has no project to be missing; kept here
+/// (its only caller) rather than in `settings.rs`, which is already at its
+/// size baseline.
+fn commit_to_global(edit: impl FnOnce(&mut app_config::Settings)) -> FfiResult {
+    let config_dir = app_core::resolve_config_dir();
+    match app_config::update(&config_dir, edit) {
+        Ok(()) => FfiResult::default(),
+        Err(error) => crate::bridge::errors::failure(
+            crate::bridge::errors::CODE_SETTINGS_IO,
+            error.to_string(),
+        ),
     }
 }
 

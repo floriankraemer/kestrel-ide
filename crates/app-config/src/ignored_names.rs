@@ -113,7 +113,11 @@ mod tests {
         assert!(add_ignored_name(&mut settings, "*.bak"));
         assert!(!add_ignored_name(&mut settings, "*.bak"));
         assert_eq!(
-            settings.ignored_names.iter().filter(|n| *n == "*.bak").count(),
+            settings
+                .ignored_names
+                .iter()
+                .filter(|n| *n == "*.bak")
+                .count(),
             1
         );
     }

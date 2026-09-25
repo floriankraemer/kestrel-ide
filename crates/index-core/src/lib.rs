@@ -137,14 +137,6 @@ const MAX_INDEXED_BYTES: u64 = 2 * 1024 * 1024;
 /// How much of a file is sniffed for a NUL byte before deciding it is binary.
 const BINARY_SNIFF_BYTES: usize = 8 * 1024;
 
-/// The two content-rule numbers [`MAX_INDEXED_BYTES`] and
-/// [`BINARY_SNIFF_BYTES`] state on the Project Scope settings page (ADR-0064)
-/// — exposed as values only, so a consumer such as `ui-shell` never
-/// duplicates the constants as separate literals.
-pub fn content_rule_limits() -> (u64, usize) {
-    (MAX_INDEXED_BYTES, BINARY_SNIFF_BYTES)
-}
-
 /// How long to keep retrying the writer lock before reporting it busy. An
 /// instance that has just been closed still holds the lock for as long as
 /// its `IndexWriter` needs to flush and drop, so "reopen the project right

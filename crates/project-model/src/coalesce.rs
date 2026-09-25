@@ -1,33 +1,32 @@
-//! Collapsing a burst of filesystem-watcher events into a bounded number of
-//! tree rebuilds.
+//! Collapsing a burst of filesystem-watcher events *for one directory* into
+//! a bounded number of `list_dir` + diff refreshes.
 //!
-//! A rebuild re-walks the whole project from disk ([`crate::rebuild_tree_sorted`]),
-//! so its cost scales with the project and it is emphatically not something to
-//! run once per event: a `git checkout`, a `cargo build` or the initial
-//! watch-registration burst produce thousands of structural events in a few
-//! seconds, and every one of them asks the same question — "what does the tree
-//! look like now?" — whose answer only the last one needs.
-//!
-//! Running them concurrently is worse than wasteful, it is unsurvivable. Each
-//! in-flight rebuild holds a complete second copy of the tree while it builds,
-//! and the walk covers build output as well as source: on this repository's own
-//! checkout that is 424 000 entries and roughly 130 MB per rebuild. Two hundred
-//! of them at once is thirty gigabytes, which is exactly how the app came to be
-//! OOM-killed moments after opening its own repository.
+//! The lazy tree (`lib.rs`'s doc comment) only ever refreshes the one
+//! directory a watcher event's path falls under, so the coalescing this type
+//! does is per-directory too: `ui-shell` keys a `HashMap<PathBuf,
+//! RefreshCoalescer>` by the directory being refreshed, one instance per
+//! directory that currently has activity, rather than the one global
+//! instance the old whole-tree rebuild used. A `git checkout` touching a
+//! thousand files across a hundred open directories now costs at most one
+//! `list_dir` per directory, not one re-walk of the entire project repeated
+//! a thousand times — the failure mode (200+ concurrent full-tree walks,
+//! measured at 30 GB resident and an OOM kill on this repository's own
+//! checkout) this type was written to prevent in the first place, before the
+//! tree became lazy.
 //!
 //! This is the same judgement the VCS status relay records for its own
 //! watcher-driven refresh (ADR-0031 §7): one request in flight, one folded
 //! behind it, and a request that arrives during a walk is answered by re-running
 //! once at the end rather than by starting a second walk beside it.
 
-/// Decides, for one project, whether a watcher event should start a tree
-/// rebuild now, be folded into the rebuild already running, or trigger one
-/// final catch-up rebuild once that one lands.
+/// Decides, for one directory, whether a watcher event should start a
+/// refresh now, be folded into the refresh already running, or trigger one
+/// final catch-up refresh once that one lands.
 ///
 /// Holds no tree and does no I/O — it is the rule, not the work, so it lives
 /// here rather than in the adapter that owns the worker thread.
 #[derive(Debug, Default)]
-pub struct RebuildCoalescer {
+pub struct RefreshCoalescer {
     /// A rebuild has been started and has not reported back yet.
     running: bool,
     /// At least one event arrived while that rebuild was walking, so its
@@ -35,7 +34,7 @@ pub struct RebuildCoalescer {
     queued: bool,
 }
 
-impl RebuildCoalescer {
+impl RefreshCoalescer {
     pub fn new() -> Self {
         Self::default()
     }
@@ -77,13 +76,13 @@ mod tests {
 
     #[test]
     fn the_first_event_starts_a_rebuild() {
-        let mut coalescer = RebuildCoalescer::new();
+        let mut coalescer = RefreshCoalescer::new();
         assert!(coalescer.request());
     }
 
     #[test]
     fn a_burst_during_a_walk_starts_no_second_rebuild() {
-        let mut coalescer = RebuildCoalescer::new();
+        let mut coalescer = RefreshCoalescer::new();
         assert!(coalescer.request());
         for _ in 0..1000 {
             assert!(
@@ -95,7 +94,7 @@ mod tests {
 
     #[test]
     fn a_burst_is_answered_by_exactly_one_catch_up_rebuild() {
-        let mut coalescer = RebuildCoalescer::new();
+        let mut coalescer = RefreshCoalescer::new();
         coalescer.request();
         for _ in 0..1000 {
             coalescer.request();
@@ -109,14 +108,14 @@ mod tests {
 
     #[test]
     fn a_quiet_rebuild_asks_for_no_follow_up() {
-        let mut coalescer = RebuildCoalescer::new();
+        let mut coalescer = RefreshCoalescer::new();
         coalescer.request();
         assert!(!coalescer.finished());
     }
 
     #[test]
     fn the_next_event_after_a_quiet_rebuild_starts_a_fresh_one() {
-        let mut coalescer = RebuildCoalescer::new();
+        let mut coalescer = RefreshCoalescer::new();
         coalescer.request();
         coalescer.finished();
         assert!(
@@ -130,7 +129,7 @@ mod tests {
     /// time, and must cost two walks in total rather than a thousand.
     #[test]
     fn a_thousand_events_cost_two_walks_and_never_overlap() {
-        let mut coalescer = RebuildCoalescer::new();
+        let mut coalescer = RefreshCoalescer::new();
         let mut in_flight = 0;
         let mut walks = 0;
 

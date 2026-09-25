@@ -42,6 +42,8 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <memory>
+
 namespace ui_shell {
 
 namespace {
@@ -191,11 +193,13 @@ QIcon locateIcon(const QColor &tint)
 // components: `Roles::Path` is always a node's full path, so the child
 // whose path is a directory prefix of the target is the next step down —
 // no separator-splitting or root-relative math needed.
-void revealPathInTree(QTreeView *treeView, const QString &path)
+//
+// Only ever called once every ancestor of `path` is already loaded
+// (`revealPathInTree` below calls `ensurePathLoaded` first) — a lazily
+// loaded but not-yet-expanded directory would otherwise have zero rows here
+// and the descent would falsely report "not found".
+void descendToPath(QTreeView *treeView, const QString &path)
 {
-    if (path.isEmpty()) {
-        return;
-    }
     QAbstractItemModel *model = treeView->model();
     QModelIndex parent;
     QModelIndex found;
@@ -234,6 +238,34 @@ void revealPathInTree(QTreeView *treeView, const QString &path)
     treeView->scrollTo(found);
 }
 
+// Loads whichever ancestors of `path` the lazy tree hasn't read from disk
+// yet (off the Qt thread, one `list_dir` per missing level — Rust's
+// `ensurePathLoaded`), then descends to it once `pathReady` confirms every
+// ancestor is in place. A one-shot connection keyed on path equality: two
+// overlapping calls (a fast double-click of "Locate in Project Tree") each
+// get their own connection, and neither leaves a dangling one behind for a
+// `path` that never arrives (a `pathReady` for a different, later call
+// simply doesn't match and is ignored).
+void revealPathInTree(QTreeView *treeView, ProjectTreeModel *treeModel, const QString &path)
+{
+    if (path.isEmpty()) {
+        return;
+    }
+    auto connection = std::make_shared<QMetaObject::Connection>();
+    *connection = QObject::connect(
+      treeModel,
+      &ProjectTreeModel::pathReady,
+      treeView,
+      [treeView, path, connection](const QString &readyPath) {
+          if (readyPath != path) {
+              return;
+          }
+          QObject::disconnect(*connection);
+          descendToPath(treeView, path);
+      });
+    treeModel->ensurePathLoaded(path);
+}
+
 } // namespace
 
 ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
@@ -247,6 +279,12 @@ ProjectTreeDock createProjectTreeDock(ads::CDockManager *dockManager,
     // follows the platform's own scaling settings.
     const int iconPx = smallIconPx(treeView);
     treeView->setIconSize(QSize(iconPx, iconPx));
+    // Every row is one line of text plus one (fixed-size) icon — never a
+    // multi-line label — so Qt doesn't need to ask the delegate for each
+    // row's own height. This also avoids a size-hint query against a
+    // not-yet-loaded lazy row, which would otherwise run once per row on
+    // every `fetchMore`/incremental refresh rather than being computed once.
+    treeView->setUniformRowHeights(true);
 
     // Between model and view, never inside the model: the icon key is the
     // Rust side's answer, and turning it into a decoration is the only part
@@ -327,8 +365,8 @@ void wireProjectTree(QTreeView *treeView,
                      const ProjectTreeActions &actions)
 {
     QObject::connect(locateAction, &QAction::triggered, treeView,
-                     [treeView, currentEditorPath = actions.currentEditorPath]() {
-                         revealPathInTree(treeView, currentEditorPath());
+                     [treeView, treeModel, currentEditorPath = actions.currentEditorPath]() {
+                         revealPathInTree(treeView, treeModel, currentEditorPath());
                      });
 
     wireRowMarkers(treeView);

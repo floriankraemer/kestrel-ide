@@ -1,18 +1,27 @@
-//! Single-root project state: directory tree snapshot, "Open Folder" logic,
-//! and last-opened-project persistence.
+//! Single-root project state: a lazily-loaded directory tree snapshot,
+//! "Open Folder" logic, and last-opened-project persistence.
 //!
 //! No Qt dependency — pure Rust,
 //! unit-testable. `ui-shell` wraps [`DirectoryTree`] in a
 //! `QAbstractItemModel` later; this crate only owns the tree data.
+//!
+//! The tree is lazy, the same model IntelliJ and VS Code use (plan:
+//! `docs/architecture/fast-project-open-plan.md`, "Step 1"): opening a
+//! project reads only the root's direct children ([`DirectoryTree::open_root`]),
+//! and a directory's own children are read from disk only when something
+//! asks for them ([`DirectoryTree::attach_children`]), typically the Qt
+//! model's `fetchMore` on first expand. A directory's [`LoadState`] tracks
+//! which state it's in.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-mod rebuild;
+mod coalesce;
 mod watcher;
-pub use rebuild::RebuildCoalescer;
+pub use coalesce::RefreshCoalescer;
 pub use watcher::{route_change, ChangeRouting, EventKind, ProjectWatcher};
 
 /// File name used to persist the last-opened project path, per the plan's
@@ -59,24 +68,174 @@ impl fmt::Display for OpenFolderError {
 
 impl std::error::Error for OpenFolderError {}
 
-/// One entry in the project's directory tree — a plain Rust arena node,
-/// no Qt awareness. `ui-shell` wraps this arena in a `QAbstractItemModel`.
+/// Directory the project search index is written into (owned by
+/// `index-core`, mirrored here only so the sidebar tree can skip it).
+const INDEX_DIR_NAME: &str = ".ide-index";
+
+/// Direction the project tree's children are sorted in. Folders always sort
+/// above files in either direction — only the name comparison within each
+/// group flips.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortOrder {
+    #[default]
+    Ascending,
+    Descending,
+}
+
+/// Compare two directory entries the way every file manager and JetBrains'
+/// own tree do: folders before files in both directions, then by name —
+/// case-insensitively via `key`, with `name` (the raw, cased string) as a
+/// tie-break so casing differences stay deterministic. `order` flips only
+/// the name comparison; folders stay on top either way.
+///
+/// Free function, not a method, so both [`list_dir`] (reading fresh names
+/// off disk) and [`DirectoryTree::resort_loaded`] (re-ordering an
+/// already-built subtree in memory, no disk access) can share it without
+/// either owning the other's data shape.
+fn compare_entries(
+    a_is_dir: bool,
+    a_key: &str,
+    a_name: &str,
+    b_is_dir: bool,
+    b_key: &str,
+    b_name: &str,
+    order: SortOrder,
+) -> std::cmp::Ordering {
+    b_is_dir.cmp(&a_is_dir).then_with(|| {
+        let name_order = a_key.cmp(b_key).then_with(|| a_name.cmp(b_name));
+        match order {
+            SortOrder::Ascending => name_order,
+            SortOrder::Descending => name_order.reverse(),
+        }
+    })
+}
+
+/// One entry a [`list_dir`] read off disk: not yet a tree node (no arena id,
+/// no parent, no children) — [`DirectoryTree::attach_children`]/
+/// [`DirectoryTree::refresh_dir`] turn a batch of these into one.
+pub struct ListedEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    /// `name.to_lowercase()`, computed once here rather than per pairwise
+    /// comparison later — the plan's explicit ask, since the old
+    /// `compare_nodes` called `.to_lowercase()` inside the comparator itself.
+    sort_key: String,
+}
+
+/// One `read_dir` of `path`, skipping the project's own search-index
+/// directory, sorted `order`'s way (folders first, then name — see
+/// [`compare_entries`]). The pure, disk-touching half of loading one
+/// directory's worth of the lazy tree — safe to run on a worker thread,
+/// same reasoning as the old `open_folder_sorted`/`rebuild_tree_sorted`
+/// this replaces.
+///
+/// An entry whose `file_type()` can't be determined is skipped rather than
+/// failing the whole listing — one bad entry must not hide the rest of an
+/// otherwise-readable directory.
+pub fn list_dir(path: &Path, order: SortOrder) -> io::Result<Vec<ListedEntry>> {
+    let mut entries: Vec<ListedEntry> = fs::read_dir(path)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == INDEX_DIR_NAME {
+                return None;
+            }
+            let is_dir = entry.file_type().ok()?.is_dir();
+            let sort_key = name.to_lowercase();
+            Some(ListedEntry {
+                path: entry.path(),
+                name,
+                is_dir,
+                sort_key,
+            })
+        })
+        .collect();
+    entries.sort_by(|a, b| {
+        compare_entries(
+            a.is_dir,
+            &a.sort_key,
+            &a.name,
+            b.is_dir,
+            &b.sort_key,
+            &b.name,
+            order,
+        )
+    });
+    Ok(entries)
+}
+
+/// Whether a directory's children have been read from disk yet. Files carry
+/// this too (always [`LoadState::Loaded`], since a file never has children
+/// to fetch) purely so [`TreeNode`] needs one field, not an
+/// `Option<LoadState>` that's meaningless for half of what it's on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LoadState {
+    #[default]
+    Unloaded,
+    /// A worker is already listing this directory; guards against a second
+    /// `fetchMore` (Qt's own view prefetching can fire twice in a row)
+    /// spawning a second worker for the same directory.
+    Loading,
+    Loaded,
+}
+
+/// One entry in the project's directory tree — a plain Rust arena node, no
+/// Qt awareness. `ui-shell` wraps this arena in a `QAbstractItemModel`.
 pub struct TreeNode {
     pub path: PathBuf,
     pub name: String,
     pub is_dir: bool,
     pub parent: Option<usize>,
     pub children: Vec<usize>,
+    /// This node's row within `parent`'s `children` — kept correct on every
+    /// insert/remove so `QAbstractItemModel::parent()`'s "what row is my
+    /// parent in *its* parent" question is an O(1) read, not a linear scan
+    /// of the grandparent's children.
+    pub index_in_parent: usize,
+    /// Meaningless for a file (see [`LoadState`]'s doc comment) but always
+    /// [`LoadState::Loaded`] for one, so callers never have to special-case
+    /// "is this a file" before reading it.
+    load_state: LoadState,
+    sort_key: String,
 }
 
-/// An in-memory snapshot of the project root's directory tree, built by
-/// walking the root once. Node 0 is always the root.
-/// Directory the project search index is written into (owned by
-/// `index-core`, mirrored here only so the sidebar tree can skip it).
-const INDEX_DIR_NAME: &str = ".ide-index";
+/// A stable removed-slot id, and the diff a [`DirectoryTree::refresh_dir`]
+/// hands back so a `QAbstractItemModel` can apply it as ranged
+/// `beginRemoveRows`/`beginInsertRows` pairs rather than a full reset.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirDiffOp {
+    /// Rows `first..=last` (inclusive, Qt's own convention) were removed
+    /// from the directory's children, in the order they used to appear.
+    Remove { first: usize, last: usize },
+    /// Rows `first..=last` (inclusive) are new, already in their sorted
+    /// position.
+    Insert { first: usize, last: usize },
+}
 
+/// The ranged remove/insert operations [`DirectoryTree::refresh_dir`]
+/// computed for one directory. Applied in order: every `Remove` describes a
+/// position in the *old* row numbering, every `Insert` a position in the
+/// row numbering that results after every `Remove` before it has already
+/// been applied — exactly the sequencing `beginRemoveRows`/
+/// `beginInsertRows` expect from repeated calls against the same parent.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DirDiff {
+    pub ops: Vec<DirDiffOp>,
+}
+
+/// An in-memory snapshot of the project root's directory tree — an arena
+/// loaded lazily, one directory at a time. Node 0 is always the root.
 pub struct DirectoryTree {
     nodes: Vec<TreeNode>,
+    /// Ids of tombstoned nodes, reusable for a genuinely new insert — never
+    /// proactively; see [`DirectoryTree::alloc_node`]'s doc comment for why
+    /// reuse is safe exactly when it happens.
+    free: Vec<usize>,
+    /// O(1) path → id lookup, maintained on every insert/tombstone, so a
+    /// caller (the Qt model's `fetchMore`/watcher-refresh/`ensurePathLoaded`
+    /// chain) never has to scan the arena to find "the node for this path".
+    path_to_id: HashMap<PathBuf, usize>,
 }
 
 impl DirectoryTree {
@@ -92,102 +251,295 @@ impl DirectoryTree {
         &self.nodes[id].children
     }
 
-    pub fn len(&self) -> usize {
-        self.nodes.len()
+    pub fn is_dir(&self, id: usize) -> bool {
+        self.nodes[id].is_dir
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.nodes.is_empty()
+    pub fn load_state(&self, id: usize) -> LoadState {
+        self.nodes[id].load_state
     }
 
-    /// Walk `root` recursively and build the arena, with each directory's
-    /// children sorted folders-first, then case-insensitively by name
-    /// ascending — matching every file manager's default and JetBrains'
-    /// default. `apply_sort_order` re-sorts an already-built tree without
-    /// touching the filesystem, for the sort-direction toggle.
-    fn build(root: &Path) -> io::Result<Self> {
-        let mut nodes = vec![TreeNode {
-            path: root.to_path_buf(),
-            name: root
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| root.to_string_lossy().into_owned()),
-            is_dir: true,
-            parent: None,
-            children: Vec::new(),
-        }];
-        Self::walk(&mut nodes, 0, root)?;
-        let mut tree = Self { nodes };
-        tree.apply_sort_order(SortOrder::Ascending);
-        Ok(tree)
+    /// This node's row within its own parent — see the field's doc comment
+    /// on [`TreeNode::index_in_parent`].
+    pub fn index_in_parent(&self, id: usize) -> usize {
+        self.nodes[id].index_in_parent
     }
 
-    fn walk(nodes: &mut Vec<TreeNode>, parent_id: usize, dir: &Path) -> io::Result<()> {
-        let entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    /// O(1) lookup of the arena id for an absolute path, or `None` if that
+    /// path isn't currently in the (partially loaded) tree at all — either
+    /// it doesn't exist, or an ancestor of it hasn't been expanded yet.
+    pub fn node_by_path(&self, path: &Path) -> Option<usize> {
+        self.path_to_id.get(path).copied()
+    }
 
-        for entry in entries {
-            let path = entry.path();
-            let is_dir = entry.file_type()?.is_dir();
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if is_dir && name == INDEX_DIR_NAME {
-                // The search index the IDE writes into the project is an
-                // implementation detail, not part of the user's project.
-                continue;
+    /// Mark `id` as a worker having started listing it — a no-op unless it
+    /// is currently [`LoadState::Unloaded`], so a caller can call this
+    /// unconditionally right before spawning a worker without checking the
+    /// state itself first.
+    pub fn set_loading(&mut self, id: usize) {
+        if self.nodes[id].load_state == LoadState::Unloaded {
+            self.nodes[id].load_state = LoadState::Loading;
+        }
+    }
+
+    /// The first ancestor of `target` (walking from the root down) that
+    /// isn't [`LoadState::Loaded`] yet, or `None` if every ancestor down to
+    /// (but not including) `target` itself is already loaded — meaning
+    /// `target`'s immediate parent's children are all in the arena, so
+    /// `target` itself is either present or genuinely doesn't exist.
+    /// `target` need not itself resolve to a node (a file is never
+    /// "loaded" in this sense).
+    ///
+    /// Used by `ui-shell`'s `ensurePathLoaded`: one call per still-unloaded
+    /// level, walked from the top, rather than trying to resolve the whole
+    /// chain in one shot.
+    pub fn first_unloaded_ancestor(&self, target: &Path) -> Option<PathBuf> {
+        let root_path = self.nodes[self.root_id()].path.clone();
+        if target == root_path {
+            return None;
+        }
+        if self.load_state(self.root_id()) != LoadState::Loaded {
+            return Some(root_path);
+        }
+        let relative = target.strip_prefix(&root_path).ok()?;
+        let mut current = root_path;
+        for component in relative.components() {
+            current = current.join(component.as_os_str());
+            if current == target {
+                return None;
             }
+            let Some(id) = self.node_by_path(&current) else {
+                // Nothing more can be loaded toward a path that doesn't
+                // exist on disk (or under a directory we haven't listed) —
+                // the caller stops the chain here.
+                return None;
+            };
+            if self.load_state(id) != LoadState::Loaded {
+                return Some(current);
+            }
+        }
+        None
+    }
 
-            let id = nodes.len();
-            nodes.push(TreeNode {
-                path: path.clone(),
+    /// Build the arena with just the root node, its children read from one
+    /// `read_dir` call. Never fails: an unreadable root simply becomes a
+    /// Loaded-empty node (the "one unreadable directory must never fail the
+    /// whole open" fix — the old recursive `walk` propagated this failure
+    /// with `?`) — `open_folder_sorted`'s own existence/readability checks
+    /// already cover the common "path is wrong" cases with a proper error
+    /// before this ever runs.
+    pub fn open_root(root: &Path, order: SortOrder) -> Self {
+        let name = root
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| root.to_string_lossy().into_owned());
+        let sort_key = name.to_lowercase();
+        let mut tree = Self {
+            nodes: vec![TreeNode {
+                path: root.to_path_buf(),
                 name,
-                is_dir,
-                parent: Some(parent_id),
+                sort_key,
+                is_dir: true,
+                parent: None,
                 children: Vec::new(),
-            });
-            nodes[parent_id].children.push(id);
-
-            if is_dir {
-                Self::walk(nodes, id, &path)?;
-            }
-        }
-        Ok(())
+                index_in_parent: 0,
+                load_state: LoadState::Unloaded,
+            }],
+            free: Vec::new(),
+            path_to_id: HashMap::new(),
+        };
+        tree.path_to_id.insert(root.to_path_buf(), 0);
+        let entries = list_dir(root, order).unwrap_or_default();
+        tree.attach_children(tree.root_id(), entries);
+        tree
     }
 
-    /// Re-order every node's children in place: folders before files in
-    /// both directions, then by name — case-insensitively, with the raw
-    /// name as a tie-break so casing differences stay deterministic.
-    /// `order` flips the name comparison only; folders stay on top either
-    /// way, matching a file manager's "Sort by name, descending".
-    pub fn apply_sort_order(&mut self, order: SortOrder) {
+    /// Insert `entries` as `dir_id`'s children, mark it
+    /// [`LoadState::Loaded`], and return the newly inserted ids in the same
+    /// (already-sorted, per [`list_dir`]) order — the Qt model uses the
+    /// count to call `beginInsertRows(parent, 0, count - 1)`/
+    /// `endInsertRows` (a directory always has zero children before its
+    /// first load, so the new rows always start at 0).
+    pub fn attach_children(&mut self, dir_id: usize, entries: Vec<ListedEntry>) -> Vec<usize> {
+        let ids: Vec<usize> = entries
+            .into_iter()
+            .map(|entry| self.alloc_node(entry, dir_id))
+            .collect();
+        for (row, &id) in ids.iter().enumerate() {
+            self.nodes[id].index_in_parent = row;
+        }
+        self.nodes[dir_id].children = ids.clone();
+        self.nodes[dir_id].load_state = LoadState::Loaded;
+        ids
+    }
+
+    /// Diff a fresh listing of `dir_id` (already [`LoadState::Loaded`])
+    /// against what it currently holds: a child matched by name+kind keeps
+    /// its id and whatever subtree it already loaded; one no longer present
+    /// is tombstoned (its own subtree recursively tombstoned with it, since
+    /// it becomes unreachable either way); a genuinely new name gets a
+    /// fresh (or reused-from-`free`) id. A rename is one remove and one
+    /// insert — detecting "same inode, different name" is deliberately out
+    /// of scope (the plan calls this out explicitly).
+    ///
+    /// Returns the ranged operations a `QAbstractItemModel` applies as
+    /// `beginRemoveRows`/`beginInsertRows` pairs — see [`DirDiff`]'s own
+    /// doc comment for the exact sequencing contract.
+    pub fn refresh_dir(&mut self, dir_id: usize, entries: Vec<ListedEntry>) -> DirDiff {
+        let old_children = self.nodes[dir_id].children.clone();
+        let mut by_name: HashMap<(String, bool), usize> = old_children
+            .iter()
+            .map(|&id| {
+                let node = &self.nodes[id];
+                ((node.name.clone(), node.is_dir), id)
+            })
+            .collect();
+
+        let mut new_children = Vec::with_capacity(entries.len());
+        for entry in entries {
+            match by_name.remove(&(entry.name.clone(), entry.is_dir)) {
+                Some(id) => new_children.push(id),
+                None => new_children.push(self.alloc_node(entry, dir_id)),
+            }
+        }
+
+        // Whatever's left in `by_name` (everything matched above was
+        // removed from it) is gone from disk.
+        for &id in by_name.values() {
+            self.tombstone_subtree(id);
+        }
+
+        for (row, &id) in new_children.iter().enumerate() {
+            self.nodes[id].index_in_parent = row;
+        }
+        self.nodes[dir_id].children = new_children.clone();
+
+        row_diff(&old_children, &new_children)
+    }
+
+    /// Re-order every currently-[`LoadState::Loaded`] directory's children
+    /// in place for the sort-direction toggle — no filesystem access, since
+    /// each node's [`TreeNode::sort_key`] was already computed when it was
+    /// listed. An [`LoadState::Unloaded`] directory needs nothing done now:
+    /// whenever it does get listed, [`list_dir`] is given the new `order`
+    /// and sorts accordingly.
+    pub fn resort_loaded(&mut self, order: SortOrder) {
         for id in 0..self.nodes.len() {
-            let mut children = std::mem::take(&mut self.nodes[id].children);
-            children.sort_by(|&a, &b| Self::compare_nodes(&self.nodes[a], &self.nodes[b], order));
-            self.nodes[id].children = children;
+            if self.nodes[id].is_dir && self.nodes[id].load_state == LoadState::Loaded {
+                let mut children = std::mem::take(&mut self.nodes[id].children);
+                children.sort_by(|&a, &b| compare_ids(&self.nodes, a, b, order));
+                for (row, &child_id) in children.iter().enumerate() {
+                    self.nodes[child_id].index_in_parent = row;
+                }
+                self.nodes[id].children = children;
+            }
         }
     }
 
-    fn compare_nodes(a: &TreeNode, b: &TreeNode, order: SortOrder) -> std::cmp::Ordering {
-        b.is_dir.cmp(&a.is_dir).then_with(|| {
-            let name_order = a
-                .name
-                .to_lowercase()
-                .cmp(&b.name.to_lowercase())
-                .then_with(|| a.name.cmp(&b.name));
-            match order {
-                SortOrder::Ascending => name_order,
-                SortOrder::Descending => name_order.reverse(),
+    /// Allocate a node for `entry` under `parent_id`, reusing a tombstoned
+    /// slot if one is free rather than always growing the arena. Safe to
+    /// reuse a slot immediately: it is only ever pushed onto `free` by
+    /// [`Self::tombstone_subtree`], which callers only reach *after* the
+    /// corresponding `beginRemoveRows`/`endRemoveRows` pair has already run
+    /// against the Qt model — by the time a new insert can observe the
+    /// reused id, Qt itself has already been told the old row (and its
+    /// persistent indexes) are gone.
+    fn alloc_node(&mut self, entry: ListedEntry, parent_id: usize) -> usize {
+        let node = TreeNode {
+            path: entry.path.clone(),
+            name: entry.name,
+            sort_key: entry.sort_key,
+            is_dir: entry.is_dir,
+            parent: Some(parent_id),
+            children: Vec::new(),
+            index_in_parent: 0,
+            load_state: LoadState::Unloaded,
+        };
+        let id = match self.free.pop() {
+            Some(id) => {
+                self.nodes[id] = node;
+                id
             }
-        })
+            None => {
+                let id = self.nodes.len();
+                self.nodes.push(node);
+                id
+            }
+        };
+        self.path_to_id.insert(entry.path, id);
+        id
+    }
+
+    /// Recursively remove `id` and everything under it: drop its path from
+    /// the lookup table and push its slot onto the free list. The subtree
+    /// is tombstoned rather than merely detached because, once its parent
+    /// no longer lists it, nothing else can reach it — leaving it "alive"
+    /// would just be an unreachable-but-not-freed leak, and its ids would
+    /// never become available for a genuinely new insert.
+    fn tombstone_subtree(&mut self, id: usize) {
+        let children = std::mem::take(&mut self.nodes[id].children);
+        for child_id in children {
+            self.tombstone_subtree(child_id);
+        }
+        self.path_to_id.remove(&self.nodes[id].path);
+        self.free.push(id);
     }
 }
 
-/// Direction the project tree's children are sorted in. Folders always sort
-/// above files in either direction — only the name comparison within each
-/// group flips.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SortOrder {
-    #[default]
-    Ascending,
-    Descending,
+/// [`DirectoryTree::resort_loaded`]'s comparator, as a free function over
+/// the raw node slice rather than a `&self` method: it runs while a
+/// `children` vector has already been taken out of the node it belongs to
+/// (`std::mem::take`), so borrowing `self` immutably for the comparison
+/// while a *different* field is mutated afterward needs no split-borrow
+/// gymnastics this way.
+fn compare_ids(nodes: &[TreeNode], a: usize, b: usize, order: SortOrder) -> std::cmp::Ordering {
+    let (na, nb) = (&nodes[a], &nodes[b]);
+    compare_entries(
+        na.is_dir,
+        &na.sort_key,
+        &na.name,
+        nb.is_dir,
+        &nb.sort_key,
+        &nb.name,
+        order,
+    )
+}
+
+/// Diff two ordered id lists (a directory's children before and after a
+/// refresh) into the smallest prefix/suffix-trimmed remove+insert pair:
+/// trim the common leading run and the common trailing run (ids are stable
+/// across a refresh for anything that survived, so `==` is a legitimate
+/// identity check here), and treat whatever's left in the middle as "the
+/// old middle went away, the new middle arrived". This isn't a minimal
+/// diff for a change scattered across many non-adjacent rows, but it is
+/// always correct, and a plain directory listing changing by one or two
+/// entries — by far the common case — collapses to exactly one remove and
+/// one insert.
+fn row_diff(old: &[usize], new: &[usize]) -> DirDiff {
+    let mut start = 0;
+    while start < old.len() && start < new.len() && old[start] == new[start] {
+        start += 1;
+    }
+    let mut old_end = old.len();
+    let mut new_end = new.len();
+    while old_end > start && new_end > start && old[old_end - 1] == new[new_end - 1] {
+        old_end -= 1;
+        new_end -= 1;
+    }
+    let mut ops = Vec::with_capacity(2);
+    if old_end > start {
+        ops.push(DirDiffOp::Remove {
+            first: start,
+            last: old_end - 1,
+        });
+    }
+    if new_end > start {
+        ops.push(DirDiffOp::Insert {
+            first: start,
+            last: new_end - 1,
+        });
+    }
+    DirDiff { ops }
 }
 
 /// A successfully opened project: its root and the directory tree snapshot
@@ -268,9 +620,13 @@ pub fn delete_path(path: &Path) -> Result<(), FileOpError> {
 }
 
 /// Validate `path` exists, is a directory, and is readable, then build the
-/// tree snapshot. Returns an error without touching any caller state —
-/// callers decide whether/when to replace their current project.
-pub fn open_folder(path: impl AsRef<Path>) -> Result<Project, OpenFolderError> {
+/// tree snapshot (root level only — see [`DirectoryTree::open_root`]).
+/// Returns an error without touching any caller state — callers decide
+/// whether/when to replace their current project.
+pub fn open_folder_sorted(
+    path: impl AsRef<Path>,
+    order: SortOrder,
+) -> Result<Project, OpenFolderError> {
     let path = path.as_ref();
 
     let metadata = fs::metadata(path).map_err(|_| OpenFolderError::NotFound(path.to_path_buf()))?;
@@ -279,8 +635,7 @@ pub fn open_folder(path: impl AsRef<Path>) -> Result<Project, OpenFolderError> {
     }
     fs::read_dir(path).map_err(|e| OpenFolderError::NotReadable(path.to_path_buf(), e))?;
 
-    let tree = DirectoryTree::build(path)
-        .map_err(|e| OpenFolderError::NotReadable(path.to_path_buf(), e))?;
+    let tree = DirectoryTree::open_root(path, order);
 
     Ok(Project {
         root: ProjectRoot {
@@ -290,28 +645,44 @@ pub fn open_folder(path: impl AsRef<Path>) -> Result<Project, OpenFolderError> {
     })
 }
 
-/// [`open_folder`], with the tree sorted the caller's way. The pure,
-/// `AppSession`-free piece of "open folder" — no thread-local, no Qt
-/// dependency — so it is safe to run on a worker thread rather than the Qt
-/// main thread (ADR-0037).
-pub fn open_folder_sorted(
-    path: impl AsRef<Path>,
-    order: SortOrder,
-) -> Result<Project, OpenFolderError> {
-    let mut project = open_folder(path)?;
-    project.tree.apply_sort_order(order);
-    Ok(project)
+/// [`open_folder_sorted`] with the default (ascending) order — most tests'
+/// entry point, and every call site that doesn't itself track a sort
+/// direction.
+pub fn open_folder(path: impl AsRef<Path>) -> Result<Project, OpenFolderError> {
+    open_folder_sorted(path, SortOrder::Ascending)
 }
 
-/// Re-walk `root` from disk and sort — the pure piece of a tree rebuild
-/// (e.g. after a filesystem-watcher event), safe to run off the Qt thread
-/// for the same reason [`open_folder_sorted`] is. Skips the existence/
-/// readability checks `open_folder` does, since `root` is by construction
-/// an already-open project's root.
-pub fn rebuild_tree_sorted(root: &Path, order: SortOrder) -> io::Result<DirectoryTree> {
-    let mut tree = DirectoryTree::build(root)?;
-    tree.apply_sort_order(order);
-    Ok(tree)
+/// Every file and folder currently reachable under `root`, gitignore-aware,
+/// skipping the project's own search index — for a caller that needs the
+/// *whole* project tree flattened (MCP's `list_project_tree`, the AI
+/// agent's own tool) rather than whatever the lazy on-screen arena happens
+/// to have loaded so far. Runs its own fresh walk rather than reading
+/// [`DirectoryTree`] precisely because that arena is partial by design; safe
+/// to call from any thread (a plain `ignore::WalkBuilder` walk, no shared
+/// state), which is what lets both consumers run it on their own
+/// already-off-the-Qt-thread worker.
+pub fn walk_all_entries(root: &Path) -> Vec<(PathBuf, bool)> {
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        // A `.gitignore` should apply even in a project that isn't (yet) a
+        // git repository itself — `require_git` defaults to `true`, which
+        // would otherwise silently stop honoring it the moment there's no
+        // `.git` directory to find.
+        .require_git(false)
+        .filter_entry(|entry| entry.file_name() != INDEX_DIR_NAME);
+    builder
+        .build()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path() != root)
+        .map(|entry| {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            (entry.into_path(), is_dir)
+        })
+        .collect()
 }
 
 /// Persist `project_path` as the last-opened project: one plain-text line
@@ -361,9 +732,9 @@ pub struct ProjectSession {
     /// `ProjectTreeModel::start_watcher_async` (`ui-shell`) — so this field
     /// only ever receives an already-built watcher.
     watcher: Option<ProjectWatcher>,
-    /// Persists across "Open Folder" and tree rebuilds, so a mutation or a
-    /// watcher-triggered refresh doesn't silently reset the user's chosen
-    /// direction back to ascending.
+    /// Persists across "Open Folder" and directory listings, so a mutation
+    /// or a watcher-triggered refresh doesn't silently reset the user's
+    /// chosen direction back to ascending.
     sort_order: SortOrder,
 }
 
@@ -376,13 +747,13 @@ impl ProjectSession {
         self.sort_order
     }
 
-    /// Change the sort direction and re-order the open tree in place, if
-    /// any — no filesystem walk, since the arena already has everything
-    /// `apply_sort_order` needs.
+    /// Change the sort direction and re-order every already-loaded
+    /// directory in place — no filesystem access; see
+    /// [`DirectoryTree::resort_loaded`].
     pub fn set_sort_order(&mut self, order: SortOrder) {
         self.sort_order = order;
         if let Some(project) = self.current.as_mut() {
-            project.tree.apply_sort_order(order);
+            project.tree.resort_loaded(order);
         }
     }
 
@@ -418,7 +789,7 @@ impl ProjectSession {
     /// just-installed one any more than the walk that built it did (plan
     /// step 4). The old watcher goes out here rather than when the new
     /// one finishes registering: until then it would keep routing the old
-    /// project's events into full re-walks of the new one.
+    /// project's events into refreshes of the new one's directories.
     pub fn install_project(
         &mut self,
         project: Project,
@@ -433,9 +804,8 @@ impl ProjectSession {
     /// thread and only the result is handed back here.
     ///
     /// `root` is the root the watcher was started for; it must still match
-    /// the currently open project's root, exactly the guard
-    /// [`Self::install_tree`] applies for a rebuilt tree. A mismatch means
-    /// a different project was opened while registration was in flight, so
+    /// the currently open project's root. A mismatch means a different
+    /// project was opened while registration was still running, so
     /// `watcher` is handed back in `Err` for the caller to drop instead of
     /// installing a watcher for a project that is no longer open. On
     /// success, the watcher it replaces (if any) comes back in `Ok` for the
@@ -453,36 +823,62 @@ impl ProjectSession {
         }
     }
 
-    /// Swap in an already re-walked tree for the still-current project, e.g.
-    /// after a filesystem-watcher rebuild ran off the Qt thread (ADR-0037).
-    /// `root` must match the currently open project's root; a mismatch means
-    /// the project changed while the rebuild was in flight, so the stale
-    /// result is dropped instead of applied. Returns whether it was applied.
-    pub fn install_tree(&mut self, root: &Path, tree: DirectoryTree) -> bool {
-        match self.current.as_mut() {
-            Some(project) if project.root.path() == root => {
-                project.tree = tree;
-                true
+    /// Mark a directory as having a listing worker already in flight for
+    /// it — a no-op if `root` no longer names the open project (the guard
+    /// every other "apply an off-thread result" method here shares).
+    pub fn mark_dir_loading(&mut self, root: &Path, dir_id: usize) {
+        if let Some(project) = self.current.as_mut() {
+            if project.root.path() == root {
+                project.tree.set_loading(dir_id);
             }
-            _ => false,
         }
     }
 
-    /// Re-snapshot the current project's tree from disk — a full rebuild,
-    /// not incremental diffing, which is a legitimate MVP-scope choice since
-    /// there's no filesystem watcher yet driving fine-grained updates
-    /// Callers use this after a create/rename/delete mutation
-    /// (US-2b). No-op if no project is open.
-    pub fn rebuild_tree(&mut self) -> io::Result<()> {
-        let Some(project) = self.current.as_ref() else {
-            return Ok(());
-        };
-        let root_path = project.root.path().to_path_buf();
-        let tree = rebuild_tree_sorted(&root_path, self.sort_order)?;
-        // `current` cannot have changed between the two lines above (no
-        // yield point in synchronous code), so this always applies.
-        self.current.as_mut().expect("checked Some above").tree = tree;
-        Ok(())
+    /// Insert an off-thread [`list_dir`] result as `dir_path`'s children —
+    /// the swap-in half of the Qt model's `fetchMore`. `dir_path` (not a
+    /// captured arena id) is resolved fresh here, since an id captured
+    /// before the listing ran could, in principle, have been recycled by an
+    /// unrelated tombstone/reuse while the worker was away; a path lookup
+    /// can't be stale that way. Returns the newly inserted ids (for
+    /// `beginInsertRows`), or `None` if `root` no longer names the open
+    /// project or `dir_path` is no longer a node in it (e.g. removed by a
+    /// watcher-driven refresh that landed first).
+    pub fn attach_dir_children(
+        &mut self,
+        root: &Path,
+        dir_path: &Path,
+        entries: Vec<ListedEntry>,
+    ) -> Option<Vec<usize>> {
+        let project = self.current.as_mut()?;
+        if project.root.path() != root {
+            return None;
+        }
+        let dir_id = project.tree.node_by_path(dir_path)?;
+        Some(project.tree.attach_children(dir_id, entries))
+    }
+
+    /// Diff an off-thread [`list_dir`] result against `dir_path`'s current
+    /// children — the swap-in half of a watcher-driven or mutation-driven
+    /// incremental refresh. Same stale-safety reasoning as
+    /// [`Self::attach_dir_children`]: resolved fresh by path, not a
+    /// captured id. `None` under the same conditions, plus when `dir_path`
+    /// isn't currently [`LoadState::Loaded`] (nothing shown there to
+    /// refresh).
+    pub fn refresh_dir(
+        &mut self,
+        root: &Path,
+        dir_path: &Path,
+        entries: Vec<ListedEntry>,
+    ) -> Option<DirDiff> {
+        let project = self.current.as_mut()?;
+        if project.root.path() != root {
+            return None;
+        }
+        let dir_id = project.tree.node_by_path(dir_path)?;
+        if project.tree.load_state(dir_id) != LoadState::Loaded {
+            return None;
+        }
+        Some(project.tree.refresh_dir(dir_id, entries))
     }
 
     /// Reopen the last-persisted project, if any. Returns `Ok(true)` if a
@@ -501,499 +897,4 @@ impl ProjectSession {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_fixture_tree(root: &Path) {
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::create_dir_all(root.join("empty_dir")).unwrap();
-        fs::write(root.join("README.md"), "hello").unwrap();
-        fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
-        fs::write(root.join("src/lib.rs"), "").unwrap();
-    }
-
-    #[test]
-    fn tree_building_reflects_fixture_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-
-        let project = open_folder(dir.path()).unwrap();
-        let tree = &project.tree;
-
-        let root_id = tree.root_id();
-        let root_children: Vec<&str> = tree
-            .children(root_id)
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert_eq!(root_children, vec!["empty_dir", "src", "README.md"]);
-
-        let src_id = tree
-            .children(root_id)
-            .iter()
-            .find(|&&id| tree.node(id).name == "src")
-            .copied()
-            .unwrap();
-        assert!(tree.node(src_id).is_dir);
-        let src_children: Vec<&str> = tree
-            .children(src_id)
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert_eq!(src_children, vec!["lib.rs", "main.rs"]);
-
-        let empty_id = tree
-            .children(root_id)
-            .iter()
-            .find(|&&id| tree.node(id).name == "empty_dir")
-            .copied()
-            .unwrap();
-        assert!(tree.children(empty_id).is_empty());
-    }
-
-    #[test]
-    fn folders_stay_above_files_and_names_sort_case_insensitively() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir_all(dir.path().join("zebra_dir")).unwrap();
-        fs::write(dir.path().join("apple.txt"), "").unwrap();
-        fs::write(dir.path().join("Banana.txt"), "").unwrap();
-        fs::write(dir.path().join("Cargo.toml"), "").unwrap();
-
-        let project = open_folder(dir.path()).unwrap();
-        let tree = &project.tree;
-        let names: Vec<&str> = tree
-            .children(tree.root_id())
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert_eq!(
-            names,
-            vec!["zebra_dir", "apple.txt", "Banana.txt", "Cargo.toml"]
-        );
-    }
-
-    #[test]
-    fn descending_reverses_names_within_each_group_but_keeps_folders_on_top() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-
-        let mut project = open_folder(dir.path()).unwrap();
-        project.tree.apply_sort_order(SortOrder::Descending);
-        let names: Vec<&str> = project
-            .tree
-            .children(project.tree.root_id())
-            .iter()
-            .map(|&id| project.tree.node(id).name.as_str())
-            .collect();
-        assert_eq!(names, vec!["src", "empty_dir", "README.md"]);
-    }
-
-    #[test]
-    fn set_sort_order_reorders_the_open_tree_without_touching_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-        let mut session = ProjectSession::new();
-        session.open_folder(dir.path(), config_dir.path()).unwrap();
-        assert_eq!(session.sort_order(), SortOrder::Ascending);
-
-        session.set_sort_order(SortOrder::Descending);
-        assert_eq!(session.sort_order(), SortOrder::Descending);
-        let tree = &session.current().unwrap().tree;
-        let names: Vec<&str> = tree
-            .children(tree.root_id())
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert_eq!(names, vec!["src", "empty_dir", "README.md"]);
-
-        // rebuild_tree() re-walks the filesystem (a create/rename/delete
-        // mutation) and must keep the chosen direction, not silently reset
-        // it back to ascending.
-        fs::write(dir.path().join("zzz.txt"), "").unwrap();
-        session.rebuild_tree().unwrap();
-        let tree = &session.current().unwrap().tree;
-        let names: Vec<&str> = tree
-            .children(tree.root_id())
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert_eq!(names, vec!["src", "empty_dir", "zzz.txt", "README.md"]);
-    }
-
-    #[test]
-    fn open_folder_sorted_applies_the_requested_order() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-
-        let project = open_folder_sorted(dir.path(), SortOrder::Descending).unwrap();
-        let tree = &project.tree;
-        let names: Vec<&str> = tree
-            .children(tree.root_id())
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        // Folders still lead either way; only the name order within each
-        // group flips.
-        assert_eq!(names, vec!["src", "empty_dir", "README.md"]);
-    }
-
-    #[test]
-    fn rebuild_tree_sorted_reflects_disk_changes() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        fs::write(dir.path().join("zzz.txt"), "").unwrap();
-
-        let tree = rebuild_tree_sorted(dir.path(), SortOrder::Ascending).unwrap();
-        let names: Vec<&str> = tree
-            .children(tree.root_id())
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert_eq!(names, vec!["empty_dir", "src", "README.md", "zzz.txt"]);
-    }
-
-    /// `install_project`/`install_tree` are the swap-in half of an
-    /// off-thread open/rebuild (ADR-0037): the walk already happened
-    /// elsewhere, only installing the result into the session is left.
-    #[test]
-    fn install_project_replaces_the_current_project() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        let project = open_folder_sorted(dir.path(), SortOrder::Ascending).unwrap();
-
-        let mut session = ProjectSession::new();
-        assert!(session.current().is_none());
-        let (replaced, replaced_watcher) = session.install_project(project);
-        assert!(replaced.is_none());
-        assert!(replaced_watcher.is_none());
-        assert_eq!(session.current().unwrap().root.path(), dir.path());
-    }
-
-    #[test]
-    fn install_project_hands_back_the_project_it_replaced() {
-        let first_dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(first_dir.path());
-        let second_dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(second_dir.path());
-
-        let mut session = ProjectSession::new();
-        session
-            .install_project(open_folder_sorted(first_dir.path(), SortOrder::Ascending).unwrap());
-        let (replaced, _) = session
-            .install_project(open_folder_sorted(second_dir.path(), SortOrder::Ascending).unwrap());
-
-        assert_eq!(replaced.unwrap().root.path(), first_dir.path());
-        assert_eq!(session.current().unwrap().root.path(), second_dir.path());
-    }
-
-    #[test]
-    fn install_project_hands_back_the_previous_watcher() {
-        let first_dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(first_dir.path());
-        let second_dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(second_dir.path());
-
-        let mut session = ProjectSession::new();
-        session
-            .install_project(open_folder_sorted(first_dir.path(), SortOrder::Ascending).unwrap());
-        let watcher = ProjectWatcher::start(first_dir.path(), false, |_, _| {}).unwrap();
-        assert!(session.install_watcher(first_dir.path(), watcher).is_ok());
-
-        let (_, replaced_watcher) = session
-            .install_project(open_folder_sorted(second_dir.path(), SortOrder::Ascending).unwrap());
-
-        assert!(replaced_watcher.is_some());
-    }
-
-    #[test]
-    fn install_watcher_is_rejected_when_no_project_is_open() {
-        let dir = tempfile::tempdir().unwrap();
-        let watcher = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
-
-        let mut session = ProjectSession::new();
-        assert!(session.install_watcher(dir.path(), watcher).is_err());
-    }
-
-    #[test]
-    fn install_watcher_is_rejected_when_the_root_no_longer_matches() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-        let mut session = ProjectSession::new();
-        session.open_folder(dir.path(), config_dir.path()).unwrap();
-
-        let other_dir = tempfile::tempdir().unwrap();
-        let watcher = ProjectWatcher::start(other_dir.path(), false, |_, _| {}).unwrap();
-
-        // A different project opened while registration was in flight — the
-        // watcher started for `other_dir` must not be installed for `dir`.
-        assert!(session.install_watcher(other_dir.path(), watcher).is_err());
-    }
-
-    #[test]
-    fn install_watcher_applies_and_returns_the_watcher_it_replaced() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-        let mut session = ProjectSession::new();
-        session.open_folder(dir.path(), config_dir.path()).unwrap();
-
-        let first = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
-        let Ok(none_replaced) = session.install_watcher(dir.path(), first) else {
-            panic!("root still matches");
-        };
-        assert!(none_replaced.is_none());
-
-        let second = ProjectWatcher::start(dir.path(), false, |_, _| {}).unwrap();
-        let Ok(replaced) = session.install_watcher(dir.path(), second) else {
-            panic!("root still matches");
-        };
-        assert!(replaced.is_some());
-    }
-
-    #[test]
-    fn install_tree_applies_only_when_the_root_still_matches() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-        let mut session = ProjectSession::new();
-        session.open_folder(dir.path(), config_dir.path()).unwrap();
-
-        fs::write(dir.path().join("new_file.txt"), "").unwrap();
-
-        // A stale rebuild for a root that is no longer open is dropped.
-        let other_dir = tempfile::tempdir().unwrap();
-        let rebuilt = rebuild_tree_sorted(dir.path(), session.sort_order()).unwrap();
-        assert!(!session.install_tree(other_dir.path(), rebuilt));
-        let tree = &session.current().unwrap().tree;
-        assert!(!tree
-            .children(tree.root_id())
-            .iter()
-            .any(|&id| tree.node(id).name == "new_file.txt"));
-
-        // A rebuild whose root still matches is applied.
-        let rebuilt = rebuild_tree_sorted(dir.path(), session.sort_order()).unwrap();
-        assert!(session.install_tree(dir.path(), rebuilt));
-        let tree = &session.current().unwrap().tree;
-        assert!(tree
-            .children(tree.root_id())
-            .iter()
-            .any(|&id| tree.node(id).name == "new_file.txt"));
-    }
-
-    #[test]
-    fn opening_nonexistent_path_errors_without_mutating_state() {
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-
-        let mut session = ProjectSession::new();
-        session.open_folder(dir.path(), config_dir.path()).unwrap();
-        assert_eq!(session.current().unwrap().root.path(), dir.path());
-
-        let missing = dir.path().join("does-not-exist");
-        let result = session.open_folder(&missing, config_dir.path());
-        assert!(matches!(result, Err(OpenFolderError::NotFound(_))));
-
-        // Current project must be unchanged after the failed open.
-        assert_eq!(session.current().unwrap().root.path(), dir.path());
-    }
-
-    #[test]
-    fn opening_unreadable_path_errors_without_mutating_state() {
-        use std::os::unix::fs::PermissionsExt;
-
-        // Permission bits don't block root, and our mandatory Docker build
-        // runs tests as root — skip rather than assert a false positive.
-        let is_root = std::process::Command::new("id")
-            .arg("-u")
-            .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "0")
-            .unwrap_or(false);
-        if is_root {
-            eprintln!(
-                "skipping opening_unreadable_path_errors_without_mutating_state: running as root"
-            );
-            return;
-        }
-
-        let dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-
-        let mut session = ProjectSession::new();
-        session.open_folder(dir.path(), config_dir.path()).unwrap();
-
-        let unreadable = tempfile::tempdir().unwrap();
-        let mut perms = fs::metadata(unreadable.path()).unwrap().permissions();
-        perms.set_mode(0o000);
-        fs::set_permissions(unreadable.path(), perms.clone()).unwrap();
-
-        let result = session.open_folder(unreadable.path(), config_dir.path());
-        assert!(matches!(result, Err(OpenFolderError::NotReadable(_, _))));
-        assert_eq!(session.current().unwrap().root.path(), dir.path());
-
-        // restore perms so tempdir cleanup can remove it
-        perms.set_mode(0o755);
-        fs::set_permissions(unreadable.path(), perms).unwrap();
-    }
-
-    #[test]
-    fn last_opened_project_persists_and_reopens() {
-        let project_dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(project_dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-
-        let mut session = ProjectSession::new();
-        session
-            .open_folder(project_dir.path(), config_dir.path())
-            .unwrap();
-
-        // Simulate a fresh app launch: a brand-new session, same config dir.
-        let mut reopened_session = ProjectSession::new();
-        let opened = reopened_session.reopen_last(config_dir.path()).unwrap();
-
-        assert!(opened);
-        assert_eq!(
-            reopened_session.current().unwrap().root.path(),
-            project_dir.path()
-        );
-    }
-
-    #[test]
-    fn reopen_last_with_nothing_persisted_is_a_noop() {
-        let config_dir = tempfile::tempdir().unwrap();
-        let mut session = ProjectSession::new();
-        let opened = session.reopen_last(config_dir.path()).unwrap();
-        assert!(!opened);
-        assert!(session.current().is_none());
-    }
-
-    #[test]
-    fn create_file_appears_on_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = create_file(dir.path(), "new.txt").unwrap();
-        assert!(path.is_file());
-        assert_eq!(path, dir.path().join("new.txt"));
-    }
-
-    #[test]
-    fn create_file_errors_when_name_taken() {
-        let dir = tempfile::tempdir().unwrap();
-        create_file(dir.path(), "dup.txt").unwrap();
-        let result = create_file(dir.path(), "dup.txt");
-        assert!(matches!(result, Err(FileOpError::AlreadyExists(_))));
-    }
-
-    #[test]
-    fn create_folder_appears_on_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = create_folder(dir.path(), "newdir").unwrap();
-        assert!(path.is_dir());
-    }
-
-    #[test]
-    fn create_folder_errors_when_name_taken() {
-        let dir = tempfile::tempdir().unwrap();
-        create_folder(dir.path(), "dup").unwrap();
-        let result = create_folder(dir.path(), "dup");
-        assert!(matches!(result, Err(FileOpError::AlreadyExists(_))));
-    }
-
-    #[test]
-    fn rename_path_moves_file_on_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = create_file(dir.path(), "old.txt").unwrap();
-        let new_path = rename_path(&path, "renamed.txt").unwrap();
-        assert!(!path.exists());
-        assert!(new_path.is_file());
-        assert_eq!(new_path, dir.path().join("renamed.txt"));
-    }
-
-    #[test]
-    fn rename_path_errors_when_target_name_taken() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = create_file(dir.path(), "a.txt").unwrap();
-        create_file(dir.path(), "b.txt").unwrap();
-        let result = rename_path(&path, "b.txt");
-        assert!(matches!(result, Err(FileOpError::AlreadyExists(_))));
-        assert!(path.exists(), "original must be untouched on error");
-    }
-
-    #[test]
-    fn rename_path_errors_when_source_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("ghost.txt");
-        let result = rename_path(&missing, "renamed.txt");
-        assert!(matches!(result, Err(FileOpError::NotFound(_))));
-    }
-
-    #[test]
-    fn delete_path_removes_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = create_file(dir.path(), "gone.txt").unwrap();
-        delete_path(&path).unwrap();
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn delete_path_removes_nonempty_folder_recursively() {
-        let dir = tempfile::tempdir().unwrap();
-        let folder = create_folder(dir.path(), "subdir").unwrap();
-        create_file(&folder, "inside.txt").unwrap();
-        fs::create_dir(folder.join("nested")).unwrap();
-        fs::write(folder.join("nested/deep.txt"), "x").unwrap();
-
-        delete_path(&folder).unwrap();
-        assert!(!folder.exists());
-    }
-
-    #[test]
-    fn delete_path_errors_when_missing() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("does-not-exist");
-        let result = delete_path(&missing);
-        assert!(matches!(result, Err(FileOpError::NotFound(_))));
-    }
-
-    #[test]
-    fn rebuild_tree_reflects_mutations() {
-        let project_dir = tempfile::tempdir().unwrap();
-        make_fixture_tree(project_dir.path());
-        let config_dir = tempfile::tempdir().unwrap();
-
-        let mut session = ProjectSession::new();
-        session
-            .open_folder(project_dir.path(), config_dir.path())
-            .unwrap();
-
-        create_file(project_dir.path(), "brand_new.txt").unwrap();
-        session.rebuild_tree().unwrap();
-
-        let tree = &session.current().unwrap().tree;
-        let root_children: Vec<&str> = tree
-            .children(tree.root_id())
-            .iter()
-            .map(|&id| tree.node(id).name.as_str())
-            .collect();
-        assert!(root_children.contains(&"brand_new.txt"));
-    }
-
-    #[test]
-    fn the_search_index_directory_is_hidden_from_the_tree() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::create_dir(dir.path().join(".ide-index")).unwrap();
-        fs::write(dir.path().join(".ide-index/meta.json"), "{}").unwrap();
-        fs::write(dir.path().join("visible.txt"), "x").unwrap();
-
-        let tree = DirectoryTree::build(dir.path()).unwrap();
-        let names: Vec<&str> = (0..tree.len())
-            .map(|i| tree.node(i).name.as_str())
-            .collect();
-
-        assert!(names.contains(&"visible.txt"));
-        assert!(!names.contains(&".ide-index"));
-        assert!(!names.contains(&"meta.json"));
-    }
-}
+mod tests;

@@ -41,6 +41,15 @@ pub struct ProjectTreeModelRust {
     /// until `begin_scope_edit` is called. See that method's own doc
     /// comment for the begin/edit/commit shape this follows.
     scope_draft: RefCell<Option<ScopeDraft>>,
+    /// The "Found N ignored but not excluded folders" notification's
+    /// current candidate list (ADR-0064, T6), computed off the Qt thread by
+    /// `find_scope_candidates_async` after every successful project open
+    /// and fetched by the view through `scopeCandidates()` once
+    /// `scopeCandidatesFound` fires — the same signal-then-fetch shape
+    /// `VcsService::statusChanged`/`changedFiles()` already uses, rather
+    /// than carrying the list on the signal itself. Empty before that
+    /// signal, or for a non-git project.
+    scope_candidates: RefCell<Vec<project_model::ScopeCandidate>>,
 }
 
 /// The Project Scope settings page's draft: both lists it edits, held in
@@ -71,6 +80,7 @@ impl Default for ProjectTreeModelRust {
             dir_refresh: RefCell::new(HashMap::new()),
             scope: RefCell::new(None),
             scope_draft: RefCell::new(None),
+            scope_candidates: RefCell::new(Vec::new()),
         }
     }
 }
@@ -509,14 +519,41 @@ impl ffi::ProjectTreeModel {
     /// path from the session (rather than trusting the caller-supplied
     /// path verbatim) and emits `projectOpened`.
     fn emit_project_opened(mut self: Pin<&mut Self>) {
-        let root = self
-            .session
-            .borrow()
-            .root_path()
-            .map(|p| p.to_string_lossy().into_owned());
+        let root = self.session.borrow().root_path().map(Path::to_path_buf);
         if let Some(root) = root {
-            self.as_mut().project_opened(QString::from(root.as_str()));
+            self.as_mut()
+                .project_opened(QString::from(root.to_string_lossy().as_ref()));
+            self.as_mut().find_scope_candidates_async(root);
         }
+    }
+
+    /// Kick off ADR-0064's "Found N ignored but not excluded folders"
+    /// notification: `git status --ignored` per repository under `root`,
+    /// filtered down to real candidates by `project_model::candidate_folders`
+    /// (T6). Fire-and-forget on a plain `std::thread`, the same shape
+    /// `open_folder_async`/`start_watcher_async` already use — this must
+    /// never delay the paint or `projectOpened`'s own index build, so it is
+    /// only ever called after both are already under way. A non-git
+    /// project (or one whose scope is not yet built) simply never emits
+    /// `scopeCandidatesFound`.
+    fn find_scope_candidates_async(mut self: Pin<&mut Self>, root: PathBuf) {
+        let Some(scope) = self.scope.borrow().clone() else {
+            return;
+        };
+        let reviewed_not_excluded =
+            crate::bridge::convert::load_project_settings().reviewed_not_excluded;
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let candidates = scope_candidates_for(&root, &scope, &reviewed_not_excluded);
+            if candidates.is_empty() {
+                return;
+            }
+            let count = candidates.len() as u32;
+            let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                *model.scope_candidates.borrow_mut() = candidates;
+                model.as_mut().scope_candidates_found(count);
+            });
+        });
     }
 
     /// (Re)start the filesystem watcher for `root` — the project that was
@@ -1250,6 +1287,58 @@ impl ffi::ProjectTreeModel {
         FfiResult::default()
     }
 
+    /// The "Found N ignored but not excluded folders" notification's
+    /// current candidate list — fetched once by the review dialog right
+    /// after `scopeCandidatesFound` fires, the same signal-then-fetch shape
+    /// `VcsService::changedFiles()` already uses.
+    pub fn scope_candidates(&self) -> Vec<ffi::FfiScopeCandidate> {
+        self.scope_candidates
+            .borrow()
+            .iter()
+            .map(|candidate| ffi::FfiScopeCandidate {
+                relative_path: QString::from(candidate.relative_path.as_str()),
+                suggest_exclude: candidate.suggest_exclude,
+            })
+            .collect()
+    }
+
+    /// The review dialog's OK: `checked` folders join `excluded`,
+    /// `unchecked` ones join `reviewed_not_excluded` so the notification
+    /// does not offer them again — one project-settings save for the whole
+    /// answer (`crate::bridge::settings::commit_to_project`, the same
+    /// single-entry-point `toggle_excluded`/`commit_scope_edit` already
+    /// go through), then one rescope if the resolved scope actually
+    /// changed. The candidate list is cleared either way: whatever the
+    /// user answered, it is not offered again until the next project open
+    /// recomputes it.
+    pub fn commit_scope_review(
+        mut self: Pin<&mut Self>,
+        checked: &QStringList,
+        unchecked: &QStringList,
+    ) -> FfiResult {
+        self.scope_candidates.borrow_mut().clear();
+        let checked: Vec<String> = checked.iter().map(|path| path.to_string()).collect();
+        let unchecked: Vec<String> = unchecked.iter().map(|path| path.to_string()).collect();
+        if checked.is_empty() && unchecked.is_empty() {
+            return FfiResult::default();
+        }
+        let before = crate::bridge::convert::load_resolved_settings();
+        let result = crate::bridge::settings::commit_to_project(move |settings| {
+            for path in &checked {
+                let _ = app_config::project_settings::add_excluded(settings, path);
+            }
+            app_config::project_settings::mark_reviewed(settings, unchecked);
+        });
+        if result.code != crate::bridge::errors::CODE_OK {
+            return result;
+        }
+        let after = crate::bridge::convert::load_resolved_settings();
+        if app_config::resolved_cache::scope_changed(&before, &after) {
+            self.as_mut().rescope();
+        }
+        FfiResult::default()
+    }
+
     /// [`index_core::excludes::content_rule_limits`]'s byte cap, in MiB, for the
     /// Project Scope settings page's note label.
     pub fn max_indexed_file_size_mib(&self) -> u32 {
@@ -1327,6 +1416,49 @@ fn commit_to_global(edit: impl FnOnce(&mut app_config::Settings)) -> FfiResult {
             crate::bridge::errors::CODE_SETTINGS_IO,
             error.to_string(),
         ),
+    }
+}
+
+/// The candidate list for `find_scope_candidates_async`'s notification: one
+/// `git status --ignored` per repository under `root` — `root` itself, plus
+/// whatever `project_model::discover_nested_repos` finds within its bound
+/// — fed to `project_model::candidate_folders`, the Qt-free rule that
+/// actually decides what is worth offering. Runs entirely off the Qt
+/// thread; every step here is either a bounded, pruned filesystem walk or
+/// one `git status` per repository, the same cost `VcsService`'s own
+/// worker threads already pay per repository.
+fn scope_candidates_for(
+    root: &Path,
+    scope: &project_model::ProjectScope,
+    reviewed_not_excluded: &[String],
+) -> Vec<project_model::ScopeCandidate> {
+    let mut ignored_by_repo = Vec::new();
+    push_repo_ignored_paths(root, &mut ignored_by_repo);
+    for nested_root in project_model::discover_nested_repos(root, scope) {
+        push_repo_ignored_paths(&nested_root, &mut ignored_by_repo);
+    }
+    if ignored_by_repo.is_empty() {
+        return Vec::new();
+    }
+    project_model::candidate_folders(root, &ignored_by_repo, scope, reviewed_not_excluded)
+}
+
+/// Discover a repository at `candidate_root` and, if found, append its
+/// working-tree root and `git status --ignored` output to `out`. Not a
+/// repository, or the `git` call failed, is silently skipped — a folder
+/// with no repository (or a transient `git` error) simply contributes no
+/// candidates, the same tolerance `find_scope_candidates_async`'s doc
+/// comment gives the notification as a whole.
+fn push_repo_ignored_paths(candidate_root: &Path, out: &mut Vec<(PathBuf, Vec<PathBuf>)>) {
+    let Ok(vcs_core::DiscoverResult::Found(repo)) = vcs_core::Repository::discover(candidate_root)
+    else {
+        return;
+    };
+    let Some(work_dir) = repo.work_dir() else {
+        return;
+    };
+    if let Ok(ignored) = repo.ignored_paths() {
+        out.push((work_dir, ignored));
     }
 }
 

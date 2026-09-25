@@ -1,0 +1,8 @@
+#!/bin/sh
+# AppImage entry point. Unlike the plain-tarball launcher this bundle also
+# ships (docker/Dockerfile's linux-artifact-bundle stage), $APPDIR is
+# exported by the AppImage runtime before this runs, so there's no need to
+# derive our own location from argv0.
+export LD_LIBRARY_PATH="$APPDIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="$APPDIR/plugins"
+exec "$APPDIR/bin/ide" "$@"

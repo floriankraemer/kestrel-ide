@@ -28,6 +28,7 @@ jobs:
       title: ${{ steps.id.outputs.title }}
       stem: ${{ steps.id.outputs.stem }}
       prerelease: ${{ steps.id.outputs.prerelease }}
+      version: ${{ steps.id.outputs.version }}
     steps:
       # Asset names are derived from `stem`, so the rolling release always
       # publishes the same file names and its download URLs never change:
@@ -44,6 +45,9 @@ jobs:
               echo "title=$GITHUB_REF_NAME"
               echo "stem=ide-$GITHUB_REF_NAME"
               echo "prerelease=false"
+              # dpkg/CFBundle version fields: strip the leading 'v' a real
+              # tag always has (v1.2.3 -> 1.2.3).
+              echo "version=${GITHUB_REF_NAME#v}"
             } >> "$GITHUB_OUTPUT"
           else
             {
@@ -51,6 +55,9 @@ jobs:
               echo "title=Latest build (main) — ${GITHUB_SHA:0:7}"
               echo "stem=ide-latest"
               echo "prerelease=true"
+              # '~' sorts below any real release in both dpkg and SemVer-ish
+              # comparisons, and dpkg requires a leading digit.
+              echo "version=0.0.0~latest"
             } >> "$GITHUB_OUTPUT"
           fi
 
@@ -80,6 +87,58 @@ jobs:
             --cache-to type=gha,mode=max \
             .
 
+      # The bundle's own launcher (dist/ide-linux-x86_64/ide) derives its root
+      # from argv0 at runtime, so the whole directory is already relocatable
+      # as-is — no changes needed to install it verbatim under /opt/ide for
+      # the .deb below.
+      - name: Package .deb
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+          STEM: ${{ needs.meta.outputs.stem }}
+        run: |
+          set -eux
+          name="$STEM-linux-x86_64"
+          pkgroot="$(mktemp -d)"
+          mkdir -p "$pkgroot/opt/ide" "$pkgroot/usr/bin" \
+            "$pkgroot/usr/share/applications" \
+            "$pkgroot/usr/share/icons/hicolor/256x256/apps" \
+            "$pkgroot/DEBIAN"
+          cp -a dist/ide-linux-x86_64/. "$pkgroot/opt/ide/"
+          ln -s /opt/ide/ide "$pkgroot/usr/bin/ide"
+          cp assets/linux/ide.desktop "$pkgroot/usr/share/applications/ide.desktop"
+          cp assets/icon.png "$pkgroot/usr/share/icons/hicolor/256x256/apps/ide.png"
+          sed "s/@VERSION@/$VERSION/g" assets/linux/control > "$pkgroot/DEBIAN/control"
+          dpkg-deb --build --root-owner-group "$pkgroot" "$name.deb"
+          sha256sum "$name.deb" > "$name.deb.sha256"
+
+      # appimagetool has no maintained numbered release (AppImageKit's last
+      # ones are 2020-era and marked obsolete by upstream itself), so this
+      # pins `continuous` — the only actively rebuilt release — against a
+      # content hash instead, so a supply-chain change is a loud CI failure
+      # rather than silent drift. Re-verify and re-pin deliberately if it
+      # ever needs to move.
+      - name: Package AppImage
+        env:
+          STEM: ${{ needs.meta.outputs.stem }}
+        run: |
+          set -eux
+          name="$STEM-linux-x86_64"
+          appdir="$(mktemp -d)/AppDir"
+          mkdir -p "$appdir"
+          cp -a dist/ide-linux-x86_64/bin "$appdir/bin"
+          cp -a dist/ide-linux-x86_64/lib "$appdir/lib"
+          cp -a dist/ide-linux-x86_64/plugins "$appdir/plugins"
+          install -m 755 assets/linux/AppRun "$appdir/AppRun"
+          cp assets/linux/ide.desktop "$appdir/ide.desktop"
+          cp assets/icon.png "$appdir/ide.png"
+
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          echo "b90f4a8b18967545fda78a445b27680a1642f1ef9488ced28b65398f2be7add2  appimagetool" | sha256sum -c -
+          chmod +x appimagetool
+          ./appimagetool --appimage-extract-and-run "$appdir" "$name.AppImage"
+          sha256sum "$name.AppImage" > "$name.AppImage.sha256"
+
       - name: Package tarball
         env:
           STEM: ${{ needs.meta.outputs.stem }}
@@ -96,6 +155,10 @@ jobs:
           path: |
             *.tar.gz
             *.tar.gz.sha256
+            *.deb
+            *.deb.sha256
+            *.AppImage
+            *.AppImage.sha256
 
   # Non-blocking by decision: the MXE mingw-w64 + Qt6 cross toolchain builds
   # from source on a cold cache (hours), so a slow or failed Windows leg must
@@ -163,11 +226,99 @@ jobs:
             *.zip
             *.zip.sha256
 
+  # Non-blocking by decision, same reasoning as `windows`: this is a
+  # never-before-run leg (first real macOS CI build), and a red or slow
+  # macOS build must not hold back the Linux artifact.
+  #
+  # Unlike linux/windows this cannot go through docker/Dockerfile at all:
+  # there is no legal way to cross-compile for macOS from Linux the way MXE
+  # provides mingw-w64 for Windows — osxcross needs Apple's SDK extracted
+  # from Xcode, and Apple's license forbids redistributing it. So this job
+  # builds natively on a GitHub-hosted macos-latest (Apple Silicon/arm64
+  # only — Intel macos-13 images were retired) runner instead, entirely
+  # outside this project's normal Docker-based dev loop. That also means
+  # there is no local `make` target for it: iterating on this leg only
+  # happens by pushing to a branch and watching Actions run, or on an
+  # actual Mac.
+  macos:
+    name: macOS bundle
+    needs: meta
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Homebrew's unversioned `qt` formula is Qt6 (Qt5 was `qt@5` and is
+      # gone). Its qmake binary is named `qmake`, not `qmake6`, so ui-shell's
+      # build.rs (which defaults to looking for `qmake6` on PATH) needs the
+      # QMAKE env var pointed at it explicitly. PATH also gets Qt's bin/ so
+      # `macdeployqt` is reachable in the bundling step below.
+      #
+      # unixodbc: db-driver-odbc links libodbc (same as unixodbc-dev on
+      # Linux, docker/Dockerfile) — without it `cargo build` fails at the
+      # final link step with "library 'odbc' not found" (confirmed on this
+      # job's first real run; everything else compiled clean).
+      - name: Install Qt6 + unixODBC
+        run: |
+          brew install qt unixodbc
+          echo "QMAKE=$(brew --prefix qt)/bin/qmake" >> "$GITHUB_ENV"
+          echo "$(brew --prefix qt)/bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        run: cargo build --release -p app
+
+      # cargo build only produces a bare Mach-O binary; assemble it into a
+      # real .app bundle by hand, then let macdeployqt embed the Qt
+      # framework closure and fix install names/rpaths. sips/iconutil are
+      # preinstalled on macOS runner images, no extra Homebrew package
+      # needed for icon conversion.
+      - name: Assemble app bundle
+        env:
+          VERSION: ${{ needs.meta.outputs.version }}
+        run: |
+          set -eux
+          app=Kestrel.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp target/release/app "$app/Contents/MacOS/ide"
+          sed "s/@VERSION@/$VERSION/g" assets/macos/Info.plist > "$app/Contents/Info.plist"
+
+          iconset="$(mktemp -d)/icon.iconset"
+          mkdir -p "$iconset"
+          for sz in 16 32 128 256 512; do
+            sips -z $sz $sz assets/icon.png --out "$iconset/icon_${sz}x${sz}.png"
+            sips -z $((sz*2)) $((sz*2)) assets/icon.png --out "$iconset/icon_${sz}x${sz}@2x.png"
+          done
+          iconutil -c icns "$iconset" -o "$app/Contents/Resources/icon.icns"
+
+          macdeployqt "$app"
+
+      - name: Package dmg
+        env:
+          STEM: ${{ needs.meta.outputs.stem }}
+        run: |
+          set -eux
+          name="$STEM-macos-arm64"
+          stage="$(mktemp -d)/dmg-stage"
+          mkdir -p "$stage"
+          cp -R Kestrel.app "$stage/"
+          ln -s /Applications "$stage/Applications"
+          hdiutil create -volname Kestrel -srcfolder "$stage" -ov -format UDZO "$name.dmg"
+          shasum -a 256 "$name.dmg" > "$name.dmg.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            *.dmg
+            *.dmg.sha256
+
   publish:
     name: Publish release
-    needs: [meta, linux, windows]
-    # `always()` so a red Windows leg still publishes the Linux artifact;
-    # a failed Linux build publishes nothing.
+    needs: [meta, linux, windows, macos]
+    # `always()` so a red Windows/macOS leg still publishes the Linux
+    # artifact; a failed Linux build publishes nothing.
     if: always() && needs.linux.result == 'success'
     runs-on: ubuntu-latest
     permissions:
@@ -194,6 +345,9 @@ jobs:
           subject=$(git log -1 --pretty=%s)
           built=$(date -u '+%Y-%m-%d %H:%M UTC')
           cd artifacts
+          gatekeeper_note=$(printf '%s\n%s\n' \
+            "macOS build is unsigned (no Apple Developer account yet) — Gatekeeper will refuse to open it." \
+            "Run \`xattr -cr /path/to/Kestrel.app\` after mounting the .dmg, or right-click → Open instead of double-clicking.")
           if [ "$PRERELEASE" = true ]; then
             gh release delete "$TAG" --cleanup-tag --yes || true
             notes=$(printf '%s\n' \
@@ -201,7 +355,9 @@ jobs:
               "" \
               "- commit: \`$GITHUB_SHA\`" \
               "- subject: $subject" \
-              "- built: $built")
+              "- built: $built" \
+              "" \
+              "$gatekeeper_note")
             gh release create "$TAG" \
               --target "$GITHUB_SHA" \
               --title "$TITLE" \
@@ -209,8 +365,13 @@ jobs:
               --notes "$notes" \
               ./*
           else
+            # --generate-notes can't be combined with custom --notes text in
+            # one call, so append the Gatekeeper note as a second edit once
+            # the auto-generated body exists.
             gh release create "$TAG" \
               --title "$TITLE" \
               --generate-notes \
               ./*
+            body=$(gh release view "$TAG" --json body -q .body)
+            gh release edit "$TAG" --notes "$(printf '%s\n\n%s' "$body" "$gatekeeper_note")"
           fi

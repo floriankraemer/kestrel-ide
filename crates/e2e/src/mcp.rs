@@ -37,28 +37,6 @@ impl Mcp {
         })
     }
 
-    /// [`discover`](Self::discover), but waits until the port the
-    /// discovery file currently names is actually accepting connections —
-    /// not just that the file exists, which `discover`'s own caller
-    /// (`Ide::mcp`) stops at.
-    ///
-    /// The Settings dialog's OK handler restarts the MCP server
-    /// unconditionally on every accept, on a fresh ephemeral port
-    /// (`mcp_page.cpp`), regardless of which page was open. Any flow that
-    /// drives Settings to completion and then talks to MCP needs this
-    /// rather than a handle grabbed before the dialog opened, or the
-    /// stale port's `post` fails outright (`ECONNREFUSED`, not a JSON-RPC
-    /// error `try_call`'s own retry loop would catch) — and a bare
-    /// `discover` can still read a stale-but-present file for a poll or
-    /// two right after the restart begins, before it is rewritten.
-    pub fn reconnect(config_dir: &Path) -> Mcp {
-        crate::wait_for("the MCP server to accept connections", || {
-            let mcp = Self::discover(config_dir)?;
-            TcpStream::connect(("127.0.0.1", mcp.port)).ok()?;
-            Some(mcp)
-        })
-    }
-
     /// One JSON-RPC call over the flat method surface, returning `result`.
     pub fn call(&self, method: &str, params: Value) -> Value {
         self.try_call(method, params)

@@ -263,15 +263,11 @@ fn e2e_go_to_file_finds_a_gitignored_file_and_a_dotdir_file() {
 /// Project Scope settings page drops a `generated/marker.txt` file out of
 /// the index — the settings-page mirror of T4's own tree-action test.
 ///
-/// Waits for the *initial* index build to finish (`wait_for_index`, the
-/// same barrier every other test in this file waits on before touching
-/// anything) before ever opening Settings — an OK-triggered rescope
-/// started while the project's first index build is still in flight was
-/// found to crash the app outright under real timing (not reproducible
-/// under a debugger, which serializes execution enough to hide the
-/// overlap). `find_files` below reuses the same `mcp` handle throughout —
-/// unlike a page that touches the MCP server's own settings, Project
-/// Scope's rescope never restarts it, so the handle never goes stale.
+/// The `mcp` handle taken before Settings opens is reused after OK on
+/// purpose: OK must not restart an MCP server whose settings did not
+/// change (a restart re-binds and re-tokens, cutting off connected
+/// clients), so a stale handle here fails with `ECONNREFUSED` if that
+/// regresses.
 #[test]
 #[ignore = "E2E: needs an X server; run via `make e2e`"]
 fn e2e_adding_generated_to_ignored_names_through_settings_drops_it_from_the_index() {
@@ -315,8 +311,11 @@ fn e2e_adding_generated_to_ignored_names_through_settings_drops_it_from_the_inde
     });
     ide.focus_main();
 
-    let settings = std::fs::read_to_string(ide.config_dir().join("settings.toml"))
-        .expect("reading settings.toml after adding generated to ignored_names");
+    let settings = e2e::wait_for("settings.toml to record generated", || {
+        std::fs::read_to_string(ide.config_dir().join("settings.toml"))
+            .ok()
+            .filter(|text| text.contains("generated"))
+    });
     assert!(
         settings.contains("generated"),
         "settings.toml should record generated as ignored, got:\n{settings}"
@@ -368,9 +367,6 @@ fn e2e_cancelling_project_scope_settings_discards_the_draft() {
     let (add_x, add_y) = rect_centre(&page["add_ignored_rect"]);
     ide.click_at(add_x, add_y, 1);
 
-    // Cancel, not OK — `mcp.commit()` never runs on this path
-    // (`settings_dialog.cpp`'s `else` branch), so the original `mcp`
-    // handle stays valid and no reconnect is needed here.
     ide.key("Escape");
     ide.wait_for_event(mark, "the dialog to close", |e| {
         e["ev"] == "dialog_closed" && e["name"] == "settings_dialog" && e["accepted"] == false

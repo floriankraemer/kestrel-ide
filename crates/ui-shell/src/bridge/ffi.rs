@@ -989,6 +989,18 @@ mod ffi {
         orig_path: QString,
     }
 
+    /// One folder ADR-0064's "Found N ignored but not excluded folders"
+    /// notification offers, 1:1 with `project_model::ScopeCandidate`
+    /// (T6) — `ProjectTreeModel::scopeCandidates()`'s row.
+    struct FfiScopeCandidate {
+        /// Project-relative, `/`-separated.
+        relative_path: QString,
+        /// The review dialog's checkbox default: unchecked for a folder
+        /// holding a nested `.git` of its own (see
+        /// `project_model::ScopeCandidate`'s doc comment).
+        suggest_exclude: bool,
+    }
+
     /// The repository's branch/upstream/ahead-behind picture, 1:1 with
     /// `vcs_core::RepoStatus`'s own four fields — refreshed by the same
     /// `statusChanged` signal `changedFiles`/`fileStatus` already answer
@@ -2191,6 +2203,30 @@ mod ffi {
         #[cxx_name = "commitScopeEdit"]
         fn commit_scope_edit(self: Pin<&mut ProjectTreeModel>) -> FfiResult;
 
+        /// ADR-0064's "Found N ignored but not excluded folders"
+        /// notification: the candidate list `scopeCandidatesFound` just
+        /// announced. Fetched once, when the notice's "Review…" action
+        /// builds the dialog — the same signal-then-fetch shape
+        /// `VcsService::changedFiles()` already uses.
+        #[qinvokable]
+        #[cxx_name = "scopeCandidates"]
+        fn scope_candidates(self: &ProjectTreeModel) -> Vec<FfiScopeCandidate>;
+
+        /// The review dialog's OK (T6): `checked` folders are added to
+        /// `excluded`, `unchecked` ones to `reviewed_not_excluded` so they
+        /// are not offered again, one project-settings save and (if the
+        /// resolved scope changed) one rescope for the whole answer. An
+        /// empty pair of lists (Cancel, or OK with nothing to say — every
+        /// row left at its own default counts as an answer through
+        /// `unchecked`, so this is only reachable via Cancel) is a no-op.
+        #[qinvokable]
+        #[cxx_name = "commitScopeReview"]
+        fn commit_scope_review(
+            self: Pin<&mut ProjectTreeModel>,
+            checked: &QStringList,
+            unchecked: &QStringList,
+        ) -> FfiResult;
+
         /// `index_core::content_rule_limits()`'s byte cap, in MiB, for the
         /// Project Scope settings page's note label. Computed from the
         /// index-core constant rather than a separate literal.
@@ -2288,6 +2324,17 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "projectRescoped"]
         fn project_rescoped(self: Pin<&mut ProjectTreeModel>, root_path: QString);
+
+        /// ADR-0064's notification: `count` gitignored folders were found
+        /// that are neither excluded nor already reviewed, computed off
+        /// the Qt thread after `projectOpened` (never delaying the paint or
+        /// the index build it also triggers). `main_window.cpp` shows the
+        /// "Found N ignored but not excluded folders" notice on this;
+        /// `scopeCandidates()` fetches the list for its "Review…" dialog.
+        /// Never emitted for a non-git project, or when nothing qualifies.
+        #[qsignal]
+        #[cxx_name = "scopeCandidatesFound"]
+        fn scope_candidates_found(self: Pin<&mut ProjectTreeModel>, count: u32);
     }
 
     // Enables `self.qt_thread()` on `ProjectTreeModel`, giving the

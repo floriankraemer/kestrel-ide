@@ -539,6 +539,9 @@ fn main() {
         // T5, ADR-0064: the Project Scope settings page, Q_OBJECT-free like
         // the pages above.
         .cpp_file("cpp/project_scope_settings_page.cpp")
+        // T6, ADR-0064: the "Found N ignored but not excluded folders"
+        // notice and its review dialog, also Q_OBJECT-free.
+        .cpp_file("cpp/scope_review_notice.cpp")
         .cpp_file("cpp/appearance_page.cpp")
         .cpp_file("cpp/language_page.cpp")
         .cpp_file("cpp/i18n_startup.cpp")

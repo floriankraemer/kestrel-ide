@@ -13,8 +13,8 @@ Design recorded in [ADR-0064](decisions/0064-project-scope-explicit-exclusions.m
 | T2 | done | 10f0091 |
 | T3 | done | 225d54f |
 | T4 | done | 0cb2958 |
-| T5 | done | (this PR) |
-| T6 | open | |
+| T5 | done | 74fa8a7 |
+| T6 | done | (this PR) |
 | T7 | open | |
 
 ## Context

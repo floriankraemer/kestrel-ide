@@ -22,9 +22,13 @@ use std::path::{Path, PathBuf};
 mod coalesce;
 /// What is part of the project, independent of `.gitignore` (ADR-0064).
 pub mod scope;
+/// Candidates for the "Found N ignored but not excluded folders"
+/// notification (ADR-0064, T6).
+pub mod scope_candidates;
 mod watcher;
 pub use coalesce::RefreshCoalescer;
 pub use scope::ProjectScope;
+pub use scope_candidates::{candidate_folders, discover_nested_repos, ScopeCandidate};
 pub use watcher::{route_change, ChangeRouting, EventKind, ProjectWatcher};
 
 /// File name used to persist the last-opened project path, per the plan's

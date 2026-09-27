@@ -458,6 +458,11 @@ fn map_diff(colors: &HashMap<String, String>, canvas: Rgba) -> DiffColors {
             &["gitDecoration.deletedResourceForeground"],
             Rgba::new(0xf4, 0x43, 0x36, 255),
         ),
+        ignored_marker: resolve_or(
+            colors,
+            &["gitDecoration.ignoredResourceForeground"],
+            Rgba::new(0x9a, 0x9d, 0x4a, 255),
+        ),
     }
 }
 

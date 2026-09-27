@@ -135,7 +135,7 @@ DiffColors toDiffColors(const FfiDiffColors &d)
                        fromFfiRgb(d.added_marker),    fromFfiRgb(d.modified_line),
                        fromFfiRgb(d.modified_inline), fromFfiRgb(d.modified_marker),
                        fromFfiRgb(d.deleted_line),    fromFfiRgb(d.deleted_inline),
-                       fromFfiRgb(d.deleted_marker) };
+                       fromFfiRgb(d.deleted_marker),  fromFfiRgb(d.ignored_marker) };
 }
 
 // What `applyTheme()` asks the provider for once and every other function in
@@ -924,6 +924,8 @@ QColor changeKindColor(FfiChangeKind kind)
         return diff.deletedMarker;
     case FfiChangeKind::Conflicted:
         return semanticColorsForTheme(activeThemeName()).error;
+    case FfiChangeKind::Ignored:
+        return diff.ignoredMarker;
     case FfiChangeKind::None:
         break;
     }

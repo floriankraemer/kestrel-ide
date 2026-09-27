@@ -84,6 +84,7 @@ modified_marker = "{modified_marker}"
 deleted_line = "{deleted_line}"
 deleted_inline = "{deleted_inline}"
 deleted_marker = "{deleted_marker}"
+ignored_marker = "{ignored_marker}"
 
 [terminal]
 black = "{black}"
@@ -138,6 +139,7 @@ selection = "{terminal_selection}"
         deleted_line = hex(d.deleted_line),
         deleted_inline = hex(d.deleted_inline),
         deleted_marker = hex(d.deleted_marker),
+        ignored_marker = hex(d.ignored_marker),
         black = hex(t.black),
         red = hex(t.red),
         green = hex(t.green),

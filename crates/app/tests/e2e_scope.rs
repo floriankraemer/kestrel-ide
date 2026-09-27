@@ -515,3 +515,82 @@ fn e2e_reviewing_ignored_folders_excludes_one_and_remembers_the_other() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// ADR-0064's other half of "`.gitignore` stays visible": `dist/` is
+/// gitignored but not excluded, so Go to File already finds `dist/app.js`
+/// (`e2e_go_to_file_finds_a_gitignored_file_and_a_dotdir_file` above) — this
+/// proves the tree still paints it in the VCS "ignored" colour, distinct
+/// from an ordinary unmodified row like `src/main.rs`.
+///
+/// Reads `Qt::ForegroundRole` off the `project_tree_row` marker
+/// (`markVisibleRows`, `project_tree_dock.cpp`) rather than a pixel probe —
+/// the same seam `e2e_marking_a_folder_excluded_drops_it_from_search_and_
+/// cancelling_restores_it` above reads for `ExcludedColorProxy`, one layer
+/// further down the same proxy chain (`VcsStatusColorProxy` sits under
+/// `ExcludedColorProxy`, `project_tree_dock.cpp`'s own comment on the
+/// chain), so a colour override is asserted exactly the way the app itself
+/// paints it.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_a_gitignored_folder_is_coloured_ignored_and_a_tracked_one_is_not() {
+    let workspace = git_fixture(&[
+        (".gitignore", "dist/\n"),
+        ("README.md", "root\n"),
+        ("src/main.rs", "fn main() {}\n"),
+        ("dist/app.js", "console.log('built');\n"),
+    ]);
+
+    let name = "e2e_a_gitignored_folder_is_coloured_ignored_and_a_tracked_one_is_not";
+    let mut ide = Ide::launch(name, APP, workspace.path());
+    drop(workspace);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+
+    // Forces a fresh, settled tree layout report the same way
+    // `click_tree_menu_action` above does — the very first layout pass's
+    // rects (and, on this seam, colours) are read before `VcsService`'s
+    // first `refreshStatus` has necessarily landed.
+    let mark = ide.mark();
+    std::fs::write(ide.project_root().join("zzz-settle.txt"), "settle\n")
+        .expect("writing a file to force a fresh tree layout report");
+    ide.wait_for_event(mark, "a settled tree_rows report", |e| {
+        e["ev"] == "project_tree_rows"
+    });
+
+    let dist_path = ide
+        .project_root()
+        .join("dist")
+        .to_string_lossy()
+        .into_owned();
+    // `README.md`, not `src/main.rs`: the tree is lazy (ADR-0064's own
+    // T2/T3 delivery), so a nested file's row only exists once its parent
+    // directory has been expanded — a top-level, tracked-and-unmodified
+    // file needs no expansion and is exactly as good a "not ignored"
+    // control.
+    let readme_path = ide
+        .project_root()
+        .join("README.md")
+        .to_string_lossy()
+        .into_owned();
+
+    let dist_row = ide.wait_for_event(mark, "the dist/ tree row", |e| {
+        e["ev"] == "project_tree_row" && e["path"] == dist_path
+    });
+    // The colour is whatever the active theme's `diff.ignored_marker`
+    // resolves to (`changeKindColor(FfiChangeKind::Ignored)`) — asserted as
+    // "some override, not empty" rather than a hardcoded hex, so this test
+    // does not also have to know which theme is active by default.
+    assert_ne!(
+        dist_row["color"], "",
+        "dist/ is gitignored, so the tree should colour it"
+    );
+
+    let readme_row = ide.wait_for_event(mark, "the README.md tree row", |e| {
+        e["ev"] == "project_tree_row" && e["path"] == readme_path
+    });
+    assert_eq!(
+        readme_row["color"], "",
+        "README.md is tracked and unmodified, so the tree should not colour it"
+    );
+
+    assert_eq!(ide.quit(), 0);
+}

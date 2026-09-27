@@ -83,6 +83,9 @@ QString changeKindLabel(FfiChangeKind kind)
     case FfiChangeKind::Conflicted:
         return QObject::tr("Conflicted");
     case FfiChangeKind::None:
+    case FfiChangeKind::Ignored:
+        // The Changes dock never lists an ignored path (ADR-0064 T7) — this
+        // arm exists only so the switch stays exhaustive.
         break;
     }
     return QString();
@@ -115,6 +118,9 @@ QString changeKindLetter(FfiChangeKind kind)
         // (`changeKindColor`/bold below).
         return QObject::tr("C", "status letter: Conflicted/Copied");
     case FfiChangeKind::None:
+    case FfiChangeKind::Ignored:
+        // The Changes dock never lists an ignored path (ADR-0064 T7) — this
+        // arm exists only so the switch stays exhaustive.
         break;
     }
     return QString();

@@ -70,6 +70,13 @@ pub struct VcsServiceRust {
     status_pending: Arc<AtomicBool>,
     is_repository: Cell<bool>,
     status: RefCell<vcs_core::RepoStatus>,
+    /// The last `refreshStatus`'s gitignored paths (ADR-0064 T7), queried
+    /// alongside `status` itself so the project tree's "ignored" colour
+    /// (`file_status`, when a path has no ordinary status) is never a call
+    /// behind the coloured statuses it never co-occurs with. One repository
+    /// only — the same single `work_dir` every other field here answers
+    /// for, not every nested repository a workspace may hold.
+    ignored: RefCell<vcs_core::IgnoredSet>,
     /// `HEAD`'s own commit message, cached alongside every `refreshStatus`
     /// (a cheap in-process `gix` read, ADR-0031 §7) so Amend can prefill it
     /// synchronously rather than round-tripping the worker when the dialog
@@ -140,6 +147,7 @@ impl Default for VcsServiceRust {
             status_pending: Arc::new(AtomicBool::new(false)),
             is_repository: Cell::new(false),
             status: RefCell::default(),
+            ignored: RefCell::default(),
             head_message: RefCell::default(),
             project_root: RefCell::default(),
             hunks: RefCell::default(),
@@ -268,6 +276,7 @@ impl ffi::VcsService {
         self.current_branch.borrow_mut().clear();
         self.head_message.borrow_mut().clear();
         *self.status.borrow_mut() = vcs_core::RepoStatus::default();
+        *self.ignored.borrow_mut() = vcs_core::IgnoredSet::default();
         self.is_repository.set(false);
         *self.project_root.borrow_mut() = root.clone();
 
@@ -342,10 +351,19 @@ impl ffi::VcsService {
             // worker round trip of its own, and Amend needs a fresh answer
             // whenever the Changes dock does.
             let head_message = worker.repo.head_message().ok().flatten();
+            // ADR-0064 T7: the project tree's "ignored" colour, refreshed on
+            // this same watcher-driven walk as every other status so a
+            // newly gitignored path is never stale relative to the changed
+            // files it never co-occurs with. `git status --ignored` failing
+            // is not this job's failure to report — `unwrap_or_default`
+            // leaves the tree simply uncoloured for ignored paths rather
+            // than failing the status refresh everything else depends on.
+            let ignored = worker.repo.ignored_paths().unwrap_or_default();
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match result {
                 Ok(status) => {
                     *service.status.borrow_mut() = status;
                     *service.head_message.borrow_mut() = head_message.unwrap_or_default();
+                    *service.ignored.borrow_mut() = vcs_core::IgnoredSet::new(ignored);
                     service.as_mut().status_changed();
                 }
                 Err(err) => {
@@ -395,6 +413,20 @@ impl ffi::VcsService {
                 staged: to_ffi_change_kind(file.staged),
                 unstaged: to_ffi_change_kind(file.unstaged),
                 orig_path: to_ffi_orig_path(&file.orig_path),
+            };
+        }
+        // Not a pending change — ADR-0064's other half: `.gitignore` no
+        // longer decides what is indexed, but it still colours the tree.
+        // Never reached for a path `status.files` already answered for
+        // above: git does not report a change *and* ignore the same path,
+        // so the two never compete for `VcsStatusColorProxy`'s one
+        // `unstaged`-wins precedence.
+        if self.ignored.borrow().is_ignored(&relative) {
+            return ffi::FfiChangedFile {
+                path: QString::from(relative.to_string_lossy().as_ref()),
+                staged: ffi::FfiChangeKind::None,
+                unstaged: ffi::FfiChangeKind::Ignored,
+                orig_path: QString::default(),
             };
         }
         none

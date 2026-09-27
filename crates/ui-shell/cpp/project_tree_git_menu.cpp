@@ -109,12 +109,19 @@ void appendGitSubmenu(QMenu &menu, const QString &absolutePath,
     // absolute path against the repository root itself — the view never does
     // path arithmetic on a repository-relative path.
     const FfiChangedFile status = vcs->fileStatus(absolutePath);
+    // A gitignored path (ADR-0064 T7) is neither staged, unstaged nor
+    // untracked in git's own sense — `fileStatus` only answers `Ignored`
+    // for `unstaged` when there is no real change to report, so every
+    // action below (which all act on a real git change) stays disabled for
+    // it rather than reading "ignored" as "untracked" and offering
+    // "Stage File" or "Add to .gitignore" for a file already ignored.
+    const bool ignored = status.unstaged == FfiChangeKind::Ignored;
     const bool hasStaged = status.staged != FfiChangeKind::None;
-    const bool hasUnstaged = status.unstaged != FfiChangeKind::None;
+    const bool hasUnstaged = !ignored && status.unstaged != FfiChangeKind::None;
     const bool untracked = status.unstaged == FfiChangeKind::Untracked;
     // `HEAD` has nothing to diff against or restore for a file it has never
     // seen, so those two entries are about tracked-ness, not dirtiness.
-    const bool tracked = !untracked;
+    const bool tracked = !untracked && !ignored;
 
     menu.addSeparator();
     QMenu *git = menu.addMenu(QObject::tr("Git"));

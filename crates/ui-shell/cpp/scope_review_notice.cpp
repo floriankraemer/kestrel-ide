@@ -188,7 +188,7 @@ public:
 
     void announce(quint32 count)
     {
-        label_->setText(tr("Found %n ignored but not excluded folder(s)", nullptr, int(count)));
+        label_->setText(tr("Found ignored but not excluded folders (%n)", nullptr, int(count)));
         reposition();
         show();
         raise();

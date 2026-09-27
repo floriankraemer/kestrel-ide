@@ -491,6 +491,12 @@ mod ffi {
         deleted_line: FfiRgb,
         deleted_inline: FfiRgb,
         deleted_marker: FfiRgb,
+        // Appended for ADR-0064 T7 (append-only): the project tree's
+        // "ignored" foreground, `changeKindColor`'s answer for
+        // `FfiChangeKind::Ignored`. No `*_line`/`*_inline` sibling — unlike
+        // the other three kinds, nothing about a gitignored file is ever
+        // shown as a diff.
+        ignored_marker: FfiRgb,
     }
 
     /// One paint's worth of grid state (T2): the whole snapshot
@@ -943,6 +949,11 @@ mod ffi {
         Renamed,
         Copied,
         Conflicted,
+        // Appended for ADR-0064 T7 (append-only): gitignored, not a pending
+        // change at all — `vcs_core::ChangeKind` has no matching variant,
+        // `VcsService::file_status` produces this one directly for a path
+        // `RepoStatus` never mentions.
+        Ignored,
     }
 
     /// The two `vcs_core::VcsError` codes the view has to *act* on rather

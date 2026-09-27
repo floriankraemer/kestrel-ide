@@ -40,6 +40,9 @@ modified_marker = "#3870b4"
 deleted_line = "#f0f0f0"
 deleted_inline = "#d6d6d6"
 deleted_marker = "#b4463c"
+# JetBrains' olive/dim yellow-green "ignored" convention (ADR-0064 T7),
+# dark enough on a light background to keep 4.5:1 contrast against white.
+ignored_marker = "#6b6b1f"
 
 [terminal]
 # JetBrains Light's console colours (ansi 0-7, then the bright 8-15).

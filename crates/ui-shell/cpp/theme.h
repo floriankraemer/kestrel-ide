@@ -76,6 +76,10 @@ struct DiffColors
     QColor deletedLine;
     QColor deletedInline;
     QColor deletedMarker;
+    // The project tree's "ignored" foreground (ADR-0064 T7, a gitignored
+    // entry): no `*Line`/`*Inline` sibling, since nothing about one is ever
+    // shown as a diff.
+    QColor ignoredMarker;
 };
 
 DiffColors diffColorsForTheme(const QString &themeName);

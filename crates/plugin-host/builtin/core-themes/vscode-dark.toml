@@ -42,6 +42,7 @@ modified_marker = "#4c82c4"
 deleted_line = "#484a4a"
 deleted_inline = "#5f5f5f"
 deleted_marker = "#c55147"
+ignored_marker = "#9a9d4a"
 
 [terminal]
 # vscode-dark also shares the dark ANSI 16 — `terminalPaletteForTheme` only

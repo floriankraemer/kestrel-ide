@@ -199,6 +199,10 @@ pub struct DiffColors {
     pub deleted_line: Rgba,
     pub deleted_inline: Rgba,
     pub deleted_marker: Rgba,
+    /// The project tree's "ignored" foreground (ADR-0064 T7): a gitignored
+    /// entry is never shown as a diff, so this has no `*_line`/`*_inline`
+    /// sibling the way added/modified/deleted each do.
+    pub ignored_marker: Rgba,
 }
 
 /// The terminal's ANSI palette plus its four fixed roles — mirrors
@@ -337,6 +341,7 @@ mod raw {
         pub deleted_line: String,
         pub deleted_inline: String,
         pub deleted_marker: String,
+        pub ignored_marker: String,
     }
 
     #[derive(Deserialize)]
@@ -431,6 +436,7 @@ pub fn parse_toml(input: &str) -> Result<ColorTheme, ThemeError> {
         deleted_line: color(&d.deleted_line, "diff.deleted_line")?,
         deleted_inline: color(&d.deleted_inline, "diff.deleted_inline")?,
         deleted_marker: color(&d.deleted_marker, "diff.deleted_marker")?,
+        ignored_marker: color(&d.ignored_marker, "diff.ignored_marker")?,
     };
 
     let t = &raw.terminal;
@@ -567,6 +573,7 @@ mod tests {
             deleted_line = "#3a1e1e"
             deleted_inline = "#5a2d2d"
             deleted_marker = "#f44336"
+            ignored_marker = "#9a9d4a"
 
             [terminal]
             black = "#000000"
@@ -612,6 +619,7 @@ mod tests {
         assert_eq!(theme.chrome.canvas, Rgba::new(0x1e, 0x1f, 0x22, 255));
         assert_eq!(theme.semantic.error, Rgba::new(0xff, 0x55, 0x55, 255));
         assert_eq!(theme.diff.added_marker, Rgba::new(0x4c, 0xaf, 0x50, 255));
+        assert_eq!(theme.diff.ignored_marker, Rgba::new(0x9a, 0x9d, 0x4a, 255));
         assert_eq!(theme.terminal.ansi()[1], Rgba::new(0xff, 0x55, 0x55, 255));
         let keyword = theme.syntax.get("keyword").expect("keyword style present");
         assert_eq!(keyword.fg, Rgba::new(0xcc, 0x78, 0x32, 255));

@@ -32,6 +32,7 @@ modified_marker = "#d29922ff"
 deleted_line = "#2c171bff"
 deleted_inline = "#563132ff"
 deleted_marker = "#f85149ff"
+ignored_marker = "#6e7681ff"
 
 [terminal]
 black = "#484f58ff"

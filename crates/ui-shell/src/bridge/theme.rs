@@ -73,6 +73,7 @@ fn diff_colors(d: &DiffColors) -> ffi::FfiDiffColors {
         deleted_line: to_ffi_rgb(d.deleted_line),
         deleted_inline: to_ffi_rgb(d.deleted_inline),
         deleted_marker: to_ffi_rgb(d.deleted_marker),
+        ignored_marker: to_ffi_rgb(d.ignored_marker),
     }
 }
 

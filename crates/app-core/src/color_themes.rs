@@ -410,6 +410,7 @@ mod tests {
             deleted_line = "#3a1e1e"
             deleted_inline = "#5a2d2d"
             deleted_marker = "#f44336"
+            ignored_marker = "#9a9d4a"
 
             [terminal]
             black = "#000000"

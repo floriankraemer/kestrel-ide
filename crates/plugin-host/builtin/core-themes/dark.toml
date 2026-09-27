@@ -40,6 +40,9 @@ modified_marker = "#4c82c4"
 deleted_line = "#484a4a"
 deleted_inline = "#5f5f5f"
 deleted_marker = "#c55147"
+# JetBrains' olive/dim yellow-green "ignored" convention (ADR-0064 T7),
+# distinct from added_marker's green and muted's grey.
+ignored_marker = "#9a9d4a"
 
 [terminal]
 # JetBrains Darcula's console colours (ansi 0-7, then the bright 8-15).

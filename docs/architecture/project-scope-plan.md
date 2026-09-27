@@ -2,7 +2,7 @@
 
 ## Status
 
-In delivery.
+Done.
 Design recorded in [ADR-0064](decisions/0064-project-scope-explicit-exclusions.md); supersedes ADR-0063.
 
 ## Progress
@@ -14,8 +14,8 @@ Design recorded in [ADR-0064](decisions/0064-project-scope-explicit-exclusions.m
 | T3 | done | 225d54f |
 | T4 | done | 0cb2958 |
 | T5 | done | 74fa8a7 |
-| T6 | done | (this PR) |
-| T7 | open | |
+| T6 | done | 0d0a6a8 |
+| T7 | done | (this PR) |
 
 ## Context
 

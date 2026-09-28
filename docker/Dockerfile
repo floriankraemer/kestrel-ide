@@ -109,6 +109,16 @@ RUN curl -fsSL -o /tmp/llvm-cov.tar.gz \
     && rm /tmp/llvm-cov.tar.gz \
     && cargo llvm-cov --version
 
+# cargo-sweep keeps target/ under a size budget (`make sweep`, which `test`,
+# `lint`, `e2e` and `coverage` run first): cargo itself never deletes the
+# artifacts a changed dependency, feature set, branch or flag left behind.
+# No binary release exists, so this one is compiled — a small crate, once
+# per image build, without the sccache wrapper (no /sccache volume here).
+ARG CARGO_SWEEP_VERSION=0.8.0
+RUN RUSTC_WRAPPER= cargo install --locked cargo-sweep --version "${CARGO_SWEEP_VERSION}" \
+    && rm -rf /usr/local/cargo/registry/cache /usr/local/cargo/registry/src \
+    && cargo sweep --version
+
 ARG SCCACHE_VERSION=0.17.0
 RUN curl -fsSL -o /tmp/sccache.tar.gz \
       "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-x86_64-unknown-linux-musl.tar.gz" \

@@ -36,7 +36,7 @@ RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IM
 # build/.gradle/target directories never end up root-owned on the host.
 RUN_JVM = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(JVM_IMAGE)
 
-.PHONY: help all test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
+.PHONY: help all sweep test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
 	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci test-db db-ci
 
 .DEFAULT_GOAL := help
@@ -50,7 +50,20 @@ all: test build ## Run tests, then build all targets
 linux-image: ## Build the linux-builder Docker image
 	$(DOCKER) build --target linux-builder -t $(LINUX_IMAGE) -f $(DOCKERFILE) .
 
-test: linux-image ## Run cargo nextest + doctests in Docker
+# Size budget for target/. cargo never deletes the artifacts an old
+# dependency, feature set, branch or flag left behind, so without this
+# target/ grew past 80 GB. `cargo sweep --maxsize` evicts least-recently-used
+# builds (by their fingerprints' access time) until the rest fits, so the
+# builds you are actually using survive; it is a quick no-op under budget.
+# 40 GB holds a full dev build with every test binary (~20 GB) plus
+# coverage's instrumented copy and the Windows cross-build without
+# evicting one to make room for the other.
+TARGET_BUDGET ?= 40GB
+
+sweep: linux-image ## Trim target/ to TARGET_BUDGET (least-recently-used builds first)
+	$(RUN_LINUX) cargo sweep --maxsize $(TARGET_BUDGET)
+
+test: linux-image sweep ## Run cargo nextest + doctests in Docker
 	$(RUN_LINUX) cargo nextest run --workspace
 	$(RUN_LINUX) cargo test --doc --workspace
 
@@ -121,7 +134,7 @@ db-ci: ## Inner half of `test-db` — run inside the image
 	# service; the compose stack's sshd is up here, so run it explicitly.
 	cargo nextest run -p db-drivers --features db-integration --run-ignored only ssh
 
-lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
+lint: linux-image sweep ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings
 	$(RUN_LINUX) cargo fmt --all -- --check
 	$(RUN_LINUX) scripts/check-file-size.sh
@@ -141,7 +154,7 @@ lint: linux-image ## Run clippy + rustfmt + file-size checks in Docker
 # binary from the outside, so it has no source of its own worth measuring.
 COVERAGE_EXCLUDES = --exclude ui-shell --exclude app --exclude e2e
 
-coverage: linux-image ## Coverage for the Qt-free crates; writes target/coverage/lcov.info
+coverage: linux-image sweep ## Coverage for the Qt-free crates; writes target/coverage/lcov.info
 	$(RUN_LINUX) $(MAKE) coverage-ci
 
 # Inner target: the command line itself, with no Docker wrapper, so CI (which
@@ -159,7 +172,7 @@ coverage-ci: ## Inner half of `coverage` — run inside the builder image
 # in linux-builder, so no image change is needed.
 E2E_XVFB = xvfb-run -a --server-args="-screen 0 1600x1200x24"
 
-e2e: linux-image ## Run the E2E flows under Xvfb (ignored by `make test`)
+e2e: linux-image sweep ## Run the E2E flows under Xvfb (ignored by `make test`)
 	$(RUN_LINUX) $(MAKE) e2e-ci
 
 # Inner target: the command line itself, with no Docker wrapper, so CI (which

@@ -29,7 +29,7 @@ Four questions had to be answered before any code could be written, because each
 
 `color_theme::parse_toml` is the crate's native parser and the format every built-in theme (`core-themes`, `github-vscode-theme`) ships as.
 `color_theme::parse_vscode_json` is a second, equally first-class entry point: `app_core::color_themes::parse_by_extension` dispatches on the contributed file's own extension, `.toml` to one parser and `.json` to the other, so a `color-themes` contribution can point at either format and the join in `app-core` never needs to know which one a given plugin chose.
-Neither format is preferred at the type level — `ColorTheme` is the same struct whichever parser produced it — so a raw, unmodified VS Code theme JSON dropped into `<config_dir>/plugins/` is offered and resolves exactly like a native TOML theme, proven by the integration test in `crates/plugin-host/tests/core_themes.rs`.
+Neither format is preferred at the type level — `ColorTheme` is the same struct whichever parser produced it — so a raw, unmodified VS Code theme JSON dropped into `<config_dir>/plugins/` is offered and resolves exactly like a native TOML theme, proven by the integration test in `crates/plugin-host/tests/it/core_themes.rs`.
 
 ### 2. The workbench-key mapping is runtime code, not an import-only script
 
@@ -69,7 +69,7 @@ This is recorded honestly as a known follow-up, not papered over: `syntax-core` 
 ## Consequences
 
 - Positive: adding another theme — built-in or user-installed, TOML or VS Code JSON — costs a manifest entry and a data file, never a new branch in `theme.cpp` or a new static table in `syntax-core`.
-- Positive: a user can install any VS Code theme JSON they already have, unmodified, with the same install path as any other plugin; proven by `crates/plugin-host/tests/core_themes.rs` and `crates/app-core/src/color_themes.rs`'s own integration tests.
+- Positive: a user can install any VS Code theme JSON they already have, unmodified, with the same install path as any other plugin; proven by `crates/plugin-host/tests/it/core_themes.rs` and `crates/app-core/src/color_themes.rs`'s own integration tests.
 - Positive: persisted `settings.toml` theme ids (`"dark"`, `"light"`, `"vscode-dark"`) are unchanged, so no settings migration was needed for existing installs.
 - Negative / accepted: `syntax-core` now carries two ways to resolve a palette — the old name-keyed `palette()`/`BUILTIN_THEMES` (kept for `markdown-preview`) and the new `ThemeStyles`/`build_palette()` (used everywhere else). This is drift, not a bug, and is tracked as a follow-up: retire the name-keyed path once `markdown-preview`'s theming is rewired onto contributions.
 - Negative / accepted: `ui-shell` gained a direct dependency on `color-theme` (for `ThemeProviderRust`'s field-by-field translation into `FfiChromePalette`/`FfiSemanticColors`/`FfiDiffColors`/`FfiColorThemeChoice`) that the original plan text did not anticipate — the same shape `convert.rs` already has for `syntax_core::theme::ScopeStyle` → `FfiScopeStyle`, and recorded in `docs/architecture/layering.md`'s `ui-shell` row rather than left as an undocumented edge.

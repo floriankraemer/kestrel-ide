@@ -1,10 +1,8 @@
 //! Split out of `stub_server_session.rs` (#162) once it crossed the
-//! file-size ceiling — see `stub_server/mod.rs` for the shared harness this
+//! file-size ceiling — see `stub_server/support.rs` for the shared harness this
 //! draws on.
 
-#[path = "stub_server/mod.rs"]
-mod stub_server;
-use stub_server::*;
+use crate::support::*;
 
 /// C9: `semantic_tokens_legend` reads the legend from `initialize`'s static
 /// `semanticTokensProvider`, and `semantic_tokens` decodes the canned

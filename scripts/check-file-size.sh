@@ -37,7 +37,7 @@ baseline() {
 	# sync_paths) now re-checks the scope through the private `scope()`
 	# helper rather than the old `excludes.rs` override-set builder, which
 	# is why the net is one line rather than the whole feature's size — the
-	# ADR-0064 tests themselves moved to tests/scope.rs. No split planned.
+	# ADR-0064 tests themselves moved to tests/it/scope.rs. No split planned.
 	crates/index-core/src/lib.rs) echo 3996 ;;
 	# Raised from 2572 by 10 lines for `Scope::from_id` (C9) — the inverse of
 	# `Scope::id`, needed to rebuild a `Scope` from the raw id a
@@ -97,10 +97,6 @@ baseline() {
 	# dispatch arm here. A split into per-feature request modules is a
 	# real follow-up (tracked separately), not attempted in this chain.
 	crates/lsp-core/src/manager.rs) echo 2052 ;;
-	# 1363 -> 2328 over the same chain: one integration test module per
-	# stub_server mode added by C4/C6/C7/C9/C10/C11. Splitting by feature
-	# is the obvious fix; deferred as a follow-up alongside manager.rs.
-	crates/lsp-core/tests/stub_server_session.rs) echo 2328 ;;
 	# 1371 -> 1686: the bridge-side call sites for the same feature chain
 	# (C5 watched files, C7 completion resolve, C9-C11 FFI methods).
 	crates/ui-shell/src/bridge/language/mod.rs) echo 1686 ;;

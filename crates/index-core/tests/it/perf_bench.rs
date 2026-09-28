@@ -1,5 +1,5 @@
 //! Benchmark behind issue #21, kept so the numbers in that PR can be re-taken.
-//! `cargo test --release --test perf_bench -- --ignored --nocapture`
+//! `cargo test --release -p index-core --test it perf_bench:: -- --ignored --nocapture`
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 

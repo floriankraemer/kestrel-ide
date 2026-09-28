@@ -2721,7 +2721,7 @@ mod tests {
 
     // ADR-0064's scope rules (gitignore no longer matters, an excluded
     // folder/ignored name does, a rescope purges) are integration-tested in
-    // `tests/scope.rs` rather than here — this file is grandfathered at a
+    // `tests/it/scope.rs` rather than here — this file is grandfathered at a
     // ratcheted line-count ceiling that may only shrink.
 
     #[test]
@@ -2808,7 +2808,7 @@ mod tests {
     }
 
     // `sync_paths` refusing a now-excluded path is integration-tested in
-    // `tests/scope.rs` alongside the rest of ADR-0064's rules.
+    // `tests/it/scope.rs` alongside the rest of ADR-0064's rules.
 
     #[test]
     fn reopening_an_unchanged_project_writes_nothing_at_all() {

@@ -72,7 +72,8 @@ fn every_core_theme_contribution_reads_and_parses() {
 /// TOML is stale: re-run `scripts/import-vscode-theme.py`.
 #[test]
 fn a_real_vendored_upstream_json_file_parses_via_parse_vscode_json() {
-    let json = include_str!("../../../third_party/github-vscode-theme/upstream/dark-default.json");
+    let json =
+        include_str!("../../../../third_party/github-vscode-theme/upstream/dark-default.json");
     let theme = color_theme::parse_vscode_json(json).expect("upstream JSON parses");
     assert_eq!(theme.appearance, color_theme::Appearance::Dark);
     assert!(!theme.id.is_empty());

@@ -28,7 +28,7 @@
 //! changed rather than because we did. A red CI that is nobody's fault is how
 //! a suite like this gets ignored and then deleted. Nightly and on demand.
 
-mod support;
+use crate::support::{retry_until, wait_for};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,7 +37,6 @@ use std::time::Duration;
 
 use lsp_core::catalog::ServerConfig;
 use lsp_core::manager::{LspEvent, LspManager};
-use support::{retry_until, wait_for};
 
 /// Long enough for rust-analyzer to index a one-file crate on a loaded CI box,
 /// short enough that a hang is a failure rather than a timeout of the job.
@@ -122,7 +121,7 @@ fn started(fixture: &Fixture) -> (LspManager, Receiver<LspEvent>) {
 }
 
 // `wait_for` and `retry_until` are shared with `csharp_conformance.rs` via
-// `tests/support/mod.rs`. `retry_until` exists because of the first thing
+// `tests/conformance/support.rs`. `retry_until` exists because of the first thing
 // this suite found: `ServerReady` is emitted as soon as `initialize`
 // returns, but rust-analyzer cannot answer a single request until it has run
 // `cargo metadata` and indexed the crate — tens of seconds on a cold cache.

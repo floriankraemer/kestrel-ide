@@ -80,11 +80,10 @@ lsp-conformance: lsp-image ## Check the LSP client against real rust-analyzer + 
 # Inner target: the command line itself, with no Docker wrapper, so CI (which
 # is already inside the lsp-conformance image) and `make lsp-conformance` run
 # exactly the same thing. Both suites, rust-analyzer's and csharp-ls's, run
-# from this one invocation — they are separate #[ignore]d test binaries, not
-# a separate target, per the plan's "beside rust-analyzer".
+# from this one invocation — they are modules of the one `conformance`
+# integration-test binary, per the plan's "beside rust-analyzer".
 lsp-conformance-ci: ## Inner half of `lsp-conformance` — run inside the image
-	cargo test -p lsp-core --test real_server_conformance -- --ignored --nocapture
-	cargo test -p lsp-core --test csharp_conformance -- --ignored --nocapture
+	cargo test -p lsp-core --test conformance -- --ignored --nocapture
 
 # jvm-build-core's `jvm-integration`-feature tests spawn a real gradle/mvn
 # binary against fixture projects — same "own image, nightly/on demand,
@@ -138,6 +137,7 @@ lint: linux-image sweep ## Run clippy + rustfmt + file-size checks in Docker
 	$(RUN_LINUX) cargo clippy --workspace --all-targets -- -D warnings
 	$(RUN_LINUX) cargo fmt --all -- --check
 	$(RUN_LINUX) scripts/check-file-size.sh
+	$(RUN_LINUX) scripts/check-test-layout.sh
 	# aws-lc-rs must never enter the tree (R2, database-tools-plan.md §13/§7): every rustls-using crate is audited
 	# to keep the `ring` provider only. Stays `--all-features`, strict: this is the only thing that catches a
 	# Windows link break before the MXE cross-build (R2). db-drivers' `cassandra` feature (F7.4, scylla 1.9) is

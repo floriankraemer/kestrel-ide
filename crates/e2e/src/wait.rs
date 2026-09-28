@@ -1,6 +1,6 @@
 //! The one waiting primitive.
 //!
-//! Modelled on `lsp-core/tests/stub_server_session.rs`'s `wait_for`: a
+//! Modelled on `lsp-core/tests/stub_server/support.rs`'s `wait_for`: a
 //! deadline, a poll, a predicate, and a panic naming what was waited for.
 //!
 //! A test that passes because 200 ms happened to be enough is worse than no

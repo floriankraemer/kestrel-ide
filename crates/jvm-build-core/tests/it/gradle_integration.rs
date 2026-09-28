@@ -26,7 +26,7 @@ fn write_script() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp dir");
     std::fs::write(
         dir.path().join(init_script::ASSET_NAME),
-        include_str!("../../plugin-host/builtin/jvm-build-tools/ide-model.init.gradle"),
+        include_str!("../../../plugin-host/builtin/jvm-build-tools/ide-model.init.gradle"),
     )
     .expect("write script");
     dir

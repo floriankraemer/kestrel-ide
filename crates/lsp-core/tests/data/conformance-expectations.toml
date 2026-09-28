@@ -1,5 +1,5 @@
 # What a real rust-analyzer actually does, as observed by
-# `crates/lsp-core/tests/real_server_conformance.rs`.
+# `crates/lsp-core/tests/conformance/real_server_conformance.rs`.
 #
 # This file IS the conformance report. A prose document listing which server
 # supports what rots within a fortnight and nobody notices; this one is
@@ -35,7 +35,7 @@ rename = true
 prepare_rename = true
 
 # What a real csharp-ls actually does, as observed by
-# `crates/lsp-core/tests/csharp_conformance.rs`.
+# `crates/lsp-core/tests/conformance/csharp_conformance.rs`.
 #
 # csharp-ls earned a second conformance suite (see
 # docs/architecture/lsp-conformance.md's amended "Why rust-analyzer only, for

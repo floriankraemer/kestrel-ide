@@ -2,7 +2,7 @@
 //! `TextIndex::open_or_build` (warm, nothing changed) take on a real tree, and
 //! how big the resulting index is.
 //!
-//! `cargo test --release -p index-core --test index_build_bench -- --ignored --nocapture`
+//! `cargo test --release -p index-core --test it index_build_bench:: -- --ignored --nocapture`
 //!
 //! Set `IDE_BENCH_ROOT=/path/to/repo` to bench a different tree; the default is
 //! this workspace's own `crates/` directory.

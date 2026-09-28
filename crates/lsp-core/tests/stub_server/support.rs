@@ -1,12 +1,12 @@
-//! Shared harness for the `stub_server_session*` integration test files
-//! (#162): stub-server configs, the polling helper, and the two session
-//! setups every topic file needs. Not itself a test binary — `tests/`
-//! files directly under it each become one, but a subdirectory does not
-//! (the standard `tests/common/mod.rs` idiom).
+//! Shared harness for the `stub_server` integration-test binary's topic
+//! modules (originally split out of `stub_server_session.rs`, #162):
+//! stub-server configs, the polling helper, and the two session setups
+//! every topic module needs. Declared once as `mod support;` in
+//! `tests/stub_server/main.rs`; each topic module pulls it in with
+//! `use crate::support::*;`.
 //!
-//! `#![allow(dead_code)]`: no single topic file uses every helper here, and
-//! that is expected — this is a shared toolbox, not a single test's setup.
-#![allow(dead_code)]
+//! No `#![allow(dead_code)]` needed: all topic modules now share one
+//! binary, so a helper only one module uses is not dead code crate-wide.
 
 pub use std::sync::mpsc::Receiver;
 pub use std::time::{Duration, Instant};

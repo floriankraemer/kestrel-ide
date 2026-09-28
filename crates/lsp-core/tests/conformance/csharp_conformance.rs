@@ -20,7 +20,7 @@
 //! Run it with `make lsp-conformance`, same as rust-analyzer's suite; both
 //! run from the one `lsp-conformance-ci` invocation.
 
-mod support;
+use crate::support::{retry_until, wait_for};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -30,7 +30,6 @@ use std::time::Duration;
 use lsp_core::catalog::ServerConfig;
 use lsp_core::manager::{LspEvent, LspManager};
 use serde_json::json;
-use support::{retry_until, wait_for};
 
 /// csharp-ls resolves a solution and warms up Roslyn before it can answer
 /// anything usable — slower than rust-analyzer's `cargo metadata` pass on a

@@ -16,7 +16,7 @@ A fresh session should read this table (and `git log`) before picking up work, p
 
 ### Measurements
 
-Taken with `cargo test --release -p index-core --test index_build_bench -- --ignored --nocapture` inside `linux-builder`, which copies the corpus to a temp directory first.
+Taken with `cargo test --release -p index-core --test it index_build_bench:: -- --ignored --nocapture` inside `linux-builder`, which copies the corpus to a temp directory first.
 
 **Small corpus** — this workspace's `crates/`, 281 files, ~1.8 MiB.
 
@@ -78,5 +78,5 @@ The build was also slower than the work it does justifies, for reasons that were
 make lint
 make test
 cargo tree -p index-core -e normal | grep -i qt   # must stay empty
-cargo test --release -p index-core --test index_build_bench -- --ignored --nocapture
+cargo test --release -p index-core --test it index_build_bench:: -- --ignored --nocapture
 ```

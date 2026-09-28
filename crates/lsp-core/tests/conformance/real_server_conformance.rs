@@ -121,7 +121,7 @@ fn started(fixture: &Fixture) -> (LspManager, Receiver<LspEvent>) {
 }
 
 // `wait_for` and `retry_until` are shared with `csharp_conformance.rs` via
-// `tests/support/mod.rs`. `retry_until` exists because of the first thing
+// `tests/conformance/support.rs`. `retry_until` exists because of the first thing
 // this suite found: `ServerReady` is emitted as soon as `initialize`
 // returns, but rust-analyzer cannot answer a single request until it has run
 // `cargo metadata` and indexed the crate — tens of seconds on a cold cache.

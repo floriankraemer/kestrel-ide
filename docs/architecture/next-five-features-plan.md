@@ -737,7 +737,7 @@ Lives at `crates/e2e/tests/` with `harness.rs` (the `Ide` fixture), `keys.rs` (x
 
 **Avoiding fake-passing timings** — the part that decides whether the suite is worth having.
 
-1. **No `sleep` anywhere except inside one function.** The harness exposes exactly one waiting primitive, modelled on `stub_server/support.rs`'s `wait_for` (lines 67–82): a deadline, a poll, a predicate, and a panic naming what it waited for. Its poll interval is the only `sleep` in the test tree, and a CI grep gate keeps it that way.
+1. **No `sleep` anywhere except inside one function.** The harness exposes exactly one waiting primitive, modelled on `stub_server/support.rs`'s `wait_for` (lines 65–79): a deadline, a poll, a predicate, and a panic naming what it waited for. Its poll interval is the only `sleep` in the test tree, and a CI grep gate keeps it that way.
 2. **Never wait for a duration; wait for a transition.** A test that passes because 200 ms happened to be enough is worse than no test — it will pass in CI and fail on a loaded laptop, which teaches the developer to re-run rather than debug.
 3. **Never assert immediately after sending input.** `xdotool key ctrl+s` returns as soon as the X event is queued.
 4. **Every assertion is against state the app published, never a screenshot.**
@@ -759,7 +759,7 @@ Port discovery is already solved: `bridge.rs:3479` writes a discovery file, and 
 Two corrections to an earlier draft's "no product change is needed". **The index is not env-overridable** — `index-core/src/lib.rs:150-168` writes `<project_root>/.ide-index` and only falls back to `dirs::cache_dir()` when the project dir refuses a file lock; isolation there comes from the throwaway project `TempDir`, and the `Drop` assertion must know that. And `XDG_STATE_HOME`/`XDG_DATA_HOME` are used **nowhere** in the workspace, so seeding them is theatre.
 Also **assert** `XDG_CONFIG_HOME` is set rather than merely setting it: with both it and `HOME` unset, `resolve_config_dir` lands in `std::env::temp_dir().join("ide")`, which is shared, not isolated.
 Git fixtures are built by shelling out to `git init` with pinned `GIT_AUTHOR_*`/`GIT_COMMITTER_*` and dates so hashes are deterministic — never a checked-in `.git`. The fixture's constructor asserts the config dir is empty and its `Drop` asserts nothing was written outside it, so cross-test bleed fails on the *first* offending test.
-Do **not** add a `resolve_config_dir`/`XDG_CONFIG_HOME` unit test via `std::env::set_var` — integration tests share one process and that is a process-global race. `stub_server/support.rs:43`'s `dying_stub_config()` shows the right pattern: pass config to a child via `env()` and keep the test process' own environment untouched.
+Do **not** add a `resolve_config_dir`/`XDG_CONFIG_HOME` unit test via `std::env::set_var` — integration tests share one process and that is a process-global race. `stub_server/support.rs:41`'s `dying_stub_config()` shows the right pattern: pass config to a child via `env()` and keep the test process' own environment untouched.
 
 **Artifacts.** A `Drop` impl firing only when `std::thread::panicking()` writes `target/e2e-artifacts/<test>/{screen.png, events.jsonl, app.stderr, app.stdout, config/}`. CI uploads with `if: failure()`, 14-day retention. Marker streams are captured on success too — they are the input to the seam-split golden comparison.
 

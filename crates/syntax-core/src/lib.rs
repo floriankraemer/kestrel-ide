@@ -2187,7 +2187,7 @@ mod tests {
     // ---- injections (I1) -------------------------------------------
     //
     // The shipped queries that use the mechanism (Markdown, HTML, PHP)
-    // are exercised end to end in `tests/language_catalog.rs`, against
+    // are exercised end to end in `tests/it/language_catalog.rs`, against
     // their real fixtures.
     //
     // What is proved here is the mechanism's edges, against synthetic

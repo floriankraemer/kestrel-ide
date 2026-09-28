@@ -7,16 +7,12 @@
 //! `containers` plugin from the same Settings dialog and relaunching to
 //! confirm its View-menu entry is gone.
 //!
-//! Its own test binary for the reason `e2e_run.rs`'s doc comment gives —
-//! `e2e.rs` sits at its ratcheted size ceiling — and `make e2e` runs it
-//! with the others.
-//!
 //! Every flow drives a fake `docker`/`podman` CLI
 //! (`container_core::bin::stub_engine`) rather than a real engine: none of
 //! this suite's hosts can assume Docker or Podman is installed. `env!(
 //! "CARGO_BIN_EXE_stub_engine")` cannot be used here — Cargo only sets a
 //! binary's `CARGO_BIN_EXE_*` for integration tests of the crate that
-//! declares it (the same reason `e2e_analysis.rs` locates `stub_analyzer`
+//! declares it (the same reason `analysis.rs` locates `stub_analyzer`
 //! by hand) — so [`stub_engine_bin`] derives its path from `CARGO_BIN_EXE_
 //! app`'s own directory instead; `e2e-ci` (`Makefile`) builds it
 //! explicitly (`cargo build --bin stub_engine -p container-core`) right
@@ -49,13 +45,9 @@ use std::path::{Path, PathBuf};
 use e2e::{Ide, Mark};
 use serde_json::Value;
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
-}
+use crate::support::{
+    fixture, open_file, rect_centre, settle, wait_for_containers_row as wait_for_row, APP,
+};
 
 /// `stub_engine`'s executable — see this file's own doc comment for why
 /// `env!("CARGO_BIN_EXE_stub_engine")` cannot be used directly.
@@ -159,42 +151,6 @@ fn launch_with_stub_engine(name: &str) -> (Ide, tempfile::TempDir, PathBuf) {
     (ide, path_dir, log_path)
 }
 
-/// A key sent as the very first input after startup can be silently
-/// dropped (a known trap of this harness — see the project's headless-E2E
-/// notes): one settling mouse click first makes every key after it land.
-/// Call once, right after `project_opened`, before this suite's first
-/// `ide.key(...)`.
-fn settle(ide: &Ide) {
-    // The project tree's own rows are the one thing on screen with a
-    // reported rect at this point; clicking the `.ide` directory row only
-    // selects it (a file row would open a tab).
-    // The *latest* report of the row: the tree publishes its rows once
-    // before the main window is laid out (tiny, wrong rects) and again
-    // after, and `main_window_shown` has already been waited for here.
-    let row = ide
-        .events()
-        .into_iter()
-        .rev()
-        .find(|e| {
-            e["ev"] == "project_tree_row"
-                && e["path"].as_str().is_some_and(|p| p.ends_with("/.ide"))
-        })
-        .expect("the project tree reported its .ide row");
-    let (x, y) = rect_centre(&row["rect"]);
-    ide.click_at(x, y, 1);
-    ide.focus_main();
-}
-
-fn rect_centre(rect: &Value) -> (i32, i32) {
-    let r: Vec<i64> = rect
-        .as_array()
-        .expect("a rect array")
-        .iter()
-        .map(|v| v.as_i64().expect("a rect component"))
-        .collect();
-    ((r[0] + r[2] / 2) as i32, (r[1] + r[3] / 2) as i32)
-}
-
 /// Open the Containers dock through the View menu (there is no default
 /// shortcut for `view.containers`) and wait until its tree is actually on
 /// screen and laid out — a `containers_tree_changed` marker with at least
@@ -213,11 +169,6 @@ fn open_containers_dock(ide: &Ide, mark: Mark) {
     });
 }
 
-fn find_row<'a>(rows: &'a [Value], kind: &str, id: Option<&str>) -> Option<&'a Value> {
-    rows.iter()
-        .find(|row| row["kind"] == kind && id.is_none_or(|wanted| row["id"] == wanted))
-}
-
 /// `crates/container-core/testdata/inspect/docker/containers.json`'s own
 /// `redis` container — the fixture's only `running` one, so the sole
 /// container row `canStart` is false for. Picking any *other* container
@@ -232,30 +183,6 @@ fn find_stoppable_container_row(rows: &[Value]) -> Option<&Value> {
                 .as_str()
                 .is_some_and(|id| id.contains(RUNNING_CONTAINER_ID_PREFIX))
     })
-}
-
-/// Wait for a `containers_tree_changed` marker whose rows include one of
-/// `kind` (and, when given, `id`), and return that row.
-fn wait_for_row(ide: &Ide, mark: Mark, kind: &str, id: Option<&str>) -> Value {
-    let kind = kind.to_string();
-    let id = id.map(str::to_string);
-    let event = ide.wait_for_event(
-        mark,
-        &format!("a `{kind}` row in the containers tree"),
-        |e| {
-            e["ev"] == "containers_tree_changed"
-                && e["rows"]
-                    .as_array()
-                    .is_some_and(|rows| find_row(rows, &kind, id.as_deref()).is_some())
-        },
-    );
-    find_row(
-        event["rows"].as_array().expect("rows array"),
-        &kind,
-        id.as_deref(),
-    )
-    .expect("just matched above")
-    .clone()
 }
 
 /// Wait for a `containers_toolbar_rects` marker naming `button`, and
@@ -305,34 +232,6 @@ fn connect_docker_and_expand_containers(ide: &Ide, mark: Mark) -> Value {
     find_stoppable_container_row(event["rows"].as_array().expect("rows array"))
         .expect("just matched above")
         .clone()
-}
-
-/// Open one file through Go to File, returning its `tab_added` marker.
-/// Duplicated from `e2e_run.rs` by that file's own judgement: a twenty-line
-/// helper is not worth a crate between the test binaries.
-fn open_file(ide: &Ide, name: &str) -> Value {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, "results for the query", |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
 }
 
 // --- (a): dock connects and shows the canned tree ------------------------

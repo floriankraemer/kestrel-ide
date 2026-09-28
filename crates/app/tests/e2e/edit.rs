@@ -1,100 +1,12 @@
 //! End-to-end flow for the buffer-editing gestures that must be exactly one
 //! Ctrl+Z each — Replace All and accepting a completion (F0-18, #142).
 //!
-//! Its own test binary for the reason `e2e_vcs.rs` gives — `e2e.rs` sits at
-//! its ratcheted size ceiling — and `make e2e` runs it with the others.
-
-use std::path::{Path, PathBuf};
-
 use e2e::{mcp::Mcp, Ide, Mark};
 use serde_json::json;
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
-}
-
-/// The fixture file's content as it is checked in — the independent answer
-/// to "did the app change this file", read without going through the app.
-fn fixture_text(name: &str, relative: &str) -> String {
-    std::fs::read_to_string(fixture(name).join(relative)).expect("fixture file")
-}
-
-/// Search Everywhere's fuzzy filename match needs the project index built
-/// first, or an early `open_file` call races an empty result set. Duplicated
-/// from `e2e.rs` for the same reason every other helper here is.
-fn wait_for_index(mcp: &Mcp) {
-    e2e::wait_for("the project index to finish building", || {
-        (mcp.call("index_status", json!({}))["ready"] == true).then_some(())
-    });
-}
-
-/// Open one file through Go to File, returning its `tab_added` marker.
-/// Duplicated from `e2e_analysis.rs` by the same judgement that duplicated
-/// it from `e2e.rs`: a twenty-line helper is not worth a crate between the
-/// test binaries.
-fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, "results for the query", |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
-}
-
-fn buffer(mcp: &Mcp, tab_id: u64) -> String {
-    mcp.call("read_buffer", json!({ "tab_id": tab_id }))["content"]
-        .as_str()
-        .expect("read_buffer returns a string")
-        .to_string()
-}
-
-/// The centre of a `[x, y, w, h]` marker field.
-fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
-    let n = |i: usize| rect[i].as_i64().expect("rect component") as i32;
-    (n(0) + n(2) / 2, n(1) + n(3) / 2)
-}
-
-/// Route the `rust` language id at `lsp-core`'s stub server — see
-/// `e2e.rs`'s `route_rust_at_stub` for why this needs a relaunch.
-fn route_rust_at_stub(ide: &mut Ide) {
-    assert_eq!(ide.quit(), 0);
-    let mut settings = app_config::load(&ide.config_dir()).expect("settings just written");
-    settings
-        .language_servers
-        .push(app_config::LanguageServerSetting {
-            language_id: "rust".to_string(),
-            command: Some(
-                Path::new(APP)
-                    .with_file_name("stub_server")
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-            ..Default::default()
-        });
-    app_config::save(&ide.config_dir(), &settings).expect("seeding the stub server override");
-    ide.relaunch();
-    ide.wait_for_ev(Mark::start(), "project_opened");
-}
+use crate::support::{
+    buffer, fixture, fixture_text, open_file, rect_centre, route_rust_at_stub, wait_for_index, APP,
+};
 
 /// F0-18 (#142): Replace All and accepting a completion each cross the seam
 /// as one `Vec<FfiTextEdit>` and are spliced inside one `beginEditBlock`, so

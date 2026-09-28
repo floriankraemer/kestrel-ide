@@ -95,7 +95,7 @@ test-jvm: linux-jvm-image ## Run the real-toolchain integration tests and Gradle
 	$(RUN_JVM) $(MAKE) jvm-ci
 
 # Inner target: the command line itself, with no Docker wrapper, mirroring
-# `lsp-conformance-ci`'s split. `e2e_build_tools` (E2, ADR-0057 §6) rides
+# `lsp-conformance-ci`'s split. `build_tools` (E2, ADR-0057 §6) rides
 # along here rather than `e2e-ci`'s per-PR budget — it is gated
 # `IDE_E2E_JVM=1` at runtime (`app`'s own test binary has no
 # `jvm-integration` feature to gate it at compile time the way the two
@@ -105,7 +105,7 @@ jvm-ci: ## Inner half of `test-jvm` — run inside the image
 	cargo nextest run -p jvm-build-core --features jvm-integration
 	cargo nextest run -p test-core --features jvm-integration
 	cargo build -p app
-	IDE_E2E_JVM=1 $(E2E_XVFB) cargo test -p app --test e2e_build_tools -- --ignored --test-threads=1 --nocapture
+	IDE_E2E_JVM=1 $(E2E_XVFB) cargo test -p app --test e2e build_tools:: -- --ignored --test-threads=1 --nocapture
 
 # Database Tools' real-server suite (docs/architecture/db-integration.md).
 # F1 lands PostgreSQL only, in `linux-builder` itself (no `linux-db` image
@@ -183,20 +183,21 @@ e2e-ci: ## Inner half of `e2e` — run inside the builder image
 	cargo build --bin stub_server -p lsp-core
 	cargo build --bin stub_analyzer -p analysis-core
 	cargo build --bin stub_engine -p container-core
-	$(E2E_XVFB) cargo test -p app --test e2e --test e2e_lazy_tree --test e2e_scope --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff --test e2e_analysis --test e2e_edit --test e2e_editor_popups --test e2e_containers --test e2e_database --test e2e_database_console -- --ignored --test-threads=1 --nocapture
+	$(E2E_XVFB) cargo test -p app --test e2e -- --ignored --test-threads=1 --nocapture
 
-# Burn-in: `make e2e-repeat TEST=e2e_open_project_edit_save N=20`. A flake is
-# a P1 bug in the product or the harness, so this exists to find one before
-# it is discovered by somebody re-running CI.
+# Burn-in: `make e2e-repeat TEST=core::e2e_open_project_edit_save N=20` (a
+# module-path filter into the merged `e2e` binary — see `tests/e2e/main.rs`).
+# A flake is a P1 bug in the product or the harness, so this exists to find
+# one before it is discovered by somebody re-running CI.
 N ?= 20
-e2e-repeat: linux-image ## Repeat one E2E flow N times: make e2e-repeat TEST=<name> N=20
-	@test -n "$(TEST)" || { echo "usage: make e2e-repeat TEST=<name> [N=20]"; exit 2; }
+e2e-repeat: linux-image ## Repeat one E2E flow N times: make e2e-repeat TEST=<module>::<name> N=20
+	@test -n "$(TEST)" || { echo "usage: make e2e-repeat TEST=<module>::<name> [N=20]"; exit 2; }
 	$(RUN_LINUX) sh -c 'cargo build -p app && cargo build --bin stub_server -p lsp-core && \
 		cargo build --bin stub_analyzer -p analysis-core && \
 		cargo build --bin stub_engine -p container-core && \
 		for i in $$(seq 1 $(N)); do \
 		echo "--- run $$i/$(N) ---"; \
-		$(E2E_XVFB) cargo test -p app --test e2e --test e2e_lazy_tree --test e2e_scope --test e2e_run --test e2e_panes --test e2e_preview --test e2e_vcs --test e2e_minimap --test e2e_about --test e2e_diff --test e2e_analysis --test e2e_edit --test e2e_editor_popups --test e2e_containers --test e2e_database --test e2e_database_console -- --ignored --exact \
+		$(E2E_XVFB) cargo test -p app --test e2e -- --ignored --exact \
 			--test-threads=1 --nocapture $(TEST) || exit 1; \
 	done'
 

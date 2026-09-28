@@ -2,97 +2,16 @@
 //! File still reaches a gitignored build artifact and a dotfile nested
 //! under a dot-directory.
 //!
-//! A separate file rather than a new test in `e2e.rs`: that file is at its
-//! own size baseline (`scripts/check-file-size.sh`) and this needs its own
-//! small copies of `git_fixture`/`open_search_popup`/`accept_top_hit`
-//! /`wait_for_index`, the same duplication `e2e_lazy_tree.rs` already
-//! accepts — each E2E test binary is its own crate, so nothing here is
-//! importable from `e2e.rs`.
-
 use e2e::{mcp::Mcp, Ide, Mark};
 use serde_json::json;
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn wait_for_index(mcp: &Mcp) {
-    e2e::wait_for("the project index to finish building", || {
-        (mcp.call("index_status", json!({}))["ready"] == true).then_some(())
-    });
-}
-
-fn open_search_popup(ide: &Ide, shortcut: &str) -> Mark {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key(shortcut);
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-    ide.mark()
-}
-
-fn accept_top_hit(ide: &Ide, mark: Mark, query: &str) {
-    ide.type_text(query);
-    let hits = ide.wait_for_event(mark, &format!("results for `{query}`"), |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    assert!(hits["count"].as_u64().unwrap() > 0);
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-}
-
-/// A fresh temp directory holding `files`, committed to a brand-new Git
-/// repository — see `e2e.rs`'s own `git_fixture` for why the commit has to
-/// exist before `Ide::launch` ever spawns the app.
-fn git_fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
-    let dir = tempfile::TempDir::new().expect("temp git fixture dir");
-    for (relative, content) in files {
-        let path = dir.path().join(relative);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("fixture subdirectory");
-        }
-        std::fs::write(&path, content).expect("fixture file");
-    }
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .status()
-            .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
-        assert!(status.success(), "git {args:?} failed");
-    };
-    git(&["init", "--quiet"]);
-    git(&["config", "user.email", "e2e@example.invalid"]);
-    git(&["config", "user.name", "E2E"]);
-    git(&["add", "."]);
-    git(&["commit", "--quiet", "-m", "initial"]);
-    dir
-}
-
-/// The centre of a `[x, y, w, h]` marker field, so a flow never computes a
-/// click point from window geometry or font metrics. Duplicated from
-/// `e2e_vcs.rs`, the same per-binary judgement this file's own module doc
-/// already makes about `git_fixture`.
-fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (
-        (rect[0] + rect[2] / 2) as i32,
-        (rect[1] + rect[3] / 2) as i32,
-    )
-}
+use crate::support::{
+    accept_top_hit, git_fixture, open_search_popup, rect_centre, wait_for_index, APP,
+};
 
 /// Right-click `folder`'s row in the project tree, click the context-menu
 /// action labelled `label`, and wait for the menu to have closed having
-/// accepted it. Collapsed from `e2e_vcs.rs`'s `open_tree_git_submenu` +
+/// accepted it. Collapsed from `vcs.rs`'s `open_tree_git_submenu` +
 /// `click_labelled_action` pair into one call: the exclusion actions are
 /// top-level entries, with no submenu to hover into first.
 fn click_tree_menu_action(
@@ -101,7 +20,7 @@ fn click_tree_menu_action(
     folder_path: &std::path::Path,
     label: &str,
 ) {
-    // Forces a fresh tree layout report the same way `e2e_vcs.rs`'s
+    // Forces a fresh tree layout report the same way `vcs.rs`'s
     // `open_tree_git_submenu` does — a row's rect from the tree's very
     // first layout pass is stale by the time the dock has its final size.
     let mark = ide.mark();
@@ -389,7 +308,7 @@ fn e2e_cancelling_project_scope_settings_discards_the_draft() {
     assert_eq!(ide.quit(), 0);
 }
 
-/// A point on a review-dialog row's checkbox glyph — `e2e_vcs.rs`'s own
+/// A point on a review-dialog row's checkbox glyph — `vcs.rs`'s own
 /// `checkbox_point`, duplicated for the reason this file's other helpers
 /// already are (each E2E binary is its own crate).
 fn checkbox_point(rect: &serde_json::Value) -> (i32, i32) {

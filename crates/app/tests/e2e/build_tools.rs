@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use e2e::{Ide, Mark};
 use serde_json::Value;
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
+use crate::support::{accept_top_hit, open_search_popup, rect_centre, APP};
 
 /// Review fix #6: `e2e::wait::DEFAULT_TIMEOUT` (60s) is tight for a real
 /// Gradle/Maven sync, build or test run in Docker — every wait in this
@@ -81,23 +81,6 @@ fn copy_dir_all(from: &Path, to: &Path) {
     }
 }
 
-/// The centre of a `[x, y, w, h]` rect a marker reported — the only way to
-/// click a widget this harness has no handle on (`e2e.rs`'s own
-/// `rect_centre`, duplicated per that file's own doc comment: a ten-line
-/// helper is not worth a shared crate between test binaries).
-fn rect_centre(rect: &Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (
-        (rect[0] + rect[2] / 2) as i32,
-        (rect[1] + rect[3] / 2) as i32,
-    )
-}
-
 /// The rect a `build_tools_row` mark carries for a tree item that is not
 /// currently visible (a collapsed ancestor) — `[0,0,0,0]`, `e2e_mark.h`'s
 /// own convention for "no rect yet" every rect-carrying mark in this repo
@@ -132,29 +115,12 @@ fn probe_completion_shown(ide: &Ide, mark: Mark, timeout: Duration) -> Option<Va
     }
 }
 
-/// Open Search Everywhere, type `query`, accept the top hit — `e2e.rs`'s
-/// own `open_search_popup`/`accept_top_hit`, collapsed into one call since
-/// neither scenario below needs the two halves separately.
+/// Open Search Everywhere, type `query`, accept the top hit —
+/// `support::open_search_popup`/`accept_top_hit`, collapsed into one call
+/// since neither scenario below needs the two halves separately.
 fn search_everywhere_accept(ide: &Ide, shortcut: &str, query: &str) {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key(shortcut);
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(query);
-    ide.wait_for_event(mark, &format!("results for `{query}`"), |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
+    let mark = open_search_popup(ide, shortcut);
+    accept_top_hit(ide, mark, query);
 }
 
 /// Gradle flow: fixture sync gated behind the trust banner, the dock's

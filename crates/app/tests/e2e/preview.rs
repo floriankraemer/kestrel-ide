@@ -1,57 +1,9 @@
 //! End-to-end flows for the preview: the in-tab edit/view toggle over a
 //! Markdown file, and a standalone Mermaid file previewing at all.
 //!
-//! Their own test binary rather than more of `e2e.rs`, which sits at its
-//! ratcheted size ceiling (`scripts/check-file-size.sh`) — the same reason
-//! `e2e_run.rs` and `e2e_panes.rs` exist. `make e2e` runs all four.
+use e2e::{Ide, Mark};
 
-use std::path::{Path, PathBuf};
-
-use e2e::{mcp::Mcp, Ide, Mark};
-use serde_json::json;
-
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
-}
-
-fn wait_for_index(mcp: &Mcp) {
-    e2e::wait_for("the project index to finish building", || {
-        (mcp.call("index_status", json!({}))["ready"] == true).then_some(())
-    });
-}
-
-/// Open one file through Go to File, returning its `tab_added` marker.
-/// Duplicated from `e2e.rs`, as `e2e_run.rs` and `e2e_panes.rs` already
-/// duplicate it: a helper this small is not worth a crate between four test
-/// binaries.
-fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, "results for the query", |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
-}
+use crate::support::{fixture, open_file, wait_for_index, APP};
 
 /// View mode: `Ctrl+Shift+M` renders the current tab in place, Escape puts
 /// the source back.

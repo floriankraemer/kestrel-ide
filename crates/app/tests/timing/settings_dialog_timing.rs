@@ -2,7 +2,8 @@
 //! delay). Not part of the regular suite — run by hand under `make shell` +
 //! Xvfb while investigating. Left in the tree as a reusable repro rather
 //! than a throwaway script, following the same real-binary-under-Xvfb
-//! method `e2e.rs`'s other flows use.
+//! method `core.rs`'s other flows use. Run directly with `cargo test -p app
+//! --test timing -- --ignored settings_dialog_timing::`.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;

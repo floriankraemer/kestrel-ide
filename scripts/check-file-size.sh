@@ -220,11 +220,16 @@ baseline() {
 	# proves the fix for the origin-badge bug #143 walked into. No split
 	# planned; this suite is already one flow per test.
 	# Ratcheted down: the split-pane flows moved to their own binary,
-	# crates/app/tests/e2e_panes.rs, to make room for the tab-drag flow.
+	# crates/app/tests/e2e_panes.rs (now tests/e2e/panes.rs), to make room
+	# for the tab-drag flow.
 	# Raised from 1362 by 35 lines for e2e_ui_locale_setting_takes_effect_on_relaunch
 	# (ADR-0049): the ui_locale_active marker on a cold launch and after a
 	# relaunch seeded with ui_locale = "de".
-	crates/app/tests/e2e.rs) echo 1397 ;;
+	# Ratcheted down again: the test-layout merge (one integration-test
+	# binary per crate) moved this file's own shared helpers out to
+	# tests/e2e/support.rs, and the file itself moved from e2e.rs to
+	# tests/e2e/core.rs.
+	crates/app/tests/e2e/core.rs) echo 1184 ;;
 	esac
 }
 

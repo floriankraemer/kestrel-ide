@@ -66,7 +66,7 @@ Both surfaces ride the one 300 ms content debounce that already existed, rather 
 - The renderer, the provider table and the FFI seam are unchanged. This ADR adds a manifest block, one dispatch arm, one language row and one C++ translation unit.
 - `MarkdownPreviewPanel` is now instantiated more than once per window — once for the dock, once per tab that has entered view mode. The class was already self-contained per instance; the only change to it is a focus proxy onto its browser.
 - `syncToEditorLine` and `nearestSourceLine` finally have a caller. They shipped with ADR-0033 and, despite the header claiming otherwise, nothing called them.
-- The E2E flows live in a new `crates/app/tests/e2e_preview.rs` binary, because `e2e.rs` is at its ratcheted size ceiling — the same reason `e2e_run.rs` and `e2e_panes.rs` exist.
+- The E2E flows live in a new `crates/app/tests/e2e_preview.rs` binary, because `e2e.rs` was at its ratcheted size ceiling — the same reason `e2e_run.rs` and `e2e_panes.rs` existed. (Later merged into one `app` E2E binary — see `crates/app/tests/e2e/preview.rs`.)
 
 ### Rejected alternatives
 

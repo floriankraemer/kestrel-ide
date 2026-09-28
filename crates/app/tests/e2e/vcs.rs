@@ -1,50 +1,10 @@
-//! End-to-end flows for version control that do not fit in `e2e.rs`, which
-//! sits at its ratcheted size ceiling (`scripts/check-file-size.sh`).
-//!
-//! Its own test binary for that reason alone — everything else about these
-//! flows is exactly as `e2e.rs` describes, and `make e2e` runs both.
+//! End-to-end flows for version control that do not fit in `core.rs`.
 
 use e2e::{Ide, Mark};
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-/// A fresh temp directory holding `files`, committed to a brand-new Git
-/// repository.
-///
-/// Duplicated from `e2e.rs` rather than shared, the same judgement
-/// `e2e_run.rs` makes about its own helpers: a twenty-line fixture is not
-/// worth a third crate between the test binaries. The reason it bakes
-/// `.git` in rather than running `git init` after launch is `e2e.rs`'s:
-/// `VcsService::open_project` discovers `.git` on a background thread the
-/// instant the project opens, and an `init` racing that thread can leave the
-/// app permanently believing the project is not a repository.
-fn git_fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
-    let dir = tempfile::TempDir::new().expect("temp git fixture dir");
-    for (relative, content) in files {
-        let path = dir.path().join(relative);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("fixture subdirectory");
-        }
-        std::fs::write(&path, content).expect("fixture file");
-    }
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .status()
-            .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
-        assert!(status.success(), "git {args:?} failed");
-    };
-    git(&["init", "--quiet"]);
-    // A fresh `git` has no identity configured in CI; scoped to this repo
-    // only, since `--global` would leak between test runs on a shared
-    // machine.
-    git(&["config", "user.email", "e2e@example.invalid"]);
-    git(&["config", "user.name", "E2E"]);
-    git(&["add", "."]);
-    git(&["commit", "--quiet", "-m", "initial"]);
-    dir
-}
+use crate::support::{
+    accept_top_hit, git_fixture, open_file, open_search_popup, rect_centre, wait_for_index, APP,
+};
 
 /// The Changes dock used to be blind to anything the app did not do itself:
 /// `refreshStatus` had exactly two callers, a save and repository
@@ -87,21 +47,6 @@ fn e2e_an_external_change_reaches_the_changes_dock() {
     });
 
     assert_eq!(ide.quit(), 0);
-}
-
-/// The centre of a `[x, y, w, h]` marker field, so a flow never computes a
-/// click point from window geometry or font metrics.
-fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (
-        (rect[0] + rect[2] / 2) as i32,
-        (rect[1] + rect[3] / 2) as i32,
-    )
 }
 
 /// `git status --porcelain`, read by the test with its own `git` process
@@ -291,41 +236,9 @@ fn e2e_file_history_opens_after_a_layout_saved_without_its_dock() {
     assert_eq!(ide.quit(), 0);
 }
 
-/// Open the Search Everywhere popup with `shortcut` and wait until its
-/// opening query has been answered, so a later `search_results` marker can
-/// only be one the test's own typing caused.
-///
-/// Duplicated from `e2e.rs` rather than shared, the same judgement
-/// `git_fixture` above already makes about this file's own helpers.
-fn open_search_popup(ide: &Ide, shortcut: &str) -> Mark {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key(shortcut);
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-    ide.mark()
-}
-
-/// Type a query into an open search popup and take the top hit.
-fn accept_top_hit(ide: &Ide, mark: Mark, query: &str) {
-    ide.type_text(query);
-    let hits = ide.wait_for_event(mark, &format!("results for `{query}`"), |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    assert!(hits["count"].as_u64().unwrap() > 0);
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-}
-
 /// The repo-wide Commit Log: open it (Find Action, since `view.vcsCommitLog`
 /// has no default shortcut — same reach `e2e_file_history_lists_commits_
-/// and_survives_the_context_menu` in `e2e.rs` uses for File History), expand
+/// and_survives_the_context_menu` in `core.rs` uses for File History), expand
 /// a row to see its full message, and double-click it open in the
 /// commit-detail dock — asserting the dock shows the right number of
 /// changed files.
@@ -398,9 +311,7 @@ fn e2e_commit_log_expand_and_open_commit_detail() {
     assert_eq!(ide.quit(), 0);
 }
 
-/// A point on a `changes_row` marker's checkbox glyph, `e2e.rs`'s own
-/// `checkbox_point` — duplicated for the reason `git_fixture` above already
-/// gives for this file's other helpers.
+/// A point on a `changes_row` marker's checkbox glyph.
 fn checkbox_point(rect: &serde_json::Value) -> (i32, i32) {
     let rect: Vec<i64> = rect
         .as_array()
@@ -732,10 +643,7 @@ fn e2e_push_carries_the_ahead_count_after_a_local_commit() {
 /// `git` subprocess from the *test* — never through the app — so a pass
 /// proves the whole seam (Changes dock -> bridge -> `vcs-core` -> a real
 /// `git` process) actually produced a commit, not that each layer's own
-/// unit tests agree with each other. Duplicated from `e2e.rs`, moved here
-/// with the test that uses it (R6: this file grew past its ceiling with the
-/// three-hunk staging flow, and `e2e.rs` was already at its own
-/// grandfathered baseline).
+/// unit tests agree with each other.
 fn head_commit_subject(repo: &std::path::Path) -> String {
     let output = std::process::Command::new("git")
         .args(["log", "-1", "--format=%s"])
@@ -854,27 +762,6 @@ fn e2e_stage_and_commit_through_the_changes_dock() {
     );
 
     assert_eq!(ide.quit(), 0);
-}
-
-/// The step a naive harness would spell `sleep`. Duplicated from `e2e.rs`
-/// for the same reason `git_fixture` above is: a twenty-line helper is not
-/// worth a third crate between the two test binaries.
-fn wait_for_index(mcp: &e2e::mcp::Mcp) {
-    e2e::wait_for("the project index to finish building", || {
-        (mcp.call("index_status", serde_json::json!({}))["ready"] == true).then_some(())
-    });
-}
-
-/// Open one file through Go to File — `open_search_popup`/`accept_top_hit`
-/// above already exist in this file for
-/// `e2e_commit_log_expand_and_open_commit_detail`'s own Find Action reach;
-/// this is the same two calls `e2e.rs`'s own `open_file` makes.
-fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
-    let mark = open_search_popup(ide, "ctrl+shift+n");
-    accept_top_hit(ide, mark, name);
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
 }
 
 /// R6: staging one hunk through `vcs.stageHunk` (the gutter popup's
@@ -1031,7 +918,7 @@ fn current_branch(repo: &std::path::Path) -> String {
 /// One `vcs_menu_action`/`branch_context_action` marker's rect, centred —
 /// shared by every step below that clicks a menu action by its label
 /// rather than counting arrow-key presses, the same reach
-/// `e2e_diff.rs`'s "Show Diff" click already uses for the VCS menu itself.
+/// `diff.rs`'s "Show Diff" click already uses for the VCS menu itself.
 fn click_labelled_action(ide: &Ide, mark: Mark, ev: &str, label: &str) {
     let action = ide.wait_for_event(mark, &format!("{ev} '{label}'"), |e| {
         e["ev"] == ev && e["label"] == label
@@ -1099,7 +986,7 @@ fn e2e_create_branch_commit_and_merge_through_the_branch_popup() {
     let base_branch = current_branch(&repo_root);
 
     // Open the VCS menu and click "Branches..." by label — the same
-    // reach `e2e_diff.rs` uses for "Show Diff", rather than counting
+    // reach `diff.rs` uses for "Show Diff", rather than counting
     // arrow-key presses the way `e2e_stage_hunk_touches_only_that_hunks_
     // index_entry` does (Stash/Unstash's arrival between Branches and the
     // separator would silently shift a hard-coded Down count).

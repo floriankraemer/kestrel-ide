@@ -1,66 +1,14 @@
 //! E2E flows for the lazy project tree (PR2 of the fast-project-open plan,
 //! `docs/architecture/fast-project-open-plan.md`, ADR-0062 "Decision 2").
 //!
-//! Split out of `e2e.rs` once these two flows pushed it over its
+//! Split out of `core.rs` once these two flows pushed it over its
 //! grandfathered file-size baseline — a mechanical move, no behavior change.
 //! Every check goes through the real marker stream or the filesystem, never
 //! a screenshot (ADR-0024).
 
-use std::path::{Path, PathBuf};
-
 use e2e::{Ide, Mark};
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
-}
-
-/// A fresh temp directory holding `files`, committed to a brand-new Git
-/// repository. See `e2e.rs`'s own copy of this helper for why `.git` is
-/// baked into the fixture rather than `git init`-ed after `Ide::launch`
-/// returns (a race with `VcsService::open_project`'s own background
-/// discovery).
-fn git_fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
-    let dir = tempfile::TempDir::new().expect("temp git fixture dir");
-    for (relative, content) in files {
-        let path = dir.path().join(relative);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).expect("fixture subdirectory");
-        }
-        std::fs::write(&path, content).expect("fixture file");
-    }
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .status()
-            .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
-        assert!(status.success(), "git {args:?} failed");
-    };
-    git(&["init", "--quiet"]);
-    git(&["config", "user.email", "e2e@example.invalid"]);
-    git(&["config", "user.name", "E2E"]);
-    git(&["add", "."]);
-    git(&["commit", "--quiet", "-m", "initial"]);
-    dir
-}
-
-/// The centre of a `[x, y, w, h]` marker field — see `e2e.rs`'s own copy.
-fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (
-        (rect[0] + rect[2] / 2) as i32,
-        (rect[1] + rect[3] / 2) as i32,
-    )
-}
+use crate::support::{fixture, git_fixture, rect_centre, APP};
 
 /// The lazy project tree (PR2 of the fast-project-open plan, ADR-0062
 /// "Decision 2"): a directory's children are read from disk only once

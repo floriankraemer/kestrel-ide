@@ -95,7 +95,7 @@ A shared Discard-changes confirm dialog is used by both the dock's row menu and 
 **E. E2E instrumentation.**
 `changes_row` gains a `status` field carrying the letter.
 A new `changes_toolbar_shown` marker reports the toolbar's Refresh/Pull/Push rects and the live ahead/behind counts.
-New tests in `crates/app/tests/e2e_vcs.rs` cover a staged rename, a conflicted file, and the ahead count moving after a commit.
+New tests in `crates/app/tests/e2e/vcs.rs` cover a staged rename, a conflicted file, and the ahead count moving after a commit.
 
 **F. Docs.**
 This plan doc, ADR-0053, the `docs/README.md` index lines, and `.ide/changes-panel-mockup.html`.

@@ -4,10 +4,6 @@
 //! `SELECT * FROM big` run and paged, then a busy `WITH RECURSIVE` query
 //! cancelled mid-flight.
 //!
-//! Its own test binary for the reason every other `e2e_*.rs` file gives
-//! (`e2e.rs` sits at its ratcheted size ceiling) — `make e2e`/`e2e-ci`
-//! run it alongside the others.
-//!
 //! NFR numbers this flow asserts (`database-tools.md` §5's own table):
 //! first row ≤ 500 ms after Run (the table's own "warm SQLite ≤ 30 ms"
 //! is measured, not asserted this strictly, to leave headroom for
@@ -21,20 +17,10 @@ use std::time::{Duration, Instant};
 use e2e::{Ide, Mark};
 use serde_json::Value;
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn rect_centre(rect: &Value) -> (i32, i32) {
-    let r: Vec<i64> = rect
-        .as_array()
-        .expect("a rect array")
-        .iter()
-        .map(|v| v.as_i64().expect("a rect component"))
-        .collect();
-    ((r[0] + r[2] / 2) as i32, (r[1] + r[3] / 2) as i32)
-}
+use crate::support::{rect_centre, settle, wait_for_database_row as wait_for_row, APP};
 
 fn rect_row_click_point(rect: &Value) -> (i32, i32) {
-    // See `e2e_database.rs`'s own copy of this helper for why the left
+    // See `database.rs`'s own copy of this helper for why the left
     // edge, not the centre: `QTreeWidget::visualItemRect` spans every
     // column, wider than this dock's narrow `RightDockWidgetArea` slot.
     let r: Vec<i64> = rect
@@ -90,21 +76,6 @@ fn fixture_project(name: &str) -> (tempfile::TempDir, tempfile::TempDir) {
     (db_dir, project_dir)
 }
 
-fn settle(ide: &Ide) {
-    let row = ide
-        .events()
-        .into_iter()
-        .rev()
-        .find(|e| {
-            e["ev"] == "project_tree_row"
-                && e["path"].as_str().is_some_and(|p| p.ends_with("/.ide"))
-        })
-        .expect("the project tree reported its .ide row");
-    let (x, y) = rect_centre(&row["rect"]);
-    ide.click_at(x, y, 1);
-    ide.focus_main();
-}
-
 fn open_database_dock(ide: &Ide, mark: Mark) -> Mark {
     ide.key("alt+v");
     let item = ide.wait_for_event(mark, "the Database item in the View menu", |e| {
@@ -138,23 +109,6 @@ fn open_database_results_dock(ide: &Ide, mark: Mark) -> Mark {
         e["ev"] == "database_console_toolbar_rects"
     });
     after_click
-}
-
-fn find_row<'a>(rows: &'a [Value], kind: &str) -> Option<&'a Value> {
-    rows.iter().find(|row| row["kind"] == kind)
-}
-
-fn wait_for_row(ide: &Ide, mark: Mark, kind: &str) -> Value {
-    let kind = kind.to_string();
-    let event = ide.wait_for_event(mark, &format!("a `{kind}` row in the database tree"), |e| {
-        e["ev"] == "database_tree_changed"
-            && e["rows"]
-                .as_array()
-                .is_some_and(|rows| find_row(rows, &kind).is_some())
-    });
-    find_row(event["rows"].as_array().expect("rows array"), &kind)
-        .expect("just matched above")
-        .clone()
 }
 
 /// The `console` toolbar button's rect from the most recent

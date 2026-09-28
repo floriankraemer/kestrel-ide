@@ -146,20 +146,35 @@ impl ffi::VcsService {
         let job_path = path.clone();
         self.as_ref().push_job(move |worker: &VcsWorker| {
             let relative = to_repo_relative(&worker.repo, Path::new(&job_path));
-            let outcome = std::fs::read_to_string(&job_path)
-                .map_err(|e| vcs_core::VcsError::Read(format!("{job_path}: {e}")))
-                .and_then(|working_text| {
-                    let working = worker.repo.hunks_against_head(&relative, &working_text)?;
-                    let states = worker.repo.classify_hunks(&relative, &working.hunks)?;
-                    Ok(CachedHunks {
-                        before_text: working.before_text,
-                        working_text,
-                        hunks: working.hunks,
-                        states,
-                    })
-                });
+            // `Ok(None)` for a binary file (not valid UTF-8): this fires for
+            // every "modified" row the Changes dock repopulates with, with
+            // no user action behind it, so it must never reach `vcsFailed`
+            // (`vcs_menu.cpp`'s catch-all `QMessageBox::warning` for that
+            // signal is a blocking modal — a background refresh popping one
+            // unprompted froze `Ctrl+Q` under Xvfb until the E2E harness's
+            // 30s timeout, since nothing there dismisses it). A binary file
+            // simply has no per-hunk rows, the same as one too large to
+            // diff (`VcsError::TooLargeToDiff`) already gets no rows either.
+            let outcome = match std::fs::read(&job_path) {
+                Ok(bytes) => match String::from_utf8(bytes) {
+                    Ok(working_text) => worker
+                        .repo
+                        .hunks_against_head(&relative, &working_text)
+                        .and_then(|working| {
+                            let states = worker.repo.classify_hunks(&relative, &working.hunks)?;
+                            Ok(Some(CachedHunks {
+                                before_text: working.before_text,
+                                working_text,
+                                hunks: working.hunks,
+                                states,
+                            }))
+                        }),
+                    Err(_) => Ok(None),
+                },
+                Err(e) => Err(vcs_core::VcsError::Read(format!("{job_path}: {e}"))),
+            };
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| match outcome {
-                Ok(cached) => {
+                Ok(Some(cached)) => {
                     service
                         .file_hunks
                         .borrow_mut()
@@ -168,6 +183,7 @@ impl ffi::VcsService {
                         .as_mut()
                         .file_hunks_ready(QString::from(job_path.as_str()));
                 }
+                Ok(None) => {}
                 Err(err) => {
                     let result = to_ffi_result(&err);
                     service.as_mut().vcs_failed(result);

@@ -220,6 +220,31 @@ void markChangesRow(QTreeWidget *tree, QTreeWidgetItem *row, const QString &path
               .arg(rect.height()));
 }
 
+// The unstaged row when the file sits in both groups: that is where a
+// still-unstaged hunk (or its load failure) is shown, and one row per file
+// is enough — every hunk's own check state already says which side it is
+// on. Shared by `addHunkRows` and `ChangesPanel::showHunkLoadFailed`, the
+// two consumers of a per-file hunk answer.
+QTreeWidgetItem *findFileRow(QTreeWidget *tree, VcsService *vcsService, const QString &absolutePath)
+{
+    QTreeWidgetItem *target = nullptr;
+    for (QTreeWidgetItemIterator it(tree); *it; ++it) {
+        QTreeWidgetItem *row = *it;
+        const QVariant rel = row->data(kLetterColumn, kPathRole);
+        if (rel.isNull() || !row->data(kLetterColumn, kHunkIndexRole).isNull()) {
+            continue;
+        }
+        if (vcsService->absolutePath(rel.toString()) != absolutePath) {
+            continue;
+        }
+        const QString group = row->data(kLetterColumn, kGroupRole).toString();
+        if (target == nullptr || group == QStringLiteral("unstaged")) {
+            target = row;
+        }
+    }
+    return target;
+}
+
 } // namespace
 
 ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QString &)> showDiff,
@@ -415,6 +440,7 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
 
     connect(vcsService_, &VcsService::statusChanged, this, &ChangesPanel::refresh);
     connect(vcsService_, &VcsService::fileHunksReady, this, &ChangesPanel::addHunkRows);
+    connect(vcsService_, &VcsService::hunksLoadFailed, this, &ChangesPanel::showHunkLoadFailed);
     connect(vcsService_, &VcsService::repositoryChanged, this, &ChangesPanel::refresh);
 
     refresh();
@@ -577,28 +603,11 @@ void ChangesPanel::refreshEmptyState()
 
 void ChangesPanel::addHunkRows(const QString &absolutePath)
 {
-    // The unstaged row when the file sits in both groups: that is where a
-    // still-unstaged hunk is looked for, and one set of rows per file is
-    // enough — every hunk's own check state already says which side it is
-    // on.
-    QTreeWidgetItem *target = nullptr;
-    for (QTreeWidgetItemIterator it(tree_); *it; ++it) {
-        QTreeWidgetItem *row = *it;
-        const QVariant rel = row->data(kLetterColumn, kPathRole);
-        if (rel.isNull() || !row->data(kLetterColumn, kHunkIndexRole).isNull()) {
-            continue;
-        }
-        if (vcsService_->absolutePath(rel.toString()) != absolutePath) {
-            continue;
-        }
-        const QString group = row->data(kLetterColumn, kGroupRole).toString();
-        if (target == nullptr || group == QStringLiteral("unstaged")) {
-            target = row;
-        }
-    }
+    QTreeWidgetItem *target = findFileRow(tree_, vcsService_, absolutePath);
     if (target == nullptr) {
         return;
     }
+    target->setToolTip(kLetterColumn, QString());
 
     const ::rust::Vec<FfiHunk> hunks = vcsService_->fileHunks(absolutePath);
     const ::rust::Vec<FfiHunkState> states = vcsService_->fileHunkStates(absolutePath);
@@ -641,6 +650,17 @@ void ChangesPanel::addHunkRows(const QString &absolutePath)
     // children existed.
     target->setExpanded(false);
     populating_ = false;
+}
+
+void ChangesPanel::showHunkLoadFailed(const QString &absolutePath, const QString &message)
+{
+    e2eMark(QStringLiteral("{\"ev\":\"changes_hunk_load_failed\",\"path\":%1}")
+              .arg(e2eJson(absolutePath)));
+    QTreeWidgetItem *target = findFileRow(tree_, vcsService_, absolutePath);
+    if (target == nullptr) {
+        return;
+    }
+    target->setToolTip(kLetterColumn, tr("Cannot show changes: %1").arg(message));
 }
 
 void ChangesPanel::onItemChanged(QTreeWidgetItem *item, int column)

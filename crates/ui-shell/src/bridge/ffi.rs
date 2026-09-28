@@ -8984,6 +8984,20 @@ mod ffi {
         #[cxx_name = "fileHunksReady"]
         fn file_hunks_ready(self: Pin<&mut VcsService>, path: QString);
 
+        /// A per-file hunk load failed — `requestHunks`' gutter refresh or
+        /// `requestFileHunks`' Changes-dock row, both fired automatically
+        /// (a settle tick, a dock repopulate) with no user action behind
+        /// them. Deliberately **not** `vcsFailed`: that signal's own
+        /// catch-all handler is a blocking `QMessageBox`, right for a
+        /// refusal a user action provoked, wrong for a background read that
+        /// simply could not diff this one file (permission denied, the file
+        /// vanished, binary content) — popping a modal nobody asked for
+        /// froze the app's `Ctrl+Q` under Xvfb until the E2E harness's own
+        /// timeout (#345). The view shows this non-modally, if at all.
+        #[qsignal]
+        #[cxx_name = "hunksLoadFailed"]
+        fn hunks_load_failed(self: Pin<&mut VcsService>, path: QString, message: QString);
+
         /// `requestChangedPathsAgainst(revision)`'s answer, tagged with
         /// the revision it was asked for.
         #[qsignal]

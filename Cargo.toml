@@ -51,6 +51,15 @@ members = [
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
 
+# Line tables for our own crates only. Every test file links its own
+# executable, and each one carried line tables for the whole dependency
+# tree (wasmtime, tantivy, the database drivers, …): dropping them took the
+# `app` binary from 754 MB to 635 MB (.debug_line 83 -> 18 MB), a saving
+# repeated across every test executable. A backtrace still names every
+# frame; only frames inside third-party code lose their file:line.
+[profile.dev.package."*"]
+debug = false
+
 # For actually attaching a debugger — mainly to the cxx-qt seam, where
 # variable and type information is the whole point. `dev` deliberately
 # doesn't carry it: full DWARF costs ~7s on every edit-one-cpp-file cycle
@@ -65,3 +74,8 @@ debug = true
 # without symbols. This profile exists to be debugged, sometimes
 # elsewhere, so it carries its own.
 split-debuginfo = "off"
+
+# Stepping into a dependency is part of debugging the cxx-qt seam, so the
+# dev profile's dependency override above is undone here.
+[profile.debugging.package."*"]
+debug = true

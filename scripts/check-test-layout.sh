@@ -21,9 +21,6 @@ exempt() {
 	# `cargo test` threaded (ci.yml), so that would be a real race. See the
 	# "one integration-test binary per crate" plan.
 	crates/vcs-core) return 0 ;;
-	# app: still 19 top-level test files until PR 2
-	# (test/merge-app-e2e) merges them into tests/e2e/ and tests/timing/.
-	crates/app) return 0 ;;
 	esac
 	return 1
 }

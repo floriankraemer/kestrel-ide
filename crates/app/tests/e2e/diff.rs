@@ -1,69 +1,9 @@
 //! End-to-end flow for the JetBrains-style diff viewer (F3-24): the editable
 //! HEAD-vs-working-tree window, its toolbar, and the apply chevron.
 //!
-//! Its own test binary for the reason `e2e_vcs.rs` gives — `e2e.rs` sits at
-//! its ratcheted size ceiling — and `make e2e` runs it with the others.
-
 use e2e::{Ide, Mark};
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-/// A fresh temp directory holding `files`, committed to a brand-new Git
-/// repository. Duplicated from `e2e_vcs.rs` by the same judgement that
-/// duplicated it from `e2e.rs`: a twenty-line fixture is not worth a crate
-/// between the test binaries, and `.git` must exist before launch because
-/// `VcsService::open_project` discovers it the instant the project opens.
-fn git_fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
-    let dir = tempfile::TempDir::new().expect("temp git fixture dir");
-    for (relative, content) in files {
-        std::fs::write(dir.path().join(relative), content).expect("fixture file");
-    }
-    let git = |args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .args(args)
-            .current_dir(dir.path())
-            .status()
-            .unwrap_or_else(|e| panic!("running git {args:?}: {e}"));
-        assert!(status.success(), "git {args:?} failed");
-    };
-    git(&["init", "--quiet"]);
-    git(&["config", "user.email", "e2e@example.invalid"]);
-    git(&["config", "user.name", "E2E"]);
-    git(&["add", "."]);
-    git(&["commit", "--quiet", "-m", "initial"]);
-    dir
-}
-
-/// The centre of a `[x, y, w, h]` marker field.
-fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
-    let n = |i: usize| rect[i].as_i64().expect("rect component") as i32;
-    (n(0) + n(2) / 2, n(1) + n(3) / 2)
-}
-
-/// Open one file through Go to File and wait for its tab.
-fn open_file(ide: &Ide, name: &str) {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, &format!("results for `{name}`"), |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    });
-}
+use crate::support::{git_fixture, open_file, rect_centre, APP};
 
 /// Pick the `steps`-th entry below the current one in a combo box at
 /// `rect`: click it open, arrow down, accept.

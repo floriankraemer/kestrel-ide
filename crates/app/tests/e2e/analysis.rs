@@ -4,8 +4,6 @@
 //! IntelliJ-parity refinement plan) F2 walks the caret between the two
 //! findings this fixture now reports.
 //!
-//! Its own test binary for the reason `e2e_vcs.rs` gives — `e2e.rs` sits at
-//! its ratcheted size ceiling — and `make e2e` runs it with the others.
 //! ADR-0046 records the E2E budget moving from 15 to 16 for this flow.
 //!
 //! No real PHPStan or Composer is installed anywhere this suite runs
@@ -37,7 +35,7 @@ use std::path::{Path, PathBuf};
 
 use e2e::{Ide, Mark};
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
+use crate::support::{cursor, open_file, rect_centre, wait_for_index, APP};
 
 /// `stub_analyzer`'s executable — see this file's own doc comment for why
 /// `env!("CARGO_BIN_EXE_stub_analyzer")` cannot be used directly.
@@ -119,35 +117,6 @@ fn php_analyzer_fixture() -> tempfile::TempDir {
     dir
 }
 
-/// Open one file through Go to File, returning its `tab_added` marker.
-/// Duplicated from `e2e_run.rs` by the same judgement that duplicated it
-/// from `e2e.rs`: a twenty-line helper is not worth a crate between the test
-/// binaries.
-fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, "results for the query", |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
-}
-
 /// Open the "Ana&lysis" menu via its mnemonic, waiting for it to actually be
 /// on screen before anything clicks into it.
 fn open_analysis_menu(ide: &Ide) -> Mark {
@@ -157,42 +126,6 @@ fn open_analysis_menu(ide: &Ide) -> Mark {
         e["ev"] == "dialog_shown" && e["name"] == "analysis_menu"
     });
     mark
-}
-
-/// The centre of a widget rectangle a marker reported, in screen
-/// coordinates. Duplicated from `e2e_run.rs` for the same reason `open_file`
-/// above is.
-fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (
-        (rect[0] + rect[2] / 2) as i32,
-        (rect[1] + rect[3] / 2) as i32,
-    )
-}
-
-/// Search Everywhere's fuzzy filename match needs the project index built
-/// first, or an early `open_file` call races an empty result set. Duplicated
-/// from `e2e.rs` for the same reason every other helper here is.
-fn wait_for_index(mcp: &e2e::mcp::Mcp) {
-    e2e::wait_for("the project index to finish building", || {
-        (mcp.call("index_status", serde_json::json!({}))["ready"] == true).then_some(())
-    });
-}
-
-fn cursor(mcp: &e2e::mcp::Mcp, tab_id: u64) -> (u32, u32) {
-    let position = mcp.call(
-        "get_cursor_position",
-        serde_json::json!({ "tab_id": tab_id }),
-    );
-    (
-        position["line"].as_u64().unwrap_or(0) as u32,
-        position["column"].as_u64().unwrap_or(0) as u32,
-    )
 }
 
 /// B/C's verification scenario from the plan: open a fixture project whose

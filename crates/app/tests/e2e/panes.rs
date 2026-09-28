@@ -2,57 +2,9 @@
 //! into a pane of its own, dragging a tab between panes, and the layout
 //! surviving a restart.
 //!
-//! Their own test binary rather than more of `e2e.rs`, which sits at its
-//! ratcheted size ceiling (`scripts/check-file-size.sh`) — the same reason
-//! `e2e_run.rs` exists. `make e2e` runs all three.
+use e2e::{Ide, Mark};
 
-use std::path::{Path, PathBuf};
-
-use e2e::{mcp::Mcp, Ide, Mark};
-use serde_json::json;
-
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
-}
-
-fn wait_for_index(mcp: &Mcp) {
-    e2e::wait_for("the project index to finish building", || {
-        (mcp.call("index_status", json!({}))["ready"] == true).then_some(())
-    });
-}
-
-/// Open one file through Go to File, returning its `tab_added` marker.
-/// Duplicated from `e2e.rs` rather than shared, as `e2e_run.rs` already
-/// duplicates it: a helper this small is not worth a crate between three
-/// test binaries.
-fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, "results for the query", |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
-}
+use crate::support::{fixture, open_file, wait_for_index, APP};
 
 /// The centre of a `[x, y, w, h]` rect field, carried by a tab marker
 /// (`tab_added`, `tab_moved`) or a `tab_context_menu_action` entry.
@@ -99,7 +51,7 @@ fn groups_of(node: &serde_json::Value) -> Vec<&serde_json::Value> {
 
 /// The saved dock layout as plain XML. ADS's `saveState` is `qCompress`ed
 /// XML (a 4-byte big-endian length, then a zlib stream) stored base64 in
-/// `window_state`; `e2e_vcs.rs` decodes it the same way for the same reason —
+/// `window_state`; `vcs.rs` decodes it the same way for the same reason —
 /// it is the only readable record of which docks were open where.
 fn saved_dock_layout(ide: &Ide) -> String {
     use base64::Engine;
@@ -129,7 +81,7 @@ fn shown_maximized(ide: &Ide) -> bool {
 /// does not reach. Neither can be driven by a gesture: there is no window
 /// manager under bare Xvfb, so nothing outside the app can maximize its
 /// window, and a dock's open state is only ever legible in the ADS blob.
-/// So the state is seeded the way `e2e_vcs.rs` seeds a stale layout, and
+/// So the state is seeded the way `vcs.rs` seeds a stale layout, and
 /// what is asserted is the full round trip — the app reads the flag, comes
 /// up that way, and writes back what it came up as rather than dropping it.
 #[test]

@@ -3,65 +3,12 @@
 //! editor, a failing build reaching the Problems dock, and a debug session
 //! stopping at a breakpoint.
 //!
-//! Their own test binary rather than more of `e2e.rs`, which sits at its
-//! ratcheted size ceiling (`scripts/check-file-size.sh`). `make e2e` runs
-//! both binaries; everything else about these flows — marker-stream
-//! assertions only, never a screenshot — is exactly as `e2e.rs` describes.
-
-use std::path::{Path, PathBuf};
+//! Everything about these flows — marker-stream assertions only, never a
+//! screenshot — is exactly as `core.rs` describes.
 
 use e2e::{Ide, Mark};
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
-}
-
-/// The centre of a widget rectangle a marker reported, in screen
-/// coordinates — the only way to click a widget this harness has no handle
-/// on. Duplicated from `e2e.rs` rather than shared: a ten-line helper is not
-/// worth a third crate between the two test binaries.
-fn rect_centre(rect: &serde_json::Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (
-        (rect[0] + rect[2] / 2) as i32,
-        (rect[1] + rect[3] / 2) as i32,
-    )
-}
-
-/// Open one file through Go to File, returning its `tab_added` marker.
-fn open_file(ide: &Ide, name: &str) -> serde_json::Value {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, "results for the query", |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
-}
+use crate::support::{fixture, open_file, rect_centre, APP};
 
 /// F4-15 (1/2): a real process, launched by `run.run`, delivers output
 /// across `RunService`'s per-console reader thread to the console dock's

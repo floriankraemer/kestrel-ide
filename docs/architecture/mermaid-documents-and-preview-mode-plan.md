@@ -45,7 +45,7 @@ T2 and T3 are independent of each other and both independent of T4, which needs 
 ```sh
 make test
 make lint
-make e2e                                                # crates/app/tests/e2e_preview.rs
+make e2e                                                # crates/app/tests/e2e/preview.rs
 cargo tree -p markdown-preview -e normal | grep -i qt    # must be empty
 cargo tree -p app-core         -e normal | grep -i qt    # must be empty
 cargo tree -p markdown-preview -e normal | grep -iE "memmap|fontconfig"   # must be empty

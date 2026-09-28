@@ -229,7 +229,7 @@ Open Project in a container (needs a remote-dev backend Kestrel does not have), 
 ## Manual verification matrix (C10)
 
 The rows below are the manual half of the Verification section above.
-Everything the `stub_engine`-backed E2E suite (`crates/app/tests/e2e_containers.rs`) can prove is covered there; this table only records what needs a real engine or a real second machine.
+Everything the `stub_engine`-backed E2E suite (`crates/app/tests/e2e/containers.rs`) can prove is covered there; this table only records what needs a real engine or a real second machine.
 "Verified" rows quote the app's own E2E marker stream (`IDE_E2E_EVENTS`) captured while driving the real binary under Xvfb against the real host `docker` — read-only actions only (connect, tree, inspect, log of an already-running container, context discovery), never a lifecycle or prune action against the host's containers.
 
 | Scenario | Status | Evidence / notes |

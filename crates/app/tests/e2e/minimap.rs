@@ -1,59 +1,9 @@
-//! End-to-end flow for the editor minimap (issue #199): its own test binary
-//! for the same reason `e2e_vcs.rs`/`e2e_preview.rs` are — `e2e.rs` sits at
-//! its ratcheted size ceiling (`scripts/check-file-size.sh`). `make e2e`
-//! runs all of them.
+//! End-to-end flow for the editor minimap (issue #199).
 
-use e2e::{mcp::Mcp, Ide, Mark};
-use serde_json::{json, Value};
+use e2e::{Ide, Mark};
+use serde_json::Value;
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn wait_for_index(mcp: &Mcp) {
-    e2e::wait_for("the project index to finish building", || {
-        (mcp.call("index_status", json!({}))["ready"] == true).then_some(())
-    });
-}
-
-/// Open one file through Go to File, returning its `tab_added` marker.
-/// Duplicated from `e2e.rs`, as every other `e2e_*.rs` binary already
-/// duplicates it: a helper this small is not worth a crate between them.
-fn open_file(ide: &Ide, name: &str) -> Value {
-    let main_window = ide.window().to_string();
-    let mark = ide.mark();
-    ide.key("ctrl+shift+n");
-    ide.wait_for_event(mark, "the search popup to open", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "search_everywhere"
-    });
-    ide.wait_for_focus_change(&main_window);
-    ide.wait_for_ev(mark, "search_results");
-
-    let mark = ide.mark();
-    ide.type_text(name);
-    ide.wait_for_event(mark, "results for the query", |e| {
-        e["ev"] == "search_results" && e["count"].as_u64().unwrap_or(0) > 0
-    });
-    ide.key("Return");
-    ide.wait_for_event(mark, "the search popup to accept", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "search_everywhere" && e["accepted"] == true
-    });
-    ide.focus_main();
-    ide.wait_for_event(mark, &format!("a tab for `{name}`"), |e| {
-        e["ev"] == "tab_added" && e["title"] == name
-    })
-}
-
-fn rect_centre(rect: &Value) -> (i32, i32) {
-    let rect: Vec<i64> = rect
-        .as_array()
-        .expect("the marker carries a rect")
-        .iter()
-        .map(|v| v.as_i64().expect("an integer"))
-        .collect();
-    (
-        (rect[0] + rect[2] / 2) as i32,
-        (rect[1] + rect[3] / 2) as i32,
-    )
-}
+use crate::support::{open_file, rect_centre, wait_for_index, APP};
 
 /// A fixture directory holding one file long enough that the minimap
 /// actually compresses it, so a click near the bottom of the strip

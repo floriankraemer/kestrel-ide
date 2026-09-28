@@ -3,8 +3,9 @@
 //! `main_window_shown` to the project tree's first painted row, and whether
 //! the UI stays responsive (a menu still opens) while the watcher registers
 //! in the background for a large project. Not part of the regular suite —
-//! run by hand under `make e2e`, following the same real-binary-under-Xvfb
-//! method `settings_dialog_timing.rs` uses for its own latency probe.
+//! run by hand, following the same real-binary-under-Xvfb method
+//! `settings_dialog_timing.rs` uses for its own latency probe:
+//! `cargo test -p app --test timing -- --ignored fast_project_open_timing::`.
 //!
 //! `main_window_shown` and `project_tree_rows` both carry an `elapsed_ms`
 //! field on the same process-entry clock (`e2e_mark.h`'s `e2eElapsedMs()`),

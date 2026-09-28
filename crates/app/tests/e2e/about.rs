@@ -1,19 +1,8 @@
-//! End-to-end flow for the Help menu's About dialog: its own test binary for
-//! the same reason `e2e_minimap.rs`/`e2e_vcs.rs` are — `e2e.rs` sits at its
-//! ratcheted size ceiling (`scripts/check-file-size.sh`). `make e2e` runs all
-//! of them.
-
-use std::path::{Path, PathBuf};
+//! End-to-end flow for the Help menu's About dialog.
 
 use e2e::{Ide, Mark};
 
-const APP: &str = env!("CARGO_BIN_EXE_app");
-
-fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures")
-        .join(name)
-}
+use crate::support::{fixture, APP};
 
 /// The About dialog reports the build this binary actually is.
 ///
@@ -30,9 +19,11 @@ fn e2e_about_reports_the_version_this_build_was_made_from() {
     ide.wait_for_ev(Mark::start(), "project_opened");
 
     // `help.about` ships unbound, so Find Action is the reachable route —
-    // the same way `e2e.rs`'s file-history flow reaches `view.vcsHistory`.
-    // Inlined rather than shared: every other `e2e_*.rs` binary already
-    // duplicates this much of the popup dance.
+    // the same way `core.rs`'s file-history flow reaches `view.vcsHistory`.
+    // Inlined rather than through `support::open_search_popup`/
+    // `accept_top_hit`: accepting here opens the About dialog, not a tab,
+    // and `accept_top_hit` hands focus back to the main window on accept —
+    // this flow needs to keep it on the dialog that just opened instead.
     let main_window = ide.window().to_string();
     let mark = ide.mark();
     ide.key("ctrl+shift+a");
@@ -78,7 +69,7 @@ fn e2e_about_reports_the_version_this_build_was_made_from() {
     // There is no window manager under Xvfb, so the input focus a closing
     // modal gives up lands nowhere — `Ctrl+Q` would go to no window at all.
     // Every other flow that raises a dialog takes the focus back the same
-    // way (`accept_top_hit` in `e2e.rs`).
+    // way (`support::accept_top_hit`).
     ide.focus_main();
 
     assert_eq!(ide.quit(), 0);

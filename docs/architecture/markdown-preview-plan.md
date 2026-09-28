@@ -65,7 +65,7 @@ Run inside `linux-builder` against the shared cargo registry volume, throwaway c
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
-make e2e                                               # crates/app/tests/e2e.rs::e2e_markdown_preview_dock
+make e2e                                               # crates/app/tests/e2e/core.rs::e2e_markdown_preview_dock
 cargo tree -p markdown-preview -e normal | grep -i qt  # must be empty
 cargo tree -p app-core         -e normal | grep -i qt  # must be empty
 cargo tree -p plugin-api       -e normal | grep -i qt  # must be empty

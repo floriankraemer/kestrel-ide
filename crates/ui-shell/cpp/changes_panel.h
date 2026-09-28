@@ -79,6 +79,13 @@ private:
     // index, partially = partly, unchecked = not yet. Checking stages that
     // hunk alone; unchecking unstages it.
     void addHunkRows(const QString &absolutePath);
+    // `hunksLoadFailed(absolutePath, message)`: the automatic per-hunk read
+    // `addHunkRows` would otherwise have populated from could not be read
+    // (binary content already answers `Ok(None)` on the Rust side and never
+    // reaches here — this is a real read failure: permission denied, the
+    // file vanished). Shown as that row's tooltip, never a dialog — see
+    // `VcsService::hunksLoadFailed`'s own doc comment for why.
+    void showHunkLoadFailed(const QString &absolutePath, const QString &message);
     void doCommit(bool amend, bool push);
     void refreshEmptyState();
     void showContextMenu(const QPoint &pos);

@@ -546,9 +546,14 @@ impl ffi::VcsService {
                         .as_mut()
                         .hunks_changed(QString::from(job_path.as_str()));
                 }
+                // Automatic (a settle tick or tab switch fired this, not a
+                // click) — `hunksLoadFailed`, never `vcsFailed`'s blocking
+                // modal. See that signal's doc comment.
                 Err(err) => {
-                    let result = to_ffi_result(&err);
-                    service.as_mut().vcs_failed(result);
+                    service.as_mut().hunks_load_failed(
+                        QString::from(job_path.as_str()),
+                        QString::from(err.to_string().as_str()),
+                    );
                 }
             });
         });

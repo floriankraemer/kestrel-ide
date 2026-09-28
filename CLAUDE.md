@@ -99,6 +99,7 @@ The authoritative per-crate import table lives in `docs/architecture/layering.md
 ## Testing
 
 - Every new rule or behavior gets unit tests in the Qt-free crate it lives in.
+- New integration-test files are modules of the crate's existing test target, not a new top-level `tests/*.rs` file (`scripts/check-test-layout.sh` gates this).
 - C++ stays thin and is untested by design — if you feel you need a C++ test, the logic is in the wrong layer.
 - Gate: `cargo test --workspace` must pass before commit.
 - Coverage: `make coverage` measures the Qt-free crates (`ui-shell`, `app` and `e2e` are excluded — see `COVERAGE_EXCLUDES`).

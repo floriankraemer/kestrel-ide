@@ -17,7 +17,7 @@ class EditorTabs;
 // C11-followup: call/type hierarchy dock. The Rust+FFI pipeline
 // (`LanguageService::requestCallHierarchy`/`requestIncomingCalls`/
 // `requestOutgoingCalls`/`requestTypeHierarchy`/`requestSupertypes`/
-// `requestSubtypes`) is wired and reachable end to end (stub_server_session.rs's
+// `requestSubtypes`) is wired and reachable end to end (stub_server/hierarchy.rs's
 // C11 tests, lsp_core::hierarchy's unit tests); this is the first `cpp/`
 // consumer, the same shape StructurePanel's outline tree and
 // FindUsagesPanel's location list already established for their own data.

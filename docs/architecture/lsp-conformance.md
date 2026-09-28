@@ -12,7 +12,7 @@ This suite closes that gap.
 make lsp-conformance
 ```
 
-It builds the `lsp-conformance` Docker stage (`linux-builder` plus pinned `rust-analyzer` and `csharp-ls` binaries) and runs `crates/lsp-core/tests/real_server_conformance.rs` and `crates/lsp-core/tests/csharp_conformance.rs`.
+It builds the `lsp-conformance` Docker stage (`linux-builder` plus pinned `rust-analyzer` and `csharp-ls` binaries) and runs `crates/lsp-core/tests/conformance/real_server_conformance.rs` and `crates/lsp-core/tests/conformance/csharp_conformance.rs`.
 The tests are `#[ignore]`d, so `cargo test --workspace` and every per-PR CI run are unaffected.
 
 ## The report is executable
@@ -55,7 +55,7 @@ C# is the first feature that did.
 The C# language-servers work taught this client two protocol behaviors no server had ever exercised for real: dynamic capability registration (`client/registerCapability`, answered by the stub since it was built) and pulled configuration (`workspace/configuration`, likewise stub-only).
 Both were built and tested entirely against `stub_server`, which answers the way the client's author assumed a server would.
 csharp-ls is the first real server this client talks to that actually uses both paths — it declares most of its capabilities dynamically after `initialized` rather than statically in the `initialize` result, and it pulls its settings rather than accepting a push.
-That is exactly the shared-misunderstanding risk this suite exists to catch, so it earned its own conformance target: `crates/lsp-core/tests/csharp_conformance.rs`, in the same `lsp-conformance` Docker stage and the same `make lsp-conformance` run as rust-analyzer's suite.
+That is exactly the shared-misunderstanding risk this suite exists to catch, so it earned its own conformance target: `crates/lsp-core/tests/conformance/csharp_conformance.rs`, in the same `lsp-conformance` Docker stage and the same `make lsp-conformance` run as rust-analyzer's suite.
 
 It covers only what depended on that divergence — the `initialize`/`ServerReady` handshake, that csharp-ls registers at least one method dynamically, `textDocument/completion` and, where advertised, `completionItem/resolve` (the `using`-insertion round trip), and `textDocument/hover` at a position after the fixture's multi-byte characters.
 It does not attempt everything csharp-ls can do; semantic tokens, code lens, and call/type hierarchy are separate features with their own conformance work when they land.
@@ -81,7 +81,7 @@ The state is **advisory**: nothing waits on it, and no request is gated behind i
 A server that never sends `$/progress` — the stub, and most small servers — reads as idle from `ServerReady` onwards and behaves exactly as it did before, which is the only safe default when "no progress yet" and "no progress ever" look identical from outside.
 A server that dies mid-index has the work it left open closed on its behalf by its supervisor, so the status bar never outlives the server it describes.
 
-The regressions live with the stub, per the rule below: `stub/indexingRun` in `crates/lsp-core/src/bin/stub_server.rs` performs the full create-plus-begin/report/end sequence on demand, and `crates/lsp-core/tests/stub_server_session.rs` drives it through indexing → idle, checks a silent server stays usable, and checks a dead one stops being busy.
+The regressions live with the stub, per the rule below: `stub/indexingRun` in `crates/lsp-core/src/bin/stub_server.rs` performs the full create-plus-begin/report/end sequence on demand, and `crates/lsp-core/tests/stub_server/progress.rs` drives it through indexing → idle, checks a silent server stays usable, and checks a dead one stops being busy.
 The conformance suite asserts the other half — that a real rust-analyzer's progress actually reaches the client — and prints the work it named.
 
 The suite still retries until an answer arrives, and still reports how long that took.
@@ -89,7 +89,7 @@ That is not a workaround for the defect any more: a test needs an answer whether
 
 ## The division of labour
 
-| | `stub_server_session.rs` | `real_server_conformance.rs` |
+| | `stub_server/*.rs` | `conformance/real_server_conformance.rs` |
 |---|---|---|
 | Tests | **our client** | **our assumptions about the protocol** |
 | Runs | every `cargo test --workspace` | nightly and on demand |

@@ -246,7 +246,7 @@ Unit-testable in CI (`make test`):
 
 - `crates/process-exec/src/host.rs` — all four prefix spellings, mixed separators, mixed case, a distro with a hyphen or dot (`Ubuntu-22.04`), a path merely containing `wsl` (`C:/wsl/notaunc`) classifying `Local`; `to_remote`/`to_local` round-tripping to identity; `argv` as an exact `Vec<String>` comparison; `WSLENV` merged without dropping the inherited value; exit 127 and the two `wsl.exe` stderr strings mapping to `Failure::NotFound`.
 - **End-to-end argv on Linux**: put a fake `wsl.exe` script on `PATH` in a tempdir that echoes its own argv as JSON, then run `process_exec::run` against a fabricated `//wsl.localhost/Ubuntu/tmp/x` `work_dir`. Proves `-d`, `--cd`, `-e` and env without Windows and without WSL — the same trick `analysis-core`'s scheduler tests use against `/bin/sh`.
-- `lsp-core` — `uri_for`/`path_for` round trips and the `rootUri` sent in `initialize`, against the existing stub server (`crates/lsp-core/tests/stub_server_lifecycle.rs`).
+- `lsp-core` — `uri_for`/`path_for` round trips and the `rootUri` sent in `initialize`, against the existing stub server (`crates/lsp-core/tests/stub_server/lifecycle.rs`).
 - `build-core`/`dap-core` — a fixture of Linux-path compiler output producing UNC-path diagnostics.
 - `run-core` — `python_program`, `wrapper_or` and macro expansion under a remote host.
 

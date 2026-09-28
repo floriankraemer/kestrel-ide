@@ -18,7 +18,7 @@ winres = "0.1"
 # The E2E harness lives in `crates/e2e` but its tests live here, because
 # `CARGO_BIN_EXE_app` is only set for integration tests of the crate that
 # declares the binary — and guessing at `target/<profile>/app` is wrong under
-# every profile but one (see `lsp-core/tests/stub_server_session.rs:15`).
+# every profile but one (see `lsp-core/tests/stub_server/support.rs:22`).
 # `app-config` is the one workspace crate a test may read: the window-state
 # flow must parse the persisted TOML with the app's own types rather than a
 # regex, or it asserts against its own re-implementation.

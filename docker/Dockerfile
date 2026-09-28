@@ -156,8 +156,8 @@ RUN mkdir -p /ccache /sccache /usr/local/cargo/registry /usr/local/cargo/git \
 
 # ---------------------------------------------------------------------------
 # lsp-conformance: linux-builder plus real language servers, for the
-# conformance suites (crates/lsp-core/tests/real_server_conformance.rs and
-# crates/lsp-core/tests/csharp_conformance.rs).
+# conformance suites (crates/lsp-core/tests/conformance/real_server_conformance.rs
+# and crates/lsp-core/tests/conformance/csharp_conformance.rs).
 #
 # Deliberately NOT folded into linux-builder: that image is pulled by every CI
 # job and every developer, and this adds ~40MB and a download for a suite that

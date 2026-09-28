@@ -68,6 +68,9 @@ jobs:
       - name: File-size gate
         run: scripts/check-file-size.sh
 
+      - name: Test-layout gate
+        run: scripts/check-test-layout.sh
+
       # R2 (database-tools-plan.md §13/§7): rustls/ring only, aws-lc-rs must
       # never enter the tree — a per-driver-crate feature audit, not a
       # passive assumption.

@@ -125,6 +125,27 @@ pub(crate) fn git_fixture(files: &[(&str, &str)]) -> tempfile::TempDir {
         }
         std::fs::write(&path, content).expect("fixture file");
     }
+    // The project's own search index writes into `.ide-index/` on its own
+    // schedule, off any user action (`project-model::watcher::route_change`
+    // already excludes it from every watcher-driven refresh for the same
+    // reason). Left untracked *and* unignored, a flow that runs a real
+    // `git add -A`/`git status` against `dir` — several do, to act the way
+    // a user's own "Stage all" would — races that background writer: it
+    // can stat a segment file `git` just listed and find it already
+    // replaced or gone (`git add -A` then fails outright), or stage a
+    // half-written one that a later diff/hunk read then fails to decode as
+    // UTF-8 (#345's `e2e_a_renamed_and_staged_file_shows_letter_r`). Every
+    // fixture gets it ignored so no caller has to know to ask.
+    let gitignore = dir.path().join(".gitignore");
+    let existing = std::fs::read_to_string(&gitignore).unwrap_or_default();
+    if !existing.lines().any(|line| line == ".ide-index/") {
+        let mut updated = existing;
+        if !updated.is_empty() && !updated.ends_with('\n') {
+            updated.push('\n');
+        }
+        updated.push_str(".ide-index/\n");
+        std::fs::write(&gitignore, updated).expect("fixture .gitignore");
+    }
     let git = |args: &[&str]| {
         let status = std::process::Command::new("git")
             .args(args)

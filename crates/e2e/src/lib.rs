@@ -470,6 +470,22 @@ impl Drop for Ide {
         if let Some(child) = self.child.as_mut() {
             let _ = child.kill();
             let _ = child.wait();
+            // `wait_for_exit`'s other half: killing the process does not
+            // make its window disappear synchronously (the X server tears
+            // it down on its own schedule), so without this a test that
+            // dies before calling `quit()`/`wait_for_exit()` leaves a
+            // corpse window the *next* test's "exactly one visible IDE
+            // window" wait in `await_startup` then panics on (#345 — one
+            // failure cascading into the next test's "2 visible IDE
+            // windows"). Bounded and non-panicking: `drop` must never
+            // panic, doubly so while already unwinding from the failure
+            // that got us here.
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            while std::time::Instant::now() < deadline
+                && !xdotool::visible_windows(MAIN_WINDOW_TITLE).is_empty()
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
         // Marker streams are kept on success too: they are the input to the
         // seam-split golden comparison.

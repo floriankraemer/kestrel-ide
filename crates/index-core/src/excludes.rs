@@ -32,3 +32,46 @@ pub struct IndexOptions {
 pub fn content_rule_limits() -> (u64, usize) {
     (crate::MAX_INDEXED_BYTES, crate::BINARY_SNIFF_BYTES)
 }
+
+/// Name of the file [`ensure_index_gitignore`] writes.
+pub(crate) const GITIGNORE_FILE: &str = ".gitignore";
+
+/// Self-ignoring, the same trick `cargo` plays for `target/`: a bare `*`
+/// makes every file the index ever writes invisible to `git status`
+/// without touching a single line of the user's own `.gitignore`. Without
+/// it the index lived inside a tracked project as ordinary untracked
+/// content — `git add -A`/"Stage all" would stage its (binary) segment
+/// files, and the Changes dock would then try to diff them (#345).
+const GITIGNORE_CONTENTS: &str = "*\n";
+
+/// Write (or rewrite) [`GITIGNORE_FILE`] under `index_dir`. Cheap enough
+/// (one small write) not to bother checking whether it is already there and
+/// unchanged first; `TextIndex::is_index_internal` already keeps this path
+/// itself out of the index, the walk and every mutating entry point, the
+/// same as every other file the index writes under `index_dir`.
+fn ensure_index_gitignore(index_dir: &std::path::Path) {
+    let _ = std::fs::write(index_dir.join(GITIGNORE_FILE), GITIGNORE_CONTENTS);
+}
+
+/// [`std::fs::create_dir_all`] plus [`ensure_index_gitignore`], for
+/// `TextIndex::build_with_progress` — a fresh index directory (including a
+/// rebuild, which `remove_dir_all`s the old one first) always gets a
+/// gitignore from the moment it exists. Folded into this one call, rather
+/// than a second statement at the call site, so the fix does not grow
+/// `lib.rs` past its size baseline (`scripts/check-file-size.sh`) for what
+/// is otherwise a one-line change.
+pub(crate) fn create_index_dir(index_dir: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(index_dir)?;
+    ensure_index_gitignore(index_dir);
+    Ok(())
+}
+
+/// [`crate::index_dir_for`] plus [`ensure_index_gitignore`], for
+/// `TextIndex::open_existing` — same "no new line in `lib.rs`" reasoning as
+/// [`create_index_dir`], and it backfills a gitignore into an index
+/// directory a pre-fix build left without one, not just a fresh build's.
+pub(crate) fn opened_index_dir(project_root: &std::path::Path) -> std::path::PathBuf {
+    let dir = crate::index_dir_for(project_root);
+    ensure_index_gitignore(&dir);
+    dir
+}

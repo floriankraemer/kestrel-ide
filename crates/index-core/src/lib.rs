@@ -1122,7 +1122,7 @@ impl TextIndex {
         if index_dir.exists() {
             fs::remove_dir_all(&index_dir)?;
         }
-        fs::create_dir_all(&index_dir)?;
+        excludes::create_index_dir(&index_dir)?;
 
         let (schema, fields) = build_schema();
         let index = Index::create_in_dir(&index_dir, schema)?;
@@ -1196,7 +1196,7 @@ impl TextIndex {
     }
 
     fn open_existing(project_root: &Path, options: &IndexOptions) -> Result<Self, IndexError> {
-        let index_dir = index_dir_for(project_root);
+        let index_dir = excludes::opened_index_dir(project_root);
         // The (mtime, size) stamps only detect changed *files*. When the
         // extraction itself changes — a locals.scm learns a node kind it
         // used to drop — every stamp still matches and the stale symbols

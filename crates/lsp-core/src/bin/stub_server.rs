@@ -93,6 +93,13 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+#[path = "stub_server/fixtures.rs"]
+mod fixtures;
+
+use fixtures::{
+    canned_diagnostic, greet_problem, hierarchy_item, highlight, location, position_line, progress,
+    uri_of,
+};
 use lsp_core::framing::{read_message, write_message};
 use serde_json::{json, Value};
 
@@ -101,6 +108,18 @@ use serde_json::{json, Value};
 const DIE_ON_DIDOPEN: &str = "STUB_LSP_DIE_ON_DIDOPEN";
 /// C7: set to `1` to advertise `completionProvider.resolveProvider: true`
 /// in `initialize`'s result.
+/// H7: knobs for the hover card's fix row. `STUB_LSP_FIX_DELAY_MS` delays the
+/// diagnostic-scoped code action on line 0 (the card's "Looking for fixes…"),
+/// `STUB_LSP_NO_FIX=1` makes it answer nothing, and
+/// `STUB_LSP_CLEAR_ON_CHANGE=1` republishes no diagnostics after any
+/// `didChange` — a server whose problem the applied fix resolved.
+const FIX_DELAY_MS: &str = "STUB_LSP_FIX_DELAY_MS";
+const NO_FIX: &str = "STUB_LSP_NO_FIX";
+const CLEAR_ON_CHANGE: &str = "STUB_LSP_CLEAR_ON_CHANGE";
+/// `STUB_LSP_GREET_DIAGNOSTIC=1` adds a second problem on `greet` (line 3, the
+/// fixture's call), so one card can hold a problem, its fix, the hover's
+/// signature and documentation, and the index's "Source:" footer.
+const GREET_DIAGNOSTIC: &str = "STUB_LSP_GREET_DIAGNOSTIC";
 const COMPLETION_RESOLVE: &str = "STUB_LSP_COMPLETION_RESOLVE";
 /// C9: set to `1` to advertise `semanticTokensProvider` statically in
 /// `initialize`'s result, the way rust-analyzer does. Unset, a test instead
@@ -168,6 +187,13 @@ fn main() {
     let mut next_request_id = 9100i64;
     let mut input = BufReader::new(io::stdin());
     let die_on_didopen = std::env::var(DIE_ON_DIDOPEN).is_ok_and(|v| v == "1");
+    let fix_delay_ms = std::env::var(FIX_DELAY_MS)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    let no_fix = std::env::var(NO_FIX).is_ok_and(|v| v == "1");
+    let clear_on_change = std::env::var(CLEAR_ON_CHANGE).is_ok_and(|v| v == "1");
+    let greet_diagnostic = std::env::var(GREET_DIAGNOSTIC).is_ok_and(|v| v == "1");
     let completion_resolve = std::env::var(COMPLETION_RESOLVE).is_ok_and(|v| v == "1");
     let semantic_tokens_static = std::env::var(SEMANTIC_TOKENS_STATIC).is_ok_and(|v| v == "1");
     let code_lens_static = std::env::var(CODE_LENS_STATIC).is_ok_and(|v| v == "1");
@@ -290,7 +316,11 @@ fn main() {
                            "params": {
                         "uri": uri,
                         "version": version,
-                        "diagnostics": [canned_diagnostic()],
+                        "diagnostics": if greet_diagnostic {
+                            vec![canned_diagnostic(), greet_problem()]
+                        } else {
+                            vec![canned_diagnostic()]
+                        },
                     }}),
                 );
                 if die_on_didopen {
@@ -298,6 +328,14 @@ fn main() {
                     // EOF and respawn us.
                     std::process::exit(1);
                 }
+            }
+            ("textDocument/didChange", _) if clear_on_change => {
+                let uri = uri_of(&params);
+                send(
+                    &out,
+                    json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+                           "params": {"uri": uri, "diagnostics": []}}),
+                );
             }
             // Echo the params back, optionally after a delay, on its own
             // thread — so a slow request cannot hold up a later fast one and
@@ -328,6 +366,11 @@ fn main() {
                     // The fixture's `greeting::greet(` call line (H4's footer).
                     3 => {
                         json!({"kind": "markdown", "value": "```rust\nfn greet(name: &str) -> String\n```\nGreets `name`."})
+                    }
+                    // H7: the fixture's `fn empty() {}` line, whose signature is
+                    // far wider than any card.
+                    7 => {
+                        json!({"kind": "markdown", "value": "```rust\nfn empty_with_a_deliberately_very_long_signature(alpha: HashMap<String, Vec<u8>>, beta: Option<Box<dyn Fn(u32) -> Result<(), String>>>) -> impl Iterator<Item = (String, Vec<u8>)>\n```\nLong."})
                     }
                     _ => Value::Null,
                 };
@@ -1142,23 +1185,28 @@ fn main() {
                 // H3: the diagnostic-scoped request for the canned diagnostic
                 // (line 0) gets one preferred quick fix, as the hover card's
                 // fix row needs; the range-scoped one keeps its refactoring.
-                if line == 0 && with_diagnostics {
-                    send(
-                        &out,
-                        json!({"jsonrpc": "2.0", "id": id, "result": [
+                if (line == 0 || (line == 3 && greet_diagnostic)) && with_diagnostics {
+                    let result = if no_fix {
+                        Value::Null
+                    } else {
+                        json!([
                             {"title": "Import `HashMap`", "kind": "quickfix",
                              "isPreferred": true,
                              "edit": {"documentChanges": [{
-                                 "textDocument": {"uri": uri, "version": 1},
+                                 "textDocument": {"uri": uri, "version": Value::Null},
                                  "edits": [{
                                      "range": {"start": {"line": 0, "character": 0},
                                                "end": {"line": 0, "character": 0}},
                                      "newText": "use std::collections::HashMap;\n",
                                  }],
                              }]}},
-                        ]}),
-                    );
-                    io::stdout().flush().ok();
+                        ])
+                    };
+                    let out = Arc::clone(&out);
+                    thread::spawn(move || {
+                        thread::sleep(Duration::from_millis(fix_delay_ms));
+                        send(&out, json!({"jsonrpc": "2.0", "id": id, "result": result}));
+                    });
                     continue;
                 }
                 let result = match line {
@@ -1396,72 +1444,4 @@ fn main() {
         }
         io::stdout().flush().ok();
     }
-}
-
-/// One `$/progress` notification for `token`.
-fn progress(token: &str, value: Value) -> Value {
-    json!({"jsonrpc": "2.0", "method": "$/progress",
-           "params": {"token": token, "value": value}})
-}
-
-/// The `textDocument.uri` of a request, or a stand-in when it has none.
-fn uri_of(params: &Value) -> String {
-    params
-        .pointer("/textDocument/uri")
-        .and_then(Value::as_str)
-        .unwrap_or("file:///stub/main.rs")
-        .to_string()
-}
-
-/// The 0-based line of a request's `position`, which is what every canned
-/// answer above is keyed by.
-fn position_line(params: &Value) -> u64 {
-    params
-        .pointer("/position/line")
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-}
-
-/// A `DocumentHighlight` on a 0-based line, optionally with a kind.
-fn highlight(line: u64, kind: Option<u64>) -> Value {
-    let mut value = json!({"range": {
-        "start": {"line": line, "character": 4},
-        "end": {"line": line, "character": 8},
-    }});
-    if let Some(kind) = kind {
-        value["kind"] = json!(kind);
-    }
-    value
-}
-
-/// A `Location` in `uri` at a 0-based line/character.
-fn location(uri: &str, line: u64, character: u64) -> Value {
-    json!({"uri": uri, "range": {
-        "start": {"line": line, "character": character},
-        "end": {"line": line, "character": character + 4},
-    }})
-}
-
-/// C11: a `CallHierarchyItem`/`TypeHierarchyItem` — the two are the same
-/// shape on the wire, so one builder covers both stub features.
-fn hierarchy_item(uri: &str, name: &str, kind: u64, line: u64) -> Value {
-    json!({
-        "name": name,
-        "kind": kind,
-        "uri": uri,
-        "range": {"start": {"line": line, "character": 0},
-                  "end": {"line": line, "character": 10}},
-        "selectionRange": {"start": {"line": line, "character": 4},
-                           "end": {"line": line, "character": 4 + name.len() as u64}},
-    })
-}
-
-/// The one diagnostic this server ever reports, on line 1.
-fn canned_diagnostic() -> Value {
-    json!({
-        "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 4}},
-        "severity": 1,
-        "source": "stub_server",
-        "message": "canned diagnostic",
-    })
 }

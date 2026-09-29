@@ -81,6 +81,8 @@ Files: `crates/lsp-core/src/completion.rs`, `crates/lsp-core/src/client_capabili
 
 ## R3 — Quick documentation, signature help and hover as real popups
 
+The hover part of this item (the hover popup's content and behaviour) is superseded by [ADR-0065](decisions/0065-interactive-hover-card.md); quick documentation and signature help stand as written here.
+
 ### Status quo
 
 - Hover, signature help and completion documentation are all `QToolTip` (`crates/ui-shell/cpp/editor_tabs.cpp`, `signature_tip.cpp`): transient, non-interactive, not scrollable, no links.

@@ -81,6 +81,12 @@ public:
 
     bool containsGlobal(const QPoint &globalPos) const;
 
+    // E2E only (`e2e_mark.h`): the popup's global rect, the click point of
+    // every anchor in its document, the ⋮ button and the word it is anchored to, as the tail of a JSON
+    // object (`"rect":[..],"links":[..],"menu":[..]`) — a headless flow cannot
+    // find a link inside a `QTextBrowser` any other way.
+    QString e2eStateJson() const;
+
 signals:
     // An `ide:` anchor was clicked (`ide:fix/0`, `ide:more/0`, `ide:source`);
     // the payload is the path after the scheme. Deciding what it means is
@@ -96,10 +102,12 @@ private:
     void forceHide();
     void endHoverCard();
     void setContent(const QString &html);
+    void fitToContent();
     void placeAt(const QRect &anchor);
 
     void closeAfterGrace();
     void applyDocumentStyleSheet();
+    QString cardStyleSheet(bool wrapSignature) const;
     void addSeverityIcons();
 
     void keyPressEvent(QKeyEvent *event) override;
@@ -120,6 +128,11 @@ private:
     QPointer<QWidget> returnFocus_;
     bool pinned_ = false;
     QRect anchor_;
+    QString html_;
+    // Card size minus viewport size; see `fitToContent`. Defaults are the QSS
+    // border, layout margins and the browser's insets as measured once.
+    int chromeWidth_ = 32;
+    int chromeHeight_ = 20;
     bool hoverCard_ = false;
 };
 

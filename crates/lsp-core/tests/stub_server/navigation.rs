@@ -42,8 +42,8 @@ fn hover_is_parsed_from_every_response_shape() {
         .expect("some hover");
     assert!(array.value.starts_with("plain hover"));
 
-    // Anywhere else: a null result is "nothing here", not an error.
-    assert_eq!(manager.hover(uri, 7, 0).expect("hover"), None);
+    // Anywhere else (the stub answers lines 0-3 and 7): a null result is "nothing here", not an error.
+    assert_eq!(manager.hover(uri, 9, 0).expect("hover"), None);
 
     manager.stop(LANG);
 }

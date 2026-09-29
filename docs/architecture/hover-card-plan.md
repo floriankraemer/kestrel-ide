@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress.
+Done.
 
 ## Progress
 
@@ -13,8 +13,8 @@ In progress.
 | H3 | done | #354 |
 | H4 | done | #355 |
 | H5 | done | #356 |
-| H6 | done | (this PR) |
-| H7 | open | |
+| H6 | done | #357 |
+| H7 | done | (this PR) |
 
 ## Context
 

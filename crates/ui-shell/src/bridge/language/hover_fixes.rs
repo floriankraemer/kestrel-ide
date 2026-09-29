@@ -205,3 +205,50 @@ impl ffi::LanguageService {
         });
     }
 }
+
+/// `code` coloured with the active editor theme's palette for `language`
+/// (the same resolution the editor and the Settings preview use). `None`
+/// for a language the highlighter does not know: the card then shows it plain.
+fn highlight_signature(code: &str, language: &str) -> Option<String> {
+    let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
+    let palette = app_core::color_themes::build_palette(
+        &plugin_host::registry(),
+        settings.theme_name(),
+        language,
+        &crate::bridge::convert::user_styles(&settings),
+    );
+    markdown_preview::highlight_html(code, language, &palette)
+}
+
+/// The hover card for `hoverAt`: the server's answer (signature lifted out
+/// of a Markdown hover, prose rendered to HTML) plus every diagnostic
+/// covering the position. Composition and rendering are `lsp_core::hover_card`
+/// (ADR-0021 escaping included); this only feeds it the Markdown engine that
+/// lives on this side of the layering.
+pub(super) fn build_hover_card(
+    hover: Option<&lsp_core::HoverText>,
+    diagnostics: &[diagnostics_core::DiagnosticRow],
+) -> lsp_core::hover_card::HoverCard {
+    let mut card = lsp_core::hover_card::HoverCard {
+        problems: diagnostics
+            .iter()
+            .map(lsp_core::hover_card::CardProblem::from_row)
+            .collect(),
+        ..Default::default()
+    };
+    if let Some(hover) = hover {
+        let doc = if hover.markdown {
+            let (signature, body) = lsp_core::hover_card::split_signature(&hover.value);
+            card.signature_html = signature
+                .as_deref()
+                .zip(lsp_core::hover_card::signature_language(&hover.value))
+                .and_then(|(code, language)| highlight_signature(code, language));
+            card.signature = signature;
+            super::render_doc_html(&body)
+        } else {
+            lsp_core::to_tooltip_html(hover)
+        };
+        card.doc_html = Some(doc);
+    }
+    card
+}

@@ -781,6 +781,11 @@ void CodeEditor::setIntentionBulb(int block, bool isFix)
     }
     intentionBulbBlock_ = block;
     intentionBulbIsFix_ = isFix;
+    // The gutter is painted, so this mark is the only way a headless flow
+    // can tell a red fix bulb from a yellow intention bulb.
+    e2eMark(QStringLiteral("{\"ev\":\"intention_bulb\",\"block\":%1,\"fix\":%2}")
+              .arg(block)
+              .arg(isFix ? QLatin1String("true") : QLatin1String("false")));
     lineNumberArea_->update();
 }
 

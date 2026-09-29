@@ -459,8 +459,12 @@ void EditorTabs::showIntentionsMenu(const QPoint *anchor)
     // A popup menu takes a keyboard grab rather than the input focus, so
     // this mark is the only way anything outside the process can know it
     // is up — same reasoning as the tab context menu's.
-    e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"intentions_menu\",\"count\":%1}")
-              .arg(items.size()));
+    e2eMarkMenuActions(&menu, "intentions_menu_action");
+    e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"intentions_menu\",\"count\":%1,"
+                            "\"x\":%2,\"y\":%3}")
+              .arg(items.size())
+              .arg(pos.x())
+              .arg(pos.y()));
     QAction *chosen = menu.exec(pos);
     e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"intentions_menu\","
                             "\"accepted\":%1}")

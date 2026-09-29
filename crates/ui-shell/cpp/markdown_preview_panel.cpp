@@ -3,6 +3,7 @@
 #include "e2e_mark.h"
 
 #include <QAction>
+#include <QEvent>
 #include <QImage>
 #include <QLabel>
 #include <QMenu>
@@ -120,6 +121,15 @@ void MarkdownPreviewPanel::setCurrentTab(quint64 tabId, const QString &path,
     requestRender();
 }
 
+void MarkdownPreviewPanel::changeEvent(QEvent *event)
+{
+    QWidget::changeEvent(event);
+    if (event->type() == QEvent::PaletteChange && !currentPath_.isEmpty()
+        && provider_->hasPreview(currentPath_)) {
+        requestRender();
+    }
+}
+
 void MarkdownPreviewPanel::requestRender()
 {
     if (currentPath_.isEmpty()) {
@@ -167,9 +177,10 @@ void MarkdownPreviewPanel::onPreviewReady(quint64 tabId, quint64 revision)
         syncToEditorLine(scrollLine);
     }
 
-    e2eMark(QStringLiteral("{\"ev\":\"preview_ready\",\"tab_id\":%1,\"revision\":%2}")
+    e2eMark(QStringLiteral("{\"ev\":\"preview_ready\",\"tab_id\":%1,\"revision\":%2,\"html\":%3}")
               .arg(tabId)
-              .arg(revision));
+              .arg(revision)
+              .arg(e2eJson(html)));
 }
 
 void MarkdownPreviewPanel::onAnchorClicked(const QUrl &url)

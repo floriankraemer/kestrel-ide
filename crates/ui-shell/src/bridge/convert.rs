@@ -365,7 +365,7 @@ pub(crate) fn dispatch_editor_command(
                 .session
                 .borrow()
                 .cursor_position(TabId::from_raw(tab_id))
-                .map(|(line, column)| mcp_server::CursorPosition { line, column });
+                .map(|(line, column)| mcp_server::CursorPosition::from_zero_based(line, column));
             let _ = respond.send(position);
         }
         mcp_server::EditorCommand::BufferContentForPath { path, respond } => {

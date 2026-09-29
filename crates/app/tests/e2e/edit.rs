@@ -251,7 +251,7 @@ fn e2e_completion_ranks_camel_humps_and_walks_snippet_tab_stops() {
             after_accept["line"].as_u64(),
             after_accept["column"].as_u64()
         ),
-        (Some(1), Some(5)),
+        (Some(2), Some(5)),
         "the caret did not land on the snippet's first tab stop"
     );
 
@@ -260,7 +260,7 @@ fn e2e_completion_ranks_camel_humps_and_walks_snippet_tab_stops() {
     let after_tab = mcp.call("get_cursor_position", json!({"tab_id": tab_id}));
     assert_eq!(
         (after_tab["line"].as_u64(), after_tab["column"].as_u64()),
-        (Some(1), Some(6)),
+        (Some(2), Some(6)),
         "Tab did not move the caret from $1 to $0"
     );
 

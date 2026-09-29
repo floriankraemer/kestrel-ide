@@ -215,7 +215,8 @@ fn e2e_search_everywhere_jump() {
     let declaration = fixture_text("tiny", "src/greeting.rs")
         .lines()
         .position(|line| line.contains(&format!("fn {QUERY}ly")))
-        .expect("the fixture declares shout_loudly") as u32;
+        .expect("the fixture declares shout_loudly") as u32
+        + 1; // `get_cursor_position` lines are 1-based
     e2e::wait_for("the caret to land on the declaration", || {
         (cursor(&mcp, tab_id).0 == declaration).then_some(())
     });

@@ -106,3 +106,55 @@ fn e2e_standalone_mermaid_file_previews() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// The preview's fenced-code colours follow the active colour theme (#363):
+/// the same Markdown, rendered under the default dark theme and again under
+/// a light one, must come out with different highlight colours.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_preview_highlight_follows_the_colour_theme() {
+    let mut ide = Ide::launch(
+        "e2e_preview_highlight_follows_the_colour_theme",
+        APP,
+        fixture("markdown"),
+    );
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    wait_for_index(&ide.mcp());
+    let tab = open_file(&ide, "demo.md");
+    let dark = preview_html(&ide, &tab);
+
+    assert_eq!(ide.quit(), 0);
+    let mut settings = app_config::load(&ide.config_dir()).expect("settings just written");
+    settings.theme = "github-light-default".to_string();
+    app_config::save(&ide.config_dir(), &settings).expect("seeding the light theme");
+    ide.relaunch();
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    // The session restores the open tab on relaunch.
+    let tab = ide.wait_for_ev(Mark::start(), "tab_added");
+    let light = preview_html(&ide, &tab);
+
+    assert_ne!(
+        code_colours(&dark),
+        code_colours(&light),
+        "fenced code has the same colours under a dark and a light theme"
+    );
+    assert_eq!(ide.quit(), 0);
+}
+
+/// Put `tab` in view mode and return the rendered HTML.
+fn preview_html(ide: &Ide, tab: &serde_json::Value) -> String {
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+    let mark = ide.mark();
+    ide.key("ctrl+shift+m");
+    let ready = ide.wait_for_event(mark, "the in-tab render", |e| {
+        e["ev"] == "preview_ready" && e["tab_id"].as_u64() == Some(tab_id)
+    });
+    ready["html"].as_str().expect("html").to_string()
+}
+
+/// Every inline `color:#rrggbb` the highlighter wrote, in order.
+fn code_colours(html: &str) -> Vec<&str> {
+    html.match_indices("color:#")
+        .map(|(at, _)| &html[at..at + "color:#rrggbb".len()])
+        .collect()
+}

@@ -110,6 +110,17 @@ impl ColorThemeService {
         self.active.as_ref()
     }
 
+    /// The `syntax_core` built-in highlight theme (`"dark"`/`"light"`) that
+    /// matches the active colour theme's appearance — what the Markdown
+    /// preview highlights fenced code with. Dark when nothing resolved,
+    /// like every other accessor's fallback.
+    pub fn highlight_theme(&self) -> &'static str {
+        match self.active().map(|theme| theme.appearance) {
+            Some(Appearance::Light) => "light",
+            _ => "dark",
+        }
+    }
+
     /// Switch the active theme to `id`, re-running the same fallback
     /// [`choose`] applies at construction — the live-preview/revert
     /// mechanism `ThemeProvider::applyColorTheme` (T7) needs, over the
@@ -311,6 +322,18 @@ mod tests {
         let service = ColorThemeService::from_registry(builtin_registry(&[]), "no-such-theme");
         let theme = service.active().expect("a dark theme is always offered");
         assert_eq!(theme.appearance, Appearance::Dark);
+    }
+
+    #[test]
+    fn highlight_theme_follows_the_active_themes_appearance() {
+        let mut service = ColorThemeService::from_registry(builtin_registry(&[]), "dark");
+        assert_eq!(service.highlight_theme(), "dark");
+        service.set_preferred("light");
+        assert_eq!(service.highlight_theme(), "light");
+        service.set_preferred("github-light-default");
+        assert_eq!(service.highlight_theme(), "light");
+        service.set_preferred("github-dark-default");
+        assert_eq!(service.highlight_theme(), "dark");
     }
 
     #[test]

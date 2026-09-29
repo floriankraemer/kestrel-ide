@@ -191,12 +191,7 @@ pub(crate) fn shared_preview() -> Arc<Mutex<app_core::preview::PreviewService>> 
     static PREVIEW: OnceLock<Arc<Mutex<app_core::preview::PreviewService>>> = OnceLock::new();
     Arc::clone(PREVIEW.get_or_init(|| {
         let _ = shared_icons();
-        Arc::new(Mutex::new(
-            app_core::preview::PreviewService::from_registry(
-                plugin_host::registry(),
-                plugin_host::tier(),
-            ),
-        ))
+        Arc::new(Mutex::new(fresh_preview()))
     }))
 }
 
@@ -208,13 +203,32 @@ pub(crate) fn shared_preview() -> Arc<Mutex<app_core::preview::PreviewService>> 
 /// the wasm tier a preview might dispatch to has to be the one just
 /// (re)started over the new registry, not the one from before the toggle.
 pub(crate) fn reload_shared_preview() {
-    let rebuilt = app_core::preview::PreviewService::from_registry(
-        plugin_host::registry(),
-        plugin_host::tier(),
-    );
+    let rebuilt = fresh_preview();
     *shared_preview()
         .lock()
         .expect("preview service lock poisoned") = rebuilt;
+}
+
+/// A preview service over the current registry, already on the active
+/// colour theme's highlight theme — a rebuild must not fall back to the
+/// service's dark default.
+fn fresh_preview() -> app_core::preview::PreviewService {
+    let mut service = app_core::preview::PreviewService::from_registry(
+        plugin_host::registry(),
+        plugin_host::tier(),
+    );
+    service.set_theme(shared_color_themes().borrow().highlight_theme());
+    service
+}
+
+/// Point the preview at the active colour theme's highlight theme — called
+/// after every colour-theme switch (startup included).
+pub(crate) fn sync_preview_theme() {
+    let theme = shared_color_themes().borrow().highlight_theme();
+    shared_preview()
+        .lock()
+        .expect("preview service lock poisoned")
+        .set_theme(theme);
 }
 
 /// The one project index in this process, shared by `SearchModel` (which

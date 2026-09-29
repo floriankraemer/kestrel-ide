@@ -104,6 +104,7 @@ impl ffi::ThemeProvider {
     /// Appearance page's live preview, and its Cancel path.
     pub fn apply_color_theme(&self, id: &QString) {
         self.themes.borrow_mut().set_preferred(&id.to_string());
+        crate::bridge::registry::sync_preview_theme();
     }
 
     /// Whether the active theme is dark — the one bit `theme.cpp` needs

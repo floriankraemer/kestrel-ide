@@ -9,6 +9,7 @@
 #include <functional>
 
 class QAction;
+class QEvent;
 class QLabel;
 class QMenu;
 class QTextBrowser;
@@ -71,6 +72,11 @@ public:
     // before the browser's own current scroll position, so the editor can
     // sync the other way when the user scrolls the preview instead.
     int nearestSourceLine() const;
+
+protected:
+    // A theme switch re-renders: the highlight colours are baked into the
+    // HTML the Rust side produced for the previous theme.
+    void changeEvent(QEvent *event) override;
 
 private slots:
     void onPreviewReady(quint64 tabId, quint64 revision);

@@ -432,10 +432,16 @@ impl Ide {
     /// typing still reaches the editor — a divergence from every real desktop
     /// and a fine way to spend an afternoon.
     pub fn focus_main(&self) {
-        let window = self.window.clone();
-        xdotool::run(&["windowfocus", "--sync", &window]);
-        wait_for("the main window to take the input focus back", || {
-            xdotool::focused_window().filter(|focused| *focused == window)
+        self.focus_window(&self.window);
+    }
+
+    /// Give the input focus to `window` (an X window id) and wait until it
+    /// holds it — for a dialog, whose marker names its own window, the same
+    /// missing-window-manager gap `focus_main` closes for the main window.
+    pub fn focus_window(&self, window: &str) {
+        xdotool::run(&["windowfocus", "--sync", window]);
+        wait_for(&format!("window {window} to take the input focus"), || {
+            xdotool::focused_window().filter(|focused| focused == window)
         });
     }
 

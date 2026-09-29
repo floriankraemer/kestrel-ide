@@ -26,8 +26,8 @@ use e2e::{Ide, Mark};
 use serde_json::json;
 
 use crate::support::{
-    accept_top_hit, buffer, cursor, fixture, fixture_text, git_fixture, open_file,
-    open_search_popup, rect_centre, route_rust_at_stub, wait_for_index, APP,
+    accept_top_hit, buffer, cursor, fixture, fixture_text, focus_refactor_preview, git_fixture,
+    open_file, open_search_popup, rect_centre, route_rust_at_stub, wait_for_index, APP,
 };
 
 // ---------------------------------------------------------------------------
@@ -307,7 +307,7 @@ fn e2e_rename_with_preview() {
     // Cancel first.
     let mark = ide.mark();
     start_rename(&ide, SYMBOL, "yell");
-    let rows = ide.wait_for_ev(mark, "preview_rows");
+    let rows = focus_refactor_preview(&ide, mark);
     assert_eq!(
         rows["count"].as_u64(),
         Some(occurrences as u64),
@@ -340,7 +340,7 @@ fn e2e_rename_with_preview() {
     // Now apply.
     let mark = ide.mark();
     start_rename(&ide, SYMBOL, "yell");
-    ide.wait_for_ev(mark, "preview_rows");
+    focus_refactor_preview(&ide, mark);
     ide.key("Return");
     let applied = ide.wait_for_ev(mark, "workspace_edit_applied");
     assert_eq!(applied["documents"].as_u64(), Some(2));
@@ -689,7 +689,7 @@ fn e2e_intention_creates_a_file_through_the_preview() {
         e["ev"] == "dialog_closed" && e["name"] == "intentions_menu" && e["accepted"] == true
     });
 
-    let rows = ide.wait_for_ev(mark, "preview_rows");
+    let rows = focus_refactor_preview(&ide, mark);
     assert_eq!(
         rows["files"].as_u64(),
         Some(2),

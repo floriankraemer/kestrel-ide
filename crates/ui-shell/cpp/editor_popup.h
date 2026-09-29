@@ -39,7 +39,18 @@ public:
     // Same, anchored to `anchor` (global coordinates — a word's or the
     // caret's cursor rect): the card opens just below it, or just above when
     // there is no room below.
-    void showAtRect(const QRect &anchor, const QString &html);
+    // `hoverCard` marks the content as the hover card (whose fixes shortcuts
+    // may apply); any other content, or hiding, ends that state and emits
+    // `hoverCardEnded`.
+    void showAtRect(const QRect &anchor, const QString &html, bool hoverCard = false);
+
+    // The card's content changed while it is up (a problem's fixes arrived):
+    // repaint and re-fit it at the same anchor, keeping it pinned/open. A
+    // no-op when hidden.
+    void updateHtml(const QString &html);
+
+    // Close now, even when pinned — the card acted on something (a fix was applied).
+    void dismiss();
 
     // The soft hide every dismissal but Escape/click-outside goes through
     // (the pointer leaving a hovered word, a signature tip whose call the
@@ -65,10 +76,16 @@ signals:
     // `EditorTabs`'s job, not the popup's.
     void actionRequested(const QString &action);
 
+    // The popup stopped showing a hover card (closed, or shows other content).
+    void hoverCardEnded();
+
 private:
     explicit EditorPopup(QWidget *parent = nullptr);
 
     void forceHide();
+    void endHoverCard();
+    void setContent(const QString &html);
+    void placeAt(const QRect &anchor);
 
     void closeAfterGrace();
     void applyDocumentStyleSheet();
@@ -89,11 +106,14 @@ private:
     // closing it hands the caret back to the editor.
     QPointer<QWidget> returnFocus_;
     bool pinned_ = false;
+    QRect anchor_;
+    bool hoverCard_ = false;
 };
 
 void showEditorPopup(const QPoint &globalPos, const QString &html);
 void showEditorPopupPinnable(const QRect &anchor, const QString &html, bool pin);
 void hideEditorPopup();
+void dismissEditorPopup();
 void pinEditorPopup();
 // `EditorPopup::scheduleClose`, for callers that only hold the free functions.
 void scheduleHideEditorPopup(const QPoint &pointerGlobalPos);

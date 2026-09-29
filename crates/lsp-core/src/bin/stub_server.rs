@@ -1135,6 +1135,28 @@ fn main() {
                     io::stdout().flush().ok();
                     continue;
                 }
+                // H3: the diagnostic-scoped request for the canned diagnostic
+                // (line 0) gets one preferred quick fix, as the hover card's
+                // fix row needs; the range-scoped one keeps its refactoring.
+                if line == 0 && with_diagnostics {
+                    send(
+                        &out,
+                        json!({"jsonrpc": "2.0", "id": id, "result": [
+                            {"title": "Import `HashMap`", "kind": "quickfix",
+                             "isPreferred": true,
+                             "edit": {"documentChanges": [{
+                                 "textDocument": {"uri": uri, "version": 1},
+                                 "edits": [{
+                                     "range": {"start": {"line": 0, "character": 0},
+                                               "end": {"line": 0, "character": 0}},
+                                     "newText": "use std::collections::HashMap;\n",
+                                 }],
+                             }]}},
+                        ]}),
+                    );
+                    io::stdout().flush().ok();
+                    continue;
+                }
                 let result = match line {
                     0 => json!([{
                         "title": "Extract into function",

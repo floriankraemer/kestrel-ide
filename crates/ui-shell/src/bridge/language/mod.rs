@@ -25,6 +25,7 @@ use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 mod build_files;
 mod containers;
 mod database;
+mod hover_fixes;
 mod lsp_surface;
 
 /// RF8: code actions, rename, formatting, and the pending-edit preview
@@ -142,6 +143,8 @@ pub struct LanguageServiceRust {
     /// L3: which hover request is still the current one. The rule is
     /// `lsp_core`'s; what is kept here is only its state.
     hover: RefCell<lsp_core::HoverTracker>,
+    /// H3: the card on screen and the fixes fetched for its problems.
+    pub(crate) hover_fixes: RefCell<hover_fixes::HoverFixes>,
     /// L5: the same for completion, plus the last answer it accepted — the
     /// view re-reads that rather than being handed the list in the signal.
     completion: RefCell<lsp_core::CompletionTracker>,
@@ -279,6 +282,7 @@ impl Default for LanguageServiceRust {
             host: RefCell::new(lsp_core::ExecHost::Local),
             store: SharedDiagnostics::default(),
             hover: RefCell::default(),
+            hover_fixes: RefCell::default(),
             completion: RefCell::default(),
             completions: RefCell::default(),
             triggers: RefCell::default(),
@@ -432,6 +436,14 @@ fn render_doc_html(markdown: &str) -> String {
 /// rendered from more than one QObject (`LanguageService`, `SearchModel`).
 static HOVER_LABELS: std::sync::Mutex<Option<lsp_core::hover_card::CardLabels>> =
     std::sync::Mutex::new(None);
+
+/// Edit the stored labels in place (English defaults if none were set yet).
+pub(crate) fn update_hover_labels(edit: impl FnOnce(&mut lsp_core::hover_card::CardLabels)) {
+    let mut guard = HOVER_LABELS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    edit(guard.get_or_insert_with(Default::default));
+}
 
 /// Render `card` with the labels the view supplied.
 pub(crate) fn render_card(card: &lsp_core::hover_card::HoverCard) -> String {
@@ -896,11 +908,15 @@ impl ffi::LanguageService {
             if diagnostics.is_empty() {
                 self.as_mut().hover_fallback();
             } else {
-                let html = render_card(&build_hover_card(None, &diagnostics));
-                self.as_mut().hover_ready(QString::from(html.as_str()));
+                // No server, but a container/database/build-file fix may
+                // still exist (`local_intentions`).
+                let card = build_hover_card(None, &diagnostics);
+                self.as_mut()
+                    .show_hover_card(card, diagnostics, None, token);
             }
             return;
         }
+        let language_id = self.open_docs.borrow().get(&path).cloned();
         let qt_thread = self.as_mut().qt_thread();
         let queued = self.push_job(move |manager| {
             let outcome = lsp_core::hover_outcome(Some(manager.hover(&uri, line, character)));
@@ -921,8 +937,10 @@ impl ffi::LanguageService {
                     service.as_mut().hover_fallback();
                     return;
                 }
-                let html = render_card(&build_hover_card(hover_html.as_ref(), &diagnostics));
-                service.as_mut().hover_ready(QString::from(html.as_str()));
+                let card = build_hover_card(hover_html.as_ref(), &diagnostics);
+                service
+                    .as_mut()
+                    .show_hover_card(card, diagnostics, language_id, token);
             });
         });
         if !queued {
@@ -1035,18 +1053,15 @@ impl ffi::LanguageService {
         else {
             return;
         };
-        let labels = lsp_core::hover_card::CardLabels {
-            loading_fixes: loading_fixes.clone(),
-            more_actions: more_actions.clone(),
-            source: source.clone(),
-            error: error.clone(),
-            warning: warning.clone(),
-            info: info.clone(),
-            hint: hint.clone(),
-        };
-        *HOVER_LABELS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(labels);
+        update_hover_labels(|labels| {
+            labels.loading_fixes.clone_from(loading_fixes);
+            labels.more_actions.clone_from(more_actions);
+            labels.source.clone_from(source);
+            labels.error.clone_from(error);
+            labels.warning.clone_from(warning);
+            labels.info.clone_from(info);
+            labels.hint.clone_from(hint);
+        });
     }
 
     pub fn cancel_hover(self: Pin<&mut Self>) {

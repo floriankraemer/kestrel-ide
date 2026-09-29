@@ -494,6 +494,7 @@ fn main() {
         .cpp_file("cpp/editor_tabs.cpp")
         .cpp_file("cpp/editor_tabs_panes.cpp")
         .cpp_file("cpp/editor_tabs_lsp.cpp")
+        .cpp_file("cpp/editor_tabs_hover_card.cpp")
         // F3-16: the gutter's change markers and the hunk popup — a fourth
         // leg of EditorTabs, same reasoning as the other three.
         .cpp_file("cpp/editor_tabs_vcs.cpp")

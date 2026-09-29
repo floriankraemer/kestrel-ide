@@ -53,7 +53,7 @@ void EditorTabs::wireHoverCard()
 }
 
 // `ide:fix/<i>` applies problem i's primary fix, `ide:more/<i>` opens its
-// intentions under the card; `ide:source` is H4's.
+// intentions under the card; `ide:source` jumps to the footer's declaration.
 void EditorTabs::onHoverCardAction(const QString &action)
 {
     bool ok = false;
@@ -70,7 +70,44 @@ void EditorTabs::onHoverCardAction(const QString &action)
             showIntentionsMenu(&below);
             dismissEditorPopup();
         }
+    } else if (action == QLatin1String("source") && !hoverSourcePath_.isEmpty()) {
+        dismissEditorPopup();
+        openFileAtLine(hoverSourcePath_, static_cast<int>(hoverSourceLine_),
+                       static_cast<int>(hoverSourceColumn_));
     }
+}
+
+void EditorTabs::setHoverSource(const QString &path, quint32 line, quint32 column)
+{
+    hoverSourcePath_ = path;
+    hoverSourceLine_ = line;
+    hoverSourceColumn_ = column;
+}
+
+void EditorTabs::wireHoverSource(SearchModel *searchModel)
+{
+    connect(searchModel, &SearchModel::hoverSignatureReady, this,
+            [this](const QString &html, const QString &sourcePath, quint32 sourceLine,
+                   quint32 sourceColumn) {
+                setHoverSource(sourcePath, sourceLine, sourceColumn);
+                showEditorPopupPinnable(hoverAnchor(), html, takeQuickDocPending());
+                EditorPopup::instance().setDeclarationEnabled(!sourcePath.isEmpty());
+            });
+    // The LSP-built card is shown at once; its "Source:" footer follows from
+    // the index without holding it up.
+    connect(languageService_, &LanguageService::hoverReady, this, [this, searchModel]() {
+        const QString path = currentPath();
+        if (!path.isEmpty()) {
+            searchModel->hoverSource(path, currentContent(), byteOffsetAt(hoverPosition()));
+        }
+    });
+    connect(searchModel, &SearchModel::hoverSourceReady, this,
+            [this](const QString &display, quint32 line, quint32 column,
+                   const QString &targetPath) {
+                setHoverSource(targetPath, line, column);
+                languageService_->setHoverSource(display, line, column);
+                EditorPopup::instance().setDeclarationEnabled(true);
+            });
 }
 
 void EditorTabs::setHoverShortcuts(const QString &applyFix, const QString &moreActions)

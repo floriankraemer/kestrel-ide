@@ -10,8 +10,8 @@ In progress.
 |---|---|---|
 | H1 | done | #352 |
 | H2 | done | #353 |
-| H3 | done | (this PR) |
-| H4 | open | |
+| H3 | done | #354 |
+| H4 | done | (this PR) |
 | H5 | open | |
 | H6 | open | |
 | H7 | open | |

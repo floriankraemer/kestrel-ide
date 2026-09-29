@@ -49,6 +49,13 @@ public:
     // no-op when hidden.
     void updateHtml(const QString &html);
 
+    // The live keymap binding shown beside the ⋮ menu's "Go to Declaration".
+    void setDeclarationShortcut(const QString &shortcut);
+
+    // Whether the shown card has a declaration to go to (told by the bridge;
+    // reset by each new card).
+    void setDeclarationEnabled(bool enabled);
+
     // Close now, even when pinned — the card acted on something (a fix was applied).
     void dismiss();
 
@@ -101,6 +108,7 @@ private:
     QTextBrowser *browser_;
     QToolButton *menuButton_;
     QMenu *menu_;
+    QAction *declarationAction_ = nullptr;
     QTimer closeTimer_;
     // Where keyboard focus lived before a click activated the popup, so
     // closing it hands the caret back to the editor.

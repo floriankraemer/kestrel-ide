@@ -11,7 +11,7 @@
 
 use e2e::{Ide, Mark};
 
-use crate::support::{fixture, open_file, route_rust_at_stub, wait_for_index, APP};
+use crate::support::{fixture, fixture_text, open_file, route_rust_at_stub, wait_for_index, APP};
 
 #[test]
 #[ignore = "E2E: needs an X server; run via `make e2e`"]
@@ -88,6 +88,61 @@ fn e2e_hover_card_fills_in_the_fix_row_when_the_server_answers() {
     assert!(!html.contains("Looking for fixes"));
 
     // Screenshot for the PR, only when asked for.
+    if let Ok(path) = std::env::var("IDE_SHOT") {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = std::process::Command::new("import")
+            .args(["-window", "root", &path])
+            .status();
+    }
+    assert_eq!(ide.quit(), 0);
+}
+
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_hover_card_gains_a_source_footer_from_the_index() {
+    let name = "e2e_hover_card_gains_a_source_footer_from_the_index";
+    let mut ide = Ide::launch(name, APP, fixture("tiny"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    route_rust_at_stub(&mut ide);
+
+    let mcp = ide.mcp();
+    wait_for_index(&mcp);
+    open_file(&ide, "main.rs");
+    // Line 4 is `    println!("{}", greeting::greet("world"));`: the end of the
+    // line, then 14 back lands inside `greet`.
+    ide.key("ctrl+Home");
+    for _ in 0..3 {
+        ide.key("Down");
+    }
+    ide.key("End");
+    for _ in 0..14 {
+        ide.key("Left");
+    }
+
+    let mark = ide.mark();
+    ide.key("ctrl+alt+q");
+    let shown = ide.wait_for_event(mark, "the card to show", |e| e["ev"] == "hover_popup_shown");
+    assert!(
+        !shown["html"].as_str().expect("html").contains("Source:"),
+        "the card is not held up by the index: {shown}"
+    );
+
+    let declaration = fixture_text("tiny", "src/greeting.rs")
+        .lines()
+        .position(|line| line.contains("fn greet("))
+        .expect("the fixture declares greet")
+        + 1;
+    let footer = format!("src/greeting.rs:{declaration}");
+    let updated = ide.wait_for_event(mark, "the source footer to arrive", |e| {
+        e["ev"] == "hover_popup_updated"
+            && e["html"].as_str().is_some_and(|h| h.contains("Source:"))
+    });
+    let html = updated["html"].as_str().expect("html");
+    assert!(
+        html.contains("href=\"ide:source\"") && html.contains(&footer),
+        "the footer names the declaration project-relative: {html}"
+    );
+
     if let Ok(path) = std::env::var("IDE_SHOT") {
         std::thread::sleep(std::time::Duration::from_millis(500));
         let _ = std::process::Command::new("import")

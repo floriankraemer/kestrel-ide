@@ -103,6 +103,10 @@ EditorPopup::EditorPopup(QWidget *parent)
     QAction *copyAction = menu_->addAction(QObject::tr("Copy"));
     connect(copyAction, &QAction::triggered, this,
             [this]() { QGuiApplication::clipboard()->setText(browser_->toPlainText()); });
+    declarationAction_ = menu_->addAction(QObject::tr("Go to Declaration"));
+    declarationAction_->setEnabled(false);
+    connect(declarationAction_, &QAction::triggered, this,
+            [this]() { emit actionRequested(QStringLiteral("source")); });
     connect(menuButton_, &QToolButton::clicked, this, [this]() {
         menu_->popup(menuButton_->mapToGlobal(QPoint(0, menuButton_->height())));
     });
@@ -145,6 +149,8 @@ void EditorPopup::showAtRect(const QRect &anchor, const QString &html, bool hove
         endHoverCard();
     }
     hoverCard_ = hoverCard;
+    // Each card starts without a declaration; the bridge says when it has one.
+    declarationAction_->setEnabled(false);
     // A new popup is never pre-pinned: each `showAt` is a new question
     // (a different word hovered, a different overload's tip), and
     // `pin()` is always a deliberate Ctrl+Q on its own answer.
@@ -205,6 +211,20 @@ void EditorPopup::updateHtml(const QString &html)
     placeAt(anchor_);
 }
 
+void EditorPopup::setDeclarationEnabled(bool enabled)
+{
+    declarationAction_->setEnabled(enabled);
+}
+
+void EditorPopup::setDeclarationShortcut(const QString &shortcut)
+{
+    QString text = QObject::tr("Go to Declaration");
+    if (!shortcut.isEmpty()) {
+        text += QLatin1Char('\t') + shortcut;
+    }
+    declarationAction_->setText(text);
+}
+
 void EditorPopup::dismiss()
 {
     forceHide();
@@ -219,8 +239,16 @@ void EditorPopup::applyDocumentStyleSheet()
     const QString rule =
       cardBorderColor(palette.color(QPalette::Mid), palette.color(QPalette::PlaceholderText))
         .name();
+    // A subtle chip for inline code: the card's own text colour, faint,
+    // over its surface — legible in light and dark alike.
+    const QColor surface = palette.color(QPalette::Window);
+    const QColor text = palette.color(QPalette::WindowText);
+    const QColor chip(surface.red() * 88 / 100 + text.red() * 12 / 100,
+                      surface.green() * 88 / 100 + text.green() * 12 / 100,
+                      surface.blue() * 88 / 100 + text.blue() * 12 / 100);
     const QString sheet =
       QStringLiteral(
+        "code { font-family: monospace; background-color: %4; }"
         ".dim { color: %1; } .source { color: %1; }"
         "a { color: %2; text-decoration: none; }"
         "p { margin-top: 0px; margin-bottom: 0px; }"
@@ -229,7 +257,7 @@ void EditorPopup::applyDocumentStyleSheet()
         ".signature { font-family: monospace; }"
         "td.sec { padding-top: 0px; padding-bottom: 6px; padding-right: 22px; }"
         "td.sep { padding-top: 6px; padding-bottom: 6px; border-top: 1px solid %3; }")
-        .arg(dim, palette.color(QPalette::Link).name(), rule);
+        .arg(dim, palette.color(QPalette::Link).name(), rule, chip.name());
     browser_->document()->setDefaultStyleSheet(sheet);
 }
 

@@ -294,6 +294,11 @@ public:
     void applyPreferredFixNow();
     // The user's bindings for the card's fix row, pushed by whoever owns the keymap.
     void setHoverShortcuts(const QString &applyFix, const QString &moreActions);
+    // H4: where the shown hover card's "Source:" footer points.
+    void setHoverSource(const QString &path, quint32 line, quint32 column);
+    // H4: the index leg of the card — the footer's resolution and the
+    // index-only hover, both answered by `searchModel`.
+    void wireHoverSource(SearchModel *searchModel);
 
     // F2-11: code.toggleInlayHints. Applies to every open editor
     // immediately (S2's live-apply convention — see setEditorFont) and to
@@ -1083,6 +1088,9 @@ private:
     bool applyPreferredPending_ = false;
     // The user's "Apply Preferred Fix" binding, shown on the menu's primary row.
     QString applyFixShortcut_;
+    QString hoverSourcePath_;
+    quint32 hoverSourceLine_ = 0;
+    quint32 hoverSourceColumn_ = 0;
 
     // F2-11: the editor a signature-help/inlay-hints request was last made
     // about — same reasoning as `intentionsEditor_`, one relevant answer at

@@ -2,6 +2,7 @@
 
 #include "declaration_navigator.h"
 #include "dock_layout.h"
+#include "editor_popup.h"
 #include "editor_tabs.h"
 #include "find_usages_panel.h"
 #include "hierarchy_panel.h"
@@ -32,6 +33,14 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
                       QObject::tr("Go to Declaration"), appSettings, actions);
     QObject::connect(goToDeclarationAction, &QAction::triggered, window,
                       [editorTabs]() { editorTabs->requestDeclarationAtCaret(); });
+
+    // H4: the hover card's ⋮ menu shows the live binding.
+    const auto pushDeclarationShortcut = [goToDeclarationAction]() {
+        EditorPopup::instance().setDeclarationShortcut(
+          goToDeclarationAction->shortcut().toString(QKeySequence::NativeText));
+    };
+    QObject::connect(goToDeclarationAction, &QAction::changed, window, pushDeclarationShortcut);
+    pushDeclarationShortcut();
 
     QAction *findUsagesAction =
       registerAction(navigateMenu, QStringLiteral("navigate.findUsages"),

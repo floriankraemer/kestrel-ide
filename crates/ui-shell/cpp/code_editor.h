@@ -429,6 +429,15 @@ public:
     void setDiagnosticMarks(const QHash<int, DiagnosticMark> &marks);
     const QHash<int, DiagnosticMark> &diagnosticMarks() const { return diagnosticMarks_; }
 
+    // The intentions bulb: drawn in the gutter's diagnostic column on `block`
+    // in place of that line's diagnostic dot, so it never covers text. A
+    // click on it reports `diagnosticMarkerClicked` like the dot does.
+    void setIntentionBulb(int block, bool isFix);
+    void clearIntentionBulb();
+    // Global point just under the bulb, for anchoring the popup; null when
+    // no bulb is shown or its line is scrolled out of view.
+    QPoint intentionBulbAnchor() const;
+
     // R4: the current file's diagnostic counts, for the error stripe's
     // corner summary.
     void setDiagnosticSummary(const DiagnosticSummary &summary);
@@ -813,6 +822,8 @@ private:
     QHash<int, ChangeMarker> changeMarkers_;
     QVector<DiagnosticSpan> diagnosticSpans_;
     QHash<int, DiagnosticMark> diagnosticMarks_;
+    int intentionBulbBlock_ = -1;
+    bool intentionBulbIsFix_ = false;
     DiagnosticSummary diagnosticSummary_;
     QVector<OccurrenceSpan> occurrenceSpans_;
     QVector<DiffLineBackground> diffBackgrounds_;

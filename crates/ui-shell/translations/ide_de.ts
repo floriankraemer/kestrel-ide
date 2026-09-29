@@ -768,13 +768,6 @@
     </message>
 </context>
 <context>
-    <name>IntentionBulb</name>
-    <message>
-        <source>Show intention actions (Alt+Enter)</source>
-        <translation>Absichtsaktionen anzeigen (Alt+Eingabe)</translation>
-    </message>
-</context>
-<context>
     <name>MarkdownPreviewPanel</name>
     <message>
         <source>Nothing to preview.</source>

@@ -32,7 +32,6 @@ class DiffViewPage;
 class FindBar;
 class HexViewer;
 class ImageViewer;
-class IntentionBulb;
 
 // F3-12a/F3-16: joins a window's VcsService to the project-open lifecycle
 // (mirroring how LanguageService::openProject is wired) and to EditorTabs's
@@ -1079,7 +1078,6 @@ private:
     // which is what its answer is positioned against; `intentionsPending_`
     // is set only by an explicit Alt+Return, so a background bulb refresh
     // never pops the menu the user didn't ask for.
-    IntentionBulb *intentionBulb_ = nullptr;
     CodeEditor *intentionsEditor_ = nullptr;
     int intentionsDocPos_ = 0;
     bool intentionsPending_ = false;

@@ -8,6 +8,7 @@
 // each pushed in from outside and none of them decided here.
 
 #include "code_editor.h"
+#include "intention_bulb.h"
 
 #include "theme.h"
 #include "vcs_gutter.h"
@@ -288,7 +289,15 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
             }
 
             const auto diagnosticIt = diagnosticMarks_.constFind(blockNumber);
-            if (diagnosticIt != diagnosticMarks_.constEnd()) {
+            if (blockNumber == intentionBulbBlock_) {
+                // The bulb replaces the line's diagnostic dot, and sits in
+                // its own column so a breakpoint beside it stays visible.
+                const int size = kDiagnosticWidth;
+                const int x = runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth;
+                const int y = top + (fontMetrics().height() - size) / 2;
+                paintBulb(painter, QRectF(x, y, size, size),
+                          intentionBulbIsFix_ ? BulbKind::Fix : BulbKind::Intention);
+            } else if (diagnosticIt != diagnosticMarks_.constEnd()) {
                 const int cx = runMarkerWidth() + kBreakpointWidth + kChangeMarkerWidth
                   + kDiagnosticWidth / 2;
                 const int cy = top + fontMetrics().height() / 2;
@@ -354,7 +363,8 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
                 return;
             }
 
-            if (onDiagnosticColumn && diagnosticMarks_.contains(blockNumber)) {
+            if (onDiagnosticColumn
+                && (diagnosticMarks_.contains(blockNumber) || blockNumber == intentionBulbBlock_)) {
                 emit diagnosticMarkerClicked(blockNumber);
                 return;
             }

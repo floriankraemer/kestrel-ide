@@ -69,8 +69,8 @@ pub use hover::{
 };
 pub use inlay_hint::{line_range as inlay_hint_range, parse_inlay_hints, InlayHint, InlayHintKind};
 pub use intentions::{
-    assemble as assemble_intentions, is_preferred, suggests_organize_imports, Intention,
-    IntentionGroup, ORGANIZE_IMPORTS,
+    assemble as assemble_intentions, bulb_kind, is_preferred, suggests_organize_imports, BulbKind,
+    Intention, IntentionGroup, ORGANIZE_IMPORTS,
 };
 pub use manager::{
     path_for, uri_for, LspError, LspEvent, LspManager, DEFAULT_REQUEST_TIMEOUT,

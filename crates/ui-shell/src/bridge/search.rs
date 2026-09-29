@@ -614,7 +614,7 @@ impl ffi::SearchModel {
             };
             // A declaration is source, not Markdown: it goes in the card's
             // signature section, escaped verbatim.
-            let html = lsp_core::hover_card::render(&lsp_core::hover_card::HoverCard {
+            let html = super::language::render_card(&lsp_core::hover_card::HoverCard {
                 signature: Some(signature),
                 ..Default::default()
             });

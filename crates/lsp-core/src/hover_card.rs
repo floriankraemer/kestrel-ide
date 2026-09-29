@@ -9,11 +9,12 @@
 //! # Styling hooks
 //!
 //! No colour is chosen here. Elements carry semantic `class` names
-//! (`problem`, `sev-error`/`sev-warning`/`sev-info`/`sev-hint`, `dim`,
+//! (`problem`, `dim`, `sec`/`sep` for section cells,
 //! `signature`, `doc`, `source`, `fix`) that the popup's
 //! `QTextDocument::setDefaultStyleSheet` maps onto the active theme's
 //! `SemanticColors`. Without a stylesheet the card degrades to plain,
-//! readable rich text.
+//! readable rich text. Severity icons are `<img src="ide-sev:error|warning|info|hint">`
+//! images the popup paints and registers as document resources.
 
 use diagnostics_core::{DiagnosticRow, Severity};
 
@@ -59,6 +60,33 @@ impl CardProblem {
 pub struct CardLocation {
     pub path: String,
     pub line: u32,
+}
+
+/// The card's fixed words. The UI layer owns translation, so it hands the
+/// localized strings in; the default is the English source text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CardLabels {
+    pub loading_fixes: String,
+    pub more_actions: String,
+    pub source: String,
+    pub error: String,
+    pub warning: String,
+    pub info: String,
+    pub hint: String,
+}
+
+impl Default for CardLabels {
+    fn default() -> Self {
+        CardLabels {
+            loading_fixes: "Loading fixes…".into(),
+            more_actions: "More actions…".into(),
+            source: "Source:".into(),
+            error: "Error".into(),
+            warning: "Warning".into(),
+            info: "Info".into(),
+            hint: "Hint".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -123,14 +151,14 @@ pub fn primary_fix(intentions: &[Intention]) -> Option<&Intention> {
 /// that came from a server or the filesystem is escaped (ADR-0021).
 ///
 /// Anchors: `ide:fix/<problem>`, `ide:more/<problem>`, `ide:source`.
-pub fn render(card: &HoverCard) -> String {
+pub fn render(card: &HoverCard, labels: &CardLabels) -> String {
     let mut sections: Vec<String> = Vec::new();
     if !card.problems.is_empty() {
         let rows: String = card
             .problems
             .iter()
             .enumerate()
-            .map(|(i, p)| render_problem(i, p))
+            .map(|(i, p)| render_problem(i, p, labels))
             .collect();
         sections.push(format!("<div class=\"problems\">{rows}</div>"));
     }
@@ -145,20 +173,33 @@ pub fn render(card: &HoverCard) -> String {
     }
     if let Some(location) = &card.source {
         sections.push(format!(
-            "<p class=\"source\">Source: <a href=\"ide:source\">{}:{}</a></p>",
+            "<p class=\"source\">{} <a href=\"ide:source\">{}:{}</a></p>",
+            escape(&labels.source),
             escape(&location.path),
             location.line
         ));
     }
-    sections.join("<hr>")
+    sections
+        .iter()
+        .enumerate()
+        .map(|(i, html)| {
+            // `<hr>` is not drawn by `QTextDocument` under a stylesheet, but a
+            // table cell's `border-top` is: every section after the first
+            // opens with the `sep` rule.
+            let class = if i == 0 { "sec" } else { "sep" };
+            format!(
+                "<table width=\"100%\" cellspacing=\"0\" cellpadding=\"0\"><tr><td class=\"{class}\">{html}</td></tr></table>"
+            )
+        })
+        .collect()
 }
 
-fn render_problem(index: usize, problem: &CardProblem) -> String {
+fn render_problem(index: usize, problem: &CardProblem, labels: &CardLabels) -> String {
     let (class, label) = match problem.severity {
-        Severity::Error => ("sev-error", "Error"),
-        Severity::Warning => ("sev-warning", "Warning"),
-        Severity::Information => ("sev-info", "Info"),
-        Severity::Hint => ("sev-hint", "Hint"),
+        Severity::Error => ("error", &labels.error),
+        Severity::Warning => ("warning", &labels.warning),
+        Severity::Information => ("info", &labels.info),
+        Severity::Hint => ("hint", &labels.hint),
     };
     let origin = match (problem.source.is_empty(), problem.code.is_empty()) {
         (true, true) => String::new(),
@@ -173,13 +214,19 @@ fn render_problem(index: usize, problem: &CardProblem) -> String {
     };
     let fixes = match &problem.fixes {
         FixState::None => String::new(),
-        FixState::Loading => "<br><span class=\"dim\">Loading fixes…</span>".to_string(),
+        FixState::Loading => format!(
+            "<br><span class=\"dim\">{}</span>",
+            escape(&labels.loading_fixes)
+        ),
         FixState::Some {
             primary_title,
             count,
         } => {
             let more = if *count > 1 {
-                format!(" <a href=\"ide:more/{index}\">More actions…</a>")
+                format!(
+                    " <a href=\"ide:more/{index}\">{}</a>",
+                    escape(&labels.more_actions)
+                )
             } else {
                 String::new()
             };
@@ -190,7 +237,8 @@ fn render_problem(index: usize, problem: &CardProblem) -> String {
         }
     };
     format!(
-        "<p class=\"problem\"><b class=\"{class}\">{label}</b> {}{origin}{fixes}</p>",
+        "<p class=\"problem\"><img src=\"ide-sev:{class}\" width=\"14\" height=\"14\" alt=\"{}\" style=\"vertical-align:middle\"> {}{origin}{fixes}</p>",
+        escape(label),
         escape(&problem.message)
     )
 }
@@ -306,7 +354,7 @@ mod tests {
                 line: 3,
             }),
         };
-        let html = render(&card);
+        let html = render(&card, &CardLabels::default());
         let at = |needle: &str| {
             html.find(needle)
                 .unwrap_or_else(|| panic!("{needle} in {html}"))
@@ -337,8 +385,8 @@ mod tests {
                 line: 1,
             }),
         };
-        let html = render(&card);
-        assert!(!html.contains("<img") && !html.contains("<s>") && !html.contains("<c>"));
+        let html = render(&card, &CardLabels::default());
+        assert!(!html.contains("<img src=x") && !html.contains("<s>") && !html.contains("<c>"));
         assert!(html.contains("&lt;img src=x&gt; &amp; &quot;q&quot;"));
         assert!(html.contains("fn f&lt;T&gt;() -&gt; &amp;str"));
         assert!(html.contains("&lt;b&gt;Fix&lt;/b&gt;"));
@@ -360,7 +408,7 @@ mod tests {
             ],
             ..HoverCard::default()
         };
-        let html = render(&card);
+        let html = render(&card, &CardLabels::default());
         assert!(html.contains("href=\"ide:fix/0\"") && html.contains("href=\"ide:more/0\""));
         assert!(html.contains("href=\"ide:fix/1\"") && !html.contains("ide:more/1"));
         assert!(html.contains("Loading fixes"));
@@ -372,16 +420,56 @@ mod tests {
     fn severity_classes_and_missing_origin() {
         let mut p = problem("m", "", "", FixState::None);
         p.severity = Severity::Warning;
-        let html = render(&HoverCard {
-            problems: vec![p],
-            ..HoverCard::default()
-        });
-        assert!(html.contains("sev-warning\">Warning</b> m</p>"));
+        let html = render(
+            &HoverCard {
+                problems: vec![p],
+                ..HoverCard::default()
+            },
+            &CardLabels::default(),
+        );
+        assert!(html.contains("src=\"ide-sev:warning\"") && html.contains("alt=\"Warning\""));
         assert!(!html.contains("dim"));
     }
 
     #[test]
+    fn labels_replace_every_fixed_word_and_are_escaped() {
+        let labels = CardLabels {
+            loading_fixes: "Lade".into(),
+            more_actions: "Mehr <".into(),
+            source: "Quelle:".into(),
+            error: "Fehler".into(),
+            ..CardLabels::default()
+        };
+        let mut loading = problem("m", "", "", FixState::Loading);
+        loading.severity = Severity::Error;
+        let more = problem(
+            "n",
+            "",
+            "",
+            FixState::Some {
+                primary_title: "F".into(),
+                count: 2,
+            },
+        );
+        let html = render(
+            &HoverCard {
+                problems: vec![loading, more],
+                source: Some(CardLocation {
+                    path: "/a".into(),
+                    line: 1,
+                }),
+                ..HoverCard::default()
+            },
+            &labels,
+        );
+        for want in ["Lade", "Mehr &lt;", "Quelle: <a", "alt=\"Fehler\""] {
+            assert!(html.contains(want), "{want} in {html}");
+        }
+        assert!(!html.contains("Loading") && !html.contains("Source:"));
+    }
+
+    #[test]
     fn empty_card_renders_nothing() {
-        assert_eq!(render(&HoverCard::default()), "");
+        assert_eq!(render(&HoverCard::default(), &CardLabels::default()), "");
     }
 }

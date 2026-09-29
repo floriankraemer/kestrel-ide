@@ -8,8 +8,8 @@ In progress.
 
 | Task | Status | PR / commit |
 |---|---|---|
-| H1 | done | (this PR) |
-| H2 | open | |
+| H1 | done | #352 |
+| H2 | done | (this branch) |
 | H3 | open | |
 | H4 | open | |
 | H5 | open | |

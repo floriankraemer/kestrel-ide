@@ -3,6 +3,7 @@
 #include "completion_delegate.h"
 #include "completion_docs_panel.h"
 #include "diff_pane.h"
+#include "editor_popup.h"
 #include "e2e_mark.h"
 #include "theme.h"
 #include <QContextMenuEvent>
@@ -15,7 +16,6 @@
 #include <QEvent>
 #include <QFocusEvent>
 #include <QFontMetrics>
-#include <QHelpEvent>
 #include <QInputMethodEvent>
 #include <QMimeData>
 #include <QKeyEvent>
@@ -43,6 +43,9 @@ constexpr int kEntryIndexRole = Qt::UserRole + 1;
 
 // Slack added to the popup's ideal width so the last glyph is not clipped.
 constexpr int kPopupWidthPadding = 8;
+// How long the pointer rests on a word before its hover card is requested.
+// H6 replaces this with the user's setting.
+constexpr int kHoverDwellMs = 500;
 
 // R2: auto-popup's debounce window. Ctrl+Space (`explicitRequest`) skips
 // it — see `completionDebounce_`'s own doc comment.
@@ -103,6 +106,13 @@ CodeEditor::CodeEditor(QWidget *parent)
     // Ctrl-hover feedback needs move events with no button held (N7), the
     // same reason TerminalWidget enables tracking for its links.
     setMouseTracking(true);
+    // H2: the hover card's dwell (see `kHoverDwellMs`).
+    hoverDwellTimer_.setSingleShot(true);
+    hoverDwellTimer_.setInterval(kHoverDwellMs);
+    connect(&hoverDwellTimer_, &QTimer::timeout, this, &CodeEditor::requestHoverForTarget);
+    // The card is anchored to where its word was; a scroll moves the word.
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, this, []() { hideEditorPopup(); });
+    connect(horizontalScrollBar(), &QScrollBar::valueChanged, this, []() { hideEditorPopup(); });
 
     // L5: the completion popup. UnfilteredPopupCompletion is the point —
     // QCompleter's own prefix matching is bypassed entirely, because which
@@ -578,7 +588,7 @@ void CodeEditor::mouseMoveEvent(QMouseEvent *event)
         return;
     }
     updateHoverSpan(event->pos(), event->modifiers().testFlag(Qt::ControlModifier));
-    cancelHover();
+    trackHoverTarget(event->pos());
     QPlainTextEdit::mouseMoveEvent(event);
 }
 
@@ -612,29 +622,35 @@ void CodeEditor::setSecondaryCarets(const QVector<SecondaryCaret> &carets)
     viewport()->update();
 }
 
-bool CodeEditor::viewportEvent(QEvent *event)
+void CodeEditor::trackHoverTarget(const QPoint &pos)
 {
-    if (event->type() == QEvent::ToolTip) {
-        const QPoint pos = static_cast<QHelpEvent *>(event)->pos();
-        // R3: an identifier wins when both apply (a squiggle under a
-        // hovered name shows the LSP hover with the diagnostic appended,
-        // `lsp_core::hover_card`), but a squiggle on its own — whitespace, a
-        // trailing comma, an unused `;` — still triggers a hover.
-        QPair<int, int> span = identifierAt(pos);
-        if (span.first < 0) {
-            span = diagnosticSpanAt(pos);
-        }
-        if (span.first >= 0) {
-            hoverPending_ = true;
-            emit hoverRequested(span.first);
-        }
-        // Accepted either way: the default handler would only offer this
-        // widget's (empty) static tooltip, and a server's answer arrives
-        // later, on hoverReady.
-        event->accept();
-        return true;
+    // R3: an identifier wins when both apply (a squiggle under a hovered
+    // name shows the LSP hover with the diagnostic appended,
+    // `lsp_core::hover_card`), but a squiggle on its own — whitespace, a
+    // trailing comma, an unused `;` — still triggers a hover.
+    QPair<int, int> target = identifierAt(pos);
+    if (target.first < 0) {
+        target = diagnosticSpanAt(pos);
     }
-    return QPlainTextEdit::viewportEvent(event);
+    if (target == hoverTarget_) {
+        return;
+    }
+    hoverTarget_ = target;
+    hoverDwellTimer_.stop();
+    // The popup outlives this for its grace period, so the pointer can reach it.
+    cancelHover();
+    if (target.first >= 0) {
+        hoverDwellTimer_.start();
+    }
+}
+
+void CodeEditor::requestHoverForTarget()
+{
+    if (hoverTarget_.first < 0 || !viewport()->underMouse()) {
+        return;
+    }
+    hoverPending_ = true;
+    emit hoverRequested(hoverTarget_.first);
 }
 
 void CodeEditor::cancelHover()
@@ -695,6 +711,8 @@ void CodeEditor::mousePressEvent(QMouseEvent *event)
 void CodeEditor::leaveEvent(QEvent *event)
 {
     clearHoverSpan();
+    hoverTarget_ = {-1, -1};
+    hoverDwellTimer_.stop();
     cancelHover();
     QPlainTextEdit::leaveEvent(event);
 }

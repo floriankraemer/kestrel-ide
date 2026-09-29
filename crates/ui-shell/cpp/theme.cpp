@@ -37,6 +37,7 @@ QString fillTokens(const ChromePalette &c, QString sheet)
         {"{surface2}", c.surface2.name()},
         {"{raised}", c.raised.name()},
         {"{border}", c.border.name()},
+        {"{card-border}", cardBorderColor(c.border, c.textDim).name()},
         {"{text}", c.text.name()},
         {"{textDim}", c.textDim.name()},
         {"{accent}", c.accent.name()},
@@ -271,6 +272,18 @@ QToolTip {
     border-radius: {r-ctl}px;
     padding: {sp-1}px {sp-2}px;
 }
+
+/* The hover card (EditorPopup); document colours: editor_popup.cpp. */
+ui_shell--EditorPopup {
+    background-color: {surface}; color: {text};
+    border: 1px solid {card-border}; border-radius: 8px;
+}
+ui_shell--EditorPopup QTextBrowser { background: transparent; color: {text}; border: none; }
+ui_shell--EditorPopup QToolButton {
+    background: transparent; color: {textDim}; border: none; padding: 0;
+    border-radius: {r-ctl}px; font-size: 20px; font-weight: bold;
+}
+ui_shell--EditorPopup QToolButton:hover { background-color: {surface2}; color: {accent}; }
 
 /* ---- menu bar and menus ------------------------------------------ */
 QMenuBar {
@@ -1163,6 +1176,12 @@ void applyTabPadding(const FfiTabPadding &padding)
     // padding, the same trick applyUiFontScale() uses above.
     qApp->setStyleSheet(styleSheetForTheme(activeThemeName()));
     restyleDockManagers();
+}
+
+QColor cardBorderColor(const QColor &b, const QColor &d)
+{
+    const auto mix = [](int from, int to) { return from + (to - from) * 45 / 100; };
+    return QColor(mix(b.red(), d.red()), mix(b.green(), d.green()), mix(b.blue(), d.blue()));
 }
 
 QColor tinted(const QColor &base, int darkFactor, int lightFactor)

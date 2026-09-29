@@ -33,7 +33,7 @@ void showSignatureTip(QWidget *, const QPoint &globalPos, const FfiSignatureHelp
     }
     const QString documentation = QString(help.documentation);
     if (!documentation.isEmpty()) {
-        html += QStringLiteral("<br/><span style=\"color:gray;\">")
+        html += QStringLiteral("<br/><span class=\"dim\">")
           + documentation.toHtmlEscaped() + QStringLiteral("</span>");
     }
     // R3: the active parameter's own documentation, distinct from the
@@ -41,7 +41,7 @@ void showSignatureTip(QWidget *, const QPoint &globalPos, const FfiSignatureHelp
     // parameter this describes.
     const QString parameterDocumentation = QString(help.parameter_documentation);
     if (!parameterDocumentation.isEmpty()) {
-        html += QStringLiteral("<br/><span style=\"color:gray;\">")
+        html += QStringLiteral("<br/><span class=\"dim\">")
           + parameterDocumentation.toHtmlEscaped() + QStringLiteral("</span>");
     }
     showEditorPopup(globalPos, html);

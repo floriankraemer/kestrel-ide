@@ -56,6 +56,11 @@ SemanticColors semanticColorsForTheme(const QString &themeName);
 // The same, for whatever theme is active — what a widget building rows wants.
 SemanticColors semanticColors();
 
+// The hover card's edge and section rules: the theme's hairline `border`
+// pulled toward `textDim`, because the plain hairline is close to invisible
+// around a white card on the light themes.
+QColor cardBorderColor(const QColor &border, const QColor &textDim);
+
 // The colours a diff paints with (`DiffView`, the unified viewer, the VCS
 // gutter's change markers and the minimap's row marks), one set per theme —
 // JetBrains' convention: added is green, modified is blue, deleted is grey.

@@ -2553,6 +2553,26 @@
         <source>utf-8</source>
         <translation>utf-8</translation>
     </message>
+    <message>
+        <source>Loading fixes…</source>
+        <translation>Korrekturen werden geladen …</translation>
+    </message>
+    <message>
+        <source>More actions…</source>
+        <translation>Weitere Aktionen …</translation>
+    </message>
+    <message>
+        <source>Source:</source>
+        <translation>Quelle:</translation>
+    </message>
+    <message>
+        <source>Hover card options</source>
+        <translation>Optionen der Hover-Karte</translation>
+    </message>
+    <message>
+        <source>Pin</source>
+        <translation>Anheften</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>

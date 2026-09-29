@@ -209,6 +209,11 @@ public:
     // resulting popup pinned once it arrives.
     void requestQuickDocumentation();
 
+    // Where the hover card opens: the hovered position's cursor rect in the
+    // current editor, in global coordinates — the caret's for Ctrl+Alt+Q,
+    // since both requests go through `hoverPosition()`.
+    QRect hoverAnchor() const;
+
     // Whichever of `hoverReady`/`hoverSignatureReady` answers the request
     // `requestQuickDocumentation` just made reads this once, to pin the
     // popup instead of leaving it as transient as a mouse dwell's. Clears
@@ -699,6 +704,10 @@ public:
     // dialog) — moves the caret to the next/previous cached hunk in the
     // current file, wrapping at either end.
     void jumpToChange(bool forward);
+
+    // H2: the hover card's `ide:` anchors (`fix/<i>`, `more/<i>`, `source`).
+    void onHoverCardAction(const QString &action);
+    void wireHoverCard();
 
 private:
     // Where a tab lives now: which group's tab strip, and at which index in

@@ -18,6 +18,7 @@
 #include <QTabWidget>
 #include <QTextBlock>
 #include <QTextCursor>
+#include <algorithm>
 #include <QTimer>
 #include <QVariant>
 #include <QVector>
@@ -239,6 +240,19 @@ void EditorTabs::requestHoverAt(CodeEditor *editor, int position)
     }
     const QPair<quint32, quint32> at = lspPosition(editor, position);
     languageService_->hoverAt(path, at.first, at.second);
+}
+
+QRect EditorTabs::hoverAnchor() const
+{
+    auto *editor = qobject_cast<CodeEditor *>(currentEditor());
+    if (!editor) {
+        return QRect(QCursor::pos(), QSize(1, 16));
+    }
+    QTextCursor cursor(editor->document());
+    cursor.setPosition(std::clamp(hoverPosition_, 0, std::max(0, editor->document()->characterCount() - 1)));
+    QRect rect = editor->cursorRect(cursor);
+    rect.moveTopLeft(editor->viewport()->mapToGlobal(rect.topLeft()));
+    return rect;
 }
 
 void EditorTabs::requestQuickDocumentation()
@@ -478,6 +492,43 @@ void EditorTabs::hoverFallback()
     if (hoverFallback_) {
         hoverFallback_();
     }
+}
+
+// H2: everything the hover card needs from `EditorTabs` — its translated
+// fixed words, the popup's `ide:` anchors, and where an answer is shown.
+void EditorTabs::wireHoverCard()
+{
+    // H2: the hover card's fixed words, translated here (the view owns
+    // `tr()`) and stored by the bridge for `render`.
+    languageService_->setHoverLabels(QStringList{
+      QObject::tr("Loading fixes…"), QObject::tr("More actions…"), QObject::tr("Source:"),
+      QObject::tr("Error"), QObject::tr("Warning"), QObject::tr("Info"), QObject::tr("Hint")});
+    connect(&EditorPopup::instance(), &EditorPopup::actionRequested, this,
+            &EditorTabs::onHoverCardAction);
+
+    // L3/R3: one popup for the whole window. The answer is asynchronous,
+    // so it is shown where the pointer is when it arrives — safe only
+    // because `lsp_core::HoverTracker` has already dropped everything
+    // the user has moved on from, so whatever reaches here is still
+    // about the word under the cursor. `hoverAt`'s html already carries
+    // the LSP hover and every diagnostic at that position composed
+    // together (`lsp_core::hover_card`), so this is the one place that
+    // paints either or both. Ctrl+Q's own request comes back on this same
+    // signal (`requestQuickDocumentation`'s doc comment), which is why
+    // pinning happens here rather than at the request site.
+    connect(languageService_, &LanguageService::hoverReady, this, [this](const QString &html) {
+        showEditorPopupPinnable(hoverAnchor(), html, takeQuickDocPending());
+        // R3 E2E: the only way a headless flow can see the popup's content
+        // — it is a separate toplevel with no model behind it, the same
+        // reason `e2eMarkMenuActions` exists for a QMenu.
+        e2eMark(QStringLiteral("{\"ev\":\"hover_popup_shown\",\"html\":%1}").arg(e2eJson(html)));
+    });
+}
+
+// Nothing emits `fix/<i>`, `more/<i>` (H3) or `source` (H4) yet, so there is
+// nothing to act on.
+void EditorTabs::onHoverCardAction(const QString &)
+{
 }
 
 void EditorTabs::hoverCanceled()
@@ -748,7 +799,8 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         hoverCanceled();
         // R3: the pointer left the hovered word — a soft hide, so a
         // Ctrl+Q-pinned popup stays up until Escape or a click outside.
-        hideEditorPopup();
+        // H2: after a short grace, so the pointer can travel into the card.
+        scheduleHideEditorPopup(QCursor::pos());
     });
     // F2-11/R3: Up/Down while the signature tip is showing cycles the
     // overload rather than moving the caret — `CodeEditor` only emits this

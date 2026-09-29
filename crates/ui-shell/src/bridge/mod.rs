@@ -61,6 +61,7 @@ pub mod ffi;
 /// like `plugins`/`language` — no draft, no OK-shaped promise, every
 /// add/remove/edit writes through immediately.
 pub mod file_associations;
+pub mod hover_settings;
 pub mod icons;
 pub mod language;
 pub mod layouts;

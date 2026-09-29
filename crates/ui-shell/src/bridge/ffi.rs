@@ -174,6 +174,14 @@ mod ffi {
         caret_line: bool,
     }
 
+    /// The hover card's switches, 1:1 with `app_config::HoverSettings`.
+    #[derive(Default)]
+    struct FfiHoverOptions {
+        docs_on_hover: bool,
+        delay_ms: u32,
+        problems_on_hover: bool,
+    }
+
     /// One row of the Keymap settings page, 1:1 with `app_config::Binding`.
     /// `shortcut` is `QKeySequence` portable text, empty for "unbound";
     /// `is_default` is resolved in Rust so the view can style rebound rows
@@ -3295,6 +3303,16 @@ mod ffi {
         #[cxx_name = "saveMinimapOptions"]
         fn save_minimap_options(self: &AppSettings, options: &FfiMinimapOptions);
 
+        /// The hover card's settings (delay clamped).
+        #[qinvokable]
+        #[cxx_name = "hoverOptions"]
+        fn hover_options(self: &AppSettings) -> FfiHoverOptions;
+
+        /// Persist the hover card's settings.
+        #[qinvokable]
+        #[cxx_name = "saveHoverOptions"]
+        fn save_hover_options(self: &AppSettings, options: &FfiHoverOptions);
+
         /// Where the running server publishes its port and auth token, so
         /// the Settings page can tell the user what to point an agent at.
         #[qinvokable]
@@ -4948,7 +4966,25 @@ mod ffi {
         /// nothing blocks, because the request runs on the worker thread.
         #[qinvokable]
         #[cxx_name = "hoverAt"]
-        fn hover_at(self: Pin<&mut LanguageService>, path: &QString, line: u32, character: u32);
+        fn hover_at(
+            self: Pin<&mut LanguageService>,
+            path: &QString,
+            line: u32,
+            character: u32,
+            quick: bool,
+        );
+
+        /// H6: apply the hover settings live (what a dwell fetches). Returns
+        /// nothing; ask `hoverDwellDelayMs` for the dwell timer.
+        #[qinvokable]
+        #[cxx_name = "setHoverOptions"]
+        fn set_hover_options(self: Pin<&mut LanguageService>, options: &FfiHoverOptions);
+
+        /// H6: the dwell delay to arm the editor's timer with, 0 when both
+        /// hover kinds are off and a dwell should not fire at all.
+        #[qinvokable]
+        #[cxx_name = "hoverDwellDelayMs"]
+        fn hover_dwell_delay_ms(self: &LanguageService) -> u32;
 
         /// H3: the shown card's fix rows changed (a problem's fixes arrived);
         /// repaint it where it is, without moving, re-pinning or closing it.

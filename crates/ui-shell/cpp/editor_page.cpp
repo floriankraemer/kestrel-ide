@@ -9,6 +9,9 @@
 #include <QColorDialog>
 #include <QFont>
 #include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QLabel>
 #include <QLineEdit>
 #include <QObject>
 #include <QPalette>
@@ -207,10 +210,56 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
     QObject::connect(minimapBreakpointsCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
     QObject::connect(minimapCaretCheck, &QCheckBox::toggled, editorPage, applyMinimapLive);
 
+    // Hover card (H6): what a dwell shows and how long it waits. The delay is
+    // meaningful only while some hover is on.
+    const FfiHoverOptions originalHover = appSettings->hoverOptions();
+    auto *hoverBox = new QGroupBox(QObject::tr("Hover"), editorPage);
+    auto *hoverLayout = new QVBoxLayout(hoverBox);
+    auto *hoverDocsCheck =
+      new QCheckBox(QObject::tr("Show quick documentation on mouse hover"), hoverBox);
+    hoverDocsCheck->setObjectName(QStringLiteral("editorHoverDocs"));
+    hoverDocsCheck->setChecked(originalHover.docs_on_hover);
+    hoverLayout->addWidget(hoverDocsCheck);
+
+    auto *hoverDelayLayout = new QHBoxLayout;
+    hoverDelayLayout->setContentsMargins(20, 0, 0, 0);
+    auto *hoverDelaySpin = new QSpinBox(hoverBox);
+    hoverDelaySpin->setObjectName(QStringLiteral("editorHoverDelay"));
+    hoverDelaySpin->setRange(100, 3000);
+    hoverDelaySpin->setSingleStep(100);
+    hoverDelaySpin->setValue(static_cast<int>(originalHover.delay_ms));
+    hoverDelayLayout->addWidget(new QLabel(QObject::tr("Delay"), hoverBox));
+    hoverDelayLayout->addWidget(hoverDelaySpin);
+    hoverDelayLayout->addWidget(new QLabel(QObject::tr("ms"), hoverBox));
+    hoverDelayLayout->addStretch();
+    hoverLayout->addLayout(hoverDelayLayout);
+
+    auto *hoverProblemsCheck =
+      new QCheckBox(QObject::tr("Show problems and quick fixes on mouse hover"), hoverBox);
+    hoverProblemsCheck->setObjectName(QStringLiteral("editorHoverProblems"));
+    hoverProblemsCheck->setChecked(originalHover.problems_on_hover);
+    hoverLayout->addWidget(hoverProblemsCheck);
+    editorForm->addRow(hoverBox);
+
+    auto hoverOptionsFrom = [hoverDocsCheck, hoverDelaySpin, hoverProblemsCheck]() {
+        return FfiHoverOptions{hoverDocsCheck->isChecked(),
+                               static_cast<quint32>(hoverDelaySpin->value()),
+                               hoverProblemsCheck->isChecked()};
+    };
+    auto applyHoverLive = [editorTabs, hoverDelaySpin, hoverDocsCheck, hoverProblemsCheck,
+                           hoverOptionsFrom]() {
+        hoverDelaySpin->setEnabled(hoverDocsCheck->isChecked() || hoverProblemsCheck->isChecked());
+        editorTabs->setHoverOptions(hoverOptionsFrom());
+    };
+    hoverDelaySpin->setEnabled(originalHover.docs_on_hover || originalHover.problems_on_hover);
+    QObject::connect(hoverDocsCheck, &QCheckBox::toggled, editorPage, applyHoverLive);
+    QObject::connect(hoverProblemsCheck, &QCheckBox::toggled, editorPage, applyHoverLive);
+    QObject::connect(hoverDelaySpin, &QSpinBox::valueChanged, editorPage, applyHoverLive);
+
     return EditorPage{
       editorPage,
       [appSettings, fontFamilyEdit, fontSizeSpin, backgroundColor, foregroundColor,
-       currentLineColor, whitespaceOptionsFrom, minimapOptionsFrom]() {
+       currentLineColor, whitespaceOptionsFrom, minimapOptionsFrom, hoverOptionsFrom]() {
           appSettings->saveEditorFont(fontFamilyEdit->text(),
                                        static_cast<quint32>(fontSizeSpin->value()));
           appSettings->saveEditorColors(*backgroundColor, *foregroundColor, *currentLineColor);
@@ -222,8 +271,10 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
           appSettings->saveMinimapOptions(FfiMinimapOptions{
             minimap.enabled, minimap.searchMatches, minimap.diagnostics, minimap.vcsChanges,
             minimap.breakpoints, minimap.caretLine});
+          appSettings->saveHoverOptions(hoverOptionsFrom());
       },
-      [editorTabs, originalFont, originalColors, originalWhitespace, originalMinimap]() {
+      [editorTabs, originalFont, originalColors, originalWhitespace, originalMinimap,
+       originalHover]() {
           editorTabs->setEditorFont(
             QFont(originalFont.family, static_cast<int>(originalFont.size)));
           editorTabs->setEditorColors(originalColors.background, originalColors.foreground,
@@ -235,6 +286,7 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
             originalMinimap.enabled, originalMinimap.search_matches, originalMinimap.diagnostics,
             originalMinimap.vcs_changes, originalMinimap.breakpoints,
             originalMinimap.caret_line});
+          editorTabs->setHoverOptions(originalHover);
       },
     };
 }

@@ -2287,6 +2287,34 @@
         <translation>Mostrar minimapa</translation>
     </message>
     <message>
+        <source>Show quick documentation on mouse hover</source>
+        <translation>Mostrar documentación rápida al pasar el ratón</translation>
+    </message>
+    <message>
+        <source>Hover</source>
+        <translation>Desplazamiento del ratón</translation>
+    </message>
+    <message>
+        <source>Delay</source>
+        <translation>Retardo</translation>
+    </message>
+    <message>
+        <source>ms</source>
+        <translation>ms</translation>
+    </message>
+    <message>
+        <source>Show problems and quick fixes on mouse hover</source>
+        <translation>Mostrar problemas y correcciones rápidas al pasar el ratón</translation>
+    </message>
+    <message>
+        <source>Show on Mouse Hover</source>
+        <translation>Mostrar al pasar el ratón</translation>
+    </message>
+    <message>
+        <source>Hover Settings…</source>
+        <translation>Ajustes de desplazamiento…</translation>
+    </message>
+    <message>
         <source>Show only languages with problems</source>
         <translation>Mostrar solo idiomas con problemas</translation>
     </message>

@@ -125,6 +125,9 @@ pub struct LanguageServiceRust {
     /// Open document path -> language id, so a change/save/close for a file we
     /// never opened against a server is dropped rather than sent.
     pub(crate) open_docs: RefCell<std::collections::HashMap<String, String>>,
+    /// H6: the hover settings in force (set live by `setHoverOptions`); what
+    /// a request fetches is `HoverSettings::scope`'s rule.
+    pub(crate) hover_settings: Cell<app_config::HoverSettings>,
     /// ADR-0052: the same `ExecHost` `LspManager::new` derived from this
     /// project's root, kept here too for the one path-retranslation site
     /// (`LspEvent::ApplyEdit`, in `apply_event`) that runs on the event
@@ -279,6 +282,7 @@ impl Default for LanguageServiceRust {
             configs: RefCell::default(),
             started: RefCell::default(),
             open_docs: RefCell::default(),
+            hover_settings: Cell::new(app_config::HoverSettings::DEFAULT),
             host: RefCell::new(lsp_core::ExecHost::Local),
             store: SharedDiagnostics::default(),
             hover: RefCell::default(),
@@ -894,29 +898,45 @@ impl ffi::LanguageService {
     /// *anything* to show — a server's answer, a diagnostic, or both — and
     /// only a request with nothing at all still falls through to
     /// `hover_fallback`'s index-declaration answer, exactly as before R3.
-    pub fn hover_at(mut self: Pin<&mut Self>, path: &QString, line: u32, character: u32) {
+    pub fn hover_at(
+        mut self: Pin<&mut Self>,
+        path: &QString,
+        line: u32,
+        character: u32,
+        quick: bool,
+    ) {
+        // What to fetch is `HoverSettings::scope`'s rule; a dwell with both
+        // kinds off never gets here in practice, but the rule is enforced
+        // regardless.
+        let Some(scope) = self.hover_settings.get().scope(quick) else {
+            return;
+        };
         let path = path.to_string();
         let token = self.hover.borrow_mut().begin();
         let uri = lsp_core::uri_from_path(&path);
-        if !self.open_docs.borrow().contains_key(&path) {
-            // No server has this document, so there is nothing to ask the
-            // server for — but a build/analyzer diagnostic can still cover
-            // this position, and widening the hover trigger to a squiggle
-            // (R3) is pointless if that case still fell all the way back
-            // to the index.
-            let diagnostics = self.store.borrow().at(&uri, line, character);
-            if diagnostics.is_empty() {
-                self.as_mut().hover_fallback();
+        let language_id = self.open_docs.borrow().get(&path).cloned();
+        if !scope.docs || language_id.is_none() {
+            // Nothing to ask a server for (no server has this document, or
+            // docs are off) — but a build/analyzer diagnostic can still
+            // cover this position, and a container/database/build-file fix
+            // may exist (`local_intentions`).
+            let diagnostics = if scope.problems {
+                self.store.borrow().at(&uri, line, character)
             } else {
-                // No server, but a container/database/build-file fix may
-                // still exist (`local_intentions`).
+                Vec::new()
+            };
+            if diagnostics.is_empty() {
+                // The index fallback is documentation too.
+                if scope.docs {
+                    self.as_mut().hover_fallback();
+                }
+            } else {
                 let card = build_hover_card(None, &diagnostics);
                 self.as_mut()
-                    .show_hover_card(card, diagnostics, None, token);
+                    .show_hover_card(card, diagnostics, language_id, token);
             }
             return;
         }
-        let language_id = self.open_docs.borrow().get(&path).cloned();
         let qt_thread = self.as_mut().qt_thread();
         let queued = self.push_job(move |manager| {
             let outcome = lsp_core::hover_outcome(Some(manager.hover(&uri, line, character)));
@@ -932,7 +952,11 @@ impl ffi::LanguageService {
                 if !service.hover.borrow().accept(token) {
                     return;
                 }
-                let diagnostics = service.store.borrow().at(&uri, line, character);
+                let diagnostics = if scope.problems {
+                    service.store.borrow().at(&uri, line, character)
+                } else {
+                    Vec::new()
+                };
                 if hover_html.is_none() && diagnostics.is_empty() {
                     service.as_mut().hover_fallback();
                     return;

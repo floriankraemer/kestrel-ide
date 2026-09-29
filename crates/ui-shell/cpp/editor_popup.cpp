@@ -107,6 +107,17 @@ EditorPopup::EditorPopup(QWidget *parent)
     declarationAction_->setEnabled(false);
     connect(declarationAction_, &QAction::triggered, this,
             [this]() { emit actionRequested(QStringLiteral("source")); });
+    menu_->addSeparator();
+    docsOnHoverAction_ = menu_->addAction(QObject::tr("Show on Mouse Hover"));
+    docsOnHoverAction_->setCheckable(true);
+    docsOnHoverAction_->setChecked(true);
+    connect(docsOnHoverAction_, &QAction::triggered, this, [this](bool checked) {
+        emit actionRequested(checked ? QStringLiteral("docs-on-hover/1")
+                                     : QStringLiteral("docs-on-hover/0"));
+    });
+    QAction *hoverSettingsAction = menu_->addAction(QObject::tr("Hover Settings…"));
+    connect(hoverSettingsAction, &QAction::triggered, this,
+            [this]() { emit actionRequested(QStringLiteral("settings")); });
     connect(menuButton_, &QToolButton::clicked, this, [this]() {
         menu_->popup(menuButton_->mapToGlobal(QPoint(0, menuButton_->height())));
     });
@@ -368,6 +379,11 @@ void EditorPopup::hidePopup()
         return;
     }
     forceHide();
+}
+
+void EditorPopup::setDocsOnHover(bool enabled)
+{
+    docsOnHoverAction_->setChecked(enabled);
 }
 
 void EditorPopup::pin()

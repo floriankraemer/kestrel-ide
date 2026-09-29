@@ -412,6 +412,10 @@ public:
     // so a file whose minimap is off keeps exactly the layout it had before
     // this feature existed.
     void setMinimapOptions(const MinimapOptions &options);
+
+    // How long the pointer rests on a word before a hover is requested;
+    // 0 turns the dwell off (the bridge says when: both hover kinds off).
+    void setHoverDwellDelay(int milliseconds);
     int minimapWidth() const;
 
     // Read-only views the minimap's overlays paint from — the widget never

@@ -227,7 +227,7 @@ void EditorTabs::onDocumentHighlightsReady()
     intentionsEditor_->setOccurrenceSpans(spans);
 }
 
-void EditorTabs::requestHoverAt(CodeEditor *editor, int position)
+void EditorTabs::requestHoverAt(CodeEditor *editor, int position, bool quick)
 {
     hoverPosition_ = position;
     const QString path = editor->property("lspPath").toString();
@@ -239,7 +239,7 @@ void EditorTabs::requestHoverAt(CodeEditor *editor, int position)
         return;
     }
     const QPair<quint32, quint32> at = lspPosition(editor, position);
-    languageService_->hoverAt(path, at.first, at.second);
+    languageService_->hoverAt(path, at.first, at.second, quick);
 }
 
 QRect EditorTabs::hoverAnchor() const
@@ -267,7 +267,7 @@ void EditorTabs::requestQuickDocumentation()
     // `hoverSignatureReady` in `main_window.cpp`) to pin the popup rather
     // than let the next mouse move close it.
     quickDocPending_ = true;
-    requestHoverAt(editor, editor->textCursor().position());
+    requestHoverAt(editor, editor->textCursor().position(), true);
 }
 
 void EditorTabs::requestSignatureHelpFor(CodeEditor *editor, bool explicitRequest)
@@ -714,6 +714,7 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     // for the tab's lifetime.
     editor->setWhitespaceOptions(whitespaceOptions_);
     editor->setMinimapOptions(minimapOptions_);
+    editor->setHoverDwellDelay(hoverDwellMs_);
     editor->setWhitespaceClassifier([this](const QString &text) {
         QVector<WhitespaceSpan> spans;
         for (const FfiWhitespaceSpan &span : editorOps_->whitespaceSpans(text)) {

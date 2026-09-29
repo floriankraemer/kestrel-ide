@@ -116,6 +116,9 @@ public:
     // RF12: the index leg of hover, wired by the window because SearchModel
     // lives there.
     std::function<void()> hoverFallback_;
+    std::function<void(bool)> hoverDocsToggled_;
+    std::function<void()> hoverSettingsRequested_;
+    int hoverDwellMs_ = 500;
     std::function<void()> hoverCanceled_;
     std::function<void(QMenu *)> contextMenu_;
     int hoverPosition_ = 0;
@@ -490,6 +493,16 @@ public:
 
     // Editor minimap (issue #199), same S2 live-apply convention.
     void setMinimapOptions(const MinimapOptions &options);
+
+    // H6: the hover card's settings, live. Pushes the rule's answer (what a
+    // dwell fetches, how long it waits) into the bridge, the editors and the
+    // card's checkable menu item.
+    void setHoverOptions(const FfiHoverOptions &options);
+
+    // The card's ⋮ menu asked to turn quick documentation on hover on/off, or
+    // to open the settings page; the window persists / opens.
+    void setHoverDocsToggledCallback(std::function<void(bool)> callback);
+    void setHoverSettingsRequestedCallback(std::function<void()> callback);
 
     // Per-tab minimap visibility, transient (not persisted, unlike
     // minimapOptions_ above): whether the minimap shows for this one tab,
@@ -894,7 +907,7 @@ private:
     // L3/R3: `hoverRequested`'s body, factored out so
     // `requestQuickDocumentation` (Ctrl+Q, at the caret) can share it with
     // the mouse-dwell path (at the pointer) rather than duplicating it.
-    void requestHoverAt(CodeEditor *editor, int position);
+    void requestHoverAt(CodeEditor *editor, int position, bool quick = false);
 
     // F2-11: inlay hints for whatever `editor` currently has visible.
     // Called on scroll and after a document change settles; a no-op when

@@ -52,6 +52,10 @@ public:
     // The live keymap binding shown beside the ⋮ menu's "Go to Declaration".
     void setDeclarationShortcut(const QString &shortcut);
 
+    // The ⋮ menu's "Show on Mouse Hover" check state (the docs-on-hover
+    // setting); set by the window whenever the setting changes.
+    void setDocsOnHover(bool enabled);
+
     // Whether the shown card has a declaration to go to (told by the bridge;
     // reset by each new card).
     void setDeclarationEnabled(bool enabled);
@@ -109,6 +113,7 @@ private:
     QToolButton *menuButton_;
     QMenu *menu_;
     QAction *declarationAction_ = nullptr;
+    QAction *docsOnHoverAction_ = nullptr;
     QTimer closeTimer_;
     // Where keyboard focus lived before a click activated the popup, so
     // closing it hands the caret back to the editor.

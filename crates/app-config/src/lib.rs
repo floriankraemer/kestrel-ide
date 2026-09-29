@@ -30,6 +30,7 @@ pub mod editing;
 /// The `[file_associations]` section: which handler a file pattern opens
 /// with.
 pub mod file_associations;
+pub mod hover; // The `[hover]` section: what the hover card shows, and its dwell delay.
 pub mod keymap;
 pub mod sql_script_run; // `sql-script` run configuration sub-table (database-tools-plan F3.6).
 pub mod syntax_colors;
@@ -79,6 +80,7 @@ pub use containers::{
 };
 pub use editing::EditingSettings;
 pub use file_associations::{FileAssociationRule, FileAssociationSettings};
+pub use hover::{HoverScope, HoverSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
@@ -422,6 +424,8 @@ pub struct Settings {
     /// rule this section follows instead of `editing`'s.
     #[serde(default)]
     pub tab_padding: TabPaddingSettings,
+    #[serde(default)]
+    pub hover: HoverSettings, // See [`hover`].
 }
 
 /// Cap on remembered recent projects — enough for a useful menu without
@@ -1056,6 +1060,7 @@ mod tests {
                 right: Some(10),
                 ..TabPaddingSettings::default()
             },
+            hover: HoverSettings::default(),
         };
 
         save(dir.path(), &settings).unwrap();

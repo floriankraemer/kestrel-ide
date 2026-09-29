@@ -89,7 +89,10 @@ baseline() {
 	# BuildToolsProjectSettings (the project's [build_tools] override,
 	# jvm-build-tools plan follow-up), wrapped onto its own line by
 	# rustfmt. No split planned.
-	crates/app-config/src/lib.rs) echo 1538 ;;
+	# Raised from 1538 by 5 lines for the [hover] section (H6): its module
+	# declaration, re-export and Settings field; the type and its tests live
+	# in hover.rs.
+	crates/app-config/src/lib.rs) echo 1543 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)
@@ -99,7 +102,9 @@ baseline() {
 	crates/lsp-core/src/manager.rs) echo 2052 ;;
 	# 1371 -> 1686: the bridge-side call sites for the same feature chain
 	# (C5 watched files, C7 completion resolve, C9-C11 FFI methods).
-	crates/ui-shell/src/bridge/language/mod.rs) echo 1686 ;;
+	# Raised from 1686 by 7 lines for hover_at's `HoverSettings::scope` gate
+	# and the service's `hover_settings` field (H6); the settings plumbing lives in bridge/hover_settings.rs.
+	crates/ui-shell/src/bridge/language/mod.rs) echo 1693 ;;
 	# Raised from the 1500 ceiling by 5 lines for minimapOptions/
 	# saveMinimapOptions (issue #199) — the same load/mutate/save pair
 	# whitespaceOptions/saveWhitespaceOptions just above them already uses.
@@ -193,7 +198,10 @@ baseline() {
 	# factory-registration line the database-tools-plan agent brief
 	# allows here, threaded through to `buildCentralWidget`/
 	# `buildContributedToolWindows` (both defined elsewhere).
-	crates/ui-shell/cpp/main_window.cpp) echo 1241 ;;
+	# Raised from 1241 by 12 lines for the hover card's menu callbacks
+	# (persist "Show on Mouse Hover", open Settings on Editor) and the
+	# startup apply of the saved hover options (H6).
+	crates/ui-shell/cpp/main_window.cpp) echo 1253 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

@@ -772,6 +772,7 @@ void buildMainWindow(AppSettings *appSettings,
     editorTabs->setMinimapOptions(MinimapOptions{
       savedMinimap.enabled, savedMinimap.search_matches, savedMinimap.diagnostics,
       savedMinimap.vcs_changes, savedMinimap.breakpoints, savedMinimap.caret_line});
+    editorTabs->setHoverOptions(appSettings->hoverOptions());
 
     wireAiChatToEditor(window, aiChat, central.aiChatPanel, editorTabs, searchModel);
 
@@ -876,6 +877,17 @@ void buildMainWindow(AppSettings *appSettings,
       runConfigEditor, containerService, treeModel,
     };
     QObject::connect(preferencesAction, &QAction::triggered, window, [window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext); });
+    // H6: the hover card's ⋮ menu.
+    editorTabs->setHoverDocsToggledCallback([editorTabs, appSettings](bool enabled) {
+        FfiHoverOptions options = appSettings->hoverOptions();
+        options.docs_on_hover = enabled;
+        appSettings->saveHoverOptions(options);
+        editorTabs->setHoverOptions(options);
+    });
+    editorTabs->setHoverSettingsRequestedCallback([window, settingsContext, appSettings]() {
+        appSettings->setSettingsScope(QStringLiteral("global"));
+        showSettingsDialog(window, settingsContext, QObject::tr("Editor"));
+    });
     // G1.6: null when its plugin is disabled; an unconditional deref here used to segfault the next launch.
     if (central.containersPanel != nullptr) {
         central.containersPanel->setOpenSettingsHandler([window, settingsContext, appSettings](const QString &tab) { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext, QObject::tr("Containers"), tab); });

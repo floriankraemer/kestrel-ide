@@ -12,8 +12,8 @@ In progress.
 | H2 | done | #353 |
 | H3 | done | #354 |
 | H4 | done | #355 |
-| H5 | done | (this PR) |
-| H6 | open | |
+| H5 | done | #356 |
+| H6 | done | (this PR) |
 | H7 | open | |
 
 ## Context

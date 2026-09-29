@@ -43,9 +43,6 @@ constexpr int kEntryIndexRole = Qt::UserRole + 1;
 
 // Slack added to the popup's ideal width so the last glyph is not clipped.
 constexpr int kPopupWidthPadding = 8;
-// How long the pointer rests on a word before its hover card is requested.
-// H6 replaces this with the user's setting.
-constexpr int kHoverDwellMs = 500;
 
 // R2: auto-popup's debounce window. Ctrl+Space (`explicitRequest`) skips
 // it — see `completionDebounce_`'s own doc comment.
@@ -106,9 +103,9 @@ CodeEditor::CodeEditor(QWidget *parent)
     // Ctrl-hover feedback needs move events with no button held (N7), the
     // same reason TerminalWidget enables tracking for its links.
     setMouseTracking(true);
-    // H2: the hover card's dwell (see `kHoverDwellMs`).
+    // H2: the hover card's dwell; the interval is the user's setting
+    // (`setHoverDwellDelay`).
     hoverDwellTimer_.setSingleShot(true);
-    hoverDwellTimer_.setInterval(kHoverDwellMs);
     connect(&hoverDwellTimer_, &QTimer::timeout, this, &CodeEditor::requestHoverForTarget);
     // The card is anchored to where its word was; a scroll moves the word.
     connect(verticalScrollBar(), &QScrollBar::valueChanged, this, []() { hideEditorPopup(); });
@@ -639,8 +636,16 @@ void CodeEditor::trackHoverTarget(const QPoint &pos)
     hoverDwellTimer_.stop();
     // The popup outlives this for its grace period, so the pointer can reach it.
     cancelHover();
-    if (target.first >= 0) {
+    if (target.first >= 0 && hoverDwellTimer_.interval() > 0) {
         hoverDwellTimer_.start();
+    }
+}
+
+void CodeEditor::setHoverDwellDelay(int milliseconds)
+{
+    hoverDwellTimer_.setInterval(milliseconds);
+    if (milliseconds <= 0) {
+        hoverDwellTimer_.stop();
     }
 }
 

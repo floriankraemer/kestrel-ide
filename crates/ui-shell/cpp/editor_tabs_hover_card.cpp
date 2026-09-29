@@ -70,11 +70,42 @@ void EditorTabs::onHoverCardAction(const QString &action)
             showIntentionsMenu(&below);
             dismissEditorPopup();
         }
+    } else if (action == QLatin1String("docs-on-hover/1") || action == QLatin1String("docs-on-hover/0")) {
+        if (hoverDocsToggled_) {
+            hoverDocsToggled_(action.endsWith(QLatin1Char('1')));
+        }
+    } else if (action == QLatin1String("settings")) {
+        dismissEditorPopup();
+        if (hoverSettingsRequested_) {
+            hoverSettingsRequested_();
+        }
     } else if (action == QLatin1String("source") && !hoverSourcePath_.isEmpty()) {
         dismissEditorPopup();
         openFileAtLine(hoverSourcePath_, static_cast<int>(hoverSourceLine_),
                        static_cast<int>(hoverSourceColumn_));
     }
+}
+
+void EditorTabs::setHoverOptions(const FfiHoverOptions &options)
+{
+    languageService_->setHoverOptions(options);
+    hoverDwellMs_ = static_cast<int>(languageService_->hoverDwellDelayMs());
+    forEachEditor([this](QPlainTextEdit *plain) {
+        if (auto *codeEditor = qobject_cast<CodeEditor *>(plain)) {
+            codeEditor->setHoverDwellDelay(hoverDwellMs_);
+        }
+    });
+    EditorPopup::instance().setDocsOnHover(options.docs_on_hover);
+}
+
+void EditorTabs::setHoverDocsToggledCallback(std::function<void(bool)> callback)
+{
+    hoverDocsToggled_ = std::move(callback);
+}
+
+void EditorTabs::setHoverSettingsRequestedCallback(std::function<void()> callback)
+{
+    hoverSettingsRequested_ = std::move(callback);
 }
 
 void EditorTabs::setHoverSource(const QString &path, quint32 line, quint32 column)

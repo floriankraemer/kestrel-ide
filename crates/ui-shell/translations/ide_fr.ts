@@ -2287,6 +2287,34 @@
         <translation>Afficher la mini-carte</translation>
     </message>
     <message>
+        <source>Show quick documentation on mouse hover</source>
+        <translation>Afficher la documentation rapide au survol de la souris</translation>
+    </message>
+    <message>
+        <source>Hover</source>
+        <translation>Survol</translation>
+    </message>
+    <message>
+        <source>Delay</source>
+        <translation>Délai</translation>
+    </message>
+    <message>
+        <source>ms</source>
+        <translation>ms</translation>
+    </message>
+    <message>
+        <source>Show problems and quick fixes on mouse hover</source>
+        <translation>Afficher les problèmes et correctifs rapides au survol de la souris</translation>
+    </message>
+    <message>
+        <source>Show on Mouse Hover</source>
+        <translation>Afficher au survol de la souris</translation>
+    </message>
+    <message>
+        <source>Hover Settings…</source>
+        <translation>Paramètres de survol…</translation>
+    </message>
+    <message>
         <source>Show only languages with problems</source>
         <translation>Afficher uniquement les langages avec problèmes</translation>
     </message>

@@ -2287,6 +2287,34 @@
         <translation>Minimap anzeigen</translation>
     </message>
     <message>
+        <source>Show quick documentation on mouse hover</source>
+        <translation>Kurzdokumentation beim Überfahren mit der Maus anzeigen</translation>
+    </message>
+    <message>
+        <source>Hover</source>
+        <translation>Hover</translation>
+    </message>
+    <message>
+        <source>Delay</source>
+        <translation>Verzögerung</translation>
+    </message>
+    <message>
+        <source>ms</source>
+        <translation>ms</translation>
+    </message>
+    <message>
+        <source>Show problems and quick fixes on mouse hover</source>
+        <translation>Probleme und Schnellkorrekturen beim Überfahren mit der Maus anzeigen</translation>
+    </message>
+    <message>
+        <source>Show on Mouse Hover</source>
+        <translation>Beim Überfahren mit der Maus anzeigen</translation>
+    </message>
+    <message>
+        <source>Hover Settings…</source>
+        <translation>Hover-Einstellungen…</translation>
+    </message>
+    <message>
         <source>Show only languages with problems</source>
         <translation>Nur Sprachen mit Problemen anzeigen</translation>
     </message>

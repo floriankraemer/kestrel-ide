@@ -86,6 +86,10 @@ pub struct DiagnosticRow {
     pub severity: Severity,
     pub message: String,
     pub source: String,
+    /// The diagnostic's own `code` (`E0412`, `reportMissingImports`, `2304`),
+    /// read from the raw LSP payload — a string or a number there. Empty when
+    /// the source has none (build-tool rows).
+    pub code: String,
 }
 
 /// How many of each severity are currently known, for the status bar and the
@@ -305,6 +309,15 @@ fn row(uri: &str, diagnostic: &Diagnostic) -> DiagnosticRow {
         severity: diagnostic.severity,
         message: diagnostic.message.clone(),
         source: diagnostic.source.clone(),
+        code: code_of(diagnostic),
+    }
+}
+
+fn code_of(diagnostic: &Diagnostic) -> String {
+    match diagnostic.raw.as_ref().and_then(|raw| raw.get("code")) {
+        Some(Value::String(code)) => code.clone(),
+        Some(Value::Number(code)) => code.to_string(),
+        _ => String::new(),
     }
 }
 
@@ -360,6 +373,24 @@ pub fn uri_from_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_row_carries_the_raw_code_whether_string_or_number() {
+        let mut store = DiagnosticStore::new();
+        let mut string_code = point_diagnostic(0, 0, Severity::Error, "a");
+        string_code.raw = Some(serde_json::json!({"code": "E0412"}));
+        let mut number_code = point_diagnostic(1, 0, Severity::Error, "b");
+        number_code.raw = Some(serde_json::json!({"code": 2304}));
+        let mut no_code = point_diagnostic(2, 0, Severity::Error, "c");
+        no_code.raw = Some(serde_json::json!({"message": "c"}));
+        store.replace(
+            "lsp:x",
+            "file:///p/a.rs",
+            vec![string_code, number_code, no_code],
+        );
+        let codes: Vec<String> = store.rows().into_iter().map(|r| r.code).collect();
+        assert_eq!(codes, ["E0412", "2304", ""]);
+    }
 
     fn point_diagnostic(line: u32, column: u32, severity: Severity, message: &str) -> Diagnostic {
         Diagnostic {
@@ -635,6 +666,7 @@ mod tests {
             }],
         );
         let rows = store.rows();
+        assert_eq!(rows[0].code, "");
         assert_eq!(rows[0].line, 4);
         assert_eq!(rows[0].column, 8);
         assert_eq!(rows[0].end_line, 4);

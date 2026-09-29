@@ -618,7 +618,7 @@ bool CodeEditor::viewportEvent(QEvent *event)
         const QPoint pos = static_cast<QHelpEvent *>(event)->pos();
         // R3: an identifier wins when both apply (a squiggle under a
         // hovered name shows the LSP hover with the diagnostic appended,
-        // `compose_hover_html`), but a squiggle on its own — whitespace, a
+        // `lsp_core::hover_card`), but a squiggle on its own — whitespace, a
         // trailing comma, an unused `;` — still triggers a hover.
         QPair<int, int> span = identifierAt(pos);
         if (span.first < 0) {

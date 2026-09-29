@@ -6,7 +6,7 @@
 //! answers `textDocument/hover` for line 0 with `MarkupContent` Markdown, so
 //! opening the fixture's `main.rs` and asking for documentation at (0,0) —
 //! Ctrl+Alt+Q, not a simulated mouse dwell, which has no reliable timing
-//! under headless Xvfb — exercises both halves of `compose_hover_html` in
+//! under headless Xvfb — exercises both halves of the hover card in
 //! one flow: the server's own answer and the diagnostic beside it.
 
 use e2e::{Ide, Mark};

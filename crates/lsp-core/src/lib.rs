@@ -22,6 +22,7 @@ pub mod formatting;
 pub mod framing;
 pub mod hierarchy;
 pub mod hover;
+pub mod hover_card;
 pub mod inlay_hint;
 pub mod intentions;
 pub mod manager;

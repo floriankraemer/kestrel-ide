@@ -2507,6 +2507,20 @@ mod ffi {
         #[cxx_name = "setTabModified"]
         fn set_tab_modified(self: Pin<&mut DocumentManager>, tab_id: u64, modified: bool);
 
+        /// The rope catching up with the widget's live text (ADR-0003 keeps
+        /// keystrokes out of the rope; readers ask for them on demand via
+        /// `liveTextRequested`). Leaves the dirty flag alone.
+        #[qinvokable]
+        #[cxx_name = "syncTabText"]
+        fn sync_tab_text(self: Pin<&mut DocumentManager>, tab_id: u64, text: &QString);
+
+        /// Emitted, and answered synchronously (direct connection) by a
+        /// `syncTabText` call, when a reader of a dirty tab needs its
+        /// unsaved text.
+        #[qsignal]
+        #[cxx_name = "liveTextRequested"]
+        fn live_text_requested(self: Pin<&mut DocumentManager>, tab_id: u64);
+
         /// The tab's current buffer content, used to populate a newly
         /// created `QPlainTextEdit` page when a tab is opened.
         #[qinvokable]
@@ -8596,6 +8610,12 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "toolSavedBuffer"]
         fn tool_saved_buffer(self: Pin<&mut AiChat>, tab_id: u64);
+
+        /// A read tool needs a dirty tab's unsaved text; same handler as
+        /// `DocumentManager::liveTextRequested`, answered synchronously.
+        #[qsignal]
+        #[cxx_name = "liveTextRequested"]
+        fn live_text_requested(self: Pin<&mut AiChat>, tab_id: u64);
     }
 
     // The streaming thread's one cross-thread hop, same pattern as

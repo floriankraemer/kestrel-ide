@@ -14,11 +14,9 @@
 //! itself from persisted state. Everything that would still be meaningful
 //! with the Qt event loop removed is a unit test somewhere else.
 //!
-//! One product limitation shapes what can be asserted where: MCP's
-//! `read_buffer` answers from `editor_core::Document`'s rope, which is
-//! populated on open and refreshed only on save — it does not see unsaved
-//! typing. Dirty state is therefore observed through the marker stream and
-//! content through the file on disk.
+//! `read_buffer` sees unsaved typing (the view pushes the widget's text into
+//! `editor_core::Document`'s rope when a reader asks); see `live_buffer.rs`.
+//! Some flows below still save before reading, which is a leftover.
 
 use std::path::Path;
 

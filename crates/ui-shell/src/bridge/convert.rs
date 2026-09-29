@@ -353,6 +353,7 @@ pub(crate) fn dispatch_editor_command(
             let _ = respond.send(entries);
         }
         mcp_server::EditorCommand::ReadBuffer { tab_id, respond } => {
+            doc_manager.as_mut().pull_live_text(TabId::from_raw(tab_id));
             let content = doc_manager
                 .session
                 .borrow()
@@ -368,6 +369,13 @@ pub(crate) fn dispatch_editor_command(
             let _ = respond.send(position);
         }
         mcp_server::EditorCommand::BufferContentForPath { path, respond } => {
+            let tab = doc_manager
+                .session
+                .borrow()
+                .find_tab_by_path(std::path::Path::new(&path));
+            if let Some(tab) = tab {
+                doc_manager.as_mut().pull_live_text(tab);
+            }
             let content = doc_manager
                 .session
                 .borrow()

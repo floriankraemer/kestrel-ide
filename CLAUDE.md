@@ -19,6 +19,9 @@ Load these skills before the work they cover — do not wait for a prompt to nam
 Apply senior-software-engineer standards inline rather than delegating to the subagent:
 small verified increments, `cargo test --workspace` green before every commit, patterns named only where they drive a decision, no abstraction for a hypothetical second implementation.
 
+Helpers never publish: all edits, commits, pushes and PRs happen in the main session or the implementing agent itself, and read-only research uses the `Explore` agent type, not a `fork`.
+`.claude/hooks/guard-helper-publish.sh` enforces it by refusing `git commit|push|merge|…` and `gh pr create|merge|…` from any subagent type outside its implementer allowlist.
+
 ## Development environment
 
 Always use Docker containers for development (builds, tests, running the app) — never the bare host.

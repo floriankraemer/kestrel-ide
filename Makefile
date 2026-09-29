@@ -58,6 +58,8 @@ linux-image: ## Build the linux-builder Docker image
 # 40 GB holds a full dev build with every test binary (~20 GB) plus
 # coverage's instrumented copy and the Windows cross-build without
 # evicting one to make room for the other.
+# The budget is per checkout: every worktree has its own target/ (sharing
+# one breaks the build, see CLAUDE.md), so N worktrees can use N x budget.
 TARGET_BUDGET ?= 40GB
 
 sweep: linux-image ## Trim target/ to TARGET_BUDGET (least-recently-used builds first)

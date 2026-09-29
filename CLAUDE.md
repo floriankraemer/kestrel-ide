@@ -35,10 +35,14 @@ Go through the Makefile rather than a hand-written `docker run`: its `RUN_LINUX`
 `target/` is bind-mounted (not baked into the image), so cargo's own incremental compilation already means a warm rebuild only recompiles the crates you actually touched plus their dependents — `make test`/`make lint` after a one-crate edit are not full-workspace-from-scratch builds. While iterating inside one crate, `make shell` then `cargo check -p <crate>` / `cargo test -p <crate>` is faster still than waiting on the full workspace; run the full `make test`/`make lint` gate before committing.
 
 `target/` is kept under a size budget by `make sweep` (cargo-sweep, least-recently-used builds evicted first); cargo itself never deletes the artifacts an old branch, dependency or flag left behind, which is how `target/` once reached 86 GB.
-A hand-written `docker run` that shares a `target/` must run `cargo sweep --maxsize 40GB` itself now and then.
 
-Always mount the source tree at `/workspace`, including in worktrees that bind-mount another checkout's `target/`.
-Cargo's fingerprints ignore the mount path, so a second path (e.g. `/ws-agents`) sharing one `target/` makes cargo reuse binaries that have the other path baked in (`CARGO_MANIFEST_DIR`, `CARGO_BIN_EXE_*`) — tests then fail with `NotFound`, and `ui-shell` can link against a stale rlib that lacks newly added C++ files.
+Each checkout or worktree builds into its own `target/`, never another checkout's — not even through a bind mount at the same `/workspace` path.
+Cargo hashes workspace members by their workspace-relative path, so two checkouts sharing one `target/` overwrite each other's `ui-shell` build-script `OUT_DIR` and crate artifacts: `app` then links against a `ui-shell` rlib built from the other checkout's sources (undefined symbols, phantom missing fields).
+A different mount path adds more breakage on top, because `CARGO_MANIFEST_DIR`, `CARGO_BIN_EXE_*` and the `cxx-qt-lib` include symlinks bake in absolute paths.
+A plain `make test` from the worktree gets this right, since `RUN_LINUX` mounts `$(CURDIR)` and its `target/` at `/workspace`; don't hand-roll other mounts.
+A warm worktree `target/` costs about 14 GB, while the shared registry, ccache and sccache volumes keep its cold build fast.
+`TARGET_BUDGET` applies per checkout, so check `df -h /` before creating worktrees and pass a lower budget (e.g. `make test TARGET_BUDGET=20GB`) when disk is tight.
+Never hand-edit anything inside a `target/`, and don't paper over collisions by `touch`ing sources or setting `CARGO_INCREMENTAL=0`.
 
 Debug builds carry line tables only, so backtraces keep file and line but a debugger sees no variable or type information.
 When you need to step through something — usually the cxx-qt seam — build with `cargo build --profile debugging -p app`, which is `dev` plus full DWARF.

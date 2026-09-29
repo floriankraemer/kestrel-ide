@@ -257,6 +257,14 @@ QWidget {
     selection-color: {text};
 }
 
+/* The rule above pins the text colour, which overrides the palette's
+   Disabled group, so without this nothing disabled would look disabled.
+   A pseudo-class outranks the plain type selectors (QLineEdit, QSpinBox, ...)
+   that set their own colour further down. */
+QWidget:disabled {
+    color: {textDim};
+}
+
 QMainWindow {
     background-color: {canvas};
 }

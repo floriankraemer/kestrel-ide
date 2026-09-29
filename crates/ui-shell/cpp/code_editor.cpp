@@ -769,6 +769,35 @@ void CodeEditor::setDiagnosticMarks(const QHash<int, DiagnosticMark> &marks)
     errorStripe_->update();
 }
 
+void CodeEditor::setIntentionBulb(int block, bool isFix)
+{
+    if (intentionBulbBlock_ == block && intentionBulbIsFix_ == isFix) {
+        return;
+    }
+    intentionBulbBlock_ = block;
+    intentionBulbIsFix_ = isFix;
+    lineNumberArea_->update();
+}
+
+void CodeEditor::clearIntentionBulb()
+{
+    if (intentionBulbBlock_ >= 0) {
+        intentionBulbBlock_ = -1;
+        lineNumberArea_->update();
+    }
+}
+
+QPoint CodeEditor::intentionBulbAnchor() const
+{
+    const QTextBlock block = document()->findBlockByNumber(intentionBulbBlock_);
+    if (!block.isValid()) {
+        return {};
+    }
+    const QRectF rect = blockBoundingGeometry(block).translated(contentOffset());
+    return lineNumberArea_->mapToGlobal(
+      QPoint(lineNumberAreaWidth(), static_cast<int>(rect.bottom())));
+}
+
 void CodeEditor::setDiagnosticSummary(const DiagnosticSummary &summary)
 {
     diagnosticSummary_ = summary;

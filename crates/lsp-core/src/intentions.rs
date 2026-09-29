@@ -56,6 +56,28 @@ impl IntentionGroup {
     }
 }
 
+/// Which bulb the editor shows for an offer list: red when something fixes
+/// a problem, yellow when it is only an optional action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BulbKind {
+    Fix,
+    Intention,
+}
+
+/// Red if any usable quick fix is on offer, yellow otherwise. A disabled
+/// quick fix cannot be applied, so it does not turn the bulb red. Whether
+/// there is a bulb at all (an empty list) stays the caller's rule.
+pub fn bulb_kind(intentions: &[Intention]) -> BulbKind {
+    let has_fix = intentions
+        .iter()
+        .any(|i| i.group == IntentionGroup::QuickFix && i.disabled().is_none());
+    if has_fix {
+        BulbKind::Fix
+    } else {
+        BulbKind::Intention
+    }
+}
+
 /// One row of the popup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intention {
@@ -313,6 +335,20 @@ mod tests {
 
     fn titles(intentions: &[Intention]) -> Vec<&str> {
         intentions.iter().map(Intention::title).collect()
+    }
+
+    #[test]
+    fn the_bulb_is_red_only_for_a_usable_quick_fix() {
+        let fix = json!({"title": "Import", "kind": "quickfix"});
+        let disabled_fix =
+            json!({"title": "Nope", "kind": "quickfix", "disabled": {"reason": "x"}});
+        let refactor = json!({"title": "Extract", "kind": "refactor.extract"});
+        let kind = |v: Value| bulb_kind(&assemble(&items(v), &[]));
+
+        assert_eq!(kind(json!([refactor.clone(), fix])), BulbKind::Fix);
+        assert_eq!(kind(json!([refactor.clone()])), BulbKind::Intention);
+        assert_eq!(kind(json!([refactor, disabled_fix])), BulbKind::Intention);
+        assert_eq!(kind(json!([])), BulbKind::Intention);
     }
 
     #[test]

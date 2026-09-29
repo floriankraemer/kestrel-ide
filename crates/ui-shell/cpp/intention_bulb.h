@@ -1,27 +1,31 @@
 #pragma once
 
-#include <QWidget>
+#include <QIcon>
+
+class QPainter;
+class QRectF;
 
 namespace ui_shell {
 
-// The bulb Alt+Enter's popup hangs off (F2-10): a small glyph floated over
-// the editor viewport at the caret's line whenever `LanguageService::
-// intentions()` has something to offer there. It decides nothing about what
-// is in the popup or when to ask — `EditorTabs` positions and shows it,
-// this only paints itself and reports a click.
-class IntentionBulb : public QWidget
+// Red bulb with a "!" for an offer that fixes a problem, yellow for an
+// optional one (`lsp_core::bulb_kind`). Colours come from the active theme's
+// SemanticColors.
+enum class BulbKind
 {
-    Q_OBJECT
-
-public:
-    explicit IntentionBulb(QWidget *viewport);
-
-signals:
-    void activated();
-
-protected:
-    void paintEvent(QPaintEvent *event) override;
-    void mousePressEvent(QMouseEvent *event) override;
+    Fix,
+    Intention,
 };
+
+// The one place a bulb is drawn: the editor gutter's icon and the intentions
+// menu's per-row icons both go through here. A lightbulb (glass and base)
+// scaled into `rect`; nothing here decides when a bulb is shown.
+void paintBulb(QPainter &painter, const QRectF &rect, BulbKind kind);
+
+// A crisp icon of the bulb at `logicalSize`, for the given screen DPR.
+QIcon bulbIcon(BulbKind kind, int logicalSize, qreal devicePixelRatio);
+
+// A transparent icon of the same size, so rows without a bulb keep their
+// text aligned with rows that have one.
+QIcon blankBulbIcon(int logicalSize, qreal devicePixelRatio);
 
 } // namespace ui_shell

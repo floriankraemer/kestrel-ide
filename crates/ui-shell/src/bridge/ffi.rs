@@ -5008,6 +5008,12 @@ mod ffi {
         #[cxx_name = "primaryIntentionIndex"]
         fn primary_intention_index(self: &LanguageService) -> i32;
 
+        /// H5: whether the last `intentions()` earns the red "fix" bulb
+        /// (`lsp_core::bulb_kind`) rather than the yellow intention one.
+        #[qinvokable]
+        #[cxx_name = "intentionBulbIsFix"]
+        fn intention_bulb_is_fix(self: &LanguageService) -> bool;
+
         /// H3: `code.applyPreferredFix` at the caret, over the list the last
         /// `requestIntentions` produced. False when it has no primary fix.
         #[qinvokable]

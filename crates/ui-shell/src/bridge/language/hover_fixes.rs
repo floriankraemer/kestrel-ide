@@ -193,6 +193,10 @@ impl ffi::LanguageService {
         primary_fix_index(&self.intentions.borrow()).map_or(-1, |i| i as i32)
     }
 
+    pub fn intention_bulb_is_fix(&self) -> bool {
+        lsp_core::bulb_kind(&self.intentions.borrow()) == lsp_core::BulbKind::Fix
+    }
+
     /// The user's bindings for the card's two shortcut hints (empty = unbound).
     pub fn set_hover_shortcuts(self: Pin<&mut Self>, apply_fix: &QString, more_actions: &QString) {
         super::update_hover_labels(|labels| {

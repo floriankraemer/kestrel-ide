@@ -401,25 +401,12 @@ void EditorTabs::onIntentionsReady()
     }
     const ::rust::Vec<FfiIntention> items = languageService_->intentions();
     if (items.empty()) {
-        if (intentionBulb_) {
-            intentionBulb_->hide();
-        }
+        intentionsEditor_->clearIntentionBulb();
         return;
     }
-
-    if (!intentionBulb_) {
-        intentionBulb_ = new IntentionBulb(intentionsEditor_->viewport());
-        connect(intentionBulb_, &IntentionBulb::activated, this,
-                [this]() { showIntentionsMenu(); });
-    } else {
-        intentionBulb_->setParent(intentionsEditor_->viewport());
-    }
-    QTextCursor cursor(intentionsEditor_->document());
-    cursor.setPosition(intentionsDocPos_);
-    const QRect caretRect = intentionsEditor_->cursorRect(cursor);
-    intentionBulb_->move(2, caretRect.top());
-    intentionBulb_->show();
-    intentionBulb_->raise();
+    intentionsEditor_->setIntentionBulb(
+      intentionsEditor_->document()->findBlock(intentionsDocPos_).blockNumber(),
+      languageService_->intentionBulbIsFix());
 
     if (wasPending) {
         showIntentionsMenu();
@@ -454,14 +441,20 @@ void EditorTabs::showIntentionsMenu(const QPoint *anchor)
         }
         QAction *entry = menu.addAction(label);
         entry->setEnabled(reason.isEmpty());
+        entry->setIcon(reason.isEmpty()
+                         ? bulbIcon(items[i].group == FfiIntentionGroup::QuickFix
+                                      ? BulbKind::Fix
+                                      : BulbKind::Intention,
+                                    16, menu.devicePixelRatioF())
+                         : blankBulbIcon(16, menu.devicePixelRatioF()));
         const quint32 index = static_cast<quint32>(i);
         connect(entry, &QAction::triggered, this, [this, index]() {
             languageService_->applyIntention(index, documentRevision());
         });
     }
     const QPoint pos = anchor != nullptr ? *anchor
-      : intentionBulb_ && intentionBulb_->isVisible()
-      ? intentionBulb_->mapToGlobal(QPoint(0, intentionBulb_->height()))
+      : intentionsEditor_ && !intentionsEditor_->intentionBulbAnchor().isNull()
+      ? intentionsEditor_->intentionBulbAnchor()
       : QCursor::pos();
     // A popup menu takes a keyboard grab rather than the input focus, so
     // this mark is the only way anything outside the process can know it
@@ -1010,8 +1003,8 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         if (activeGroup_ && activeGroup_->currentWidget() == editor) {
             updateStatusBar();
             languageService_->cancelIntentions();
-            if (intentionBulb_ && intentionsEditor_ == editor) {
-                intentionBulb_->hide();
+            if (intentionsEditor_ == editor) {
+                editor->clearIntentionBulb();
             }
             intentionsTimer->start();
             // F2-11: signature help tracks typing live rather than waiting

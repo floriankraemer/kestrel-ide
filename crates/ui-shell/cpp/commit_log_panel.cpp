@@ -166,6 +166,15 @@ void CommitLogPanel::onCommitLogReady(const ::rust::Vec<FfiLogEntry> &entries)
     // Nothing more to load once the answer came back shorter than what was
     // asked for — the repository's whole history is already shown.
     loadMoreButton_->setEnabled(static_cast<quint32>(entries.size()) >= currentMax_);
+    // Marks describe what a user could click. An answer that lands while the
+    // dock is hidden (a `repositoryChanged` refresh, tabbed behind another
+    // dock) has rects of geometry nobody sees, and a flow that took the first
+    // row it found with a positive rect clicked into blind (the
+    // `commit_log_expand_and_open_commit_detail` flake). Raising the dock
+    // re-asks (`showEvent`), and that answer is marked.
+    if (!list_->isVisible()) {
+        return;
+    }
     for (int row = 0; row < list_->commitCount(); ++row) {
         const QRect rect = list_->globalRectForRow(row);
         e2eMark(QStringLiteral("{\"ev\":\"commit_log_row\",\"commit\":%1,"

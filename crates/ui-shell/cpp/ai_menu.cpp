@@ -97,6 +97,8 @@ void wireAiChatToEditor(QMainWindow *window, AiChat *aiChat, AiChatPanel *aiChat
                       [editorTabs](quint64 tabId, const QString &content) {
                           editorTabs->onBufferEditedExternally(tabId, content);
                       });
+    QObject::connect(aiChat, &AiChat::liveTextRequested, editorTabs,
+                      &EditorTabs::onLiveTextRequested, Qt::DirectConnection);
     QObject::connect(aiChat, &AiChat::toolSavedBuffer, editorTabs, [editorTabs](quint64 tabId) {
         editorTabs->onTabModifiedChanged(tabId, false);
     });

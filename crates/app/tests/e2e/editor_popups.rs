@@ -214,21 +214,20 @@ fn link(marker: &Value, href: &str) -> (i32, i32) {
 }
 
 /// The stub's import fix landed at the top of the buffer since `mark`.
-/// The buffer is read after a save: `read_buffer` answers from the session's
-/// document, which only catches up with the editor on save.
 fn assert_import_applied(s: &Session, mark: Mark) {
     s.ide.wait_for_ev(mark, "workspace_edit_applied");
     s.ide.focus_main();
-    s.ide.key("ctrl+s");
-    s.ide.wait_for_event(mark, "the tab to be saved", |e| {
-        e["ev"] == "tab_dirty" && e["dirty"] == false
-    });
     s.ide.sync(&s.mcp);
     let text = buffer(&s.mcp, s.tab_id);
     assert!(
         text.starts_with(IMPORT),
         "the import is not at the top:\n{text}"
     );
+    // A dirty tab would hold Ctrl+Q behind the unsaved-changes prompt.
+    s.ide.key("ctrl+s");
+    s.ide.wait_for_event(mark, "the tab to be saved", |e| {
+        e["ev"] == "tab_dirty" && e["dirty"] == false
+    });
 }
 
 fn has_fix_row(marker: &Value) -> bool {

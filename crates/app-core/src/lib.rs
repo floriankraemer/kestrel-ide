@@ -32,6 +32,7 @@ pub mod file_ops;
 pub mod icons;
 /// Rasterising an SVG image tab's file, reusing `icon-theme`'s pipeline.
 pub mod image_render;
+mod live_text; // Rope catch-up with the widget before a reader looks (#361).
 /// Where plugins and the Markdown/Mermaid renderer are joined (ADR-0033).
 pub mod preview;
 mod project_open; // Swap-in half of an off-thread project open/rebuild (ADR-0037).
@@ -816,7 +817,7 @@ impl AppSession {
 
     // --- internals --------------------------------------------------------
 
-    fn find_tab_by_path(&self, path: &Path) -> Option<TabId> {
+    pub fn find_tab_by_path(&self, path: &Path) -> Option<TabId> {
         self.docs
             .iter()
             .find(|e| e.content.path() == Some(path))

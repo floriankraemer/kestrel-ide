@@ -183,6 +183,21 @@ impl ffi::DocumentManager {
         }
     }
 
+    pub fn sync_tab_text(self: Pin<&mut Self>, tab_id: u64, text: &QString) {
+        self.session
+            .borrow_mut()
+            .sync_tab_text(TabId::from_raw(tab_id), &text.to_string());
+    }
+
+    /// Ask the view for `id`'s unsaved text if it has any, before a reader
+    /// looks at the rope. Emits with no session borrow held: the slot calls
+    /// straight back into `sync_tab_text`.
+    pub(crate) fn pull_live_text(mut self: Pin<&mut Self>, id: TabId) {
+        if self.session.borrow().tab_needs_live_text(id) {
+            self.as_mut().live_text_requested(id.raw());
+        }
+    }
+
     pub fn record_jump(self: Pin<&mut Self>, path: &QString, line: u32, column: u32) {
         self.session.borrow_mut().record_jump(
             std::path::PathBuf::from(path.to_string()),

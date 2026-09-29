@@ -466,6 +466,14 @@ impl ffi::AiChat {
         self.as_mut().token_usage_changed();
     }
 
+    /// Ask the view for a dirty tab's unsaved text before a read tool looks
+    /// at the rope; see `DocumentManager::pull_live_text`.
+    fn pull_live_text(mut self: Pin<&mut Self>, id: TabId) {
+        if self.session.borrow().tab_needs_live_text(id) {
+            self.as_mut().live_text_requested(id.raw());
+        }
+    }
+
     // --- tool execution, on the Qt thread ---------------------------------
 
     /// Runs one already-validated call against the shared `AppSession` and
@@ -535,6 +543,10 @@ impl ffi::AiChat {
                 // tool does it: the user may be sitting on unsaved edits,
                 // and resolving against disk would answer about text that
                 // is no longer on screen.
+                let tab = self.session.borrow().find_tab_by_path(&path);
+                if let Some(tab) = tab {
+                    self.as_mut().pull_live_text(tab);
+                }
                 let content = self
                     .session
                     .borrow()
@@ -572,10 +584,13 @@ impl ffi::AiChat {
                     .collect();
                 Ok(serde_json::json!({ "entries": entries }))
             }
-            "read_buffer" => match self.session.borrow().tab_content(tab_id()) {
-                Some(content) => Ok(serde_json::json!({ "content": content })),
-                None => Err(AppError::NoSuchTab.to_string()),
-            },
+            "read_buffer" => {
+                self.as_mut().pull_live_text(tab_id());
+                match self.session.borrow().tab_content(tab_id()) {
+                    Some(content) => Ok(serde_json::json!({ "content": content })),
+                    None => Err(AppError::NoSuchTab.to_string()),
+                }
+            }
             "open_file" => {
                 let path = std::path::PathBuf::from(string("path"));
                 let opened = self.session.borrow_mut().open_file(&path);

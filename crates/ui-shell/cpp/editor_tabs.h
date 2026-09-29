@@ -550,6 +550,8 @@ public:
     // onTabOpened's own modificationChanged forwarding would have done had
     // a human typed the same edit.
     void onBufferEditedExternally(quint64 tabId, const QString &content);
+    // Pushes the widget's unsaved text into the Rust rope (syncTabText).
+    void onLiveTextRequested(quint64 tabId);
 
     // US-3's external-change prompt: the tab `tabId` (backed by `path`) was
     // modified outside the editor (filesystem watcher). "Reload" re-reads

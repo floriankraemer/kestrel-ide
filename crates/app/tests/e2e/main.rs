@@ -16,6 +16,7 @@ mod diff;
 mod edit;
 mod editor_popups;
 mod lazy_tree;
+mod live_buffer;
 mod minimap;
 mod panes;
 mod preview;

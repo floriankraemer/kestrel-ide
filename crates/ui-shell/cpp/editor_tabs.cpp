@@ -146,6 +146,8 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
     if (databaseService != nullptr) connect(databaseService, &DatabaseService::consoleFileReady, this, [this](const QString &path, const QString &) { openFile(path); });
     connect(docManager_, &DocumentManager::tabClosed, this, &EditorTabs::onTabClosed);
     connect(docManager_, &DocumentManager::tabModifiedChanged, this, &EditorTabs::onTabModifiedChanged);
+    // Direct: a reader (MCP read_buffer) waits for the answer, which is a syncTabText call.
+    connect(docManager_, &DocumentManager::liveTextRequested, this, &EditorTabs::onLiveTextRequested, Qt::DirectConnection);
 
     // Clicking anywhere inside a group — its tab bar or its editor —
     // makes that group the active one. One application-wide hook beats
@@ -829,6 +831,13 @@ void EditorTabs::onBufferEditedExternally(quint64 tabId, const QString &content)
     }
     editor->setPlainText(content);
     editor->document()->setModified(true);
+}
+
+void EditorTabs::onLiveTextRequested(quint64 tabId)
+{
+    if (auto *editor = editorForTab(tabId)) {
+        docManager_->syncTabText(tabId, editor->toPlainText());
+    }
 }
 
 void EditorTabs::handleExternalChange(quint64 tabId, const QString &path)

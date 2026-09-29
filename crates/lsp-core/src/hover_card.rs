@@ -171,6 +171,9 @@ impl Default for CardLabels {
 pub struct HoverCard {
     pub problems: Vec<CardProblem>,
     pub signature: Option<String>,
+    /// The signature already syntax-coloured by the caller (which owns the
+    /// theme and the highlighter). Shown instead of `signature` when present.
+    pub signature_html: Option<String>,
     /// Documentation already rendered to HTML by the caller's Markdown
     /// engine (which lives beside `markdown-preview`, not in this crate).
     pub doc_html: Option<String>,
@@ -249,6 +252,17 @@ pub fn split_signature(markdown: &str) -> (Option<String>, String) {
     (signature, body)
 }
 
+/// The language id of the first fenced block of a Markdown hover
+/// (```` ```rust ```` gives `rust`), for colouring the lifted signature.
+pub fn signature_language(markdown: &str) -> Option<&str> {
+    let line = markdown
+        .lines()
+        .find(|l| l.trim_start().starts_with("```"))?;
+    let info = line.trim_start().trim_start_matches('`').trim();
+    let id = info.split(|c: char| c.is_whitespace() || c == ',').next()?;
+    (!id.is_empty()).then_some(id)
+}
+
 /// The fix the card offers inline: the first `preferred` enabled quick fix,
 /// else the first enabled quick fix. Disabled actions are never primary —
 /// they cannot be applied here.
@@ -284,17 +298,18 @@ pub fn render(card: &HoverCard, labels: &CardLabels) -> String {
         sections.push(format!("<div class=\"problems\">{rows}</div>"));
     }
     if let Some(signature) = &card.signature {
-        sections.push(format!(
-            "<pre class=\"signature\">{}</pre>",
-            escape(signature)
-        ));
+        let body = card
+            .signature_html
+            .clone()
+            .unwrap_or_else(|| escape(signature));
+        sections.push(format!("<pre class=\"signature\">{body}</pre>"));
     }
     if let Some(doc) = card.doc_html.as_deref().filter(|d| !d.is_empty()) {
         sections.push(format!("<div class=\"doc\">{doc}</div>"));
     }
     if let Some(location) = &card.source {
         sections.push(format!(
-            "<p class=\"source\">{} <a href=\"ide:source\">{}:{}</a></p>",
+            "<p class=\"source\">{} <a class=\"path\" href=\"ide:source\">{}:{}</a></p>",
             escape(&labels.source),
             escape(&location.path),
             location.line
@@ -336,12 +351,12 @@ fn render_problem(index: usize, problem: &CardProblem, labels: &CardLabels) -> S
     let fixes = match &problem.fixes {
         FixState::None => String::new(),
         FixState::Loading => format!(
-            "<br><span class=\"dim\">{}</span>",
+            "<p class=\"fixrow\"><span class=\"dim\">{}</span></p>",
             escape(&labels.loading_fixes)
         ),
         FixState::Some { primary_title, .. } => {
             format!(
-                "<br><a class=\"fix\" href=\"ide:fix/{index}\">{}</a>{} &nbsp; <a href=\"ide:more/{index}\">{}</a>{}",
+                "<p class=\"fixrow\"><a class=\"fix\" href=\"ide:fix/{index}\">{}</a>{} &nbsp; <a href=\"ide:more/{index}\">{}</a>{}</p>",
                 escape(primary_title),
                 shortcut_hint(&labels.apply_fix_shortcut),
                 escape(&labels.more_actions),
@@ -350,7 +365,7 @@ fn render_problem(index: usize, problem: &CardProblem, labels: &CardLabels) -> S
         }
     };
     format!(
-        "<p class=\"problem\"><img src=\"ide-sev:{class}\" width=\"14\" height=\"14\" alt=\"{}\" style=\"vertical-align:middle\"> {}{origin}{fixes}</p>",
+        "<p class=\"problem\"><img src=\"ide-sev:{class}\" width=\"14\" height=\"14\" alt=\"{}\" style=\"vertical-align:middle\"> {}{origin}</p>{fixes}",
         escape(label),
         escape(&problem.message)
     )
@@ -514,6 +529,7 @@ mod tests {
         let card = HoverCard {
             problems: vec![problem("bad", "rustc", "E0412", FixState::None)],
             signature: Some("fn f()".into()),
+            signature_html: None,
             doc_html: Some("<p>docs</p>".into()),
             source: Some(CardLocation {
                 path: "/a.rs".into(),
@@ -530,7 +546,7 @@ mod tests {
         assert!(at("class=\"signature\"") < at("class=\"doc\""));
         assert!(at("class=\"doc\"") < at("class=\"source\""));
         assert!(html.contains("<span class=\"dim\">rustc E0412</span>"));
-        assert!(html.contains("<a href=\"ide:source\">/a.rs:3</a>"));
+        assert!(html.contains("<a class=\"path\" href=\"ide:source\">/a.rs:3</a>"));
     }
 
     #[test]
@@ -546,6 +562,7 @@ mod tests {
                 },
             )],
             signature: Some("fn f<T>() -> &str".into()),
+            signature_html: None,
             doc_html: None,
             source: Some(CardLocation {
                 path: "/<x>.rs".into(),
@@ -732,5 +749,68 @@ mod tests {
     #[test]
     fn empty_card_renders_nothing() {
         assert_eq!(render(&HoverCard::default(), &CardLabels::default()), "");
+    }
+
+    #[test]
+    fn fix_row_is_its_own_block_so_it_can_indent_under_the_message() {
+        let card = HoverCard {
+            problems: vec![
+                problem("a", "", "", FixState::Loading),
+                problem(
+                    "b",
+                    "",
+                    "",
+                    FixState::Some {
+                        primary_title: "Fix".into(),
+                        count: 1,
+                    },
+                ),
+            ],
+            ..HoverCard::default()
+        };
+        let html = render(&card, &CardLabels::default());
+        assert_eq!(html.matches("<p class=\"fixrow\">").count(), 2);
+        assert!(!html.contains("<br>"));
+    }
+
+    #[test]
+    fn coloured_signature_replaces_the_escaped_one() {
+        let card = HoverCard {
+            signature: Some("fn f()".into()),
+            signature_html: Some("<span style=\"color:#fff\">fn</span> f()".into()),
+            ..HoverCard::default()
+        };
+        let html = render(&card, &CardLabels::default());
+        assert!(html
+            .contains("<pre class=\"signature\"><span style=\"color:#fff\">fn</span> f()</pre>"));
+    }
+
+    #[test]
+    fn signature_language_is_the_first_fence_info_word() {
+        assert_eq!(
+            signature_language(
+                "```rust
+x
+```"
+            ),
+            Some("rust")
+        );
+        assert_eq!(
+            signature_language(
+                "intro
+  ```php title
+x"
+            ),
+            Some("php")
+        );
+        assert_eq!(
+            signature_language(
+                "```
+x
+```"
+            ),
+            None
+        );
+        assert_eq!(signature_language("no fence"), None);
     }
 }

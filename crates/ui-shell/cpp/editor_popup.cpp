@@ -1,5 +1,6 @@
 #include "editor_popup.h"
 
+#include "e2e_mark.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -16,7 +17,10 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QScreen>
+#include <QTextBlock>
+#include <QScrollBar>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QTextDocument>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -84,6 +88,9 @@ EditorPopup::EditorPopup(QWidget *parent)
     browser_->setOpenLinks(false);
     browser_->setReadOnly(true);
     browser_->setFrameShape(QFrame::NoFrame);
+    // Everything wraps (signatures are `pre-wrap`), so a horizontal bar could
+    // only ever eat the card's last line.
+    browser_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     // `ide:` anchors are this card's own actions, never a destination.
     connect(browser_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
         if (url.scheme() == QLatin1String("ide")) {
@@ -118,6 +125,7 @@ EditorPopup::EditorPopup(QWidget *parent)
     QAction *hoverSettingsAction = menu_->addAction(QObject::tr("Hover Settings…"));
     connect(hoverSettingsAction, &QAction::triggered, this,
             [this]() { emit actionRequested(QStringLiteral("settings")); });
+    e2eMarkMenuActions(menu_, "hover_menu_action");
     connect(menuButton_, &QToolButton::clicked, this, [this]() {
         menu_->popup(menuButton_->mapToGlobal(QPoint(0, menuButton_->height())));
     });
@@ -139,8 +147,11 @@ EditorPopup::EditorPopup(QWidget *parent)
 
 EditorPopup &EditorPopup::instance()
 {
-    static EditorPopup popup;
-    return popup;
+    // On the heap on purpose: `~QApplication` deletes every top-level widget,
+    // so a function-local static would be destroyed a second time at process
+    // exit (a SIGSEGV on Ctrl+Q whenever the ⋮ menu had been used).
+    static EditorPopup *popup = new EditorPopup;
+    return *popup;
 }
 
 void EditorPopup::showAt(const QPoint &globalPos, const QString &html)
@@ -175,6 +186,9 @@ void EditorPopup::showAtRect(const QRect &anchor, const QString &html, bool hove
         // hands focus back here.
         returnFocus_ = QApplication::focusWidget();
         show();
+        // Now that it is laid out, correct the size for the real chrome.
+        fitToContent();
+        placeAt(anchor);
         qApp->installEventFilter(this);
     }
 }
@@ -184,15 +198,37 @@ void EditorPopup::setContent(const QString &html)
     applyDocumentStyleSheet();
     browser_->setHtml(html);
     addSeverityIcons();
-    // Shrink to the content (up to the cap) rather than always being as
-    // wide as the widest possible card.
-    QTextDocument *document = browser_->document();
-    const int chrome = 2 * kOuterMargin + 2 * document->documentMargin();
-    document->setTextWidth(kMaxWidth - chrome);
-    const int cardWidth = std::clamp(static_cast<int>(document->idealWidth()) + chrome, kMinWidth, kMaxWidth);
-    document->setTextWidth(cardWidth - chrome);
-    const int height = std::min(
-      kMaxHeight, static_cast<int>(document->size().height()) + 2 * kOuterMargin);
+    html_ = html;
+    fitToContent();
+}
+
+// Size the card to its content, up to the cap. Measured on scratch documents
+// rather than the browser's own: it answers with the layout of its previous
+// width until it is shown, and a `pre-wrap` signature reports only its
+// shortest wrapped width, which would shrink the card to its minimum. So the
+// width comes from a copy with signatures unwrapped (a signature wider than
+// the cap then wraps at the cap) and the height from a wrapped one.
+void EditorPopup::fitToContent()
+{
+    // The card's chrome (layout margins, border, the browser's own insets) is
+    // whatever is left around the viewport; read it while it is on screen,
+    // and keep the last reading for the first card of a session.
+    if (isVisible() && !browser_->verticalScrollBar()->isVisible()) {
+        chromeWidth_ = width() - browser_->viewport()->width();
+        chromeHeight_ = height() - browser_->viewport()->height();
+    }
+    QTextDocument natural;
+    natural.setDefaultStyleSheet(cardStyleSheet(false));
+    natural.setHtml(html_);
+    natural.setTextWidth(kMaxWidth - chromeWidth_);
+    const int cardWidth = std::clamp(static_cast<int>(natural.idealWidth()) + chromeWidth_,
+                                     kMinWidth, kMaxWidth);
+    QTextDocument wrapped;
+    wrapped.setDefaultStyleSheet(cardStyleSheet(true));
+    wrapped.setHtml(html_);
+    wrapped.setTextWidth(cardWidth - chromeWidth_);
+    const int height =
+      std::min(kMaxHeight, static_cast<int>(wrapped.size().height()) + chromeHeight_);
     // A scrollbar only when the card hit its cap; otherwise a rounding
     // overshoot would show one on a card that fits.
     browser_->setVerticalScrollBarPolicy(height >= kMaxHeight ? Qt::ScrollBarAsNeeded
@@ -245,6 +281,13 @@ void EditorPopup::dismiss()
 // active theme. Set on every show so a live theme switch is honoured.
 void EditorPopup::applyDocumentStyleSheet()
 {
+    browser_->document()->setDefaultStyleSheet(cardStyleSheet(true));
+}
+
+// `wrapSignature` off is the card's natural (unwrapped) look, which is what
+// its width is measured from.
+QString EditorPopup::cardStyleSheet(bool wrapSignature) const
+{
     const QPalette palette = qApp->palette();
     const QString dim = palette.color(QPalette::PlaceholderText).name();
     const QString rule =
@@ -265,11 +308,14 @@ void EditorPopup::applyDocumentStyleSheet()
         "p { margin-top: 0px; margin-bottom: 0px; }"
         ".problem { margin-top: 2px; margin-bottom: 2px; }"
         "pre { margin-top: 0px; margin-bottom: 0px; }"
-        ".signature { font-family: monospace; }"
+        ".signature { font-family: monospace; white-space: %5; }"
+        ".path { font-family: monospace; }"
+        ".fixrow { margin-left: 22px; margin-top: 0px; margin-bottom: 2px; }"
         "td.sec { padding-top: 0px; padding-bottom: 6px; padding-right: 22px; }"
         "td.sep { padding-top: 6px; padding-bottom: 6px; border-top: 1px solid %3; }")
-        .arg(dim, palette.color(QPalette::Link).name(), rule, chip.name());
-    browser_->document()->setDefaultStyleSheet(sheet);
+        .arg(dim, palette.color(QPalette::Link).name(), rule, chip.name(),
+             wrapSignature ? QStringLiteral("pre-wrap") : QStringLiteral("pre"));
+    return sheet;
 }
 
 // `<img src="ide-sev:<kind>">` in the card: a filled disc in the severity
@@ -401,8 +447,46 @@ void EditorPopup::endHoverCard()
     }
 }
 
+QString EditorPopup::e2eStateJson() const
+{
+    QStringList links;
+    for (QTextBlock block = browser_->document()->begin(); block.isValid();
+         block = block.next()) {
+        for (auto it = block.begin(); !it.atEnd(); ++it) {
+            const QTextCharFormat format = it.fragment().charFormat();
+            if (!format.isAnchor()) {
+                continue;
+            }
+            QTextCursor cursor(browser_->document());
+            cursor.setPosition(it.fragment().position());
+            const QRect line = browser_->cursorRect(cursor);
+            // A few pixels in from the fragment's start is inside its text.
+            const QPoint at = browser_->viewport()->mapToGlobal(
+              QPoint(line.left() + 6, line.center().y()));
+            links << QStringLiteral("{\"href\":%1,\"x\":%2,\"y\":%3}")
+                       .arg(e2eJson(format.anchorHref()))
+                       .arg(at.x())
+                       .arg(at.y());
+        }
+    }
+    const QPoint menuAt = menuButton_->mapToGlobal(menuButton_->rect().center());
+    return QStringLiteral("\"rect\":[%1,%2,%3,%4],\"links\":[%5],\"menu\":[%6,%7],"
+                        "\"anchor\":[%8,%9,%10,%11],\"doc\":[%12,%13,%14,%15]")
+      .arg(x()).arg(y()).arg(width()).arg(height())
+      .arg(links.join(QLatin1Char(',')))
+      .arg(menuAt.x()).arg(menuAt.y())
+      .arg(anchor_.x()).arg(anchor_.y()).arg(anchor_.width()).arg(anchor_.height())
+      .arg(static_cast<int>(browser_->document()->size().width()))
+      .arg(static_cast<int>(browser_->document()->size().height()))
+      .arg(browser_->viewport()->width())
+      .arg(browser_->viewport()->height());
+}
+
 void EditorPopup::forceHide()
 {
+    if (isVisible()) {
+        e2eMark("{\"ev\":\"hover_popup_hidden\"}");
+    }
     endHoverCard();
     pinned_ = false;
     closeTimer_.stop();

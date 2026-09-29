@@ -33,6 +33,7 @@ mod html;
 mod links;
 mod mermaid;
 
+pub use highlight::highlight_html;
 pub use html::{Anchor, Diagram, RenderOptions};
 pub use links::{resolve_link, LinkTarget};
 pub use mermaid::{DiagramError, RasterisedDiagram};

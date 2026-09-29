@@ -165,7 +165,7 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
     editorForm->addRow(minimapCheck);
 
     auto *minimapSubLayout = new QVBoxLayout;
-    minimapSubLayout->setContentsMargins(20, 0, 0, 0);
+    minimapSubLayout->setContentsMargins(20, 0, 0, 12);
     auto *minimapSearchCheck = new QCheckBox(QObject::tr("Find matches"), editorPage);
     minimapSearchCheck->setChecked(originalMinimap.search_matches);
     auto *minimapDiagnosticsCheck = new QCheckBox(QObject::tr("Errors and warnings"), editorPage);
@@ -228,9 +228,11 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
     hoverDelaySpin->setRange(100, 3000);
     hoverDelaySpin->setSingleStep(100);
     hoverDelaySpin->setValue(static_cast<int>(originalHover.delay_ms));
-    hoverDelayLayout->addWidget(new QLabel(QObject::tr("Delay"), hoverBox));
+    auto *hoverDelayLabel = new QLabel(QObject::tr("Delay"), hoverBox);
+    auto *hoverDelayUnit = new QLabel(QObject::tr("ms"), hoverBox);
+    hoverDelayLayout->addWidget(hoverDelayLabel);
     hoverDelayLayout->addWidget(hoverDelaySpin);
-    hoverDelayLayout->addWidget(new QLabel(QObject::tr("ms"), hoverBox));
+    hoverDelayLayout->addWidget(hoverDelayUnit);
     hoverDelayLayout->addStretch();
     hoverLayout->addLayout(hoverDelayLayout);
 
@@ -246,12 +248,20 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
                                static_cast<quint32>(hoverDelaySpin->value()),
                                hoverProblemsCheck->isChecked()};
     };
-    auto applyHoverLive = [editorTabs, hoverDelaySpin, hoverDocsCheck, hoverProblemsCheck,
+    // The whole Delay row, so its words grey out with the spin box.
+    auto setDelayRowEnabled = [hoverDelayLabel, hoverDelaySpin, hoverDelayUnit](bool enabled) {
+        for (QWidget *widget : {static_cast<QWidget *>(hoverDelayLabel),
+                                static_cast<QWidget *>(hoverDelaySpin),
+                                static_cast<QWidget *>(hoverDelayUnit)}) {
+            widget->setEnabled(enabled);
+        }
+    };
+    auto applyHoverLive = [editorTabs, setDelayRowEnabled, hoverDocsCheck, hoverProblemsCheck,
                            hoverOptionsFrom]() {
-        hoverDelaySpin->setEnabled(hoverDocsCheck->isChecked() || hoverProblemsCheck->isChecked());
+        setDelayRowEnabled(hoverDocsCheck->isChecked() || hoverProblemsCheck->isChecked());
         editorTabs->setHoverOptions(hoverOptionsFrom());
     };
-    hoverDelaySpin->setEnabled(originalHover.docs_on_hover || originalHover.problems_on_hover);
+    setDelayRowEnabled(originalHover.docs_on_hover || originalHover.problems_on_hover);
     QObject::connect(hoverDocsCheck, &QCheckBox::toggled, editorPage, applyHoverLive);
     QObject::connect(hoverProblemsCheck, &QCheckBox::toggled, editorPage, applyHoverLive);
     QObject::connect(hoverDelaySpin, &QSpinBox::valueChanged, editorPage, applyHoverLive);

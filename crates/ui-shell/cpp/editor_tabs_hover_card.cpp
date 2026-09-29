@@ -40,7 +40,8 @@ void EditorTabs::wireHoverCard()
         // R3 E2E: the only way a headless flow can see the popup's content
         // — it is a separate toplevel with no model behind it, the same
         // reason `e2eMarkMenuActions` exists for a QMenu.
-        e2eMark(QStringLiteral("{\"ev\":\"hover_popup_shown\",\"html\":%1}").arg(e2eJson(html)));
+        e2eMark(QStringLiteral("{\"ev\":\"hover_popup_shown\",\"html\":%1,%2}")
+                  .arg(e2eJson(html), EditorPopup::instance().e2eStateJson()));
     });
     // H3: the card's fixes are usable only while it is what the popup shows.
     connect(&EditorPopup::instance(), &EditorPopup::hoverCardEnded, this,
@@ -48,7 +49,8 @@ void EditorTabs::wireHoverCard()
     // H3: a problem's fixes arrived; repaint the card where it stands.
     connect(languageService_, &LanguageService::hoverCardUpdated, this, [](const QString &html) {
         EditorPopup::instance().updateHtml(html);
-        e2eMark(QStringLiteral("{\"ev\":\"hover_popup_updated\",\"html\":%1}").arg(e2eJson(html)));
+        e2eMark(QStringLiteral("{\"ev\":\"hover_popup_updated\",\"html\":%1,%2}")
+                  .arg(e2eJson(html), EditorPopup::instance().e2eStateJson()));
     });
 }
 
@@ -157,6 +159,7 @@ void EditorTabs::applyPreferredFixNow()
     }
     // The bridge holds fixes only while the popup shows that hover card.
     if (languageService_->applyPreferredHoverFix(documentRevision())) {
+        e2eMark("{\"ev\":\"apply_preferred_fix\",\"source\":\"card\"}");
         dismissEditorPopup();
         return;
     }
@@ -170,8 +173,10 @@ void EditorTabs::applyPreferredFixNow()
 void EditorTabs::applyPreferredFromCaretAnswer()
 {
     if (languageService_->applyPreferredIntention(documentRevision())) {
+        e2eMark("{\"ev\":\"apply_preferred_fix\",\"source\":\"caret\"}");
         return;
     }
+    e2eMark("{\"ev\":\"apply_preferred_fix\",\"source\":\"none\"}");
     if (auto *main = qobject_cast<QMainWindow *>(window_)) {
         main->statusBar()->showMessage(QObject::tr("No quick fix is available here."), 4000);
     }

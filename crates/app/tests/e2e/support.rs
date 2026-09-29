@@ -179,8 +179,18 @@ pub(crate) fn stub_server_path() -> PathBuf {
 /// `openProject`, from whatever `app-config` already has on disk — so the
 /// override has to be written before the project opens, not after.
 pub(crate) fn route_rust_at_stub(ide: &mut Ide) {
+    route_rust_at_stub_with(ide, |_| {});
+}
+
+/// [`route_rust_at_stub`], also letting the flow seed other settings in the
+/// same relaunch.
+pub(crate) fn route_rust_at_stub_with(
+    ide: &mut Ide,
+    tweak: impl FnOnce(&mut app_config::Settings),
+) {
     assert_eq!(ide.quit(), 0);
     let mut settings = app_config::load(&ide.config_dir()).expect("settings just written");
+    tweak(&mut settings);
     settings
         .language_servers
         .push(app_config::LanguageServerSetting {

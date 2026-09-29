@@ -10,6 +10,7 @@
 #include <QHash>
 
 #include <QPlainTextEdit>
+#include <QTimer>
 #include <QSize>
 #include <QPair>
 #include <QString>
@@ -706,10 +707,6 @@ protected:
     // TerminalWidget's clickable links (F4). Mouse tracking is on so a
     // move with no button held still arrives here.
     void mouseMoveEvent(QMouseEvent *event) override;
-    // L3: QEvent::ToolTip is Qt's own dwell detection, and it arrives on the
-    // viewport for a scroll area — so this, not event(), is where a hover
-    // gesture is picked up.
-    bool viewportEvent(QEvent *event) override;
     void mousePressEvent(QMouseEvent *event) override;
     void leaveEvent(QEvent *event) override;
     // Ctrl+wheel: zoom this editor's own font, IntelliJ/VS Code convention.
@@ -748,6 +745,12 @@ private:
     void updateHoverSpan(const QPoint &pos, bool ctrlHeld);
     // Withdraws an outstanding hover request (pointer moved or left).
     void cancelHover();
+    // H2: the pointer moved to `pos`. A new target span restarts the dwell
+    // timer and withdraws the old hover (which the popup closes only after
+    // its grace period); the same span leaves everything running.
+    void trackHoverTarget(const QPoint &pos);
+    // The dwell timer fired: ask for the hover of `hoverTarget_`.
+    void requestHoverForTarget();
     void clearHoverSpan();
 
     // The current line up to the caret — what `lsp_core::completion` reads
@@ -844,6 +847,11 @@ private:
     // Whether a hover answer is still outstanding, so an idle mouse move
     // doesn't cross the FFI seam to cancel nothing.
     bool hoverPending_ = false;
+    // H2: the identifier/squiggle span under the pointer, and the single-shot
+    // timer that turns a rest on it into a hover request (replaces Qt's
+    // QEvent::ToolTip wake-up, whose delay is not ours to set).
+    QPair<int, int> hoverTarget_{-1, -1};
+    QTimer hoverDwellTimer_;
     // R3: set by `setSignatureTipActive` — while true, `keyPressEvent`
     // reroutes Up/Down to `signatureOverloadCycleRequested`.
     bool signatureTipActive_ = false;

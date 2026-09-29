@@ -4904,6 +4904,13 @@ mod ffi {
         #[cxx_name = "serverNameForFile"]
         fn server_name_for_file(self: &LanguageService, path: &QString) -> QString;
 
+        /// The hover card's fixed words as translated `tr()` strings, in the
+        /// order loading-fixes, more-actions, source, error, warning, info,
+        /// hint; handed over once at start-up (English until then).
+        #[qinvokable]
+        #[cxx_name = "setHoverLabels"]
+        fn set_hover_labels(self: Pin<&mut LanguageService>, labels: &QStringList);
+
         /// L3 — the pointer dwelled over an identifier: ask the server what
         /// it is. `line` is 0-based and `character` counts UTF-16 code
         /// units, which is what the protocol speaks and what `QTextCursor`

@@ -947,7 +947,7 @@ void buildMainWindow(AppSettings *appSettings,
       [searchModel]() { searchModel->cancelHoverSignature(); });
     QObject::connect(languageService, &LanguageService::hoverFallback, window,
                       [editorTabs]() { editorTabs->hoverFallback(); });
-    QObject::connect(searchModel, &SearchModel::hoverSignatureReady, window, [editorTabs](const QString &html) { showEditorPopupPinnable(QCursor::pos(), html, editorTabs->takeQuickDocPending()); });
+    QObject::connect(searchModel, &SearchModel::hoverSignatureReady, window, [editorTabs](const QString &html) { showEditorPopupPinnable(editorTabs->hoverAnchor(), html, editorTabs->takeQuickDocPending()); });
 
     // RF11: the Refactor menu. Every entry routes through the one
     // RefactorController, so there is a single place that turns a server's

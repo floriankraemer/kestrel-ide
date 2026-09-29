@@ -2553,6 +2553,26 @@
         <source>utf-8</source>
         <translation>utf-8</translation>
     </message>
+    <message>
+        <source>Loading fixes…</source>
+        <translation>Chargement des correctifs…</translation>
+    </message>
+    <message>
+        <source>More actions…</source>
+        <translation>Plus d’actions…</translation>
+    </message>
+    <message>
+        <source>Source:</source>
+        <translation>Source :</translation>
+    </message>
+    <message>
+        <source>Hover card options</source>
+        <translation>Options de la carte</translation>
+    </message>
+    <message>
+        <source>Pin</source>
+        <translation>Épingler</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>

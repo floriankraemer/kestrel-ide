@@ -427,6 +427,22 @@ fn render_doc_html(markdown: &str) -> String {
     markdown_preview::render(markdown, &markdown_preview::RenderOptions::default()).html
 }
 
+/// The card's translated fixed words, handed over once by the view
+/// (`setHoverLabels`); English until then. Process-wide because the card is
+/// rendered from more than one QObject (`LanguageService`, `SearchModel`).
+static HOVER_LABELS: std::sync::Mutex<Option<lsp_core::hover_card::CardLabels>> =
+    std::sync::Mutex::new(None);
+
+/// Render `card` with the labels the view supplied.
+pub(crate) fn render_card(card: &lsp_core::hover_card::HoverCard) -> String {
+    let labels = HOVER_LABELS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or_default();
+    lsp_core::hover_card::render(card, &labels)
+}
+
 /// The hover card for `hoverAt`: the server's answer (signature lifted out
 /// of a Markdown hover, prose rendered to HTML) plus every diagnostic
 /// covering the position. Composition and rendering are `lsp_core::hover_card`
@@ -880,7 +896,7 @@ impl ffi::LanguageService {
             if diagnostics.is_empty() {
                 self.as_mut().hover_fallback();
             } else {
-                let html = lsp_core::hover_card::render(&build_hover_card(None, &diagnostics));
+                let html = render_card(&build_hover_card(None, &diagnostics));
                 self.as_mut().hover_ready(QString::from(html.as_str()));
             }
             return;
@@ -905,10 +921,7 @@ impl ffi::LanguageService {
                     service.as_mut().hover_fallback();
                     return;
                 }
-                let html = lsp_core::hover_card::render(&build_hover_card(
-                    hover_html.as_ref(),
-                    &diagnostics,
-                ));
+                let html = render_card(&build_hover_card(hover_html.as_ref(), &diagnostics));
                 service.as_mut().hover_ready(QString::from(html.as_str()));
             });
         });
@@ -1011,6 +1024,29 @@ impl ffi::LanguageService {
             self.as_mut()
                 .refactor_failed(QString::from(message.as_str()));
         }
+    }
+
+    /// Store the translated card labels: loading-fixes, more-actions,
+    /// source, error, warning, info, hint. A list of any other length is
+    /// ignored (the English defaults stay).
+    pub fn set_hover_labels(self: Pin<&mut Self>, labels: &cxx_qt_lib::QStringList) {
+        let words: Vec<String> = labels.iter().map(ToString::to_string).collect();
+        let [loading_fixes, more_actions, source, error, warning, info, hint] = words.as_slice()
+        else {
+            return;
+        };
+        let labels = lsp_core::hover_card::CardLabels {
+            loading_fixes: loading_fixes.clone(),
+            more_actions: more_actions.clone(),
+            source: source.clone(),
+            error: error.clone(),
+            warning: warning.clone(),
+            info: info.clone(),
+            hint: hint.clone(),
+        };
+        *HOVER_LABELS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(labels);
     }
 
     pub fn cancel_hover(self: Pin<&mut Self>) {

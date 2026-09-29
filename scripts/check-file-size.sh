@@ -194,21 +194,6 @@ baseline() {
 	# allows here, threaded through to `buildCentralWidget`/
 	# `buildContributedToolWindows` (both defined elsewhere).
 	crates/ui-shell/cpp/main_window.cpp) echo 1241 ;;
-	# Raised from the 1200 ceiling by 3 lines for the jvm-build-tools
-	# plan's B4, review fix 4: a save of an open build file also reaches
-	# BuildToolsService::fileSaved, right where saveTab already forwards
-	# to LanguageService::documentSaved. The 3 lines are the minimum an
-	# `if` guarding one call can cost with this file's own brace style
-	# (every other conditional in this function uses braces); the
-	# forward itself is a callback (`setDocumentSavedCallback`, this
-	# class's own idiom — see `setPreviewChangedCallback` and friends)
-	# set from `build_tools_wiring.cpp`, not a second EditorTabs-owned
-	# service pointer, so this is the whole cost, not part of a larger
-	# one. No split planned for these 3 lines alone.
-	# Ratcheted down from 1203: F3.1/F3.3 compacted the containerService/
-	# databaseService virtual-document `if` blocks to one line each to
-	# make room for the `consoleFileReady` -> `openFile` connect.
-	crates/ui-shell/cpp/editor_tabs.cpp) echo 1202 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

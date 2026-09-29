@@ -505,16 +505,23 @@ fn supertype_edges_from_tree(
     edges
 }
 
-/// How many extraction query walks this process has run, for tests that
-/// need to assert *which* work a code path did rather than how long it
-/// took (see index-core's go-to-definition early-out). A relaxed counter
-/// bumped once per query walk — not per match — so it costs nothing on
-/// the hot paths it measures.
+thread_local! {
+    static QUERY_WALKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many extraction query walks the calling thread has run, for tests
+/// that need to assert *which* work a code path did rather than how long
+/// it took (see index-core's go-to-definition early-out). Bumped once per
+/// query walk — not per match — so it costs nothing on the hot paths it
+/// measures. Per thread, so tests running in parallel in one process
+/// cannot inflate each other's count.
 #[doc(hidden)]
-pub static QUERY_WALKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub fn query_walks() -> usize {
+    QUERY_WALKS.with(std::cell::Cell::get)
+}
 
 fn count_query_walk() {
-    QUERY_WALKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    QUERY_WALKS.with(|walks| walks.set(walks.get() + 1));
 }
 
 /// One parsed buffer whose extraction queries the caller drives

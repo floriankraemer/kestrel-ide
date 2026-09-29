@@ -1,13 +1,11 @@
 //! Go-to-definition must stop before the expensive `tags` walk when the
 //! caret is not on an identifier (issue #21).
 //!
-//! Asserted on the work actually done -- `syntax_core::QUERY_WALKS` counts
-//! query walks -- rather than on wall-clock time, which is flaky. One test
-//! function on purpose: the counter is process-wide, so two tests reading
-//! it would race under the default parallel harness.
+//! Asserted on the work actually done -- `syntax_core::query_walks()` counts
+//! the calling thread's query walks -- rather than on wall-clock time, which
+//! is flaky.
 
 use std::path::Path;
-use std::sync::atomic::Ordering;
 
 const SOURCE: &str = r#"
 fn helper() -> usize { 1 }
@@ -18,9 +16,9 @@ fn caller() -> usize {
 "#;
 
 fn walks_during(f: impl FnOnce()) -> usize {
-    let before = syntax_core::QUERY_WALKS.load(Ordering::Relaxed);
+    let before = syntax_core::query_walks();
     f();
-    syntax_core::QUERY_WALKS.load(Ordering::Relaxed) - before
+    syntax_core::query_walks() - before
 }
 
 #[test]

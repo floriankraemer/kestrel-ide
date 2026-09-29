@@ -46,3 +46,53 @@ fn e2e_quick_documentation_composes_hover_and_diagnostic() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_hover_card_fills_in_the_fix_row_when_the_server_answers() {
+    let name = "e2e_hover_card_fills_in_the_fix_row_when_the_server_answers";
+    let mut ide = Ide::launch(name, APP, fixture("tiny"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    route_rust_at_stub(&mut ide);
+
+    let mcp = ide.mcp();
+    wait_for_index(&mcp);
+    open_file(&ide, "main.rs");
+    ide.key("ctrl+Home");
+
+    let mark = ide.mark();
+    ide.key("ctrl+alt+q");
+    let shown = ide.wait_for_event(mark, "the card to show with its fixes loading", |e| {
+        e["ev"] == "hover_popup_shown"
+    });
+    assert!(
+        shown["html"]
+            .as_str()
+            .expect("html")
+            .contains("Looking for fixes"),
+        "fixes are asked for after the card is up: {shown}"
+    );
+
+    let updated = ide.wait_for_event(mark, "the fix row to arrive", |e| {
+        e["ev"] == "hover_popup_updated"
+    });
+    let html = updated["html"].as_str().expect("html");
+    assert!(
+        html.contains("href=\"ide:fix/0\"") && html.contains("Import `HashMap`"),
+        "the preferred quick fix should be the fix link: {html}"
+    );
+    assert!(
+        html.contains("ide:more/0"),
+        "and More actions follows it: {html}"
+    );
+    assert!(!html.contains("Looking for fixes"));
+
+    // Screenshot for the PR, only when asked for.
+    if let Ok(path) = std::env::var("IDE_SHOT") {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = std::process::Command::new("import")
+            .args(["-window", "root", &path])
+            .status();
+    }
+    assert_eq!(ide.quit(), 0);
+}

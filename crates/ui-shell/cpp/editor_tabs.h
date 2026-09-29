@@ -290,6 +290,10 @@ public:
     // asked explicitly — and opens the grouped popup as soon as the answer
     // lands, whether or not the bulb ends up shown for it.
     void showIntentionsNow();
+    // H3: `code.applyPreferredFix` (Alt+Shift+Return).
+    void applyPreferredFixNow();
+    // The user's bindings for the card's fix row, pushed by whoever owns the keymap.
+    void setHoverShortcuts(const QString &applyFix, const QString &moreActions);
 
     // F2-11: code.toggleInlayHints. Applies to every open editor
     // immediately (S2's live-apply convention — see setEditorFont) and to
@@ -707,6 +711,7 @@ public:
 
     // H2: the hover card's `ide:` anchors (`fix/<i>`, `more/<i>`, `source`).
     void onHoverCardAction(const QString &action);
+    void applyPreferredFromCaretAnswer();
     void wireHoverCard();
 
 private:
@@ -861,7 +866,9 @@ private:
     void onIntentionsReady();
 
     // The grouped popup itself, shared by the bulb's click and Alt+Return.
-    void showIntentionsMenu();
+    // `anchor` (global) places it there instead of at the bulb/pointer — the
+    // hover card's "More actions…" opens it under the card.
+    void showIntentionsMenu(const QPoint *anchor = nullptr);
 
     // F2-11: `LanguageService::documentHighlightsReady` — paint whatever
     // came back onto the editor `requestIntentionsFor` asked about.
@@ -1071,6 +1078,11 @@ private:
     CodeEditor *intentionsEditor_ = nullptr;
     int intentionsDocPos_ = 0;
     bool intentionsPending_ = false;
+    // H3: `code.applyPreferredFix` with no primary fix on a visible card
+    // asked for the caret's intentions; apply their primary fix on arrival.
+    bool applyPreferredPending_ = false;
+    // The user's "Apply Preferred Fix" binding, shown on the menu's primary row.
+    QString applyFixShortcut_;
 
     // F2-11: the editor a signature-help/inlay-hints request was last made
     // about — same reasoning as `intentionsEditor_`, one relevant answer at

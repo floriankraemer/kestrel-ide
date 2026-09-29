@@ -586,9 +586,8 @@ fn e2e_comment_toggle_and_duplicate_line() {
 /// other refactoring does.
 ///
 /// The caret sits at (0,0), which is inside `stub_server`'s canned
-/// diagnostic (line 0, columns 0-4) — so this also proves
-/// `intentions::assemble` dedups the one action both the diagnostic-scoped
-/// and the range-scoped request return, rather than listing it twice.
+/// diagnostic (line 0, columns 0-4) — so the menu is its quick fix plus the
+/// extract action, listed once though both requests return it (`assemble`).
 #[test]
 #[ignore = "E2E: needs an X server; run via `make e2e`"]
 fn e2e_alt_enter_applies_an_intention_in_one_undo() {
@@ -611,9 +610,10 @@ fn e2e_alt_enter_applies_an_intention_in_one_undo() {
     });
     assert_eq!(
         shown["count"].as_u64(),
-        Some(1),
-        "the stub's one action at (0,0) should not be listed twice"
+        Some(2),
+        "the quick fix plus the extract action, which must not be listed twice"
     );
+    ide.key("Down");
     ide.key("Down");
     ide.key("Return");
     ide.wait_for_event(mark, "the intentions menu to accept", |e| {

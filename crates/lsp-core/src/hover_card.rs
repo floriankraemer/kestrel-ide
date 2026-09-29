@@ -33,6 +33,21 @@ pub enum FixState {
     },
 }
 
+impl FixState {
+    /// What the server's answer for one problem means for its fix row:
+    /// `Some` when there is a primary fix (`count` is the whole list the
+    /// "More actions…" menu will show), `None` otherwise.
+    pub fn of(intentions: &[Intention]) -> Self {
+        match primary_fix(intentions) {
+            Some(primary) => FixState::Some {
+                primary_title: primary.title().to_string(),
+                count: intentions.len(),
+            },
+            None => FixState::None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardProblem {
     pub severity: Severity,
@@ -55,6 +70,59 @@ impl CardProblem {
     }
 }
 
+/// The intentions fetched for the problems of the hover card that is on
+/// screen, tagged with that card's hover token.
+///
+/// Fixes are usable only while their card is the one showing: the holder
+/// is emptied when the popup shows anything else or closes, and an answer
+/// for any other token is refused, so a shortcut can never apply a fix the
+/// user is no longer looking at.
+#[derive(Debug, Default)]
+pub struct HoverFixes {
+    token: Option<u64>,
+    per_problem: Vec<Vec<Intention>>,
+}
+
+impl HoverFixes {
+    /// A card for `token` with `problems` problems went up; nothing is known yet.
+    pub fn show(&mut self, token: u64, problems: usize) {
+        self.token = Some(token);
+        self.per_problem = vec![Vec::new(); problems];
+    }
+
+    /// The card is gone (closed, or the popup shows something else).
+    pub fn clear(&mut self) {
+        self.token = None;
+        self.per_problem.clear();
+    }
+
+    /// Record `problem`'s answer. False (and nothing stored) when `token` is
+    /// not the showing card's or `problem` does not exist.
+    pub fn fill(&mut self, token: u64, problem: usize, list: Vec<Intention>) -> bool {
+        if self.token != Some(token) {
+            return false;
+        }
+        match self.per_problem.get_mut(problem) {
+            Some(slot) => {
+                *slot = list;
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn list(&self, problem: usize) -> Option<&[Intention]> {
+        self.per_problem.get(problem).map(Vec::as_slice)
+    }
+
+    /// The first problem that has a primary fix.
+    pub fn first_fixable(&self) -> Option<usize> {
+        self.per_problem
+            .iter()
+            .position(|list| primary_fix_index(list).is_some())
+    }
+}
+
 /// Where the hovered symbol is declared.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardLocation {
@@ -73,18 +141,25 @@ pub struct CardLabels {
     pub warning: String,
     pub info: String,
     pub hint: String,
+    /// The user's actual bindings for "apply preferred fix" and "show
+    /// intention actions", shown dim after the fix row's links; empty
+    /// (unbound) shows nothing.
+    pub apply_fix_shortcut: String,
+    pub more_actions_shortcut: String,
 }
 
 impl Default for CardLabels {
     fn default() -> Self {
         CardLabels {
-            loading_fixes: "Loading fixes…".into(),
+            loading_fixes: "Looking for fixes…".into(),
             more_actions: "More actions…".into(),
             source: "Source:".into(),
             error: "Error".into(),
             warning: "Warning".into(),
             info: "Info".into(),
             hint: "Hint".into(),
+            apply_fix_shortcut: String::new(),
+            more_actions_shortcut: String::new(),
         }
     }
 }
@@ -140,11 +215,19 @@ pub fn split_signature(markdown: &str) -> (Option<String>, String) {
 /// else the first enabled quick fix. Disabled actions are never primary —
 /// they cannot be applied here.
 pub fn primary_fix(intentions: &[Intention]) -> Option<&Intention> {
-    let mut fixes = intentions
-        .iter()
-        .filter(|i| i.group == IntentionGroup::QuickFix && i.disabled().is_none());
-    let first = fixes.clone().find(|i| i.preferred);
-    first.or_else(|| fixes.next())
+    primary_fix_index(intentions).map(|i| &intentions[i])
+}
+
+/// [`primary_fix`] as a position in `intentions`, for callers that apply
+/// the fix by its index in the list the menu shows.
+pub fn primary_fix_index(intentions: &[Intention]) -> Option<usize> {
+    let usable = |i: &Intention| i.group == IntentionGroup::QuickFix && i.disabled().is_none();
+    let position = |want_preferred: bool| {
+        intentions
+            .iter()
+            .position(|i| usable(i) && (!want_preferred || i.preferred))
+    };
+    position(true).or_else(|| position(false))
 }
 
 /// The card as HTML in the subset `QTextDocument` understands. Every string
@@ -218,21 +301,13 @@ fn render_problem(index: usize, problem: &CardProblem, labels: &CardLabels) -> S
             "<br><span class=\"dim\">{}</span>",
             escape(&labels.loading_fixes)
         ),
-        FixState::Some {
-            primary_title,
-            count,
-        } => {
-            let more = if *count > 1 {
-                format!(
-                    " <a href=\"ide:more/{index}\">{}</a>",
-                    escape(&labels.more_actions)
-                )
-            } else {
-                String::new()
-            };
+        FixState::Some { primary_title, .. } => {
             format!(
-                "<br><a class=\"fix\" href=\"ide:fix/{index}\">{}</a>{more}",
-                escape(primary_title)
+                "<br><a class=\"fix\" href=\"ide:fix/{index}\">{}</a>{} &nbsp; <a href=\"ide:more/{index}\">{}</a>{}",
+                escape(primary_title),
+                shortcut_hint(&labels.apply_fix_shortcut),
+                escape(&labels.more_actions),
+                shortcut_hint(&labels.more_actions_shortcut),
             )
         }
     };
@@ -241,6 +316,14 @@ fn render_problem(index: usize, problem: &CardProblem, labels: &CardLabels) -> S
         escape(label),
         escape(&problem.message)
     )
+}
+
+fn shortcut_hint(shortcut: &str) -> String {
+    if shortcut.is_empty() {
+        String::new()
+    } else {
+        format!(" <span class=\"dim\">{}</span>", escape(shortcut))
+    }
 }
 
 fn escape(text: &str) -> String {
@@ -410,10 +493,102 @@ mod tests {
         };
         let html = render(&card, &CardLabels::default());
         assert!(html.contains("href=\"ide:fix/0\"") && html.contains("href=\"ide:more/0\""));
-        assert!(html.contains("href=\"ide:fix/1\"") && !html.contains("ide:more/1"));
-        assert!(html.contains("Loading fixes"));
+        assert!(html.contains("href=\"ide:fix/1\"") && html.contains("href=\"ide:more/1\""));
+        assert!(html.contains("Looking for fixes"));
         assert!(!html.contains("ide:fix/2") && !html.contains("ide:fix/3"));
         assert!(!html.contains("ide:source"));
+    }
+
+    #[test]
+    fn fix_row_shows_the_bound_shortcuts_only_when_bound() {
+        let card = HoverCard {
+            problems: vec![problem(
+                "a",
+                "",
+                "",
+                FixState::Some {
+                    primary_title: "Import".into(),
+                    count: 1,
+                },
+            )],
+            ..HoverCard::default()
+        };
+        let bare = render(&card, &CardLabels::default());
+        assert!(!bare.contains("Alt+"));
+        let labels = CardLabels {
+            apply_fix_shortcut: "Alt+Shift+Enter".into(),
+            more_actions_shortcut: "Alt+Enter".into(),
+            ..CardLabels::default()
+        };
+        let html = render(&card, &labels);
+        assert!(html.contains("Import</a> <span class=\"dim\">Alt+Shift+Enter</span>"));
+        assert!(html.contains("More actions…</a> <span class=\"dim\">Alt+Enter</span>"));
+    }
+
+    #[test]
+    fn fix_state_follows_the_answer() {
+        let list = [
+            intention("plain", "quickfix", false, false),
+            intention("r", "refactor", false, false),
+        ];
+        assert_eq!(
+            FixState::of(&list),
+            FixState::Some {
+                primary_title: "plain".into(),
+                count: 2
+            }
+        );
+        assert_eq!(FixState::of(&list[1..]), FixState::None);
+        assert_eq!(FixState::of(&[]), FixState::None);
+    }
+
+    #[test]
+    fn primary_index_points_into_the_menu_list() {
+        let list = [
+            intention("r", "refactor", true, false),
+            intention("a", "quickfix", false, false),
+            intention("b", "quickfix", true, false),
+        ];
+        assert_eq!(primary_fix_index(&list), Some(2));
+        assert_eq!(primary_fix_index(&list[..2]), Some(1));
+        assert_eq!(primary_fix_index(&[]), None);
+    }
+
+    #[test]
+    fn hover_fixes_belong_to_their_card_only() {
+        let mut fixes = HoverFixes::default();
+        assert_eq!(fixes.first_fixable(), None);
+        fixes.show(7, 2);
+        assert!(!fixes.fill(6, 0, vec![intention("x", "quickfix", true, false)]));
+        assert!(!fixes.fill(7, 5, Vec::new()));
+        assert_eq!(fixes.first_fixable(), None);
+        assert!(fixes.fill(7, 1, vec![intention("x", "quickfix", true, false)]));
+        assert_eq!(fixes.first_fixable(), Some(1));
+        assert_eq!(fixes.list(1).unwrap().len(), 1);
+        fixes.clear();
+        assert_eq!(fixes.first_fixable(), None);
+        assert!(!fixes.fill(7, 1, vec![intention("x", "quickfix", true, false)]));
+        assert!(fixes.list(1).is_none());
+    }
+
+    #[test]
+    fn a_new_card_forgets_the_old_ones_fixes() {
+        let mut fixes = HoverFixes::default();
+        fixes.show(1, 1);
+        fixes.fill(1, 0, vec![intention("x", "quickfix", true, false)]);
+        fixes.show(2, 1);
+        assert_eq!(fixes.first_fixable(), None);
+    }
+
+    #[test]
+    fn loading_row_is_dim_and_has_no_anchors() {
+        let card = HoverCard {
+            problems: vec![problem("a", "", "", FixState::Loading)],
+            ..HoverCard::default()
+        };
+        let html = render(&card, &CardLabels::default());
+        assert!(html.contains("<span class=\"dim\">Looking for fixes…</span>"));
+        assert!(!html.contains("ide:"));
     }
 
     #[test]
@@ -465,7 +640,7 @@ mod tests {
         for want in ["Lade", "Mehr &lt;", "Quelle: <a", "alt=\"Fehler\""] {
             assert!(html.contains(want), "{want} in {html}");
         }
-        assert!(!html.contains("Loading") && !html.contains("Source:"));
+        assert!(!html.contains("Looking") && !html.contains("Source:"));
     }
 
     #[test]

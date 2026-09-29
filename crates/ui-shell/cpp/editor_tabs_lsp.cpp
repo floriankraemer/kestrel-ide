@@ -395,6 +395,10 @@ void EditorTabs::onIntentionsReady()
     if (!intentionsEditor_) {
         return;
     }
+    if (applyPreferredPending_) {
+        applyPreferredPending_ = false;
+        applyPreferredFromCaretAnswer();
+    }
     const ::rust::Vec<FfiIntention> items = languageService_->intentions();
     if (items.empty()) {
         if (intentionBulb_) {
@@ -422,9 +426,9 @@ void EditorTabs::onIntentionsReady()
     }
 }
 
-void EditorTabs::showIntentionsMenu()
+void EditorTabs::showIntentionsMenu(const QPoint *anchor)
 {
-    if (!intentionsEditor_) {
+    if (!intentionsEditor_ && anchor == nullptr) {
         return;
     }
     const ::rust::Vec<FfiIntention> items = languageService_->intentions();
@@ -432,6 +436,8 @@ void EditorTabs::showIntentionsMenu()
         return;
     }
     QMenu menu(window_);
+    menu.setObjectName(QStringLiteral("intentionsMenu"));
+    const int primary = languageService_->primaryIntentionIndex();
     FfiIntentionGroup lastGroup = items[0].group;
     for (std::size_t i = 0; i < items.size(); ++i) {
         if (i > 0 && items[i].group != lastGroup) {
@@ -439,16 +445,22 @@ void EditorTabs::showIntentionsMenu()
         }
         lastGroup = items[i].group;
         const QString reason = items[i].disabled_reason;
-        QAction *entry = menu.addAction(reason.isEmpty()
-                                          ? QString(items[i].title)
-                                          : tr("%1 — %2").arg(QString(items[i].title), reason));
+        QString label = reason.isEmpty() ? QString(items[i].title)
+                                         : tr("%1 — %2").arg(QString(items[i].title), reason);
+        if (static_cast<int>(i) == primary && !applyFixShortcut_.isEmpty()) {
+            // A tab renders the right-aligned shortcut column without
+            // registering a real shortcut on a throwaway menu.
+            label += QLatin1Char('\t') + applyFixShortcut_;
+        }
+        QAction *entry = menu.addAction(label);
         entry->setEnabled(reason.isEmpty());
         const quint32 index = static_cast<quint32>(i);
         connect(entry, &QAction::triggered, this, [this, index]() {
             languageService_->applyIntention(index, documentRevision());
         });
     }
-    const QPoint pos = intentionBulb_ && intentionBulb_->isVisible()
+    const QPoint pos = anchor != nullptr ? *anchor
+      : intentionBulb_ && intentionBulb_->isVisible()
       ? intentionBulb_->mapToGlobal(QPoint(0, intentionBulb_->height()))
       : QCursor::pos();
     // A popup menu takes a keyboard grab rather than the input focus, so
@@ -492,43 +504,6 @@ void EditorTabs::hoverFallback()
     if (hoverFallback_) {
         hoverFallback_();
     }
-}
-
-// H2: everything the hover card needs from `EditorTabs` — its translated
-// fixed words, the popup's `ide:` anchors, and where an answer is shown.
-void EditorTabs::wireHoverCard()
-{
-    // H2: the hover card's fixed words, translated here (the view owns
-    // `tr()`) and stored by the bridge for `render`.
-    languageService_->setHoverLabels(QStringList{
-      QObject::tr("Loading fixes…"), QObject::tr("More actions…"), QObject::tr("Source:"),
-      QObject::tr("Error"), QObject::tr("Warning"), QObject::tr("Info"), QObject::tr("Hint")});
-    connect(&EditorPopup::instance(), &EditorPopup::actionRequested, this,
-            &EditorTabs::onHoverCardAction);
-
-    // L3/R3: one popup for the whole window. The answer is asynchronous,
-    // so it is shown where the pointer is when it arrives — safe only
-    // because `lsp_core::HoverTracker` has already dropped everything
-    // the user has moved on from, so whatever reaches here is still
-    // about the word under the cursor. `hoverAt`'s html already carries
-    // the LSP hover and every diagnostic at that position composed
-    // together (`lsp_core::hover_card`), so this is the one place that
-    // paints either or both. Ctrl+Q's own request comes back on this same
-    // signal (`requestQuickDocumentation`'s doc comment), which is why
-    // pinning happens here rather than at the request site.
-    connect(languageService_, &LanguageService::hoverReady, this, [this](const QString &html) {
-        showEditorPopupPinnable(hoverAnchor(), html, takeQuickDocPending());
-        // R3 E2E: the only way a headless flow can see the popup's content
-        // — it is a separate toplevel with no model behind it, the same
-        // reason `e2eMarkMenuActions` exists for a QMenu.
-        e2eMark(QStringLiteral("{\"ev\":\"hover_popup_shown\",\"html\":%1}").arg(e2eJson(html)));
-    });
-}
-
-// Nothing emits `fix/<i>`, `more/<i>` (H3) or `source` (H4) yet, so there is
-// nothing to act on.
-void EditorTabs::onHoverCardAction(const QString &)
-{
 }
 
 void EditorTabs::hoverCanceled()

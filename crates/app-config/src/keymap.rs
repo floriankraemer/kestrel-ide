@@ -240,6 +240,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Alt+Return",
     },
     ActionDef {
+        id: "code.applyPreferredFix",
+        label: "Apply Preferred Fix",
+        category: "Code",
+        default_shortcut: "Alt+Shift+Return",
+    },
+    ActionDef {
         id: "code.parameterInfo",
         label: "Parameter Info",
         category: "Code",
@@ -1229,6 +1235,20 @@ mod tests {
                 a.default_shortcut
             );
         }
+    }
+
+    #[test]
+    fn apply_preferred_fix_owns_alt_shift_return_alone() {
+        let map = keymap();
+        assert_eq!(
+            map.shortcut_for("code.applyPreferredFix"),
+            "Alt+Shift+Return"
+        );
+        let owners = ACTIONS
+            .iter()
+            .filter(|a| a.default_shortcut == "Alt+Shift+Return")
+            .count();
+        assert_eq!(owners, 1);
     }
 
     #[test]

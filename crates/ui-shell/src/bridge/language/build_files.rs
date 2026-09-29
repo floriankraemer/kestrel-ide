@@ -556,8 +556,7 @@ impl ffi::LanguageService {
 
     /// D7's short-circuit branch: `request_intentions` tries this
     /// *before* the language-server path, mirroring C6's
-    /// `container_intentions`. Returns `false` — never touching
-    /// `self.intentions` — both when there is no hint at all (the file
+    /// `container_intentions`. Returns `None` both when there is no hint at all (the file
     /// is not a build file, or nothing is wrong at the caret) and when
     /// one exists but a real server is also configured for this file
     /// (`pom.xml` with lemminx, `build.gradle.kts` with
@@ -566,22 +565,16 @@ impl ffi::LanguageService {
     /// `request_intentions` merges the quick fix back in for that case
     /// itself, via [`build_file_quick_fix`](Self::build_file_quick_fix).
     pub(crate) fn build_file_intentions(
-        mut self: Pin<&mut Self>,
+        &self,
         path: &str,
         line: u32,
         character: u32,
-    ) -> bool {
-        let Some(intention) = self.build_file_quick_fix(path, line, character) else {
-            return false;
-        };
+    ) -> Option<Vec<lsp_core::Intention>> {
+        let intention = self.build_file_quick_fix(path, line, character)?;
         if self.config_for_path(path).is_some() {
-            return false;
+            return None;
         }
-        self.intentions_tracker.borrow_mut().begin();
-        *self.intentions.borrow_mut() = vec![intention];
-        self.intentions_language.borrow_mut().clear();
-        self.as_mut().intentions_ready();
-        true
+        Some(vec![intention])
     }
 }
 

@@ -412,6 +412,22 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
     connect(showIntentionsAction, &QAction::triggered, this,
             [this]() { editorTabs_->showIntentionsNow(); });
 
+    // H3: Alt+Shift+Return applies the visible hover card's primary fix, else
+    // the caret's. The card's fix row shows both bindings, kept live here.
+    QAction *applyPreferredFixAction = registerAction(
+      refactorMenu, QStringLiteral("code.applyPreferredFix"), tr("Apply Preferred Fix"),
+      appSettings, actions);
+    connect(applyPreferredFixAction, &QAction::triggered, this,
+            [this]() { editorTabs_->applyPreferredFixNow(); });
+    const auto pushHoverShortcuts = [this, applyPreferredFixAction, showIntentionsAction]() {
+        editorTabs_->setHoverShortcuts(
+          applyPreferredFixAction->shortcut().toString(QKeySequence::NativeText),
+          showIntentionsAction->shortcut().toString(QKeySequence::NativeText));
+    };
+    connect(applyPreferredFixAction, &QAction::changed, this, pushHoverShortcuts);
+    connect(showIntentionsAction, &QAction::changed, this, pushHoverShortcuts);
+    pushHoverShortcuts();
+
     // F2-11: Ctrl+P. The tip's own content is driven by typing; this is
     // only for asking again explicitly with the caret sitting still — the
     // same "showing" flag typing uses, so an already-open tip does not

@@ -2554,8 +2554,8 @@
         <translation>utf-8</translation>
     </message>
     <message>
-        <source>Loading fixes…</source>
-        <translation>Cargando correcciones…</translation>
+        <source>Looking for fixes…</source>
+        <translation>Buscando correcciones…</translation>
     </message>
     <message>
         <source>More actions…</source>
@@ -2572,6 +2572,10 @@
     <message>
         <source>Pin</source>
         <translation>Fijar</translation>
+    </message>
+    <message>
+        <source>No quick fix is available here.</source>
+        <translation>No hay ninguna corrección rápida disponible aquí.</translation>
     </message>
 </context>
 <context>
@@ -2702,6 +2706,10 @@
     <message>
         <source>use of %1</source>
         <translation>uso de %1</translation>
+    </message>
+    <message>
+        <source>Apply Preferred Fix</source>
+        <translation>Aplicar la corrección preferida</translation>
     </message>
 </context>
 <context>

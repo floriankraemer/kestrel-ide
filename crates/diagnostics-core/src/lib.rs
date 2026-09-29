@@ -208,6 +208,23 @@ impl DiagnosticStore {
             .collect()
     }
 
+    /// The raw protocol payload of the diagnostic `row` was made from — what
+    /// a `codeAction` request scoped to that one problem must echo back.
+    /// Matched on uri, start position and message, which identifies a row
+    /// within one store snapshot.
+    pub fn raw_for(&self, row: &DiagnosticRow) -> Option<Value> {
+        self.by_key
+            .iter()
+            .filter(|((_, uri), _)| *uri == row.uri)
+            .flat_map(|(_, diags)| diags.iter())
+            .find(|d| {
+                d.range.start.line + 1 == row.line
+                    && d.range.start.character == row.column
+                    && d.message == row.message
+            })
+            .and_then(|d| d.raw.clone())
+    }
+
     /// Every diagnostic covering `(line, character)` in `uri`, as the rows
     /// the Problems dock already shows — what R3's hover popup composes
     /// into its diagnostics section. Shares [`covers`] with
@@ -715,6 +732,22 @@ mod tests {
         let found = store.diagnostics_at("file:///p/a.rs", 2, 2);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0]["message"], "here");
+    }
+
+    #[test]
+    fn raw_for_finds_the_payload_of_exactly_that_row() {
+        let mut store = DiagnosticStore::new();
+        let mut a = point_diagnostic(2, 1, Severity::Error, "a");
+        a.raw = Some(serde_json::json!({"message": "a"}));
+        let mut b = point_diagnostic(2, 1, Severity::Error, "b");
+        b.raw = Some(serde_json::json!({"message": "b"}));
+        store.replace("lsp:rust", "file:///p/a.rs", vec![a, b]);
+        let rows = store.at("file:///p/a.rs", 2, 1);
+        let b_row = rows.iter().find(|r| r.message == "b").unwrap();
+        assert_eq!(store.raw_for(b_row).unwrap()["message"], "b");
+        let mut gone = b_row.clone();
+        gone.message = "c".into();
+        assert!(store.raw_for(&gone).is_none());
     }
 
     #[test]

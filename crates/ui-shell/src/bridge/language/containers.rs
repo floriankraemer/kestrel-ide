@@ -323,34 +323,26 @@ impl ffi::LanguageService {
             .collect();
     }
 
-    /// The "Pull image" branch of `requestIntentions` (C6). `true` when
-    /// the caret is on an image reference and the intentions list has
-    /// been filled with the one action; `false` hands on to the server.
+    /// The "Pull image" branch of the intentions dispatch (C6). `Some` when
+    /// the caret is on an image reference; `None` hands on to the server.
     pub(crate) fn container_intentions(
-        mut self: Pin<&mut Self>,
+        &self,
         path: &str,
         line: u32,
         character: u32,
-    ) -> bool {
-        if Self::container_file_kind(path).is_none() {
-            return false;
-        }
+    ) -> Option<Vec<lsp_core::Intention>> {
+        Self::container_file_kind(path)?;
         let content = self
             .session
             .borrow()
             .content_for_path(Path::new(path))
             .unwrap_or_default();
-        let Some(line_text) = content.lines().nth(line as usize) else {
-            return false;
-        };
+        let line_text = content.lines().nth(line as usize)?;
         let byte = editor_core::offsets::byte_offset(line_text, character as usize);
         let column = line_text[..byte].chars().count();
-        let Some((reference, _)) = image_ref::image_ref_at(line_text, column) else {
-            return false;
-        };
+        let (reference, _) = image_ref::image_ref_at(line_text, column)?;
         let reference = reference.to_string();
-        self.intentions_tracker.borrow_mut().begin();
-        *self.intentions.borrow_mut() = vec![lsp_core::Intention {
+        Some(vec![lsp_core::Intention {
             item: lsp_core::CodeActionItem {
                 title: format!("Pull image {reference}"),
                 kind: Some(PULL_INTENTION_KIND.to_string()),
@@ -361,10 +353,7 @@ impl ffi::LanguageService {
             },
             group: lsp_core::IntentionGroup::Other,
             preferred: false,
-        }];
-        self.intentions_language.borrow_mut().clear();
-        self.as_mut().intentions_ready();
-        true
+        }])
     }
 
     /// The `container.*` branch of `applyIntention`: no server involved —

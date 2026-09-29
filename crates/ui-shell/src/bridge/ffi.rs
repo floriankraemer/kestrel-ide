@@ -4920,6 +4920,60 @@ mod ffi {
         #[cxx_name = "hoverAt"]
         fn hover_at(self: Pin<&mut LanguageService>, path: &QString, line: u32, character: u32);
 
+        /// H3: the shown card's fix rows changed (a problem's fixes arrived);
+        /// repaint it where it is, without moving, re-pinning or closing it.
+        #[qsignal]
+        #[cxx_name = "hoverCardUpdated"]
+        fn hover_card_updated(self: Pin<&mut LanguageService>, html: QString);
+
+        /// H3: bindings shown dim in the card's fix row ("Apply Preferred
+        /// Fix" and "Show Intention Actions"); empty when unbound.
+        #[qinvokable]
+        #[cxx_name = "setHoverShortcuts"]
+        fn set_hover_shortcuts(
+            self: Pin<&mut LanguageService>,
+            apply_fix: &QString,
+            more_actions: &QString,
+        );
+
+        /// H3: the popup no longer shows the hover card (it closed, or shows
+        /// other content): forget its fixes so no shortcut can apply them.
+        #[qinvokable]
+        #[cxx_name = "clearHoverFixes"]
+        fn clear_hover_fixes(self: Pin<&mut LanguageService>);
+
+        /// H3: apply the primary fix of hover-card problem `problem`.
+        #[qinvokable]
+        #[cxx_name = "applyHoverFix"]
+        fn apply_hover_fix(self: Pin<&mut LanguageService>, problem: u32, buffer_revision: i64);
+
+        /// H3: "More actions…" — make hover-card problem `problem`'s
+        /// intentions the list `intentions()`/`applyIntention` use. False
+        /// when it has none.
+        #[qinvokable]
+        #[cxx_name = "selectHoverIntentions"]
+        fn select_hover_intentions(self: Pin<&mut LanguageService>, problem: u32) -> bool;
+
+        /// H3: `code.applyPreferredFix` with a hover card up. False when the
+        /// card has no primary fix.
+        #[qinvokable]
+        #[cxx_name = "applyPreferredHoverFix"]
+        fn apply_preferred_hover_fix(self: Pin<&mut LanguageService>, buffer_revision: i64)
+            -> bool;
+
+        /// H3: position in `intentions()` of the primary fix (the row that
+        /// carries the Alt+Shift+Enter hint), -1 when there is none.
+        #[qinvokable]
+        #[cxx_name = "primaryIntentionIndex"]
+        fn primary_intention_index(self: &LanguageService) -> i32;
+
+        /// H3: `code.applyPreferredFix` at the caret, over the list the last
+        /// `requestIntentions` produced. False when it has no primary fix.
+        #[qinvokable]
+        #[cxx_name = "applyPreferredIntention"]
+        fn apply_preferred_intention(self: Pin<&mut LanguageService>, buffer_revision: i64)
+            -> bool;
+
         /// The pointer moved or left the editor: whatever hover is in flight
         /// is no longer wanted. Discarding it is `lsp_core::HoverTracker`'s
         /// rule, not the view's — a late answer shown at the new position

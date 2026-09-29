@@ -25,21 +25,12 @@ impl ffi::LanguageService {
     /// asks for.
     pub fn request_intentions(mut self: Pin<&mut Self>, path: &QString, line: u32, character: u32) {
         let path = path.to_string();
-        // C6: "Pull image" on a `FROM`/`image:` reference needs no server.
-        if self.as_mut().container_intentions(&path, line, character) {
-            return;
-        }
-        // F3.7: "Format SQL"/"Go to DDL" on a database-attached file need
-        // no server either.
-        if self.as_mut().database_intentions(&path, line, character) {
-            return;
-        }
-        // D7: "Update to X" on a build-file dependency needs no server —
-        // short-circuits here only when no real server is also configured
-        // for this file (review fix #3). When one is, it returns `false`
-        // and the quick fix — recomputed just below — is merged into the
-        // server's own answer instead of replacing it.
-        if self.as_mut().build_file_intentions(&path, line, character) {
+        // C6/F3.7/D7: the actions that need no server, ahead of it.
+        if let Some(list) = self.local_intentions(&path, line, character) {
+            self.intentions_tracker.borrow_mut().begin();
+            *self.intentions.borrow_mut() = list;
+            self.intentions_language.borrow_mut().clear();
+            self.as_mut().intentions_ready();
             return;
         }
         let build_file_quick_fix = self.build_file_quick_fix(&path, line, character);
@@ -69,6 +60,22 @@ impl ffi::LanguageService {
                 service.as_mut().intentions_ready();
             });
         });
+    }
+
+    /// The intentions that need no language server — "Pull image" (C6),
+    /// "Format SQL"/"Go to DDL" (F3.7), a build file's "Update to X" when no
+    /// server is configured for it (D7) — or `None` to ask the server. The
+    /// one dispatch behind both Alt+Enter (`requestIntentions`) and the
+    /// hover card's per-problem fixes.
+    pub(crate) fn local_intentions(
+        &self,
+        path: &str,
+        line: u32,
+        character: u32,
+    ) -> Option<Vec<lsp_core::Intention>> {
+        self.container_intentions(path, line, character)
+            .or_else(|| self.database_intentions(path, line, character))
+            .or_else(|| self.build_file_intentions(path, line, character))
     }
 
     /// The caret moved (or the tab did): whatever `requestIntentions` is

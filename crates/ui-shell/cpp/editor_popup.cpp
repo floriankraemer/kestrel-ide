@@ -135,17 +135,35 @@ void EditorPopup::showAt(const QPoint &globalPos, const QString &html)
     showAtRect(QRect(globalPos, QSize(1, 16)), html);
 }
 
-void EditorPopup::showAtRect(const QRect &anchor, const QString &html)
+void EditorPopup::showAtRect(const QRect &anchor, const QString &html, bool hoverCard)
 {
     if (html.isEmpty()) {
         forceHide();
         return;
     }
+    if (!hoverCard) {
+        endHoverCard();
+    }
+    hoverCard_ = hoverCard;
     // A new popup is never pre-pinned: each `showAt` is a new question
     // (a different word hovered, a different overload's tip), and
     // `pin()` is always a deliberate Ctrl+Q on its own answer.
     pinned_ = false;
     closeTimer_.stop();
+    setContent(html);
+    placeAt(anchor);
+
+    if (!isVisible()) {
+        // Remembered before `show()`: closing after a click-activation
+        // hands focus back here.
+        returnFocus_ = QApplication::focusWidget();
+        show();
+        qApp->installEventFilter(this);
+    }
+}
+
+void EditorPopup::setContent(const QString &html)
+{
     applyDocumentStyleSheet();
     browser_->setHtml(html);
     addSeverityIcons();
@@ -163,23 +181,33 @@ void EditorPopup::showAtRect(const QRect &anchor, const QString &html)
     browser_->setVerticalScrollBarPolicy(height >= kMaxHeight ? Qt::ScrollBarAsNeeded
                                                               : Qt::ScrollBarAlwaysOff);
     resize(cardWidth, std::max(height, 32));
+}
 
+void EditorPopup::placeAt(const QRect &anchor)
+{
+    anchor_ = anchor;
     const QScreen *screen = QGuiApplication::screenAt(anchor.topLeft());
     const QRect available = screen ? screen->availableGeometry() : QRect(0, 0, 1920, 1080);
     int x = std::min(anchor.left(), available.right() - width());
     int y = anchor.bottom() + kAnchorGap;
-    if (y + height > available.bottom()) {
-        y = anchor.top() - height - kAnchorGap;
+    if (y + height() > available.bottom()) {
+        y = anchor.top() - height() - kAnchorGap;
     }
     move(std::max(x, available.left()), std::max(y, available.top()));
+}
 
-    if (!isVisible()) {
-        // Remembered before `show()`: closing after a click-activation
-        // hands focus back here.
-        returnFocus_ = QApplication::focusWidget();
-        show();
-        qApp->installEventFilter(this);
+void EditorPopup::updateHtml(const QString &html)
+{
+    if (!isVisible() || html.isEmpty()) {
+        return;
     }
+    setContent(html);
+    placeAt(anchor_);
+}
+
+void EditorPopup::dismiss()
+{
+    forceHide();
 }
 
 // The semantic classes `lsp_core::hover_card::render` emits, mapped onto the
@@ -321,8 +349,17 @@ void EditorPopup::pin()
     }
 }
 
+void EditorPopup::endHoverCard()
+{
+    if (hoverCard_) {
+        hoverCard_ = false;
+        emit hoverCardEnded();
+    }
+}
+
 void EditorPopup::forceHide()
 {
+    endHoverCard();
     pinned_ = false;
     closeTimer_.stop();
     qApp->removeEventFilter(this);
@@ -375,6 +412,11 @@ bool EditorPopup::eventFilter(QObject *watched, QEvent *event)
 void showEditorPopup(const QPoint &globalPos, const QString &html)
 {
     EditorPopup::instance().showAt(globalPos, html);
+}
+
+void dismissEditorPopup()
+{
+    EditorPopup::instance().dismiss();
 }
 
 void hideEditorPopup()

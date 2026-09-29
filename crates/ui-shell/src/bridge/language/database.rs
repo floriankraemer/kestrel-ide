@@ -417,16 +417,14 @@ impl ffi::LanguageService {
     /// "Format SQL" over the statement at the caret, and "Go to DDL" for
     /// the identifier under it. Short-circuits before the language-server
     /// path exactly like `container_intentions` — SQL has no server in
-    /// this codebase.
+    /// this codebase. `None` when the file has no database attached.
     pub(crate) fn database_intentions(
-        mut self: Pin<&mut Self>,
+        &self,
         path: &str,
         line: u32,
         character: u32,
-    ) -> bool {
-        let Some(source_id) = self.database.attachment_for(path) else {
-            return false;
-        };
+    ) -> Option<Vec<lsp_core::Intention>> {
+        let source_id = self.database.attachment_for(path)?;
         let content = self
             .session
             .borrow()
@@ -453,11 +451,7 @@ impl ffi::LanguageService {
                 preferred: false,
             });
         }
-        self.intentions_tracker.borrow_mut().begin();
-        *self.intentions.borrow_mut() = intentions;
-        self.intentions_language.borrow_mut().clear();
-        self.as_mut().intentions_ready();
-        true
+        Some(intentions)
     }
 
     /// The `database.goToDdl` branch of `applyIntention`: fetches the

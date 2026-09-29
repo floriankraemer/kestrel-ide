@@ -427,64 +427,33 @@ fn render_doc_html(markdown: &str) -> String {
     markdown_preview::render(markdown, &markdown_preview::RenderOptions::default()).html
 }
 
-/// R3: a hover answer as HTML, replacing `lsp_core::to_tooltip_html`'s old
-/// mini Markdown renderer (bold, fences and rules only) with the real one
-/// this crate already has for completion documentation — lists, links and
-/// tables now render instead of showing as raw source. A plaintext hover
-/// still goes through `to_tooltip_html`, which is source code (or, for the
-/// index-declaration fallback, a bare signature) rather than prose and must
-/// not have its punctuation reinterpreted as Markdown.
-fn render_hover_html(hover: &lsp_core::HoverText) -> String {
-    if hover.markdown {
-        render_doc_html(&hover.value)
-    } else {
-        lsp_core::to_tooltip_html(hover)
-    }
-}
-
-/// R3: `hoverAt`'s composed popup — the hover HTML (if the server or the
-/// index answered) followed by every diagnostic covering the position, each
-/// as its severity and source. A tested, Qt-free function despite living in
-/// a bridge module (`convert.rs`'s tests already use this shape): it takes
-/// and returns plain types, so this is exercised without a Qt runtime.
-/// `None`/empty in both arguments never happens at the one call site —
-/// `hover_at` falls back to the index instead — but is handled here as
-/// "nothing to show" rather than asserted against, so a future caller with
-/// a genuinely empty answer degrades rather than panics.
-fn compose_hover_html(
-    hover_html: Option<&str>,
+/// The hover card for `hoverAt`: the server's answer (signature lifted out
+/// of a Markdown hover, prose rendered to HTML) plus every diagnostic
+/// covering the position. Composition and rendering are `lsp_core::hover_card`
+/// (ADR-0021 escaping included); this only feeds it the Markdown engine that
+/// lives on this side of the layering.
+fn build_hover_card(
+    hover: Option<&lsp_core::HoverText>,
     diagnostics: &[diagnostics_core::DiagnosticRow],
-) -> String {
-    let mut sections: Vec<String> = Vec::new();
-    if let Some(html) = hover_html {
-        if !html.is_empty() {
-            sections.push(html.to_string());
-        }
-    }
-    for diagnostic in diagnostics {
-        let severity = match diagnostic.severity {
-            diagnostics_core::Severity::Error => "Error",
-            diagnostics_core::Severity::Warning => "Warning",
-            diagnostics_core::Severity::Information => "Info",
-            diagnostics_core::Severity::Hint => "Hint",
-        };
-        let source = if diagnostic.source.is_empty() {
-            String::new()
+) -> lsp_core::hover_card::HoverCard {
+    let mut card = lsp_core::hover_card::HoverCard {
+        problems: diagnostics
+            .iter()
+            .map(lsp_core::hover_card::CardProblem::from_row)
+            .collect(),
+        ..Default::default()
+    };
+    if let Some(hover) = hover {
+        let doc = if hover.markdown {
+            let (signature, body) = lsp_core::hover_card::split_signature(&hover.value);
+            card.signature = signature;
+            render_doc_html(&body)
         } else {
-            format!(" ({})", html_escape(&diagnostic.source))
+            lsp_core::to_tooltip_html(hover)
         };
-        sections.push(format!(
-            "<b>{severity}{source}:</b> {}",
-            html_escape(&diagnostic.message)
-        ));
+        card.doc_html = Some(doc);
     }
-    sections.join("<hr>")
-}
-
-fn html_escape(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+    card
 }
 
 /// One candidate for [`LanguageServiceRust::fallback_completion`]: a bare
@@ -911,7 +880,7 @@ impl ffi::LanguageService {
             if diagnostics.is_empty() {
                 self.as_mut().hover_fallback();
             } else {
-                let html = compose_hover_html(None, &diagnostics);
+                let html = lsp_core::hover_card::render(&build_hover_card(None, &diagnostics));
                 self.as_mut().hover_ready(QString::from(html.as_str()));
             }
             return;
@@ -920,7 +889,7 @@ impl ffi::LanguageService {
         let queued = self.push_job(move |manager| {
             let outcome = lsp_core::hover_outcome(Some(manager.hover(&uri, line, character)));
             let hover_html = match outcome {
-                lsp_core::HoverOutcome::Lsp(hover) => Some(render_hover_html(&hover)),
+                lsp_core::HoverOutcome::Lsp(hover) => Some(hover),
                 lsp_core::HoverOutcome::Index => None,
             };
             let uri = uri.clone();
@@ -936,7 +905,10 @@ impl ffi::LanguageService {
                     service.as_mut().hover_fallback();
                     return;
                 }
-                let html = compose_hover_html(hover_html.as_deref(), &diagnostics);
+                let html = lsp_core::hover_card::render(&build_hover_card(
+                    hover_html.as_ref(),
+                    &diagnostics,
+                ));
                 service.as_mut().hover_ready(QString::from(html.as_str()));
             });
         });
@@ -1599,82 +1571,48 @@ impl ffi::LanguageService {
 
 #[cfg(test)]
 mod hover_popup_tests {
-    use super::{compose_hover_html, html_escape};
+    use super::build_hover_card;
     use diagnostics_core::{Diagnostic, DiagnosticStore, Position, Range, Severity};
 
-    fn diagnostic_at(line: u32, character: u32, severity: Severity, message: &str) -> Diagnostic {
-        Diagnostic {
-            range: Range {
-                start: Position { line, character },
-                end: None,
-            },
-            severity,
-            message: message.to_string(),
-            source: "rustc".to_string(),
-            raw: None,
-        }
-    }
-
     #[test]
-    fn hover_alone_is_shown_with_no_diagnostics_section() {
-        assert_eq!(
-            compose_hover_html(Some("<b>fn main()</b>"), &[]),
-            "<b>fn main()</b>"
-        );
-    }
-
-    #[test]
-    fn diagnostics_are_appended_after_the_hover_separated_by_a_rule() {
+    fn card_combines_signature_docs_and_problems() {
         let mut store = DiagnosticStore::new();
         store.replace(
             "lsp:rust",
             "file:///a.rs",
-            vec![diagnostic_at(0, 0, Severity::Error, "mismatched types")],
+            vec![Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: 0,
+                        character: 0,
+                    },
+                    end: None,
+                },
+                severity: Severity::Error,
+                message: "mismatched types".into(),
+                source: "rustc".into(),
+                raw: Some(serde_json::json!({"code": "E0308"})),
+            }],
         );
         let rows = store.at("file:///a.rs", 0, 0);
-        assert_eq!(
-            compose_hover_html(Some("<b>fn main()</b>"), &rows),
-            "<b>fn main()</b><hr><b>Error (rustc):</b> mismatched types"
-        );
+        let hover = lsp_core::HoverText {
+            value: "```rust\nfn main()\n```\n\nEntry point.".into(),
+            markdown: true,
+        };
+        let card = build_hover_card(Some(&hover), &rows);
+        assert_eq!(card.signature.as_deref(), Some("fn main()"));
+        assert!(card.doc_html.unwrap().contains("Entry point."));
+        assert_eq!(card.problems[0].code, "E0308");
     }
 
     #[test]
-    fn no_hover_shows_only_the_diagnostics() {
-        let mut store = DiagnosticStore::new();
-        store.replace(
-            "lsp:rust",
-            "file:///a.rs",
-            vec![diagnostic_at(0, 0, Severity::Warning, "unused import")],
-        );
-        let rows = store.at("file:///a.rs", 0, 0);
-        assert_eq!(
-            compose_hover_html(None, &rows),
-            "<b>Warning (rustc):</b> unused import"
-        );
-    }
-
-    #[test]
-    fn a_diagnostics_message_is_html_escaped() {
-        let mut store = DiagnosticStore::new();
-        store.replace(
-            "lsp:rust",
-            "file:///a.rs",
-            vec![diagnostic_at(
-                0,
-                0,
-                Severity::Error,
-                "expected `T<U>` & got `V`",
-            )],
-        );
-        let rows = store.at("file:///a.rs", 0, 0);
-        assert_eq!(
-            compose_hover_html(None, &rows),
-            "<b>Error (rustc):</b> expected `T&lt;U&gt;` &amp; got `V`"
-        );
-    }
-
-    #[test]
-    fn escape_covers_the_three_reinterpretable_characters() {
-        assert_eq!(html_escape("<a & b>"), "&lt;a &amp; b&gt;");
+    fn plaintext_hover_is_not_split_or_reinterpreted() {
+        let hover = lsp_core::HoverText {
+            value: "a *b* ```c```".into(),
+            markdown: false,
+        };
+        let card = build_hover_card(Some(&hover), &[]);
+        assert_eq!(card.signature, None);
+        assert_eq!(card.doc_html.as_deref(), Some("<pre>a *b* ```c```</pre>"));
     }
 }

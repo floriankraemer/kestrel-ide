@@ -84,6 +84,7 @@ All plan documents are complete except the plugin-host-and-icon-themes plan, the
 - [Search Everywhere plan](architecture/search-everywhere-plan.md) — Search Everywhere popup and Search Results dock.
 - [Code navigation plan](architecture/code-navigation-plan.md) — Go to Declaration, Find Usages, Go to Implementation, jump history.
 - [Language platform plan](architecture/language-platform-plan.md) — extensible tree-sitter languages, per-language theming, runtime grammars, LSP.
+- [Hover card plan](architecture/hover-card-plan.md) — JetBrains-style interactive hover card: Rust-rendered problems, fixes, signature, docs and source footer, with a themed popup that the pointer can enter.
 - [Refactoring plan](architecture/refactoring-plan.md) — rename, extract via code actions, signature on hover.
 - [Index performance plan](architecture/index-performance-plan.md) — faster project index build and a status-bar indexing indicator.
 - [Large files and the binary viewer plan](architecture/large-files-and-binary-viewer-plan.md) — no-wrap default, highlighting size ceilings, O(1) fold lookup, read-only hex view for binary files.

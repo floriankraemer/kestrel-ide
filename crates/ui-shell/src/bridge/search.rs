@@ -612,12 +612,11 @@ impl ffi::SearchModel {
             else {
                 return;
             };
-            // Rendered through the tooltip path the server answers use, as
-            // plain text: a declaration is source, not Markdown, and must
-            // not have its punctuation reinterpreted.
-            let html = lsp_core::to_tooltip_html(&lsp_core::HoverText {
-                value: signature,
-                markdown: false,
+            // A declaration is source, not Markdown: it goes in the card's
+            // signature section, escaped verbatim.
+            let html = lsp_core::hover_card::render(&lsp_core::hover_card::HoverCard {
+                signature: Some(signature),
+                ..Default::default()
             });
             let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
                 if model.hover.borrow().accept(token) {

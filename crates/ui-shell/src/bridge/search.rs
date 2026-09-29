@@ -601,9 +601,15 @@ impl ffi::SearchModel {
                 return;
             };
             // A declaration is source, not Markdown: it goes in the card's
-            // signature section, escaped verbatim.
+            // signature section, coloured by the declaring file's grammar
+            // (plain escaped when it has none).
+            let signature_html = lsp_core::hover_card::signature_language_for_path(
+                &found.target.path,
+            )
+            .and_then(|language| super::language::highlight_signature(&signature, &language));
             let html = super::language::render_card(&lsp_core::hover_card::HoverCard {
                 signature: Some(signature),
+                signature_html,
                 source: found.location.clone(),
                 ..Default::default()
             });

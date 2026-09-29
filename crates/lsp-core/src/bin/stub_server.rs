@@ -325,6 +325,10 @@ fn main() {
                     }
                     1 => json!({"language": "rust", "value": "fn main()"}),
                     2 => json!(["plain hover", {"language": "rust", "value": "fn main()"}]),
+                    // The fixture's `greeting::greet(` call line (H4's footer).
+                    3 => {
+                        json!({"kind": "markdown", "value": "```rust\nfn greet(name: &str) -> String\n```\nGreets `name`."})
+                    }
                     _ => Value::Null,
                 };
                 let result = if contents.is_null() {

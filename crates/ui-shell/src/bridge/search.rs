@@ -592,23 +592,11 @@ impl ffi::SearchModel {
         let qt_thread = self.as_mut().qt_thread();
         let slot = std::sync::Arc::clone(&self.index);
         std::thread::spawn(move || {
-            let guard = slot.read().unwrap();
-            // Without a built index the buffer alone still resolves a
-            // same-file declaration, which is most of what a hover asks
-            // about — the same reasoning `resolve_declaration` uses.
-            let resolution = match guard.ready() {
-                Some(index) => index.resolve_declaration(&path, &content, byte_offset).ok(),
-                None => Some(index_core::resolve_declaration_in_buffer(
-                    &path,
-                    &content,
-                    byte_offset,
-                )),
-            };
-            drop(guard);
-            let Some(target) = resolution.and_then(|r| r.candidates.into_iter().next()) else {
+            let Some(found) = resolve_hover_declaration(&slot, &path, &content, byte_offset) else {
                 return;
             };
-            let Some(signature) = index_core::declaration_signature(&target.path, target.line)
+            let Some(signature) =
+                index_core::declaration_signature(&found.target.path, found.target.line)
             else {
                 return;
             };
@@ -616,13 +604,57 @@ impl ffi::SearchModel {
             // signature section, escaped verbatim.
             let html = super::language::render_card(&lsp_core::hover_card::HoverCard {
                 signature: Some(signature),
+                source: found.location.clone(),
                 ..Default::default()
             });
+            let target_path = found.target.path.to_string_lossy().into_owned();
+            // Empty path = no footer, so nothing for the view to jump to.
+            let (target_line, target_column) = found
+                .location
+                .as_ref()
+                .map_or((0, 0), |l| (l.line, l.column));
             let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
                 if model.hover.borrow().accept(token) {
-                    model
-                        .as_mut()
-                        .hover_signature_ready(QString::from(html.as_str()));
+                    model.as_mut().hover_signature_ready(
+                        QString::from(html.as_str()),
+                        QString::from(target_path.as_str()),
+                        target_line,
+                        target_column,
+                    );
+                }
+            });
+        });
+    }
+
+    /// H4: the "Source:" footer for the LSP-built hover card, resolved
+    /// off the Qt thread so the card is never held up by it.
+    pub fn hover_source(
+        mut self: Pin<&mut Self>,
+        path: &QString,
+        content: &QString,
+        byte_offset: usize,
+    ) {
+        let path = std::path::PathBuf::from(path.to_string());
+        let content = content.to_string();
+        let token = self.hover.borrow_mut().begin();
+        let qt_thread = self.as_mut().qt_thread();
+        let slot = std::sync::Arc::clone(&self.index);
+        std::thread::spawn(move || {
+            let Some(found) = resolve_hover_declaration(&slot, &path, &content, byte_offset) else {
+                return;
+            };
+            let Some(location) = found.location else {
+                return;
+            };
+            let target_path = found.target.path.to_string_lossy().into_owned();
+            let _ = qt_thread.queue(move |mut model: Pin<&mut Self>| {
+                if model.hover.borrow().accept(token) {
+                    model.as_mut().hover_source_ready(
+                        QString::from(location.path.as_str()),
+                        location.line,
+                        location.column,
+                        QString::from(target_path.as_str()),
+                    );
                 }
             });
         });
@@ -1375,4 +1407,49 @@ impl ffi::SearchModel {
             }
         });
     }
+}
+
+/// A resolved hover target and its card footer (`None` when the target is
+/// the hovered line itself).
+struct HoverDeclaration {
+    target: index_core::SymbolMatch,
+    location: Option<lsp_core::hover_card::CardLocation>,
+}
+
+/// The first declaration candidate for the symbol at `byte_offset`.
+fn resolve_hover_declaration(
+    slot: &mcp_server::IndexHandle,
+    path: &std::path::Path,
+    content: &str,
+    byte_offset: usize,
+) -> Option<HoverDeclaration> {
+    let guard = slot.read().unwrap();
+    // Without a built index the buffer alone still resolves a same-file
+    // declaration, which is most of what a hover asks about — the same
+    // reasoning `resolve_declaration` uses.
+    let (resolution, root) = match guard.ready() {
+        Some(index) => (
+            index.resolve_declaration(path, content, byte_offset).ok(),
+            Some(index.root().to_path_buf()),
+        ),
+        None => (
+            Some(index_core::resolve_declaration_in_buffer(
+                path,
+                content,
+                byte_offset,
+            )),
+            None,
+        ),
+    };
+    drop(guard);
+    let target = resolution?.candidates.into_iter().next()?;
+    let location = lsp_core::hover_card::source_location(
+        root.as_deref(),
+        path,
+        lsp_core::hover_card::line_at(content, byte_offset),
+        &target.path,
+        target.line as u32,
+        target.col as u32,
+    );
+    Some(HoverDeclaration { target, location })
 }

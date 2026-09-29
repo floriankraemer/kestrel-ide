@@ -128,6 +128,9 @@ impl HoverFixes {
 pub struct CardLocation {
     pub path: String,
     pub line: u32,
+    /// Byte column of the declaration's name, where a jump lands; the card
+    /// itself shows only `path:line`.
+    pub column: u32,
 }
 
 /// The card's fixed words. The UI layer owns translation, so it hands the
@@ -172,6 +175,41 @@ pub struct HoverCard {
     /// engine (which lives beside `markdown-preview`, not in this crate).
     pub doc_html: Option<String>,
     pub source: Option<CardLocation>,
+}
+
+/// The card's "Source:" footer for a declaration at `target_line` (1-based)
+/// of `target`, shown project-relative when a `root` is known. `None` when
+/// the declaration is the hovered line itself: a footer pointing at where
+/// the pointer already is says nothing.
+pub fn source_location(
+    root: Option<&std::path::Path>,
+    hovered: &std::path::Path,
+    hovered_line: u32,
+    target: &std::path::Path,
+    target_line: u32,
+    target_column: u32,
+) -> Option<CardLocation> {
+    if hovered == target && hovered_line == target_line {
+        return None;
+    }
+    let shown = root
+        .and_then(|root| target.strip_prefix(root).ok())
+        .unwrap_or(target);
+    Some(CardLocation {
+        path: shown.to_string_lossy().into_owned(),
+        line: target_line,
+        column: target_column,
+    })
+}
+
+/// The 1-based line holding `byte_offset` of `content`.
+pub fn line_at(content: &str, byte_offset: usize) -> u32 {
+    let end = byte_offset.min(content.len());
+    content.as_bytes()[..end]
+        .iter()
+        .filter(|b| **b == b'\n')
+        .count() as u32
+        + 1
 }
 
 /// Split a Markdown hover into its signature and the remaining Markdown.
@@ -335,6 +373,51 @@ fn escape(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn source_location_is_project_relative_when_inside_the_root() {
+        let got = source_location(
+            Some(Path::new("/p")),
+            Path::new("/p/a.rs"),
+            1,
+            Path::new("/p/src/b.rs"),
+            7,
+            4,
+        );
+        assert_eq!(
+            got,
+            Some(CardLocation {
+                path: "src/b.rs".into(),
+                line: 7,
+                column: 4
+            })
+        );
+    }
+
+    #[test]
+    fn source_location_keeps_the_full_path_outside_the_root_or_without_one() {
+        let target = Path::new("/elsewhere/b.rs");
+        for root in [Some(Path::new("/p")), None] {
+            let got = source_location(root, Path::new("/p/a.rs"), 1, target, 2, 0).unwrap();
+            assert_eq!(got.path, "/elsewhere/b.rs");
+        }
+    }
+
+    #[test]
+    fn source_location_is_omitted_for_the_hovered_line_itself() {
+        let a = Path::new("/p/a.rs");
+        assert_eq!(source_location(None, a, 3, a, 3, 0), None);
+        assert!(source_location(None, a, 3, a, 4, 0).is_some());
+    }
+
+    #[test]
+    fn line_at_counts_newlines_before_the_offset() {
+        assert_eq!(line_at("a\nb\nc", 0), 1);
+        assert_eq!(line_at("a\nb\nc", 2), 2);
+        assert_eq!(line_at("a\nb\nc", 99), 3);
+    }
+
     use super::*;
     use crate::code_action::CodeActionItem;
     use serde_json::json;
@@ -435,6 +518,7 @@ mod tests {
             source: Some(CardLocation {
                 path: "/a.rs".into(),
                 line: 3,
+                column: 0,
             }),
         };
         let html = render(&card, &CardLabels::default());
@@ -466,6 +550,7 @@ mod tests {
             source: Some(CardLocation {
                 path: "/<x>.rs".into(),
                 line: 1,
+                column: 0,
             }),
         };
         let html = render(&card, &CardLabels::default());
@@ -632,6 +717,7 @@ mod tests {
                 source: Some(CardLocation {
                     path: "/a".into(),
                     line: 1,
+                    column: 0,
                 }),
                 ..HoverCard::default()
             },

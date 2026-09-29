@@ -25,6 +25,8 @@ pub(crate) struct HoverFixes {
     card: HoverCard,
     fixes: lsp_core::hover_card::HoverFixes,
     language: String,
+    /// A card is on screen; a late footer for none must not repaint anything.
+    active: bool,
 }
 
 impl ffi::LanguageService {
@@ -47,6 +49,7 @@ impl ffi::LanguageService {
             state.fixes.show(token, rows.len());
             state.language = language_id.clone().unwrap_or_default();
             state.card = card;
+            state.active = true;
         }
         let html = self.rendered_card();
         self.as_mut().hover_ready(html);
@@ -61,6 +64,23 @@ impl ffi::LanguageService {
     /// content): its fixes must not be applicable any more.
     pub fn clear_hover_fixes(self: Pin<&mut Self>) {
         *self.hover_fixes.borrow_mut() = HoverFixes::default();
+    }
+
+    /// H4: the declaration behind the shown card arrived; add its footer.
+    pub fn set_hover_source(self: Pin<&mut Self>, display: &QString, line: u32, column: u32) {
+        {
+            let mut state = self.hover_fixes.borrow_mut();
+            if !state.active {
+                return;
+            }
+            state.card.source = Some(lsp_core::hover_card::CardLocation {
+                path: display.to_string(),
+                line,
+                column,
+            });
+        }
+        let html = self.rendered_card();
+        self.hover_card_updated(html);
     }
 
     fn rendered_card(&self) -> QString {

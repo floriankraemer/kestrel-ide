@@ -3891,7 +3891,37 @@ mod ffi {
         /// Tooltip HTML for the most recent, still-current request.
         #[qsignal]
         #[cxx_name = "hoverSignatureReady"]
-        fn hover_signature_ready(self: Pin<&mut SearchModel>, html: QString);
+        fn hover_signature_ready(
+            self: Pin<&mut SearchModel>,
+            html: QString,
+            source_path: QString,
+            source_line: u32,
+            source_column: u32,
+        );
+
+        /// H4 — the declaration behind the LSP-built hover card, for its
+        /// "Source:" footer. Answers on `hoverSourceReady`, and on nothing
+        /// when unresolved, the pointer moved on, or the declaration is the
+        /// hovered line.
+        #[qinvokable]
+        #[cxx_name = "hoverSource"]
+        fn hover_source(
+            self: Pin<&mut SearchModel>,
+            path: &QString,
+            content: &QString,
+            byte_offset: usize,
+        );
+
+        /// `display` is the project-relative path; `target_path` the file to open.
+        #[qsignal]
+        #[cxx_name = "hoverSourceReady"]
+        fn hover_source_ready(
+            self: Pin<&mut SearchModel>,
+            display: QString,
+            line: u32,
+            column: u32,
+            target_path: QString,
+        );
 
         /// RF9 — work out what renaming the symbol under the caret would
         /// change, with no language server involved.
@@ -4941,6 +4971,17 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "clearHoverFixes"]
         fn clear_hover_fixes(self: Pin<&mut LanguageService>);
+
+        /// H4: add the "Source:" footer (`display` is project-relative) to the
+        /// shown card. A no-op when no card is up.
+        #[qinvokable]
+        #[cxx_name = "setHoverSource"]
+        fn set_hover_source(
+            self: Pin<&mut LanguageService>,
+            display: &QString,
+            line: u32,
+            column: u32,
+        );
 
         /// H3: apply the primary fix of hover-card problem `problem`.
         #[qinvokable]

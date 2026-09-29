@@ -372,6 +372,12 @@ fn main() {
                     7 => {
                         json!({"kind": "markdown", "value": "```rust\nfn empty_with_a_deliberately_very_long_signature(alpha: HashMap<String, Vec<u8>>, beta: Option<Box<dyn Fn(u32) -> Result<(), String>>>) -> impl Iterator<Item = (String, Vec<u8>)>\n```\nLong."})
                     }
+                    // The fixture's closing `}` line: a doc far taller than any
+                    // card, so the card scrolls.
+                    5 => {
+                        let doc: Vec<String> = (1..=60).map(|n| format!("Doc line {n}.")).collect();
+                        json!({"kind": "markdown", "value": format!("```rust\nfn tall()\n```\n{}", doc.join("\n\n"))})
+                    }
                     _ => Value::Null,
                 };
                 let result = if contents.is_null() {

@@ -49,6 +49,23 @@ pub(crate) fn open_search_popup(ide: &Ide, shortcut: &str) -> Mark {
     ide.mark()
 }
 
+/// Wait for the refactor preview to be up and give it the input focus, so a
+/// following `Return`/`Escape` reaches the dialog. Returns its
+/// `preview_rows` marker. Keying on `preview_rows` alone raced the dialog
+/// being shown and focused, and the key was dropped (#346).
+pub(crate) fn focus_refactor_preview(ide: &Ide, mark: Mark) -> Value {
+    let rows = ide.wait_for_ev(mark, "preview_rows");
+    let shown = ide.wait_for_event(mark, "the refactor preview to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "refactor_preview"
+    });
+    ide.focus_window(
+        shown["window"]
+            .as_str()
+            .expect("dialog_shown carries its window"),
+    );
+    rows
+}
+
 /// Type a query into an open search popup and take the top hit.
 pub(crate) fn accept_top_hit(ide: &Ide, mark: Mark, query: &str) {
     ide.type_text(query);

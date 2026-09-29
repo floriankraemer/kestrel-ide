@@ -9,6 +9,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSplitter>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -107,7 +108,18 @@ RefactorPreviewDialog::RefactorPreviewDialog(const QString &title,
     e2eMark(QStringLiteral("{\"ev\":\"preview_rows\",\"count\":%1,\"files\":%2}")
               .arg(rows.size())
               .arg(groups.size()));
-    e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"refactor_preview\"}"));
+    // #346: `dialog_shown` fires once `exec()`'s modal loop is running and
+    // the dialog is mapped, the convention `settings_dialog.cpp` explains —
+    // marked from this constructor it came before the dialog existed on
+    // screen, and a flow's `Return` raced it. `window` is the X window id,
+    // because under bare Xvfb nothing hands a new toplevel the input focus:
+    // a key sent while the main window still holds it is dropped by the
+    // modal block, so a flow has to focus this window itself.
+    QTimer::singleShot(0, this, [this]() {
+        e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"refactor_preview\","
+                                "\"window\":\"%1\"}")
+                  .arg(winId()));
+    });
 }
 
 void RefactorPreviewDialog::done(int result)

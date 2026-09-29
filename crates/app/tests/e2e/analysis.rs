@@ -191,13 +191,13 @@ fn e2e_analyzer_findings_appear_inline_and_in_problems() {
     });
 
     // Double-clicking the row navigates the already-open tab to line 10
-    // (1-based in the row, 0-based from `get_cursor_position`) — the
+    // (1-based in the row and from `get_cursor_position`) — the
     // canned finding's own line.
     let (rx, ry) = rect_centre(&row["rect"]);
     ide.double_click_at(rx, ry, 1);
     e2e::wait_for("the caret to land on the finding's line", || {
         let after = cursor(&mcp, tab_id);
-        (after != before && after.0 == 9).then_some(())
+        (after != before && after.0 == 10).then_some(())
     });
 
     // R4: F2 (`code.nextDiagnostic`) walks to this file's other finding
@@ -210,12 +210,12 @@ fn e2e_analyzer_findings_appear_inline_and_in_problems() {
     ide.focus_main();
     ide.key("F2");
     e2e::wait_for("F2 to land on the second diagnostic (line 20)", || {
-        (cursor(&mcp, tab_id).0 == 19).then_some(())
+        (cursor(&mcp, tab_id).0 == 20).then_some(())
     });
     ide.key("F2");
     e2e::wait_for(
         "a second F2 to wrap back to the first diagnostic (line 10)",
-        || (cursor(&mcp, tab_id).0 == 9).then_some(()),
+        || (cursor(&mcp, tab_id).0 == 10).then_some(()),
     );
 
     assert_eq!(ide.quit(), 0);

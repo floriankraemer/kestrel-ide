@@ -630,7 +630,7 @@ fn e2e_hover_source_footer_jumps_to_the_declaration() {
     let tab_id = tab["tab_id"].as_u64().expect("tab_id");
     // The caret lands on the declaration's name (the tab opens at 1:0, so the
     // column is what shows the jump happened).
-    let want = (declaration as u32, column as u32);
+    let want = (declaration as u32 + 1, column as u32); // 1-based line
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let got = crate::support::cursor(&s.mcp, tab_id);

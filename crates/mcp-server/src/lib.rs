@@ -34,6 +34,9 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+mod cursor;
+pub use cursor::CursorPosition;
+
 /// The MCP revision this server implements. A client that asks for a
 /// different one still gets told this one — the spec's prescribed answer
 /// for a version we don't speak.
@@ -60,13 +63,6 @@ pub struct BufferInfo {
 pub struct ProjectTreeEntry {
     pub path: String,
     pub is_dir: bool,
-}
-
-/// A tab's last-reported cursor position (M4's `get_cursor_position`).
-#[derive(Debug, Clone, Copy, Serialize)]
-pub struct CursorPosition {
-    pub line: u32,
-    pub column: u32,
 }
 
 /// Commands the MCP transport sends to the running editor. `mcp-server`

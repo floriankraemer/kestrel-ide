@@ -4,6 +4,8 @@
 
 #include <QWidget>
 
+class QBoxLayout;
+class QGridLayout;
 class QLabel;
 class QPushButton;
 
@@ -32,11 +34,21 @@ protected:
     void showEvent(QShowEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
+    // Width 0: the banner shrinks with the pane (text wraps, buttons drop
+    // below it) instead of reporting the row's natural width, which made
+    // ADS wrap the whole editor area in a horizontal scroll area.
+    QSize minimumSizeHint() const override;
+
 private:
     void refresh();
+    void reflow();
     void markGeometry();
 
     BuildToolsService *buildToolsService_;
+    QGridLayout *grid_;
+    QWidget *buttonBar_;
+    QBoxLayout *buttons_;
+    bool stacked_ = false;
     QLabel *label_;
     QPushButton *primaryButton_;
     QPushButton *secondaryButton_;

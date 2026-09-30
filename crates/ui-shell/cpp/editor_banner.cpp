@@ -2,7 +2,8 @@
 #include "e2e_mark.h"
 #include "theme.h"
 
-#include <QHBoxLayout>
+#include <QBoxLayout>
+#include <QGridLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -53,12 +54,24 @@ EditorBanner::EditorBanner(BuildToolsService *buildToolsService, QWidget *parent
     primaryButton_ = new QPushButton(this);
     secondaryButton_ = new QPushButton(this);
 
-    auto *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(12, 8, 12, 8);
-    layout->setSpacing(8);
-    layout->addWidget(label_, 1);
-    layout->addWidget(primaryButton_);
-    layout->addWidget(secondaryButton_);
+    label_->setWordWrap(true);
+    label_->setMinimumWidth(0);
+    label_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+
+    buttonBar_ = new QWidget(this);
+    buttons_ = new QBoxLayout(QBoxLayout::LeftToRight, buttonBar_);
+    buttons_->setContentsMargins(0, 0, 0, 0);
+    buttons_->setSpacing(8);
+    buttons_->addWidget(primaryButton_);
+    buttons_->addWidget(secondaryButton_);
+
+    grid_ = new QGridLayout(this);
+    grid_->setContentsMargins(12, 8, 12, 8);
+    grid_->setSpacing(8);
+    grid_->setColumnStretch(0, 1);
+    // No layout-imposed minimum: `minimumSizeHint()` says how small we go.
+    grid_->setSizeConstraint(QLayout::SetNoConstraint);
+    reflow();
 
     connect(buildToolsService_, &BuildToolsService::bannerChanged, this, &EditorBanner::refresh);
     refresh();
@@ -109,8 +122,44 @@ void EditorBanner::refresh()
     case FfiBannerKind::None:
         break;
     }
+    reflow();
     setVisible(true);
     markGeometry();
+}
+
+QSize EditorBanner::minimumSizeHint() const
+{
+    return QSize(0, QWidget::minimumSizeHint().height());
+}
+
+// One row while the text and both buttons fit side by side; otherwise the
+// (wrapping) text takes the full width and the buttons sit right-aligned
+// beneath it.
+void EditorBanner::reflow()
+{
+    const QMargins margins = grid_->contentsMargins();
+    const int buttonsWide = primaryButton_->sizeHint().width() + buttons_->spacing()
+                            + secondaryButton_->sizeHint().width();
+    const int gutters = margins.left() + margins.right();
+    const int wide = gutters + grid_->spacing()
+                     + label_->fontMetrics().horizontalAdvance(label_->text()) + buttonsWide;
+    // Narrower than the two buttons side by side: stack those too.
+    buttons_->setDirection(width() < gutters + buttonsWide ? QBoxLayout::TopToBottom
+                                                           : QBoxLayout::LeftToRight);
+    const bool stack = width() < wide;
+    if (stack == stacked_ && grid_->count() > 0) {
+        return;
+    }
+    stacked_ = stack;
+    grid_->removeWidget(label_);
+    grid_->removeWidget(buttonBar_);
+    if (stack) {
+        grid_->addWidget(label_, 0, 0, 1, 2);
+        grid_->addWidget(buttonBar_, 1, 0, 1, 2, Qt::AlignRight);
+    } else {
+        grid_->addWidget(label_, 0, 0);
+        grid_->addWidget(buttonBar_, 0, 1);
+    }
 }
 
 void EditorBanner::showEvent(QShowEvent *event)
@@ -122,6 +171,7 @@ void EditorBanner::showEvent(QShowEvent *event)
 void EditorBanner::resizeEvent(QResizeEvent *event)
 {
     QWidget::resizeEvent(event);
+    reflow();
     markGeometry();
 }
 

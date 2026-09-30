@@ -127,6 +127,7 @@ private:
     // closing it hands the caret back to the editor.
     QPointer<QWidget> returnFocus_;
     bool pinned_ = false;
+    bool closing_ = false;
     QRect anchor_;
     QString html_;
     // Card size minus viewport size; see `fitToContent`. Defaults are the QSS

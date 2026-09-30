@@ -16,6 +16,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPixmap>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QTextBlock>
 #include <QScrollBar>
@@ -491,6 +492,14 @@ QString EditorPopup::e2eStateJson() const
 
 void EditorPopup::forceHide()
 {
+    // `hide()` of the active card sends WindowDeactivate while `isVisible()`
+    // is still true; `event()` then calls back in. That nested close must not
+    // repeat the marker, the focus return or `endHoverCard`.
+    if (closing_) {
+        return;
+    }
+    closing_ = true;
+    const auto done = qScopeGuard([this]() { closing_ = false; });
     if (isVisible()) {
         e2eMark("{\"ev\":\"hover_popup_hidden\"}");
     }

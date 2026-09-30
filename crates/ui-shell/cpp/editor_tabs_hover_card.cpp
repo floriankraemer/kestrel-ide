@@ -125,6 +125,9 @@ void EditorTabs::wireHoverSource(SearchModel *searchModel)
                 setHoverSource(sourcePath, sourceLine, sourceColumn);
                 showEditorPopupPinnable(hoverAnchor(), html, takeQuickDocPending());
                 EditorPopup::instance().setDeclarationEnabled(!sourcePath.isEmpty());
+                // E2E: the index-fallback card, observed like the LSP one.
+                e2eMark(QStringLiteral("{\"ev\":\"hover_popup_shown\",\"html\":%1,%2}")
+                          .arg(e2eJson(html), EditorPopup::instance().e2eStateJson()));
             });
     // The LSP-built card is shown at once; its "Source:" footer follows from
     // the index without holding it up.

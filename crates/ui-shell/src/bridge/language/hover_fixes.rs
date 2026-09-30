@@ -209,7 +209,7 @@ impl ffi::LanguageService {
 /// `code` coloured with the active editor theme's palette for `language`
 /// (the same resolution the editor and the Settings preview use). `None`
 /// for a language the highlighter does not know: the card then shows it plain.
-fn highlight_signature(code: &str, language: &str) -> Option<String> {
+pub(crate) fn highlight_signature(code: &str, language: &str) -> Option<String> {
     let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
     let palette = app_core::color_themes::build_palette(
         &plugin_host::registry(),

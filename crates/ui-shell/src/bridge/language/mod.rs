@@ -27,6 +27,7 @@ mod containers;
 mod database;
 mod hover_fixes;
 use hover_fixes::build_hover_card;
+pub(super) use hover_fixes::highlight_signature;
 mod lsp_surface;
 
 /// RF8: code actions, rename, formatting, and the pending-edit preview

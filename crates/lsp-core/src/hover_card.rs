@@ -263,6 +263,14 @@ pub fn signature_language(markdown: &str) -> Option<&str> {
     (!id.is_empty()).then_some(id)
 }
 
+/// The grammar id that colours a declaration lifted from `path` (the index
+/// fallback has no Markdown fence to read it from): the language registry's
+/// pick for the file, `None` for plain text.
+pub fn signature_language_for_path(path: &std::path::Path) -> Option<String> {
+    let language = syntax_core::language_for_path(path);
+    (language != syntax_core::Language::PLAIN_TEXT).then(|| language.id())
+}
+
 /// The fix the card offers inline: the first `preferred` enabled quick fix,
 /// else the first enabled quick fix. Disabled actions are never primary —
 /// they cannot be applied here.
@@ -783,6 +791,16 @@ mod tests {
         let html = render(&card, &CardLabels::default());
         assert!(html
             .contains("<pre class=\"signature\"><span style=\"color:#fff\">fn</span> f()</pre>"));
+    }
+
+    #[test]
+    fn signature_language_for_path_follows_the_registry() {
+        let rust = signature_language_for_path(std::path::Path::new("src/lib.rs"));
+        assert_eq!(rust.as_deref(), Some("rust"));
+        assert_eq!(
+            signature_language_for_path(std::path::Path::new("notes.unknownext")),
+            None
+        );
     }
 
     #[test]

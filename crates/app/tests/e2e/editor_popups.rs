@@ -105,6 +105,48 @@ fn e2e_hover_card_fills_in_the_fix_row_when_the_server_answers() {
 
 #[test]
 #[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_index_fallback_card_colours_its_signature() {
+    let name = "e2e_index_fallback_card_colours_its_signature";
+    let mut ide = Ide::launch(name, APP, fixture("tiny"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    // No `route_rust_at_stub`: no language server answers, so the card is
+    // the index declaration alone.
+    let mcp = ide.mcp();
+    wait_for_index(&mcp);
+    open_file(&ide, "main.rs");
+    ide.key("ctrl+Home");
+    for _ in 0..3 {
+        ide.key("Down");
+    }
+    ide.key("End");
+    for _ in 0..14 {
+        ide.key("Left");
+    }
+
+    let mark = ide.mark();
+    ide.key("ctrl+alt+q");
+    let shown = ide.wait_for_event(mark, "the fallback card to show", |e| {
+        e["ev"] == "hover_popup_shown"
+            || e["ev"] == "hover_popup_updated"
+                && e["html"]
+                    .as_str()
+                    .is_some_and(|h| h.contains("class=\"signature\""))
+    });
+    let html = shown["html"].as_str().expect("html");
+    let signature = html
+        .split("class=\"signature\"")
+        .nth(1)
+        .and_then(|rest| rest.split("</pre>").next())
+        .unwrap_or_else(|| panic!("the card has a signature: {html}"));
+    assert!(
+        signature.contains("<span style=\"color:#") && signature.contains("greet"),
+        "the index signature is syntax-coloured: {html}"
+    );
+    assert_eq!(ide.quit(), 0);
+}
+
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
 fn e2e_hover_card_gains_a_source_footer_from_the_index() {
     let name = "e2e_hover_card_gains_a_source_footer_from_the_index";
     let mut ide = Ide::launch(name, APP, fixture("tiny"));

@@ -530,6 +530,12 @@ fn e2e_hover_card_closes_on_escape_typing_click_outside_and_scroll() {
             .wait_for_event(mark, &format!("the card to close on {trigger}"), |e| {
                 e["ev"] == "hover_popup_hidden"
             });
+        s.ide.sync(&s.mcp);
+        assert_eq!(
+            s.ide.events_since_of(mark, "hover_popup_hidden").len(),
+            1,
+            "one close on {trigger} must publish one marker"
+        );
         // Back to the top for the next round.
         s.ide.focus_main();
         s.ide.key("ctrl+Home");
@@ -1045,6 +1051,12 @@ fn e2e_click_focuses_a_long_card_so_pgdn_scrolls_it_and_escape_returns_to_the_ed
     s.ide.key("Escape");
     s.ide.wait_for_ev(mark, "hover_popup_hidden");
     s.ide.key("z");
+    s.ide.sync(&s.mcp);
+    assert_eq!(
+        s.ide.events_since_of(mark, "hover_popup_hidden").len(),
+        1,
+        "one close must publish one marker"
+    );
     s.ide
         .wait_for_event(mark, "the typed key to dirty the tab", |e| {
             e["ev"] == "tab_dirty" && e["dirty"] == true

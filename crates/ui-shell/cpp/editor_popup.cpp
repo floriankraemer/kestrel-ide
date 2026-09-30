@@ -91,6 +91,12 @@ EditorPopup::EditorPopup(QWidget *parent)
     // Everything wraps (signatures are `pre-wrap`), so a horizontal bar could
     // only ever eat the card's last line.
     browser_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // E2E: the only way a headless flow sees the card scroll from the keyboard.
+    connect(browser_->verticalScrollBar(), &QScrollBar::valueChanged, this, [this]() {
+        if (isVisible()) {
+            e2eMark(QStringLiteral("{\"ev\":\"hover_popup_scrolled\",%1}").arg(e2eStateJson()));
+        }
+    });
     // `ide:` anchors are this card's own actions, never a destination.
     connect(browser_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
         if (url.scheme() == QLatin1String("ide")) {
@@ -471,7 +477,7 @@ QString EditorPopup::e2eStateJson() const
     }
     const QPoint menuAt = menuButton_->mapToGlobal(menuButton_->rect().center());
     return QStringLiteral("\"rect\":[%1,%2,%3,%4],\"links\":[%5],\"menu\":[%6,%7],"
-                        "\"anchor\":[%8,%9,%10,%11],\"doc\":[%12,%13,%14,%15]")
+                        "\"anchor\":[%8,%9,%10,%11],\"doc\":[%12,%13,%14,%15],\"scroll\":%16")
       .arg(x()).arg(y()).arg(width()).arg(height())
       .arg(links.join(QLatin1Char(',')))
       .arg(menuAt.x()).arg(menuAt.y())
@@ -479,7 +485,8 @@ QString EditorPopup::e2eStateJson() const
       .arg(static_cast<int>(browser_->document()->size().width()))
       .arg(static_cast<int>(browser_->document()->size().height()))
       .arg(browser_->viewport()->width())
-      .arg(browser_->viewport()->height());
+      .arg(browser_->viewport()->height())
+      .arg(browser_->verticalScrollBar()->value());
 }
 
 void EditorPopup::forceHide()

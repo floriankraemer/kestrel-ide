@@ -974,3 +974,91 @@ fn e2e_hover_settings_entry_of_the_overflow_menu_opens_the_settings() {
     s.ide.focus_main();
     assert_eq!(s.ide.quit(), 0);
 }
+
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_hover_card_fixed_labels_are_german_under_the_de_locale() {
+    let mut s = session(
+        "e2e_hover_card_fixed_labels_are_german_under_the_de_locale",
+        &[("STUB_LSP_GREET_DIAGNOSTIC", "1")],
+        |settings| settings.ui_locale = "de".to_string(),
+    );
+    put_caret_in_greet(&s.ide);
+    let mark = s.ide.mark();
+    s.ide.key("ctrl+alt+q");
+    let full = s
+        .ide
+        .wait_for_event(mark, "the fix row and the source footer", |e| {
+            e["ev"] == "hover_popup_updated"
+                && has_fix_row(e)
+                && e["html"].as_str().is_some_and(|h| h.contains("Quelle:"))
+        });
+    let html = full["html"].as_str().unwrap();
+    for german in ["Weitere Aktionen", "Quelle:", "Warnung"] {
+        assert!(html.contains(german), "`{german}` missing from {html}");
+    }
+    for english in ["More actions", "Source:", "Warning"] {
+        assert!(!html.contains(english), "`{english}` left in {html}");
+    }
+    s.ide.focus_main();
+    assert_eq!(s.ide.quit(), 0);
+}
+
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_click_focuses_a_long_card_so_pgdn_scrolls_it_and_escape_returns_to_the_editor() {
+    let mut s = session(
+        "e2e_click_focuses_a_long_card_so_pgdn_scrolls_it_and_escape_returns_to_the_editor",
+        &[],
+        |_| {},
+    );
+    // Line 6 (the closing `}`): the stub answers with a doc taller than the cap.
+    s.ide.key("ctrl+Home");
+    for _ in 0..5 {
+        s.ide.key("Down");
+    }
+    s.ide.key("Right");
+    let mark = s.ide.mark();
+    s.ide.key("ctrl+alt+q");
+    let shown = s
+        .ide
+        .wait_for_event(mark, "the card", |e| e["ev"] == "hover_popup_shown");
+    let doc = ints(&shown["doc"]);
+    assert!(
+        doc[1] > doc[3],
+        "the document must overflow the card: {doc:?}"
+    );
+    assert_eq!(shown["scroll"], 0);
+
+    // Focus is what the click gives: PgDn scrolls only a focused card.
+    let (x, y) = rect_centre(&shown["rect"]);
+    s.ide.click_at(x, y, 1);
+    let mark = s.ide.mark();
+    s.ide.key("Next");
+    let scrolled = s.ide.wait_for_event(mark, "the card to scroll", |e| {
+        e["ev"] == "hover_popup_scrolled"
+    });
+    assert!(scrolled["scroll"].as_i64().unwrap() > 0, "{scrolled}");
+
+    // Escape closes the card and the editor has the keyboard again.
+    let mark = s.ide.mark();
+    s.ide.key("Escape");
+    s.ide.wait_for_ev(mark, "hover_popup_hidden");
+    s.ide.key("z");
+    s.ide
+        .wait_for_event(mark, "the typed key to dirty the tab", |e| {
+            e["ev"] == "tab_dirty" && e["dirty"] == true
+        });
+    // Without a window manager Ctrl+S needs the X focus put back (`focus_main`).
+    s.ide.focus_main();
+    s.ide.key("ctrl+s");
+    s.ide.wait_for_event(mark, "the tab to be saved", |e| {
+        e["ev"] == "tab_dirty" && e["dirty"] == false
+    });
+    s.ide.sync(&s.mcp);
+    assert!(
+        buffer(&s.mcp, s.tab_id).contains("}z"),
+        "the key typed after Escape reached the editor"
+    );
+    assert_eq!(s.ide.quit(), 0);
+}

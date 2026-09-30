@@ -874,7 +874,7 @@ void buildMainWindow(AppSettings *appSettings,
       buildToolsEditor,
       uiFontTargets,
       central.terminalPanel,
-      runConfigEditor, containerService, treeModel,
+      runConfigEditor, containerService, treeModel, central.buildToolsPanel,
     };
     QObject::connect(preferencesAction, &QAction::triggered, window, [window, settingsContext, appSettings]() { appSettings->setSettingsScope(QStringLiteral("global")); showSettingsDialog(window, settingsContext); });
     // H6: the hover card's ⋮ menu.

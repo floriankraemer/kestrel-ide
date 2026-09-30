@@ -157,6 +157,13 @@ impl IconPack {
         self.for_appearance(&self.default_file, appearance)
     }
 
+    /// One icon by its id, with the light-variant substitution applied — for
+    /// art no file or folder name reaches. An id the pack has no asset for
+    /// is the renderer's to fall back from (to the default file icon).
+    pub fn icon_by_id<'a>(&'a self, icon_id: &'a str, appearance: Appearance) -> &'a str {
+        self.for_appearance(icon_id, appearance)
+    }
+
     /// Where an icon's SVG lives, relative to `pack.toml`.
     pub fn asset_path(&self, icon_id: &str) -> PathBuf {
         PathBuf::from(ICONS_DIR).join(format!("{icon_id}.svg"))

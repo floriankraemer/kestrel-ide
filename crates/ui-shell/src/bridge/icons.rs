@@ -64,6 +64,82 @@ impl ffi::IconProvider {
         }
     }
 
+    /// The icon key for a Build Tools row: the rule is
+    /// `app_core::build_tools_icons::row_icon`, this only translates the
+    /// enums and asks the shared service.
+    pub fn icon_key_for_build_tool_row(
+        &self,
+        kind: ffi::FfiBuildToolNodeKind,
+        tool: &QString,
+        source_role: ffi::FfiBuildToolSourceRole,
+        group_kind: ffi::FfiBuildToolGroupKind,
+    ) -> QString {
+        use app_core::build_tools_tree::FolderRole;
+        use jvm_build_core::view::NodeKind;
+        let kind = match kind {
+            ffi::FfiBuildToolNodeKind::ToolRoot => NodeKind::ToolRoot,
+            ffi::FfiBuildToolNodeKind::Group => NodeKind::Group,
+            ffi::FfiBuildToolNodeKind::Task => NodeKind::Task,
+            ffi::FfiBuildToolNodeKind::Module => NodeKind::Module,
+            ffi::FfiBuildToolNodeKind::SourceRoot => NodeKind::SourceRoot,
+            ffi::FfiBuildToolNodeKind::Dependency => NodeKind::Dependency,
+            ffi::FfiBuildToolNodeKind::Profile => NodeKind::Profile,
+            ffi::FfiBuildToolNodeKind::Plugin => NodeKind::Plugin,
+            ffi::FfiBuildToolNodeKind::Goal => NodeKind::Goal,
+            _ => return QString::default(),
+        };
+        let role = match source_role {
+            ffi::FfiBuildToolSourceRole::Main => Some(FolderRole::Main),
+            ffi::FfiBuildToolSourceRole::Test => Some(FolderRole::Test),
+            ffi::FfiBuildToolSourceRole::Resource => Some(FolderRole::Resource),
+            _ => None,
+        };
+        let group = {
+            use ffi::FfiBuildToolGroupKind as F;
+            use jvm_build_core::view::GroupKind as G;
+            match group_kind {
+                F::Tasks => Some(G::Tasks),
+                F::TaskGroup => Some(G::TaskGroup),
+                F::Lifecycle => Some(G::Lifecycle),
+                F::Plugins => Some(G::Plugins),
+                F::Modules => Some(G::Modules),
+                F::Dependencies => Some(G::Dependencies),
+                F::DependencyModule => Some(G::DependencyModule),
+                F::Configuration => Some(G::Configuration),
+                F::Profiles => Some(G::Profiles),
+                _ => None,
+            }
+        };
+        let Some(tool) = jvm_build_core::model::Tool::from_toolchain_id(&tool.to_string()) else {
+            return QString::default();
+        };
+        self.pack_key(app_core::build_tools_icons::row_icon(
+            kind, tool, role, group,
+        ))
+    }
+
+    /// The icon key for a pack-drawn Build Tools toolbar button.
+    pub fn icon_key_for_build_toolbar(&self, button: ffi::FfiBuildToolbarIcon) -> QString {
+        use app_core::build_tools_icons::ToolbarIcon;
+        let button = match button {
+            ffi::FfiBuildToolbarIcon::Settings => ToolbarIcon::Settings,
+            ffi::FfiBuildToolbarIcon::SkipTests => ToolbarIcon::SkipTests,
+            _ => return QString::default(),
+        };
+        self.pack_key(Some(app_core::build_tools_icons::toolbar_icon(button)))
+    }
+
+    fn pack_key(&self, icon: Option<app_core::build_tools_icons::PackIcon>) -> QString {
+        icon.and_then(|icon| {
+            self.icons
+                .service
+                .borrow()
+                .pack_icon_key(&icon, self.icons.appearance.get())
+        })
+        .map(|key| QString::from(key.as_str()))
+        .unwrap_or_default()
+    }
+
     /// Every icon theme the loaded plugins offer, for the Appearance page's
     /// combo.
     pub fn icon_themes(&self) -> Vec<ffi::FfiIconTheme> {

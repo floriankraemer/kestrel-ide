@@ -13,7 +13,7 @@
 
 use std::collections::HashSet;
 
-use crate::model::{BuildModel, Conflict, Dependency, Tool};
+use crate::model::{BuildModel, Conflict, Dependency, SourceContent, SourceRootKind, Tool};
 
 /// What kind of row a [`Node`] is — the dock's icon and indent, decided by
 /// `cpp/`, never this crate.
@@ -31,6 +31,31 @@ pub enum NodeKind {
     Plugin,
     /// A goal one plugin's `<executions>` binds.
     Goal,
+}
+
+/// Which section or nesting level a [`NodeKind::Group`] row is — the fact
+/// the dock's icon rule reads (`app_core::build_tools_icons`), so it never
+/// has to guess from the row's (translatable, user-named) label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupKind {
+    /// Gradle's `Tasks` section.
+    Tasks,
+    /// One Gradle task group (`build`, `verification`, …).
+    TaskGroup,
+    /// Maven's `Lifecycle` section.
+    Lifecycle,
+    /// Maven's `Plugins` section.
+    Plugins,
+    /// Gradle's `Modules` section.
+    Modules,
+    /// The `Dependencies` section.
+    Dependencies,
+    /// One module's dependencies under the `Dependencies` section.
+    DependencyModule,
+    /// A Gradle configuration or Maven scope under a module's dependencies.
+    Configuration,
+    /// Maven's `Profiles` section.
+    Profiles,
 }
 
 /// One row of the dock's tree, flattened and parent-qualified — the same
@@ -63,6 +88,12 @@ pub struct Node {
     /// argument) — the service keeps the checked set, this crate only
     /// answers "is `label` in it" for the row the service asked to shape.
     pub checked: bool,
+    /// Meaningful only for `NodeKind::SourceRoot`: the reported kind and
+    /// content, so the icon rule (`app_core::build_tools_icons`) reads a
+    /// fact instead of parsing `detail`'s tooltip text.
+    pub source_root: Option<(SourceRootKind, SourceContent)>,
+    /// Meaningful only for `NodeKind::Group`.
+    pub group: Option<GroupKind>,
 }
 
 fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -> Node {
@@ -75,7 +106,14 @@ fn node(id: String, parent_id: &str, kind: NodeKind, label: impl Into<String>) -
         detail: String::new(),
         task_path: String::new(),
         build_file: String::new(),
+        source_root: None,
+        group: None,
     }
+}
+
+fn tagged(mut row: Node, kind: GroupKind) -> Node {
+    row.group = Some(kind);
+    row
 }
 
 /// A dependency's conflict, as one line for the row's `detail` column — the
@@ -169,18 +207,19 @@ pub fn rows(model: &BuildModel, checked_profiles: &HashSet<String>) -> Vec<Node>
 /// declared).
 fn gradle_tasks(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
     let tasks_id = format!("{root_id}:tasks");
-    out.push(node(tasks_id.clone(), root_id, NodeKind::Group, "Tasks"));
+    out.push(tagged(
+        node(tasks_id.clone(), root_id, NodeKind::Group, "Tasks"),
+        GroupKind::Tasks,
+    ));
     let mut groups: Vec<&str> = model.tasks.iter().map(|t| t.group.as_str()).collect();
     groups.sort_unstable();
     groups.dedup();
     for group in groups {
         let group_label = if group.is_empty() { "Other" } else { group };
         let group_id = format!("{tasks_id}:{group_label}");
-        out.push(node(
-            group_id.clone(),
-            &tasks_id,
-            NodeKind::Group,
-            group_label,
+        out.push(tagged(
+            node(group_id.clone(), &tasks_id, NodeKind::Group, group_label),
+            GroupKind::TaskGroup,
         ));
         for task in model.tasks.iter().filter(|t| t.group == group) {
             let mut row = node(
@@ -201,11 +240,9 @@ fn gradle_tasks(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
 /// there is no second level of grouping to nest).
 fn maven_lifecycle(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
     let lifecycle_id = format!("{root_id}:lifecycle");
-    out.push(node(
-        lifecycle_id.clone(),
-        root_id,
-        NodeKind::Group,
-        "Lifecycle",
+    out.push(tagged(
+        node(lifecycle_id.clone(), root_id, NodeKind::Group, "Lifecycle"),
+        GroupKind::Lifecycle,
     ));
     for task in &model.tasks {
         let mut row = node(
@@ -226,11 +263,9 @@ fn maven_lifecycle(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
 /// bind as children.
 fn maven_plugins(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
     let plugins_id = format!("{root_id}:plugins");
-    out.push(node(
-        plugins_id.clone(),
-        root_id,
-        NodeKind::Group,
-        "Plugins",
+    out.push(tagged(
+        node(plugins_id.clone(), root_id, NodeKind::Group, "Plugins"),
+        GroupKind::Plugins,
     ));
     let mut seen = HashSet::new();
     for module in &model.modules {
@@ -263,11 +298,9 @@ fn maven_plugins(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
 /// Gradle only: `Modules`, each with its own source roots as children.
 fn modules_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
     let modules_id = format!("{root_id}:modules");
-    out.push(node(
-        modules_id.clone(),
-        root_id,
-        NodeKind::Group,
-        "Modules",
+    out.push(tagged(
+        node(modules_id.clone(), root_id, NodeKind::Group, "Modules"),
+        GroupKind::Modules,
     ));
     for module in &model.modules {
         let module_id = format!("{modules_id}:{}", module.path);
@@ -298,6 +331,7 @@ fn modules_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
                 relative,
             );
             root_row.detail = format!("{:?} / {:?}", root.kind, root.content);
+            root_row.source_root = Some((root.kind, root.content));
             out.push(root_row);
         }
     }
@@ -310,11 +344,9 @@ fn modules_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
 /// row, plenty scannable at that count.
 fn dependencies_group(out: &mut Vec<Node>, model: &BuildModel, root_id: &str) {
     let deps_id = format!("{root_id}:dependencies");
-    out.push(node(
-        deps_id.clone(),
-        root_id,
-        NodeKind::Group,
-        "Dependencies",
+    out.push(tagged(
+        node(deps_id.clone(), root_id, NodeKind::Group, "Dependencies"),
+        GroupKind::Dependencies,
     ));
     match model.tool {
         Tool::Gradle => gradle_dependencies(out, model, &deps_id),
@@ -339,11 +371,14 @@ fn gradle_dependencies(out: &mut Vec<Node>, model: &BuildModel, deps_id: &str) {
             continue;
         }
         let module_id = format!("{deps_id}:{}", module.path);
-        out.push(node(
-            module_id.clone(),
-            deps_id,
-            NodeKind::Group,
-            module.name.as_str(),
+        out.push(tagged(
+            node(
+                module_id.clone(),
+                deps_id,
+                NodeKind::Group,
+                module.name.as_str(),
+            ),
+            GroupKind::DependencyModule,
         ));
         let mut configurations: Vec<&str> = module
             .dependencies
@@ -364,11 +399,14 @@ fn gradle_dependencies(out: &mut Vec<Node>, model: &BuildModel, deps_id: &str) {
         });
         for configuration in configurations {
             let configuration_id = format!("{module_id}:{configuration}");
-            out.push(node(
-                configuration_id.clone(),
-                &module_id,
-                NodeKind::Group,
-                configuration,
+            out.push(tagged(
+                node(
+                    configuration_id.clone(),
+                    &module_id,
+                    NodeKind::Group,
+                    configuration,
+                ),
+                GroupKind::Configuration,
             ));
             push_dependency_rows(out, module, configuration, &configuration_id);
         }
@@ -389,11 +427,14 @@ fn maven_dependencies(out: &mut Vec<Node>, model: &BuildModel, deps_id: &str) {
         scopes.dedup();
         for scope in scopes {
             let scope_id = format!("{deps_id}:{}:{scope}", module.path);
-            out.push(node(
-                scope_id.clone(),
-                deps_id,
-                NodeKind::Group,
-                format!("{} ({scope})", module.name),
+            out.push(tagged(
+                node(
+                    scope_id.clone(),
+                    deps_id,
+                    NodeKind::Group,
+                    format!("{} ({scope})", module.name),
+                ),
+                GroupKind::Configuration,
             ));
             push_dependency_rows(out, module, scope, &scope_id);
         }
@@ -450,11 +491,9 @@ fn profiles_group(
         return;
     }
     let profiles_id = format!("{root_id}:profiles");
-    out.push(node(
-        profiles_id.clone(),
-        root_id,
-        NodeKind::Group,
-        "Profiles",
+    out.push(tagged(
+        node(profiles_id.clone(), root_id, NodeKind::Group, "Profiles"),
+        GroupKind::Profiles,
     ));
     for profile in &model.profiles {
         let mut row = node(
@@ -748,6 +787,26 @@ mod tests {
     }
 
     #[test]
+    fn every_group_row_names_its_section_and_no_other_row_does() {
+        for model in [gradle_model(), maven_model()] {
+            for row in rows(&model, &empty_checked()) {
+                assert_eq!(
+                    row.group.is_some(),
+                    row.kind == NodeKind::Group,
+                    "{:?} `{}`",
+                    row.kind,
+                    row.label
+                );
+            }
+        }
+        let gradle = rows(&gradle_model(), &empty_checked());
+        let section = |label: &str| gradle.iter().find(|n| n.label == label).unwrap().group;
+        assert_eq!(section("Tasks"), Some(GroupKind::Tasks));
+        assert_eq!(section("Modules"), Some(GroupKind::Modules));
+        assert_eq!(section("Dependencies"), Some(GroupKind::Dependencies));
+    }
+
+    #[test]
     fn a_source_root_label_is_relative_to_its_module_dir_kind_goes_in_the_tooltip() {
         // gradle_model()'s one source root is `/proj/app/src/main/java`
         // under a module whose `dir` is `/proj/app`.
@@ -758,6 +817,10 @@ mod tests {
             .unwrap();
         assert_eq!(root.label, "src/main/java");
         assert!(root.detail.contains("Main"), "detail was {}", root.detail);
+        assert_eq!(
+            root.source_root,
+            Some((SourceRootKind::Main, SourceContent::Java))
+        );
     }
 
     #[test]

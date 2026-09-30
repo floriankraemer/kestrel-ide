@@ -2881,6 +2881,24 @@ mod ffi {
             expanded: bool,
         ) -> QString;
 
+        /// The icon key for a Build Tools tree row, or an empty string when
+        /// the row paints none (a profile checkbox) or no icon theme is
+        /// active. `tool` is the row's `"gradle"`/`"maven"` id.
+        #[qinvokable]
+        #[cxx_name = "iconKeyForBuildToolRow"]
+        fn icon_key_for_build_tool_row(
+            self: &IconProvider,
+            kind: FfiBuildToolNodeKind,
+            tool: &QString,
+            source_role: FfiBuildToolSourceRole,
+            group_kind: FfiBuildToolGroupKind,
+        ) -> QString;
+
+        /// The icon key for a pack-drawn Build Tools toolbar button.
+        #[qinvokable]
+        #[cxx_name = "iconKeyForBuildToolbar"]
+        fn icon_key_for_build_toolbar(self: &IconProvider, button: FfiBuildToolbarIcon) -> QString;
+
         /// `px` by `px` premultiplied RGBA8 for a key, `px * px * 4` bytes,
         /// or empty when there is nothing to draw. Wrap it in a
         /// `QImage::Format_RGBA8888_Premultiplied` — see `icon_cache.cpp`
@@ -6094,6 +6112,37 @@ mod ffi {
         Goal,
     }
 
+    /// A `SourceRoot` row's role, for its folder art (`None` on every other
+    /// row) — `app_core::build_tools_tree::FolderRole` crossed the seam.
+    enum FfiBuildToolSourceRole {
+        None,
+        Main,
+        Test,
+        Resource,
+    }
+
+    /// A `Group` row's section (`None` on every other row) —
+    /// `jvm_build_core::view::GroupKind` crossed the seam.
+    enum FfiBuildToolGroupKind {
+        None,
+        Tasks,
+        TaskGroup,
+        Lifecycle,
+        Plugins,
+        Modules,
+        Dependencies,
+        DependencyModule,
+        Configuration,
+        Profiles,
+    }
+
+    /// A Build Tools toolbar button whose icon comes from the icon pack
+    /// (`app_core::build_tools_icons::ToolbarIcon`).
+    enum FfiBuildToolbarIcon {
+        Settings,
+        SkipTests,
+    }
+
     /// One row of the Build Tools dock's tree, flattened and
     /// parent-qualified like `FfiTestNode` — a `QTreeWidget` builds its own
     /// hierarchy from `parentId` rather than nesting a `Vec` inside a `Vec`.
@@ -6119,6 +6168,12 @@ mod ffi {
         /// Meaningful only for `FfiBuildToolNodeKind::Profile`: whether the
         /// dock's checkbox for this profile is ticked.
         checked: bool,
+        /// Meaningful only for `FfiBuildToolNodeKind::SourceRoot`.
+        #[cxx_name = "sourceRole"]
+        source_role: FfiBuildToolSourceRole,
+        /// Meaningful only for `FfiBuildToolNodeKind::Group`.
+        #[cxx_name = "groupKind"]
+        group_kind: FfiBuildToolGroupKind,
     }
 
     /// The dock's title (computed in Rust from which tools synced

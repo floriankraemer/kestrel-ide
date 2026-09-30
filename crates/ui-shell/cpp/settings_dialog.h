@@ -13,6 +13,7 @@ class QWidget;
 
 namespace ui_shell {
 
+class BuildToolsPanel;
 class EditorTabs;
 class TerminalSessionsPanel;
 
@@ -76,6 +77,9 @@ struct SettingsContext
     // `toggleExcluded` from T4), so the settings page reuses that same
     // QObject rather than adding a second one for two more lists.
     ProjectTreeModel *projectTreeModel;
+    // Null when the Build Tools plugin is disabled. Repainted with the rest
+    // of the icons when the icon or colour theme changes.
+    BuildToolsPanel *buildToolsPanel;
 };
 
 // Settings dialog (S1: category list + stacked detail pane). One page per

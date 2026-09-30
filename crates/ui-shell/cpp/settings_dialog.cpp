@@ -2,6 +2,7 @@
 
 #include "ai_providers_page.h"
 #include "analysis_settings_page.h"
+#include "build_tools_panel.h"
 #include "build_tools_settings_page.h"
 #include "appearance_page.h"
 #include "containers_page.h"
@@ -207,9 +208,13 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     // Every cached icon behind the tree, dropped: called by the Appearance
     // page when either theme changes, and by the Plugins page when a plugin
     // that contributes icons is switched off.
-    auto refreshIcons = [targets = context.uiFontTargets, editorTabs]() {
+    auto refreshIcons = [targets = context.uiFontTargets, editorTabs,
+                         buildTools = context.buildToolsPanel]() {
         refreshTreeIcons(targets.projectTree);
         editorTabs->refreshTabIcons();
+        if (buildTools != nullptr) {
+            buildTools->refreshIcons();
+        }
     };
 
     const AppearancePage appearance = buildAppearancePage(

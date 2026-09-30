@@ -3,6 +3,7 @@
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "icon_cache.h"
+#include "theme.h"
 
 #include "DockAreaWidget.h"
 #include "DockManager.h"
@@ -22,7 +23,6 @@
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QSizePolicy>
-#include <QStyle>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -46,48 +46,25 @@ constexpr int kIsDependencyRole = Qt::UserRole + 5;
 // doc comment), never carried through as a sentinel string past this file.
 const int kAllScopesIndex = 0;
 
-// A row icon per kind (review fix 3, pixel scrutiny): plain platform-style
-// icons, the same "no vendored asset for a handful of kinds" call
-// `tests_panel.cpp`'s own status dot makes, rather than the project tree's
-// icon-theme pipeline — that pipeline resolves a *file's* icon from its
-// path/language, which a Gradle task or a Maven scope has neither of.
-QIcon iconForKind(FfiBuildToolNodeKind kind)
+// Every icon here is the active icon pack's, resolved by key through the
+// same appearance-aware, pack-fallback pipeline the project tree uses
+// (`IconProvider::iconKeyFor*` -> `sharedIconCache()`). Which pack entry a
+// row or button paints as is `app_core::build_tools_icons`' rule; this only
+// paints the answer. No icon theme active means no icon, never a platform
+// glyph.
+constexpr int kIconPx = 16;
+
+QIcon iconForNode(const FfiBuildToolNode &node)
 {
-    QStyle *style = QApplication::style();
-    switch (kind) {
-    case FfiBuildToolNodeKind::ToolRoot:
-        return style->standardIcon(QStyle::SP_DriveHDIcon);
-    case FfiBuildToolNodeKind::Group:
-        return style->standardIcon(QStyle::SP_DirIcon);
-    case FfiBuildToolNodeKind::Task:
-        return style->standardIcon(QStyle::SP_MediaPlay);
-    case FfiBuildToolNodeKind::Module:
-        return style->standardIcon(QStyle::SP_DirClosedIcon);
-    case FfiBuildToolNodeKind::SourceRoot:
-        // A source root is a directory (`src/main/java`), so it gets the
-        // same folder glyph a module does, not a file's.
-        return style->standardIcon(QStyle::SP_DirIcon);
-    case FfiBuildToolNodeKind::Dependency:
-        return style->standardIcon(QStyle::SP_FileDialogDetailedView);
-    case FfiBuildToolNodeKind::Profile:
-        return QIcon();
-    case FfiBuildToolNodeKind::Plugin: {
-        // `SP_DriveNetIcon` (review fix 3) reads as a network/monitor glyph
-        // at 16px, wrong for a build plugin — review fix, round 6. Every
-        // Maven plugin's own home is `pom.xml`, and the icon theme already
-        // has real Maven-branded art for that file — `fileIcon` is the same
-        // per-path resolution the Project tree uses for an actual pom.xml
-        // row, borrowed here rather than a raw theme-id lookup (which
-        // returned null: whatever `iconKeyForPath` layers on top of a bare
-        // id — appearance, pack fallback — a shortcut around it skips).
-        // Falls back to the platform glyph if the active pack has none.
-        const QIcon themed = fileIcon(QStringLiteral("pom.xml"), 16);
-        return themed.isNull() ? style->standardIcon(QStyle::SP_DriveNetIcon) : themed;
-    }
-    case FfiBuildToolNodeKind::Goal:
-        return style->standardIcon(QStyle::SP_ArrowRight);
-    }
-    return QIcon();
+    const QString key = sharedIconProvider()->iconKeyForBuildToolRow(
+      node.kind, QString(node.tool), node.sourceRole, node.groupKind);
+    return sharedIconCache().iconFor(key, kIconPx);
+}
+
+QIcon iconForToolbar(FfiBuildToolbarIcon button)
+{
+    return sharedIconCache().iconFor(sharedIconProvider()->iconKeyForBuildToolbar(button),
+                                     kIconPx);
 }
 
 // Icon-only, tooltip-carries-the-meaning toolbar buttons — the same shape
@@ -98,24 +75,16 @@ QIcon iconForKind(FfiBuildToolNodeKind kind)
 // clips under that width pressure regardless of any one widget's own
 // minimum width — the fix is fewer pixels demanded, not a floor that only
 // moves the squeeze to whichever button is still text.
-QToolButton *glyphButton(QStyle::StandardPixmap icon, const QString &tooltip, QWidget *parent)
+//
+// `checkable` is the Offline/Skip Tests/Conflicts toggles' pressed state;
+// the global `QToolButton:checked` rule frames it.
+QToolButton *glyphButton(const QString &tooltip, bool checkable, QWidget *parent)
 {
     auto *button = new QToolButton(parent);
-    button->setIcon(QApplication::style()->standardIcon(icon));
+    button->setIconSize(QSize(kIconPx, kIconPx));
     button->setToolTip(tooltip);
     button->setAutoRaise(true);
-    return button;
-}
-
-// Same shape, checkable: the Offline/Skip Tests toggles need a pressed
-// state, not just a click — `changes_toolbar.cpp`'s own icon-only,
-// tooltip-carries-the-meaning buttons (its `refreshButton_`) are the
-// precedent this follows, `setCheckable` the only addition a toggle needs.
-QToolButton *checkableGlyphButton(QStyle::StandardPixmap icon, const QString &tooltip,
-                                   QWidget *parent)
-{
-    QToolButton *button = glyphButton(icon, tooltip, parent);
-    button->setCheckable(true);
+    button->setCheckable(checkable);
     return button;
 }
 
@@ -166,8 +135,7 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
   , runService_(runService)
   , openAt_(std::move(openAt))
 {
-    auto *reloadButton =
-      glyphButton(QStyle::SP_BrowserReload, tr("Reload All Gradle/Maven Projects"), this);
+    reloadButton_ = glyphButton(tr("Reload All Gradle/Maven Projects"), false, this);
     executeEdit_ = new QLineEdit(this);
     executeEdit_->setPlaceholderText(tr("Execute…"));
     // Expanding (not a bare stretch factor) so Execute is the row's own
@@ -177,26 +145,23 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     // "the field gives up space last" rule while still keeping a floor.
     executeEdit_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     executeEdit_->setMinimumWidth(90);
-    auto *runButton = glyphButton(QStyle::SP_MediaPlay, tr("Run"), this);
+    runButton_ = glyphButton(tr("Run"), false, this);
     // Checkable icon-only toggles, not text checkboxes: `changes_toolbar.cpp`'s
     // own icon-only `refreshButton_` is the precedent (review fix 4) — a row
     // of text checkboxes plus three more buttons overflows a right-side
     // dock's width, especially Maven's, which carries one toggle more than
     // Gradle's.
-    offlineButton_ =
-      checkableGlyphButton(QStyle::SP_DriveNetIcon, tr("Toggle Offline Mode"), this);
-    skipTestsButton_ =
-      checkableGlyphButton(QStyle::SP_MediaSkipForward, tr("Toggle Skip Tests"), this);
-    auto *settingsButton =
-      glyphButton(QStyle::SP_FileDialogDetailedView, tr("Settings…"), this);
+    offlineButton_ = glyphButton(tr("Toggle Offline Mode"), true, this);
+    skipTestsButton_ = glyphButton(tr("Toggle Skip Tests"), true, this);
+    settingsButton_ = glyphButton(tr("Settings…"), false, this);
 
     auto *toolbar = new QHBoxLayout();
-    toolbar->addWidget(reloadButton);
+    toolbar->addWidget(reloadButton_);
     toolbar->addWidget(executeEdit_, 1);
-    toolbar->addWidget(runButton);
+    toolbar->addWidget(runButton_);
     toolbar->addWidget(offlineButton_);
     toolbar->addWidget(skipTestsButton_);
-    toolbar->addWidget(settingsButton);
+    toolbar->addWidget(settingsButton_);
 
     // D8: the dependency analyzer's own row, under the main toolbar — a
     // combo needs its selected text on screen (unlike every icon-only
@@ -210,8 +175,8 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     dependencyScopeCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
     dependencyScopeCombo_->setMinimumContentsLength(6);
     // An icon toggle like Offline / Skip Tests above, not a text checkbox.
-    conflictsOnlyButton_ = checkableGlyphButton(QStyle::SP_MessageBoxWarning,
-                                                 tr("Show Conflicts Only"), this);
+    conflictsOnlyButton_ = glyphButton(tr("Show Conflicts Only"), true, this);
+    applyToolbarIcons();
     auto *dependencyToolbar = new QHBoxLayout();
     dependencyToolbar->addWidget(dependencyScopeCombo_, 1);
     dependencyToolbar->addWidget(conflictsOnlyButton_);
@@ -226,6 +191,7 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     // itself (`view::rows`'s job) and whatever didn't becomes the row's
     // tooltip instead (`refreshTree`, below).
     tree_->setHeaderHidden(true);
+    tree_->setIconSize(QSize(kIconPx, kIconPx));
     // Sized to its widest row rather than the viewport: a dependency's full
     // group:artifact:version coordinate can run well past a ~260px dock's
     // width, and eliding it is worse than a horizontal scrollbar — the same
@@ -258,9 +224,9 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     layout->addWidget(tree_, 1);
     layout->addWidget(emptyStateLabel_, 1);
 
-    connect(reloadButton, &QToolButton::clicked, this,
+    connect(reloadButton_, &QToolButton::clicked, this,
             [this]() { buildToolsService_->sync(); });
-    connect(runButton, &QToolButton::clicked, this, [this]() {
+    connect(runButton_, &QToolButton::clicked, this, [this]() {
         if (QTreeWidgetItem *item = tree_->currentItem()) {
             runNode(item->data(0, kIdRole).toString(), executeEdit_->text());
         }
@@ -289,7 +255,7 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
             [this](bool on) { buildToolsService_->setOffline(on); });
     connect(skipTestsButton_, &QToolButton::toggled, this,
             [this](bool on) { buildToolsService_->setSkipTests(on); });
-    connect(settingsButton, &QToolButton::clicked, this, [this]() {
+    connect(settingsButton_, &QToolButton::clicked, this, [this]() {
         if (openSettings_) {
             openSettings_();
         }
@@ -380,6 +346,29 @@ void BuildToolsPanel::refreshDependencyScopes()
     dependencyScopeCombo_->setCurrentIndex(index >= 0 ? index : kAllScopesIndex);
 }
 
+// The pack has no reload/run/offline/warning art that reads at 16px, so those
+// four use the app's own icon set (the Changes toolbar's masks), tinted per
+// role: run green and the conflicts filter amber like every other status
+// glyph, the rest the dim chrome text. The other two come from the pack.
+void BuildToolsPanel::applyToolbarIcons()
+{
+    const QColor dim = chromePaletteForTheme(activeThemeName()).textDim;
+    const SemanticColors semantic = semanticColors();
+    reloadButton_->setIcon(maskIcon(":/ui/icons/diff/sync.a8", dim));
+    runButton_->setIcon(maskIcon(":/ui/icons/buildtools/run.a8", semantic.ok));
+    offlineButton_->setIcon(maskIcon(":/ui/icons/buildtools/offline.a8", dim));
+    skipTestsButton_->setIcon(iconForToolbar(FfiBuildToolbarIcon::SkipTests));
+    settingsButton_->setIcon(iconForToolbar(FfiBuildToolbarIcon::Settings));
+    conflictsOnlyButton_->setIcon(
+      maskIcon(":/ui/icons/buildtools/warning.a8", semantic.warning));
+}
+
+void BuildToolsPanel::refreshIcons()
+{
+    applyToolbarIcons();
+    refreshTree();
+}
+
 void BuildToolsPanel::refreshTree()
 {
     // Rebuilding sets every profile row's check state from the model, which
@@ -414,7 +403,7 @@ void BuildToolsPanel::refreshTree()
         QTreeWidgetItem *parentItem = parentId.isEmpty() ? nullptr : itemsById.value(parentId);
         auto *item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
         item->setText(0, QString(node.label));
-        item->setIcon(0, iconForKind(node.kind));
+        item->setIcon(0, iconForNode(node));
         // `detail` is never shown as its own column any more (review fix,
         // round 6) — every row's label already carries what a user needs to
         // scan the tree by (`view::rows`'s job: a relative source-root path,

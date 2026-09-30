@@ -7,6 +7,9 @@
         <file>icons/diff/chevron_apply.a8</file>
         <file>icons/diff/collapse.a8</file>
         <file>icons/diff/sync.a8</file>
+        <file>icons/buildtools/run.a8</file>
+        <file>icons/buildtools/offline.a8</file>
+        <file>icons/buildtools/warning.a8</file>
         <file>icons/diff/fetch.a8</file>
         <file>icons/diff/stage_all.a8</file>
         <file>icons/diff/unstage_all.a8</file>

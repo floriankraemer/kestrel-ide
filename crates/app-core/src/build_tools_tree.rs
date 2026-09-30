@@ -25,6 +25,16 @@ pub enum FolderRole {
 }
 
 impl FolderRole {
+    /// The role a source root of this `kind`/`content` paints as: resources
+    /// win over the main/test split, as [`folder_role`] has always had it.
+    pub fn of(kind: SourceRootKind, content: SourceContent) -> Self {
+        match (kind, content) {
+            (_, SourceContent::Resources) => FolderRole::Resource,
+            (SourceRootKind::Test, _) => FolderRole::Test,
+            (SourceRootKind::Main, _) => FolderRole::Main,
+        }
+    }
+
     /// The icon pack's own folder-name key this role paints as
     /// (`icon_theme::IconPack::folder_icon`'s `folder_name` argument),
     /// substituted for the directory's real name so a `main`/`test` set
@@ -51,11 +61,7 @@ pub fn folder_role(path: &Path, model: &BuildModel) -> Option<FolderRole> {
         .iter()
         .flat_map(|module| &module.source_roots)
         .find(|root| root.path == path)
-        .map(|root| match (root.kind, root.content) {
-            (_, SourceContent::Resources) => FolderRole::Resource,
-            (SourceRootKind::Test, _) => FolderRole::Test,
-            (SourceRootKind::Main, _) => FolderRole::Main,
-        })
+        .map(|root| FolderRole::of(root.kind, root.content))
 }
 
 /// Is `path` one of `model`'s own output directories — greyed in the tree,

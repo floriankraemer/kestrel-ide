@@ -50,8 +50,13 @@ public:
     // routinely finishes while this dock is still hidden.
     void markE2eRows() const;
 
+    // The icon theme or the colour theme changed: re-resolve every icon. The
+    // caller has already dropped `sharedIconCache()` (`refreshTreeIcons`).
+    void refreshIcons();
+
 private:
     void refreshTree();
+    void applyToolbarIcons();
     void refreshTitle();
     void refreshBanner();
     void refreshDependencyScopes();
@@ -65,6 +70,9 @@ private:
 
     QTreeWidget *tree_;
     QLineEdit *executeEdit_;
+    QToolButton *reloadButton_;
+    QToolButton *runButton_;
+    QToolButton *settingsButton_;
     QToolButton *offlineButton_;
     QToolButton *skipTestsButton_;
     // D8's dependency analyzer: the Dependencies subtree's scope filter

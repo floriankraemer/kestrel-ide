@@ -26,6 +26,8 @@ use std::sync::Arc;
 use icon_theme::{IconAssets, IconError, IconPack, IconRenderer};
 use plugin_host::PluginRegistry;
 
+use crate::build_tools_icons::PackIcon;
+
 /// Re-exported so the FFI seam can name an appearance without `ui-shell`
 /// taking a direct dependency on `icon-theme`: the seam's only business
 /// with icons goes through this module.
@@ -55,6 +57,11 @@ pub fn icon_appearance(color_theme_appearance: color_theme::Appearance) -> Appea
 /// and an icon id is a file stem — neither contains this, so a key splits
 /// back apart unambiguously.
 const KEY_SEPARATOR: char = '/';
+
+/// Separates the collapsed and the expanded icon inside one key, for a row
+/// whose art changes when it opens (see `ICON_KEY_STATE_SEPARATOR` in
+/// `ui-shell`'s `bridge/tree.rs`, which spells the same character).
+pub const KEY_STATE_SEPARATOR: char = '\n';
 
 /// One entry of the Appearance page's icon-theme combo.
 ///
@@ -201,6 +208,29 @@ impl IconService {
         let theme = self.active.as_ref()?;
         let icon = theme.pack.folder_icon(canonical_name, expanded, appearance);
         Some(format!("{}{KEY_SEPARATOR}{icon}", theme.pack.id))
+    }
+
+    /// The key for a [`PackIcon`] question — the Build Tools panel's rows and
+    /// toolbar, which name no real path. Goes through the same pack tables
+    /// and light/dark substitution as [`Self::icon_key`], so a pack lacking
+    /// an entry answers with its own default file or folder icon.
+    ///
+    /// A folder answers with two states, collapsed then expanded, joined by
+    /// [`KEY_STATE_SEPARATOR`]; a file or bare id answers with one.
+    pub fn pack_icon_key(&self, icon: &PackIcon, appearance: Appearance) -> Option<String> {
+        let theme = self.active.as_ref()?;
+        let pack = &theme.pack;
+        let id = pack.id.as_str();
+        let key = |icon_id: &str| format!("{id}{KEY_SEPARATOR}{icon_id}");
+        Some(match icon {
+            PackIcon::File(name) => key(pack.file_icon(name, None, appearance)),
+            PackIcon::Id(icon_id) => key(pack.icon_by_id(icon_id, appearance)),
+            PackIcon::Folder(name) => format!(
+                "{}{KEY_STATE_SEPARATOR}{}",
+                key(pack.folder_icon(name, false, appearance)),
+                key(pack.folder_icon(name, true, appearance)),
+            ),
+        })
     }
 
     /// Premultiplied RGBA8 for `key` at `px` by `px`, `px * px * 4` bytes.
@@ -428,6 +458,55 @@ mod tests {
                     Appearance::Light
                 )
                 .expect("active theme")
+        );
+    }
+
+    #[test]
+    fn a_pack_icon_resolves_by_file_folder_or_id_through_the_pack() {
+        let service = material();
+        let dark = Appearance::Dark;
+        assert_eq!(
+            service.pack_icon_key(&PackIcon::File("pom.xml"), dark),
+            Some("material/maven".to_string())
+        );
+        assert_eq!(
+            service.pack_icon_key(&PackIcon::File("dependency.jar"), dark),
+            Some("material/jar".to_string())
+        );
+        assert_eq!(
+            service.pack_icon_key(&PackIcon::Id("settings"), dark),
+            Some("material/settings".to_string())
+        );
+        assert_eq!(
+            service.pack_icon_key(&PackIcon::Folder("tasks"), dark),
+            Some("material/folder-tasks\nmaterial/folder-tasks-open".to_string())
+        );
+    }
+
+    #[test]
+    fn a_pack_icon_the_pack_has_no_table_entry_for_falls_back_to_the_pack_default() {
+        let service = material();
+        assert_eq!(
+            service.pack_icon_key(&PackIcon::Folder("no-such-folder-name"), Appearance::Dark),
+            Some("material/folder\nmaterial/folder-open".to_string())
+        );
+    }
+
+    #[test]
+    fn a_pack_icon_follows_the_light_appearance() {
+        let service = material();
+        assert_eq!(
+            service.pack_icon_key(&PackIcon::File("Cargo.toml"), Appearance::Light),
+            Some("material/toml_light".to_string())
+        );
+    }
+
+    #[test]
+    fn a_pack_icon_with_no_active_theme_is_none() {
+        let service = IconService::from_registry(Arc::new(PluginRegistry::default()), "");
+        assert_eq!(
+            service.pack_icon_key(&PackIcon::Id("settings"), Appearance::Dark),
+            None
         );
     }
 

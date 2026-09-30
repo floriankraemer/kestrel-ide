@@ -37,6 +37,8 @@ use cxx_qt_lib::QString;
 use jvm_build_core::model::{BuildModel, Tool};
 use jvm_build_core::sync::ChangeOrigin;
 
+use app_core::build_tools_tree::FolderRole;
+
 use crate::bridge::errors;
 use crate::bridge::ffi;
 use crate::bridge::registry::SharedDiagnostics;
@@ -198,6 +200,23 @@ fn to_ffi_node_kind(kind: jvm_build_core::view::NodeKind) -> ffi::FfiBuildToolNo
     }
 }
 
+fn to_ffi_group_kind(group: Option<jvm_build_core::view::GroupKind>) -> ffi::FfiBuildToolGroupKind {
+    use ffi::FfiBuildToolGroupKind as F;
+    use jvm_build_core::view::GroupKind as G;
+    match group {
+        None => F::None,
+        Some(G::Tasks) => F::Tasks,
+        Some(G::TaskGroup) => F::TaskGroup,
+        Some(G::Lifecycle) => F::Lifecycle,
+        Some(G::Plugins) => F::Plugins,
+        Some(G::Modules) => F::Modules,
+        Some(G::Dependencies) => F::Dependencies,
+        Some(G::DependencyModule) => F::DependencyModule,
+        Some(G::Configuration) => F::Configuration,
+        Some(G::Profiles) => F::Profiles,
+    }
+}
+
 fn to_ffi_node(node: &jvm_build_core::view::Node, tool: Tool) -> ffi::FfiBuildToolNode {
     ffi::FfiBuildToolNode {
         id: QString::from(node.id.as_str()),
@@ -208,6 +227,15 @@ fn to_ffi_node(node: &jvm_build_core::view::Node, tool: Tool) -> ffi::FfiBuildTo
         tool: QString::from(tool.toolchain_id()),
         build_file: QString::from(node.build_file.as_str()),
         checked: node.checked,
+        source_role: match node.source_root {
+            Some((kind, content)) => match FolderRole::of(kind, content) {
+                FolderRole::Main => ffi::FfiBuildToolSourceRole::Main,
+                FolderRole::Test => ffi::FfiBuildToolSourceRole::Test,
+                FolderRole::Resource => ffi::FfiBuildToolSourceRole::Resource,
+            },
+            None => ffi::FfiBuildToolSourceRole::None,
+        },
+        group_kind: to_ffi_group_kind(node.group),
     }
 }
 

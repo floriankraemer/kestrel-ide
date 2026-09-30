@@ -21,6 +21,16 @@ impl Tool {
             Tool::Maven => "maven",
         }
     }
+
+    /// The inverse of [`Self::toolchain_id`], for a caller that only kept
+    /// the id (the Build Tools rows carry it across the FFI seam).
+    pub fn from_toolchain_id(id: &str) -> Option<Self> {
+        match id {
+            "gradle" => Some(Tool::Gradle),
+            "maven" => Some(Tool::Maven),
+            _ => None,
+        }
+    }
 }
 
 /// A source root's kind, so the project tree (B7) can pick a `folder-src`
@@ -156,6 +166,14 @@ impl BuildModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tool_round_trips_through_its_toolchain_id() {
+        for tool in [Tool::Gradle, Tool::Maven] {
+            assert_eq!(Tool::from_toolchain_id(tool.toolchain_id()), Some(tool));
+        }
+        assert_eq!(Tool::from_toolchain_id("ant"), None);
+    }
 
     #[test]
     fn a_module_is_found_by_its_path() {

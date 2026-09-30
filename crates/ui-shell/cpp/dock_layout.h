@@ -14,6 +14,12 @@ class CDockWidget;
 
 namespace ui_shell {
 
+// Floors `dock` at the shared minimum size (or its widget's own larger
+// minimum width), so a splitter cannot squeeze it to a sliver (#376).
+// `DockRegistry::registerDock` applies it to every registered dock; the
+// editor, ADS's central dock, is not registered and calls it directly.
+void applyMinimumDockSize(ads::CDockWidget *dock);
+
 // Every dock widget hanging off the main window's one CDockManager, and the
 // one place that knows how to show/hide one of them.
 //

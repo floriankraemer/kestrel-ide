@@ -221,10 +221,10 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *editorRoot = new QSplitter(Qt::Horizontal);
     auto *editorDock = new ads::CDockWidget(dockManager, QObject::tr("Editor"));
     editorDock->setWidget(wrapEditorDockContent(editorRoot));
+    applyMinimumDockSize(editorDock); // The central dock is not registered, so floor it here.
     // The editor is ADS's *central* dock widget, not an ordinary center-area
     // one: a central widget absorbs the leftover space, so the side and
-    // bottom panels keep their size hints instead of splitting the window
-    // into equal shares and squeezing the editor down to nothing.
+    // bottom panels keep their size hints instead of squeezing it to nothing.
     auto *editorArea = dockManager->setCentralWidget(editorDock);
     // dockStyleSheet() paints the editor column on `surface` and every side
     // panel on `surface2`, the way the mockup's `.editor-col` and `.sidebar`

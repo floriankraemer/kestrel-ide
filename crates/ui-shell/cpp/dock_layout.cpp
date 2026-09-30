@@ -24,6 +24,15 @@ constexpr QSize kMinDockSize(200, 40);
 
 } // namespace
 
+// Needs the dock's widget already set, and runs before the dock joins an
+// area: the area reads the dock's minimum size hint when the dock is added.
+void applyMinimumDockSize(ads::CDockWidget *dock)
+{
+    dock->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromDockWidgetMinimumSize);
+    const int panelMinWidth = dock->widget() != nullptr ? dock->widget()->minimumWidth() : 0;
+    dock->setMinimumSize(qMax(panelMinWidth, kMinDockSize.width()), kMinDockSize.height());
+}
+
 DockRegistry::DockRegistry(ads::CDockManager *dockManager) : dockManager_(dockManager) {}
 
 ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWidget *dock,
@@ -32,11 +41,7 @@ ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWi
 {
     ads::CDockWidget *anchor =
       relativeTo && !relativeTo->dockWidgets().isEmpty() ? relativeTo->dockWidgets().first() : nullptr;
-    // Before `addDockWidget`: the area reads the dock's minimum size hint
-    // when the dock joins it.
-    dock->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromDockWidgetMinimumSize);
-    const int panelMinWidth = dock->widget() != nullptr ? dock->widget()->minimumWidth() : 0;
-    dock->setMinimumSize(qMax(panelMinWidth, kMinDockSize.width()), kMinDockSize.height());
+    applyMinimumDockSize(dock);
     docks_.insert(id, Entry{dock, area, anchor});
     return dockManager_->addDockWidget(area, dock, relativeTo);
 }

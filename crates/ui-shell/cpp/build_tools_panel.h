@@ -6,7 +6,6 @@
 #include <functional>
 
 class QAction;
-class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
@@ -74,7 +73,7 @@ private:
     // row is already tight on a right-side dock's width, and these two
     // controls matter only while looking at Dependencies).
     QComboBox *dependencyScopeCombo_;
-    QCheckBox *conflictsOnlyCheck_;
+    QToolButton *conflictsOnlyButton_;
     QLabel *statusLabel_;
     // D8 (screenshot review): shown centered in place of `tree_` for a
     // project with nothing to show yet — either no Gradle/Maven marker

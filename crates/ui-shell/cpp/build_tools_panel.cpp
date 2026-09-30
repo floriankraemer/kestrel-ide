@@ -10,7 +10,6 @@
 
 #include <QAction>
 #include <QApplication>
-#include <QCheckBox>
 #include <QClipboard>
 #include <QComboBox>
 #include <QGuiApplication>
@@ -206,10 +205,16 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
     dependencyScopeCombo_ = new QComboBox(this);
     dependencyScopeCombo_->addItem(tr("All Scopes"));
     dependencyScopeCombo_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    conflictsOnlyCheck_ = new QCheckBox(tr("Conflicts Only"), this);
+    // Compact: the combo sizes to a short floor instead of its longest scope
+    // name, so this row never sets the dock's minimum width (#324).
+    dependencyScopeCombo_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    dependencyScopeCombo_->setMinimumContentsLength(6);
+    // An icon toggle like Offline / Skip Tests above, not a text checkbox.
+    conflictsOnlyButton_ = checkableGlyphButton(QStyle::SP_MessageBoxWarning,
+                                                 tr("Show Conflicts Only"), this);
     auto *dependencyToolbar = new QHBoxLayout();
     dependencyToolbar->addWidget(dependencyScopeCombo_, 1);
-    dependencyToolbar->addWidget(conflictsOnlyCheck_);
+    dependencyToolbar->addWidget(conflictsOnlyButton_);
 
     tree_ = new QTreeWidget(this);
     tree_->setColumnCount(1);
@@ -294,7 +299,7 @@ BuildToolsPanel::BuildToolsPanel(BuildToolsService *buildToolsService, RunServic
                                                   ? QString()
                                                   : dependencyScopeCombo_->itemText(index));
     });
-    connect(conflictsOnlyCheck_, &QCheckBox::toggled, this,
+    connect(conflictsOnlyButton_, &QToolButton::toggled, this,
             [this](bool on) { buildToolsService_->setConflictsOnly(on); });
 
     connect(buildToolsService_, &BuildToolsService::modelChanged, this, [this]() {
@@ -470,6 +475,11 @@ void BuildToolsPanel::markE2eRows() const
                   .arg(rect.height()));
         ++count;
     }
+    e2eMark(QStringLiteral("{\"ev\":\"build_tools_panel_shown\",\"width\":%1,"
+                            "\"min_width\":%2,\"hscroll\":%3}")
+              .arg(width())
+              .arg(minimumSizeHint().width())
+              .arg(e2eNeedsHorizontalScroll(this) ? "true" : "false"));
     e2eMark(QStringLiteral("{\"ev\":\"build_tools_rows\",\"count\":%1}").arg(count));
 }
 

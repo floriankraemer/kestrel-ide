@@ -45,3 +45,8 @@ void e2eMarkMenuActions(class QMenu *menu, const char *event);
 // one raw. Deliberately not a JSON library: this is the only JSON the view
 // ever writes.
 QString e2eJson(const QString &value);
+
+// Whether the scroll area a dock wraps `widget` in (ADS does that when the
+// widget's minimum size exceeds the dock's) currently shows a horizontal
+// scrollbar: the dock demands more width than the column gives it.
+bool e2eNeedsHorizontalScroll(const class QWidget *widget);

@@ -14,17 +14,17 @@ namespace ui_shell {
 
 namespace {
 
-QToolButton *iconButton(const char *mask, const QString &text, QWidget *parent)
+// Icon-only, the tooltip carries the meaning (IntelliJ's own Git toolbar): a
+// row of text buttons demanded more than a right column's default width and
+// pushed the whole dock into a horizontal scroll area (#324).
+QToolButton *iconButton(const char *mask, const QString &tooltip, QWidget *parent)
 {
     auto *button = new QToolButton(parent);
     button->setIcon(maskIcon(mask, chromePaletteForTheme(activeThemeName()).textDim));
     button->setIconSize(QSize(16, 16));
     button->setAutoRaise(true);
     button->setFocusPolicy(Qt::NoFocus);
-    if (!text.isEmpty()) {
-        button->setText(text);
-        button->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
-    }
+    button->setToolTip(tooltip);
     return button;
 }
 
@@ -46,8 +46,7 @@ ChangesToolbar::ChangesToolbar(VcsService *vcsService, QWidget *parent)
                         branchChip_->mapToGlobal(QPoint(0, branchChip_->height())));
     });
 
-    refreshButton_ = iconButton(":/ui/icons/diff/sync.a8", QString(), this);
-    refreshButton_->setToolTip(tr("Refresh (git status)"));
+    refreshButton_ = iconButton(":/ui/icons/diff/sync.a8", tr("Refresh (git status)"), this);
     connect(refreshButton_, &QToolButton::clicked, this, [this]() {
         // Re-enabled the moment an answer lands, whether it is this click's
         // own refresh or one already queued behind it — `VcsService` runs
@@ -61,7 +60,7 @@ ChangesToolbar::ChangesToolbar(VcsService *vcsService, QWidget *parent)
     connect(vcsService_, &VcsService::vcsFailed, refreshButton_,
             [this]() { refreshButton_->setEnabled(true); });
 
-    fetchButton_ = iconButton(":/ui/icons/diff/sync.a8", tr("Fetch"), this);
+    fetchButton_ = iconButton(":/ui/icons/diff/fetch.a8", tr("Fetch"), this);
     connect(fetchButton_, &QToolButton::clicked, this, &ChangesToolbar::fetchRequested);
 
     pullButton_ = iconButton(":/ui/icons/diff/arrow_down.a8", tr("Pull"), this);
@@ -70,13 +69,10 @@ ChangesToolbar::ChangesToolbar(VcsService *vcsService, QWidget *parent)
     pushButton_ = iconButton(":/ui/icons/diff/arrow_up.a8", tr("Push"), this);
     connect(pushButton_, &QToolButton::clicked, this, &ChangesToolbar::pushRequested);
 
-    // Text buttons, `tests_panel.cpp`'s Run All/Run Failed/Stop convention.
-    stageAllButton_ = new QToolButton(this);
-    stageAllButton_->setText(tr("Stage all"));
+    stageAllButton_ = iconButton(":/ui/icons/diff/stage_all.a8", tr("Stage all"), this);
     connect(stageAllButton_, &QToolButton::clicked, this, &ChangesToolbar::stageAllRequested);
 
-    unstageAllButton_ = new QToolButton(this);
-    unstageAllButton_->setText(tr("Unstage all"));
+    unstageAllButton_ = iconButton(":/ui/icons/diff/unstage_all.a8", tr("Unstage all"), this);
     connect(unstageAllButton_, &QToolButton::clicked, this, &ChangesToolbar::unstageAllRequested);
 
     auto *layout = new QHBoxLayout(this);
@@ -126,11 +122,9 @@ void ChangesToolbar::refresh()
     static const QString kRemote = QStringLiteral("origin");
     fetchButton_->setToolTip(tr("git fetch %1").arg(kRemote));
 
-    pullButton_->setText(status.behind > 0 ? tr("Pull %1").arg(status.behind) : tr("Pull"));
     pullButton_->setToolTip(tr("git pull %1 %2").arg(kRemote, branch));
     pullButton_->setEnabled(!status.detached && status.has_upstream);
 
-    pushButton_->setText(status.ahead > 0 ? tr("Push %1").arg(status.ahead) : tr("Push"));
     pushButton_->setToolTip(status.has_upstream ? tr("git push %1 %2").arg(kRemote, branch)
                                                  : tr("git push -u %1 %2").arg(kRemote, branch));
     pushButton_->setEnabled(!status.detached && (status.ahead > 0 || !status.has_upstream));

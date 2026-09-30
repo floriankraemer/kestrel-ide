@@ -421,3 +421,38 @@ fn e2e_maven_pom_completion() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// #324: the scope row (combo + "Conflicts Only") demanded more than the
+/// default right column offers. No sync needed: the toolbar rows exist from
+/// the moment the dock is shown, so this runs without a JDK.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_the_build_tools_dock_needs_no_horizontal_scrollbar_at_its_default_width() {
+    let name = "e2e_the_build_tools_dock_needs_no_horizontal_scrollbar_at_its_default_width";
+    let project = crate::support::git_fixture(&[("build.gradle", ""), ("settings.gradle", "")]);
+    let mut ide = Ide::launch(name, APP, project.path());
+    drop(project);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    ide.wait_for_ev(Mark::start(), "main_window_shown");
+    let mark = ide.mark();
+    search_everywhere_accept(&ide, "ctrl+shift+a", "Build Tools");
+    ide.wait_for_ev(mark, "build_tools_panel_shown");
+    std::thread::sleep(Duration::from_millis(1000));
+    crate::support::shot("build-tools-default");
+    let panel = ide
+        .events_since_of(mark, "build_tools_panel_shown")
+        .pop()
+        .expect("a build_tools_panel_shown marker");
+    let (width, min_width) = (
+        panel["width"].as_i64().expect("width"),
+        panel["min_width"].as_i64().expect("min_width"),
+    );
+    assert!(
+        panel["hscroll"] == false,
+        "the Build Tools panel needs {min_width}px but its dock is {width}px wide: a horizontal scrollbar"
+    );
+    // Widened, for the PR's screenshot: a diagnostic only.
+    ide.drag((1013, 300), (700, 300));
+    crate::support::shot("build-tools-wide");
+    ide.quit();
+}

@@ -255,6 +255,10 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
   , showDiff_(std::move(showDiff))
   , showFileHistory_(std::move(showFileHistory))
 {
+    // The tree, toolbar and commit buttons fit without a horizontal
+    // scrollbar from here up (#376); `DockRegistry::registerDock` keeps a
+    // panel's own minimum width when it raises a dock to the shared floor.
+    setMinimumWidth(360);
     toolbar_ = new ChangesToolbar(vcsService_, this);
     connect(toolbar_, &ChangesToolbar::refreshRequested, vcsService_,
             [this]() { vcsService_->refreshStatus(); });

@@ -1,5 +1,6 @@
 #include "dock_layout.h"
 
+#include <QSize>
 #include <QSplitter>
 #include <QTimer>
 
@@ -9,6 +10,29 @@
 
 namespace ui_shell {
 
+namespace {
+
+// ADS's default minimum for a dock is a fixed 60x40, so a splitter drag
+// squeezed a dock to a sliver (#376). This is the floor for every dock: wide
+// enough for its tab strip and primary controls, and below the narrowest
+// default column (Project, 260px). A dock whose controls need more sets its
+// own larger minimum on its widget before registering (Changes does); one
+// that still runs out of room scrolls inside it. Not the content's own
+// minimum: an area's minimum is its widest tab's, and the AI Chat tab would
+// pin the whole right column wide.
+constexpr QSize kMinDockSize(200, 40);
+
+} // namespace
+
+// Needs the dock's widget already set, and runs before the dock joins an
+// area: the area reads the dock's minimum size hint when the dock is added.
+void applyMinimumDockSize(ads::CDockWidget *dock)
+{
+    dock->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromDockWidgetMinimumSize);
+    const int panelMinWidth = dock->widget() != nullptr ? dock->widget()->minimumWidth() : 0;
+    dock->setMinimumSize(qMax(panelMinWidth, kMinDockSize.width()), kMinDockSize.height());
+}
+
 DockRegistry::DockRegistry(ads::CDockManager *dockManager) : dockManager_(dockManager) {}
 
 ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWidget *dock,
@@ -17,6 +41,7 @@ ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWi
 {
     ads::CDockWidget *anchor =
       relativeTo && !relativeTo->dockWidgets().isEmpty() ? relativeTo->dockWidgets().first() : nullptr;
+    applyMinimumDockSize(dock);
     docks_.insert(id, Entry{dock, area, anchor});
     return dockManager_->addDockWidget(area, dock, relativeTo);
 }

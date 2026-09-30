@@ -276,3 +276,20 @@ pub(crate) fn wait_for_database_row(ide: &Ide, mark: Mark, kind: &str) -> Value 
         .expect("just matched above")
         .clone()
 }
+
+/// A screenshot of the whole screen to `<dir>/<name>.png`, where `<dir>` is
+/// `$IDE_SHOT_DIR` or, failing that, an existing `target/shots`: a diagnostic
+/// for the PR, never an assertion (ADR-0024).
+pub(crate) fn shot(name: &str) {
+    let default = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/shots");
+    let dir = std::env::var_os("IDE_SHOT_DIR")
+        .map(PathBuf::from)
+        .or_else(|| default.is_dir().then_some(default));
+    if let Some(dir) = dir {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let _ = std::process::Command::new("import")
+            .args(["-window", "root"])
+            .arg(dir.join(format!("{name}.png")))
+            .status();
+    }
+}

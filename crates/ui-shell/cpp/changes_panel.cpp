@@ -309,6 +309,10 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     messageHistory_ = new QComboBox(this);
     messageHistory_->setEditable(false);
     messageHistory_->setPlaceholderText(tr("Recent commit messages…"));
+    // Sized to a short floor, not to its longest message: this combo must
+    // never set the dock's minimum width (#324).
+    messageHistory_->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    messageHistory_->setMinimumContentsLength(8);
     // -1 (nothing selected) until a row is chosen; picking one never
     // commits by itself, only fills the message box below, so the index is
     // reset afterwards rather than staying on the chosen row — otherwise
@@ -360,11 +364,17 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     commitAndPushButton_ = new QPushButton(tr("Commit and Push"), this);
     amendButton_ = new QPushButton(tr("Amend"), this);
 
+    // Two short rows, not one: three text buttons side by side need more
+    // than a right column's default width (#324). Amend shares the row of
+    // the commit options it belongs with, Commit and Commit and Push split
+    // the row below evenly.
+    auto *optionsRow = new QHBoxLayout();
+    optionsRow->addWidget(optionsToggle);
+    optionsRow->addStretch(1);
+    optionsRow->addWidget(amendButton_);
     auto *buttonRow = new QHBoxLayout();
-    buttonRow->addWidget(commitButton_);
-    buttonRow->addWidget(commitAndPushButton_);
-    buttonRow->addWidget(amendButton_);
-    buttonRow->addStretch(1);
+    buttonRow->addWidget(commitButton_, 1);
+    buttonRow->addWidget(commitAndPushButton_, 1);
 
     repoWidgets_ = new QWidget(this);
     auto *repoLayout = new QVBoxLayout(repoWidgets_);
@@ -373,7 +383,7 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     repoLayout->addWidget(tree_, 1);
     repoLayout->addWidget(messageHistory_);
     repoLayout->addWidget(messageEdit_);
-    repoLayout->addWidget(optionsToggle);
+    repoLayout->addLayout(optionsRow);
     repoLayout->addWidget(commitOptions_);
     repoLayout->addLayout(buttonRow);
 
@@ -479,7 +489,8 @@ void ChangesPanel::markShown()
     const QRect commitRect(commitButton_->mapToGlobal(QPoint(0, 0)), commitButton_->size());
     e2eMark(QStringLiteral("{\"ev\":\"changes_panel_shown\","
                             "\"message_rect\":[%1,%2,%3,%4],"
-                            "\"commit_rect\":[%5,%6,%7,%8]}")
+                            "\"commit_rect\":[%5,%6,%7,%8],"
+                            "\"width\":%9,\"min_width\":%10,\"hscroll\":%11}")
               .arg(messageRect.x())
               .arg(messageRect.y())
               .arg(messageRect.width())
@@ -487,7 +498,10 @@ void ChangesPanel::markShown()
               .arg(commitRect.x())
               .arg(commitRect.y())
               .arg(commitRect.width())
-              .arg(commitRect.height()));
+              .arg(commitRect.height())
+              .arg(width())
+              .arg(minimumSizeHint().width())
+              .arg(e2eNeedsHorizontalScroll(this) ? "true" : "false"));
 }
 
 void ChangesPanel::refresh()

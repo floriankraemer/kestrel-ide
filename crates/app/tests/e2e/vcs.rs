@@ -3,7 +3,8 @@
 use e2e::{Ide, Mark};
 
 use crate::support::{
-    accept_top_hit, git_fixture, open_file, open_search_popup, rect_centre, wait_for_index, APP,
+    accept_top_hit, git_fixture, open_file, open_search_popup, rect_centre, shot, wait_for_index,
+    APP,
 };
 
 /// The Changes dock used to be blind to anything the app did not do itself:
@@ -1134,4 +1135,41 @@ fn e2e_create_branch_commit_and_merge_through_the_branch_popup() {
     ide.focus_main();
 
     assert_eq!(ide.quit(), 0);
+}
+
+/// #324: the Changes dock's toolbar and button row demanded more than the
+/// default right column offers, so ADS wrapped the dock in a horizontal
+/// scroll area. The panel's own minimum width must fit its default width.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_the_changes_dock_needs_no_horizontal_scrollbar_at_its_default_width() {
+    let name = "e2e_the_changes_dock_needs_no_horizontal_scrollbar_at_its_default_width";
+    let repo = git_fixture(&[("draft.txt", "first draft\n")]);
+    let mut ide = Ide::launch(name, APP, repo.path());
+    drop(repo);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    ide.key("alt+9");
+    ide.wait_for_event(
+        Mark::start(),
+        "the Changes dock to report its geometry",
+        |e| e["ev"] == "changes_panel_shown",
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    shot("changes-default");
+    let panel = ide
+        .events_since_of(Mark::start(), "changes_panel_shown")
+        .pop()
+        .expect("a changes_panel_shown marker");
+    let (width, min_width) = (
+        panel["width"].as_i64().expect("width"),
+        panel["min_width"].as_i64().expect("min_width"),
+    );
+    assert!(
+        panel["hscroll"] == false,
+        "the Changes panel needs {min_width}px but its dock is {width}px wide: a horizontal scrollbar"
+    );
+    // Widened, for the PR's screenshot: a diagnostic only.
+    ide.drag((911, 260), (500, 260));
+    shot("changes-wide");
+    ide.quit();
 }

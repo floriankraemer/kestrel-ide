@@ -4,7 +4,10 @@
 #include <QAction>
 #include <QMenu>
 #include <QPoint>
+#include <QAbstractScrollArea>
 #include <QRect>
+#include <QScrollBar>
+#include <QWidget>
 #include <QTimer>
 
 #include <chrono>
@@ -137,4 +140,16 @@ void e2eMarkMenuActions(QMenu *menu, const char *event)
             }
         });
     });
+}
+
+bool e2eNeedsHorizontalScroll(const QWidget *widget)
+{
+    for (const QWidget *w = widget; w != nullptr; w = w->parentWidget()) {
+        if (const auto *area = qobject_cast<const QAbstractScrollArea *>(w)) {
+            if (area->horizontalScrollBar()->isVisible()) {
+                return true;
+            }
+        }
+    }
+    return false;
 }

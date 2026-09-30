@@ -42,7 +42,17 @@ fn hover_is_parsed_from_every_response_shape() {
         .expect("some hover");
     assert!(array.value.starts_with("plain hover"));
 
-    // Anywhere else (the stub answers lines 0-3 and 7): a null result is "nothing here", not an error.
+    // Line 5: a doc far taller than any hover card (the card-scrolling E2E).
+    let tall = manager
+        .hover(uri, 5, 0)
+        .expect("hover")
+        .expect("some hover");
+    assert!(tall
+        .value
+        .starts_with("```rust\nfn tall()\n```\nDoc line 1."));
+    assert!(tall.value.ends_with("Doc line 60."));
+
+    // Anywhere else (the stub answers lines 0-3, 5 and 7): a null result is "nothing here", not an error.
     assert_eq!(manager.hover(uri, 9, 0).expect("hover"), None);
 
     manager.stop(LANG);

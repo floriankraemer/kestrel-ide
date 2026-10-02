@@ -214,12 +214,12 @@ A row's status and commit hash are updated in the commit that finishes it.
 | T3 — gutter Run / Debug / Run with Coverage per test | done | 4092770 |
 | T4 — `test_core::coverage` Clover parser + `coverage-args`, paths mapped to local | done | 414f9fc |
 | T5 — coverage gutter stripes + Coverage dock | done | 6920853 |
-| T6 — ADR-0048 amendment | done | — |
+| T6 — ADR-0048 amendment | done | 5237a52 |
 
 ### Q — quality tools (ADR-0070)
 | Task | Status | Commit |
 |---|---|---|
-| Q1 — Psalm and PHPMD analyzer rows | open | |
+| Q1 — Psalm and PHPMD analyzer rows | done | — |
 | Q2 — `formatters` contribution point; php-cs-fixer, Pint and phpcbf rows | open | |
 | Q3 — `analysis_core::format` through the buffer strategies; formatter mode in the stub analyzer | open | |
 | Q4 — Reformat Code uses the configured formatter, otherwise LSP; result applied as diff edits in one undo step | open | |

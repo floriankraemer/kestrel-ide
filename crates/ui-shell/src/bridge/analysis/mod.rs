@@ -396,8 +396,7 @@ impl ffi::AnalysisService {
             // whole batch over one analyzer.
             return self.run_next(root);
         };
-        let mut args = [prefix, analyzer.args.clone()].concat();
-        args.push(root.to_string_lossy().into_owned());
+        let args = [prefix, analyzer.project_run_args(&root)].concat();
 
         let qt_thread = self.as_mut().qt_thread();
         let id = analyzer.id.clone();

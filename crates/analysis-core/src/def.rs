@@ -98,13 +98,39 @@ impl AnalyzerDef {
     /// appended, because the tool has to be told which file to read.
     pub fn file_run_args(&self, file: &Path) -> Vec<String> {
         let file = file.to_string_lossy();
-        let mut argv = self.args.clone();
-        let names_file = self.file_args.iter().any(|a| a.contains("{file}"));
-        argv.extend(self.file_args.iter().map(|a| a.replace("{file}", &file)));
+        let names_file = self
+            .args
+            .iter()
+            .chain(&self.file_args)
+            .any(|a| a.contains("{file}"));
+        let mut argv: Vec<String> = self
+            .args
+            .iter()
+            .chain(&self.file_args)
+            .map(|a| a.replace("{file}", &file))
+            .collect();
         if !names_file && self.buffer != BufferStrategy::Stdin {
             argv.push(file.into_owned());
         }
         argv
+    }
+
+    /// The argv tail for a project-wide run over `root`: `args`, with a
+    /// `{file}` placeholder (a tool whose path is not the last argument,
+    /// like PHPMD's `<path> <format> <ruleset>`) replaced by the root, else
+    /// the root appended.
+    pub fn project_run_args(&self, root: &Path) -> Vec<String> {
+        let root = root.to_string_lossy();
+        if self.args.iter().any(|a| a.contains("{file}")) {
+            self.args
+                .iter()
+                .map(|a| a.replace("{file}", &root))
+                .collect()
+        } else {
+            let mut argv = self.args.clone();
+            argv.push(root.into_owned());
+            argv
+        }
     }
 
     /// The severity a tool's own word maps to, or [`Severity::Warning`]
@@ -217,6 +243,27 @@ mod tests {
             def.file_run_args(Path::new("/p/a.php")),
             vec!["--report=checkstyle", "--stdin-path=/p/a.php", "-"]
         );
+    }
+
+    #[test]
+    fn a_placeholder_in_args_positions_the_path_for_file_and_project_runs() {
+        let mut c = contribution();
+        c.args = vec!["{file}".into(), "checkstyle".into(), "cleancode".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.file_run_args(Path::new("/p/a.php")),
+            vec!["/p/a.php", "checkstyle", "cleancode"]
+        );
+        assert_eq!(
+            def.project_run_args(Path::new("/p")),
+            vec!["/p", "checkstyle", "cleancode"]
+        );
+    }
+
+    #[test]
+    fn a_project_run_without_a_placeholder_appends_the_root() {
+        let def = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(def.project_run_args(Path::new("/p")), vec!["analyse", "/p"]);
     }
 
     #[test]

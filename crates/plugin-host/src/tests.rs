@@ -550,10 +550,16 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     assert_eq!(plugin.source(), PluginSource::Builtin);
 
     let analyzers: Vec<_> = registry.analyzers().collect();
-    assert_eq!(analyzers.len(), 2, "{analyzers:?}");
+    assert_eq!(analyzers.len(), 4, "{analyzers:?}");
     for (owner, _) in &analyzers {
         assert_eq!(owner.id(), "php-tools");
     }
+    let psalm = analyzers.iter().find(|(_, a)| a.id == "psalm").unwrap().1;
+    assert_eq!(psalm.composer_package.as_deref(), Some("vimeo/psalm"));
+    assert_eq!(psalm.buffer.as_deref(), Some("saved-only"));
+    let phpmd = analyzers.iter().find(|(_, a)| a.id == "phpmd").unwrap().1;
+    assert_eq!(phpmd.args[..2], ["{file}", "checkstyle"]);
+    assert_eq!(phpmd.languages, vec!["php"]);
 
     let phpstan = analyzers
         .iter()

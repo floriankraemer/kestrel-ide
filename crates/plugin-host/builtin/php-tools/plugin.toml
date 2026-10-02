@@ -16,7 +16,7 @@ name = "PHP Tools"
 version = "1.0.0"
 api_version = 1
 license = "MIT"
-description = "PHPStan, PHP_CodeSniffer and PHPUnit for PHP projects."
+description = "PHPStan, Psalm, PHPMD, PHP_CodeSniffer and PHPUnit for PHP projects."
 
 # The Composer dock (PHP parity plan, I8). `composer` is the id
 # `tool_window_factories.cpp` has a native host for.
@@ -75,6 +75,48 @@ file-args = ["--stdin-path={file}", "-"]
 # mapped.
 [contributes.analyzers.severity-map]
 error = "error"
+warning = "warning"
+
+[[contributes.analyzers]]
+id = "psalm"
+name = "Psalm"
+program-candidates = ["vendor/bin/psalm", "psalm.phar", "psalm"]
+args = ["--output-format=checkstyle", "--no-progress"]
+output-format = "checkstyle-xml"
+composer-package = "vimeo/psalm"
+requires-interpreter = "php"
+languages = ["php"]
+# Psalm analyses files on disk (it needs a psalm.xml in the project).
+buffer = "saved-only"
+
+# Psalm's checkstyle report uses `error` and `info`.
+[contributes.analyzers.severity-map]
+error = "error"
+info = "information"
+
+[[contributes.analyzers]]
+id = "phpmd"
+name = "PHPMD"
+program-candidates = ["vendor/bin/phpmd", "phpmd.phar", "phpmd"]
+# PHPMD's argv is positional: `<path> <format> <ruleset> [options]`, so the
+# path is the `{file}` placeholder (the file, or the project root for a
+# project run). The ruleset is PHPMD's built-in set, not the project's
+# `phpmd.xml`.
+args = [
+  "{file}",
+  "checkstyle",
+  "cleancode,codesize,controversial,design,naming,unusedcode",
+  "--exclude",
+  "*/vendor/*,*/node_modules/*",
+]
+output-format = "checkstyle-xml"
+composer-package = "phpmd/phpmd"
+requires-interpreter = "php"
+languages = ["php"]
+buffer = "saved-only"
+
+[contributes.analyzers.severity-map]
+error = "warning"
 warning = "warning"
 
 # The frameworks below build on (or beside) PHPUnit, so selection order

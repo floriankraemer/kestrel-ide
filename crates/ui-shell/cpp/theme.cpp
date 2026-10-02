@@ -344,7 +344,7 @@ QToolBar {
     background-color: {surface};
     border: none;
     border-bottom: 1px solid {border};
-    padding: 0 {sp-2}px;
+    padding: 0;
     spacing: {sp-1}px;
     min-height: {toolbar-h}px;
     max-height: {toolbar-h}px;

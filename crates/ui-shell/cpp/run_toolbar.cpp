@@ -172,9 +172,10 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
   , buildService_(buildService)
   , debugService_(debugService)
 {
-    // Height and horizontal padding come from the QToolBar this sits in
-    // (chromeStyleSheet()'s `QToolBar` rule); this widget only orders the
-    // controls.
+    // Height comes from the QToolBar this sits in (chromeStyleSheet()'s
+    // `QToolBar` rule); the horizontal padding is this layout's, because a
+    // QToolBar's QSS padding is applied to all four sides (it would cut
+    // 8px off the top and bottom of the 26px controls).
     configCombo_ = new QComboBox(this);
     configCombo_->setMinimumWidth(120);
     configCombo_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
@@ -201,7 +202,7 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
     listenButton_->setIcon(listenIcon);
 
     auto *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setContentsMargins(tokens::kSp2, 0, tokens::kSp2, 0);
     layout->setSpacing(tokens::kSp1);
     layout->addWidget(runButton_);
     layout->addWidget(stopButton_);

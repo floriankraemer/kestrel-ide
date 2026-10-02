@@ -787,3 +787,25 @@ fn contains_extension_finds_a_source_file_but_not_an_ignored_one() {
     fs::write(dir.path().join("src/Foo.php"), "").unwrap();
     assert!(contains_extension(dir.path(), "php"));
 }
+
+#[test]
+fn config_dir_override_is_used_verbatim() {
+    let dir = config_dir_from(
+        Some("/tmp/isolated".into()),
+        Some(PathBuf::from("/home/u/.config")),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/tmp/isolated")));
+}
+
+#[test]
+fn config_dir_without_override_is_the_platform_dir_plus_ide() {
+    let platform = Some(PathBuf::from("/home/u/.config"));
+    assert_eq!(
+        config_dir_from(None, platform.clone()),
+        Some(PathBuf::from("/home/u/.config/ide"))
+    );
+    assert_eq!(
+        config_dir_from(Some("".into()), platform),
+        Some(PathBuf::from("/home/u/.config/ide"))
+    );
+}

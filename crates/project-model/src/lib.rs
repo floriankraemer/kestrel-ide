@@ -774,11 +774,24 @@ pub fn read_last_project(config_dir: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
-/// The platform config dir the real app persists into (`dirs::config_dir()`
-/// joined with `ide`). Tests should use their own temp dir instead of this,
-/// to avoid touching the developer's real `~/.config`.
+/// Environment variable that points the app at an isolated config dir
+/// (used verbatim, no `ide` suffix), so a manual walk or a second install
+/// never touches the real settings, recents and window state.
+pub const CONFIG_DIR_ENV: &str = "IDE_CONFIG_DIR";
+
+/// The config dir the real app persists into: `IDE_CONFIG_DIR` when set and
+/// non-empty, else the platform config dir (`dirs::config_dir()`) joined with
+/// `ide`. Tests should use their own temp dir instead of this, to avoid
+/// touching the developer's real `~/.config`.
 pub fn default_config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("ide"))
+    config_dir_from(std::env::var_os(CONFIG_DIR_ENV), dirs::config_dir())
+}
+
+fn config_dir_from(over: Option<std::ffi::OsString>, platform: Option<PathBuf>) -> Option<PathBuf> {
+    match over {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => platform.map(|d| d.join("ide")),
+    }
 }
 
 /// Session-scoped holder for "the one open project", matching US-1: opening

@@ -625,14 +625,6 @@ impl From<io::Error> for ConfigError {
     }
 }
 
-/// The platform config dir the real app persists into (`dirs::config_dir()`
-/// joined with `ide`), same convention as `project-model::default_config_dir`.
-/// Tests should use their own temp dir instead of this, to avoid touching the
-/// developer's real `~/.config`.
-pub fn default_config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("ide"))
-}
-
 // ---------------------------------------------------------------------------
 // The path-keyed core. `Settings` (global) and `ProjectSettings` (per project)
 // are both persisted through these three functions, so the guarantees below

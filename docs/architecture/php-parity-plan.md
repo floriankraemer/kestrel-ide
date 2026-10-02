@@ -444,6 +444,13 @@ It does not debug in the container: the official image has no Xdebug, which stay
 17. `composer require` mid-session is picked up.
 18. The "Verify …" lines in `followups.md`.
 
+#### E4 — isolating the Windows and WSL walks
+
+The Windows build resolves its config dir through the Known Folder API, which ignores `APPDATA`, so a launch would use the real `%APPDATA%\ide`.
+`IDE_CONFIG_DIR` (read by `project_model::default_config_dir`) points the app at a throwaway directory instead.
+The walk launches with `IDE_CONFIG_DIR=C:\Users\flori\ide-phptest\config` and pre-seeds `last-project.txt` there with the fixture path, since the app takes no project argument.
+The OS keychain is written only by the Settings fields that store a secret, so a walk that enters no key and no password never touches it.
+
 #### E4 results — Linux column (2026-10-02)
 
 Driven in the real app under Xvfb in the `linux-php` image (real PHP 8.3, Xdebug, PCOV, Intelephense, Phpactor, vscode-php-debug), over the `php_app` fixture, in the dark and light themes at 100% and at 150% (`QT_SCALE_FACTOR=1.5`).

@@ -457,19 +457,23 @@ E4 stays open until they are filled.
 | 3. Windows without WSL shows the Phpactor reason | pending | Windows only. |
 | 4. WSL interpreter | pending | WSL only. |
 | 5. Container `exec` against `run` latency | pending | Needs the Docker host; flow d covers the function, not the timing. |
-| 6. Xdebug from the CLI, `php -S`, PHPUnit | CLI pass | Run configuration stops at the breakpoint under real Xdebug, three scope fetches per stop; `php -S` and the gutter test are the green E3 flows. The advice shows in Settings and the Debug console. Container and WSL pending. |
+| 6. Xdebug from the CLI, `php -S`, PHPUnit | CLI pass after fixes | Run configuration stops at the breakpoint under real Xdebug, three scope fetches per stop; `php -S` and the gutter test are the green E3 flows. The Debug dock's inputs, frame path and variable names were cut off at the default height (fixed), and the `xdebug.mode` advice no longer prints on IDE-started runs, only when the listen toggle starts a listener. Container and WSL pending. |
 | 7. Listen toggle glyph and sync | pass after fix | Run menu check and toolbar highlight agree in both states; the toolbar clipped the checked button and the config combo (fixed). |
-| 8. Composer dock | pass after fix | Lists the locked packages; stayed stale after a change on disk (fixed). |
-| 9. Coverage colours | pass | Covered lines green, uncovered red in the gutter, per-file and per-directory percentages in the dock; not captured at 150% (the gutter-icon mark is not scaled). |
-| 10. Generate | pass | Menu with the reason on disabled entries, and the member picker. |
+| 8. Composer dock | pass after fixes | Lists the locked packages; stayed stale after a change on disk (fixed). At the default width its button row forced a horizontal scroll bar and clipped the version column (fixed: Install and Update stay, the rest sit behind More; the version always shows, names elide in the middle). |
+| 9. Coverage colours | pass after fixes | Covered lines green, uncovered red in the gutter, per-file and per-directory percentages in the dock; a file with no executable lines shows a dash instead of `0.0% (0/0)` (fixed). Captured at 150% once the harness scaled marker coordinates (fixed). |
+| 10. Generate | pass after fix | Menu with the reason on disabled entries; the member picker had no heading or Select All and None (fixed). |
 | 11. New menu namespaces | partial | The submenu lists the PHP kinds; the name prompt is E2's flow. |
 | 12. Ctrl+J and Ctrl+Alt+T | partial | Both menus open, Ctrl+Alt+T included; the German layout and AltGr are pending. |
 | 13. Twig and Blade | pass | Both highlighted in both themes. |
 | 14. Format-on-save failure notice | pass after fixes | A project's `[editing] format_on_save` was never applied (fixed); the notice then clipped under the status bar's widgets (fixed). |
-| 15. Search Everywhere with six tabs, Ctrl+N | pass | Classes tab lists the project's and vendor's classes; the first results take 1 to 3 s on a cold index. |
+| 15. Search Everywhere with six tabs, Ctrl+N | pass after fixes | Classes tab lists the project's and vendor's classes, headed Classes, each with its kind and file greyed after the name; exact, prefix and substring matches now rank before loose subsequences. The first results take 1 to 3 s on a cold index. The dock tab bar seen under the popup is the popup overlapping it, not a rendering fault. |
 | 16. A real Laravel or Symfony project | pending | Not run. |
 | 17. `composer require` mid-session | pass after fix | `composer require --dev` was picked up by the dock only after fixing its reload. |
 | 18. The "Verify ..." lines | done in E3 | See the E3 results. |
+
+Batch 3 settings fixes: opening a project or confirming the Settings dialog no longer rewrites `.ide/settings.toml`.
+Detected run configurations are shown and never saved, an update that changes nothing writes nothing, and unset editing fields are not serialised.
+Checkboxes carry a tick and a visible border in both themes, and the PHP page collapses its empty probe line.
 
 Fixes made while walking: the listed `fix(...)` commits after `d442627`, one per finding, each with its regression test where the rule lives or a real-toolchain flow assertion.
 

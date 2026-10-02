@@ -174,9 +174,9 @@ void EditorTabs::runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QS
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(Qt::Checked);
     }
-    // Sized to its rows (up to a dozen) instead of a big empty box.
-    const int visibleRows = qMin(list->count(), 12);
-    list->setFixedHeight(visibleRows * list->sizeHintForRow(0) + 2 * list->frameWidth());
+    // Sized to its rows, up to a dozen, instead of a big empty box.
+    list->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
+    list->setMaximumHeight(12 * list->sizeHintForRow(0) + 2 * list->frameWidth());
     layout->addWidget(list);
     auto *selection = new QHBoxLayout();
     for (const auto &[label, state] :

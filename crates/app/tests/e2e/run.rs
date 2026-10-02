@@ -503,3 +503,26 @@ fn e2e_php_listen_session_stops_for_two_connections() {
 
     assert_eq!(ide.quit(), 0);
 }
+
+/// Opening a project, detecting its run configurations and committing the
+/// Settings dialog must never rewrite the `.ide/settings.toml` a user
+/// committed: detected configurations are shown, not saved, and an unset
+/// field is not written back as `tab_width = 0`.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_launch_leaves_the_project_settings_file_untouched() {
+    let name = "e2e_launch_leaves_the_project_settings_file_untouched";
+    let mut ide = Ide::launch(name, APP, fixture("php_untouched"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    ide.wait_for_event(
+        Mark::start(),
+        "the detected PHP configurations to reach the toolbar",
+        |e| e["ev"] == "run_configurations_changed" && e["count"].as_u64().unwrap_or(0) >= 2,
+    );
+    assert_eq!(ide.quit(), 0);
+    let written = std::fs::read(ide.project_root().join(".ide/settings.toml")).expect("settings");
+    assert_eq!(
+        String::from_utf8_lossy(&written),
+        crate::support::fixture_text("php_untouched", ".ide/settings.toml"),
+    );
+}

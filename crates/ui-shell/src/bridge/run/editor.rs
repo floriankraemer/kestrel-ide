@@ -40,12 +40,7 @@ fn generate_id() -> String {
 impl ffi::RunConfigEditor {
     pub fn begin_edit(&self) {
         let configs = current_project_root()
-            .map(|root| {
-                app_config::project_settings::load(&root)
-                    .unwrap_or_default()
-                    .run_configs
-                    .unwrap_or_default()
-            })
+            .map(|root| super::effective_run_configs(&root))
             .unwrap_or_default();
         *self.saved.borrow_mut() = configs.clone();
         *self.draft.borrow_mut() = configs;
@@ -429,6 +424,11 @@ impl ffi::RunConfigEditor {
             };
         };
         let draft = self.draft.borrow().clone();
+        // Untouched draft: the list shown includes detected configurations
+        // that are not in the file, and OK must not write them there.
+        if draft == *self.saved.borrow() {
+            return FfiResult::default();
+        }
         match app_config::project_settings::update(&root, |settings| {
             settings.run_configs = Some(draft.clone());
         }) {

@@ -59,7 +59,7 @@ pub struct EditingSettings {
     /// Columns one indentation level is worth. `0` means "never chosen",
     /// which resolves to [`DEFAULT_TAB_WIDTH`]; see
     /// [`EditingSettings::tab_width_or_default`] for the clamp.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_zero")]
     pub tab_width: u32,
     /// Indent with spaces rather than tab characters. `None` means "never
     /// chosen" — a bare `bool` would make the derived `Default` say "tabs"
@@ -92,16 +92,22 @@ pub struct EditingSettings {
     pub soft_wrap: Option<bool>,
     /// Encoding name used when a file gives no clue about its own, e.g.
     /// `"utf-8"`. Opaque to this crate. Empty means "never chosen".
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub default_encoding: String,
     /// `"preserve"`, `"lf"`, `"crlf"` or `"platform"`. A plain string for the
     /// same reason `AiProviderSetting::kind` is one: this crate stores the
     /// vocabulary, `settings-model` owns it. Empty means "never chosen".
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub line_endings: String,
     /// Per-language overrides, keyed by language id.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub languages: HashMap<String, EditingSettings>,
+}
+
+/// `skip_serializing_if` for the "never chosen" `0` sentinel: an unset field
+/// must not be written back as `tab_width = 0` over a file that never had it.
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl EditingSettings {

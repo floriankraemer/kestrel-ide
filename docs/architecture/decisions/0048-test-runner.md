@@ -73,3 +73,43 @@ Rerun's `--filter` pattern construction (`test_core::filter`, D6) lives in this 
 - [ADR-0046: one diagnostics model](0046-one-diagnostics-model.md) — the shared store a failing test's diagnostics publish into (D3), and the `(source, uri)` keying a test's rows use (`test:<framework-name>`).
 - [ADR-0047: the `analyzers` contribution point](0047-analyzers-contribution-point.md) — the sibling contribution point (`TestFrameworkContribution`, D1) and the piped-not-PTY reasoning this ADR's decision 2 extends from a batch report to a streamed one.
 - `docs/architecture/php-tooling-plan.md` — the plan this ADR's phase D belongs to.
+
+## Amendment (2026-10-02): coverage, `junit-xml-stdout` and test markers (PHP parity plan, phase T)
+
+The PHP parity plan grows the runner in four ways, none of which changes the decisions above.
+
+### Four more PHP frameworks, and a `junit-xml-stdout` format
+
+`php-tools` now contributes Pest, Codeception, Behat and PHPSpec beside PHPUnit.
+Pest streams TeamCity like PHPUnit.
+Codeception (`--xml`) and Behat (`--format=junit --out=<dir>`) write JUnit reports that `report-glob` finds.
+PHPSpec's JUnit formatter prints the document on stdout, so the new `output-format = "junit-xml-stdout"` collects stdout while the process runs and parses it once after exit, through the same `TestSink::junit` call a `junit-xml` run uses.
+The selection rule is unchanged ("the first contributed framework whose program resolves"), so the manifest order carries the policy: Pest and Codeception precede PHPUnit because both depend on it, and Behat and PHPSpec follow it.
+The consequence noted above (one framework per project) therefore still holds, and PHPUnit wins in a project that also has Behat.
+PHPSpec has no name filter, so rerunning a single PHPSpec node is not supported.
+Behat's reports go to `.ide/local/test-reports/behat`, which is never committed.
+
+### Test markers
+
+`php_core::tests::markers` decides, from a tree-sitter parse, which editor lines carry a Run/Debug marker and the `--filter` string each one runs.
+A PHPUnit class marks its own line (the whole class) and each `test*`, `#[Test]` or `@test` method.
+A Pest file marks each `test(`/`it(` call and each `describe(` block.
+Filters are PCRE-escaped, including the namespace backslash, because PCRE2 rejects an unescaped `\T`.
+`TestService` starts the marker's test through the ordinary rerun path with the pattern as a new `RerunSelection::Pattern`, so a marker run fills the same tree and publishes the same diagnostics.
+Debug reuses ADR-0069's listener: `DebugService` starts it, and once it is up the pending test starts with the Xdebug environment (`test_core::run_on_env` takes the extra environment).
+
+### Coverage
+
+A contribution may declare `coverage-args` (PHPUnit and Pest: `--coverage-clover $COVERAGE_FILE$`).
+`test_core::coverage` substitutes a project-relative report path (`.ide/local/coverage/clover.xml`), so the file lands in the project mount on every host, and sets `XDEBUG_MODE=coverage`, which PCOV ignores.
+After the run the bridge reads the Clover XML, `parse_clover` turns it into per-file line hits, and `map_paths_from` maps the paths the tool printed through `ExecHost::path_from_tool` (container and WSL).
+`Coverage::rows` rolls the lines up into every directory under the project root for the Coverage dock.
+The editor paints the hit and missed lines as gutter stripes; the dock lists directories and files with their share of covered lines.
+A framework without `coverage-args` refuses a coverage run with a typed message.
+
+### Consequences
+
+- Positive: five frameworks and coverage need no new parser beyond Clover, and every one of them reaches the same tree, diagnostics and rerun path.
+- Negative / accepted: Codeception and Behat names do not follow PHPUnit's `Class::method` shape, so "Rerun failed" against them uses the PHPUnit-regex dialect and may match nothing for a Codeception Cest or a Behat scenario.
+- Negative / accepted: Pest's `--filter` is matched against the test description (`it does x`, `` `Group` → it does x `` inside `describe`), not a class name, so a marker's filter can also match a sibling whose description starts the same way.
+- Negative / accepted: Codeception has no coverage row, because its report path is the configured output directory rather than a path the IDE chooses.

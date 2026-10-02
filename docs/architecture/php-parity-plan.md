@@ -213,8 +213,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | T2 — `php_core::tests::markers` (PHPUnit `test*`/`#[Test]`/`@test`, Pest `test`/`it`/`describe`) | done | 0a84f0d |
 | T3 — gutter Run / Debug / Run with Coverage per test | done | 4092770 |
 | T4 — `test_core::coverage` Clover parser + `coverage-args`, paths mapped to local | done | 414f9fc |
-| T5 — coverage gutter stripes + Coverage dock | done | — |
-| T6 — ADR-0048 amendment | open | |
+| T5 — coverage gutter stripes + Coverage dock | done | 6920853 |
+| T6 — ADR-0048 amendment | done | — |
 
 ### Q — quality tools (ADR-0070)
 | Task | Status | Commit |

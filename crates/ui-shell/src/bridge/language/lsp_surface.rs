@@ -170,10 +170,10 @@ impl ffi::LanguageService {
             return;
         }
         let triggers = self
-            .signature_triggers
+            .advertised
             .borrow()
             .get(&language_id)
-            .cloned()
+            .map(lsp_core::Advertised::signature_triggers)
             .unwrap_or_default();
         if !lsp_core::should_request_signature_help(
             &triggers,

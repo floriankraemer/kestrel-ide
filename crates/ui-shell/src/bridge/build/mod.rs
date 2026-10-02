@@ -70,7 +70,7 @@ fn to_ffi_result(err: &build_core::BuildError) -> ffi::FfiResult {
 }
 
 /// The shared diagnostics store's key for one toolchain's rows (ADR-0046):
-/// distinct from a language server's (`language::lsp_source_key`) so a
+/// distinct from a language server's (`lsp_core::diagnostics::source_key`) so a
 /// build's rows for a file and a server's for the same file coexist.
 fn source_key(toolchain: &str) -> String {
     format!("build:{toolchain}")

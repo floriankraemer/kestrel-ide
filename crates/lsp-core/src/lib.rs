@@ -95,6 +95,7 @@ pub use rename::{
     parse_prepare_rename, prepare_outcome, rename_outcome, PrepareOutcome, PrepareRename,
     RenameOutcome,
 };
+pub use routing::{Advertised, ServerAdvert};
 pub use semantic_tokens::{
     overlay as overlay_semantic_tokens, parse_full_response as parse_semantic_tokens_full,
     parse_legend as parse_semantic_tokens_legend, scope_for as semantic_token_scope,

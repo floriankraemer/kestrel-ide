@@ -6,6 +6,8 @@
 
 use serde_json::Value;
 
+use crate::signature_help::SignatureTriggers;
+
 /// How a method is answered when more than one server could.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
@@ -140,6 +142,73 @@ pub fn is_empty_answer(value: &Value) -> bool {
     }
 }
 
+/// What one server said it wants, from its `initialize` result.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ServerAdvert {
+    pub trigger_characters: Vec<String>,
+    pub signature_triggers: SignatureTriggers,
+    pub completion_resolve: bool,
+}
+
+/// What every server of one language advertised, merged for the language:
+/// the editor asks for completion after a character any of them wants.
+#[derive(Debug, Clone, Default)]
+pub struct Advertised {
+    servers: Vec<(String, ServerAdvert)>,
+}
+
+impl Advertised {
+    /// Record (or replace, after a restart) one server's advertisement.
+    pub fn set(&mut self, server_id: &str, advert: ServerAdvert) {
+        match self.servers.iter_mut().find(|(id, _)| id == server_id) {
+            Some((_, existing)) => *existing = advert,
+            None => self.servers.push((server_id.to_string(), advert)),
+        }
+    }
+
+    /// Completion trigger characters: the union, first occurrence first.
+    pub fn trigger_characters(&self) -> Vec<String> {
+        union(self.servers.iter().map(|(_, a)| &a.trigger_characters))
+    }
+
+    /// Signature help is on when any server offers it, on every character
+    /// any of them names.
+    pub fn signature_triggers(&self) -> SignatureTriggers {
+        SignatureTriggers {
+            supported: self
+                .servers
+                .iter()
+                .any(|(_, a)| a.signature_triggers.supported),
+            trigger: union(
+                self.servers
+                    .iter()
+                    .map(|(_, a)| &a.signature_triggers.trigger),
+            ),
+            retrigger: union(
+                self.servers
+                    .iter()
+                    .map(|(_, a)| &a.signature_triggers.retrigger),
+            ),
+        }
+    }
+
+    /// Whether any server offers `completionItem/resolve`; the request itself
+    /// goes to the item's origin, which answers or says it cannot.
+    pub fn completion_resolve_supported(&self) -> bool {
+        self.servers.iter().any(|(_, a)| a.completion_resolve)
+    }
+}
+
+fn union<'a>(lists: impl Iterator<Item = &'a Vec<String>>) -> Vec<String> {
+    let mut merged: Vec<String> = Vec::new();
+    for item in lists.flatten() {
+        if !merged.contains(item) {
+            merged.push(item.clone());
+        }
+    }
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,5 +296,31 @@ mod tests {
         assert!(is_empty_answer(&json!({"items": []})));
         assert!(!is_empty_answer(&json!([1])));
         assert!(!is_empty_answer(&json!({"contents": "x"})));
+    }
+
+    #[test]
+    fn advertisements_merge_as_a_union_and_a_restart_replaces_its_own() {
+        let advert = |chars: &[&str], sig: bool, resolve: bool| ServerAdvert {
+            trigger_characters: chars.iter().map(|c| c.to_string()).collect(),
+            signature_triggers: SignatureTriggers {
+                supported: sig,
+                trigger: chars.iter().map(|c| c.to_string()).collect(),
+                retrigger: vec![],
+            },
+            completion_resolve: resolve,
+        };
+        let mut merged = Advertised::default();
+        assert!(!merged.completion_resolve_supported());
+        merged.set("a", advert(&[".", ":"], false, false));
+        merged.set("b", advert(&[":", ">"], true, true));
+        assert_eq!(merged.trigger_characters(), [".", ":", ">"]);
+        assert!(merged.signature_triggers().supported);
+        assert_eq!(merged.signature_triggers().trigger, [".", ":", ">"]);
+        assert!(merged.completion_resolve_supported());
+
+        merged.set("b", advert(&["$"], false, false));
+        assert_eq!(merged.trigger_characters(), [".", ":", "$"]);
+        assert!(!merged.signature_triggers().supported);
+        assert!(!merged.completion_resolve_supported());
     }
 }

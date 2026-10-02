@@ -39,7 +39,7 @@ use diagnostics_core::Severity;
 use crate::bridge::ffi;
 
 /// The shared diagnostics store's key for this module's rows (F3.7),
-/// distinct from `lsp_source_key`'s per-language ones and from a build
+/// distinct from `lsp_core::diagnostics::source_key`'s per-server ones and from a build
 /// tool's — a bare `.sql` file has neither an LSP source nor a build tool
 /// behind it.
 const DATABASE_INSPECTIONS_SOURCE: &str = "database:inspections";

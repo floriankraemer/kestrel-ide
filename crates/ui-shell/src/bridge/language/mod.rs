@@ -36,7 +36,7 @@ mod lsp_surface;
 /// through — split out once this file crossed the file-size ceiling
 /// (#162), the same reason `lsp_surface` exists. `refactor_controller.cpp`
 /// is this module's one C++ consumer, mirroring the split there.
-mod refactor;
+pub(crate) mod refactor;
 mod server_lifecycle;
 
 /// Every `language-servers` contribution from the live plugin registry,

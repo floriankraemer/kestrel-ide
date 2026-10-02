@@ -164,6 +164,20 @@ pub fn parse_on_type_triggers(capabilities: &Value) -> Vec<String> {
     first.into_iter().chain(more).map(str::to_string).collect()
 }
 
+/// What a save should write after the server answered a whole-document
+/// formatting request for `text`: `None` when nothing changes (already
+/// formatted, or no formatter), the formatted text otherwise. Errors say
+/// why the server's edits could not be applied, so the caller can save
+/// unformatted and tell the user.
+pub fn formatted_text(text: &str, outcome: FormattingOutcome) -> Result<Option<String>, String> {
+    match outcome {
+        FormattingOutcome::Edits(edits) => crate::workspace_edit::apply_to_text(text, &edits)
+            .map(Some)
+            .map_err(|err| err.to_string()),
+        FormattingOutcome::AlreadyFormatted | FormattingOutcome::Unsupported => Ok(None),
+    }
+}
+
 /// A capability is present when it is `true` or an options object. `false`,
 /// `null` and absent all mean no — the protocol allows all three and servers
 /// use all three.
@@ -319,6 +333,37 @@ mod tests {
             },
             "newText": text,
         })
+    }
+
+    #[test]
+    fn a_saved_text_is_the_server_edits_applied_or_untouched() {
+        let edits = vec![TextEdit {
+            start_line: 0,
+            start_character: 0,
+            end_line: 0,
+            end_character: 3,
+            new_text: "<?php".into(),
+        }];
+        assert_eq!(
+            formatted_text("php\n", FormattingOutcome::Edits(edits)),
+            Ok(Some("<?php\n".to_string()))
+        );
+        assert_eq!(
+            formatted_text("x", FormattingOutcome::AlreadyFormatted),
+            Ok(None)
+        );
+        assert_eq!(
+            formatted_text("x", FormattingOutcome::Unsupported),
+            Ok(None)
+        );
+        let outside = vec![TextEdit {
+            start_line: 9,
+            start_character: 0,
+            end_line: 9,
+            end_character: 1,
+            new_text: String::new(),
+        }];
+        assert!(formatted_text("x", FormattingOutcome::Edits(outside)).is_err());
     }
 
     #[test]

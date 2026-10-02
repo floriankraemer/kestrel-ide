@@ -383,16 +383,7 @@ impl ffi::LanguageService {
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
             return;
         };
-        let settings = crate::bridge::convert::load_resolved_settings();
-        let rules = settings_model::editing::resolve_for_language(&settings, &language_id);
-        let style = rules.indent_style();
-        let options = lsp_core::formatting::FormattingOptions {
-            tab_size: style.tab_width as u32,
-            insert_spaces: style.use_spaces,
-            trim_trailing_whitespace: Some(rules.trim_trailing_whitespace),
-            insert_final_newline: Some(rules.insert_final_newline),
-            trim_final_newlines: None,
-        };
+        let options = formatting_options(&language_id);
         let uri = lsp_core::uri_from_path(&path);
         // `quiet` is on-type formatting: its own gate and slot, so a trigger
         // keystroke can never disturb a Rename or code action in flight.
@@ -637,5 +628,20 @@ impl ffi::LanguageService {
             .and_then(|edit| lsp_core::parse_workspace_edit(edit).ok())
             .and_then(|docs| docs.first().map(|doc| doc.path.clone()))
             .unwrap_or_default()
+    }
+}
+
+/// The options a formatting request for `language_id` carries, from the
+/// language's editing settings.
+pub(crate) fn formatting_options(language_id: &str) -> lsp_core::formatting::FormattingOptions {
+    let settings = crate::bridge::convert::load_resolved_settings();
+    let rules = settings_model::editing::resolve_for_language(&settings, language_id);
+    let style = rules.indent_style();
+    lsp_core::formatting::FormattingOptions {
+        tab_size: style.tab_width as u32,
+        insert_spaces: style.use_spaces,
+        trim_trailing_whitespace: Some(rules.trim_trailing_whitespace),
+        insert_final_newline: Some(rules.insert_final_newline),
+        trim_final_newlines: None,
     }
 }

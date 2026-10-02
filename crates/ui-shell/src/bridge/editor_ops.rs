@@ -999,7 +999,8 @@ impl ffi::EditorOps {
     /// `text` formatted by the language's tool formatter, when
     /// `format_on_save` is on for it and a tool is configured (ADR-0070).
     ///
-    /// Blocks the caller for at most `FORMAT_ON_SAVE_TIMEOUT`. A failing or
+    /// With no tool formatter the language server formats, under the same
+    /// limit. Blocks the caller for at most `FORMAT_ON_SAVE_TIMEOUT`. A failing or
     /// timed-out formatter must not keep the file from being saved: the save
     /// goes ahead unformatted and the failure comes back as the notice the
     /// view shows, as `(tool name, its message)`. `Ok(None)` means nothing
@@ -1024,11 +1025,11 @@ impl ffi::EditorOps {
         if !wanted {
             return Ok(None);
         }
+        let timeout = crate::bridge::format_tool::FORMAT_ON_SAVE_TIMEOUT;
         let Some(tool) = crate::bridge::format_tool::ToolFormat::resolve(&language.id(), false)
         else {
-            return Ok(None);
+            return lsp_format_on_save(&language.id(), &path, text, timeout);
         };
-        let timeout = crate::bridge::format_tool::FORMAT_ON_SAVE_TIMEOUT;
         tool.run(text, &path, timeout)
             .map(Some)
             .map_err(|error| (tool.name().to_string(), error.to_string()))
@@ -1171,5 +1172,40 @@ impl ffi::EditorOps {
                     })
             })
             .collect()
+    }
+}
+
+/// `text` formatted by the language server (`textDocument/formatting`), for
+/// a save with no tool formatter. The request runs on the LSP worker and the
+/// save waits at most `timeout` for it; a language without a running server
+/// is not an error, a failed or late answer is (the save goes ahead).
+fn lsp_format_on_save(
+    language_id: &str,
+    path: &Path,
+    text: &str,
+    timeout: std::time::Duration,
+) -> Result<Option<String>, (String, String)> {
+    const SERVER: &str = "language server";
+    let uri = lsp_core::uri_from_path(&path.to_string_lossy());
+    let options = crate::bridge::language::refactor::formatting_options(language_id);
+    let (reply, answer) = std::sync::mpsc::channel();
+    let sent_text = text.to_string();
+    let queued = crate::bridge::registry::push_lsp_job(Box::new(move |manager| {
+        // The server formats what the buffer holds now, not what it last saw.
+        let outcome = manager
+            .did_change(&uri, &sent_text)
+            .and_then(|_| manager.format(&uri, &options));
+        let _ = reply.send(outcome);
+    }));
+    if !queued {
+        return Ok(None);
+    }
+    match answer.recv_timeout(timeout) {
+        // Never opened: no server runs for this file, nothing to format with.
+        Ok(Err(lsp_core::LspError::Protocol(_))) => Ok(None),
+        Ok(Err(error)) => Err((SERVER.to_string(), error.to_string())),
+        Ok(Ok(outcome)) => lsp_core::formatting::formatted_text(text, outcome)
+            .map_err(|error| (SERVER.to_string(), error)),
+        Err(_) => Err((SERVER.to_string(), "timed out".to_string())),
     }
 }

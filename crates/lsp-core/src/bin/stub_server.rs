@@ -185,6 +185,9 @@ fn main() {
     // rather than only that `LspManager::did_change_watched_files` returned
     // `Ok`.
     let last_watched_files_change: Arc<Mutex<Value>> = Arc::new(Mutex::new(Value::Null));
+    // The last `workspace/didChangeConfiguration` params, so a test can
+    // assert the pushed settings payload.
+    let last_configuration_change: Arc<Mutex<Value>> = Arc::new(Mutex::new(Value::Null));
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
     let mut next_request_id = 9100i64;
     let mut input = BufReader::new(io::stdin());
@@ -314,6 +317,18 @@ fn main() {
                 let change = last_watched_files_change
                     .lock()
                     .expect("watched files lock")
+                    .clone();
+                send(&out, json!({"jsonrpc": "2.0", "id": id, "result": change}));
+            }
+            ("workspace/didChangeConfiguration", _) => {
+                *last_configuration_change
+                    .lock()
+                    .expect("configuration lock") = params;
+            }
+            ("stub/lastConfigurationChange", Some(id)) => {
+                let change = last_configuration_change
+                    .lock()
+                    .expect("configuration lock")
                     .clone();
                 send(&out, json!({"jsonrpc": "2.0", "id": id, "result": change}));
             }

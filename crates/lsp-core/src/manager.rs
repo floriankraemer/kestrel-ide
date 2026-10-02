@@ -955,18 +955,23 @@ impl LspManager {
     /// C6: update the settings a running server pulls via
     /// `workspace/configuration` and tell it to re-pull them.
     ///
-    /// The notification's `settings` is deliberately `null`, not `settings`
-    /// itself — that is what tells a client-supports-pull server (csharp-ls
-    /// included) to re-issue `workspace/configuration` rather than treat the
-    /// notification as the new value pushed inline.
+    /// The notification carries the settings too, as `{section: settings}`
+    /// (what Intelephense and Phpactor read), because not every server
+    /// re-pulls `workspace/configuration` after a bare notification. A
+    /// server with no `settings_section` gets `null`, which is the pull
+    /// trigger for one that does re-pull.
     pub fn update_settings(&self, server_id: &str, settings: Value) -> Result<(), LspError> {
         let server = self
             .server_by_id(server_id)
             .ok_or_else(|| LspError::NoServer(server_id.to_string()))?;
+        let pushed = match &server.settings_section {
+            Some(section) => json!({ section: settings.clone() }),
+            None => Value::Null,
+        };
         *server.settings.lock().unwrap() = settings;
         server.notify(
             "workspace/didChangeConfiguration",
-            json!({"settings": Value::Null}),
+            json!({"settings": pushed}),
         )
     }
 

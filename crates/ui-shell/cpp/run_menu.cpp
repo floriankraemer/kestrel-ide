@@ -8,6 +8,7 @@
 #include "code_editor.h"
 #include "editor_tabs.h"
 #include "run_console_panel.h"
+#include "run_toolbar.h"
 
 #include <QAction>
 #include <QMainWindow>
@@ -22,7 +23,7 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
                    DockRegistry *docks, RunConsolePanel *runConsolePanel,
                    ProjectTreeModel *treeModel, EditorTabs *editorTabs, BuildPanel *buildPanel,
                    QMenu *viewMenu, ContainerService *containerService,
-                   ConsoleService *consoleService)
+                   ConsoleService *consoleService, DebugService *debugService)
 {
     // Detect run configurations (Cargo.toml, package.json, Makefile) the
     // moment a project opens, same lifecycle hook LanguageService and the
@@ -114,6 +115,23 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
         docks->show(QStringLiteral("runConsole"));
         runConsolePanel->focusConfigSelector();
     });
+
+    // ADR-0069: IntelliJ's telephone toggle. Checked is whatever
+    // `DebugService` says is listening, so the toolbar button and this
+    // action cannot disagree.
+    QAction *phpListenAction =
+      registerAction(runMenu, QStringLiteral("run.phpListen"),
+                      QObject::tr("Start Listening for PHP Debug Connections"), appSettings,
+                      actions);
+    phpListenAction->setCheckable(true);
+    phpListenAction->setChecked(debugService->isPhpListening());
+    QObject::connect(phpListenAction, &QAction::triggered, window,
+                      [window, debugService, phpListenAction](bool on) {
+                          setPhpListening(debugService, window, on);
+                          phpListenAction->setChecked(debugService->isPhpListening());
+                      });
+    QObject::connect(debugService, &DebugService::phpListeningChanged, phpListenAction,
+                      &QAction::setChecked);
 
     // IntelliJ's Show Running List: which of this session's consoles are
     // still alive, and a way back to each one's tab (R2-5).

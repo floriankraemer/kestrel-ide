@@ -33,6 +33,6 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
                    DockRegistry *docks, RunConsolePanel *runConsolePanel,
                    ProjectTreeModel *treeModel, EditorTabs *editorTabs, BuildPanel *buildPanel,
                    QMenu *viewMenu, ContainerService *containerService,
-                   ConsoleService *consoleService);
+                   ConsoleService *consoleService, DebugService *debugService);
 
 } // namespace ui_shell

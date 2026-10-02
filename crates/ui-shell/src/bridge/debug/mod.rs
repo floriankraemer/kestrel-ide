@@ -36,6 +36,8 @@ use serde_json::{json, Value};
 use crate::bridge::errors;
 use crate::bridge::ffi;
 
+mod php;
+
 /// What the Qt thread keeps about one running session.
 struct SessionState {
     session: Arc<DapSession>,
@@ -55,6 +57,20 @@ struct SessionState {
     /// there is no way to ask "what is in scope *here*" — which is exactly
     /// what inline values need (D3-7).
     scope_references: Vec<i64>,
+}
+
+impl SessionState {
+    fn new(session: Arc<DapSession>) -> Self {
+        SessionState {
+            session,
+            stopped_thread: 0,
+            current_frame: 0,
+            frames: Vec::new(),
+            scope_references: Vec::new(),
+            threads: Vec::new(),
+            variables: HashMap::new(),
+        }
+    }
 }
 
 /// What a session is attaching to (D4-1, D4-2).
@@ -114,6 +130,8 @@ pub struct DebugServiceRust {
     watch_references: RefCell<Vec<i64>>,
     /// Expressions the Evaluate box has run, most recent first (R5).
     evaluate_history: RefCell<EvaluateHistory>,
+    /// The PHP listen session, while there is one (ADR-0069).
+    php_listen: RefCell<Option<php::PhpListen>>,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -339,18 +357,9 @@ impl ffi::DebugService {
             Err(err) => return to_ffi_result(&err),
         };
 
-        self.sessions.borrow_mut().insert(
-            session_id,
-            SessionState {
-                session: Arc::clone(&session),
-                stopped_thread: 0,
-                current_frame: 0,
-                frames: Vec::new(),
-                scope_references: Vec::new(),
-                threads: Vec::new(),
-                variables: HashMap::new(),
-            },
-        );
+        self.sessions
+            .borrow_mut()
+            .insert(session_id, SessionState::new(Arc::clone(&session)));
         self.as_mut()
             .debug_started(session_id, QString::from(config_id.as_str()));
 
@@ -359,7 +368,11 @@ impl ffi::DebugService {
         let adapter_id = adapter.id.clone();
         let breakpoints = self.breakpoints.borrow().clone();
         std::thread::spawn(move || {
-            let result = handshake(&session, &adapter_id, &spec, &breakpoints);
+            let result = handshake(
+                &session,
+                dap_core::launch::arguments(&adapter_id, &spec),
+                &breakpoints,
+            );
             if let Err(err) = result {
                 let failure = (err.code(), err.to_string());
                 let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
@@ -482,18 +495,9 @@ impl ffi::DebugService {
             Err(err) => return to_ffi_result(&err),
         };
 
-        self.sessions.borrow_mut().insert(
-            session_id,
-            SessionState {
-                session: Arc::clone(&session),
-                stopped_thread: 0,
-                current_frame: 0,
-                frames: Vec::new(),
-                scope_references: Vec::new(),
-                threads: Vec::new(),
-                variables: HashMap::new(),
-            },
-        );
+        self.sessions
+            .borrow_mut()
+            .insert(session_id, SessionState::new(Arc::clone(&session)));
         self.as_mut()
             .debug_started(session_id, QString::from(to.label().as_str()));
 
@@ -1369,6 +1373,7 @@ impl ffi::DebugService {
         if self.sessions.borrow_mut().remove(&session_id).is_none() {
             return;
         }
+        self.as_mut().forget_php_listener(session_id);
         self.as_mut().debug_terminated(session_id, exit_code);
     }
 }
@@ -1377,8 +1382,7 @@ impl ffi::DebugService {
 /// sent in between — which is what `configurationDone` exists to bracket.
 fn handshake(
     session: &Arc<DapSession>,
-    adapter_id: &str,
-    spec: &run_core::LaunchSpec,
+    launch_arguments: Value,
     breakpoints: &BreakpointStore,
 ) -> Result<(), DapError> {
     session.initialize()?;
@@ -1386,7 +1390,7 @@ fn handshake(
     // `initialized` event: an adapter may hold the launch response until
     // `configurationDone`, which a client blocked on launch can never send
     // (see `DapSession::launch`).
-    session.launch(dap_core::launch::arguments(adapter_id, spec))?;
+    session.launch(launch_arguments)?;
     session.wait_for_initialized(std::time::Duration::from_secs(10))?;
     send_configuration(session, breakpoints);
     session.configuration_done()

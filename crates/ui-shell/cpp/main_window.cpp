@@ -1084,7 +1084,7 @@ void buildMainWindow(AppSettings *appSettings,
     buildVcsMenu(window, vcsService, appSettings, *actions, editorTabs, central.docks,
                  central.fileHistoryPanel, viewMenu);
     buildRunMenu(window, runService, runConfigEditor, appSettings, *actions, central.docks,
-                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService, consoleService);
+                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService, consoleService, debugService);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu,
                    buildToolsService);
     wireContributedToolWindowMenus(appSettings, *actions, central.docks, viewMenu); // G1

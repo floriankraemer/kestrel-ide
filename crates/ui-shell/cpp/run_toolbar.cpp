@@ -138,7 +138,32 @@ QIcon debugGlyph(QColor color)
     });
 }
 
+// Listen for PHP debug connections — a telephone handset, IntelliJ's icon
+// for the same toggle: an arc with an earpiece and a mouthpiece.
+QIcon listenGlyph(QColor color)
+{
+    return glyphIcon(color, [](QPainter &painter, QColor tint) {
+        QPen pen(tint, 2.2);
+        pen.setCapStyle(Qt::RoundCap);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawArc(QRectF(2.5, 4.5, 11, 11), 25 * 16, 130 * 16);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(tint);
+        painter.drawRoundedRect(QRectF(1.8, 7.2, 3.4, 4.6), 1.2, 1.2);
+        painter.drawRoundedRect(QRectF(10.8, 7.2, 3.4, 4.6), 1.2, 1.2);
+    });
+}
+
 } // namespace
+
+void setPhpListening(DebugService *debugService, QWidget *parent, bool enabled)
+{
+    const FfiResult result = debugService->setPhpListening(enabled);
+    if (result.code != 0) {
+        QMessageBox::warning(parent, QObject::tr("PHP Debug"), result.message);
+    }
+}
 
 RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
                         DebugService *debugService, QWidget *parent)
@@ -166,6 +191,14 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
     buildButton_->setIcon(buildGlyph(dim));
     debugButton_ = makeGlyphButton(tr("Debug"), tr("Debug"), this);
     debugButton_->setIcon(debugGlyph(dim));
+    listenButton_ = makeGlyphButton(tr("Listen"), tr("Start Listening for PHP Debug Connections"),
+                                    this);
+    listenButton_->setCheckable(true);
+    QIcon listenIcon;
+    listenIcon.addPixmap(listenGlyph(dim).pixmap(kIconSide, kIconSide), QIcon::Normal, QIcon::Off);
+    listenIcon.addPixmap(listenGlyph(semantic.ok).pixmap(kIconSide, kIconSide), QIcon::Normal,
+                         QIcon::On);
+    listenButton_->setIcon(listenIcon);
 
     auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -175,6 +208,7 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
     layout->addWidget(rerunButton_);
     layout->addWidget(buildButton_);
     layout->addWidget(debugButton_);
+    layout->addWidget(listenButton_);
     layout->addStretch(1);
     layout->addWidget(configCombo_);
 
@@ -189,6 +223,13 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
     connect(buildButton_, &QToolButton::clicked, this,
             [this]() { buildService_->build(); });
     connect(debugButton_, &QToolButton::clicked, this, &RunToolbar::debugSelected);
+    connect(listenButton_, &QToolButton::clicked, this,
+            [this](bool on) { setPhpListening(debugService_, this, on); });
+    // The listener can end by itself (its adapter exiting), and the Run menu
+    // toggles it too: the button shows what `DebugService` says.
+    connect(debugService_, &DebugService::phpListeningChanged, listenButton_,
+            &QToolButton::setChecked);
+    listenButton_->setChecked(debugService_->isPhpListening());
 
     connect(runService_, &RunService::consoleStarted, this,
             [this](quint64 consoleId, const QString &configId) {
@@ -286,7 +327,10 @@ void RunToolbar::debugSelected()
     if (!configId.isEmpty()) {
         // Whether an adapter exists for it, and what a launch body looks
         // like, are `DebugService`'s answers (ADR-0041).
-        debugService_->debug(configId);
+        const FfiResult result = debugService_->debug(configId);
+        if (result.code != 0) {
+            QMessageBox::warning(this, tr("Debug"), result.message);
+        }
     }
 }
 

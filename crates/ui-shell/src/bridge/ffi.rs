@@ -10104,6 +10104,22 @@ mod ffi {
         #[cxx_name = "attachRemote"]
         fn attach_remote(self: Pin<&mut DebugService>, host: &QString, port: u32) -> FfiResult;
 
+        /// The "Start Listening for PHP Debug Connections" toggle (ADR-0069):
+        /// while on, an Xdebug connection from anywhere appears as a thread of
+        /// one session. The result carries a missing adapter's install hint.
+        #[qinvokable]
+        #[cxx_name = "setPhpListening"]
+        fn set_php_listening(self: Pin<&mut DebugService>, enabled: bool) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "isPhpListening"]
+        fn is_php_listening(self: &DebugService) -> bool;
+
+        /// The PHP listen session started or ended.
+        #[qsignal]
+        #[cxx_name = "phpListeningChanged"]
+        fn php_listening_changed(self: Pin<&mut DebugService>, listening: bool);
+
         /// `host:port` of the last remote target this project attached to,
         /// empty if it never has — what the dialog offers instead of an
         /// empty field.

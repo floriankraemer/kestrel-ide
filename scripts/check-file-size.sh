@@ -92,7 +92,7 @@ baseline() {
 	# Raised from 1538 by 5 lines for the [hover] section (H6): its module
 	# declaration, re-export and Settings field; the type and its tests live
 	# in hover.rs.
-	crates/app-config/src/lib.rs) echo 1495 ;;
+	crates/app-config/src/lib.rs) echo 1483 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)

@@ -64,6 +64,10 @@ pub mod launch_settings;
 /// outside this crate needs to know the module exists.
 pub mod window;
 
+// `update_toml`, kept out of this file for the size ratchet.
+mod update;
+pub(crate) use update::update_toml;
+
 /// The UI language accessor and locale list, split out like `window` above.
 /// `SUPPORTED_UI_LOCALES` is re-exported below.
 mod ui_locale;
@@ -685,22 +689,6 @@ fn save_toml<T: Serialize>(path: &Path, temp_path: &Path, value: &T) -> Result<(
         return Err(ConfigError::Io(err));
     }
     Ok(())
-}
-
-/// Load, edit, save.
-///
-/// A load failure aborts the update instead of editing a `T::default()` and
-/// saving that: the file on disk holds everything the user configured, so
-/// writing defaults over it because it could not be read (or was momentarily
-/// unreadable) is data loss, not a fresh start.
-fn update_toml<T: DeserializeOwned + Serialize + Default>(
-    path: &Path,
-    temp_path: &Path,
-    edit: impl FnOnce(&mut T),
-) -> Result<(), ConfigError> {
-    let mut value: T = load_toml(path)?;
-    edit(&mut value);
-    save_toml(path, temp_path, &value)
 }
 
 /// Load settings from `<config_dir>/settings.toml`. A missing file is not an

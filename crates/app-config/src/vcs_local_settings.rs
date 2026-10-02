@@ -7,7 +7,6 @@
 //! it lives under `.ide/local/`, which `project_settings::ensure_gitignore`
 //! already seeds as ignored.
 
-use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -95,7 +94,6 @@ pub fn update(
     edit: impl FnOnce(&mut VcsLocalSettings),
 ) -> Result<(), ConfigError> {
     let dir = local_dir(project_root)?;
-    fs::create_dir_all(&dir)?;
     update_toml(
         &dir.join(VCS_LOCAL_SETTINGS_FILE),
         &dir.join(TEMP_VCS_LOCAL_SETTINGS_FILE),
@@ -112,6 +110,15 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let settings = load(root.path()).unwrap();
         assert_eq!(settings.declined_git_init, None);
+    }
+
+    #[test]
+    fn turning_blame_off_for_a_file_that_never_had_it_on_creates_nothing() {
+        // Opening a tab reports "blame off" for it; that must not put a
+        // `.ide/` directory into the user's repository.
+        let root = tempfile::tempdir().unwrap();
+        update(root.path(), |s| s.set_blame_enabled("src/a.php", false)).unwrap();
+        assert!(!root.path().join(".ide").exists());
     }
 
     #[test]

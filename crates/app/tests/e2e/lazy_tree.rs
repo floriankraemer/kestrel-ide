@@ -23,18 +23,14 @@ fn e2e_lazy_tree_expands_on_demand_and_refreshes_incrementally() {
     let mut ide = Ide::launch(name, APP, fixture("tiny"));
     ide.wait_for_ev(Mark::start(), "project_opened");
 
-    // The project-scope settings folder (`.ide/`, ADR-0022) lands as its
-    // own watcher-driven row shortly after open, alongside the fixture's
-    // own `src` folder — wait for the root to settle at its final two
-    // entries before reading any row's position, so the click below can't
-    // race that reshuffle. Neither root entry's own children are read from
-    // disk yet (the lazy tree's whole point): `.ide` is never expanded by
-    // this flow, and `src`'s two files (`main.rs`, `greeting.rs`) only
-    // appear once it is.
-    let root_settled =
-        ide.wait_for_event(Mark::start(), "the root to settle at two entries", |e| {
-            e["ev"] == "project_tree_rows" && e["count"] == 2
-        });
+    // The root holds just the fixture's own `src` folder: opening a project
+    // creates no `.ide/` (nothing has changed a project setting), so there
+    // is no later watcher-driven row to race. Its children are not read
+    // from disk yet (the lazy tree's whole point): `src`'s two files
+    // (`main.rs`, `greeting.rs`) only appear once it is expanded.
+    let root_settled = ide.wait_for_event(Mark::start(), "the root to settle at one entry", |e| {
+        e["ev"] == "project_tree_rows" && e["count"] == 1
+    });
     let root_row_count = root_settled["count"].as_u64().expect("count");
 
     let src_path = ide.project_root().join("src");
@@ -132,12 +128,12 @@ fn e2e_lazy_tree_reveal_context_menu_sort_and_vcs_color() {
 
     let root = ide.project_root().to_path_buf();
 
-    // The project-scope settings folder (`.ide/`, ADR-0022) lands as its own
-    // watcher-driven row shortly after open, same race the earlier lazy-tree
-    // test has to guard against — wait for it before reading any row's
-    // settled position or the root's settled row count.
-    ide.wait_for_event(Mark::start(), "the .ide settings folder to appear", |e| {
-        e["ev"] == "project_tree_row" && e["path"] == root.join(".ide").to_string_lossy().as_ref()
+    // Opening a project creates no `.ide/`, so the last top-level entry to
+    // be listed is the fixture's own `empty_dir`: wait for it before
+    // reading any row's settled position or the root's settled row count.
+    ide.wait_for_event(Mark::start(), "the empty_dir row to appear", |e| {
+        e["ev"] == "project_tree_row"
+            && e["path"] == root.join("empty_dir").to_string_lossy().as_ref()
     });
     let root_row_count = ide
         .events_since_of(Mark::start(), "project_tree_rows")

@@ -247,8 +247,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | G4 — view: Tab expansion, Ctrl+J, Ctrl+Alt+T, postfix in completion | done | d84c601 |
 | G5 — `file-templates` point; `php_core::psr4::namespace_for`; Class/Interface/Trait/Enum/Test templates | done | 2ccbcf5 |
 | G6 — New > File/Directory/from template in the project tree and the File menu | done | cb2e560 |
-| G7 — Generate menu (Alt+Insert): constructor/getters/setters from `php_core::generate`, plus server `source.*` code actions | done | — |
-| G8 — ADR-0072 | open | |
+| G7 — Generate menu (Alt+Insert): constructor/getters/setters from `php_core::generate`, plus server `source.*` code actions | done | 4b1c1c4 |
+| G8 — ADR-0072 | done | — |
 
 ### E — verification and docs
 | Task | Status | Commit |

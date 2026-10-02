@@ -134,13 +134,30 @@ fn snippet_stop(range: std::ops::Range<usize>, more: bool) -> ffi::FfiSnippetSto
 /// `settings` is a cached copy rather than a read per call: `toggleComment`
 /// and friends need the effective tab width, and re-reading `settings.toml`
 /// on every keystroke would put a file read on the typing path. The settings
-/// dialog calls `reloadSettings` when it commits.
+/// dialog calls `reloadSettings` when it commits, and the copy is re-read
+/// whenever the open project differs from the one it was resolved for (this
+/// object is built before any project is open, and its `[editing]` section
+/// is the project's to override).
 pub struct EditorOpsRust {
     tabs: RefCell<HashMap<u64, TabOps>>,
     settings: RefCell<app_config::Settings>,
+    /// The project root `settings` was resolved for.
+    settings_root: RefCell<Option<std::path::PathBuf>>,
     /// Only ever read, and only for one thing: which language a tab's file
     /// is, so the grammar-aware operations know which grammar.
     session: Rc<RefCell<app_core::AppSession>>,
+}
+
+impl EditorOpsRust {
+    /// The cached resolved settings, re-read first if another project opened.
+    fn settings(&self) -> std::cell::Ref<'_, app_config::Settings> {
+        let root = crate::bridge::convert::current_project_root();
+        if *self.settings_root.borrow() != root {
+            *self.settings.borrow_mut() = crate::bridge::convert::load_resolved_settings();
+            *self.settings_root.borrow_mut() = root;
+        }
+        self.settings.borrow()
+    }
 }
 
 impl Default for EditorOpsRust {
@@ -148,6 +165,7 @@ impl Default for EditorOpsRust {
         Self {
             tabs: RefCell::new(HashMap::new()),
             settings: RefCell::new(crate::bridge::convert::load_resolved_settings()),
+            settings_root: RefCell::new(crate::bridge::convert::current_project_root()),
             session: shared_session(),
         }
     }
@@ -242,7 +260,7 @@ impl EditorOpsRust {
     /// spaces-vs-tabs resolved through `settings-model`, which owns the
     /// question of what a language may override.
     fn indent_style(&self, language: Language) -> IndentStyle {
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         let rules = settings_model::editing::resolve_for_language(&settings, &language.id());
         rules.indent_style()
     }
@@ -255,7 +273,7 @@ impl EditorOpsRust {
     /// and line-ending policy (F1-11), through the same resolution the
     /// indent style already uses.
     fn save_rules(&self, language: Language) -> editor_core::save_rules::SaveRules {
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         let mut rules =
             settings_model::editing::resolve_for_language(&settings, &language.id()).save_rules();
         // W6 (line endings, ADR-0052): `on_save`'s `LineEnding::platform()`
@@ -459,6 +477,7 @@ impl ffi::EditorOps {
     /// restart.
     pub fn reload_settings(self: Pin<&mut Self>) {
         *self.settings.borrow_mut() = crate::bridge::convert::load_resolved_settings();
+        *self.settings_root.borrow_mut() = crate::bridge::convert::current_project_root();
     }
 
     /// Alt+Click: one more caret at `position`.
@@ -1019,7 +1038,7 @@ impl ffi::EditorOps {
             return Ok(None);
         };
         let wanted = {
-            let settings = self.settings.borrow();
+            let settings = self.settings();
             settings_model::editing::resolve_for_language(&settings, &language.id()).format_on_save
         };
         if !wanted {
@@ -1050,7 +1069,7 @@ impl ffi::EditorOps {
     /// tab's lifetime.
     pub fn wrap_column_for_tab(&self, tab_id: u64) -> u32 {
         let language = language_of(&self.session.borrow(), tab_id);
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         settings_model::editing::resolve_for_language(&settings, &language.id()).wrap_column
     }
 
@@ -1058,14 +1077,14 @@ impl ffi::EditorOps {
     /// than only guided by it.
     pub fn soft_wrap_for_tab(&self, tab_id: u64) -> bool {
         let language = language_of(&self.session.borrow(), tab_id);
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         settings_model::editing::resolve_for_language(&settings, &language.id()).soft_wrap
     }
 
     /// The cached global soft-wrap setting, for the View menu's toggle to
     /// show its current state when the menu is built.
     pub fn soft_wrap_enabled(&self) -> bool {
-        self.settings.borrow().editing.soft_wrap_or_default()
+        self.settings().editing.soft_wrap_or_default()
     }
 
     /// Flip the *global* soft-wrap setting and persist it — the View menu's

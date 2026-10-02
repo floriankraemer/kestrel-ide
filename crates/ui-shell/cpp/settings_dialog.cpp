@@ -940,6 +940,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         // settings no longer describe and leaves the rest running, and the
         // re-announcement below starts the replacements.
         context.languageService->applyServerSettings();
+        editorTabs->editorOps()->reloadSettings();
         editorTabs->reannounceDocuments();
     } else {
         context.aiProviderEditor->revert();

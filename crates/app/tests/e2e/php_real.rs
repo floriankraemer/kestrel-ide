@@ -136,7 +136,10 @@ fn e2e_php_real_servers_analysis_navigate_format() {
     }
     let name = "e2e_php_real_servers_analysis_navigate_format";
     let project = php_project();
-    write_project_settings(project.path(), "[php]\nformatter = \"php-cs-fixer\"\n");
+    write_project_settings(
+        project.path(),
+        "[php]\nformatter = \"php-cs-fixer\"\n\n[editing]\nformat_on_save = true\n",
+    );
     let mut ide = launch_php(name, project.path());
     drop(project);
     ide.wait_for_ev(Mark::start(), "project_opened");
@@ -156,6 +159,13 @@ fn e2e_php_real_servers_analysis_navigate_format() {
     ide.key("ctrl+s");
     let row = wait_for_problem(&ide, mark, "PHPStan", "src/Greeter.php");
     assert!(row["path"].as_str().unwrap().starts_with('/'), "{row}");
+    // The project's own `[editing] format_on_save` reaches the editor: that
+    // save ran php-cs-fixer on the planted PSR-12 violations.
+    e2e::wait_for("the save to be formatted by php-cs-fixer", || {
+        ide.read_project_file("src/Greeter.php")
+            .contains("whisper(string $name): string")
+            .then_some(())
+    });
 
     // Format: Reformat Code.
     ide.key("ctrl+alt+l");

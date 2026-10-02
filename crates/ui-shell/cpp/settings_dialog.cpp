@@ -501,6 +501,11 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
 
     auto *searchEdit = new QLineEdit(&dialog);
     searchEdit->setPlaceholderText(QObject::tr("Search settings"));
+    // The column is as wide as its list, which is sized from "Language
+    // Servers"; a wider UI font elided the placeholder ("Search settin...")
+    // on Windows. Room for the leading icon, the clear button and the padding.
+    searchEdit->setMinimumWidth(
+      searchEdit->fontMetrics().horizontalAdvance(searchEdit->placeholderText()) + 72);
     searchEdit->setClearButtonEnabled(true);
     searchEdit->addAction(searchIcon(), QLineEdit::LeadingPosition);
     QObject::connect(searchEdit, &QLineEdit::textChanged, &dialog, applySettingsFilter);

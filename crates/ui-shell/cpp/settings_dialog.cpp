@@ -773,17 +773,30 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
           // edits the value with the keyboard (select-all, type, Tab)
           // rather than clicking the up/down arrows at its right edge,
           // which is what would have needed the width.
-          QTimer::singleShot(0, &dialog, [pages, editingIndex]() {
+          //
+          // `ok_rect` rides along because the page that was just built can
+          // grow the dialog: the `ok_rect` of `dialog_shown` predates that
+          // and points above the button once the category list is long
+          // enough to need the room.
+          QTimer::singleShot(0, &dialog, [&dialog, pages, editingIndex]() {
               auto *tabWidthSpin = pages->widget(editingIndex)->findChild<QSpinBox *>(
                 QStringLiteral("editingTabWidth"));
-              if (!tabWidthSpin) {
+              auto *buttons = dialog.findChild<QDialogButtonBox *>();
+              if (!tabWidthSpin || !buttons) {
                   return;
               }
               const QPoint topLeft = tabWidthSpin->mapToGlobal(QPoint(0, 0));
+              QPushButton *ok = buttons->button(QDialogButtonBox::Ok);
+              const QPoint okTopLeft = ok->mapToGlobal(QPoint(0, 0));
               e2eMark(QStringLiteral("{\"ev\":\"settings_scope_switched\","
-                                      "\"tab_width_top_left\":[%1,%2]}")
+                                      "\"tab_width_top_left\":[%1,%2],"
+                                      "\"ok_rect\":[%3,%4,%5,%6]}")
                         .arg(topLeft.x())
-                        .arg(topLeft.y()));
+                        .arg(topLeft.y())
+                        .arg(okTopLeft.x())
+                        .arg(okTopLeft.y())
+                        .arg(ok->width())
+                        .arg(ok->height()));
           });
       });
 

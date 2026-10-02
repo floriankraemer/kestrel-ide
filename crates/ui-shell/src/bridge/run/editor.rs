@@ -401,48 +401,12 @@ impl ffi::RunConfigEditor {
         });
     }
 
-    /// The first problem that would stop the dialog closing: an empty
-    /// `program` for a plain process configuration
-    /// (`run_core::RunError::InvalidConfig`'s own rule, mirrored here rather
-    /// than calling into `run-core` since a single-field check this shallow
-    /// does not warrant a second entry point into that crate), or the
-    /// matching `container_core::run_config::validate_*` rule for a
-    /// container-kind one — `program` is unused and always empty there, so
-    /// the plain-process check would wrongly flag every one of them.
+    /// The first problem that would stop the dialog closing — the rule is
+    /// `run_core::validate::problem`'s, per kind.
     pub fn validate(&self) -> FfiResult {
         let containers = effective_container_settings();
         for config in self.draft.borrow().iter() {
-            let problem = match config.kind.as_deref() {
-                Some("container-image") => config
-                    .container_image
-                    .as_ref()
-                    .and_then(container_core::run_config::validate_image),
-                Some("containerfile") => config
-                    .containerfile
-                    .as_ref()
-                    .and_then(container_core::run_config::validate_containerfile),
-                Some("compose") => config
-                    .compose
-                    .as_ref()
-                    .and_then(container_core::run_config::validate_compose),
-                // Both PHP kinds compile their own argv; nothing to check.
-                Some(run_core::php_run::KIND_BUILTIN_SERVER | run_core::php_run::KIND_CONSOLE) => {
-                    None
-                }
-                _ => config
-                    .program
-                    .trim()
-                    .is_empty()
-                    .then(|| "has no program to run".to_string())
-                    .or_else(|| {
-                        config.run_on.as_deref().and_then(|run_on| {
-                            let id = run_core::target_id(run_on)?;
-                            containers.targets.iter().all(|t| t.id != id).then(|| {
-                                format!("runs on a target (\"{id}\") that no longer exists")
-                            })
-                        })
-                    }),
-            };
+            let problem = run_core::validate::problem(config, &containers);
             if let Some(problem) = problem {
                 let label = if config.name.trim().is_empty() {
                     "one configuration".to_string()

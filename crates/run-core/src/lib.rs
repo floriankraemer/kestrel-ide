@@ -33,6 +33,7 @@ pub mod macros;
 pub mod php_run;
 pub mod supervisor;
 pub mod toolchain;
+pub mod validate;
 
 pub use ansi::{AnsiResolver, AnsiStripper, StyledRun, StyledText, TextStyle};
 pub use batching::{BatchedOutput, OutputBatcher};

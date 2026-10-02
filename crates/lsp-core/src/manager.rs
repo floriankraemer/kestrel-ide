@@ -327,6 +327,9 @@ struct Server {
     language_id: String,
     /// Answer order among the servers of one language; lower answers first.
     priority: usize,
+    /// Where this server's process runs (ADR-0066): the project's host unless
+    /// the server's `exec` says otherwise.
+    host: ExecHost,
     /// Whether its `publishDiagnostics` are forwarded (`ServerConfig::diagnostics`).
     diagnostics: bool,
     conn: Mutex<Option<Conn>>,
@@ -567,6 +570,16 @@ impl LspManager {
     /// error rather than as a silent no-op later. Starting a language that is
     /// already running is a no-op.
     pub fn start(&self, cfg: &ServerConfig) -> Result<(), LspError> {
+        self.start_on(cfg, self.host.clone())
+    }
+
+    /// [`Self::start`], with the server's process on `host` rather than the
+    /// project's — the seam for a server with `exec = "interpreter"`.
+    ///
+    /// Only the process, the `rootUri` and the document URIs of `didOpen` and
+    /// its siblings follow `host`; request params and results are not yet
+    /// retranslated, which a host with a path map (ADR-0067) will need.
+    pub fn start_on(&self, cfg: &ServerConfig, host: ExecHost) -> Result<(), LspError> {
         if self.servers.lock().unwrap().contains_key(&cfg.id) {
             return Ok(());
         }
@@ -574,6 +587,7 @@ impl LspManager {
             id: cfg.id.clone(),
             language_id: cfg.language_id.clone(),
             priority: cfg.priority,
+            host: host.clone(),
             diagnostics: cfg.diagnostics,
             conn: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
@@ -595,9 +609,9 @@ impl LspManager {
         let handle = spawn_supervisor(
             Arc::clone(&server),
             cfg.clone(),
-            self.root_uri.clone(),
+            self.root_uri_on(&host),
             self.root_path.clone(),
-            self.host.clone(),
+            host,
             self.events.clone(),
             ready_tx,
         );
@@ -759,6 +773,15 @@ impl LspManager {
     /// Send a notification to every server of the language (fire and forget
     /// by protocol definition). It succeeds if any server took it.
     pub fn notify(&self, language_id: &str, method: &str, params: Value) -> Result<(), LspError> {
+        self.notify_servers(language_id, method, |_| params.clone())
+    }
+
+    fn notify_servers(
+        &self,
+        language_id: &str,
+        method: &str,
+        params_for: impl Fn(&Server) -> Value,
+    ) -> Result<(), LspError> {
         let servers = self.servers_of(language_id);
         if servers.is_empty() {
             return Err(LspError::NoServer(language_id.to_string()));
@@ -766,7 +789,7 @@ impl LspManager {
         let mut first_error = None;
         let mut delivered = false;
         for server in &servers {
-            match server.notify(method, params.clone()) {
+            match server.notify(method, params_for(server)) {
                 Ok(()) => delivered = true,
                 Err(e) => {
                     first_error.get_or_insert(e);
@@ -794,13 +817,11 @@ impl LspManager {
                 version: 1,
             },
         );
-        self.notify(
-            language_id,
-            "textDocument/didOpen",
+        self.notify_document(language_id, "textDocument/didOpen", &uri, |uri| {
             json!({"textDocument": {
                 "uri": uri, "languageId": language_id, "version": 1, "text": text
-            }}),
-        )
+            }})
+        })
     }
 
     /// Tell the server a document changed, as a full-text sync. Returns the
@@ -815,14 +836,12 @@ impl LspManager {
             doc.version += 1;
             (doc.language_id.clone(), doc.version)
         };
-        self.notify(
-            &language_id,
-            "textDocument/didChange",
+        self.notify_document(&language_id, "textDocument/didChange", &uri, |uri| {
             json!({
                 "textDocument": {"uri": uri, "version": version},
                 "contentChanges": [{"text": text}],
-            }),
-        )?;
+            })
+        })?;
         Ok(version)
     }
 
@@ -830,10 +849,11 @@ impl LspManager {
     pub fn did_save(&self, uri: &str) -> Result<(), LspError> {
         let uri = self.normalize_uri(uri);
         let language_id = self.language_of(&uri)?;
-        self.notify(
+        self.notify_document(
             &language_id,
             "textDocument/didSave",
-            json!({"textDocument": {"uri": uri}}),
+            &uri,
+            |uri| json!({"textDocument": {"uri": uri}}),
         )
     }
 
@@ -842,11 +862,47 @@ impl LspManager {
         let uri = self.normalize_uri(uri);
         let language_id = self.language_of(&uri)?;
         self.documents.lock().unwrap().remove(&uri);
-        self.notify(
+        self.notify_document(
             &language_id,
             "textDocument/didClose",
-            json!({"textDocument": {"uri": uri}}),
+            &uri,
+            |uri| json!({"textDocument": {"uri": uri}}),
         )
+    }
+
+    /// Send a document notification to every server of the language, each
+    /// with the document's URI as that server's own host spells it.
+    fn notify_document(
+        &self,
+        language_id: &str,
+        method: &str,
+        uri: &str,
+        params: impl Fn(&str) -> Value,
+    ) -> Result<(), LspError> {
+        self.notify_servers(language_id, method, |server| {
+            params(&self.uri_on(&server.host, uri))
+        })
+    }
+
+    /// The workspace root as `host` spells it.
+    fn root_uri_on(&self, host: &ExecHost) -> String {
+        if *host == self.host {
+            self.root_uri.clone()
+        } else {
+            uri_for(host, &self.root_path)
+        }
+    }
+
+    /// A project-host URI as `host` spells it: unchanged for the project's
+    /// own host, otherwise through the local path both agree on.
+    fn uri_on(&self, host: &ExecHost, uri: &str) -> String {
+        if *host == self.host {
+            return uri.to_string();
+        }
+        match path_for(&self.host, uri) {
+            Some(path) => uri_for(host, &path),
+            None => uri.to_string(),
+        }
     }
 
     /// Tell a server about filesystem changes it asked to watch
@@ -1869,6 +1925,28 @@ mod host_translation_tests {
         let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/home/f/proj"));
         assert_eq!(manager.root_uri, "file:///home/f/proj");
         assert!(!manager.host.is_remote());
+    }
+
+    #[test]
+    fn a_server_on_the_projects_own_host_gets_the_uri_unchanged() {
+        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
+            "//wsl.localhost/Ubuntu/home/f/proj",
+        ));
+        let uri = "file:///home/f/proj/src/main.rs";
+        assert_eq!(manager.uri_on(&manager.host.clone(), uri), uri);
+    }
+
+    #[test]
+    fn a_server_on_another_host_gets_the_uri_that_host_spells() {
+        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
+            "//wsl.localhost/Ubuntu/home/f/proj",
+        ));
+        // The project is in the distro; this server runs on the Windows side
+        // and sees the document through its UNC path.
+        assert_eq!(
+            manager.uri_on(&ExecHost::Local, "file:///home/f/proj/src/main.rs"),
+            "file:////wsl.localhost/Ubuntu/home/f/proj/src/main.rs"
+        );
     }
 
     /// normalize_uri applied twice must be a no-op — `format_range` falling

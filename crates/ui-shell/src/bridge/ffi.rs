@@ -6404,7 +6404,8 @@ mod ffi {
         #[qinvokable]
         fn form(self: &PhpSettingsEditor) -> FfiPhpForm;
 
-        /// The formatters PHP can use, for the page's formatter choice.
+        /// The formatters PHP can use, for the page's formatter choice, plus the
+        /// configured one when it is no longer installed.
         #[qinvokable]
         #[cxx_name = "formatterChoices"]
         fn formatter_choices(self: &PhpSettingsEditor) -> Vec<FfiFormatterChoice>;

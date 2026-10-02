@@ -268,6 +268,23 @@ impl PhpForm {
     }
 }
 
+/// The formatter choices the PHP page offers: the installed ones, plus the
+/// configured id when no plugin offers it any more. Dropping that id from the
+/// list would make the page reset it to "Language server" on the first edit
+/// of anything else, silently losing the setting.
+pub fn formatter_choices(
+    installed: Vec<(String, String)>,
+    configured: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut choices = installed;
+    if let Some(id) = non_blank(&configured.map(str::to_string)) {
+        if !choices.iter().any(|(known, _)| known == id) {
+            choices.push((id.to_string(), format!("{id} (not installed)")));
+        }
+    }
+    choices
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,5 +459,26 @@ mod tests {
             form.validate(),
             Err(PhpFormError::InvalidLanguageLevel(_))
         ));
+    }
+
+    #[test]
+    fn a_configured_formatter_nobody_offers_stays_a_choice() {
+        let installed = vec![("pint".to_string(), "Pint".to_string())];
+        assert_eq!(
+            formatter_choices(installed.clone(), Some("pint")),
+            installed
+        );
+        assert_eq!(formatter_choices(installed.clone(), None), installed);
+        assert_eq!(formatter_choices(installed.clone(), Some("  ")), installed);
+        assert_eq!(
+            formatter_choices(installed, Some("old-fixer")),
+            vec![
+                ("pint".to_string(), "Pint".to_string()),
+                (
+                    "old-fixer".to_string(),
+                    "old-fixer (not installed)".to_string()
+                )
+            ]
+        );
     }
 }

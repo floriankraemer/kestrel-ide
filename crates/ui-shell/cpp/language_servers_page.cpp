@@ -43,6 +43,17 @@ struct LiveState
 
 using LiveStates = QHash<QString, LiveState>;
 
+// What the manager has said so far this session. The settings dialog is
+// rebuilt on every open, and a server's state (Phpactor skipped on native
+// Windows, Intelephense not found) is announced when a file of its language
+// opens, long before the page does; each page therefore starts from this
+// record instead of an empty one.
+std::shared_ptr<LiveStates> sessionLiveStates()
+{
+    static const auto states = std::make_shared<LiveStates>();
+    return states;
+}
+
 QString liveStatusText(const LiveState &live)
 {
     switch (live.state) {
@@ -154,6 +165,16 @@ void paintStatus(QTreeWidgetItem *item, const FfiLanguageServerRow &row, const L
 
 } // namespace
 
+void trackLanguageServerStates(LanguageService *languageService)
+{
+    QObject::connect(languageService, &LanguageService::serverStateChanged, languageService,
+                     [live = sessionLiveStates()](const QString &serverId, const QString &name,
+                                                  FfiServerState state, const QString &detail,
+                                                  quint32 retryMs) {
+                         (*live)[serverId] = LiveState{state, name, detail, retryMs, true};
+                     });
+}
+
 QWidget *buildLanguageServersPage(QWidget *parent,
                                   LanguageServerEditor *editor,
                                   LanguageService *languageService)
@@ -200,7 +221,7 @@ QWidget *buildLanguageServersPage(QWidget *parent,
     detailLabel->setVisible(false);
     layout->addWidget(detailLabel);
 
-    auto live = std::make_shared<LiveStates>();
+    auto live = sessionLiveStates();
 
     auto rowFor = [editor](const QString &serverId) {
         for (const FfiLanguageServerRow &row : editor->rows()) {

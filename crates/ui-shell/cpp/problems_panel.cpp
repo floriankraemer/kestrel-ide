@@ -1,4 +1,5 @@
 #include "problems_panel.h"
+#include "language_servers_page.h"
 
 #include "e2e_mark.h"
 #include "editor_tabs.h"
@@ -153,6 +154,9 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
     connect(languageService_, &LanguageService::diagnosticsChanged, this, &ProblemsPanel::refresh);
     connect(buildService_, &BuildService::diagnosticsChanged, this, &ProblemsPanel::refresh);
     connect(analysisService, &AnalysisService::diagnosticsChanged, this, &ProblemsPanel::refresh);
+    // The panel exists from app start, so it is also where the Language
+    // Servers page's session record begins.
+    trackLanguageServerStates(languageService_);
     connect(languageService_,
             &LanguageService::serverStateChanged,
             this,

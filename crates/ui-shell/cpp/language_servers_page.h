@@ -19,6 +19,11 @@ namespace ui_shell {
 //
 // A failing command never opens a dialog: `LspManager` retries on a backoff,
 // and a modal per retry would make the editor unusable.
+// Starts recording every server state the manager announces, from app start,
+// so a Language Servers page opened later shows the Status of servers that
+// were launched (or ruled out) before it existed.
+void trackLanguageServerStates(LanguageService *languageService);
+
 QWidget *buildLanguageServersPage(QWidget *parent,
                                   LanguageServerEditor *editor,
                                   LanguageService *languageService);

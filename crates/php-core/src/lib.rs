@@ -9,6 +9,7 @@
 pub mod composer;
 pub mod composer_view;
 pub mod level;
+pub mod lsp;
 pub mod probe;
 
 /// The `secret-store` service name for PHP secrets, distinct from the

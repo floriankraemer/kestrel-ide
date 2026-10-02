@@ -166,12 +166,12 @@ A row's status and commit hash are updated in the commit that finishes it.
 | I6 — run-configuration dialog pages for I5 | done | b5de8ed |
 | I7 — Settings > PHP page: interpreter (local/container), probed version and Xdebug, language level, include paths, stubs, licence key (secret-store), server toggles | done | cf63262 |
 | I8 — Composer tool window: scripts, packages, install/update/require/remove/dump-autoload/outdated | done | eaf9a0f |
-| I9 — ADR-0068 + `layering.md` row + Qt/tokio gate | done | — |
+| I9 — ADR-0068 + `layering.md` row + Qt/tokio gate | done | 2877b7d |
 
 ### PS — PHP language-server configuration
 | Task | Status | Commit |
 |---|---|---|
-| PS1 — `php_core::lsp::{intelephense, phpactor}` → (initialization options, settings), golden JSON | open | |
+| PS1 — `php_core::lsp::{intelephense, phpactor}` → (initialization options, settings), golden JSON | done | — |
 | PS2 — ui-shell joins PS1 into `ServerConfig` on start and on settings save | open | |
 | PS3 — install hints (npm / phar) in the server start error | open | |
 

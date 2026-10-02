@@ -723,18 +723,6 @@ impl AppSession {
 
     // --- tree mutations ---------------------------------------------------
 
-    /// Create an empty file named `name` inside `parent_dir` (US-2b). The
-    /// tree itself is no longer re-snapshotted here: `ui-shell`'s
-    /// `ProjectTreeModel` refreshes the affected (Loaded) directory
-    /// incrementally, through the exact same `list_dir` → diff → ranged
-    /// model update path a watcher event uses — see the plan's "Step 3",
-    /// "OR" alternative. A full rebuild-and-reset would also throw away the
-    /// tree's expand state, which is the whole point of the lazy tree.
-    pub fn create_file(&mut self, parent_dir: &Path, name: &str) -> Result<(), AppError> {
-        project_model::create_file(parent_dir, name).map_err(AppError::FileOp)?;
-        Ok(())
-    }
-
     /// Create an empty folder named `name` inside `parent_dir` (US-2b); see
     /// [`Self::create_file`]'s doc comment for why the tree isn't
     /// re-snapshotted here any more.

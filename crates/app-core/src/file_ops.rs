@@ -125,6 +125,22 @@ impl fmt::Display for ResourceOpError {
 }
 
 impl AppSession {
+    /// Create an empty file named `name` inside `parent_dir` (US-2b). The
+    /// tree itself is no longer re-snapshotted here: `ui-shell`'s
+    /// `ProjectTreeModel` refreshes the affected (Loaded) directory
+    /// incrementally, through the exact same `list_dir` → diff → ranged
+    /// model update path a watcher event uses — see the plan's "Step 3",
+    /// "OR" alternative. A full rebuild-and-reset would also throw away the
+    /// tree's expand state, which is the whole point of the lazy tree.
+    pub fn create_file(&mut self, parent_dir: &Path, name: &str) -> Result<(), AppError> {
+        project_model::create_file(parent_dir, name).map_err(AppError::FileOp)?;
+        // The watcher reports this creation after the view may have opened
+        // the new file: not an external edit.
+        self.suppressed_changes
+            .insert(parent_dir.join(name), std::time::Instant::now());
+        Ok(())
+    }
+
     /// Create a file holding `contents` (a rendered new-file template) inside
     /// `parent_dir`, and say where it landed so the caller can open it. The
     /// tree refreshes the way [`Self::create_file`]'s does.
@@ -134,7 +150,13 @@ impl AppSession {
         name: &str,
         contents: &str,
     ) -> Result<PathBuf, AppError> {
-        project_model::create_file_with(parent_dir, name, contents).map_err(AppError::FileOp)
+        let path = project_model::create_file_with(parent_dir, name, contents)
+            .map_err(AppError::FileOp)?;
+        // The watcher reports the creation after the view has opened the
+        // file: not an external edit.
+        self.suppressed_changes
+            .insert(path.clone(), std::time::Instant::now());
+        Ok(path)
     }
 
     /// Perform the file operations a refactoring asked for, then retarget
@@ -626,6 +648,20 @@ mod tests {
             .unwrap();
         assert_eq!(path, dir.path().join("Foo.php"));
         assert_eq!(fs::read_to_string(&path).unwrap(), "<?php\n");
+    }
+
+    #[test]
+    fn a_file_this_session_created_is_not_an_external_change_once_opened() {
+        let (mut session, dir) = project_session();
+        session.create_file(dir.path(), "new.txt").unwrap();
+        let from_template = session
+            .create_file_with(dir.path(), "Foo.php", "<?php\n")
+            .unwrap();
+        let created = dir.path().join("new.txt");
+        session.open_file(&created).unwrap();
+        session.open_file(&from_template).unwrap();
+        assert_eq!(session.check_external_change(&created), None);
+        assert_eq!(session.check_external_change(&from_template), None);
     }
 
     #[test]

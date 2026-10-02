@@ -6829,6 +6829,44 @@ mod ffi {
         #[cxx_name = "runNode"]
         fn run_node(self: Pin<&mut TestService>, node_id: &QString) -> FfiResult;
 
+        /// The 0-based lines of `text` that carry a test Run/Debug marker
+        /// (PHP parity plan T3); empty for any file that is not a PHP test.
+        #[qinvokable]
+        #[cxx_name = "markerLines"]
+        fn marker_lines(self: &TestService, path: &QString, text: &QString) -> Vec<u32>;
+
+        /// What the marker on `line` is called, for its menu.
+        #[qinvokable]
+        #[cxx_name = "markerName"]
+        fn marker_name(self: &TestService, path: &QString, text: &QString, line: u32) -> QString;
+
+        /// Run the one test (or class) the marker on `line` names.
+        #[qinvokable]
+        #[cxx_name = "runMarker"]
+        fn run_marker(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
+        /// Remember the marker a Debug click chose; the run starts with
+        /// `runPendingWithEnv` once `DebugService`'s listener is up.
+        #[qinvokable]
+        #[cxx_name = "prepareDebugMarker"]
+        fn prepare_debug_marker(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
+        /// Start the remembered test with the Xdebug environment
+        /// (`[[key, value], ...]`).
+        #[qinvokable]
+        #[cxx_name = "runPendingWithEnv"]
+        fn run_pending_with_env(self: Pin<&mut TestService>, env_json: &QString) -> FfiResult;
+
         /// Stop the run in progress, if any.
         #[qinvokable]
         fn stop(self: Pin<&mut TestService>);
@@ -10139,6 +10177,19 @@ mod ffi {
             config_id: QString,
             env_json: QString,
         );
+
+        /// Listen for Xdebug, then have the pending gutter test started
+        /// (`phpTestLaunchRequested`) — the test counterpart of debugging
+        /// a PHP run configuration.
+        #[qinvokable]
+        #[cxx_name = "debugPhpTests"]
+        fn debug_php_tests(self: Pin<&mut DebugService>) -> FfiResult;
+
+        /// The listener is up for a debugged test: the view hands the
+        /// environment (`[[key, value], ...]`) to `TestService`.
+        #[qsignal]
+        #[cxx_name = "phpTestLaunchRequested"]
+        fn php_test_launch_requested(self: Pin<&mut DebugService>, env_json: QString);
 
         /// The PHP listen session started or ended.
         #[qsignal]

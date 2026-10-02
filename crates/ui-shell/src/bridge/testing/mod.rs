@@ -31,6 +31,8 @@ use crate::bridge::errors;
 use crate::bridge::ffi;
 use crate::bridge::registry::SharedDiagnostics;
 
+mod gutter;
+
 /// This source's key in the shared store (ADR-0046): distinct from an
 /// analyzer's or a build's, so a test failure's rows for a file never
 /// clobber (or get clobbered by) either.
@@ -53,6 +55,9 @@ pub struct TestServiceRust {
     /// Where the last run executed, so the paths its failures print map
     /// back to local files (ADR-0067). `None` until the first run.
     run_host: RefCell<Option<process_exec::host::ExecHost>>,
+    /// The filter a gutter Debug click chose, run once the PHP listener is
+    /// up (T3): Xdebug does not retry, so the run starts after it.
+    pending_debug: RefCell<Option<String>>,
     store: SharedDiagnostics,
 }
 
@@ -136,6 +141,8 @@ fn framework_host(
 enum RerunSelection {
     Failed(Vec<test_core::TestId>),
     Node(test_core::TestId),
+    /// A ready-made `--filter` pattern, from a gutter marker (T3).
+    Pattern(String),
 }
 
 fn to_ffi_kind(kind: test_core::NodeKind) -> ffi::FfiTestNodeKind {
@@ -255,7 +262,7 @@ impl ffi::TestService {
     }
 
     pub fn run_all(self: Pin<&mut Self>) -> ffi::FfiResult {
-        self.start(None)
+        self.start(None, Vec::new())
     }
 
     pub fn run_failed(self: Pin<&mut Self>) -> ffi::FfiResult {
@@ -263,15 +270,19 @@ impl ffi::TestService {
         if ids.is_empty() {
             return errors::failure(errors::CODE_REFUSED, "no failed tests to rerun");
         }
-        self.start(Some(RerunSelection::Failed(ids)))
+        self.start(Some(RerunSelection::Failed(ids)), Vec::new())
     }
 
     pub fn run_node(self: Pin<&mut Self>, node_id: &QString) -> ffi::FfiResult {
         let id = test_core::TestId(node_id.to_string());
-        self.start(Some(RerunSelection::Node(id)))
+        self.start(Some(RerunSelection::Node(id)), Vec::new())
     }
 
-    fn start(mut self: Pin<&mut Self>, selection: Option<RerunSelection>) -> ffi::FfiResult {
+    fn start(
+        mut self: Pin<&mut Self>,
+        selection: Option<RerunSelection>,
+        env: Vec<(String, String)>,
+    ) -> ffi::FfiResult {
         if !self.runs.borrow().is_empty() {
             return errors::failure(errors::CODE_REFUSED, "a test run is already in progress");
         }
@@ -335,6 +346,7 @@ impl ffi::TestService {
             Some(RerunSelection::Node(id)) => {
                 test_core::filter::for_node(&self.tree.borrow(), id, dialect)
             }
+            Some(RerunSelection::Pattern(pattern)) => vec![pattern.clone()],
         };
 
         let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
@@ -377,11 +389,12 @@ impl ffi::TestService {
                 ansi: run_core::AnsiStripper::default(),
             };
             let program_str = program.to_string_lossy().into_owned();
-            let result = test_core::run_on(
+            let result = test_core::run_on_env(
                 &host,
                 &handle,
                 &program_str,
                 &args,
+                &env,
                 &root,
                 output_format,
                 report_glob.as_deref(),

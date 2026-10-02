@@ -46,7 +46,11 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEdi
                     ContainerService *containerService);
 // D2-5/D3: gives EditorTabs the DebugService whose breakpoints its gutter
 // shows and toggles (editor_tabs_debug.cpp).
-void wireDebugService(DebugService *debugService, EditorTabs *editorTabs);
+void wireDebugService(DebugService *debugService, EditorTabs *editorTabs, TestService *testService);
+// PHP parity T3: gives EditorTabs the TestService whose per-test gutter
+// markers it shows, and joins a debugged test's listener to its run
+// (editor_tabs_run.cpp). Called from `wireDebugService`.
+void wireTestGutter(TestService *testService, DebugService *debugService, EditorTabs *editorTabs);
 // ADR-0046: builds the one DiagnosticsService, gives EditorTabs the copy its
 // squiggles read, and refreshes them whenever any source's rows in the
 // shared store changed (editor_tabs_lsp.cpp). `analysisService` is the PHP
@@ -617,6 +621,7 @@ public:
     // configuration..." opens the run-config dialog, which needs both.
     void setContainerRunContext(RunConfigEditor *runConfigEditor, ContainerService *containerService);
     void setDebugService(DebugService *debugService);
+    void setTestService(TestService *testService);
     // ADR-0046: only `applyDiagnostics` (fired off `wireDiagnosticsService`'s
     // signals, never from the constructor) reads this, so retrofitting it
     // post-construction is safe, unlike `ProblemsPanel`'s own copy.
@@ -652,6 +657,8 @@ public:
     // launch this editor's file through `RunService::runContext`, or show
     // the Dockerfile/compose popup (C5/C6) scoped to that line.
     void requestRunFor(CodeEditor *editor, int line = 0);
+    // PHP parity T3: the Run/Debug popup of the test marker on `line`.
+    void showTestMarkerMenu(CodeEditor *editor, const QString &path, int line);
 
     // C6: `ContainerService::composeLenses` for a compose file, pushed into
     // the editor the same way `onCodeLensesReady` pushes a server's.
@@ -1039,6 +1046,7 @@ private:
     RunConfigEditor *runConfigEditor_ = nullptr;
     ContainerService *containerService_ = nullptr;
     DebugService *debugService_ = nullptr;
+    TestService *testService_ = nullptr;
     // F3-18: vcs.annotate's state, applied to whichever editor is active.
     bool annotateEnabled_ = false;
     // R7: notified whenever `annotateEnabled_` changes, so the VCS menu's

@@ -306,6 +306,33 @@ pub fn run_on(
     report_glob: Option<&str>,
     sink: &mut dyn TestSink,
 ) -> Result<Option<i32>, RunFailure> {
+    run_on_env(
+        host,
+        handle,
+        program,
+        args,
+        &[],
+        work_dir,
+        format,
+        report_glob,
+        sink,
+    )
+}
+
+/// [`run_on`] with extra environment variables for the process — the
+/// Xdebug environment of a debugged test, `XDEBUG_MODE=coverage`.
+#[allow(clippy::too_many_arguments)]
+pub fn run_on_env(
+    host: &process_exec::host::ExecHost,
+    handle: &TestRunHandle,
+    program: &str,
+    args: &[String],
+    env: &[(String, String)],
+    work_dir: &Path,
+    format: OutputFormat,
+    report_glob: Option<&str>,
+    sink: &mut dyn TestSink,
+) -> Result<Option<i32>, RunFailure> {
     // Taken before the process is even spawned (finding 4): the clock-free
     // snapshot this run's own reports are diffed against, so a run that
     // writes nothing at all never gets mistaken for a run whose reports
@@ -315,8 +342,9 @@ pub fn run_on(
         _ => HashMap::new(),
     };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let spawned = process_exec::spawn_on(host, program, &arg_refs, work_dir, &[], None).map_err(
-        |e| match e {
+    let env_refs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let spawned = process_exec::spawn_on(host, program, &arg_refs, work_dir, &env_refs, None)
+        .map_err(|e| match e {
             process_exec::Failure::NotFound => RunFailure::NotFound,
             process_exec::Failure::Io(msg) => RunFailure::Io(msg),
             // `spawn` never blocks waiting for exit, so it has no timeout to
@@ -324,8 +352,7 @@ pub fn run_on(
             // change to `process_exec::Failure` is a compile error here, not a
             // silent gap.
             process_exec::Failure::TimedOut => RunFailure::Io("unexpected timeout".into()),
-        },
-    )?;
+        })?;
     *handle
         .spawned
         .lock()

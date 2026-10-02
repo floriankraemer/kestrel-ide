@@ -739,7 +739,7 @@ void buildMainWindow(AppSettings *appSettings,
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5
-    wireDebugService(debugService, editorTabs);         // D2-5
+    wireDebugService(debugService, editorTabs, testService); // D2-5, PHP parity T3
     // Breakpoints live under the project's `.ide/local/`, so they can only
     // be read once a project is open — the same lifecycle hook run
     // configuration detection uses.

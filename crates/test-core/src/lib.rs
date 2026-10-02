@@ -38,8 +38,8 @@ mod tree;
 pub use diagnostics::{diagnostics_by_file, diagnostics_by_file_on};
 pub use junit::{parse as parse_junit_xml, JUnitTestCase, ParseError as JUnitParseError};
 pub use runner::{
-    parse_output_format, run, run_on, OutputFormat, RunFailure, TestRunHandle, TestSink,
-    UnknownOutputFormat,
+    parse_output_format, run, run_on, run_on_env, OutputFormat, RunFailure, TestRunHandle,
+    TestSink, UnknownOutputFormat,
 };
 pub use selection::{select_framework, SUPPORTED_OUTPUT_FORMATS};
 pub use teamcity::{TeamCityEvent, TeamCityParser};

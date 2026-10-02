@@ -23,6 +23,8 @@ pub struct TestMarker {
     /// 0-based line of the class/method name or of the call.
     pub line: u32,
     pub scope: MarkerScope,
+    /// What the menu calls it: the class, method or Pest description.
+    pub name: String,
     /// What the `--filter` flag takes to run exactly this.
     pub filter: String,
 }
@@ -116,6 +118,7 @@ impl Walker<'_> {
         self.out.push(TestMarker {
             line: name.start_position().row as u32,
             scope: MarkerScope::Group,
+            name: self.text_of(name).to_string(),
             filter: format!("^{escaped}::"),
         });
         let mut cursor = body.walk();
@@ -140,6 +143,7 @@ impl Walker<'_> {
                 self.out.push(TestMarker {
                     line: method.start_position().row as u32,
                     scope: MarkerScope::Test,
+                    name: method_name.to_string(),
                     // A data provider suffixes the name: `m with data set #0`.
                     filter: format!(
                         "^{escaped}::{}( with data set .+)?$",
@@ -202,6 +206,7 @@ impl Walker<'_> {
             self.out.push(TestMarker {
                 line: call.start_position().row as u32,
                 scope: MarkerScope::Group,
+                name: description,
                 filter: escape_regex(&format!("{} → ", self.describes.join(" → "))),
             });
             let mut cursor = call.walk();
@@ -214,7 +219,7 @@ impl Walker<'_> {
         let name = if callee == "it" {
             format!("it {description}")
         } else {
-            description
+            description.clone()
         };
         let full = if self.describes.is_empty() {
             name
@@ -224,6 +229,7 @@ impl Walker<'_> {
         self.out.push(TestMarker {
             line: call.start_position().row as u32,
             scope: MarkerScope::Test,
+            name: description,
             filter: escape_regex(&full),
         });
         true
@@ -324,6 +330,13 @@ final class GreeterTest extends TestCase
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn markers_carry_the_name_the_menu_shows() {
+        let text = "<?php\nclass GreeterTest extends TestCase {\n public function testGreets() {}\n}\ntest('adds', fn () => 1);\ndescribe('G', function () {});\n";
+        let names: Vec<String> = markers(text).into_iter().map(|m| m.name).collect();
+        assert_eq!(names, ["GreeterTest", "testGreets", "adds", "G"]);
     }
 
     #[test]

@@ -27,6 +27,7 @@ pub(super) struct PhpListen {
 
 /// A run to start once the listener is up, with the Xdebug environment.
 pub(super) struct PhpRun {
+    /// Empty for the pending gutter test run.
     config_id: String,
     env: Vec<(String, String)>,
     check: XdebugCheck,
@@ -191,6 +192,33 @@ impl ffi::DebugService {
             .run_on
             .as_deref()
             .and_then(|run_on| run_core::container_target::path_map(run_on, &containers, root));
+        self.launch_php_debug(config.id.clone(), container_map, root)
+    }
+
+    /// Debug the gutter test `TestService` has pending: it runs on the
+    /// `[php]` interpreter's host, so a container interpreter's mount is
+    /// the path map.
+    pub fn debug_php_tests(self: Pin<&mut Self>) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let container_map =
+            match php_core::host::interpreter_host(&settings.php, &settings.containers, &root) {
+                process_exec::host::ExecHost::Container(container) => Some(container.path_map),
+                _ => None,
+            };
+        self.launch_php_debug(String::new(), container_map, &root)
+    }
+
+    /// Listen and start the run once the listener is up; `config_id` is
+    /// empty for the pending test run.
+    fn launch_php_debug(
+        self: Pin<&mut Self>,
+        config_id: String,
+        container_map: Option<process_exec::host::PathMap>,
+        root: &Path,
+    ) -> ffi::FfiResult {
         let host = process_exec::host::ExecHost::for_path(root);
         // The adapter runs beside the project (in the distro, for a WSL
         // root), so the mapping's local side is a path it can read.
@@ -212,7 +240,7 @@ impl ffi::DebugService {
         let check_host =
             php_core::host::interpreter_host(&settings.php, &settings.containers, root);
         let run = PhpRun {
-            config_id: config.id.clone(),
+            config_id,
             env: plan.env,
             check: XdebugCheck {
                 in_container: matches!(check_host, process_exec::host::ExecHost::Container(_)),
@@ -229,6 +257,10 @@ impl ffi::DebugService {
 
     fn request_php_launch(self: Pin<&mut Self>, run: &PhpRun) {
         let env = serde_json::to_string(&run.env).unwrap_or_default();
+        if run.config_id.is_empty() {
+            self.php_test_launch_requested(QString::from(env.as_str()));
+            return;
+        }
         self.php_launch_requested(
             QString::from(run.config_id.as_str()),
             QString::from(env.as_str()),

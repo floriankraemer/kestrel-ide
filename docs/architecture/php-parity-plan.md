@@ -210,8 +210,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Task | Status | Commit |
 |---|---|---|
 | T1 — Pest, Codeception, Behat and PHPSpec rows (`junit-xml-stdout` format) | done | 6cc7057 |
-| T2 — `php_core::tests::markers` (PHPUnit `test*`/`#[Test]`/`@test`, Pest `test`/`it`/`describe`) | done | — |
-| T3 — gutter Run / Debug / Run with Coverage per test | open | |
+| T2 — `php_core::tests::markers` (PHPUnit `test*`/`#[Test]`/`@test`, Pest `test`/`it`/`describe`) | done | 0a84f0d |
+| T3 — gutter Run / Debug / Run with Coverage per test | done | — |
 | T4 — `test_core::coverage` Clover parser + `coverage-args`, paths mapped to local | open | |
 | T5 — coverage gutter stripes + Coverage dock | open | |
 | T6 — ADR-0048 amendment | open | |

@@ -8,6 +8,7 @@
 
 pub mod composer;
 pub mod composer_view;
+pub mod generate;
 pub mod host;
 pub mod level;
 pub mod lsp;

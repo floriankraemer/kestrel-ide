@@ -419,6 +419,10 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
                       tr("Reformat Selection"), appSettings, actions);
     connect(reformatSelectionAction, &QAction::triggered, this, [reformat]() { reformat(true); });
 
+    // ADR-0072: Alt+Insert.
+    QAction *generateAction = registerAction(refactorMenu, QStringLiteral("code.generate"),
+                                             tr("Generate..."), appSettings, actions);
+    connect(generateAction, &QAction::triggered, this, [this]() { editorTabs_->showGenerateNow(); });
     // ADR-0072: Ctrl+J and Ctrl+Alt+T. Which templates fit, and what each
     // expands to, is Rust's; this only opens the pickers.
     QAction *insertTemplateAction =

@@ -241,6 +241,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "",
     },
     ActionDef {
+        id: "code.generate",
+        label: "Generate...",
+        category: "Code",
+        default_shortcut: "Alt+Insert",
+    },
+    ActionDef {
         id: "code.insertLiveTemplate",
         label: "Insert Live Template...",
         category: "Code",
@@ -990,7 +996,8 @@ pub const ACTIONS: &[ActionDef] = &[
         id: "database.addRow",
         label: "Add Row",
         category: "Database",
-        default_shortcut: "Alt+Insert",
+        // Alt+Insert is Generate in the editor.
+        default_shortcut: "Ctrl+Alt+Insert",
     },
     ActionDef {
         id: "database.deleteRow",

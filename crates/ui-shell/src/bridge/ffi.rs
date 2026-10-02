@@ -778,6 +778,30 @@ mod ffi {
         more: bool,
     }
 
+    /// What Alt+Insert can generate for a PHP class (ADR-0072).
+    #[derive(Debug)]
+    enum FfiGenerateKind {
+        Constructor,
+        Getters,
+        Setters,
+        GettersAndSetters,
+    }
+
+    /// One Generate entry; a `reason`-carrying one is listed greyed.
+    struct FfiGenerateOption {
+        kind: FfiGenerateKind,
+        title: QString,
+        enabled: bool,
+        reason: QString,
+    }
+
+    /// One property in the Generate picker; `name` goes back to
+    /// `generateCode`.
+    struct FfiGenerateMember {
+        name: QString,
+        label: QString,
+    }
+
     /// One new-file template in the New menu (ADR-0072).
     struct FfiFileTemplate {
         id: QString,
@@ -4951,6 +4975,36 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "endSnippet"]
         fn end_snippet(self: Pin<&mut EditorOps>, tab_id: u64);
+
+        /// Alt+Insert: the generators for the PHP class at the caret (ADR-0072).
+        #[qinvokable]
+        #[cxx_name = "generateOptions"]
+        fn generate_options(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+        ) -> Vec<FfiGenerateOption>;
+
+        #[qinvokable]
+        #[cxx_name = "generateMembers"]
+        fn generate_members(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            kind: FfiGenerateKind,
+        ) -> Vec<FfiGenerateMember>;
+
+        /// The edits generating `kind` for the properties in `selected` (only
+        /// their `name` is read).
+        #[qinvokable]
+        #[cxx_name = "generateCode"]
+        fn generate_code(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            kind: FfiGenerateKind,
+            selected: Vec<FfiGenerateMember>,
+        ) -> Vec<FfiTextEdit>;
 
         /// Tab: expand the live template named at the caret (ADR-0072).
         #[qinvokable]

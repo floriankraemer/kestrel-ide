@@ -403,6 +403,11 @@ void EditorTabs::requestCodeLensesFor(CodeEditor *editor)
 
 void EditorTabs::onIntentionsReady()
 {
+    if (generatePending_) {
+        generatePending_ = false;
+        showGenerateMenu(true);
+        return;
+    }
     const bool wasPending = intentionsPending_;
     intentionsPending_ = false;
     if (!intentionsEditor_) {

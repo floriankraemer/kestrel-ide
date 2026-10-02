@@ -303,6 +303,11 @@ public:
     // ADR-0072: Ctrl+J and Ctrl+Alt+T. Each lists what Rust says fits (the
     // caret's place / a selection), and expands the chosen live template.
     void insertLiveTemplateNow();
+    // ADR-0072: Alt+Insert. Lists the generators for the PHP class at the
+    // caret (Rust's answer) and the language servers' source/refactor
+    // actions; with no server in play the local entries show after a short
+    // wait for one.
+    void showGenerateNow();
     void surroundWithTemplateNow();
     // H3: `code.applyPreferredFix` (Alt+Shift+Return).
     void applyPreferredFixNow();
@@ -901,6 +906,8 @@ private:
     // positions it at the request's caret line and, for an explicit
     // request, opens the popup immediately.
     void onIntentionsReady();
+    void showGenerateMenu(bool withServerActions);
+    void runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QString &title);
 
     // The grouped popup itself, shared by the bulb's click and Alt+Return.
     // `anchor` (global) places it there instead of at the bulb/pointer — the
@@ -1117,6 +1124,10 @@ private:
     CodeEditor *intentionsEditor_ = nullptr;
     int intentionsDocPos_ = 0;
     bool intentionsPending_ = false;
+    // Alt+Insert is waiting for the servers' answer; `generateToken_` retires
+    // the fallback timer of a request that has since been answered.
+    bool generatePending_ = false;
+    quint64 generateToken_ = 0;
     // H3: `code.applyPreferredFix` with no primary fix on a visible card
     // asked for the caret's intentions; apply their primary fix on arrival.
     bool applyPreferredPending_ = false;

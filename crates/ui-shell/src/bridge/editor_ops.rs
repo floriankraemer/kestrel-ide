@@ -54,6 +54,7 @@ use syntax_core::Language;
 
 use crate::bridge::ffi::{self, FfiResult};
 
+mod generate;
 mod templates;
 use crate::bridge::registry::shared_session;
 

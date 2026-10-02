@@ -185,6 +185,7 @@ e2e-ci: ## Inner half of `e2e` — run inside the builder image
 	cargo build --bin stub_server -p lsp-core
 	cargo build --bin stub_analyzer -p analysis-core
 	cargo build --bin stub_engine -p container-core
+	cargo build --bin stub_adapter -p dap-core
 	$(E2E_XVFB) cargo test -p app --test e2e -- --ignored --test-threads=1 --nocapture
 
 # Burn-in: `make e2e-repeat TEST=core::e2e_open_project_edit_save N=20` (a
@@ -197,6 +198,7 @@ e2e-repeat: linux-image ## Repeat one E2E flow N times: make e2e-repeat TEST=<mo
 	$(RUN_LINUX) sh -c 'cargo build -p app && cargo build --bin stub_server -p lsp-core && \
 		cargo build --bin stub_analyzer -p analysis-core && \
 		cargo build --bin stub_engine -p container-core && \
+		cargo build --bin stub_adapter -p dap-core && \
 		for i in $$(seq 1 $(N)); do \
 		echo "--- run $$i/$(N) ---"; \
 		$(E2E_XVFB) cargo test -p app --test e2e -- --ignored --exact \

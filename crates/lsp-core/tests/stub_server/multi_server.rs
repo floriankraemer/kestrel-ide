@@ -86,6 +86,24 @@ fn did_open_reaches_every_server_and_each_publishes_under_its_own_id() {
 }
 
 #[test]
+fn a_tagged_server_publishes_under_its_own_source_name() {
+    let (manager, rx) = two_servers();
+    manager
+        .did_open("file:///workspace/a.stub", LANG, "hello\n")
+        .expect("didOpen is sent");
+    let mut sources = Vec::new();
+    while sources.len() < 2 {
+        sources.push(wait_for(&rx, "Diagnostics", |e| match e {
+            LspEvent::Diagnostics { diagnostics, .. } => diagnostics[0].source.clone(),
+            _ => None,
+        }));
+    }
+    sources.sort();
+    assert_eq!(sources, ["stub_a", "stub_b"]);
+    manager.stop(LANG);
+}
+
+#[test]
 fn stopping_one_server_leaves_the_other_running() {
     let (manager, _rx) = two_servers();
     manager.stop_server("a");

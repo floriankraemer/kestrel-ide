@@ -343,17 +343,24 @@ fn main() {
                     .unwrap_or("")
                     .to_string();
                 let version = params.pointer("/textDocument/version").cloned();
+                let mut canned = canned_diagnostic();
+                // E2 (P2): a tagged profile reports under its own source, so
+                // Problems shows which server said it.
+                if let Some(tag) = &profile_tag {
+                    canned["source"] = json!(format!("stub_{tag}"));
+                }
+                let diagnostics = if greet_diagnostic {
+                    vec![canned, greet_problem()]
+                } else {
+                    vec![canned]
+                };
                 send(
                     &out,
                     json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
                            "params": {
                         "uri": uri,
                         "version": version,
-                        "diagnostics": if greet_diagnostic {
-                            vec![canned_diagnostic(), greet_problem()]
-                        } else {
-                            vec![canned_diagnostic()]
-                        },
+                        "diagnostics": diagnostics,
                     }}),
                 );
                 if die_on_didopen {

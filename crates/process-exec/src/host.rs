@@ -523,7 +523,7 @@ pub fn distros() -> Vec<String> {
     let mut command = Command::new("wsl.exe");
     command.args(["--list", "--quiet"]);
     suppress_console_window(&mut command);
-    let output = command.output();
+    let output = crate::retry_text_busy(|| command.output());
     match output {
         Ok(output) => parse_distro_list(&decode_utf16le(&output.stdout)),
         Err(_) => Vec::new(),
@@ -620,7 +620,7 @@ fn resolve_in_container(
     };
     let mut command = host.command("sh", &["-c", script, "sh", &candidate], cwd, &[]);
     suppress_console_window(&mut command);
-    let output = command.output().ok()?;
+    let output = crate::retry_text_busy(|| command.output()).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -644,8 +644,7 @@ fn probe_executable(distro: &str, remote_path: &str) -> bool {
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "-e", "test", "-x", remote_path]);
     suppress_console_window(&mut command);
-    command
-        .output()
+    crate::retry_text_busy(|| command.output())
         .map(|out| out.status.success())
         .unwrap_or(false)
 }
@@ -655,7 +654,7 @@ fn probe_command_v(distro: &str, program: &str) -> Option<String> {
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "-e", "/bin/sh", "-lc", &script]);
     suppress_console_window(&mut command);
-    let output = command.output().ok()?;
+    let output = crate::retry_text_busy(|| command.output()).ok()?;
     if !output.status.success() {
         return None;
     }

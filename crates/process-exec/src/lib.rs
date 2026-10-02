@@ -97,6 +97,30 @@ pub fn run(
     )
 }
 
+/// How many times a spawn is retried while the program is "text busy".
+const TEXT_BUSY_RETRIES: u32 = 50;
+
+/// `ETXTBSY` is 26 on Linux, macOS and the BSDs.
+fn is_text_busy(error: &io::Error) -> bool {
+    cfg!(unix) && error.raw_os_error() == Some(26)
+}
+
+/// Run `attempt` again for as long as it fails with `ETXTBSY`: exec of a
+/// file some process still has open for writing. A program that was just
+/// written (or installed) can hit this when another thread forks while the
+/// writer's descriptor is open, because the forked child holds a copy of it
+/// until its own exec closes it — a window of microseconds, so a short
+/// retry is the standard answer.
+pub(crate) fn retry_text_busy<T>(mut attempt: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    for _ in 0..TEXT_BUSY_RETRIES {
+        match attempt() {
+            Err(error) if is_text_busy(&error) => thread::sleep(Duration::from_millis(10)),
+            other => return other,
+        }
+    }
+    attempt()
+}
+
 /// [`run`] on an explicit `host` instead of the one `work_dir`'s path
 /// implies — for the callers that pick a host by configuration (a PHP
 /// interpreter target), not by where the project lives.
@@ -131,7 +155,7 @@ pub fn run_on(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = match command.spawn() {
+    let mut child = match retry_text_busy(|| command.spawn()) {
         Ok(child) => child,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(Failure::NotFound),
         Err(e) => return Err(Failure::Io(e.to_string())),
@@ -348,7 +372,7 @@ pub fn spawn_on(
         .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let child = command.spawn();
+    let child = retry_text_busy(|| command.spawn());
     match child {
         Ok(child) => Ok(Spawned {
             child: Arc::new(Mutex::new(child)),
@@ -361,6 +385,28 @@ pub fn spawn_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The race behind flaky fake-executable tests, made deterministic: the
+    /// writer's descriptor is still open when the first exec happens.
+    #[cfg(unix)]
+    #[test]
+    fn a_program_still_open_for_writing_is_retried_until_it_is_closed() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fake");
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(b"#!/bin/sh\necho ok\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let closer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            drop(file);
+        });
+        let output = retry_text_busy(|| Command::new(&path).output()).unwrap();
+        closer.join().unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+    }
 
     #[test]
     fn captures_stdout_on_success() {

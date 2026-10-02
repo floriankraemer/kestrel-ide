@@ -241,6 +241,18 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "",
     },
     ActionDef {
+        id: "code.insertLiveTemplate",
+        label: "Insert Live Template...",
+        category: "Code",
+        default_shortcut: "Ctrl+J",
+    },
+    ActionDef {
+        id: "code.surroundWith",
+        label: "Surround With...",
+        category: "Code",
+        default_shortcut: "Ctrl+Alt+T",
+    },
+    ActionDef {
         id: "code.showIntentions",
         label: "Show Intention Actions",
         category: "Code",
@@ -320,7 +332,8 @@ pub const ACTIONS: &[ActionDef] = &[
         id: "view.projectTree",
         label: "Project",
         category: "View",
-        default_shortcut: "Ctrl+Alt+T",
+        // JetBrains' own slot for the Project window; Ctrl+Alt+T is Surround With.
+        default_shortcut: "Alt+1",
     },
     ActionDef {
         id: "view.terminal",
@@ -1311,9 +1324,11 @@ mod tests {
             "gone.action".to_string(),
             "Ctrl+K".to_string(),
         )]));
-        map.assign("also.gone", "Ctrl+J");
+        map.assign("also.gone", "Ctrl+Alt+Shift+9");
         assert_eq!(map.shortcut_for("also.gone"), "");
-        assert!(map.conflicts("view.goToLine", "Ctrl+J").is_empty());
+        assert!(map
+            .conflicts("view.goToLine", "Ctrl+Alt+Shift+9")
+            .is_empty());
     }
 
     #[test]

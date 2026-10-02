@@ -25,6 +25,17 @@ pub const SELECTION_VAR: &str = "$SELECTION$";
 /// Where a postfix template puts the expression before the dot.
 pub const EXPR_VAR: &str = "$EXPR$";
 
+/// A template ready to go in: the range it replaces and the snippet source
+/// (indented, variables substituted) that replaces it. This is also exactly
+/// what a snippet completion item carries, so a template can be offered
+/// through the completion popup and accepted by the same code that accepts a
+/// server's snippet.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Prepared {
+    pub range: Range<usize>,
+    pub source: String,
+}
+
 /// What an expansion does to the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Expansion {
@@ -111,10 +122,24 @@ pub fn site_at(language: Language, text: &str, word: Range<usize>) -> Site {
     Site::Other
 }
 
+/// The abbreviation being typed at `caret`: the word before it, unless that
+/// word is a variable (`$if`) or a member (`->if`, `::if`), which is never
+/// an abbreviation.
+pub fn abbreviation_before(text: &str, caret: usize) -> Option<Range<usize>> {
+    let word = word_before(text, caret)?;
+    let head = &text[..word.start];
+    let member = head.ends_with("->") || head.ends_with("::") || head.ends_with('$');
+    (!member).then_some(word)
+}
+
 /// Replace `word` with `body`.
 pub fn expand(text: &str, word: Range<usize>, body: &str, style: IndentStyle) -> Expansion {
+    finish(&prepare_expand(text, word, body, style))
+}
+
+pub fn prepare_expand(text: &str, word: Range<usize>, body: &str, style: IndentStyle) -> Prepared {
     let body = body.replace(SELECTION_VAR, "").replace(EXPR_VAR, "");
-    render(text, word, &body, style)
+    indent(text, word, &body, style)
 }
 
 /// Wrap `selection` in `body` at its [`SELECTION_VAR`].
@@ -141,10 +166,10 @@ pub fn surround(text: &str, selection: Range<usize>, body: &str, style: IndentSt
     let selected = relativize(&text[range.clone()], base);
     let body = body.replace(EXPR_VAR, "");
     let body = substitute(&body, SELECTION_VAR, &selected);
-    render(text, range, &body, style)
+    finish(&indent(text, range, &body, style))
 }
 
-/// A `expr.abbr` the caret sits at the end of.
+/// An `expr.abbr` the caret sits at the end of; `abbr` may still be empty.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostfixSite {
     /// The `abbr` after the dot.
@@ -169,7 +194,7 @@ const CHAIN_KINDS: [&str; 7] = [
 /// The `expr.abbr` ending at `caret`: the expression is the longest chain of
 /// accesses, calls and subscripts that ends right before the dot.
 pub fn postfix_site(language: Language, text: &str, caret: usize) -> Option<PostfixSite> {
-    let abbreviation = word_before(text, caret)?;
+    let abbreviation = word_before(text, caret).unwrap_or(caret..caret);
     let dot = abbreviation.start.checked_sub(1)?;
     if text.as_bytes().get(dot) != Some(&b'.') || dot == 0 {
         return None;
@@ -210,11 +235,15 @@ fn is_leaf_value(kind: &str) -> bool {
 
 /// Replace `expr.abbr` with `body`, its [`EXPR_VAR`] standing for the expression.
 pub fn postfix(text: &str, site: &PostfixSite, body: &str, style: IndentStyle) -> Expansion {
+    finish(&prepare_postfix(text, site, body, style))
+}
+
+pub fn prepare_postfix(text: &str, site: &PostfixSite, body: &str, style: IndentStyle) -> Prepared {
     let base = indent_of(text, site.expr.start);
     let expr = relativize(&text[site.expr.clone()], base);
     let body = body.replace(SELECTION_VAR, "");
     let body = substitute(&body, EXPR_VAR, &expr);
-    render(text, site.expr.start..site.abbreviation.end, &body, style)
+    indent(text, site.expr.start..site.abbreviation.end, &body, style)
 }
 
 fn line_start(text: &str, at: usize) -> usize {
@@ -257,8 +286,8 @@ fn substitute(body: &str, var: &str, value: &str) -> String {
     body.replacen(var, &value, 1)
 }
 
-/// Indent, parse and position: the part every entry point shares.
-fn render(text: &str, range: Range<usize>, body: &str, style: IndentStyle) -> Expansion {
+/// Tabs become the indent unit and every later line gets the base indent.
+fn indent(text: &str, range: Range<usize>, body: &str, style: IndentStyle) -> Prepared {
     let base = indent_of(text, range.start);
     let unit = style.unit();
     let source = body
@@ -277,8 +306,12 @@ fn render(text: &str, range: Range<usize>, body: &str, style: IndentStyle) -> Ex
         })
         .collect::<Vec<_>>()
         .join("\n");
+    Prepared { range, source }
+}
 
-    let mut parsed = snippet::parse(&source);
+/// Parse the snippet and turn its stops into buffer offsets.
+fn finish(prepared: &Prepared) -> Expansion {
+    let mut parsed = snippet::parse(&prepared.source);
     let end_of_text = parsed.text.chars().count();
     if !parsed.placeholders.is_empty() && parsed.placeholders.iter().all(|p| p.number != 0) {
         parsed.placeholders.push(Placeholder {
@@ -293,14 +326,14 @@ fn render(text: &str, range: Range<usize>, body: &str, style: IndentStyle) -> Ex
             .nth(chars)
             .map_or(parsed.text.len(), |(i, _)| i)
     };
-    let origin = range.start;
+    let origin = prepared.range.start;
     let stops = snippet::stops(&parsed)
         .into_iter()
         .map(|r| origin + byte_at(r.start)..origin + byte_at(r.end))
         .collect();
     let caret = origin + parsed.text.len();
     Expansion {
-        edit: TextEdit::new(range, parsed.text),
+        edit: TextEdit::new(prepared.range.clone(), parsed.text),
         stops,
         caret,
     }
@@ -459,5 +492,35 @@ mod tests {
         assert_eq!(at("<?php\nclass A {\n    |\n}\n"), Site::ClassBody);
         assert_eq!(at("<?php\n$x = |;\n"), Site::Expression);
         assert_eq!(at("<?php\nfoo(|);\n"), Site::Expression);
+    }
+
+    #[test]
+    fn variables_and_members_are_not_abbreviations() {
+        assert_eq!(abbreviation_before("fore", 4), Some(0..4));
+        assert_eq!(abbreviation_before("$fore", 5), None);
+        assert_eq!(abbreviation_before("$a->fore", 8), None);
+        assert_eq!(abbreviation_before("A::fore", 7), None);
+    }
+
+    #[test]
+    fn a_postfix_site_exists_right_after_the_dot() {
+        let text = "<?php\n$xs.";
+        let site = postfix_site(php(), text, text.len()).unwrap();
+        assert_eq!(&text[site.expr.clone()], "$xs");
+        assert!(site.abbreviation.is_empty());
+    }
+
+    #[test]
+    fn a_prepared_postfix_is_snippet_source_over_the_whole_site() {
+        let text = "<?php\n$xs.fo";
+        let site = postfix_site(php(), text, text.len()).unwrap();
+        let p = prepare_postfix(
+            text,
+            &site,
+            "foreach ($EXPR$ as $1) {}",
+            IndentStyle::default(),
+        );
+        assert_eq!(p.source, "foreach ($xs as $1) {}".replace("$xs", "\\$xs"));
+        assert_eq!(&text[p.range], "$xs.fo");
     }
 }

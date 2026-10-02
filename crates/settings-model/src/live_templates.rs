@@ -7,8 +7,10 @@
 //! load.
 
 use app_config::LiveTemplateSetting;
-use edit_ops::templates::Site;
+use edit_ops::indent::IndentStyle;
+use edit_ops::templates::{self, Expansion, Prepared, Site};
 use plugin_api::{LiveTemplateContribution, TemplateContext};
+use syntax_core::Language;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LiveTemplate {
@@ -97,6 +99,147 @@ pub fn for_language<'a>(all: &'a [LiveTemplate], language: &str) -> Vec<&'a Live
     let mut found: Vec<_> = all.iter().filter(|t| t.language == language).collect();
     found.sort_by(|a, b| a.abbreviation.cmp(&b.abbreviation));
     found
+}
+
+/// What Tab does at `caret`: the postfix template named after a dot, else
+/// the plain template named by the word before the caret that fits where it
+/// stands. `None` means Tab keeps its ordinary meaning.
+pub fn expand_before_caret(
+    all: &[LiveTemplate],
+    language: Language,
+    text: &str,
+    caret: usize,
+    style: IndentStyle,
+) -> Option<Expansion> {
+    let id = language.id();
+    let named = |abbreviation: &str, postfix: bool| {
+        all.iter()
+            .find(|t| t.postfix == postfix && t.language == id && t.abbreviation == abbreviation)
+    };
+    if let Some(site) = templates::postfix_site(language, text, caret) {
+        if let Some(t) = named(&text[site.abbreviation.clone()], true) {
+            return Some(templates::postfix(text, &site, &t.body, style));
+        }
+    }
+    let word = templates::abbreviation_before(text, caret)?;
+    let template = named(&text[word.clone()], false)?;
+    let site = templates::site_at(language, text, word.clone());
+    template
+        .fits(site)
+        .then(|| templates::expand(text, word, &template.body, style))
+}
+
+/// The plain templates the Insert Live Template list offers at `caret`.
+pub fn insertable<'a>(
+    all: &'a [LiveTemplate],
+    language: Language,
+    text: &str,
+    caret: usize,
+) -> Vec<&'a LiveTemplate> {
+    let word = templates::word_before(text, caret).unwrap_or(caret..caret);
+    let site = templates::site_at(language, text, word);
+    for_language(all, &language.id())
+        .into_iter()
+        .filter(|t| !t.postfix && t.fits(site))
+        .collect()
+}
+
+/// Insert the plain template `abbreviation` at `caret`, replacing the
+/// half-typed word before it when that is a start of the abbreviation.
+pub fn insert(
+    all: &[LiveTemplate],
+    language: Language,
+    text: &str,
+    caret: usize,
+    abbreviation: &str,
+    style: IndentStyle,
+) -> Option<Expansion> {
+    let id = language.id();
+    let template = all
+        .iter()
+        .find(|t| !t.postfix && t.language == id && t.abbreviation == abbreviation)?;
+    let word = templates::word_before(text, caret)
+        .filter(|w| abbreviation.starts_with(&text[w.clone()]))
+        .unwrap_or(caret..caret);
+    Some(templates::expand(text, word, &template.body, style))
+}
+
+/// The templates Surround With offers: the ones that wrap a selection.
+pub fn surround_candidates(all: &[LiveTemplate], language: Language) -> Vec<&LiveTemplate> {
+    for_language(all, &language.id())
+        .into_iter()
+        .filter(|t| !t.postfix && t.body.contains(templates::SELECTION_VAR))
+        .collect()
+}
+
+/// Wrap `selection` in the template `abbreviation`.
+pub fn surround_with(
+    all: &[LiveTemplate],
+    language: Language,
+    text: &str,
+    selection: std::ops::Range<usize>,
+    abbreviation: &str,
+    style: IndentStyle,
+) -> Option<Expansion> {
+    let template = surround_candidates(all, language)
+        .into_iter()
+        .find(|t| t.abbreviation == abbreviation)?;
+    Some(templates::surround(text, selection, &template.body, style))
+}
+
+/// One template as a completion item: shown as `abbreviation`, and accepted
+/// by replacing `prepared.range` with `prepared.source`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplateOffer {
+    pub abbreviation: String,
+    pub description: String,
+    pub prepared: Prepared,
+}
+
+impl TemplateOffer {
+    fn new(template: &LiveTemplate, prepared: Prepared) -> Self {
+        Self {
+            abbreviation: template.abbreviation.clone(),
+            description: template.description.clone(),
+            prepared,
+        }
+    }
+}
+
+/// The templates the completion popup lists at `caret`.
+///
+/// After `expr.`: the postfix templates whose abbreviation starts with what
+/// follows the dot. Elsewhere: only the plain template whose abbreviation is
+/// exactly the word typed, first, so that Tab or Enter on `fore` expands it
+/// instead of accepting the keyword `foreach`. Listing every plain template
+/// by prefix would bury the language's own keywords in every popup; Ctrl+J
+/// lists them all.
+pub fn completions(
+    all: &[LiveTemplate],
+    language: Language,
+    text: &str,
+    caret: usize,
+    style: IndentStyle,
+) -> Vec<TemplateOffer> {
+    let id = language.id();
+    if let Some(site) = templates::postfix_site(language, text, caret) {
+        let typed = text[site.abbreviation.clone()].to_lowercase();
+        return for_language(all, &id)
+            .into_iter()
+            .filter(|t| t.postfix && t.abbreviation.to_lowercase().starts_with(&typed))
+            .map(|t| TemplateOffer::new(t, templates::prepare_postfix(text, &site, &t.body, style)))
+            .collect();
+    }
+    let Some(word) = templates::abbreviation_before(text, caret) else {
+        return Vec::new();
+    };
+    let typed = &text[word.clone()];
+    let site = templates::site_at(language, text, word.clone());
+    all.iter()
+        .find(|t| !t.postfix && t.language == id && t.abbreviation == typed && t.fits(site))
+        .map(|t| TemplateOffer::new(t, templates::prepare_expand(text, word, &t.body, style)))
+        .into_iter()
+        .collect()
 }
 
 #[cfg(test)]
@@ -235,5 +378,86 @@ mod tests {
         let fore = templates.iter().find(|t| t.abbreviation == "fore").unwrap();
         let e = surround("a();", 0..4, &fore.body, style);
         assert_eq!(e.edit.text, "foreach ($array as $item) {\n    a();\n}");
+    }
+
+    fn lang() -> Language {
+        syntax_core::language_by_id("php").unwrap()
+    }
+
+    #[test]
+    fn tab_prefers_a_postfix_template_then_a_plain_one_that_fits() {
+        let all = shipped_php();
+        let style = IndentStyle::default();
+        let text = "<?php\nfunction f() {\n    fore\n}\n";
+        let caret = text.find("fore").unwrap() + 4;
+        let e = expand_before_caret(&all, lang(), text, caret, style).unwrap();
+        assert!(e.edit.text.starts_with("foreach ("));
+
+        // `fore` as a variable name or inside an expression is left alone.
+        let expr = "<?php\n$x = fore;\n";
+        let caret = expr.find("fore").unwrap() + 4;
+        assert!(expand_before_caret(&all, lang(), expr, caret, style).is_none());
+
+        let post = "<?php\nfunction f() {\n    $xs.foreach\n}\n";
+        let caret = post.find(".foreach").unwrap() + 8;
+        let e = expand_before_caret(&all, lang(), post, caret, style).unwrap();
+        assert!(
+            e.edit.text.starts_with("foreach ($xs as "),
+            "{}",
+            e.edit.text
+        );
+    }
+
+    #[test]
+    fn insert_lists_what_fits_and_replaces_a_typed_prefix() {
+        let all = shipped_php();
+        let style = IndentStyle::default();
+        let text = "<?php\nclass A {\n    pu\n}\n";
+        let caret = text.find("pu").unwrap() + 2;
+        let names: Vec<_> = insertable(&all, lang(), text, caret)
+            .iter()
+            .map(|t| t.abbreviation.as_str())
+            .collect();
+        assert!(names.contains(&"pubf") && names.contains(&"ctor"));
+        assert!(!names.contains(&"fore"));
+        let e = insert(&all, lang(), text, caret, "pubf", style).unwrap();
+        assert_eq!(e.edit.range, caret - 2..caret);
+        assert!(e.edit.text.starts_with("public function "));
+    }
+
+    #[test]
+    fn surround_offers_the_wrapping_templates_only() {
+        let all = shipped_php();
+        let names: Vec<_> = surround_candidates(&all, lang())
+            .iter()
+            .map(|t| t.abbreviation.as_str())
+            .collect();
+        assert_eq!(names, ["fore", "forek", "if", "ife", "try"]);
+        let e = surround_with(&all, lang(), "a();", 0..4, "if", IndentStyle::default()).unwrap();
+        assert_eq!(e.edit.text, "if (condition) {\n    a();\n}");
+        assert!(surround_with(&all, lang(), "a();", 0..4, "fn", IndentStyle::default()).is_none());
+    }
+
+    #[test]
+    fn completions_list_postfix_templates_after_a_dot_and_the_exact_plain_one_elsewhere() {
+        let all = shipped_php();
+        let text = "<?php\n$xs.is";
+        let offers = completions(&all, lang(), text, text.len(), IndentStyle::default());
+        let names: Vec<_> = offers.iter().map(|o| o.abbreviation.as_str()).collect();
+        assert_eq!(names, ["isset"]);
+        assert_eq!(&text[offers[0].prepared.range.clone()], "$xs.is");
+        let after_dot = "<?php\n$xs.";
+        assert_eq!(
+            completions(
+                &all,
+                lang(),
+                after_dot,
+                after_dot.len(),
+                IndentStyle::default()
+            )
+            .len(),
+            9
+        );
+        assert!(completions(&all, lang(), "<?php\n$xs", 9, IndentStyle::default()).is_empty());
     }
 }

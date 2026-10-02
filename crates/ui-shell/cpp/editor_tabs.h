@@ -205,6 +205,10 @@ public:
     // Static because it touches nothing but the editor it is handed —
     // `FindBar` splices its replacements through it too (F0-18).
     static void applyEditsTo(QPlainTextEdit *editor, const ::rust::Vec<FfiTextEdit> &edits);
+    // ADR-0072: splice an expanded live template and select its first stop.
+    // False when `expansion` expanded nothing.
+    bool applyTemplateExpansion(CodeEditor *editor, const FfiTemplateExpansion &expansion);
+    QString pickTemplate(CodeEditor *editor, const ::rust::Vec<FfiTemplateItem> &items);
 
     // RF12: where the pointer last dwelled, so the index leg of hover can
     // be started from outside this class when the server declines.
@@ -296,6 +300,10 @@ public:
     // asked explicitly — and opens the grouped popup as soon as the answer
     // lands, whether or not the bulb ends up shown for it.
     void showIntentionsNow();
+    // ADR-0072: Ctrl+J and Ctrl+Alt+T. Each lists what Rust says fits (the
+    // caret's place / a selection), and expands the chosen live template.
+    void insertLiveTemplateNow();
+    void surroundWithTemplateNow();
     // H3: `code.applyPreferredFix` (Alt+Shift+Return).
     void applyPreferredFixNow();
     // The user's bindings for the card's fix row, pushed by whoever owns the keymap.

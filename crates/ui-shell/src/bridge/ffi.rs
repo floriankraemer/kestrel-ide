@@ -778,6 +778,25 @@ mod ffi {
         more: bool,
     }
 
+    /// One live template in a picker (ADR-0072).
+    struct FfiTemplateItem {
+        abbreviation: QString,
+        description: QString,
+    }
+
+    /// What expanding a live template did: the edits to splice (descending,
+    /// like every `Vec<FfiTextEdit>`) and the stop to select afterwards, in
+    /// the post-edit document's UTF-16 positions. `stop` is the first tab
+    /// stop with `more` set while others remain, or the caret as an empty
+    /// range. `applied` false means there was nothing to expand and the key
+    /// keeps its ordinary meaning.
+    #[derive(Default)]
+    struct FfiTemplateExpansion {
+        applied: bool,
+        edits: Vec<FfiTextEdit>,
+        stop: FfiSnippetStop,
+    }
+
     /// One caret, as flat document positions in UTF-16 code units — the
     /// unit `QTextCursor::position()` counts in, so the view uses these
     /// directly rather than converting.
@@ -4902,6 +4921,53 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "endSnippet"]
         fn end_snippet(self: Pin<&mut EditorOps>, tab_id: u64);
+
+        /// Tab: expand the live template named at the caret (ADR-0072).
+        #[qinvokable]
+        #[cxx_name = "expandTemplate"]
+        fn expand_template(self: &EditorOps, tab_id: u64, text: &QString) -> FfiTemplateExpansion;
+
+        /// Ctrl+J: the templates that fit the caret's place.
+        #[qinvokable]
+        #[cxx_name = "insertableTemplates"]
+        fn insertable_templates(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+        ) -> Vec<FfiTemplateItem>;
+
+        #[qinvokable]
+        #[cxx_name = "insertTemplate"]
+        fn insert_template(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            abbreviation: &QString,
+        ) -> FfiTemplateExpansion;
+
+        /// Ctrl+Alt+T: the templates that can wrap a selection.
+        #[qinvokable]
+        #[cxx_name = "surroundTemplates"]
+        fn surround_templates(self: &EditorOps, tab_id: u64) -> Vec<FfiTemplateItem>;
+
+        #[qinvokable]
+        #[cxx_name = "surroundWith"]
+        fn surround_with(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            abbreviation: &QString,
+        ) -> FfiTemplateExpansion;
+
+        /// Templates as completion items (postfix after `expr.`, or the plain
+        /// one named by the typed word).
+        #[qinvokable]
+        #[cxx_name = "templateCompletions"]
+        fn template_completions(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+        ) -> Vec<FfiCompletionItem>;
 
         /// The edits a save would make before it writes the file (F1-11):
         /// the language's formatter when format-on-save is on (ADR-0070),

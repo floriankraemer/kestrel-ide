@@ -419,6 +419,19 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
                       tr("Reformat Selection"), appSettings, actions);
     connect(reformatSelectionAction, &QAction::triggered, this, [reformat]() { reformat(true); });
 
+    // ADR-0072: Ctrl+J and Ctrl+Alt+T. Which templates fit, and what each
+    // expands to, is Rust's; this only opens the pickers.
+    QAction *insertTemplateAction =
+      registerAction(refactorMenu, QStringLiteral("code.insertLiveTemplate"),
+                      tr("Insert Live Template..."), appSettings, actions);
+    connect(insertTemplateAction, &QAction::triggered, this,
+            [this]() { editorTabs_->insertLiveTemplateNow(); });
+    QAction *surroundWithAction =
+      registerAction(refactorMenu, QStringLiteral("code.surroundWith"), tr("Surround With..."),
+                      appSettings, actions);
+    connect(surroundWithAction, &QAction::triggered, this,
+            [this]() { editorTabs_->surroundWithTemplateNow(); });
+
     // F2-10: Alt+Return. `EditorTabs` owns the bulb this shares its popup
     // with; this only wires the shortcut to asking for it right now.
     QAction *showIntentionsAction =

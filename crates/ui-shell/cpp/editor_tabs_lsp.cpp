@@ -822,8 +822,7 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
             this,
             [this, editor](const QString &textBefore) {
                 QVector<CompletionEntry> entries;
-                for (const FfiCompletionItem &item :
-                     languageService_->completionItems(textBefore)) {
+                const auto append = [&entries](const FfiCompletionItem &item) {
                     QVector<int> matchPositions;
                     for (quint32 position : item.match_positions) {
                         matchPositions.append(static_cast<int>(position));
@@ -846,6 +845,16 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
                     entry.isSnippet = item.is_snippet;
                     entry.matchPositions = matchPositions;
                     entries.append(entry);
+                };
+                // ADR-0072: postfix templates after `expr.` come first — they
+                // are the specific answer there.
+                for (const FfiCompletionItem &item : editorOps_->templateCompletions(
+                       editor->property("tabId").toULongLong(), editor->toPlainText())) {
+                    append(item);
+                }
+                for (const FfiCompletionItem &item :
+                     languageService_->completionItems(textBefore)) {
+                    append(item);
                 }
                 editor->showCompletions(entries);
             });
@@ -941,6 +950,13 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     });
     // R1: Tab/Shift+Tab.
     connect(editor, &CodeEditor::multiCaretIndent, this, [this, editor, tabId](bool outdent) {
+        // ADR-0072: Tab after a live-template abbreviation expands it; Rust says
+        // whether there was one, otherwise Tab indents as ever.
+        if (!outdent
+            && applyTemplateExpansion(editor,
+                                      editorOps_->expandTemplate(tabId, editor->toPlainText()))) {
+            return;
+        }
         applyEditsTo(editor, editorOps_->indentSelection(tabId, editor->toPlainText(), outdent));
         refreshCarets(editor);
     });

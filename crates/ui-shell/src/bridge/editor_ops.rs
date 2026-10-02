@@ -53,6 +53,8 @@ use edit_ops::selection_expand::SelectionHistory;
 use syntax_core::Language;
 
 use crate::bridge::ffi::{self, FfiResult};
+
+mod templates;
 use crate::bridge::registry::shared_session;
 
 /// Which line operation `lineOp` was asked for. Mirrored as plain integers

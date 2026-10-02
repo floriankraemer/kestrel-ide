@@ -334,6 +334,9 @@ pub struct ServerConfig {
     pub posix_only: bool,
     /// Which host the server's process runs on.
     pub exec: ServerExec,
+    /// Answer order among the servers of one language; lower answers first.
+    /// `resolve_servers` numbers the resolved list.
+    pub priority: usize,
     pub source: ServerSource,
 }
 
@@ -362,6 +365,7 @@ impl From<&ServerDef> for ServerConfig {
             diagnostics: def.diagnostics,
             posix_only: def.posix_only,
             exec: ServerExec::Host,
+            priority: 0,
             source: ServerSource::Builtin,
         }
     }
@@ -403,6 +407,7 @@ impl From<&PluginServer> for ServerConfig {
             diagnostics: true,
             posix_only: false,
             exec: ServerExec::Host,
+            priority: 0,
             source: ServerSource::Plugin {
                 plugin_id: plugin.plugin_id.clone(),
             },
@@ -486,12 +491,16 @@ pub fn resolve_servers(
                     diagnostics: true,
                     posix_only: false,
                     exec: ServerExec::Host,
+                    priority: 0,
                     source: ServerSource::User,
                 };
                 apply(&mut cfg, ov);
                 resolved.push(cfg);
             }
         }
+    }
+    for (priority, cfg) in resolved.iter_mut().enumerate() {
+        cfg.priority = priority;
     }
     resolved
 }

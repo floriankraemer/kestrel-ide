@@ -107,6 +107,7 @@ fn config() -> ServerConfig {
         diagnostics: true,
         posix_only: false,
         exec: lsp_core::catalog::ServerExec::Host,
+        priority: 0,
         source: lsp_core::catalog::ServerSource::Builtin,
     }
 }

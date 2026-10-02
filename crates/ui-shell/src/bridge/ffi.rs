@@ -4969,7 +4969,7 @@ mod ffi {
         /// it takes effect immediately rather than on OK.
         #[qinvokable]
         #[cxx_name = "restartServer"]
-        fn restart_server(self: Pin<&mut LanguageService>, language_id: &QString);
+        fn restart_server(self: Pin<&mut LanguageService>, server_id: &QString);
 
         /// Whether a server is configured, enabled and started for this
         /// file's language — the difference between "no problems" and "no
@@ -5864,7 +5864,7 @@ mod ffi {
         #[cxx_name = "serverStateChanged"]
         fn server_state_changed(
             self: Pin<&mut LanguageService>,
-            language_id: QString,
+            server_id: QString,
             name: QString,
             state: FfiServerState,
             detail: QString,

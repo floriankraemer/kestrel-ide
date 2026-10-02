@@ -576,7 +576,8 @@ impl ffi::LanguageService {
 
     pub fn document_opened(mut self: Pin<&mut Self>, path: &QString, text: &QString) {
         let path_str = path.to_string();
-        let Some(config) = self.config_for_path(&path_str) else {
+        let configs = self.configs_for_path(&path_str);
+        let Some(config) = configs.first().cloned() else {
             self.as_mut().open_build_file_document(&path_str, text);
             // F3.7: a `.sql` file attached to a data source has no
             // server either — same "register it anyway, for this
@@ -592,7 +593,7 @@ impl ffi::LanguageService {
             .insert(path_str, language_id.clone());
 
         if self.started.borrow_mut().insert(language_id.clone()) {
-            self.as_mut().start_server(config);
+            self.as_mut().start_servers(configs);
         }
         let language = language_id.clone();
         self.as_mut().push_job(move |manager| {
@@ -694,9 +695,16 @@ impl ffi::LanguageService {
             return;
         };
         let uri = lsp_core::uri_from_path(&path);
-        self.store
-            .borrow_mut()
-            .remove(&lsp_source_key(&language_id), &uri);
+        for config in self
+            .configs
+            .borrow()
+            .iter()
+            .filter(|c| c.language_id == language_id)
+        {
+            self.store
+                .borrow_mut()
+                .remove(&lsp_source_key(&config.id), &uri);
+        }
         let closed = uri.clone();
         self.push_job(move |manager| {
             let _ = manager.did_close(&closed);
@@ -819,22 +827,22 @@ impl ffi::LanguageService {
         self.document_opened(path, text);
     }
 
-    pub fn restart_server(mut self: Pin<&mut Self>, language_id: &QString) {
-        let language_id = language_id.to_string();
+    pub fn restart_server(mut self: Pin<&mut Self>, server_id: &QString) {
+        let server_id = server_id.to_string();
         let config = self
             .configs
             .borrow()
             .iter()
-            .find(|config| config.language_id == language_id)
+            .find(|config| config.id == server_id)
             .cloned();
         let Some(config) = config else {
             return;
         };
-        let stopping = language_id.clone();
+        let stopping = server_id.clone();
         self.as_ref()
-            .push_job(move |manager| manager.stop(&stopping));
-        self.started.borrow_mut().insert(language_id);
-        self.as_mut().start_server(config);
+            .push_job(move |manager| manager.stop_server(&stopping));
+        self.started.borrow_mut().insert(config.language_id.clone());
+        self.as_mut().start_servers(vec![config]);
     }
 
     pub fn has_server_for_file(&self, path: &QString) -> bool {
@@ -842,10 +850,12 @@ impl ffi::LanguageService {
     }
 
     pub fn server_name_for_file(&self, path: &QString) -> QString {
-        match self.config_for_path(&path.to_string()) {
-            Some(config) => QString::from(config.name.as_str()),
-            None => QString::default(),
-        }
+        let names: Vec<String> = self
+            .configs_for_path(&path.to_string())
+            .into_iter()
+            .map(|config| config.name)
+            .collect();
+        QString::from(names.join(", ").as_str())
     }
 
     /// R3: the LSP hover plus every diagnostic covering `(line, character)`,
@@ -1382,12 +1392,17 @@ impl ffi::LanguageService {
     /// `lsp-core` answers only what the protocol calls it and what to launch
     /// (ADR-0018).
     fn config_for_path(&self, path: &str) -> Option<lsp_core::ServerConfig> {
+        self.configs_for_path(path).into_iter().next()
+    }
+
+    /// Every enabled server for this path's language, in answer order
+    /// (ADR-0066).
+    fn configs_for_path(&self, path: &str) -> Vec<lsp_core::ServerConfig> {
         let language_id = syntax_core::language_for_path(Path::new(path)).id();
-        lsp_core::enabled_server(
-            &self.configs.borrow(),
-            lsp_core::lsp_language_id(&language_id),
-        )
-        .cloned()
+        let language_id = lsp_core::lsp_language_id(&language_id);
+        lsp_core::enabled_servers(&self.configs.borrow(), language_id)
+            .cloned()
+            .collect()
     }
 
     /// Queue work for the worker thread. Returns false when there is no
@@ -1403,57 +1418,74 @@ impl ffi::LanguageService {
         }
     }
 
-    /// Queue the (blocking) launch of one server and report its outcome.
-    /// A launch that fails frees the language again, so opening another file
-    /// of it retries rather than staying silently dead for the session.
-    fn start_server(mut self: Pin<&mut Self>, config: lsp_core::ServerConfig) {
-        let language_id = config.language_id.clone();
-        let name = config.name.clone();
+    /// Queue the (blocking) launch of a language's servers, in answer
+    /// order, and report each outcome. A launch where every server fails
+    /// frees the language again, so opening another file of it retries
+    /// rather than staying silently dead for the session; one server failing
+    /// beside a working one does not, or a missing Phpactor would be
+    /// relaunched on every file open.
+    fn start_servers(mut self: Pin<&mut Self>, configs: Vec<lsp_core::ServerConfig>) {
+        let Some(language_id) = configs.first().map(|c| c.language_id.clone()) else {
+            return;
+        };
         let qt_thread = self.as_mut().qt_thread();
-        self.as_mut().server_state_changed(
-            QString::from(language_id.as_str()),
-            QString::from(name.as_str()),
-            ffi::FfiServerState::Starting,
-            QString::default(),
-            0,
-        );
+        for config in &configs {
+            self.as_mut().server_state_changed(
+                QString::from(config.id.as_str()),
+                QString::from(config.name.as_str()),
+                ffi::FfiServerState::Starting,
+                QString::default(),
+                0,
+            );
+        }
         self.push_job(move |manager| {
-            if let Err(err) = manager.start(&config) {
-                let message = err.to_string();
-                let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+            let mut failures = Vec::new();
+            for config in &configs {
+                if let Err(err) = manager.start(config) {
+                    failures.push((config.id.clone(), config.name.clone(), err.to_string()));
+                }
+            }
+            if failures.is_empty() {
+                return;
+            }
+            let all_failed = failures.len() == configs.len();
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+                if all_failed {
                     service.started.borrow_mut().remove(&language_id);
+                }
+                for (id, name, message) in failures {
                     service.as_mut().server_state_changed(
-                        QString::from(language_id.as_str()),
+                        QString::from(id.as_str()),
                         QString::from(name.as_str()),
                         ffi::FfiServerState::Failed,
                         QString::from(message.as_str()),
                         0,
                     );
-                });
-            }
+                }
+            });
         });
     }
 
     /// The listener thread's one hop onto the Qt thread: an `LspEvent` becomes
     /// either a store update or a status signal, and nothing else.
     fn apply_event(mut self: Pin<&mut Self>, event: lsp_core::LspEvent) {
-        let name_of = |language_id: &str| {
+        let name_of = |server_id: &str| {
             self.configs
                 .borrow()
                 .iter()
-                .find(|c| c.language_id == language_id)
+                .find(|c| c.id == server_id)
                 .map(|c| c.name.clone())
-                .unwrap_or_else(|| language_id.to_string())
+                .unwrap_or_else(|| server_id.to_string())
         };
         match event {
             lsp_core::LspEvent::Diagnostics {
-                language_id,
+                server_id,
                 uri,
                 diagnostics,
                 ..
             } => {
                 self.store.borrow_mut().replace(
-                    &lsp_source_key(&language_id),
+                    &lsp_source_key(&server_id),
                     &uri,
                     lsp_core::to_diagnostics(diagnostics),
                 );
@@ -1461,12 +1493,13 @@ impl ffi::LanguageService {
             }
             lsp_core::LspEvent::ServerReady {
                 language_id,
+                server_id,
                 trigger_characters,
                 signature_triggers,
                 completion_resolve_supported,
                 ..
             } => {
-                let name = name_of(&language_id);
+                let name = name_of(&server_id);
                 self.triggers
                     .borrow_mut()
                     .insert(language_id.clone(), trigger_characters);
@@ -1477,7 +1510,7 @@ impl ffi::LanguageService {
                     .borrow_mut()
                     .insert(language_id.clone(), completion_resolve_supported);
                 self.as_mut().server_state_changed(
-                    QString::from(language_id.as_str()),
+                    QString::from(server_id.as_str()),
                     QString::from(name.as_str()),
                     ffi::FfiServerState::Ready,
                     QString::default(),
@@ -1485,13 +1518,13 @@ impl ffi::LanguageService {
                 );
             }
             lsp_core::LspEvent::ServerExited {
-                language_id,
+                server_id,
                 retry_in,
                 ..
             } => {
-                let name = name_of(&language_id);
+                let name = name_of(&server_id);
                 self.as_mut().server_state_changed(
-                    QString::from(language_id.as_str()),
+                    QString::from(server_id.as_str()),
                     QString::from(name.as_str()),
                     ffi::FfiServerState::Exited,
                     QString::default(),
@@ -1499,12 +1532,11 @@ impl ffi::LanguageService {
                 );
             }
             lsp_core::LspEvent::ServerFailed {
-                language_id,
-                message,
+                server_id, message, ..
             } => {
-                let name = name_of(&language_id);
+                let name = name_of(&server_id);
                 self.as_mut().server_state_changed(
-                    QString::from(language_id.as_str()),
+                    QString::from(server_id.as_str()),
                     QString::from(name.as_str()),
                     ffi::FfiServerState::Failed,
                     QString::from(message.as_str()),
@@ -1560,15 +1592,16 @@ impl ffi::LanguageService {
             // server is doing is its own words; picking which busy server to
             // report is the map's ordering, and how to word it is the view's.
             lsp_core::LspEvent::ServerBusy {
-                language_id,
+                server_id,
                 activity,
+                ..
             } => {
-                let name = name_of(&language_id);
+                let name = name_of(&server_id);
                 {
                     let mut busy = self.busy.borrow_mut();
                     match activity {
-                        Some(activity) => busy.insert(language_id, (name, activity)),
-                        None => busy.remove(&language_id),
+                        Some(activity) => busy.insert(server_id, (name, activity)),
+                        None => busy.remove(&server_id),
                     };
                 }
                 let first = self

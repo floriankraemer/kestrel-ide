@@ -152,6 +152,8 @@ pub enum LspEvent {
     /// `restarts` is 0 for the first launch and counts respawns after that.
     ServerReady {
         language_id: String,
+        /// The server that became ready (ADR-0066: a language may have several).
+        server_id: String,
         restarts: u32,
         /// The characters this server wants completion requested after, from
         /// its `initialize` result — `.` in most languages, `:` in Rust.
@@ -172,6 +174,7 @@ pub enum LspEvent {
     /// after `retry_in` unless the restart budget is used up.
     ServerExited {
         language_id: String,
+        server_id: String,
         restarts: u32,
         retry_in: Duration,
     },
@@ -179,6 +182,7 @@ pub enum LspEvent {
     /// restart budget. No further events will arrive for this language.
     ServerFailed {
         language_id: String,
+        server_id: String,
         message: String,
     },
     /// F0-16: what the server is working on, from its `$/progress`
@@ -191,11 +195,13 @@ pub enum LspEvent {
     /// onwards — nothing waits on it, the state is advisory.
     ServerBusy {
         language_id: String,
+        server_id: String,
         activity: Option<ServerActivity>,
     },
     /// `textDocument/publishDiagnostics`.
     Diagnostics {
         language_id: String,
+        server_id: String,
         uri: String,
         /// The document version the server diagnosed, when it reports one.
         version: Option<i32>,
@@ -210,6 +216,7 @@ pub enum LspEvent {
     /// where the set of open documents is known.
     ApplyEdit {
         language_id: String,
+        server_id: String,
         /// What the server calls this change, for the preview's title.
         label: Option<String>,
         edit: Value,
@@ -218,6 +225,7 @@ pub enum LspEvent {
     /// Any other server-to-client notification, unparsed.
     Notification {
         language_id: String,
+        server_id: String,
         method: String,
         params: Value,
     },
@@ -313,7 +321,13 @@ struct Conn {
 /// One language's server: its config, its connection, and the requests
 /// currently awaiting a response.
 struct Server {
+    /// The id this server runs under (`ServerConfig::id`).
+    id: String,
     language_id: String,
+    /// Answer order among the servers of one language; lower answers first.
+    priority: usize,
+    /// Whether its `publishDiagnostics` are forwarded (`ServerConfig::diagnostics`).
+    diagnostics: bool,
     conn: Mutex<Option<Conn>>,
     pending: Mutex<HashMap<i64, Sender<Result<Value, LspError>>>>,
     next_id: AtomicI64,
@@ -449,6 +463,7 @@ pub struct LspManager {
     /// from `root_path` (ADR-0052). Never recomputed: a project's host does
     /// not change without a new `LspManager`.
     host: ExecHost,
+    /// Running servers by id.
     servers: Mutex<HashMap<String, Arc<Server>>>,
     supervisors: Mutex<HashMap<String, JoinHandle<()>>>,
     documents: Mutex<HashMap<String, DocState>>,
@@ -509,11 +524,14 @@ impl LspManager {
     /// error rather than as a silent no-op later. Starting a language that is
     /// already running is a no-op.
     pub fn start(&self, cfg: &ServerConfig) -> Result<(), LspError> {
-        if self.servers.lock().unwrap().contains_key(&cfg.language_id) {
+        if self.servers.lock().unwrap().contains_key(&cfg.id) {
             return Ok(());
         }
         let server = Arc::new(Server {
+            id: cfg.id.clone(),
             language_id: cfg.language_id.clone(),
+            priority: cfg.priority,
+            diagnostics: cfg.diagnostics,
             conn: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicI64::new(1),
@@ -545,14 +563,11 @@ impl LspManager {
         // the first attempt's outcome comes back here.
         match ready_rx.recv() {
             Ok(Ok(())) => {
-                self.servers
-                    .lock()
-                    .unwrap()
-                    .insert(cfg.language_id.clone(), server);
+                self.servers.lock().unwrap().insert(cfg.id.clone(), server);
                 self.supervisors
                     .lock()
                     .unwrap()
-                    .insert(cfg.language_id.clone(), handle);
+                    .insert(cfg.id.clone(), handle);
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -568,9 +583,15 @@ impl LspManager {
 
     /// Is a server currently connected for this language?
     pub fn is_running(&self, language_id: &str) -> bool {
-        self.server(language_id)
-            .map(|s| s.conn.lock().unwrap().is_some())
-            .unwrap_or(false)
+        self.servers_of(language_id)
+            .iter()
+            .any(|s| s.conn.lock().unwrap().is_some())
+    }
+
+    /// Is the server with this id currently connected?
+    pub fn is_server_running(&self, server_id: &str) -> bool {
+        self.server_by_id(server_id)
+            .is_some_and(|s| s.conn.lock().unwrap().is_some())
     }
 
     /// Send a request and wait for its response ([`DEFAULT_REQUEST_TIMEOUT`]).
@@ -584,7 +605,7 @@ impl LspManager {
     }
 
     /// Send a request, cancelling it with `$/cancelRequest` if `timeout`
-    /// elapses first.
+    /// elapses first. Which server answers is decided by [`crate::routing`].
     pub fn request_with_timeout(
         &self,
         language_id: &str,
@@ -592,18 +613,35 @@ impl LspManager {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, LspError> {
-        let server = self
-            .server(language_id)
-            .ok_or_else(|| LspError::NoServer(language_id.to_string()))?;
-        server.request(method, params, timeout)
+        let servers = self.servers_of(language_id);
+        if servers.is_empty() {
+            return Err(LspError::NoServer(language_id.to_string()));
+        }
+        // ponytail: routing arrives with L5; until then the first server answers.
+        servers[0].request(method, params, timeout)
     }
 
-    /// Send a notification (fire and forget by protocol definition).
+    /// Send a notification to every server of the language (fire and forget
+    /// by protocol definition). It succeeds if any server took it.
     pub fn notify(&self, language_id: &str, method: &str, params: Value) -> Result<(), LspError> {
-        let server = self
-            .server(language_id)
-            .ok_or_else(|| LspError::NoServer(language_id.to_string()))?;
-        server.notify(method, params)
+        let servers = self.servers_of(language_id);
+        if servers.is_empty() {
+            return Err(LspError::NoServer(language_id.to_string()));
+        }
+        let mut first_error = None;
+        let mut delivered = false;
+        for server in &servers {
+            match server.notify(method, params.clone()) {
+                Ok(()) => delivered = true,
+                Err(e) => {
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+        match (delivered, first_error) {
+            (false, Some(e)) => Err(e),
+            _ => Ok(()),
+        }
     }
 
     /// Tell the server a document is open. The manager owns the version
@@ -691,9 +729,17 @@ impl LspManager {
         language_id: &str,
         changes: &[(PathBuf, FileChangeKind)],
     ) -> Result<(), LspError> {
-        let Some(server) = self.server(language_id) else {
-            return Ok(());
-        };
+        for server in self.servers_of(language_id) {
+            self.send_watched_changes(&server, changes)?;
+        }
+        Ok(())
+    }
+
+    fn send_watched_changes(
+        &self,
+        server: &Server,
+        changes: &[(PathBuf, FileChangeKind)],
+    ) -> Result<(), LspError> {
         // Registration is rare (once per server session, typically), so
         // recompiling on every call — rather than caching the compiled
         // `GlobSet` on `Server` and invalidating it on register/unregister
@@ -727,7 +773,7 @@ impl LspManager {
     /// (csharp-ls's suspected path, the same dual path C9 checks for
     /// semantic tokens). `false` for a server that is not running.
     pub fn code_lenses_supported(&self, language_id: &str) -> bool {
-        self.server(language_id).is_some_and(|server| {
+        self.servers_of(language_id).iter().any(|server| {
             *server.code_lens_supported.lock().unwrap()
                 || server
                     .registrations
@@ -741,7 +787,7 @@ impl LspManager {
     /// `textDocument/prepareCallHierarchy`. `false` for a server that is not
     /// running.
     pub fn call_hierarchy_supported(&self, language_id: &str) -> bool {
-        self.server(language_id).is_some_and(|server| {
+        self.servers_of(language_id).iter().any(|server| {
             *server.call_hierarchy_supported.lock().unwrap()
                 || server
                     .registrations
@@ -755,7 +801,7 @@ impl LspManager {
     /// `textDocument/prepareTypeHierarchy`. `false` for a server that is not
     /// running.
     pub fn type_hierarchy_supported(&self, language_id: &str) -> bool {
-        self.server(language_id).is_some_and(|server| {
+        self.servers_of(language_id).iter().any(|server| {
             *server.type_hierarchy_supported.lock().unwrap()
                 || server
                     .registrations
@@ -773,17 +819,15 @@ impl LspManager {
     /// to know which one a given server uses (C9's plan explicitly calls
     /// out that csharp-ls's path is unconfirmed, so both are handled).
     pub fn semantic_tokens_legend(&self, language_id: &str) -> Option<SemanticTokensLegend> {
-        self.server(language_id)?
-            .semantic_tokens_legend
-            .lock()
-            .unwrap()
-            .clone()
+        self.servers_of(language_id)
+            .iter()
+            .find_map(|s| s.semantic_tokens_legend.lock().unwrap().clone())
     }
 
-    /// The `capabilities` this language's server declared in `initialize`
+    /// The `capabilities` the server `server_id` declared in `initialize`
     /// (`Null` before it answered, or when it is not running).
-    pub fn capabilities(&self, language_id: &str) -> Value {
-        self.server(language_id)
+    pub fn capabilities(&self, server_id: &str) -> Value {
+        self.server_by_id(server_id)
             .map(|s| s.capabilities.lock().unwrap().clone())
             .unwrap_or(Value::Null)
     }
@@ -798,8 +842,9 @@ impl LspManager {
     /// `client/registerCapability`. `false` for a server that is not
     /// running at all, same as "it never registered anything".
     pub fn method_registered(&self, language_id: &str, method: &str) -> bool {
-        self.server(language_id)
-            .is_some_and(|server| server.registrations.method_registered(method))
+        self.servers_of(language_id)
+            .iter()
+            .any(|server| server.registrations.method_registered(method))
     }
 
     /// C6: update the settings a running server pulls via
@@ -809,10 +854,10 @@ impl LspManager {
     /// itself — that is what tells a client-supports-pull server (csharp-ls
     /// included) to re-issue `workspace/configuration` rather than treat the
     /// notification as the new value pushed inline.
-    pub fn update_settings(&self, language_id: &str, settings: Value) -> Result<(), LspError> {
+    pub fn update_settings(&self, server_id: &str, settings: Value) -> Result<(), LspError> {
         let server = self
-            .server(language_id)
-            .ok_or_else(|| LspError::NoServer(language_id.to_string()))?;
+            .server_by_id(server_id)
+            .ok_or_else(|| LspError::NoServer(server_id.to_string()))?;
         *server.settings.lock().unwrap() = settings;
         server.notify(
             "workspace/didChangeConfiguration",
@@ -820,10 +865,17 @@ impl LspManager {
         )
     }
 
-    /// Shut one server down: `shutdown`, `exit`, then kill if it lingers.
+    /// Shut every server of a language down.
     pub fn stop(&self, language_id: &str) {
-        let server = self.servers.lock().unwrap().remove(language_id);
-        let handle = self.supervisors.lock().unwrap().remove(language_id);
+        for server in self.servers_of(language_id) {
+            self.stop_server(&server.id);
+        }
+    }
+
+    /// Shut one server down: `shutdown`, `exit`, then kill if it lingers.
+    pub fn stop_server(&self, server_id: &str) {
+        let server = self.servers.lock().unwrap().remove(server_id);
+        let handle = self.supervisors.lock().unwrap().remove(server_id);
         let Some(server) = server else { return };
 
         server.stopping.store(true, Ordering::SeqCst);
@@ -849,14 +901,28 @@ impl LspManager {
 
     /// Shut every running server down.
     pub fn stop_all(&self) {
-        let languages: Vec<String> = self.servers.lock().unwrap().keys().cloned().collect();
-        for language_id in languages {
-            self.stop(&language_id);
+        let ids: Vec<String> = self.servers.lock().unwrap().keys().cloned().collect();
+        for id in ids {
+            self.stop_server(&id);
         }
     }
 
-    fn server(&self, language_id: &str) -> Option<Arc<Server>> {
-        self.servers.lock().unwrap().get(language_id).cloned()
+    /// The running servers of a language, in answer order.
+    fn servers_of(&self, language_id: &str) -> Vec<Arc<Server>> {
+        let mut servers: Vec<Arc<Server>> = self
+            .servers
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.language_id == language_id)
+            .cloned()
+            .collect();
+        servers.sort_by(|a, b| (a.priority, &a.id).cmp(&(b.priority, &b.id)));
+        servers
+    }
+
+    fn server_by_id(&self, server_id: &str) -> Option<Arc<Server>> {
+        self.servers.lock().unwrap().get(server_id).cloned()
     }
 
     /// Mark a refactoring as in flight for as long as the returned guard
@@ -944,6 +1010,7 @@ fn spawn_supervisor(
                     }
                     let _ = events.send(LspEvent::ServerReady {
                         language_id: cfg.language_id.clone(),
+                        server_id: cfg.id.clone(),
                         restarts,
                         trigger_characters,
                         signature_triggers,
@@ -967,6 +1034,7 @@ fn spawn_supervisor(
                     }
                     let _ = events.send(LspEvent::ServerFailed {
                         language_id: cfg.language_id.clone(),
+                        server_id: cfg.id.clone(),
                         message,
                     });
                     return;
@@ -984,6 +1052,7 @@ fn spawn_supervisor(
             if server.progress.lock().unwrap().clear() {
                 let _ = events.send(LspEvent::ServerBusy {
                     language_id: cfg.language_id.clone(),
+                    server_id: cfg.id.clone(),
                     activity: None,
                 });
             }
@@ -995,12 +1064,14 @@ fn spawn_supervisor(
             if restarts > MAX_RESTARTS {
                 let _ = events.send(LspEvent::ServerFailed {
                     language_id: cfg.language_id.clone(),
+                    server_id: cfg.id.clone(),
                     message: format!("gave up after {MAX_RESTARTS} restarts"),
                 });
                 return;
             }
             let _ = events.send(LspEvent::ServerExited {
                 language_id: cfg.language_id.clone(),
+                server_id: cfg.id.clone(),
                 restarts,
                 retry_in: backoff,
             });
@@ -1203,6 +1274,7 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
             let (gate, rx) = ApplyEditGate::new();
             let _ = events.send(LspEvent::ApplyEdit {
                 language_id: language_id.to_string(),
+                server_id: server.id.clone(),
                 label: params
                     .get("label")
                     .and_then(Value::as_str)
@@ -1319,7 +1391,10 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
         (Some(method), None) => {
             let params = message.get("params").cloned().unwrap_or(Value::Null);
             let event = if method == "textDocument/publishDiagnostics" {
-                publish_diagnostics(language_id, &params)
+                if !server.diagnostics {
+                    return;
+                }
+                publish_diagnostics(language_id, &server.id, &params)
             } else if method == "$/progress" {
                 // Handled on the reader thread like any other notification:
                 // the tracker is a `Mutex` around a `Vec`, so this costs
@@ -1332,6 +1407,7 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
                 }
                 Some(LspEvent::ServerBusy {
                     language_id: language_id.to_string(),
+                    server_id: server.id.clone(),
                     activity: progress.current(),
                 })
             } else {
@@ -1339,6 +1415,7 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
             };
             let _ = events.send(event.unwrap_or(LspEvent::Notification {
                 language_id: language_id.to_string(),
+                server_id: server.id.clone(),
                 method: method.to_string(),
                 params,
             }));
@@ -1358,13 +1435,14 @@ fn apply_edit_response(id: i64, applied: bool, reason: Option<&str>) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-fn publish_diagnostics(language_id: &str, params: &Value) -> Option<LspEvent> {
+fn publish_diagnostics(language_id: &str, server_id: &str, params: &Value) -> Option<LspEvent> {
     let uri = params.get("uri")?.as_str()?.to_string();
     let diagnostics =
         serde_json::from_value::<Vec<lsp_types::Diagnostic>>(params.get("diagnostics")?.clone())
             .ok()?;
     Some(LspEvent::Diagnostics {
         language_id: language_id.to_string(),
+        server_id: server_id.to_string(),
         uri,
         version: params
             .get("version")
@@ -1724,6 +1802,7 @@ mod host_translation_tests {
             diagnostics: true,
             posix_only: false,
             exec: crate::catalog::ServerExec::Host,
+            priority: 0,
             source: crate::catalog::ServerSource::Builtin,
         });
         unsafe {

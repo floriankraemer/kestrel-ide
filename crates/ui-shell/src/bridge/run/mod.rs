@@ -805,6 +805,35 @@ impl ffi::RunService {
         self.as_mut().launch(config, &root, &context)
     }
 
+    pub fn run_with_env(
+        mut self: Pin<&mut Self>,
+        config_id: &QString,
+        env_json: &QString,
+    ) -> ffi::FfiResult {
+        let Ok(extra) = serde_json::from_str::<Vec<(String, String)>>(&env_json.to_string()) else {
+            return ffi::FfiResult {
+                code: errors::CODE_INVALID_ARGUMENT,
+                message: QString::from("the extra environment is not a list of pairs"),
+            };
+        };
+        let config_id = config_id.to_string();
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let configs = app_config::project_settings::load(&root)
+            .unwrap_or_default()
+            .run_configs
+            .unwrap_or_default();
+        let Some(mut config) = configs.into_iter().find(|c| c.id == config_id) else {
+            return unknown_run_config("unknown run configuration");
+        };
+        // Added before `launch`: a container wrap turns the environment
+        // into `-e` arguments, so it cannot be appended afterwards.
+        config.env.extend(extra);
+        let context = run_core::MacroContext::for_project(&root);
+        self.as_mut().launch(config, &root, &context)
+    }
+
     /// Launch `config` as a temporary run configuration, persisting it
     /// first (`remember_only`) exactly as [`Self::run_context`] does — the
     /// jvm-build-tools plan's B1: `BuildToolsService::taskConfig` builds

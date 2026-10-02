@@ -230,6 +230,15 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
     connect(debugService_, &DebugService::phpListeningChanged, listenButton_,
             &QToolButton::setChecked);
     listenButton_->setChecked(debugService_->isPhpListening());
+    // A PHP debug launch: `DebugService` has the listener up and says which
+    // configuration to start with which Xdebug environment.
+    connect(debugService_, &DebugService::phpLaunchRequested, this,
+            [this](const QString &configId, const QString &envJson) {
+                const FfiResult result = runService_->runWithEnv(configId, envJson);
+                if (result.code != 0) {
+                    QMessageBox::warning(this, tr("Debug"), result.message);
+                }
+            });
 
     connect(runService_, &RunService::consoleStarted, this,
             [this](quint64 consoleId, const QString &configId) {

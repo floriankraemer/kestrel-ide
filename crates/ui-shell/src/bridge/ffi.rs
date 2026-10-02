@@ -9688,6 +9688,17 @@ mod ffi {
         #[qinvokable]
         fn run(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
 
+        /// Run `config_id` with extra environment variables (`env_json` is
+        /// `[[key, value], ...]`) — how a PHP debug launch carries the Xdebug
+        /// settings, including into a container.
+        #[qinvokable]
+        #[cxx_name = "runWithEnv"]
+        fn run_with_env(
+            self: Pin<&mut RunService>,
+            config_id: &QString,
+            env_json: &QString,
+        ) -> FfiResult;
+
         /// Whether running `path` from the editor would launch anything —
         /// what decides if the gutter shows a Run icon on that file (R1-6).
         /// The rule is `run_core::context::config_for_file`'s, so the view
@@ -10114,6 +10125,17 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "isPhpListening"]
         fn is_php_listening(self: &DebugService) -> bool;
+
+        /// A PHP debug run is ready to start: the listener is up. The view
+        /// hands it to `RunService::runWithEnv`; `env_json` is the Xdebug
+        /// environment as `[[key, value], ...]`.
+        #[qsignal]
+        #[cxx_name = "phpLaunchRequested"]
+        fn php_launch_requested(
+            self: Pin<&mut DebugService>,
+            config_id: QString,
+            env_json: QString,
+        );
 
         /// The PHP listen session started or ended.
         #[qsignal]

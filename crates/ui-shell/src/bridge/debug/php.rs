@@ -4,12 +4,13 @@
 //! Translation only: the listen arguments and the Xdebug environment are
 //! `dap_core::xdebug::plan`'s.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;
+use dap_core::xdebug::{self, HostKind};
 use dap_core::{DapError, DapSession};
 use serde_json::Value;
 
@@ -22,6 +23,12 @@ use crate::bridge::ffi;
 pub(super) struct PhpListen {
     pub(super) session_id: u64,
     pub(super) arguments: Value,
+}
+
+/// A run to start once the listener is up, with the Xdebug environment.
+pub(super) struct PhpRun {
+    config_id: String,
+    env: Vec<(String, String)>,
 }
 
 /// `[php].xdebug_port` in force.
@@ -40,7 +47,7 @@ impl ffi::DebugService {
             return no_project();
         };
         let plan = dap_core::xdebug::plan(dap_core::xdebug::HostKind::Local, None, xdebug_port());
-        match self.ensure_php_listener(&root, plan.listen_arguments) {
+        match self.ensure_php_listener(&root, plan.listen_arguments, None) {
             Ok(()) => ffi::FfiResult::default(),
             Err(err) => to_ffi_result(&err),
         }
@@ -52,10 +59,15 @@ impl ffi::DebugService {
 
     /// Make sure a listen session with `arguments` is running, replacing
     /// one that listens differently.
+    ///
+    /// `run` is started (through `phpLaunchRequested`) once the listener
+    /// is ready: Xdebug does not retry, so a program that starts first
+    /// finds nobody listening.
     pub(super) fn ensure_php_listener(
         mut self: Pin<&mut Self>,
         root: &Path,
         arguments: Value,
+        run: Option<PhpRun>,
     ) -> Result<(), DapError> {
         if self
             .php_listen
@@ -63,6 +75,9 @@ impl ffi::DebugService {
             .as_ref()
             .is_some_and(|listen| listen.arguments == arguments)
         {
+            if let Some(run) = run {
+                self.as_mut().request_php_launch(&run);
+            }
             return Ok(());
         }
         // ponytail: the old adapter is shut down on the Qt thread (a couple
@@ -100,7 +115,13 @@ impl ffi::DebugService {
 
         let breakpoints = self.breakpoints.borrow().clone();
         std::thread::spawn(move || {
-            if let Err(err) = handshake(&session, arguments, &breakpoints) {
+            let result = handshake(&session, arguments, &breakpoints);
+            if let (Ok(()), Some(run)) = (&result, run) {
+                let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
+                    service.as_mut().request_php_launch(&run);
+                });
+            }
+            if let Err(err) = result {
                 let failure = (err.code(), err.to_string());
                 let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
                     service.as_mut().debug_failed(
@@ -115,6 +136,51 @@ impl ffi::DebugService {
             }
         });
         Ok(())
+    }
+
+    /// Debug a PHP run configuration: listen (in the shape the host needs),
+    /// then have the run start with the Xdebug environment.
+    pub(super) fn debug_php(
+        self: Pin<&mut Self>,
+        config: &run_core::RunConfig,
+        root: &Path,
+    ) -> ffi::FfiResult {
+        let containers = crate::bridge::run::effective_container_settings();
+        let container_map = config
+            .run_on
+            .as_deref()
+            .and_then(|run_on| run_core::container_target::path_map(run_on, &containers, root));
+        let host = process_exec::host::ExecHost::for_path(root);
+        // The adapter runs beside the project (in the distro, for a WSL
+        // root), so the mapping's local side is a path it can read.
+        let path_map = container_map
+            .as_ref()
+            .map(|map| process_exec::host::PathMap {
+                local_root: PathBuf::from(dap_core::source_path(&host, &map.local_root)),
+                remote_root: map.remote_root.clone(),
+            });
+        let kind = if path_map.is_some() {
+            HostKind::Container
+        } else {
+            HostKind::Local
+        };
+        let plan = xdebug::plan(kind, path_map.as_ref(), xdebug_port());
+        let run = PhpRun {
+            config_id: config.id.clone(),
+            env: plan.env,
+        };
+        match self.ensure_php_listener(root, plan.listen_arguments, Some(run)) {
+            Ok(()) => ffi::FfiResult::default(),
+            Err(err) => to_ffi_result(&err),
+        }
+    }
+
+    fn request_php_launch(self: Pin<&mut Self>, run: &PhpRun) {
+        let env = serde_json::to_string(&run.env).unwrap_or_default();
+        self.php_launch_requested(
+            QString::from(run.config_id.as_str()),
+            QString::from(env.as_str()),
+        );
     }
 
     /// End the listen session, if any, and wait for its adapter to go.

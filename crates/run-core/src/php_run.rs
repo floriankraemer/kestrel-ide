@@ -80,20 +80,24 @@ pub fn published_ports(config: &RunConfig) -> Vec<PortBinding> {
     }]
 }
 
+/// Whether `config` runs PHP: the PHP toolchain, or one of the PHP kinds.
+pub fn is_php_config(config: &RunConfig) -> bool {
+    config.toolchain.as_deref() == Some(ToolchainId::Php.as_str())
+        || matches!(
+            config.kind.as_deref(),
+            Some(KIND_BUILTIN_SERVER | KIND_CONSOLE)
+        )
+}
+
 /// `config` with the interpreter's container target as its `run_on`, when
 /// it is a PHP configuration (the PHP toolchain, or one of the PHP kinds)
 /// that names no `run_on` of its own — an explicit `local` or another
 /// target is the user's choice and stays. `None`/blank `target` changes
 /// nothing.
 pub fn inherit_container_target(config: &RunConfig, target: Option<&str>) -> RunConfig {
-    let is_php = config.toolchain.as_deref() == Some(ToolchainId::Php.as_str())
-        || matches!(
-            config.kind.as_deref(),
-            Some(KIND_BUILTIN_SERVER | KIND_CONSOLE)
-        );
     let mut config = config.clone();
     if let Some(id) = target.map(str::trim).filter(|id| !id.is_empty()) {
-        if is_php && config.run_on.is_none() {
+        if is_php_config(&config) && config.run_on.is_none() {
             config.run_on = Some(format!("container:{id}"));
         }
     }
@@ -204,6 +208,17 @@ mod tests {
             ("8081", "8081")
         );
         assert!(published_ports(&RunConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn php_configurations_are_the_php_toolchain_and_the_php_kinds() {
+        let toolchain = |id: &str| RunConfig {
+            toolchain: Some(id.into()),
+            ..RunConfig::default()
+        };
+        assert!(is_php_config(&toolchain("php")));
+        assert!(is_php_config(&server(Default::default())));
+        assert!(!is_php_config(&toolchain("cargo")));
     }
 
     #[test]

@@ -301,26 +301,10 @@ impl ffi::DebugService {
             };
         };
 
-        // Run targets (C8) are explicitly out of scope for debugging: the
-        // adapter would have to run *inside* the container, which this
-        // codebase has no mechanism for (ADR-0056's "Run targets" section
-        // records the gap). A container-*kind* configuration (`kind` set)
-        // is unaffected — it was never debuggable through this path either,
-        // caught by the adapter lookup below the same way it always was.
-        if config.kind.is_none()
-            && config
-                .run_on
-                .as_deref()
-                .is_some_and(|run_on| !run_on.trim().is_empty())
-        {
-            return ffi::FfiResult {
-                code: errors::CODE_RUN_TARGET,
-                message: QString::from(
-                    "Debugging inside a container target is not supported yet — run instead, \
-                     or use a remote-attach debug configuration",
-                ),
-            };
-        }
+        let config = run_core::php_run::inherit_container_target(
+            &config,
+            crate::bridge::run::effective_php_container_target().as_deref(),
+        );
 
         // Which adapter: the configuration's own toolchain if it has one,
         // otherwise whatever the project is built with. Both answers come
@@ -340,6 +324,33 @@ impl ffi::DebugService {
                 .unwrap_or_else(|| "this project".to_string());
             return to_ffi_result(&DapError::NoAdapter(language));
         };
+
+        // PHP is the one exception: its adapter only listens, and the
+        // program starts in the container with Xdebug dialling back out.
+        if adapter.id == dap_core::catalog::PHP_DEBUG {
+            return self.debug_php(&config, &root);
+        }
+
+        // Run targets (C8) are out of scope for every other adapter: the
+        // adapter would have to run *inside* the container, which this
+        // codebase has no mechanism for (ADR-0056's "Run targets" section
+        // records the gap). A container-*kind* configuration (`kind` set)
+        // is unaffected — it was never debuggable through this path either,
+        // caught by the adapter lookup below the same way it always was.
+        if config.kind.is_none()
+            && config
+                .run_on
+                .as_deref()
+                .is_some_and(|run_on| !run_on.trim().is_empty())
+        {
+            return ffi::FfiResult {
+                code: errors::CODE_RUN_TARGET,
+                message: QString::from(
+                    "Debugging inside a container target is not supported yet — run instead, \
+                     or use a remote-attach debug configuration",
+                ),
+            };
+        }
 
         let mut spec = config.to_launch_spec(&root);
         spec.cwd = Some(spec.cwd.clone().unwrap_or_else(|| root.clone()));

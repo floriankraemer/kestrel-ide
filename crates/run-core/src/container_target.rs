@@ -165,6 +165,20 @@ pub fn wrap_process_spec(
     }))
 }
 
+/// Where `run_on` mounts the project inside its container, both
+/// directions; `None` when `run_on` is not a known container target.
+pub fn path_map(
+    run_on: &str,
+    containers: &ContainerSettings,
+    project_root: &std::path::Path,
+) -> Option<target::PathMap> {
+    let target = find_target(containers, target_id(run_on)?)?;
+    Some(target::PathMap::new(
+        project_root.to_path_buf(),
+        &target.workdir,
+    ))
+}
+
 /// The before-launch build task a run target needs — the image (or compose
 /// service) has to exist before *anything* else in the configuration's own
 /// before-launch list runs, so `before_launch::tasks_of_with_containers`
@@ -215,6 +229,18 @@ mod tests {
             run_on: run_on.map(str::to_string),
             ..RunConfig::default()
         }
+    }
+
+    #[test]
+    fn path_map_mounts_the_project_at_the_targets_workdir() {
+        let mut target = image_target();
+        target.workdir = "/var/www".to_string();
+        let containers = containers_with(target);
+        let map = path_map("container:t1", &containers, std::path::Path::new("/p")).unwrap();
+        assert_eq!(map.remote_root, "/var/www");
+        assert_eq!(map.local_root, std::path::PathBuf::from("/p"));
+        assert!(path_map("container:gone", &containers, std::path::Path::new("/p")).is_none());
+        assert!(path_map("local", &containers, std::path::Path::new("/p")).is_none());
     }
 
     #[test]

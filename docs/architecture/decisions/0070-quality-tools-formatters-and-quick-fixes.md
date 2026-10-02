@@ -46,9 +46,10 @@ A diff over `MAX_DIFF_BYTES` falls back to one whole-text edit.
 
 **Format on save.**
 `[editing] format_on_save` is a per-language tri-state (off by default).
-It applies to languages with a tool formatter only; language servers are not asked to format on save, because that request is asynchronous and the save must not wait on it.
-The tool runs on the Qt thread with a 10 second limit, before the trim and final-newline rules, and both end up as one diff against the buffer.
-A failing or timed-out formatter is logged and the file is saved unformatted: a broken tool must not keep a file from being saved.
+With a tool formatter the tool runs; with none the language server formats instead (`textDocument/formatting`, after sending it the buffer's current text), under the same limit.
+A language with no running server is not an error and the save goes ahead as it is.
+The work runs with a 10 second limit, before the trim and final-newline rules, and both end up as one diff against the buffer.
+A failing or timed-out formatter does not keep the file from being saved: the file is saved unformatted and the view shows a notice naming the tool and its message.
 
 **Quick fixes for findings.**
 - `Diagnostic` gains `code: Option<String>`, the rule id for sources with no raw LSP payload.
@@ -66,5 +67,6 @@ A failing or timed-out formatter is logged and the file is saved unformatted: a 
 - A formatter that only works on files (php-cs-fixer, Pint) costs a temp file per run; the copy is deleted when the run ends and matches the existing gitignore pattern.
 - Format on save blocks the editor for up to 10 seconds in the worst case.
   Making it asynchronous would need the save itself to become asynchronous; it was not worth that for a tool that normally answers in well under a second.
-- Language servers cannot format on save.
-- Not verified against the real tools: the Linux builder has no PHP, so the argv shapes follow the tools' documentation and the runs are tested against a stub that plays the same protocol (`stub_analyzer`'s formatter mode).
+- The save waits for a language server's answer at most as long as for a tool, and goes ahead unformatted when it is late.
+- Checked against the real tools in the nightly `php_real` flows: PHPStan's checkstyle prints paths relative to its working directory, which the IDE sets to the project root and joins back; php-cs-fixer and Pint format the dotfile temp copy; `phpcbf --sniffs` accepts a three-part sniff code and refuses the four-part message code, which is why `fix-args` uses `{sniff}`; PHPStan honours stacked `@phpstan-ignore` comments.
+  The formatter argv shapes are also tested against a stub that plays the same protocol (`stub_analyzer`'s formatter mode).

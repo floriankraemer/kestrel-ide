@@ -21,17 +21,22 @@ Drive vscode-php-debug through the existing `DapSession`, in its listen mode.
   The `php-debug` row of the `dap-core` catalog runs `node` on `phpDebug.js`.
   The newest `xdebug.php-debug-*` extension under `~/.vscode`, `~/.vscode-server`, `~/.vscode-insiders`, `~/.vscode-oss`, `~/.cursor` or `~/.windsurf` is used.
   A `[[debug_adapter]]` with id `php-debug` overrides the command and arguments.
-  A missing adapter shows an install hint.
+  A missing adapter shows an install hint, and when no `phpDebug.js` was found the start is refused with it (`dap_core::catalog::not_located`) rather than starting `node phpDebug.js`, which spawns fine and then dies with an opaque "adapter disconnected".
   `ToolchainId::Php.debug_adapter()` is `php-debug`.
 - **Listen session.**
   The `launch` body has no `program`, a `port` (`[php].xdebug_port`, default 9003), a `hostname` and `pathMappings` as an object from server path to local path.
-  The session stays up across runs.
+  The session stays up across runs, and ends only when the toggle is switched off or the session is stopped: the adapter does not report a termination when one connection ends, so a script that finishes leaves the session listening for the next one.
   The Run menu and toolbar toggle "Start Listening for PHP Debug Connections" starts and ends it.
   Connections are threads of that one session in the existing debugger UI.
 - **One path for every debug launch.**
   Debug on a PHP run configuration starts the listen session (or reuses one that listens the same way), then runs the configuration through `RunService::runWithEnv` with the Xdebug environment.
   `dap_core::xdebug::env` builds it: `XDEBUG_MODE=debug`, `XDEBUG_SESSION` (or `XDEBUG_TRIGGER`) and `XDEBUG_CONFIG="client_host=… client_port=…"`.
   The program starts only after the adapter finished its handshake, because Xdebug does not retry.
+- **One lifecycle type.**
+  `dap_core::xdebug::ListenSession` owns what is running, what waits behind a shutting-down adapter and which runs wait for the handshake.
+  `request` answers with a `ListenAction` (`Start`, `Launch`, `Replace` or `Nothing`), `started` and `handshake_done` advance it, and `stop` drops the queue.
+  A run requested while the running listener is still handshaking is held until `handshake_done` hands it back, so a connection is never attempted before the adapter listens.
+  `bridge/debug/php.rs` only performs the actions; it holds no lifecycle rule.
 - **Where PHP runs** is decided by `dap_core::xdebug::plan`.
 
   | PHP runs | Adapter listens on | PHP dials | pathMappings |
@@ -64,3 +69,4 @@ Drive vscode-php-debug through the existing `DapSession`, in its listen mode.
 - The adapter location is found on the machine the IDE runs on; for a WSL project the override is the way to point at the distro's copy.
 - A container needs a route to the host: Docker Desktop and Podman resolve `host.docker.internal`, Linux Docker needs `host-gateway`.
 - PHPUnit and Pest debugging from the gutter reuses this path (phase T).
+- Checked against the real adapter and Xdebug 3 (the nightly `php_real` flows): a CLI run stops at its breakpoint with variables, and one listen session serves two `php -S` requests in turn with no second session.

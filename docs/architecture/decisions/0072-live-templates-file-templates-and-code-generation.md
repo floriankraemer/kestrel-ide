@@ -48,6 +48,8 @@ Rust owns every decision; the view applies edits and selects the first stop.
 - The completion popup lists the postfix templates after `expr.`, and the plain template whose abbreviation is exactly the typed word, first.
   Plain templates are not listed by prefix, because they would sit above the language's own keywords (`if`, `fn`) in every popup.
 - Ctrl+Alt+T was `view.projectTree`'s default; the Project window moves to Alt+1.
+- A shortcut a release adds as a default can collide with a key the user already bound.
+  `Keymap` resolves it at load time: the persisted override keeps its key and the clashing default is left unbound, so no key triggers two actions (the new defaults Ctrl+N, Ctrl+J, Ctrl+Shift+B, Alt+1, Ctrl+Alt+Insert, Alt+Insert and Ctrl+Alt+T are covered by a test).
 
 **A `file-templates` contribution point.**
 Fields: `id`, `name`, `language`, `extension`, `name-suffix`, `body`.
@@ -58,6 +60,8 @@ Fields: `id`, `name`, `language`, `extension`, `name-suffix`, `body`.
 - `php_core::psr4::namespace_for` picks the PSR-4 root (from `autoload` and `autoload-dev`, several roots per prefix allowed) whose directory is the longest prefix of the target directory, then appends the sub-directories.
   No root means an empty namespace.
 - `php-tools` ships PHP Class, Interface, Trait, Enum, PHPUnit Test and PHP File.
+- The New menu lists a template only for a language the project uses (`settings_model::file_templates::is_offered`): the language's marker file exists (`composer.json` for PHP) or the project holds a file with the template's extension (`project_model::contains_extension`, a depth-limited probe that honours `.gitignore`, so `vendor/` does not count).
+  A language with no known marker is always offered.
 
 **New in the tree and the File menu.**
 New > File, Directory and one entry per file template, in the project tree's context menu and at the top of the File menu; the target is the selected folder, or the project root.

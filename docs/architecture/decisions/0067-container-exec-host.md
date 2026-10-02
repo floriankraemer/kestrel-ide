@@ -36,6 +36,7 @@ Two more facts forced the shape:
 - **Building the host.**
   `container_core::target::exec_host(target, invocation, root, mode, selinux_relabel)` builds it from a `ContainerTargetSetting` and the resolved connection.
   A compose service defaults to `exec` (`compose exec -T <svc>`) and may be `run --rm -T`; an image or Containerfile target is always `run --rm -i` with the project bind-mounted at the target's workdir.
+  A connection's standalone `compose_executable` override (`docker-compose`) replaces the engine program and takes no `compose` subcommand: `Invocation::compose_form` says which argv a compose command needs and `Invocation::for_compose` applies it, for exec hosts, run targets and the Containers dock alike.
   Docker and Podman differ only in the engine program; a connection reached through `wsl.exe` marks the host `via_wsl`, so its environment goes through `WSLENV` and the mount source is the distro's path.
   `exec_host_for` resolves a target id against `ContainerSettings`; `php_core::host::interpreter_host` joins that to the `[php]` settings and falls back to the project's own host when no target is set or it no longer exists.
 - **Program lookup.**
@@ -79,7 +80,6 @@ Two more facts forced the shape:
 - Negative: every `ExecHost` match now has a third arm, which is the point of using an enum.
 - Negative: a file only the container has (for example a server's built-in stubs) opens at its container path and cannot be loaded locally.
 - Negative: argument rebasing is a prefix match on the project root; an argument that is a project path by coincidence is rewritten.
-- Negative: a compose target with a `compose_executable` override (`docker-compose`) is run through the engine's `compose` subcommand; the override is ignored.
 - Negative: environment variables of a per-call `env` appear as `-e K=V` in the engine's argv.
 
 ## Related

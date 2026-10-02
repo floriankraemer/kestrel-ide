@@ -255,9 +255,9 @@ A row's status and commit hash are updated in the commit that finishes it.
 |---|---|---|
 | E1 — `stub_server` capability-profile flag (`STUB_LSP_TAG`/`STUB_LSP_CAPS`, done with L3) | done | b6c7a10 |
 | E2 — per-PR E2E: `e2e_php_two_servers_and_on_save_analysis`, `e2e_php_listen_session_stops_for_two_connections`, `e2e_php_generate_templates_and_new_class` | done | 40db0bb |
-| E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | done | — |
+| E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | done | 6e0bd8e |
 | E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | open | |
-| Z1 — `overview.md`, `layering.md`, README index, keymap defaults | open | |
+| Z1 — `overview.md`, `layering.md`, README index, keymap defaults | done | — |
 
 ## Acceptance per phase (as the user sees it)
 

@@ -191,7 +191,11 @@ impl ffi::LanguageService {
             let mut failures = Vec::new();
             for config in &configs {
                 if let Err(err) = manager.start(config) {
-                    failures.push((config.id.clone(), config.name.clone(), err.to_string()));
+                    failures.push((
+                        config.id.clone(),
+                        config.name.clone(),
+                        lsp_core::start_failure_text(&config.id, &err),
+                    ));
                 }
             }
             if failures.is_empty() {

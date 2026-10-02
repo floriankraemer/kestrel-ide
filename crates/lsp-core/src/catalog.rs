@@ -566,6 +566,30 @@ pub enum ReloadKind {
     Restart,
 }
 
+/// How to install a server we ship a default for but never install, shown
+/// when it fails to start because it is missing. `None` for a server we
+/// know no single install command for.
+pub fn install_hint(server_id: &str) -> Option<&'static str> {
+    match server_id {
+        "intelephense" => Some("Install it with: npm i -g intelephense"),
+        "phpactor" => Some(
+            "Install it with: composer global require phpactor/phpactor, \
+             or download phpactor.phar and put it on PATH as phpactor",
+        ),
+        _ => None,
+    }
+}
+
+/// The text shown when `server_id` failed to start with `error`: the
+/// error, plus the install hint when the program could not be spawned (a
+/// timeout or a protocol failure is not a missing install).
+pub fn start_failure_text(server_id: &str, error: &crate::manager::LspError) -> String {
+    match (error, install_hint(server_id)) {
+        (crate::manager::LspError::Spawn { .. }, Some(hint)) => format!("{error}. {hint}"),
+        _ => error.to_string(),
+    }
+}
+
 /// How a running server must react to going from `before` to `after`.
 pub fn reload_kind(before: &ServerConfig, after: &ServerConfig) -> ReloadKind {
     let launch_differs = before.language_id != after.language_id
@@ -1150,5 +1174,29 @@ mod tests {
         let started = reload_plan(&off, &all, |lang| lang == "php");
         assert_eq!(started.start, ["phpactor"]);
         assert!(started.stop.is_empty());
+    }
+
+    #[test]
+    fn a_missing_php_server_says_how_to_install_it() {
+        use crate::manager::LspError;
+        let missing = LspError::Spawn {
+            command: "intelephense".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+        };
+        let text = start_failure_text("intelephense", &missing);
+        assert!(text.contains("npm i -g intelephense"), "{text}");
+        assert!(start_failure_text("phpactor", &missing).contains("composer global require"));
+        // Only a spawn failure is a missing install; others and unknown
+        // servers get the plain error.
+        assert_eq!(
+            start_failure_text(
+                "intelephense",
+                &LspError::Timeout {
+                    method: "initialize".into()
+                }
+            ),
+            "initialize timed out"
+        );
+        assert_eq!(start_failure_text("gopls", &missing), missing.to_string());
     }
 }

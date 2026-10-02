@@ -120,11 +120,15 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
     moreMenu->addAction(QObject::tr("Outdated"), [=]() { run(QStringLiteral("outdated"), QString()); });
     moreMenu->addAction(QObject::tr("Refresh"), refresh);
     auto *moreButton = new QToolButton(panel);
-    // The chevron is part of the label: the style's own menu indicator
-    // lands on the text's baseline in an auto-raise button.
-    moreButton->setText(QObject::tr("More") + QStringLiteral(" \u25BE"));
+    moreButton->setText(QObject::tr("More"));
     moreButton->setAutoRaise(true);
-    moreButton->setStyleSheet(QStringLiteral("QToolButton::menu-indicator { image: none; }"));
+    // The themed button reserves no room for the menu arrow, which then
+    // sits on the label's baseline; reserve it and centre it, as the
+    // MenuButtonPopup rule in theme.cpp does for its own arrow.
+    moreButton->setStyleSheet(QStringLiteral(
+      "QToolButton { padding-right: 16px; }"
+      "QToolButton::menu-indicator { subcontrol-origin: padding;"
+      " subcontrol-position: center right; right: 4px; }"));
     moreButton->setPopupMode(QToolButton::InstantPopup);
     moreButton->setMenu(moreMenu);
     toolbar->addWidget(moreButton);

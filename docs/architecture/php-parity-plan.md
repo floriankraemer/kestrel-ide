@@ -235,8 +235,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Y2 — `twig` and `blade` rows (`.blade.php` beats `.php`), hidden `php_only` row, queries | done | 5e2da04 |
 | Y3 — `.phtml` and `.inc` → PHP | done | a787251 |
 | Y4 — `syntax_core::language_at`; injection-aware comment toggle | done | faac937 |
-| Y5 — richer `php/folds.scm` (arrays, doc comments, use groups, match, heredoc, attributes) | done | — |
-| Y6 — ADR-0071 | open | |
+| Y5 — richer `php/folds.scm` (arrays, doc comments, use groups, match, heredoc, attributes) | done | d54d9a5 |
+| Y6 — ADR-0071 | done | — |
 
 ### G — code generation (ADR-0072)
 | Task | Status | Commit |

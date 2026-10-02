@@ -231,6 +231,11 @@ void buildDebugMenu(QMainWindow *window, DebugService *debugService, DebugPanel 
                           }
                       });
 
+    // A stop brings the Debug dock forward: the run console a launch opens
+    // would otherwise stay on top of the frames and variables.
+    QObject::connect(debugService, &DebugService::debugStopped, window,
+                      [showDock](quint64, const QString &, const QString &, quint32) { showDock(); });
+
     QAction *viewDebugAction = registerAction(viewMenu, QStringLiteral("view.debug"),
                                                QObject::tr("Debug"), appSettings, actions);
     QObject::connect(viewDebugAction, &QAction::triggered, window, showDock);

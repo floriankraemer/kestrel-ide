@@ -254,7 +254,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Task | Status | Commit |
 |---|---|---|
 | E1 — `stub_server` capability-profile flag (`STUB_LSP_TAG`/`STUB_LSP_CAPS`, done with L3) | done | b6c7a10 |
-| E2 — E2E `e2e_php_two_servers_and_on_save_analysis` | open | |
+| E2 — per-PR E2E: `e2e_php_two_servers_and_on_save_analysis`, `e2e_php_listen_session_stops_for_two_connections`, `e2e_php_generate_templates_and_new_class` | done | — |
 | E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | open | |
 | E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | open | |
 | Z1 — `overview.md`, `layering.md`, README index, keymap defaults | open | |
@@ -344,6 +344,85 @@ A row's status and commit hash are updated in the commit that finishes it.
   - E2 runs per-PR flows under Xvfb.
   - E3 runs nightly against real PHP 8.3, Composer, Intelephense, Phpactor, vscode-php-debug and Docker.
 - **Manual (E4):** a real Laravel or Symfony Composer project, walked by hand on Linux, WSL and Windows, with screenshots checked pixel by pixel.
+
+## Phase E test plan
+
+Agreed by the testing expert and the product owner on 2026-10-02.
+
+### E2 — per-PR flows (stubs only, under Xvfb)
+
+- Prerequisites:
+  - `stub_analyzer` reads a file (last argument an existing file) or stdin (`-` with `--stdin-path=`) and reports one finding per line containing `STUB_FINDING`.
+  - Its `source` is `PHPStan.stubFinding` when the binary is named `phpstan`, else `Stub.Sniff.Finding`; the project-root mode stays.
+  - `stub_server` publishes `source: "stub_<tag>"` when `STUB_LSP_TAG` is set.
+  - `make e2e-ci` builds `stub_adapter`.
+  - `route_language_at_stubs` routes a language at tagged stub servers with diagnostics on.
+- New marks: the Generate menu and member dialog, the Ctrl+J and Ctrl+Alt+T menus, the New submenu and its name prompt, and `checked` on menu actions.
+- Flow `analysis::e2e_php_two_servers_and_on_save_analysis`:
+  - Problems shows a row per server (`stub_intelephense`, `stub_phpactor`).
+  - Completion merges both servers and lists `shared` once.
+  - Typing `// STUB_FINDING` adds a PHP_CodeSniffer row and no PHPStan row.
+  - Saving adds the PHPStan row.
+  - Alt+Enter offers each server's fix and a suppress action per analyzer.
+  - The PHPStan suppress inserts `// @phpstan-ignore PHPStan.stubFinding` above the line, and one Ctrl+Z removes it.
+  - `fore` + Tab expands `foreach (`.
+- Flow `run::e2e_php_listen_session_stops_for_two_connections`:
+  - The Run menu toggle starts one listen session and shows as checked.
+  - The first connection stops at the breakpoint with variables.
+  - F9 brings the second stop on the same session, with no second `debug_started`.
+  - Toggling off ends the session.
+  - The container target's `0.0.0.0` listener and `pathMappings` are asserted in a `dap-core` integration test, since they need no UI.
+- Flow `edit::e2e_php_generate_templates_and_new_class`:
+  - Alt+Insert > Getters and Setters generates no setter for a readonly property.
+  - File > New > PHP Class in `src/Sub` creates `App\Sub\Thing` under the composer PSR-4 map.
+  - Ctrl+Alt+T wraps a line in `if`.
+  - `$xs.foreach` + Tab expands.
+  - Ctrl+/ on an HTML line of a `.php` file writes `<!-- … -->`.
+- Alt+1 shows the Project dock but does not toggle it (see the follow-ups in the delivery report), so no flow asserts a toggle.
+
+### E3 — nightly flows (`IDE_E2E_PHP=1`)
+
+- Image `linux-php`, built `FROM linux-builder` like `linux-jvm`:
+  - PHP 8.3 (sury) with cli, xdebug, pcov, mbstring, xml, curl, zip and intl, and `xdebug.mode=off`, `pcov.enabled=0`;
+  - Composer pinned with a checksum;
+  - Node and Intelephense pinned;
+  - the Phpactor phar pinned;
+  - the vscode-php-debug VSIX from open-vsx unzipped into `/opt/vscode-home/.vscode/extensions` (`HOME=/opt/vscode-home`, so auto-location is tested);
+  - the Docker CLI and Compose for the container flow;
+  - a prewarmed `COMPOSER_CACHE_DIR` and a `composer install` per test, with no vendor symlink.
+- Fixture `crates/app/tests/fixtures/php_app/`:
+  - PSR-4 `App\` to `src`, `Tests\` to `tests`;
+  - PHPUnit ^11, Pest ^3, PHPStan, PHPCS and php-cs-fixer, with a committed `composer.lock`;
+  - `Greeter` and `GreeterInterface` with a planted PHPStan error and a PSR-12 violation;
+  - `GreeterTest` and `GreeterPestTest`;
+  - `phpstan.neon`, `phpcs.xml`, `.php-cs-fixer.dist.php`, `bin/console.php` and `public/index.php`.
+- Makefile: `linux-php-image`, `test-php` (outer) and `php-ci` (inner), and `test-php-container` (Compose like `test-db`, with `docker.sock` and an identical bind path).
+- Flows in `php_real.rs`:
+  - a) servers, analysis, navigation and format, plus the Composer dock;
+  - b) Xdebug from the CLI, a listen session, and `php -S` with `?XDEBUG_TRIGGER=1`;
+  - c) a gutter test, debug from the gutter, coverage, the Pest marker and a namespaced rerun;
+  - d) the container interpreter, in `test-php-container` only.
+
+### E4 — manual matrix (Linux, WSL, Windows; light and dark; 100% and 150% DPI)
+
+1. Settings > PHP, pixel by pixel.
+2. The licence key lives only in the secret store.
+3. Windows without WSL shows the Phpactor reason.
+4. A WSL interpreter.
+5. Container `exec` against `run` latency.
+6. Xdebug from the CLI, `php -S` and PHPUnit, locally, on WSL and in a container, with the advice shown.
+7. The listen toggle's glyph and sync.
+8. The Composer dock.
+9. Coverage colours.
+10. Generate.
+11. New menu namespaces.
+12. Ctrl+J and Ctrl+Alt+T (German layout, AltGr).
+13. Twig and Blade.
+14. The format-on-save failure notice.
+15. Search Everywhere with six tabs and Ctrl+N.
+16. A real Laravel or Symfony project: open time, memory, Psalm, PHPMD, Pint, phpcbf, Codeception, Behat and PHPSpec.
+17. `composer require` mid-session is picked up.
+18. The "Verify …" lines in `followups.md`.
 
 ## Critical files
 - `crates/lsp-core/src/{manager.rs,catalog.rs}` (+ new `routing.rs`)

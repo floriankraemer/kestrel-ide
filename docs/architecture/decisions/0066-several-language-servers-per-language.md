@@ -47,6 +47,19 @@ A language has an ordered list of servers, each running under a stable server `i
   A `posix_only` server is skipped on native Windows with a local host and reported `Unavailable` with the reason (`catalog::launch_plan`, `is_windows` injected); it still runs in WSL and on an interpreter host.
   Each server may run on its own `ExecHost` (`start_on`).
 
+## E2E budget
+
+ADR-0046 last recorded the per-PR flow budget, moving it from 15 to 16.
+No later ADR kept the count, and the suite has grown since: before the PHP parity E2E phase it held 89 flows in 18 modules, and the ceiling of 16 is long gone.
+This plan adds three flows to existing modules, so the suite now holds 92 flows in 18 modules:
+
+- `analysis::e2e_php_two_servers_and_on_save_analysis` covers what no unit test reaches here: two servers' diagnostics and merged completion and fixes arriving through one editor, plus PHPCS on type against PHPStan on save.
+- `run::e2e_php_listen_session_stops_for_two_connections` covers one listen session serving two connections, which only a real adapter handshake, the Qt thread and the toggle can show together.
+- `edit::e2e_php_generate_templates_and_new_class` covers the editor gestures whose menus, prompts and key chords exist only in the view.
+
+Each flow carries several assertions on purpose, because a flow costs a process start and an X session.
+The nightly flows against real PHP (`IDE_E2E_PHP=1`) are outside this budget.
+
 ## Alternatives considered
 
 | Option | Why rejected |

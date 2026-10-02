@@ -65,6 +65,30 @@ pub struct PhpSettings {
     pub servers: BTreeMap<String, PhpServerSetting>,
 }
 
+/// The `php-builtin-server` run configuration's own sub-table (PHP parity
+/// plan, I5): blank/zero fields mean "the default", and what the default
+/// is (`localhost`, 8000, the project root) is `run-core`'s rule. The
+/// `php-console` kind needs no sub-table.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct PhpBuiltinServerRunSetting {
+    /// Listen address; blank is `localhost`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub host: String,
+    /// Listen port; 0 is 8000.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub port: u16,
+    /// Document root (`-t`), macros allowed; blank is the project root.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub document_root: String,
+    /// Router script, macros allowed; blank serves files directly.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub router: String,
+}
+
+fn is_zero(port: &u16) -> bool {
+    *port == 0
+}
+
 /// `skip_serializing_if` for the owning `Settings`/`ProjectSettings` field.
 pub fn is_default(value: &PhpSettings) -> bool {
     value == &PhpSettings::default()
@@ -102,5 +126,26 @@ mod tests {
         let text = toml::to_string(&settings).expect("serialize");
         let parsed: PhpSettings = toml::from_str(&text).expect("deserialize");
         assert_eq!(parsed, settings);
+    }
+
+    #[test]
+    fn an_untouched_table_writes_nothing() {
+        let text = toml::to_string(&PhpBuiltinServerRunSetting::default()).expect("serialize");
+        assert_eq!(text.trim(), "");
+    }
+
+    #[test]
+    fn round_trips_every_field() {
+        let setting = PhpBuiltinServerRunSetting {
+            host: "0.0.0.0".into(),
+            port: 8080,
+            document_root: "$PROJECT_DIR$/public".into(),
+            router: "router.php".into(),
+        };
+        let text = toml::to_string(&setting).expect("serialize");
+        assert_eq!(
+            toml::from_str::<PhpBuiltinServerRunSetting>(&text).unwrap(),
+            setting
+        );
     }
 }

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::container_run::{ComposeRunSetting, ContainerImageRunSetting, ContainerfileRunSetting};
 use crate::is_false;
+use crate::php::PhpBuiltinServerRunSetting;
 use crate::sql_script_run::SqlScriptRunSetting;
 
 /// One entry in a run configuration's `before_launch` list (B2-1).
@@ -108,6 +109,10 @@ pub struct RunConfigSetting {
     /// `.sql` file against a data source rather than launching a process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sql_script: Option<SqlScriptRunSetting>,
+    /// `[run_configs.php_server]`, present iff
+    /// `kind == Some("php-builtin-server")` (PHP parity plan, I5).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub php_server: Option<PhpBuiltinServerRunSetting>,
     /// Run targets (C8): where a *plain-process* configuration's launch
     /// actually runs. `None` means "local, as always". `Some("container:<id>")`
     /// names a `[containers.target]` row this configuration's program/args

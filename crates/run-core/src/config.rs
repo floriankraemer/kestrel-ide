@@ -107,7 +107,8 @@ impl RunConfigExt for RunConfig {
             _ => None,
         }
         .unwrap_or_else(|| {
-            let spec = process_launch_spec(self, context);
+            let materialized = crate::php_run::materialize(self, context);
+            let spec = process_launch_spec(materialized.as_ref().unwrap_or(self), context);
             // Run targets (C8) only apply to a plain process configuration
             // — a container-kind one's launch already *is* a container
             // launch (`RunConfigSetting::run_on`'s own doc comment). An

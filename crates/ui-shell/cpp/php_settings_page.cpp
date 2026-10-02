@@ -57,6 +57,9 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
     auto *interpreterEdit = new QLineEdit(QString(form.interpreter), page);
     interpreterEdit->setPlaceholderText(QObject::tr("php (from PATH)"));
     auto *detectButton = new QPushButton(QObject::tr("Detect"), page);
+    // A page button must not become the dialog's default on focus: Enter
+    // would then press Detect instead of OK.
+    detectButton->setAutoDefault(false);
     auto *interpreterRow = new QHBoxLayout();
     interpreterRow->addWidget(interpreterEdit, 1);
     interpreterRow->addWidget(detectButton);
@@ -112,6 +115,7 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
     auto *licenceEdit = new QLineEdit(page);
     licenceEdit->setEchoMode(QLineEdit::Password);
     auto *removeLicenceButton = new QPushButton(QObject::tr("Remove"), page);
+    removeLicenceButton->setAutoDefault(false);
     auto *licenceRow = new QHBoxLayout();
     licenceRow->addWidget(licenceEdit, 1);
     licenceRow->addWidget(removeLicenceButton);

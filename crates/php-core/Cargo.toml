@@ -18,5 +18,11 @@ container-core = { path = "../container-core" }
 # configs lives here, so the rule is testable without Qt (PS2).
 lsp-core = { path = "../lsp-core" }
 
+# `tests::markers`: the editor's test positions over tree-sitter-php, through
+# the one grammar registry (ADR-0018), as `container-core::compose_file`
+# does for YAML.
+syntax-core = { path = "../syntax-core" }
+tree-sitter = "0.26"
+
 [dev-dependencies]
 tempfile = "3"

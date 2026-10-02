@@ -6199,7 +6199,9 @@ dependencies = [
  "lsp-core",
  "process-exec",
  "serde_json",
+ "syntax-core",
  "tempfile",
+ "tree-sitter",
 ]
 
 [[package]]

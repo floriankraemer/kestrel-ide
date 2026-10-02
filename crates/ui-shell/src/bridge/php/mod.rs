@@ -152,7 +152,7 @@ impl ffi::PhpSettingsEditor {
             trimmed => trimmed.to_string(),
         };
         let root =
-            crate::bridge::convert::current_project_root().unwrap_or_else(|| std::env::temp_dir());
+            crate::bridge::convert::current_project_root().unwrap_or_else(std::env::temp_dir);
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
             let host = process_exec::host::ExecHost::for_path(&root);

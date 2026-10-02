@@ -173,7 +173,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 |---|---|---|
 | PS1 — `php_core::lsp::{intelephense, phpactor}` → (initialization options, settings), golden JSON | done | 0c4f605 |
 | PS2 — ui-shell joins PS1 into `ServerConfig` on start and on settings save | done | 01441fe |
-| PS3 — install hints (npm / phar) in the server start error | done | — |
+| PS3 — install hints (npm / phar) in the server start error | done | 65b95d1 |
 
 ### N — missing LSP requests
 | Task | Status | Commit |

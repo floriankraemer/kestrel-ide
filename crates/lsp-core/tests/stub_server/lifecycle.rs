@@ -213,6 +213,31 @@ fn a_respawned_server_is_sent_didopen_for_documents_again() {
         _ => None,
     });
 }
+/// A stop that lands while the supervisor sleeps before respawning must end
+/// the supervisor: it used to reconnect anyway and then read from a server
+/// nobody would ever stop, so `stop` joined it forever (a ~1 in 150 hang of
+/// the respawn tests at their end).
+#[test]
+fn stopping_a_server_during_its_restart_backoff_returns() {
+    let (manager, rx) = LspManager::new("file:///workspace");
+    manager.start(&dying_stub_config()).expect("stub starts");
+    manager
+        .did_open("file:///workspace/a.stub", LANG, "boom\n")
+        .expect("didOpen");
+    wait_for(&rx, "the exit that starts the backoff", |e| match e {
+        LspEvent::ServerExited { .. } => Some(()),
+        _ => None,
+    });
+    let (done, stopped) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        manager.stop(LANG);
+        let _ = done.send(());
+    });
+    stopped
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("stop returned instead of joining a respawned server");
+}
+
 /// The whole L2 path minus Qt: a real child server publishes diagnostics,
 /// the event lands in the store the adapter keeps, and the store yields the
 /// rows the Problems panel renders.

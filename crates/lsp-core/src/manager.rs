@@ -1126,6 +1126,17 @@ fn spawn_supervisor(
                     if let Some(tx) = ready.take() {
                         let _ = tx.send(Ok(()));
                     }
+                    // A stop that began while this respawn was connecting
+                    // looked for a connection before there was one, so
+                    // nobody will kill this one: without this the read loop
+                    // below never ends and `stop_server` joins forever.
+                    if server.stopping.load(Ordering::SeqCst) {
+                        if let Some(mut conn) = server.conn.lock().unwrap().take() {
+                            let _ = conn.child.kill();
+                            let _ = conn.child.wait();
+                        }
+                        return;
+                    }
                     let _ = events.send(LspEvent::ServerReady {
                         language_id: cfg.language_id.clone(),
                         server_id: cfg.id.clone(),
@@ -1197,6 +1208,9 @@ fn spawn_supervisor(
                 retry_in: backoff,
             });
             thread::sleep(backoff);
+            if server.stopping.load(Ordering::SeqCst) {
+                return;
+            }
             backoff = (backoff * 2).min(RESTART_BACKOFF_MAX);
         }
     })

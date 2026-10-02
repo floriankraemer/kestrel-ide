@@ -130,3 +130,106 @@ fn a_server_with_diagnostics_off_publishes_nothing() {
     }
     manager.stop(LANG);
 }
+
+fn started_pair(a_caps: &str, b_caps: &str) -> (LspManager, Receiver<LspEvent>) {
+    let (manager, rx) = LspManager::new("file:///workspace");
+    for (priority, (id, caps)) in [("a", a_caps), ("b", b_caps)].into_iter().enumerate() {
+        manager
+            .start(&ServerConfig {
+                priority,
+                ..tagged_config(id, caps)
+            })
+            .expect("starts");
+    }
+    (manager, rx)
+}
+
+const HOVER_PARAMS: fn() -> serde_json::Value = || {
+    json!({"textDocument": {"uri": "file:///workspace/a.stub"},
+           "position": {"line": 0, "character": 0}})
+};
+
+fn hover_text(manager: &LspManager) -> Result<String, LspError> {
+    let result = manager.request(LANG, "textDocument/hover", HOVER_PARAMS())?;
+    Ok(result["contents"]["value"]
+        .as_str()
+        .unwrap_or("")
+        .to_string())
+}
+
+#[test]
+fn a_first_method_goes_to_the_first_capable_server() {
+    let (manager, _rx) = started_pair("hover", "hover");
+    assert_eq!(hover_text(&manager).unwrap(), "hover a");
+    manager.stop(LANG);
+}
+
+#[test]
+fn a_first_method_skips_a_server_that_does_not_declare_it() {
+    let (manager, _rx) = started_pair("", "hover");
+    assert_eq!(hover_text(&manager).unwrap(), "hover b");
+    manager.stop(LANG);
+}
+
+#[test]
+fn a_method_no_server_offers_is_method_not_found() {
+    let (manager, _rx) = started_pair("", "");
+    let err = hover_text(&manager).unwrap_err();
+    assert!(
+        matches!(err, LspError::Response { code: -32601, .. }),
+        "{err:?}"
+    );
+    manager.stop(LANG);
+}
+
+#[test]
+fn a_command_goes_to_the_server_that_lists_it() {
+    let (manager, _rx) = started_pair("executeCommand", "executeCommand");
+    let ran = manager
+        .request(
+            LANG,
+            "workspace/executeCommand",
+            json!({"command": "cmd.b", "arguments": []}),
+        )
+        .unwrap();
+    assert_eq!(ran["ranOn"], "b");
+    manager.stop(LANG);
+}
+
+#[test]
+fn a_tagged_item_is_resolved_by_its_origin_and_sent_back_untagged() {
+    let (manager, _rx) = started_pair("completion", "completion");
+    let mut item = json!({"label": "x"});
+    lsp_core::routing::tag_origin(&mut item, "b");
+    let resolved = manager
+        .request(LANG, "completionItem/resolve", item)
+        .unwrap();
+    assert_eq!(resolved["detail"], "resolved by b");
+    assert!(
+        resolved.get(lsp_core::routing::ORIGIN_KEY).is_none(),
+        "the server must see the item it wrote: {resolved}"
+    );
+    manager.stop(LANG);
+}
+
+#[test]
+fn request_all_returns_every_capable_servers_answer_in_order() {
+    let (manager, _rx) = started_pair("hover", "hover");
+    let answers = manager.request_all(
+        LANG,
+        "textDocument/hover",
+        HOVER_PARAMS(),
+        Duration::from_secs(5),
+    );
+    let tags: Vec<_> = answers
+        .iter()
+        .map(|(id, r)| {
+            (
+                id.as_str(),
+                r.as_ref().unwrap()["contents"]["value"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(tags, [("a", json!("hover a")), ("b", json!("hover b"))]);
+    manager.stop(LANG);
+}

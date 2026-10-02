@@ -29,6 +29,7 @@ use crate::configuration;
 use crate::framing::{read_message, write_message};
 use crate::progress::{ProgressTracker, ServerActivity};
 use crate::registration::{Registration, Registrations};
+use crate::routing::{self, Route};
 use crate::semantic_tokens::{self, SemanticTokensLegend};
 use crate::signature_help::{parse_signature_triggers, SignatureTriggers};
 use crate::watched_files::{FileChangeKind, WatchedFiles};
@@ -435,9 +436,51 @@ impl Server {
 
     /// Fail every in-flight request; called when the connection dies so no
     /// caller waits for a response that can never arrive.
+    /// Whether this server may be sent `method`, from the capabilities it
+    /// declared or registered ([`routing::is_capable`]).
+    fn can_answer(&self, method: &str) -> bool {
+        routing::is_capable(method, &self.capabilities.lock().unwrap(), |m| {
+            self.registrations.method_registered(m)
+        })
+    }
+
     fn drop_pending(&self) {
         self.pending.lock().unwrap().clear();
     }
+}
+
+fn no_capable_server(method: &str) -> LspError {
+    LspError::Response {
+        code: METHOD_NOT_FOUND,
+        message: format!("no language server for this language offers {method}"),
+    }
+}
+
+/// Send `method` to every server in `servers` at once and collect the answers
+/// in the order given. One thread per server, so the slowest sets the pace.
+fn fan_out(
+    servers: &[Arc<Server>],
+    method: &str,
+    params: &Value,
+    timeout: Duration,
+) -> Vec<(String, Result<Value, LspError>)> {
+    thread::scope(|scope| {
+        let handles: Vec<_> = servers
+            .iter()
+            .map(|server| {
+                scope.spawn(move || {
+                    (
+                        server.id.clone(),
+                        server.request(method, params.clone(), timeout),
+                    )
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("request thread does not panic"))
+            .collect()
+    })
 }
 
 /// What the manager knows about one open document.
@@ -614,11 +657,91 @@ impl LspManager {
         timeout: Duration,
     ) -> Result<Value, LspError> {
         let servers = self.servers_of(language_id);
-        if servers.is_empty() {
-            return Err(LspError::NoServer(language_id.to_string()));
+        match servers.as_slice() {
+            [] => Err(LspError::NoServer(language_id.to_string())),
+            // One server: nothing to route, and no capability filtering, so a
+            // single-server language behaves exactly as it always did.
+            [only] => only.request(method, params, timeout),
+            _ => self.route(&servers, method, params, timeout),
         }
-        // ponytail: routing arrives with L5; until then the first server answers.
-        servers[0].request(method, params, timeout)
+    }
+
+    /// Ask every server of the language that can answer `method`, in answer
+    /// order, concurrently. The answers come back unmerged, tagged with the
+    /// server that gave them (a failure of one server is its own entry).
+    pub fn request_all(
+        &self,
+        language_id: &str,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Vec<(String, Result<Value, LspError>)> {
+        let mut servers = self.servers_of(language_id);
+        if servers.len() > 1 {
+            servers.retain(|s| s.can_answer(method));
+        }
+        fan_out(&servers, method, &params, timeout)
+    }
+
+    fn route(
+        &self,
+        servers: &[Arc<Server>],
+        method: &str,
+        mut params: Value,
+        timeout: Duration,
+    ) -> Result<Value, LspError> {
+        let capable: Vec<Arc<Server>> = servers
+            .iter()
+            .filter(|s| s.can_answer(method))
+            .cloned()
+            .collect();
+        match routing::route_of(method) {
+            Route::Origin => {
+                let origin = routing::take_origin(&mut params).or_else(|| {
+                    let command = params.get("command").and_then(Value::as_str)?;
+                    let capabilities: Vec<_> = servers
+                        .iter()
+                        .map(|s| (s.id.clone(), s.capabilities.lock().unwrap().clone()))
+                        .collect();
+                    routing::command_owner(
+                        command,
+                        capabilities.iter().map(|(id, caps)| (id.as_str(), caps)),
+                    )
+                    .map(str::to_string)
+                });
+                let target = origin
+                    .and_then(|id| servers.iter().find(|s| s.id == id))
+                    .or(capable.first())
+                    .or(servers.first())
+                    .expect("route is only called with servers");
+                target.request(method, params, timeout)
+            }
+            Route::First => {
+                let mut first_error = None;
+                let mut last_empty = None;
+                for server in &capable {
+                    match server.request(method, params.clone(), timeout) {
+                        Ok(answer) if routing::is_empty_answer(&answer) => {
+                            last_empty = Some(answer)
+                        }
+                        Ok(answer) => return Ok(answer),
+                        Err(e) => {
+                            first_error.get_or_insert(e);
+                        }
+                    }
+                }
+                match (last_empty, first_error) {
+                    (Some(empty), _) => Ok(empty),
+                    (None, Some(e)) => Err(e),
+                    (None, None) => Err(no_capable_server(method)),
+                }
+            }
+            // ponytail: merging arrives with L6; until then the first capable server answers.
+            Route::Merge => match capable.first() {
+                Some(server) => server.request(method, params, timeout),
+                None => Err(no_capable_server(method)),
+            },
+        }
     }
 
     /// Send a notification to every server of the language (fire and forget

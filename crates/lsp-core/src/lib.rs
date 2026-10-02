@@ -31,6 +31,7 @@ pub mod progress;
 pub mod references;
 pub mod registration;
 pub mod rename;
+pub mod routing;
 pub mod semantic_tokens;
 pub mod signature_help;
 pub mod tracker;

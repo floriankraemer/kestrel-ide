@@ -28,6 +28,8 @@ pub struct ServerDef {
     /// The server cannot run on native Windows (it still runs on WSL and in
     /// a container).
     pub posix_only: bool,
+    /// Which host the server's process runs on.
+    pub exec: ServerExec,
 }
 
 /// Default language servers, in the order they answer a `First` request. Nothing here is installed
@@ -41,6 +43,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "python",
@@ -50,6 +53,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "go",
@@ -59,6 +63,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "c",
@@ -68,6 +73,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "cpp",
@@ -77,6 +83,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "typescript",
@@ -86,6 +93,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "javascript",
@@ -95,6 +103,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     // `typescriptreact` is a separate LSP language id, but the same server
     // handles it — it keys JSX parsing off the id it is told.
@@ -106,6 +115,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "json",
@@ -115,6 +125,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "yaml",
@@ -124,6 +135,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "bash",
@@ -133,6 +145,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["start"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "lua",
@@ -142,6 +155,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "intelephense",
@@ -151,10 +165,13 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     // Runs beside Intelephense (ADR-0066). Its diagnostics are off by default
     // because Intelephense already reports them; Phpactor is the second
-    // opinion for navigation, completion and refactoring.
+    // opinion for navigation, completion and refactoring. It is a PHP
+    // program, so it runs where PHP does (ADR-0067): in the container the
+    // `[php]` settings name, else on the project's own host.
     ServerDef {
         id: "phpactor",
         language_id: "php",
@@ -163,6 +180,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["language-server"],
         diagnostics: false,
         posix_only: true,
+        exec: ServerExec::Interpreter,
     },
     ServerDef {
         id: "java",
@@ -172,6 +190,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "kotlin",
@@ -181,6 +200,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "swift",
@@ -190,6 +210,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "scala",
@@ -199,6 +220,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "haskell",
@@ -208,6 +230,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--lsp"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "fsharp",
@@ -217,6 +240,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "zig",
@@ -226,6 +250,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "ruby",
@@ -235,6 +260,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "toml",
@@ -244,6 +270,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["lsp", "stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "sql",
@@ -253,6 +280,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "html",
@@ -262,6 +290,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "css",
@@ -271,6 +300,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "xml",
@@ -280,6 +310,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &[],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
         id: "dockerfile",
@@ -289,6 +320,7 @@ pub const SERVERS: &[ServerDef] = &[
         args: &["start", "--stdio"],
         diagnostics: true,
         posix_only: false,
+        exec: ServerExec::Host,
     },
 ];
 
@@ -364,7 +396,7 @@ impl From<&ServerDef> for ServerConfig {
             initialization_options: serde_json::Value::Null,
             diagnostics: def.diagnostics,
             posix_only: def.posix_only,
-            exec: ServerExec::Host,
+            exec: def.exec,
             priority: 0,
             source: ServerSource::Builtin,
         }
@@ -1231,5 +1263,38 @@ mod tests {
             "initialize timed out"
         );
         assert_eq!(start_failure_text("gopls", &missing), missing.to_string());
+    }
+
+    #[test]
+    fn phpactor_runs_where_php_does_and_only_a_local_native_windows_host_skips_it() {
+        let resolved = resolve_servers(&[], &[]);
+        let phpactor = resolved.iter().find(|c| c.id == "phpactor").unwrap();
+        assert_eq!(phpactor.exec, ServerExec::Interpreter);
+        assert_eq!(
+            resolved
+                .iter()
+                .find(|c| c.id == "intelephense")
+                .unwrap()
+                .exec,
+            ServerExec::Host
+        );
+        let local = process_exec::host::ExecHost::Local;
+        let container =
+            process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+                program: "docker".into(),
+                prefix_args: vec![],
+                engine_env: vec![],
+                via_wsl: false,
+                verb_args: vec![],
+                target: vec![],
+                path_map: process_exec::host::PathMap::new("/p", ""),
+            });
+        // Native Windows project, PHP in a container: runs, in the container.
+        let plan = launch_plan([phpactor], &local, &container, true);
+        assert!(plan.skipped.is_empty() && plan.start.len() == 1);
+        // Native Windows, PHP local: skipped, with the reason to show.
+        let plan = launch_plan([phpactor], &local, &local, true);
+        assert!(plan.start.is_empty());
+        assert!(plan.skipped[0].1.contains("native Windows"));
     }
 }

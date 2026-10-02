@@ -188,16 +188,58 @@ pub(crate) fn route_rust_at_stub_with(
     ide: &mut Ide,
     tweak: impl FnOnce(&mut app_config::Settings),
 ) {
+    reseed_settings(ide, |settings| {
+        tweak(settings);
+        settings
+            .language_servers
+            .push(app_config::LanguageServerSetting {
+                language_id: "rust".to_string(),
+                command: Some(stub_server_path().to_string_lossy().into_owned()),
+                ..Default::default()
+            });
+    });
+}
+
+/// One tagged stub language server for [`route_language_at_stubs`].
+pub(crate) struct StubServer<'a> {
+    /// The catalog id (`intelephense`, `phpactor`): which server's entry is
+    /// replaced, and the tag its answers and diagnostics carry.
+    pub id: &'a str,
+    /// `STUB_LSP_CAPS`: the `…Provider` capabilities the stub advertises.
+    pub caps: &'a str,
+}
+
+/// Route every server of `language_id` named in `servers` at the stub
+/// server's tagged profile (`STUB_LSP_TAG=<id>`), with diagnostics on, so a
+/// flow can tell which server a merged answer came from. Like
+/// [`route_rust_at_stub`] it relaunches, since the server table is resolved
+/// once on `openProject`.
+pub(crate) fn route_language_at_stubs(ide: &mut Ide, language_id: &str, servers: &[StubServer]) {
+    reseed_settings(ide, |settings| {
+        for server in servers {
+            settings
+                .language_servers
+                .push(app_config::LanguageServerSetting {
+                    id: Some(server.id.to_string()),
+                    language_id: language_id.to_string(),
+                    command: Some("env".to_string()),
+                    args: Some(vec![
+                        format!("STUB_LSP_TAG={}", server.id),
+                        format!("STUB_LSP_CAPS={}", server.caps),
+                        stub_server_path().to_string_lossy().into_owned(),
+                    ]),
+                    diagnostics: Some(true),
+                    ..Default::default()
+                });
+        }
+    });
+}
+
+/// Quit, let `change` edit the user settings on disk, and relaunch.
+fn reseed_settings(ide: &mut Ide, change: impl FnOnce(&mut app_config::Settings)) {
     assert_eq!(ide.quit(), 0);
     let mut settings = app_config::load(&ide.config_dir()).expect("settings just written");
-    tweak(&mut settings);
-    settings
-        .language_servers
-        .push(app_config::LanguageServerSetting {
-            language_id: "rust".to_string(),
-            command: Some(stub_server_path().to_string_lossy().into_owned()),
-            ..Default::default()
-        });
+    change(&mut settings);
     app_config::save(&ide.config_dir(), &settings).expect("seeding the stub server override");
     ide.relaunch();
     ide.wait_for_ev(Mark::start(), "project_opened");

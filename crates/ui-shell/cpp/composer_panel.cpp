@@ -191,7 +191,7 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
 
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Composer"));
     dock->setWidget(panel);
-    docks->registerDock(QStringLiteral("composer"), dock, ads::RightDockWidgetArea, relativeTo);
+    docks->registerDock(QStringLiteral("composer"), dock, ads::CenterDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("composer"));
 
     // The files change outside the IDE (and by the very actions this dock

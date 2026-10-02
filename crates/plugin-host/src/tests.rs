@@ -668,6 +668,35 @@ fn the_php_tools_builtin_contributes_three_formatters() {
 }
 
 #[test]
+fn the_php_tools_builtin_contributes_live_and_postfix_templates() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+    let templates: Vec<_> = registry.live_templates().map(|(_, t)| t).collect();
+    let plain = |abbr: &str| {
+        templates
+            .iter()
+            .any(|t| !t.postfix && t.abbreviation == abbr)
+    };
+    let post = |abbr: &str| {
+        templates
+            .iter()
+            .any(|t| t.postfix && t.abbreviation == abbr)
+    };
+    for abbr in [
+        "fore", "forek", "if", "ife", "try", "fn", "pubf", "prif", "prof", "pubsf", "const",
+        "ctor", "dd", "vd",
+    ] {
+        assert!(plain(abbr), "missing {abbr}");
+    }
+    for abbr in [
+        "if", "notnull", "null", "isset", "foreach", "return", "var", "throw", "par",
+    ] {
+        assert!(post(abbr), "missing postfix {abbr}");
+    }
+}
+
+#[test]
 fn an_analyzer_contribution_needs_no_wasm_component_either() {
     let fixture = Fixture::new();
     let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);

@@ -185,4 +185,55 @@ mod tests {
             .collect();
         assert_eq!(php, ["a", "b"]);
     }
+
+    fn shipped_php() -> Vec<LiveTemplate> {
+        let php_tools: Vec<_> = plugin_host::BUILTIN_PLUGINS
+            .iter()
+            .copied()
+            .filter(|b| b.manifest.contains("id = \"php-tools\""))
+            .collect();
+        let dir = tempfile::tempdir().unwrap();
+        let registry = plugin_host::load(dir.path(), &php_tools, &[]);
+        assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+        let all = resolve(registry.live_templates().map(|(_, t)| t), &[]);
+        for_language(&all, "php").into_iter().cloned().collect()
+    }
+
+    #[test]
+    fn every_shipped_php_template_expands_to_clean_code() {
+        use edit_ops::indent::IndentStyle;
+        use edit_ops::templates::{expand, postfix, surround, PostfixSite};
+        let style = IndentStyle::default();
+        let templates = shipped_php();
+        assert_eq!(templates.iter().filter(|t| !t.postfix).count(), 14);
+        assert_eq!(templates.iter().filter(|t| t.postfix).count(), 9);
+        for t in &templates {
+            let text = "$xs";
+            let e = if t.postfix {
+                let site = PostfixSite {
+                    abbreviation: 4..4,
+                    expr: 0..3,
+                };
+                postfix("$xs.", &site, &t.body, style)
+            } else {
+                expand("", 0..0, &t.body, style)
+            };
+            let out = &e.edit.text;
+            assert!(
+                !out.contains("$SELECTION$") && !out.contains("$EXPR$"),
+                "{out}"
+            );
+            assert!(
+                !out.contains("\\$"),
+                "an unescaped dollar leaked in {}: {out}",
+                t.abbreviation
+            );
+            if t.postfix {
+                assert!(out.contains(text), "{out}");
+            }
+        }
+        let fore = templates.iter().find(|t| t.abbreviation == "fore").unwrap();
+        let e = surround("a();", 0..4, &fore.body, style);
+        assert_eq!(e.edit.text, "foreach ($array as $item) {\n    a();\n}");
+    }
 }

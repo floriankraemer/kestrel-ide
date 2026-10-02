@@ -16,7 +16,7 @@ name = "PHP Tools"
 version = "1.0.0"
 api_version = 1
 license = "MIT"
-description = "PHPStan, Psalm, PHPMD, PHP_CodeSniffer, PHPUnit and the php-cs-fixer, Pint and phpcbf formatters for PHP projects."
+description = "PHPStan, Psalm, PHPMD, PHP_CodeSniffer, PHPUnit and the php-cs-fixer, Pint and phpcbf formatters, and live templates for PHP projects."
 
 # The Composer dock (PHP parity plan, I8). `composer` is the id
 # `tool_window_factories.cpp` has a native host for.
@@ -271,3 +271,166 @@ fix-args = ["--sniffs={sniff}"]
 config-file-candidates = [".phpcs.xml", "phpcs.xml", ".phpcs.xml.dist", "phpcs.xml.dist"]
 composer-package = "squizlabs/php_codesniffer"
 requires-interpreter = "php"
+
+# Live templates (ADR-0072). Bodies are LSP snippets: `$1`, `${1:default}`, `$0`,
+# `$SELECTION$` (surround) and, for postfix, `$EXPR$`; a PHP variable's dollar is
+# written `\$` so the snippet grammar leaves it alone.
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "fore"
+description = "foreach over a value"
+body = "foreach (\\$${1:array} as \\$${2:item}) {\n\t$SELECTION$$0\n}"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "forek"
+description = "foreach with key and value"
+body = "foreach (\\$${1:array} as \\$${2:key} => \\$${3:value}) {\n\t$SELECTION$$0\n}"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "if"
+description = "if statement"
+body = "if (${1:condition}) {\n\t$SELECTION$$0\n}"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "ife"
+description = "if / else statement"
+body = "if (${1:condition}) {\n\t$SELECTION$$2\n} else {\n\t$0\n}"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "try"
+description = "try / catch block"
+body = "try {\n\t$SELECTION$$1\n} catch (\\Throwable \\$${2:e}) {\n\t$0\n}"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "fn"
+description = "function"
+body = "function ${1:name}($2): ${3:void}\n{\n\t$0\n}"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "pubf"
+description = "public method"
+body = "public function ${1:name}($2): ${3:void}\n{\n\t$0\n}"
+context = "class"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "prif"
+description = "private method"
+body = "private function ${1:name}($2): ${3:void}\n{\n\t$0\n}"
+context = "class"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "prof"
+description = "protected method"
+body = "protected function ${1:name}($2): ${3:void}\n{\n\t$0\n}"
+context = "class"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "pubsf"
+description = "public static method"
+body = "public static function ${1:name}($2): ${3:void}\n{\n\t$0\n}"
+context = "class"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "const"
+description = "constant"
+body = "const ${1:NAME} = ${2:null};$0"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "ctor"
+description = "constructor with promoted properties"
+body = "public function __construct(\n\t${1:private readonly string \\$name},\n) {\n\t$0\n}"
+context = "class"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "dd"
+description = "var_dump and die"
+body = "var_dump(${1:\\$var});\ndie();$0"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "vd"
+description = "var_dump"
+body = "var_dump(${1:\\$var});$0"
+context = "statement"
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "if"
+description = "if (expr)"
+body = "if ($EXPR$) {\n\t$0\n}"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "notnull"
+description = "if (expr !== null)"
+body = "if ($EXPR$ !== null) {\n\t$0\n}"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "null"
+description = "if (expr === null)"
+body = "if ($EXPR$ === null) {\n\t$0\n}"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "isset"
+description = "if (isset(expr))"
+body = "if (isset($EXPR$)) {\n\t$0\n}"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "foreach"
+description = "foreach (expr as $item)"
+body = "foreach ($EXPR$ as \\$${1:item}) {\n\t$0\n}"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "return"
+description = "return expr;"
+body = "return $EXPR$;"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "var"
+description = "$name = expr;"
+body = "\\$${1:name} = $EXPR$;$0"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "throw"
+description = "throw expr;"
+body = "throw $EXPR$;"
+postfix = true
+
+[[contributes.live-templates]]
+language = "php"
+abbreviation = "par"
+description = "(expr)"
+body = "($EXPR$)"
+postfix = true

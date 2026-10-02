@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
-use dap_core::xdebug::{self, HostKind};
+use dap_core::xdebug::{self, HostKind, ListenDecision};
 use dap_core::{DapError, DapSession};
 use serde_json::Value;
 
@@ -23,6 +23,14 @@ use crate::bridge::ffi;
 pub(super) struct PhpListen {
     pub(super) session_id: u64,
     pub(super) arguments: Value,
+}
+
+/// A listener to start once the previous adapter has shut down (and freed
+/// its port); a newer request replaces it.
+pub(super) struct PendingListen {
+    root: PathBuf,
+    arguments: Value,
+    run: Option<PhpRun>,
 }
 
 /// A run to start once the listener is up, with the Xdebug environment.
@@ -82,7 +90,10 @@ impl ffi::DebugService {
     /// The "Start Listening for PHP Debug Connections" toggle.
     pub fn set_php_listening(mut self: Pin<&mut Self>, enabled: bool) -> ffi::FfiResult {
         if !enabled {
-            self.as_mut().stop_php_listener();
+            self.php_pending.borrow_mut().take();
+            if let Some(old) = self.as_mut().stop_php_listener() {
+                std::thread::spawn(move || old.shutdown());
+            }
             return ffi::FfiResult::default();
         }
         let Some(root) = current_project_root() else {
@@ -104,30 +115,84 @@ impl ffi::DebugService {
     ///
     /// `run` is started (through `phpLaunchRequested`) once the listener
     /// is ready: Xdebug does not retry, so a program that starts first
-    /// finds nobody listening.
+    /// finds nobody listening. Replacing shuts the old adapter down on a
+    /// worker (it holds the port, and takes a couple of seconds at worst);
+    /// the new listener starts when that is done.
     pub(super) fn ensure_php_listener(
         mut self: Pin<&mut Self>,
         root: &Path,
         arguments: Value,
         run: Option<PhpRun>,
     ) -> Result<(), DapError> {
-        if self
-            .php_listen
-            .borrow()
-            .as_ref()
-            .is_some_and(|listen| listen.arguments == arguments)
-        {
-            let session_id = self.php_listen.borrow().as_ref().map(|l| l.session_id);
-            if let (Some(run), Some(session_id)) = (run, session_id) {
-                let qt_thread = self.as_mut().qt_thread();
-                std::thread::spawn(move || launch_after_check(qt_thread, session_id, run));
+        let decision = xdebug::decide_listen(
+            self.php_listen.borrow().as_ref().map(|l| &l.arguments),
+            self.php_pending.borrow().is_some(),
+            &arguments,
+        );
+        match decision {
+            ListenDecision::Reuse => {
+                let session_id = self.php_listen.borrow().as_ref().map(|l| l.session_id);
+                if let (Some(run), Some(session_id)) = (run, session_id) {
+                    let qt_thread = self.as_mut().qt_thread();
+                    std::thread::spawn(move || launch_after_check(qt_thread, session_id, run));
+                }
+                Ok(())
             }
-            return Ok(());
+            ListenDecision::Start => self.start_php_listener(root, arguments, run),
+            ListenDecision::Queue => {
+                *self.php_pending.borrow_mut() = Some(PendingListen {
+                    root: root.to_path_buf(),
+                    arguments,
+                    run,
+                });
+                Ok(())
+            }
+            ListenDecision::Replace => {
+                *self.php_pending.borrow_mut() = Some(PendingListen {
+                    root: root.to_path_buf(),
+                    arguments,
+                    run,
+                });
+                let old = self.as_mut().stop_php_listener();
+                let qt_thread = self.as_mut().qt_thread();
+                std::thread::spawn(move || {
+                    if let Some(old) = old {
+                        old.shutdown();
+                    }
+                    let _ = qt_thread.queue(|service: Pin<&mut ffi::DebugService>| {
+                        service.start_pending_php_listener();
+                    });
+                });
+                Ok(())
+            }
         }
-        // ponytail: the old adapter is shut down on the Qt thread (a couple
-        // of seconds at worst) so its port is free for the new one.
-        self.as_mut().stop_php_listener();
+    }
 
+    /// The old adapter is gone: start the listener queued behind it, if
+    /// the user has not stopped listening meanwhile.
+    fn start_pending_php_listener(mut self: Pin<&mut Self>) {
+        let pending = self.php_pending.borrow_mut().take();
+        let Some(PendingListen {
+            root,
+            arguments,
+            run,
+        }) = pending
+        else {
+            return;
+        };
+        if let Err(err) = self.as_mut().start_php_listener(&root, arguments, run) {
+            // No session exists to attach the failure to; the debug console
+            // shows it whatever the id.
+            self.as_mut().debug_failed(0, to_ffi_result(&err));
+        }
+    }
+
+    fn start_php_listener(
+        mut self: Pin<&mut Self>,
+        root: &Path,
+        arguments: Value,
+        run: Option<PhpRun>,
+    ) -> Result<(), DapError> {
         let settings = app_config::project_settings::load(root).unwrap_or_default();
         let adapter = dap_core::catalog::resolve(
             dap_core::catalog::PHP_DEBUG,
@@ -267,16 +332,14 @@ impl ffi::DebugService {
         );
     }
 
-    /// End the listen session, if any, and wait for its adapter to go.
-    fn stop_php_listener(mut self: Pin<&mut Self>) {
-        let Some(session_id) = self.php_listen.borrow().as_ref().map(|l| l.session_id) else {
-            return;
-        };
+    /// End the listen session, if any. The adapter is returned still
+    /// running: shutting it down blocks, so the caller does that off the
+    /// Qt thread.
+    fn stop_php_listener(mut self: Pin<&mut Self>) -> Option<Arc<DapSession>> {
+        let session_id = self.php_listen.borrow().as_ref().map(|l| l.session_id)?;
         let session = self.as_mut().session_handle(session_id);
         self.as_mut().finish_session(session_id, 0);
-        if let Some(session) = session {
-            session.shutdown();
-        }
+        session
     }
 
     /// A session ended: if it was the listen session, say so.

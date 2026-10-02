@@ -90,6 +90,38 @@ pub fn plan(host: HostKind, path_map: Option<&PathMap>, port: u16) -> Plan {
     }
 }
 
+/// What a request to listen with some adapter arguments does, given what is
+/// running — the rule the bridge follows so replacing a listener never
+/// waits for the old adapter on the UI thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListenDecision {
+    /// The running listener already listens that way.
+    Reuse,
+    /// Nothing is running or stopping: start now.
+    Start,
+    /// A listener with other arguments runs: stop it off-thread, then start.
+    Replace,
+    /// An old adapter is still shutting down (it holds the port): the
+    /// request replaces whatever was queued behind it.
+    Queue,
+}
+
+/// Decide how to satisfy a request for `wanted` arguments.
+pub fn decide_listen(
+    running: Option<&Value>,
+    shutdown_in_flight: bool,
+    wanted: &Value,
+) -> ListenDecision {
+    if shutdown_in_flight {
+        return ListenDecision::Queue;
+    }
+    match running {
+        Some(current) if current == wanted => ListenDecision::Reuse,
+        Some(_) => ListenDecision::Replace,
+        None => ListenDecision::Start,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +174,17 @@ mod tests {
             value(&plan.env, "XDEBUG_CONFIG"),
             Some("client_host=host.docker.internal client_port=9003")
         );
+    }
+
+    #[test]
+    fn replacing_a_listener_never_starts_before_the_old_adapter_is_gone() {
+        use serde_json::json;
+        let (a, b) = (json!({"port": 1}), json!({"port": 2}));
+        assert_eq!(decide_listen(None, false, &a), ListenDecision::Start);
+        assert_eq!(decide_listen(Some(&a), false, &a), ListenDecision::Reuse);
+        assert_eq!(decide_listen(Some(&a), false, &b), ListenDecision::Replace);
+        // The old adapter still holds the port: queue, whatever was asked.
+        assert_eq!(decide_listen(None, true, &b), ListenDecision::Queue);
+        assert_eq!(decide_listen(None, true, &a), ListenDecision::Queue);
     }
 }

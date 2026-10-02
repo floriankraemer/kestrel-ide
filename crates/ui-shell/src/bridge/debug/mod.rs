@@ -132,6 +132,8 @@ pub struct DebugServiceRust {
     evaluate_history: RefCell<EvaluateHistory>,
     /// The PHP listen session, while there is one (ADR-0069).
     php_listen: RefCell<Option<php::PhpListen>>,
+    /// A listener waiting for the old adapter's shutdown to finish.
+    php_pending: RefCell<Option<php::PendingListen>>,
 }
 
 fn current_project_root() -> Option<PathBuf> {

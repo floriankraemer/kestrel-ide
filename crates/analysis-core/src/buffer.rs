@@ -28,6 +28,19 @@ pub enum BufferStrategy {
     SavedOnly,
 }
 
+impl BufferStrategy {
+    /// Parse a manifest's `buffer` value; absent means `SavedOnly`, the
+    /// only strategy that needs nothing from the tool. The manifest loader
+    /// already rejected unknown spellings, so `None` here means absent.
+    pub fn from_manifest(value: Option<&str>) -> Self {
+        match value {
+            Some("stdin") => Self::Stdin,
+            Some("temp-copy") => Self::TempCopy,
+            _ => Self::SavedOnly,
+        }
+    }
+}
+
 /// `OnType` needs the tool to read something other than the last save;
 /// `SavedOnly` cannot offer that, so the effective trigger silently
 /// becomes `OnSave` — silently to the process, not to the user: the

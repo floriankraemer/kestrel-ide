@@ -586,6 +586,14 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
         vec!["vendor/bin/phpcs", "phpcs.phar", "phpcs"]
     );
     assert_eq!(phpcs.args, vec!["--report=checkstyle"]);
+    assert_eq!(phpcs.buffer.as_deref(), Some("stdin"));
+    assert_eq!(phpcs.languages, vec!["php"]);
+    assert_eq!(phpcs.requires_interpreter.as_deref(), Some("php"));
+    assert_eq!(
+        phpcs.composer_package.as_deref(),
+        Some("squizlabs/php_codesniffer")
+    );
+    assert_eq!(phpstan.composer_package.as_deref(), Some("phpstan/phpstan"));
     assert_eq!(phpcs.output_format, "checkstyle-xml");
     assert_eq!(
         phpcs.severity_map.get("warning").map(String::as_str),

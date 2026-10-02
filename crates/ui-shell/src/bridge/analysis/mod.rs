@@ -101,17 +101,14 @@ fn build_analyzer_rows(
         .rows()
         .iter()
         .map(|row| {
-            let candidates = contributions
-                .iter()
-                .find(|c| c.id == row.id)
+            let contribution = contributions.iter().find(|c| c.id == row.id);
+            let candidates = contribution
                 .map(|c| c.program_candidates.clone())
                 .unwrap_or_default();
-            // Composer-package matching (which package name explains a
-            // tool that resolves to nothing): `analysis_core::php`'s
-            // id->package table (C2), covering the built-in php-tools
-            // analyzers. An id with no entry (a future non-PHP analyzer)
-            // passes an empty slice, same as the pre-C2 stub.
-            let packages: Vec<&str> = analysis_core::composer_package(&row.id)
+            // Which Composer package explains a tool that resolves to
+            // nothing: the manifest's own `composer-package`.
+            let packages: Vec<&str> = contribution
+                .and_then(|c| c.composer_package.as_deref())
                 .into_iter()
                 .collect();
             let status = analysis_core::status(&candidates, root, &packages);

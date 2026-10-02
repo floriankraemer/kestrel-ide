@@ -210,6 +210,55 @@ pub struct AnalyzerContribution {
     /// `analysis-core` parses the value side into its own `Severity`.
     #[serde(default, rename = "severity-map")]
     pub severity_map: BTreeMap<String, String>,
+    /// Language ids (`"php"`) whose files this analyzer checks on type or
+    /// save. Empty means project-wide runs only: no per-file trigger ever
+    /// selects it.
+    #[serde(default)]
+    pub languages: Vec<String>,
+    /// Arguments for a single-file run, placed after [`Self::args`]. A
+    /// `{file}` placeholder is replaced by the file's path; when no
+    /// argument contains it (and [`Self::buffer`] is not `"stdin"`) the
+    /// path is appended instead.
+    #[serde(default, rename = "file-args")]
+    pub file_args: Vec<String>,
+    /// How the tool sees an unsaved buffer: `"stdin"`, `"temp-copy"` or
+    /// `"saved-only"` (the default when absent). Unknown strings are
+    /// rejected at load time; `analysis-core::BufferStrategy` is the only
+    /// crate that interprets the value.
+    #[serde(default)]
+    pub buffer: Option<String>,
+    /// The Composer package that installs this tool, so detection can say
+    /// "declared but not installed" (`phpstan/phpstan`).
+    #[serde(default, rename = "composer-package")]
+    pub composer_package: Option<String>,
+    /// The interpreter the program needs to run under. Only `"php"` is
+    /// known; the host then runs the tool through the configured PHP
+    /// binary when the program is a `.phar` or not executable.
+    #[serde(default, rename = "requires-interpreter")]
+    pub requires_interpreter: Option<String>,
+}
+
+/// Interpreters a contribution may name in `requires-interpreter`.
+const KNOWN_INTERPRETERS: &[&str] = &["php"];
+
+/// Shared load-time check for the two process-launch contributions'
+/// `composer-package` / `requires-interpreter` fields.
+fn check_tool_package_and_interpreter(
+    point: &'static str,
+    composer_package: Option<&str>,
+    requires_interpreter: Option<&str>,
+) -> Result<(), LoadErrorKind> {
+    if composer_package.is_some_and(|p| p.trim().is_empty()) {
+        return Err(LoadErrorKind::EmptyField("composer-package"));
+    }
+    if let Some(interpreter) = requires_interpreter {
+        if !KNOWN_INTERPRETERS.contains(&interpreter) {
+            return Err(LoadErrorKind::MalformedManifest(format!(
+                "{point}.requires-interpreter `{interpreter}` must be one of `php`"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// One test framework a plugin offers (the PHP tooling plan's D1).
@@ -294,6 +343,14 @@ pub struct TestFrameworkContribution {
     /// matches zero tests instead of the intended one).
     #[serde(default, rename = "filter-dialect")]
     pub filter_dialect: Option<String>,
+    /// The Composer package that installs this framework
+    /// (`phpunit/phpunit`); same meaning as
+    /// [`AnalyzerContribution::composer_package`].
+    #[serde(default, rename = "composer-package")]
+    pub composer_package: Option<String>,
+    /// Same meaning as [`AnalyzerContribution::requires_interpreter`].
+    #[serde(default, rename = "requires-interpreter")]
+    pub requires_interpreter: Option<String>,
 }
 
 /// One build tool a plugin offers (the jvm-build-tools plan's A1).
@@ -742,6 +799,22 @@ impl PluginManifest {
                 "contributes.analyzers.output-format",
                 &analyzer.output_format,
             )?;
+            for language in &analyzer.languages {
+                non_empty("contributes.analyzers.languages", language)?;
+            }
+            if let Some(buffer) = &analyzer.buffer {
+                if !matches!(buffer.as_str(), "stdin" | "temp-copy" | "saved-only") {
+                    return Err(LoadErrorKind::MalformedManifest(format!(
+                        "contributes.analyzers.buffer `{buffer}` must be one of `stdin`, \
+                         `temp-copy`, `saved-only`"
+                    )));
+                }
+            }
+            check_tool_package_and_interpreter(
+                "contributes.analyzers",
+                analyzer.composer_package.as_deref(),
+                analyzer.requires_interpreter.as_deref(),
+            )?;
         }
         check_unique(
             ContributionPoint::Analyzers,
@@ -785,6 +858,11 @@ impl PluginManifest {
             non_empty(
                 "contributes.test-frameworks.output-format",
                 &framework.output_format,
+            )?;
+            check_tool_package_and_interpreter(
+                "contributes.test-frameworks",
+                framework.composer_package.as_deref(),
+                framework.requires_interpreter.as_deref(),
             )?;
             if let Some(dialect) = &framework.filter_dialect {
                 non_empty("contributes.test-frameworks.filter-dialect", dialect)?;

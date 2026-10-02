@@ -13,6 +13,8 @@ use std::collections::HashMap;
 use diagnostics_core::Severity;
 use plugin_api::AnalyzerContribution;
 
+use crate::buffer::BufferStrategy;
+
 /// When an analyzer runs.
 ///
 /// Mirrors the plan's three triggers. `OnType` and `OnSave` analyze one
@@ -43,6 +45,13 @@ pub struct AnalyzerDef {
     pub program_candidates: Vec<String>,
     pub args: Vec<String>,
     pub output_format: String,
+    /// Language ids this analyzer checks per file; empty = project runs only.
+    pub languages: Vec<String>,
+    /// Arguments (and `{file}` placeholder) for a single-file run.
+    pub file_args: Vec<String>,
+    pub buffer: BufferStrategy,
+    /// `Some("php")` when the program must run under the PHP interpreter.
+    pub requires_interpreter: Option<String>,
     severities: HashMap<String, Severity>,
 }
 
@@ -61,6 +70,10 @@ impl AnalyzerDef {
             program_candidates: contribution.program_candidates.clone(),
             args: contribution.args.clone(),
             output_format: contribution.output_format.clone(),
+            languages: contribution.languages.clone(),
+            file_args: contribution.file_args.clone(),
+            buffer: BufferStrategy::from_manifest(contribution.buffer.as_deref()),
+            requires_interpreter: contribution.requires_interpreter.clone(),
             severities,
         }
     }
@@ -99,6 +112,11 @@ mod tests {
             severity_map: [("error".to_string(), "error".to_string())]
                 .into_iter()
                 .collect(),
+            languages: vec![],
+            file_args: vec![],
+            buffer: None,
+            composer_package: None,
+            requires_interpreter: None,
         }
     }
 
@@ -115,6 +133,26 @@ mod tests {
             def.severity_for("whatever-this-tool-calls-it"),
             Severity::Warning
         );
+    }
+
+    #[test]
+    fn file_run_fields_carry_over_with_the_buffer_parsed() {
+        let mut c = contribution();
+        c.languages = vec!["php".into()];
+        c.file_args = vec!["--stdin-path={file}".into(), "-".into()];
+        c.buffer = Some("stdin".into());
+        c.requires_interpreter = Some("php".into());
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(def.languages, vec!["php"]);
+        assert_eq!(def.file_args, vec!["--stdin-path={file}", "-"]);
+        assert_eq!(def.buffer, BufferStrategy::Stdin);
+        assert_eq!(def.requires_interpreter.as_deref(), Some("php"));
+    }
+
+    #[test]
+    fn an_absent_buffer_means_saved_only() {
+        let def = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(def.buffer, BufferStrategy::SavedOnly);
     }
 
     #[test]

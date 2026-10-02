@@ -184,6 +184,11 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            languages: vec![],
+            file_args: vec![],
+            buffer: None,
+            composer_package: None,
+            requires_interpreter: None,
         })
     }
 

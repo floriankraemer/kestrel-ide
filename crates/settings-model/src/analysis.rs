@@ -164,6 +164,11 @@ mod tests {
             args: vec![],
             output_format: "checkstyle-xml".into(),
             severity_map: Default::default(),
+            languages: vec![],
+            file_args: vec![],
+            buffer: None,
+            composer_package: None,
+            requires_interpreter: None,
         }
     }
 

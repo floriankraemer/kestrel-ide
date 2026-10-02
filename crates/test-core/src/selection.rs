@@ -70,6 +70,8 @@ mod tests {
             requires_toolchain: None,
             report_glob: None,
             filter_dialect: None,
+            composer_package: None,
+            requires_interpreter: None,
         }
     }
 

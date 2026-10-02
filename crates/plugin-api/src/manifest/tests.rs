@@ -503,6 +503,99 @@ fn duplicate_language_server_ids_in_one_manifest_are_rejected() {
 }
 
 #[test]
+fn an_analyzer_contribution_reads_the_file_run_and_composer_fields() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "phpcs"
+            name = "PHPCS"
+            program-candidates = ["phpcs"]
+            output-format = "checkstyle-xml"
+            languages = ["php"]
+            file-args = ["--stdin-path={file}", "-"]
+            buffer = "stdin"
+            composer-package = "squizlabs/php_codesniffer"
+            requires-interpreter = "php"
+            "#,
+    ))
+    .expect("valid");
+    let a = &manifest.contributes.analyzers[0];
+    assert_eq!(a.languages, vec!["php"]);
+    assert_eq!(a.file_args, vec!["--stdin-path={file}", "-"]);
+    assert_eq!(a.buffer.as_deref(), Some("stdin"));
+    assert_eq!(
+        a.composer_package.as_deref(),
+        Some("squizlabs/php_codesniffer")
+    );
+    assert_eq!(a.requires_interpreter.as_deref(), Some("php"));
+}
+
+#[test]
+fn an_unknown_analyzer_buffer_strategy_is_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            output-format = "checkstyle-xml"
+            buffer = "carrier-pigeon"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
+fn an_unknown_interpreter_is_rejected_on_analyzers_and_test_frameworks() {
+    let analyzer = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            output-format = "checkstyle-xml"
+            requires-interpreter = "ruby"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(analyzer, LoadErrorKind::MalformedManifest(_)));
+    let framework = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.test-frameworks]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            requires-interpreter = "ruby"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(framework, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
+fn a_test_framework_reads_composer_package_and_interpreter() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            composer-package = "phpunit/phpunit"
+            requires-interpreter = "php"
+            "#,
+    ))
+    .expect("valid");
+    let f = &manifest.contributes.test_frameworks[0];
+    assert_eq!(f.composer_package.as_deref(), Some("phpunit/phpunit"));
+    assert_eq!(f.requires_interpreter.as_deref(), Some("php"));
+}
+
+#[test]
 fn an_analyzer_contribution_round_trips() {
     let manifest = PluginManifest::from_toml_str(&with(
         r#"

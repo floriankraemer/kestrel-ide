@@ -37,23 +37,6 @@ pub const PHPCS_CONFIG_CANDIDATES: &[&str] = &[
 /// shadow a developer's own untracked override.
 pub const PHPUNIT_CONFIG_CANDIDATES: &[&str] = &["phpunit.xml", "phpunit.xml.dist"];
 
-/// The Composer package an analyzer id corresponds to, for
-/// [`crate::status`]'s `composer_packages` argument — the table B8 left as
-/// a stub (`analyzer_rows()` passed `&[]`, so a declared-but-uninstalled
-/// tool reported `NotDetected` rather than saying why).
-pub fn composer_package(analyzer_id: &str) -> Option<&'static str> {
-    match analyzer_id {
-        "phpstan" => Some("phpstan/phpstan"),
-        "phpcs" => Some("squizlabs/php_codesniffer"),
-        // Not just an analyzer id: `test-core`'s D7 caller looks this up
-        // for `phpunit` too, since it is the same "declared but not
-        // installed" question `AnalyzerStatus` already answers for a
-        // linter, applied to a test framework's own program candidates.
-        "phpunit" => Some("phpunit/phpunit"),
-        _ => None,
-    }
-}
-
 /// Does `program` need to be run through a PHP binary rather than executed
 /// directly?
 ///
@@ -107,26 +90,6 @@ pub fn invocation(program: &Path, php_binary: Option<&str>) -> (PathBuf, Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn phpstan_maps_to_its_composer_package() {
-        assert_eq!(composer_package("phpstan"), Some("phpstan/phpstan"));
-    }
-
-    #[test]
-    fn phpcs_maps_to_its_composer_package() {
-        assert_eq!(composer_package("phpcs"), Some("squizlabs/php_codesniffer"));
-    }
-
-    #[test]
-    fn phpunit_maps_to_its_composer_package() {
-        assert_eq!(composer_package("phpunit"), Some("phpunit/phpunit"));
-    }
-
-    #[test]
-    fn an_unknown_analyzer_id_has_no_composer_package() {
-        assert_eq!(composer_package("eslint"), None);
-    }
 
     #[test]
     fn a_phar_always_needs_the_php_prefix() {

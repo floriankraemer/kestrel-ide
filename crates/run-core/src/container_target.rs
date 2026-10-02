@@ -10,8 +10,7 @@
 //! anything starts.
 
 use app_config::ContainerSettings;
-use container_core::connection::{ConnectionConfig, Engine, Invocation};
-use container_core::target::{self, SimpleLaunch, TargetError, WrappedLaunch};
+use container_core::target::{self, invocation_for, SimpleLaunch, TargetError, WrappedLaunch};
 
 use crate::before_launch::BeforeLaunchTask;
 use crate::config::{LaunchSpec, RunConfig};
@@ -66,23 +65,6 @@ fn find_target<'a>(
     target_id: &str,
 ) -> Option<&'a app_config::ContainerTargetSetting> {
     containers.targets.iter().find(|t| t.id == target_id)
-}
-
-fn invocation_for(containers: &ContainerSettings, connection_id: &str) -> Invocation {
-    let Some(row) = containers
-        .connections
-        .iter()
-        .find(|c| c.id == connection_id)
-    else {
-        return ConnectionConfig {
-            engine: Engine::Docker,
-            kind: container_core::connection::ConnectionKind::Auto,
-            executable: None,
-            compose_executable: None,
-        }
-        .invocation();
-    };
-    ConnectionConfig::from_setting(row).invocation()
 }
 
 /// Check `config.run_on` ahead of launching, the same role

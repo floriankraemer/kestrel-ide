@@ -19,32 +19,12 @@ use app_config::container_run::{
 use app_config::ContainerSettings;
 use container_core::connection::{ConnectionConfig, Engine, Invocation};
 use container_core::run_config;
+use container_core::target::invocation_for;
 
 use crate::before_launch::BeforeLaunchTask;
 use crate::config::{ConsoleKind, LaunchSpec, RunConfig};
 use crate::macros::{self, MacroContext};
 use crate::toolchain::ToolCommand;
-
-/// The [`Invocation`] `connection_id` names, or a bare local `docker` when
-/// it is blank or matches no configured connection — never a hard failure:
-/// a container run configuration with no server picked yet should still
-/// preview and attempt a command rather than refuse to launch.
-fn invocation_for(containers: &ContainerSettings, connection_id: &str) -> Invocation {
-    let Some(row) = containers
-        .connections
-        .iter()
-        .find(|c| c.id == connection_id)
-    else {
-        return ConnectionConfig {
-            engine: Engine::Docker,
-            kind: container_core::connection::ConnectionKind::Auto,
-            executable: None,
-            compose_executable: None,
-        }
-        .invocation();
-    };
-    ConnectionConfig::from_setting(row).invocation()
-}
 
 fn e(value: &str, context: &MacroContext) -> String {
     macros::expand(value, context)

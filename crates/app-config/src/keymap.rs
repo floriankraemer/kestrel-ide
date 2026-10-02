@@ -801,6 +801,13 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // PHP parity plan I8: the Composer dock. Unbound like `view.build`.
+    ActionDef {
+        id: "view.composer",
+        label: "Composer",
+        category: "View",
+        default_shortcut: "",
+    },
     // database-tools-plan F2.5: the Database dock. Unbound like
     // `view.build`.
     ActionDef {

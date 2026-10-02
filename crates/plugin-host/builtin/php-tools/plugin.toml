@@ -18,6 +18,13 @@ api_version = 1
 license = "MIT"
 description = "PHPStan, PHP_CodeSniffer and PHPUnit for PHP projects."
 
+# The Composer dock (PHP parity plan, I8). `composer` is the id
+# `tool_window_factories.cpp` has a native host for.
+[[contributes.tool-windows]]
+id = "composer"
+title = "Composer"
+area = "right"
+
 [[contributes.analyzers]]
 id = "phpstan"
 name = "PHPStan"

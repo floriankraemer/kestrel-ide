@@ -551,6 +551,8 @@ fn main() {
         // menu action, Q_OBJECT-free like the pages/menus above.
         .cpp_file("cpp/analysis_settings_page.cpp")
         .cpp_file("cpp/analysis_menu.cpp")
+        // PHP parity plan I8: the Composer dock, Q_OBJECT-free as well.
+        .cpp_file("cpp/composer_panel.cpp")
         // PHP parity plan I7: the Settings > PHP page, Q_OBJECT-free too.
         .cpp_file("cpp/php_settings_page.cpp")
         // The jvm-build-tools plan's B5: the Build Tools settings page,

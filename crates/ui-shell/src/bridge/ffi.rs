@@ -33,7 +33,7 @@ use crate::bridge::editor_ops::EditorOpsRust;
 use crate::bridge::file_associations::FileAssociationsEditorRust;
 use crate::bridge::icons::IconProviderRust;
 use crate::bridge::language::LanguageServiceRust;
-use crate::bridge::php::PhpSettingsEditorRust;
+use crate::bridge::php::{ComposerServiceRust, PhpSettingsEditorRust};
 use crate::bridge::plugins::PluginCatalogRust;
 use crate::bridge::preview::PreviewProviderRust;
 use crate::bridge::run::{RunConfigEditorRust, RunServiceRust};
@@ -6209,6 +6209,53 @@ mod ffi {
     }
 
     impl cxx_qt::Threading for PhpSettingsEditor {}
+
+    /// One row of the Composer tool window (I8): `kind` is `script`,
+    /// `package` or `dev-package`; `detail` is the script's commands or the
+    /// package's installed version (else its constraint).
+    struct FfiComposerRow {
+        kind: QString,
+        name: QString,
+        detail: QString,
+        /// Package rows: whether `composer.lock` pins a version.
+        installed: bool,
+    }
+
+    /// What `ComposerService::actionConfig` answers: a refusal (`result`)
+    /// or the run configuration to launch.
+    #[derive(Default)]
+    struct FfiComposerAction {
+        result: FfiResult,
+        config: FfiRunConfig,
+    }
+
+    extern "RustQt" {
+        /// The Composer tool window's model (I8): rows from `composer.json`
+        /// and `composer.lock`, and the run configuration of each action.
+        /// Every action runs in the Run console through
+        /// `RunService::runTemporary`.
+        #[qobject]
+        type ComposerService = super::ComposerServiceRust;
+
+        #[qinvokable]
+        #[cxx_name = "hasComposerJson"]
+        fn has_composer_json(self: &ComposerService) -> bool;
+
+        /// Re-read from disk on every call; the files are small.
+        #[qinvokable]
+        fn rows(self: &ComposerService) -> Vec<FfiComposerRow>;
+
+        /// `action` is one of `php_core::composer_view::ComposerAction::parse`'s
+        /// wire names; `argument` is a package or script name when the
+        /// action takes one.
+        #[qinvokable]
+        #[cxx_name = "actionConfig"]
+        fn action_config(
+            self: &ComposerService,
+            action: &QString,
+            argument: &QString,
+        ) -> FfiComposerAction;
+    }
 
     /// A Build Tools dock row's kind (the jvm-build-tools plan's B1/B2) —
     /// `jvm_build_core::view::NodeKind` crossed the seam.

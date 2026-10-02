@@ -2,6 +2,7 @@
 
 #include "build_tools_panel.h"
 #include "build_tools_wiring.h"
+#include "composer_panel.h"
 #include "containers_panel.h"
 #include "database_panel.h"
 #include "database_results_panel.h"
@@ -10,6 +11,7 @@
 #include "keymap_page.h"
 
 #include "DockAreaWidget.h"
+#include "DockManager.h"
 
 #include <QAction>
 #include <QDebug>
@@ -47,6 +49,14 @@ ContributedToolWindows buildContributedToolWindows(
        editorTabs](ads::CDockAreaWidget *relativeTo) -> QWidget * {
           return wireBuildToolsDock(dockManager, docks, relativeTo, editorDock, buildToolsService,
                                     runService, treeModel, editorTabs);
+      });
+    factories.insert(
+      QStringLiteral("composer"),
+      [dockManager, docks, runService, treeModel](ads::CDockAreaWidget *relativeTo) -> QWidget * {
+          // Stateless model, owned by the dock manager like the panel.
+          auto *composerService = new ComposerService(dockManager);
+          return buildComposerDock(dockManager, docks, relativeTo, composerService, runService,
+                                   treeModel);
       });
     factories.insert(
       QStringLiteral("containers"),
@@ -112,6 +122,9 @@ void wireContributedToolWindowMenus(AppSettings *appSettings, QHash<QString, QAc
         QAction *action = nullptr;
         if (row.id == QStringLiteral("buildTools")) {
             action = registerAction(viewMenu, QStringLiteral("view.buildTools"), row.title,
+                                    appSettings, actions);
+        } else if (row.id == QStringLiteral("composer")) {
+            action = registerAction(viewMenu, QStringLiteral("view.composer"), row.title,
                                     appSettings, actions);
         } else if (row.id == QStringLiteral("containers")) {
             action = registerAction(viewMenu, QStringLiteral("view.containers"), row.title,

@@ -7,6 +7,8 @@
 //! the key goes to `secret-store` on commit and never into a
 //! `settings.toml` that may be committed (ADR-0068).
 
+mod composer;
+
 use std::cell::RefCell;
 use std::pin::Pin;
 
@@ -18,6 +20,8 @@ use settings_model::php::PhpForm;
 
 use crate::bridge::errors;
 use crate::bridge::ffi::{self, FfiResult};
+
+pub use composer::ComposerServiceRust;
 
 /// A licence-key edit waiting for the dialog's OK.
 #[derive(Debug, Clone, PartialEq, Eq)]

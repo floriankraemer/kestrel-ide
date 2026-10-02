@@ -58,6 +58,8 @@ pub struct TestServiceRust {
     /// The filter a gutter Debug click chose, run once the PHP listener is
     /// up (T3): Xdebug does not retry, so the run starts after it.
     pending_debug: RefCell<Option<String>>,
+    /// The last coverage run's report, local paths (T5).
+    coverage: RefCell<Option<test_core::coverage::Coverage>>,
     store: SharedDiagnostics,
 }
 
@@ -262,7 +264,7 @@ impl ffi::TestService {
     }
 
     pub fn run_all(self: Pin<&mut Self>) -> ffi::FfiResult {
-        self.start(None, Vec::new())
+        self.start(None, Vec::new(), false)
     }
 
     pub fn run_failed(self: Pin<&mut Self>) -> ffi::FfiResult {
@@ -270,18 +272,19 @@ impl ffi::TestService {
         if ids.is_empty() {
             return errors::failure(errors::CODE_REFUSED, "no failed tests to rerun");
         }
-        self.start(Some(RerunSelection::Failed(ids)), Vec::new())
+        self.start(Some(RerunSelection::Failed(ids)), Vec::new(), false)
     }
 
     pub fn run_node(self: Pin<&mut Self>, node_id: &QString) -> ffi::FfiResult {
         let id = test_core::TestId(node_id.to_string());
-        self.start(Some(RerunSelection::Node(id)), Vec::new())
+        self.start(Some(RerunSelection::Node(id)), Vec::new(), false)
     }
 
     fn start(
         mut self: Pin<&mut Self>,
         selection: Option<RerunSelection>,
-        env: Vec<(String, String)>,
+        mut env: Vec<(String, String)>,
+        with_coverage: bool,
     ) -> ffi::FfiResult {
         if !self.runs.borrow().is_empty() {
             return errors::failure(errors::CODE_REFUSED, "a test run is already in progress");
@@ -356,6 +359,18 @@ impl ffi::TestService {
             framework.filter_template.as_deref(),
             &patterns,
         );
+        if with_coverage {
+            if framework.coverage_args.is_empty() {
+                return errors::failure(
+                    errors::CODE_REFUSED,
+                    "this test framework cannot collect coverage",
+                );
+            }
+            args.extend(test_core::coverage::args(&framework.coverage_args));
+            env.extend(test_core::coverage::env());
+            // A report from an earlier run must never pass for this one's.
+            let _ = std::fs::remove_file(root.join(test_core::coverage::REPORT_PATH));
+        }
         // A PHP framework runs under the configured interpreter, which is
         // what makes it run inside that interpreter's container.
         let (program, args) = match framework.requires_interpreter.as_deref() {
@@ -400,8 +415,23 @@ impl ffi::TestService {
                 report_glob.as_deref(),
                 &mut sink,
             );
+            let coverage = with_coverage.then(|| {
+                let xml = std::fs::read_to_string(root.join(test_core::coverage::REPORT_PATH));
+                xml.ok()
+                    .and_then(|xml| test_core::coverage::parse_clover(&xml).ok())
+                    .map(|coverage| coverage.map_paths_from(&host))
+            });
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
+                if let Some(coverage) = coverage {
+                    if coverage.is_none() {
+                        service.as_mut().test_output_appended(QString::from(
+                            "\nNo coverage report was written. Is Xdebug (coverage mode) or PCOV installed?\n",
+                        ));
+                    }
+                    *service.coverage.borrow_mut() = coverage;
+                    service.as_mut().coverage_changed();
+                }
                 let (ok, message) = match result {
                     Ok(_) => (true, String::new()),
                     Err(test_core::RunFailure::NotFound) => {

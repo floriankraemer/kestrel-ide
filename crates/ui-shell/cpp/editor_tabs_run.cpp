@@ -44,6 +44,9 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEdi
 void wireTestGutter(TestService *testService, DebugService *debugService, EditorTabs *editorTabs)
 {
     editorTabs->setTestService(testService);
+    // A coverage run (or clearing it) repaints every open editor's stripes.
+    QObject::connect(testService, &TestService::coverageChanged, editorTabs,
+                      [editorTabs]() { editorTabs->refreshRunMarkers(); });
     // A debugged test starts once `DebugService` has the listener up.
     QObject::connect(debugService, &DebugService::phpTestLaunchRequested, testService,
                       [testService](const QString &envJson) { testService->runPendingWithEnv(envJson); });
@@ -140,6 +143,17 @@ void EditorTabs::refreshRunMarker(CodeEditor *editor)
         }
     }
     editor->setRunLines(lines);
+    QSet<int> covered;
+    QSet<int> uncovered;
+    if (testService_ != nullptr && !path.isEmpty()) {
+        for (const quint32 line : testService_->coveredLines(path)) {
+            covered.insert(static_cast<int>(line));
+        }
+        for (const quint32 line : testService_->uncoveredLines(path)) {
+            uncovered.insert(static_cast<int>(line));
+        }
+    }
+    editor->setCoverageLines(covered, uncovered);
     QStringList lineNumbers;
     for (const int line : lines) {
         lineNumbers << QString::number(line);
@@ -241,11 +255,14 @@ void EditorTabs::showTestMarkerMenu(CodeEditor *editor, const QString &path, int
     QMenu menu(editor);
     QAction *run = menu.addAction(tr("Run '%1'").arg(name));
     QAction *debug = debugService_ != nullptr ? menu.addAction(tr("Debug '%1'").arg(name)) : nullptr;
+    QAction *coverage = menu.addAction(tr("Run '%1' with Coverage").arg(name));
     e2eMarkMenuActions(&menu, "run_gutter_menu_action");
     QAction *chosen = menu.exec(QCursor::pos());
     FfiResult result;
     if (chosen == run) {
         result = testService_->runMarker(path, text, testLine);
+    } else if (chosen == coverage) {
+        result = testService_->runMarkerWithCoverage(path, text, testLine);
     } else if (debug != nullptr && chosen == debug) {
         result = testService_->prepareDebugMarker(path, text, testLine);
         if (result.code == 0) {

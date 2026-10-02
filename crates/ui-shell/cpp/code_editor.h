@@ -518,6 +518,11 @@ public:
     void setRunLines(const QSet<int> &lines);
     bool runnable() const { return !runLines_.isEmpty(); }
 
+    // PHP parity T5: the lines the last coverage run executed and the
+    // executable ones it missed, as stripes at the gutter's right edge.
+    // `TestService` decides which is which; the widget only paints.
+    void setCoverageLines(const QSet<int> &covered, const QSet<int> &uncovered);
+
     // F3-18: per-line blame text, off by default (vcs.annotate toggles it).
     // Replaces whatever was set before — the caller re-sends the whole file's
     // annotations on every `blameReady`, same as setChangeMarkers.
@@ -802,6 +807,8 @@ private:
     // R1-7/C6: set from RunService::runLines; a non-empty set widens the
     // gutter by one icon column and puts a Run triangle on each line.
     QSet<int> runLines_;
+    QSet<int> coveredLines_;
+    QSet<int> uncoveredLines_;
     // D2-5: breakpoints in this file, and the suspended line.
     QSet<int> breakpointLines_;
     int executionLine_ = -1;

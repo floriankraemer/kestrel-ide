@@ -847,6 +847,13 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // PHP parity plan T5: opens the Coverage dock. Unbound like `view.tests`.
+    ActionDef {
+        id: "view.coverage",
+        label: "Coverage",
+        category: "View",
+        default_shortcut: "",
+    },
     // The PHP tooling plan's B9: runs every enabled, installed analyzer
     // against the whole open project via `AnalysisService::inspectProject`.
     ActionDef {

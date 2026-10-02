@@ -6741,6 +6741,21 @@ mod ffi {
         Skipped,
     }
 
+    /// One row of the Coverage dock (PHP parity plan T5): a file or a
+    /// directory with the executable lines beneath it.
+    struct FfiCoverageRow {
+        /// Relative to the project root, `/`-separated; empty for the root.
+        path: QString,
+        #[cxx_name = "absPath"]
+        abs_path: QString,
+        #[cxx_name = "isFile"]
+        is_file: bool,
+        covered: u32,
+        total: u32,
+        /// 0 to 100, from `test_core::coverage::CoverageRow::percent`.
+        percent: f64,
+    }
+
     /// One row of the Tests dock's tree (D4/D5): a flattened
     /// `test_core::TestNode`, parent-qualified rather than nested, since a
     /// `QTreeWidget` builds its own hierarchy from `parentId` the same way
@@ -6866,6 +6881,46 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "runPendingWithEnv"]
         fn run_pending_with_env(self: Pin<&mut TestService>, env_json: &QString) -> FfiResult;
+
+        /// Run the whole project's tests collecting coverage (T5).
+        #[qinvokable]
+        #[cxx_name = "runAllWithCoverage"]
+        fn run_all_with_coverage(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Run the marker's test collecting coverage (T5).
+        #[qinvokable]
+        #[cxx_name = "runMarkerWithCoverage"]
+        fn run_marker_with_coverage(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
+        /// 0-based lines of `path` the last coverage run executed.
+        #[qinvokable]
+        #[cxx_name = "coveredLines"]
+        fn covered_lines(self: &TestService, path: &QString) -> Vec<u32>;
+
+        /// 0-based executable lines of `path` the last coverage run missed.
+        #[qinvokable]
+        #[cxx_name = "uncoveredLines"]
+        fn uncovered_lines(self: &TestService, path: &QString) -> Vec<u32>;
+
+        /// The Coverage dock's rows, parents before children.
+        #[qinvokable]
+        #[cxx_name = "coverageRows"]
+        fn coverage_rows(self: &TestService) -> Vec<FfiCoverageRow>;
+
+        /// Forget the last coverage run.
+        #[qinvokable]
+        #[cxx_name = "clearCoverage"]
+        fn clear_coverage(self: Pin<&mut TestService>);
+
+        /// A coverage run delivered (or `clearCoverage` dropped) its report.
+        #[qsignal]
+        #[cxx_name = "coverageChanged"]
+        fn coverage_changed(self: Pin<&mut TestService>);
 
         /// Stop the run in progress, if any.
         #[qinvokable]

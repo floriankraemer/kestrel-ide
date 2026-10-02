@@ -1,5 +1,6 @@
 #include "tests_panel.h"
 
+#include "coverage_panel.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "theme.h"
@@ -430,11 +431,12 @@ TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            ads::CDockAreaWidget *relativeTo, TestService *testService,
                            TestsPanel::OpenAt openAt)
 {
-    auto *panel = new TestsPanel(testService, std::move(openAt), dockManager);
+    auto *panel = new TestsPanel(testService, openAt, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Tests"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("tests"), dock, ads::CenterDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("tests"));
+    buildCoverageDock(dockManager, docks, relativeTo, testService, openAt);
     // E2E only: same reasoning as `containers_panel.cpp`'s identical
     // `visibilityChanged` connect on its own dock — the toolbar has no
     // real geometry until this dock is actually on screen and laid out.

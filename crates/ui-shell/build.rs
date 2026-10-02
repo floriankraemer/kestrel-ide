@@ -587,6 +587,8 @@ fn main() {
         // `build_panel.cpp` (plain QWidget, lambdas and pointer-to-member
         // connects), so only the source is listed.
         .cpp_file("cpp/tests_panel.cpp")
+        // T5: the Coverage dock. No Q_OBJECT, so only the source is listed.
+        .cpp_file("cpp/coverage_panel.cpp")
         .cpp_file("cpp/tests_menu.cpp")
         // The jvm-build-tools plan's B1-B6: the Build Tools dock and the
         // reusable editor banner both declare Q_OBJECT (they connect to

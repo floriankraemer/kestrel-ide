@@ -183,6 +183,36 @@ fn a_server_that_dies_mid_session_is_respawned() {
         .expect("the respawned server answers");
     assert_eq!(echoed["tag"], "after-respawn");
 }
+
+/// The respawned process has seen no document, so opening the same one again
+/// must reach it — a `didOpen` the crashed process already got is not
+/// "already sent".
+#[test]
+fn a_respawned_server_is_sent_didopen_for_documents_again() {
+    let (manager, rx) = LspManager::new("file:///workspace");
+    manager.start(&dying_stub_config()).expect("stub starts");
+    let uri = "file:///workspace/a.stub";
+    manager.did_open(uri, LANG, "boom\n").expect("didOpen");
+    wait_for(&rx, "diagnostics", |e| match e {
+        LspEvent::Diagnostics { .. } => Some(()),
+        _ => None,
+    });
+    wait_for(&rx, "ServerReady after respawn", |e| match e {
+        LspEvent::ServerReady { restarts: 1, .. } => Some(()),
+        _ => None,
+    });
+
+    manager
+        .did_open(uri, LANG, "boom\n")
+        .expect("didOpen again");
+
+    // The new process answers a didOpen with diagnostics; it only does if
+    // the notification was actually sent.
+    wait_for(&rx, "diagnostics from the respawned server", |e| match e {
+        LspEvent::Diagnostics { .. } => Some(()),
+        _ => None,
+    });
+}
 /// The whole L2 path minus Qt: a real child server publishes diagnostics,
 /// the event lands in the store the adapter keeps, and the store yields the
 /// rows the Problems panel renders.

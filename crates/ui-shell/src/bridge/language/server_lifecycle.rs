@@ -133,6 +133,34 @@ impl ffi::LanguageService {
         }
     }
 
+    /// A respawned server process has seen none of the open documents. Send
+    /// each its live text again; `lsp_core` forgot what the crashed process
+    /// had (`did_open` reaches only servers that have not been told), so
+    /// servers that kept running are not sent a second `didOpen`.
+    pub(super) fn reopen_documents_for(mut self: Pin<&mut Self>, language_id: &str) {
+        let docs: Vec<(String, String)> = {
+            let session = self.session.borrow();
+            self.open_docs
+                .borrow()
+                .iter()
+                .filter(|(_, open_for)| open_for.as_str() == language_id)
+                .filter_map(|(path, _)| {
+                    let text = session.content_for_path(std::path::Path::new(path))?;
+                    Some((lsp_core::uri_from_path(path), text))
+                })
+                .collect()
+        };
+        if docs.is_empty() {
+            return;
+        }
+        let language_id = language_id.to_string();
+        self.as_mut().push_job(move |manager| {
+            for (uri, text) in &docs {
+                let _ = manager.did_open(uri, &language_id, text);
+            }
+        });
+    }
+
     pub fn restart_server(mut self: Pin<&mut Self>, server_id: &QString) {
         let server_id = server_id.to_string();
         let config = self

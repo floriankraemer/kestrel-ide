@@ -1335,6 +1335,7 @@ impl ffi::LanguageService {
             lsp_core::LspEvent::ServerReady {
                 language_id,
                 server_id,
+                restarts,
                 trigger_characters,
                 signature_triggers,
                 completion_resolve_supported,
@@ -1362,6 +1363,9 @@ impl ffi::LanguageService {
                     QString::default(),
                     0,
                 );
+                if restarts > 0 {
+                    self.as_mut().reopen_documents_for(&language_id);
+                }
             }
             lsp_core::LspEvent::ServerExited {
                 server_id,

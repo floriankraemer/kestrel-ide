@@ -152,6 +152,59 @@ impl AnalysisDraft {
     }
 }
 
+/// What happened to a file that may warrant a per-file analysis run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileEvent {
+    /// The buffer changed (the caller debounces).
+    Edit,
+    /// The buffer was written to disk.
+    Save,
+}
+
+/// One analyzer that should run for a file event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileJob {
+    /// `AnalyzerContribution::id`.
+    pub analyzer_id: String,
+}
+
+/// Which analyzers fire for `event` on a file of language `language_id`.
+///
+/// An analyzer fires when it is enabled, names the language, and its
+/// effective trigger matches: `OnType` runs on every edit and on save,
+/// `OnSave` only on save, `Manual` never. An analyzer whose manifest
+/// `buffer` is absent or `saved-only` cannot read an unsaved buffer, so a
+/// configured `OnType` is downgraded to `OnSave` (the same rule as
+/// `analysis_core::effective_trigger`, restated here because this crate
+/// does not depend on `analysis-core`).
+pub fn file_jobs(
+    event: FileEvent,
+    language_id: &str,
+    draft: &AnalysisDraft,
+    contributions: &[AnalyzerContribution],
+) -> Vec<FileJob> {
+    contributions
+        .iter()
+        .filter(|c| c.languages.iter().any(|l| l == language_id))
+        .filter_map(|c| {
+            let row = draft.row(&c.id).filter(|row| row.enabled)?;
+            let reads_unsaved = matches!(c.buffer.as_deref(), Some("stdin" | "temp-copy"));
+            let trigger = match row.trigger {
+                Trigger::OnType if !reads_unsaved => Trigger::OnSave,
+                other => other,
+            };
+            let fires = match (event, trigger) {
+                (_, Trigger::Manual) => false,
+                (FileEvent::Edit, trigger) => trigger == Trigger::OnType,
+                (FileEvent::Save, _) => true,
+            };
+            fires.then(|| FileJob {
+                analyzer_id: c.id.clone(),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +277,84 @@ mod tests {
         draft.apply_to(&mut settings);
         assert_eq!(settings.analysis.analyzers.len(), 1);
         assert_eq!(settings.analysis.analyzers[0].id, "phpstan");
+    }
+
+    fn php_analyzer(id: &str, buffer: Option<&str>) -> AnalyzerContribution {
+        AnalyzerContribution {
+            id: id.into(),
+            languages: vec!["php".into()],
+            buffer: buffer.map(String::from),
+            ..phpstan()
+        }
+    }
+
+    fn ids(jobs: Vec<FileJob>) -> Vec<String> {
+        jobs.into_iter().map(|j| j.analyzer_id).collect()
+    }
+
+    fn draft_with(contribs: &[AnalyzerContribution], trigger: Trigger) -> AnalysisDraft {
+        let mut draft = AnalysisDraft::new(&Settings::default(), contribs);
+        for c in contribs {
+            draft.set_trigger(&c.id, trigger);
+        }
+        draft
+    }
+
+    #[test]
+    fn an_edit_fires_only_analyzers_that_can_read_the_unsaved_buffer() {
+        let contribs = [
+            php_analyzer("phpstan", None),
+            php_analyzer("phpcs", Some("stdin")),
+        ];
+        let draft = draft_with(&contribs, Trigger::OnType);
+        let jobs = file_jobs(FileEvent::Edit, "php", &draft, &contribs);
+        assert_eq!(ids(jobs), vec!["phpcs"]);
+    }
+
+    #[test]
+    fn a_save_fires_the_downgraded_saved_only_analyzer_too() {
+        let contribs = [
+            php_analyzer("phpstan", None),
+            php_analyzer("phpcs", Some("stdin")),
+        ];
+        let draft = draft_with(&contribs, Trigger::OnType);
+        let jobs = file_jobs(FileEvent::Save, "php", &draft, &contribs);
+        assert_eq!(ids(jobs), vec!["phpstan", "phpcs"]);
+    }
+
+    #[test]
+    fn an_on_save_analyzer_ignores_edits() {
+        let contribs = [php_analyzer("phpcs", Some("stdin"))];
+        let draft = draft_with(&contribs, Trigger::OnSave);
+        assert!(file_jobs(FileEvent::Edit, "php", &draft, &contribs).is_empty());
+        assert_eq!(
+            ids(file_jobs(FileEvent::Save, "php", &draft, &contribs)),
+            vec!["phpcs"]
+        );
+    }
+
+    #[test]
+    fn a_manual_analyzer_never_fires_per_file() {
+        let contribs = [php_analyzer("phpcs", Some("stdin"))];
+        let draft = draft_with(&contribs, Trigger::Manual);
+        assert!(file_jobs(FileEvent::Edit, "php", &draft, &contribs).is_empty());
+        assert!(file_jobs(FileEvent::Save, "php", &draft, &contribs).is_empty());
+    }
+
+    #[test]
+    fn a_disabled_analyzer_never_fires() {
+        let contribs = [php_analyzer("phpcs", Some("temp-copy"))];
+        let mut draft = draft_with(&contribs, Trigger::OnType);
+        draft.set_enabled("phpcs", false);
+        assert!(file_jobs(FileEvent::Save, "php", &draft, &contribs).is_empty());
+    }
+
+    #[test]
+    fn another_language_or_an_analyzer_without_languages_never_fires() {
+        let contribs = [php_analyzer("phpcs", Some("stdin")), phpstan()];
+        let draft = draft_with(&contribs, Trigger::OnType);
+        assert!(file_jobs(FileEvent::Save, "rust", &draft, &contribs).is_empty());
+        let jobs = file_jobs(FileEvent::Save, "php", &draft, &contribs);
+        assert_eq!(ids(jobs), vec!["phpcs"]);
     }
 }

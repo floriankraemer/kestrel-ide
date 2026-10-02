@@ -31,10 +31,21 @@ fn refused(message: String) -> ffi::FfiCreateResult {
 }
 
 impl ffi::ProjectTreeModel {
-    /// The templates the New menu lists.
+    /// The templates the New menu lists: those of a language the project
+    /// uses (`settings_model::file_templates::is_offered`).
     pub fn file_templates(&self) -> Vec<ffi::FfiFileTemplate> {
+        let root = self.session.borrow().root_path().map(PathBuf::from);
         plugin_host::registry()
             .file_templates()
+            .filter(|(_, template)| {
+                root.as_deref().is_none_or(|root| {
+                    file_templates::is_offered(
+                        template,
+                        |marker| root.join(marker).is_file(),
+                        |extension| project_model::contains_extension(root, extension),
+                    )
+                })
+            })
             .map(|(_, template)| ffi::FfiFileTemplate {
                 id: QString::from(template.id.as_str()),
                 name: QString::from(template.name.as_str()),

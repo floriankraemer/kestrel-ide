@@ -16,6 +16,31 @@ pub struct Vars {
 
 const NAMESPACE_VAR: &str = "${NAMESPACE}";
 
+/// Files whose presence says a project is written in `language`, for the
+/// languages where one exists.
+fn language_markers(language: &str) -> &'static [&'static str] {
+    match language {
+        "php" => &["composer.json"],
+        _ => &[],
+    }
+}
+
+/// Whether the New menu offers `template` in this project: when the project
+/// has one of the language's marker files (`has_file`, relative to the
+/// root) or a file with the template's extension (`has_extension`). A
+/// language with no known marker is always offered — there is no way to
+/// tell it is absent.
+pub fn is_offered(
+    template: &FileTemplateContribution,
+    has_file: impl Fn(&str) -> bool,
+    has_extension: impl Fn(&str) -> bool,
+) -> bool {
+    let markers = language_markers(&template.language);
+    markers.is_empty()
+        || markers.iter().any(|marker| has_file(marker))
+        || has_extension(&template.extension)
+}
+
 /// The name as the template wants it: `name_suffix` appended unless the
 /// name already ends with it, and a typed-in extension removed. A template
 /// that puts the name into code (`${NAME}` in its body) needs a name that
@@ -102,6 +127,30 @@ mod tests {
     }
 
     const BODY: &str = "<?php\n\nnamespace ${NAMESPACE};\n\nclass ${NAME} {}\n// ${DATE} ${YEAR}\n";
+
+    #[test]
+    fn a_php_template_is_offered_only_where_the_project_has_php() {
+        let php = template(BODY, None);
+        let offered = |marker: bool, ext: bool| is_offered(&php, |_| marker, |_| ext);
+        assert!(offered(true, false), "composer.json");
+        assert!(offered(false, true), "a .php file");
+        assert!(!offered(false, false), "a Rust or JS project");
+        let mut other = php;
+        other.language = "toml".into();
+        assert!(is_offered(&other, |_| false, |_| false), "no known marker");
+    }
+
+    #[test]
+    fn the_marker_and_extension_probes_get_the_right_names() {
+        let php = template(BODY, None);
+        assert!(is_offered(&php, |name| name == "composer.json", |_| false));
+        assert!(is_offered(&php, |_| false, |ext| ext == "php"));
+        assert!(!is_offered(
+            &php,
+            |name| name == "package.json",
+            |ext| ext == "js"
+        ));
+    }
 
     #[test]
     fn variables_are_filled_in() {

@@ -772,3 +772,18 @@ fn walk_all_entries_ignores_gitignore_but_honours_its_own_lists() {
         .iter()
         .any(|p| p.starts_with(dir.path().join("excluded"))));
 }
+
+#[test]
+fn contains_extension_finds_a_source_file_but_not_an_ignored_one() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join(".git")).unwrap();
+    fs::write(dir.path().join(".gitignore"), "vendor/\n").unwrap();
+    fs::create_dir_all(dir.path().join("vendor/lib")).unwrap();
+    fs::write(dir.path().join("vendor/lib/a.php"), "").unwrap();
+    fs::write(dir.path().join("main.rs"), "").unwrap();
+    assert!(!contains_extension(dir.path(), "php"));
+    assert!(contains_extension(dir.path(), "rs"));
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/Foo.php"), "").unwrap();
+    assert!(contains_extension(dir.path(), "php"));
+}

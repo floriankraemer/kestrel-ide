@@ -730,6 +730,24 @@ pub fn walk_all_entries(
     entries
 }
 
+/// How deep [`contains_extension`] looks: a project's source sits near its
+/// root, and a flat probe must not walk a monorepo on every New menu.
+const EXTENSION_PROBE_DEPTH: usize = 6;
+
+/// Whether `root` holds a file ending in `.extension` within
+/// [`EXTENSION_PROBE_DEPTH`] levels, honouring `.gitignore` (so `vendor/`
+/// and `node_modules/` do not count). Stops at the first hit.
+pub fn contains_extension(root: &Path, extension: &str) -> bool {
+    ignore::WalkBuilder::new(root)
+        .max_depth(Some(EXTENSION_PROBE_DEPTH))
+        .build()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry.path().extension().and_then(|e| e.to_str()) == Some(extension)
+                && entry.file_type().is_some_and(|t| t.is_file())
+        })
+}
+
 /// Persist `project_path` as the last-opened project: one plain-text line
 /// in `config_dir` (per plan §3 — deliberately not serde/toml/json).
 pub fn persist_last_project(config_dir: &Path, project_path: &Path) -> io::Result<()> {

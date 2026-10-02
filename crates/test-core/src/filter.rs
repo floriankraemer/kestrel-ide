@@ -64,14 +64,15 @@ pub fn parse_filter_dialect(value: Option<&str>) -> Result<FilterDialect, Unknow
 
 /// Escape a string for literal use inside a PCRE `--filter` pattern. A
 /// test's qualified name can itself carry regex metacharacters — a
-/// data-provider-suffixed name commonly has `(`, `)`, `#`, `"` — while the
-/// namespace separator `\` is left alone: a literal backslash has no
-/// special meaning to PCRE on its own, so escaping it would only double it
-/// uselessly and make the pattern harder to read in a log.
-fn escape_regex(value: &str) -> String {
+/// data-provider-suffixed name commonly has `(`, `)`, `#`, `"` — and the
+/// namespace separator `\` is one too: PCRE2 rejects `\T` and similar
+/// ("unrecognized character follows \"), so `App\Tests\Foo` must go out as
+/// `App\\Tests\\Foo`. The one helper behind both the tree's reruns and
+/// `php-core`'s editor test markers.
+pub fn escape_regex(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for c in value.chars() {
-        if ".+*?()[]{}^$|/#".contains(c) {
+        if r"\.+*?()[]{}^$|/#".contains(c) {
             escaped.push('\\');
         }
         escaped.push(c);
@@ -254,7 +255,7 @@ mod tests {
             &TestId("Tests\\GreeterTest::testGreets".into()),
             FilterDialect::PhpUnitRegex,
         );
-        assert_eq!(pattern, vec!["^Tests\\GreeterTest::testGreets$"]);
+        assert_eq!(pattern, vec!["^Tests\\\\GreeterTest::testGreets$"]);
     }
 
     #[test]
@@ -265,7 +266,7 @@ mod tests {
             &TestId("Tests\\GreeterTest".into()),
             FilterDialect::PhpUnitRegex,
         );
-        assert_eq!(pattern, vec!["^Tests\\GreeterTest::"]);
+        assert_eq!(pattern, vec!["^Tests\\\\GreeterTest::"]);
     }
 
     #[test]
@@ -420,5 +421,11 @@ mod tests {
     fn no_patterns_at_all_leaves_args_unchanged() {
         let args = apply_filter(&["test".into()], Some("--tests"), None, &[]);
         assert_eq!(args, vec!["test"]);
+    }
+
+    #[test]
+    fn a_namespace_separator_is_escaped_so_pcre_accepts_the_pattern() {
+        assert_eq!(escape_regex(r"App\Tests\Foo"), r"App\\Tests\\Foo");
+        assert_eq!(escape_regex("a.b(c)#1"), r"a\.b\(c\)\#1");
     }
 }

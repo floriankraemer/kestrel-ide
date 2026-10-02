@@ -226,7 +226,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Q5 — `format_on_save` per language | done | aca9bd6 |
 | Q6 — suppress quick fixes (`@phpstan-ignore`, `@psalm-suppress`, `phpcs:ignore`) in Alt+Enter | done | 86451ff |
 | Q7 — "Fix with phpcbf" intention | done | ba3ad0e |
-| Q8 — ADR-0070 | done | — |
+| Q8 — ADR-0070 | done | 9c4bcaf |
 
 ### Y — templating languages (ADR-0071)
 | Task | Status | Commit |

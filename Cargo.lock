@@ -6201,6 +6201,7 @@ dependencies = [
  "serde_json",
  "syntax-core",
  "tempfile",
+ "test-core",
  "tree-sitter",
 ]
 

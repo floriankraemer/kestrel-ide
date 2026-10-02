@@ -24,5 +24,9 @@ lsp-core = { path = "../lsp-core" }
 syntax-core = { path = "../syntax-core" }
 tree-sitter = "0.26"
 
+# `filter::escape_regex`: the one PCRE-escaping rule behind both the tree's
+# reruns and the editor's test markers.
+test-core = { path = "../test-core" }
+
 [dev-dependencies]
 tempfile = "3"

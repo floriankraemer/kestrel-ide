@@ -114,7 +114,7 @@ impl Walker<'_> {
         } else {
             format!("{}\\{}", self.namespace, self.text_of(name))
         };
-        let escaped = escape_regex(&qualified);
+        let escaped = test_core::filter::escape_regex(&qualified);
         self.out.push(TestMarker {
             line: name.start_position().row as u32,
             scope: MarkerScope::Group,
@@ -147,7 +147,7 @@ impl Walker<'_> {
                     // A data provider suffixes the name: `m with data set #0`.
                     filter: format!(
                         "^{escaped}::{}( with data set .+)?$",
-                        escape_regex(method_name)
+                        test_core::filter::escape_regex(method_name)
                     ),
                 });
             }
@@ -207,7 +207,10 @@ impl Walker<'_> {
                 line: call.start_position().row as u32,
                 scope: MarkerScope::Group,
                 name: description,
-                filter: escape_regex(&format!("{} → ", self.describes.join(" → "))),
+                filter: test_core::filter::escape_regex(&format!(
+                    "{} → ",
+                    self.describes.join(" → ")
+                )),
             });
             let mut cursor = call.walk();
             for child in call.children(&mut cursor) {
@@ -230,7 +233,7 @@ impl Walker<'_> {
             line: call.start_position().row as u32,
             scope: MarkerScope::Test,
             name: description,
-            filter: escape_regex(&full),
+            filter: test_core::filter::escape_regex(&full),
         });
         true
     }
@@ -256,19 +259,6 @@ impl Walker<'_> {
         let inner = raw.get(1..raw.len().checked_sub(1)?)?;
         Some(inner.replace(&format!("\\{quote}"), &quote.to_string()))
     }
-}
-
-/// Escape for a PCRE `--filter`: every metacharacter, and the backslash
-/// (PCRE2 rejects `\T` and similar, so a namespace separator must be `\\`).
-fn escape_regex(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for c in value.chars() {
-        if r"\.+*?()[]{}^$|/#".contains(c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
 }
 
 #[cfg(test)]

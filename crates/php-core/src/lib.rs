@@ -7,3 +7,4 @@
 //! `run-core`, which must not depend on this crate (ADR-0039).
 
 pub mod composer;
+pub mod level;

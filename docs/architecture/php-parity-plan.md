@@ -158,8 +158,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### I — `php-core`, interpreter, Composer, running PHP (ADR-0068)
 | Task | Status | Commit |
 |---|---|---|
-| I1 — crate `php-core`: composer.json/composer.lock model | done | — |
-| I2 — language level: explicit → `require.php` lower bound → probed version | open | |
+| I1 — crate `php-core`: composer.json/composer.lock model | done | a6f489a |
+| I2 — language level: explicit → `require.php` lower bound → probed version | done | — |
 | I3 — `process_exec::run_on`/`spawn_on`; interpreter probe (version, ini, xdebug/pcov, `xdebug.mode`) | open | |
 | I4 — `ToolchainId::Php`; Composer scripts detected as run configs; Run Current File for `.php` | open | |
 | I5 — run kinds `php-builtin-server` (`php -S`) and `php-console` (PsySH, otherwise `php -a`) | open | |

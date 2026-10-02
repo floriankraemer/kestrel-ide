@@ -382,12 +382,7 @@ impl ffi::RunConfigEditor {
                 .iter()
                 .find(|c| c.id == connection_id)
                 .map(|row| {
-                    let connection =
-                        container_core::connection::ConnectionConfig::from_setting(row);
-                    container_core::connection::Invocation {
-                        program: connection.compose_program(),
-                        ..connection.invocation()
-                    }
+                    container_core::connection::ConnectionConfig::from_setting(row).invocation()
                 })
                 .and_then(|invocation| {
                     container_core::run_config::compose_services(&invocation, &files, &root).ok()

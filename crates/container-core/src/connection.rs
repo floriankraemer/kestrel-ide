@@ -402,6 +402,24 @@ impl Invocation {
         }
     }
 
+    /// This invocation for compose commands: [`Self::compose_form`]'s
+    /// program and prefix, with the `compose` subcommand in the prefix when
+    /// the form needs it, so callers append only the compose arguments
+    /// (`-f …`, `up`, …) and a standalone `docker-compose` never sees
+    /// `docker-compose compose -f …`.
+    #[must_use]
+    pub fn for_compose(&self) -> Invocation {
+        let (program, mut prefix_args, plugin) = self.compose_form();
+        if plugin {
+            prefix_args.push("compose".to_string());
+        }
+        Invocation {
+            program,
+            prefix_args,
+            ..self.clone()
+        }
+    }
+
     /// `prefix_args` followed by `args`, as owned strings — what every
     /// caller (`ops.rs`, `session.rs`, ...) hands `process_exec::run`/
     /// `spawn` or a `pty_core::ShellSpec`.
@@ -761,6 +779,66 @@ mod tests {
         };
         assert_eq!(cfg.invocation().program, "docker");
         assert_eq!(cfg.compose_program(), "docker-compose");
+    }
+
+    #[test]
+    fn a_compose_command_never_doubles_the_subcommand() {
+        let argv = |cfg: &ConnectionConfig| {
+            let compose = cfg.invocation().for_compose();
+            (
+                compose.program.clone(),
+                compose.argv(&["-f", "c.yml", "up", "-d"]),
+            )
+        };
+        let engine = config(Engine::Docker, ConnectionKind::Auto);
+        assert_eq!(
+            argv(&engine),
+            (
+                "docker".to_string(),
+                vec!["compose", "-f", "c.yml", "up", "-d"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
+        );
+        let standalone = ConnectionConfig {
+            compose_executable: Some("docker-compose".to_string()),
+            ..engine
+        };
+        assert_eq!(
+            argv(&standalone),
+            (
+                "docker-compose".to_string(),
+                vec!["-f", "c.yml", "up", "-d"]
+                    .into_iter()
+                    .map(String::from)
+                    .collect()
+            )
+        );
+        let in_wsl = ConnectionConfig {
+            kind: ConnectionKind::Wsl {
+                distro: "Ubuntu".to_string(),
+            },
+            ..standalone
+        };
+        assert_eq!(
+            argv(&in_wsl),
+            (
+                "wsl.exe".to_string(),
+                [
+                    "-d",
+                    "Ubuntu",
+                    "--",
+                    "docker-compose",
+                    "-f",
+                    "c.yml",
+                    "up",
+                    "-d"
+                ]
+                .map(String::from)
+                .to_vec()
+            )
+        );
     }
 
     #[test]

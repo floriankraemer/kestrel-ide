@@ -316,7 +316,7 @@ pub fn containerfile_build_argv(setting: &ContainerfileRunSetting) -> Vec<String
 /// ([`compose_up_argv`], [`compose_down_argv`], [`compose_stop_argv`],
 /// [`compose_services`]) shares.
 fn compose_common_args(setting: &ComposeRunSetting) -> Vec<String> {
-    let mut args = vec!["compose".to_string()];
+    let mut args = Vec::new();
     for file in &setting.compose_files {
         args.push("-f".to_string());
         args.push(file.clone());
@@ -440,7 +440,7 @@ pub fn compose_stop_argv(setting: &ComposeRunSetting) -> Vec<String> {
 /// one service from the tree must not also touch the run configuration's
 /// own persisted service list or its other options.
 pub fn compose_scale_argv(files: &[String], service: &str, count: u32) -> Vec<String> {
-    let mut args = vec!["compose".to_string()];
+    let mut args = Vec::new();
     for file in files {
         args.push("-f".to_string());
         args.push(file.clone());
@@ -505,14 +505,14 @@ pub fn compose_services(
     files: &[String],
     project_root: &Path,
 ) -> Result<Vec<String>, OpError> {
-    let mut args = vec!["compose".to_string()];
+    let mut args = Vec::new();
     for file in files {
         args.push("-f".to_string());
         args.push(file.clone());
     }
     args.push("config".to_string());
     args.push("--services".to_string());
-    let output = run_op(invocation, &args, project_root)?;
+    let output = run_op(&invocation.for_compose(), &args, project_root)?;
     Ok(String::from_utf8_lossy(&output.stdout)
         .lines()
         .map(str::trim)
@@ -534,7 +534,7 @@ pub fn compose_service_needs_build(
     service: &str,
     project_root: &Path,
 ) -> Result<bool, OpError> {
-    let mut args = vec!["compose".to_string()];
+    let mut args = Vec::new();
     for file in files {
         args.push("-f".to_string());
         args.push(file.clone());
@@ -542,7 +542,7 @@ pub fn compose_service_needs_build(
     args.push("config".to_string());
     args.push("--format".to_string());
     args.push("json".to_string());
-    let output = run_op(invocation, &args, project_root)?;
+    let output = run_op(&invocation.for_compose(), &args, project_root)?;
     Ok(service_has_build_key(&output.stdout, service))
 }
 
@@ -754,10 +754,7 @@ mod tests {
     #[test]
     fn a_bare_compose_up_is_just_the_files_and_up_dash_d() {
         let argv = compose_up_argv(&compose(|_| {}), Path::new("/p"));
-        assert_eq!(
-            argv,
-            vec!["compose", "-f", "docker-compose.yml", "up", "-d"]
-        );
+        assert_eq!(argv, vec!["-f", "docker-compose.yml", "up", "-d"]);
     }
 
     #[test]
@@ -785,7 +782,6 @@ mod tests {
         assert_eq!(
             argv,
             vec![
-                "compose",
                 "-f",
                 "docker-compose.yml",
                 "-p",
@@ -827,7 +823,6 @@ mod tests {
         assert_eq!(
             compose_down_argv(&setting),
             vec![
-                "compose",
                 "-f",
                 "docker-compose.yml",
                 "down",
@@ -843,7 +838,7 @@ mod tests {
     fn compose_stop_is_just_the_files_and_stop() {
         assert_eq!(
             compose_stop_argv(&compose(|_| {})),
-            vec!["compose", "-f", "docker-compose.yml", "stop"]
+            vec!["-f", "docker-compose.yml", "stop"]
         );
     }
 
@@ -853,7 +848,6 @@ mod tests {
         assert_eq!(
             compose_scale_argv(&files, "web", 3),
             vec![
-                "compose",
                 "-f",
                 "docker-compose.yml",
                 "up",

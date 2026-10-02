@@ -45,6 +45,9 @@ pub trait TestSink {
 pub enum OutputFormat {
     TeamCity,
     JunitXml,
+    /// The JUnit document is the process's own stdout (PHPSpec's
+    /// `--format=junit`), parsed once after exit like [`Self::JunitXml`].
+    JunitXmlStdout,
 }
 
 /// An `output-format` string a manifest names that no runner in this build
@@ -67,6 +70,7 @@ pub fn parse_output_format(value: &str) -> Result<OutputFormat, UnknownOutputFor
     match value {
         "teamcity" => Ok(OutputFormat::TeamCity),
         "junit-xml" => Ok(OutputFormat::JunitXml),
+        "junit-xml-stdout" => Ok(OutputFormat::JunitXmlStdout),
         other => Err(UnknownOutputFormat(other.to_string())),
     }
 }
@@ -191,6 +195,15 @@ fn changed_since(
             before.get(path) != Some(&(mtime, meta.len()))
         })
         .collect()
+}
+
+/// The cases in a stdout that is a JUnit document, tolerating banner lines
+/// before the XML; unparseable output yields no cases rather than failing.
+fn junit_cases_from_stdout(stdout: &str) -> Vec<JUnitTestCase> {
+    let start = stdout.find("<?xml").or_else(|| stdout.find("<testsuite"));
+    start
+        .and_then(|start| crate::junit::parse(&stdout[start..]).ok())
+        .unwrap_or_default()
 }
 
 /// Read and parse every new-or-changed `junit-xml` report under `work_dir`
@@ -334,6 +347,7 @@ pub fn run_on(
     });
 
     let mut parser = TeamCityParser::new();
+    let mut collected = String::new();
     let mut buffer = [0u8; 8192];
     loop {
         let read = match stdout.read(&mut buffer) {
@@ -341,8 +355,12 @@ pub fn run_on(
             Ok(read) => read,
         };
         let chunk = String::from_utf8_lossy(&buffer[..read]).into_owned();
-        for event in parser.feed(&chunk) {
-            sink.event(event);
+        if format == OutputFormat::JunitXmlStdout {
+            collected.push_str(&chunk);
+        } else {
+            for event in parser.feed(&chunk) {
+                sink.event(event);
+            }
         }
         sink.output(&chunk);
     }
@@ -360,6 +378,9 @@ pub fn run_on(
 
     if let (OutputFormat::JunitXml, Some(pattern)) = (format, report_glob) {
         sink.junit(collect_junit_cases(work_dir, pattern, &pre_run_reports));
+    }
+    if format == OutputFormat::JunitXmlStdout {
+        sink.junit(junit_cases_from_stdout(&collected));
     }
 
     Ok(exit_code)
@@ -557,6 +578,50 @@ mod tests {
     fn parse_output_format_accepts_the_two_known_values() {
         assert_eq!(parse_output_format("teamcity"), Ok(OutputFormat::TeamCity));
         assert_eq!(parse_output_format("junit-xml"), Ok(OutputFormat::JunitXml));
+        assert_eq!(
+            parse_output_format("junit-xml-stdout"),
+            Ok(OutputFormat::JunitXmlStdout)
+        );
+    }
+
+    /// PHPSpec's `--format=junit` prints the document on stdout, possibly
+    /// after a banner line.
+    #[test]
+    fn a_junit_xml_stdout_run_parses_the_document_the_process_prints() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = format!(
+            "echo banner; cat <<'EOF'\n{}\nEOF\n",
+            junit_xml("spec\\Greeter")
+        );
+        let handle = TestRunHandle::new();
+        let mut collected = Collected::default();
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), script],
+            dir.path(),
+            OutputFormat::JunitXmlStdout,
+            None,
+            &mut collected,
+        )
+        .unwrap();
+        assert_eq!(code, Some(0));
+        assert!(collected.events.is_empty());
+        let names: Vec<&str> = collected
+            .junit_cases
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(
+            collected.junit_cases[1].status,
+            crate::tree::TestStatus::Failed
+        );
+    }
+
+    #[test]
+    fn unparseable_junit_stdout_yields_no_cases() {
+        assert!(junit_cases_from_stdout("PHP Fatal error: boom").is_empty());
     }
 
     #[test]

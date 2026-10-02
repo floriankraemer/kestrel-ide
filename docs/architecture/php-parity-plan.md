@@ -204,12 +204,12 @@ A row's status and commit hash are updated in the commit that finishes it.
 | D4 — `dap_core::xdebug::env` | done | cfb5cb9 |
 | D5 — debug PHP run configs and tests in a container (lift the refusal for `php-debug` only) | done | c0c6d6d |
 | D6 — Xdebug check (extension missing, mode without `debug`) on the PHP page and in the debug start error | done | 03cb350 |
-| D7 — ADR-0069 | done | — |
+| D7 — ADR-0069 | done | 1c70a70 |
 
 ### T — testing
 | Task | Status | Commit |
 |---|---|---|
-| T1 — Pest, Codeception, Behat and PHPSpec rows (`junit-xml-stdout` format) | open | |
+| T1 — Pest, Codeception, Behat and PHPSpec rows (`junit-xml-stdout` format) | done | — |
 | T2 — `php_core::tests::markers` (PHPUnit `test*`/`#[Test]`/`@test`, Pest `test`/`it`/`describe`) | open | |
 | T3 — gutter Run / Debug / Run with Coverage per test | open | |
 | T4 — `test_core::coverage` Clover parser + `coverage-args`, paths mapped to local | open | |

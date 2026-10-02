@@ -19,7 +19,7 @@ use plugin_api::TestFrameworkContribution;
 /// the process exits (C1, jvm-build-tools plan/ADR-0057) — both are
 /// "supported" in the sense this list gates, `select_framework` does not
 /// care which.
-pub const SUPPORTED_OUTPUT_FORMATS: &[&str] = &["teamcity", "junit-xml"];
+pub const SUPPORTED_OUTPUT_FORMATS: &[&str] = &["teamcity", "junit-xml", "junit-xml-stdout"];
 
 /// The first framework, in contribution order, that is runnable against
 /// this project: its `requires_toolchain` (if any) is among

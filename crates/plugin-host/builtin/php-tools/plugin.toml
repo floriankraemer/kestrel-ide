@@ -77,6 +77,66 @@ file-args = ["--stdin-path={file}", "-"]
 error = "error"
 warning = "warning"
 
+# The frameworks below build on (or beside) PHPUnit, so selection order
+# matters: `test_core::select_framework` takes the first whose program
+# resolves. Pest and Codeception both depend on `phpunit/phpunit`, so they
+# precede it; Behat and PHPSpec do not, so a project that has PHPUnit too
+# keeps running PHPUnit.
+[[contributes.test-frameworks]]
+id = "pest"
+name = "Pest"
+program-candidates = ["vendor/bin/pest"]
+# Pest (2+) speaks PHPUnit's `--teamcity` and `--filter`.
+args = ["--teamcity"]
+filter-flag = "--filter"
+output-format = "teamcity"
+config-file-candidates = ["phpunit.xml", "phpunit.xml.dist", "pest.php"]
+composer-package = "pestphp/pest"
+requires-interpreter = "php"
+
+[[contributes.test-frameworks]]
+id = "codeception"
+name = "Codeception"
+program-candidates = ["vendor/bin/codecept"]
+# `--xml` writes `report.xml` into the configured output directory
+# (`tests/_output` by default); there is no streaming format.
+args = ["run", "--xml"]
+filter-flag = "--filter"
+output-format = "junit-xml"
+report-glob = "**/_output/report.xml"
+config-file-candidates = ["codeception.yml", "codeception.dist.yml"]
+composer-package = "codeception/codeception"
+requires-interpreter = "php"
+
+[[contributes.test-frameworks]]
+id = "behat"
+name = "Behat"
+program-candidates = ["vendor/bin/behat"]
+# The junit formatter writes one `<suite>.xml` per suite into `--out`.
+args = ["--format=junit", "--out=.ide/test-reports/behat"]
+# Behat selects scenarios by title, not by PHPUnit-style class name.
+filter-flag = "--name"
+output-format = "junit-xml"
+report-glob = ".ide/test-reports/behat/*.xml"
+config-file-candidates = ["behat.yml", "behat.yml.dist"]
+composer-package = "behat/behat"
+requires-interpreter = "php"
+
+[[contributes.test-frameworks]]
+id = "phpspec"
+name = "PHPSpec"
+program-candidates = ["vendor/bin/phpspec"]
+# Without `--out` the junit formatter prints the whole document on stdout.
+args = ["run", "--format=junit", "--no-interaction"]
+# PHPSpec has no name filter (it selects by spec path); the flag is the
+# manifest's mandatory placeholder, so rerunning a single PHPSpec node is
+# not supported.
+filter-flag = "--example"
+output-format = "junit-xml-stdout"
+config-file-candidates = ["phpspec.yml", "phpspec.yml.dist"]
+composer-package = "phpspec/phpspec"
+requires-interpreter = "php"
+
 [[contributes.test-frameworks]]
 id = "phpunit"
 name = "PHPUnit"

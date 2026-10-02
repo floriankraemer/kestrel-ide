@@ -601,8 +601,22 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     );
 
     let frameworks: Vec<_> = registry.test_frameworks().collect();
-    assert_eq!(frameworks.len(), 1, "{frameworks:?}");
-    let (owner, phpunit) = &frameworks[0];
+    let ids: Vec<&str> = frameworks.iter().map(|(_, f)| f.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["pest", "codeception", "behat", "phpspec", "phpunit"],
+        "selection order: PHPUnit-based runners first"
+    );
+    let (_, codeception) = &frameworks[1];
+    assert_eq!(codeception.output_format, "junit-xml");
+    assert_eq!(
+        codeception.report_glob.as_deref(),
+        Some("**/_output/report.xml")
+    );
+    let (_, phpspec) = &frameworks[3];
+    assert_eq!(phpspec.output_format, "junit-xml-stdout");
+    assert!(frameworks.iter().all(|(_, f)| f.composer_package.is_some()));
+    let (owner, phpunit) = &frameworks[4];
     assert_eq!(owner.id(), "php-tools");
     assert_eq!(phpunit.id, "phpunit");
     assert_eq!(phpunit.name, "PHPUnit");

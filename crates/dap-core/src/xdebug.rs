@@ -156,7 +156,7 @@ pub enum ListenAction<R> {
     Nothing,
     /// Start the listener now, then launch `run` once it is ready.
     Start(PendingListen<R>),
-    /// Launch `run` on the already running listener `session_id`.
+    /// Launch `run` on the running, handshake-complete listener `session_id`.
     Launch { session_id: u64, run: R },
     /// Stop the running adapter off-thread, then `take_pending` and start.
     Replace,
@@ -168,6 +168,10 @@ pub enum ListenAction<R> {
 #[derive(Debug)]
 pub struct ListenSession<R> {
     running: Option<(u64, Value)>,
+    /// The running adapter finished its DAP handshake and accepts connections.
+    ready: bool,
+    /// Runs requested while the running adapter was still handshaking.
+    awaiting_ready: Vec<R>,
     pending: Option<PendingListen<R>>,
 }
 
@@ -175,6 +179,8 @@ impl<R> Default for ListenSession<R> {
     fn default() -> Self {
         Self {
             running: None,
+            ready: false,
+            awaiting_ready: Vec::new(),
             pending: None,
         }
     }
@@ -203,7 +209,14 @@ impl<R> ListenSession<R> {
         };
         match decision {
             ListenDecision::Reuse => match (request.run, self.session_id()) {
-                (Some(run), Some(session_id)) => ListenAction::Launch { session_id, run },
+                (Some(run), Some(session_id)) if self.ready => {
+                    ListenAction::Launch { session_id, run }
+                }
+                // Xdebug does not retry: wait for `handshake_done`.
+                (Some(run), Some(_)) => {
+                    self.awaiting_ready.push(run);
+                    ListenAction::Nothing
+                }
                 _ => ListenAction::Nothing,
             },
             ListenDecision::Start => ListenAction::Start(request),
@@ -227,12 +240,25 @@ impl<R> ListenSession<R> {
     /// The adapter for `session_id` is up and listens with `arguments`.
     pub fn started(&mut self, session_id: u64, arguments: Value) {
         self.running = Some((session_id, arguments));
+        self.ready = false;
+        self.awaiting_ready.clear();
+    }
+
+    /// The adapter for `session_id` finished its handshake. Returns the
+    /// runs that were requested meanwhile, to launch now.
+    pub fn handshake_done(&mut self, session_id: u64) -> Vec<R> {
+        if self.session_id() != Some(session_id) {
+            return Vec::new();
+        }
+        self.ready = true;
+        std::mem::take(&mut self.awaiting_ready)
     }
 
     /// The user turned listening off: drop what was queued. Returns the
     /// session to shut down, if any.
     pub fn stop(&mut self) -> Option<u64> {
         self.pending = None;
+        self.awaiting_ready.clear();
         self.session_id()
     }
 
@@ -241,6 +267,8 @@ impl<R> ListenSession<R> {
         let was_listener = self.session_id() == Some(session_id);
         if was_listener {
             self.running = None;
+            self.ready = false;
+            self.awaiting_ready.clear();
         }
         was_listener
     }
@@ -328,6 +356,43 @@ mod tests {
 
     fn up(session: &mut ListenSession<&'static str>, id: u64, args: &Value) {
         session.started(id, args.clone());
+        session.handshake_done(id);
+    }
+
+    #[test]
+    fn a_run_during_the_handshake_waits_until_it_completes() {
+        let args = serde_json::json!({"port": 1});
+        let root = Path::new("/p");
+        let mut s = ListenSession::default();
+        s.started(7, args.clone());
+        assert_eq!(
+            s.request(root, args.clone(), Some("early")),
+            ListenAction::Nothing
+        );
+        assert!(
+            s.handshake_done(8).is_empty(),
+            "another session's handshake"
+        );
+        assert_eq!(s.handshake_done(7), vec!["early"]);
+        assert!(s.handshake_done(7).is_empty(), "launched once");
+        assert_eq!(
+            s.request(root, args, Some("late")),
+            ListenAction::Launch {
+                session_id: 7,
+                run: "late"
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_handshake_drops_the_waiting_runs() {
+        let args = serde_json::json!({"port": 1});
+        let mut s = ListenSession::default();
+        s.started(7, args.clone());
+        s.request(Path::new("/p"), args, Some("early"));
+        assert!(s.ended(7));
+        s.started(8, serde_json::json!({"port": 1}));
+        assert!(s.handshake_done(8).is_empty());
     }
 
     #[test]

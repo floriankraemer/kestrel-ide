@@ -201,8 +201,19 @@ impl ffi::DebugService {
         let breakpoints = self.breakpoints.borrow().clone();
         std::thread::spawn(move || {
             let result = handshake(&session, arguments, &breakpoints);
-            if let (Ok(()), Some(run)) = (&result, run) {
-                launch_after_check(qt_thread.clone(), session_id, run);
+            if result.is_ok() {
+                if let Some(run) = run {
+                    launch_after_check(qt_thread.clone(), session_id, run);
+                }
+                // Runs that asked to launch while this handshake was in flight.
+                let waiting = qt_thread.clone();
+                let _ = qt_thread.queue(move |service: Pin<&mut ffi::DebugService>| {
+                    let runs = service.php_listen.borrow_mut().handshake_done(session_id);
+                    for run in runs {
+                        let qt_thread = waiting.clone();
+                        std::thread::spawn(move || launch_after_check(qt_thread, session_id, run));
+                    }
+                });
             }
             if let Err(err) = result {
                 let failure = (err.code(), err.to_string());

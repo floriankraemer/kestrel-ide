@@ -36,6 +36,7 @@ mod lsp_surface;
 /// (#162), the same reason `lsp_surface` exists. `refactor_controller.cpp`
 /// is this module's one C++ consumer, mirroring the split there.
 mod refactor;
+mod server_lifecycle;
 
 /// Every `language-servers` contribution from the live plugin registry,
 /// translated into `lsp_core::PluginServer`.
@@ -756,72 +757,11 @@ impl ffi::LanguageService {
         }
     }
 
-    pub fn apply_server_settings(self: Pin<&mut Self>) {
-        // The resolved layer, not the global file: a project may name its
-        // own language servers (ADR-0022), and a project that pins a
-        // toolchain-local server is the reason that field is project-scoped.
-        let settings = crate::bridge::convert::load_resolved_settings();
-        let overrides =
-            settings_model::servers::overrides_from_settings(&settings.language_servers);
-        let resolved = lsp_core::resolve_servers(&overrides, &plugin_servers());
-
-        // Which running servers the new settings no longer describe: the
-        // comparison is between two resolved configurations, so "changed" is
-        // `lsp_core`'s definition of the launch, not a field-by-field guess.
-        let previous = self.configs.borrow().clone();
-        let stale: Vec<String> = self
-            .started
-            .borrow()
-            .iter()
-            .filter(|language_id| {
-                let before = previous.iter().find(|c| &&c.language_id == language_id);
-                let after = lsp_core::enabled_server(&resolved, language_id);
-                match (before, after) {
-                    (Some(before), Some(after)) => before != after,
-                    _ => true,
-                }
-            })
-            .cloned()
-            .collect();
-        *self.configs.borrow_mut() = resolved;
-
-        for language_id in stale {
-            self.started.borrow_mut().remove(&language_id);
-            self.advertised.borrow_mut().remove(&language_id);
-            // Forgetting the documents is what lets `reopenDocument` start
-            // the replacement server and re-send `didOpen` to it.
-            self.open_docs
-                .borrow_mut()
-                .retain(|_, open_for| open_for != &language_id);
-            let stopping = language_id.clone();
-            self.as_ref()
-                .push_job(move |manager| manager.stop(&stopping));
-        }
-    }
-
     pub fn reopen_document(self: Pin<&mut Self>, path: &QString, text: &QString) {
         if self.open_docs.borrow().contains_key(&path.to_string()) {
             return;
         }
         self.document_opened(path, text);
-    }
-
-    pub fn restart_server(mut self: Pin<&mut Self>, server_id: &QString) {
-        let server_id = server_id.to_string();
-        let config = self
-            .configs
-            .borrow()
-            .iter()
-            .find(|config| config.id == server_id)
-            .cloned();
-        let Some(config) = config else {
-            return;
-        };
-        let stopping = server_id.clone();
-        self.as_ref()
-            .push_job(move |manager| manager.stop_server(&stopping));
-        self.started.borrow_mut().insert(config.language_id.clone());
-        self.as_mut().start_servers(vec![config]);
     }
 
     pub fn has_server_for_file(&self, path: &QString) -> bool {
@@ -1394,70 +1334,6 @@ impl ffi::LanguageService {
             Some(jobs) => jobs.send(Box::new(job)).is_ok(),
             None => false,
         }
-    }
-
-    /// Queue the (blocking) launch of a language's servers, in answer
-    /// order, and report each outcome. A launch where every server fails
-    /// frees the language again, so opening another file of it retries
-    /// rather than staying silently dead for the session; one server failing
-    /// beside a working one does not, or a missing Phpactor would be
-    /// relaunched on every file open. A server the platform rules out
-    /// (`lsp_core::launch_plan`) is reported `Unavailable`, with the reason,
-    /// and never launched.
-    fn start_servers(mut self: Pin<&mut Self>, configs: Vec<lsp_core::ServerConfig>) {
-        let Some(language_id) = configs.first().map(|c| c.language_id.clone()) else {
-            return;
-        };
-        let plan = lsp_core::launch_plan(&configs, &self.host.borrow(), cfg!(windows));
-        for (config, reason) in &plan.skipped {
-            self.as_mut().server_state_changed(
-                QString::from(config.id.as_str()),
-                QString::from(config.name.as_str()),
-                ffi::FfiServerState::Unavailable,
-                QString::from(reason.as_str()),
-                0,
-            );
-        }
-        let configs = plan.start;
-        if configs.is_empty() {
-            return;
-        }
-        let qt_thread = self.as_mut().qt_thread();
-        for config in &configs {
-            self.as_mut().server_state_changed(
-                QString::from(config.id.as_str()),
-                QString::from(config.name.as_str()),
-                ffi::FfiServerState::Starting,
-                QString::default(),
-                0,
-            );
-        }
-        self.push_job(move |manager| {
-            let mut failures = Vec::new();
-            for config in &configs {
-                if let Err(err) = manager.start(config) {
-                    failures.push((config.id.clone(), config.name.clone(), err.to_string()));
-                }
-            }
-            if failures.is_empty() {
-                return;
-            }
-            let all_failed = failures.len() == configs.len();
-            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
-                if all_failed {
-                    service.started.borrow_mut().remove(&language_id);
-                }
-                for (id, name, message) in failures {
-                    service.as_mut().server_state_changed(
-                        QString::from(id.as_str()),
-                        QString::from(name.as_str()),
-                        ffi::FfiServerState::Failed,
-                        QString::from(message.as_str()),
-                        0,
-                    );
-                }
-            });
-        });
     }
 
     /// The listener thread's one hop onto the Qt thread: an `LspEvent` becomes

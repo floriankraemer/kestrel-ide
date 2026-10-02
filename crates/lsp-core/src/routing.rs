@@ -166,6 +166,11 @@ impl Advertised {
         }
     }
 
+    /// Forget one server's advertisement (it was stopped).
+    pub fn remove(&mut self, server_id: &str) {
+        self.servers.retain(|(id, _)| id != server_id);
+    }
+
     /// Completion trigger characters: the union, first occurrence first.
     pub fn trigger_characters(&self) -> Vec<String> {
         union(self.servers.iter().map(|(_, a)| &a.trigger_characters))
@@ -319,6 +324,8 @@ mod tests {
         assert!(merged.completion_resolve_supported());
 
         merged.set("b", advert(&["$"], false, false));
+        merged.set("c", advert(&["@"], false, false));
+        merged.remove("c");
         assert_eq!(merged.trigger_characters(), [".", ":", "$"]);
         assert!(!merged.signature_triggers().supported);
         assert!(!merged.completion_resolve_supported());

@@ -43,8 +43,9 @@ pub use apply_edit::{
     ApplyEditGate, ApplyEditVerdict, RefactorSession, RefactorSessions, APPLY_EDIT_TIMEOUT,
 };
 pub use catalog::{
-    default_server, enabled_server, enabled_servers, launch_plan, lsp_language_id, resolve_servers,
-    LaunchPlan, PluginServer, ServerConfig, ServerDef, ServerOverride, ServerSource, SERVERS,
+    default_server, enabled_server, enabled_servers, launch_plan, lsp_language_id, reload_kind,
+    reload_plan, resolve_servers, LaunchPlan, PluginServer, ReloadKind, ReloadPlan, ServerConfig,
+    ServerDef, ServerOverride, ServerSource, SERVERS,
 };
 pub use code_action::{
     filter_by_kind, kind_matches, needs_unfiltered_retry, parse_code_actions,

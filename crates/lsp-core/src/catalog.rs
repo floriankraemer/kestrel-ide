@@ -554,6 +554,84 @@ pub fn enabled_servers<'a>(
         .filter(move |c| c.language_id == language_id && c.enabled)
 }
 
+/// What a changed configuration means for a server that is already running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadKind {
+    /// Nothing that reaches the server changed.
+    Unchanged,
+    /// Only its settings changed: send `didChangeConfiguration`, keep running.
+    PushSettings,
+    /// Something fixed at launch changed — what to run, what `initialize`
+    /// carries, where it runs, whether its diagnostics show.
+    Restart,
+}
+
+/// How a running server must react to going from `before` to `after`.
+pub fn reload_kind(before: &ServerConfig, after: &ServerConfig) -> ReloadKind {
+    let launch_differs = before.language_id != after.language_id
+        || before.command != after.command
+        || before.args != after.args
+        || before.initialization_options != after.initialization_options
+        || before.settings_section != after.settings_section
+        || before.exec != after.exec
+        || before.diagnostics != after.diagnostics;
+    if launch_differs {
+        ReloadKind::Restart
+    } else if before.settings != after.settings {
+        ReloadKind::PushSettings
+    } else {
+        ReloadKind::Unchanged
+    }
+}
+
+/// What to do to the running servers when settings change.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReloadPlan {
+    /// Server ids to stop: disabled, removed, or about to be restarted.
+    pub stop: Vec<String>,
+    /// Server ids to launch: newly enabled, or restarted.
+    pub start: Vec<String>,
+    /// Server id and the settings to push to it.
+    pub push: Vec<(String, serde_json::Value)>,
+}
+
+/// Compare two resolved configurations for the languages that have been
+/// started (`is_started`). Servers of a language nobody opened are left
+/// alone: they launch from the new configuration on first use.
+pub fn reload_plan(
+    before: &[ServerConfig],
+    after: &[ServerConfig],
+    is_started: impl Fn(&str) -> bool,
+) -> ReloadPlan {
+    let running = |cfgs: &'_ [ServerConfig]| -> Vec<ServerConfig> {
+        cfgs.iter()
+            .filter(|c| c.enabled && is_started(&c.language_id))
+            .cloned()
+            .collect()
+    };
+    let (before, after) = (running(before), running(after));
+    let mut plan = ReloadPlan::default();
+    for old in &before {
+        match after.iter().find(|c| c.id == old.id) {
+            None => plan.stop.push(old.id.clone()),
+            Some(new) => match reload_kind(old, new) {
+                ReloadKind::Restart => {
+                    plan.stop.push(old.id.clone());
+                    plan.start.push(old.id.clone());
+                }
+                ReloadKind::PushSettings => plan.push.push((new.id.clone(), new.settings.clone())),
+                ReloadKind::Unchanged => {}
+            },
+        }
+    }
+    for new in &after {
+        if !before.iter().any(|c| c.id == new.id) {
+            plan.start.push(new.id.clone());
+        }
+    }
+    plan
+}
+
 /// Which of a language's enabled servers to launch, and which to skip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LaunchPlan {
@@ -984,5 +1062,93 @@ mod tests {
             .collect();
         let local = process_exec::host::ExecHost::Local;
         assert!(launch_plan(&in_container, &local, true).skipped.is_empty());
+    }
+
+    fn php_config(id: &str) -> ServerConfig {
+        resolve_servers(&[], &[])
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_settings_only_change_is_pushed_not_restarted() {
+        let before = php_config("intelephense");
+        let after = ServerConfig {
+            settings: serde_json::json!({"a": 1}),
+            ..before.clone()
+        };
+        assert_eq!(reload_kind(&before, &after), ReloadKind::PushSettings);
+        assert_eq!(reload_kind(&before, &before), ReloadKind::Unchanged);
+    }
+
+    #[test]
+    fn anything_fixed_at_launch_restarts_the_server() {
+        let before = php_config("intelephense");
+        for after in [
+            ServerConfig {
+                initialization_options: serde_json::json!({"k": 1}),
+                ..before.clone()
+            },
+            ServerConfig {
+                command: "/opt/i".into(),
+                ..before.clone()
+            },
+            ServerConfig {
+                args: vec![],
+                ..before.clone()
+            },
+            ServerConfig {
+                diagnostics: false,
+                ..before.clone()
+            },
+            ServerConfig {
+                exec: ServerExec::Interpreter,
+                ..before.clone()
+            },
+        ] {
+            assert_eq!(reload_kind(&before, &after), ReloadKind::Restart);
+        }
+        let renamed = ServerConfig {
+            name: "X".into(),
+            ..before.clone()
+        };
+        assert_eq!(reload_kind(&before, &renamed), ReloadKind::Unchanged);
+    }
+
+    #[test]
+    fn a_reload_touches_only_the_servers_that_changed() {
+        let all = resolve_servers(&[], &[]);
+        let mut after = all.clone();
+        for c in after.iter_mut() {
+            match c.id.as_str() {
+                "phpactor" => c.initialization_options = serde_json::json!({"k": 1}),
+                "intelephense" => c.settings = serde_json::json!({"s": 1}),
+                _ => {}
+            }
+        }
+        let plan = reload_plan(&all, &after, |lang| lang == "php");
+        assert_eq!(plan.stop, ["phpactor"]);
+        assert_eq!(plan.start, ["phpactor"]);
+        assert_eq!(
+            plan.push,
+            [("intelephense".to_string(), serde_json::json!({"s": 1}))]
+        );
+    }
+
+    #[test]
+    fn disabling_stops_enabling_starts_and_unstarted_languages_are_left_alone() {
+        let all = resolve_servers(&[], &[]);
+        let mut off = all.clone();
+        off.iter_mut().find(|c| c.id == "phpactor").unwrap().enabled = false;
+        off.iter_mut().find(|c| c.id == "rust").unwrap().command = "other".into();
+
+        let stopped = reload_plan(&all, &off, |lang| lang == "php");
+        assert_eq!(stopped.stop, ["phpactor"]);
+        assert!(stopped.start.is_empty() && stopped.push.is_empty());
+
+        let started = reload_plan(&off, &all, |lang| lang == "php");
+        assert_eq!(started.start, ["phpactor"]);
+        assert!(started.stop.is_empty());
     }
 }

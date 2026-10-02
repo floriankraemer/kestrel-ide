@@ -99,12 +99,12 @@ baseline() {
 	# and call/type hierarchy (C11) each added a request method and a
 	# dispatch arm here. A split into per-feature request modules is a
 	# real follow-up (tracked separately), not attempted in this chain.
-	crates/lsp-core/src/manager.rs) echo 2052 ;;
+	crates/lsp-core/src/manager.rs) echo 1944 ;;
 	# 1371 -> 1686: the bridge-side call sites for the same feature chain
 	# (C5 watched files, C7 completion resolve, C9-C11 FFI methods).
 	# Raised from 1686 by 7 lines for hover_at's `HoverSettings::scope` gate
 	# and the service's `hover_settings` field (H6); the settings plumbing lives in bridge/hover_settings.rs.
-	crates/ui-shell/src/bridge/language/mod.rs) echo 1693 ;;
+	crates/ui-shell/src/bridge/language/mod.rs) echo 1554 ;;
 	# Raised from the 1500 ceiling by 5 lines for minimapOptions/
 	# saveMinimapOptions (issue #199) — the same load/mutate/save pair
 	# whitespaceOptions/saveWhitespaceOptions just above them already uses.

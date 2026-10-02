@@ -317,3 +317,46 @@ fn a_merged_answer_survives_one_server_being_stopped() {
     assert_eq!(labels, ["shared", "only_a"]);
     manager.stop(LANG);
 }
+
+#[test]
+fn a_server_started_late_gets_the_open_document_and_the_others_do_not_get_it_twice() {
+    let (manager, rx) = LspManager::new("file:///workspace");
+    manager.start(&tagged_config("a", "")).expect("a starts");
+    let uri = "file:///workspace/a.stub";
+    manager.did_open(uri, LANG, "hello\n").unwrap();
+    manager.did_change(uri, "hello!\n").unwrap();
+    wait_for(&rx, "a's diagnostics", |e| match e {
+        LspEvent::Diagnostics { server_id, .. } if server_id == "a" => Some(()),
+        _ => None,
+    });
+
+    manager
+        .start(&ServerConfig {
+            priority: 1,
+            ..tagged_config("b", "")
+        })
+        .expect("b starts");
+    manager.did_open(uri, LANG, "hello!\n").unwrap();
+    wait_for(&rx, "b's diagnostics", |e| match e {
+        LspEvent::Diagnostics {
+            server_id, version, ..
+        } if server_id == "b" => {
+            assert_eq!(
+                *version,
+                Some(2),
+                "the version carries on, it does not restart"
+            );
+            Some(())
+        }
+        _ => None,
+    });
+    manager.request(LANG, "stub/tag", json!({})).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    while let Ok(event) = rx.try_recv() {
+        assert!(
+            !matches!(&event, LspEvent::Diagnostics { server_id, .. } if server_id == "a"),
+            "a was sent didOpen twice: {event:?}"
+        );
+    }
+    manager.stop(LANG);
+}

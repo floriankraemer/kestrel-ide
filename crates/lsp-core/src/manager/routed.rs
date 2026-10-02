@@ -33,6 +33,15 @@ impl LspManager {
         fan_out(&servers, method, &params, timeout)
     }
 
+    /// Does any server of the language offer `method`, by static capability
+    /// or dynamic registration? For callers that prefer a request when it is
+    /// offered and have a fallback when it is not.
+    pub fn supports(&self, language_id: &str, method: &str) -> bool {
+        self.servers_of(language_id)
+            .iter()
+            .any(|server| server.can_answer(method))
+    }
+
     pub(super) fn route(
         &self,
         servers: &[Arc<Server>],

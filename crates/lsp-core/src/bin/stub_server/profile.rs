@@ -77,7 +77,12 @@ pub fn answer(tag: &str, method: &str, params: &Value) -> Option<Value> {
             item["detail"] = json!(format!("resolved by {tag}"));
             item
         }
-        "textDocument/definition" => json!([loc(&format!("file:///{tag}.rs"), 0)]),
+        "textDocument/definition"
+        | "textDocument/implementation"
+        | "textDocument/typeDefinition" => json!([loc(&format!("file:///{tag}.rs"), 0)]),
+        // A different line from `definition`, so a test can tell which of the
+        // two Go to Declaration asked.
+        "textDocument/declaration" => json!([loc(&format!("file:///{tag}.rs"), 7)]),
         "textDocument/hover" => {
             json!({"contents": {"kind": "plaintext", "value": format!("hover {tag}")}})
         }

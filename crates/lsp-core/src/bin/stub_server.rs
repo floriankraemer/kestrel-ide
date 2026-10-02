@@ -407,7 +407,15 @@ fn main() {
             }
             // L4: one target per requested character, so the single-Location,
             // Location-array and LocationLink-array replies are all reachable.
-            ("textDocument/definition", Some(id)) => {
+            // N1/N2: implementation, type definition and declaration answer
+            // the same, so one fixture covers the three parsers' shared shape.
+            (
+                "textDocument/definition"
+                | "textDocument/implementation"
+                | "textDocument/typeDefinition"
+                | "textDocument/declaration",
+                Some(id),
+            ) => {
                 let uri = params
                     .pointer("/textDocument/uri")
                     .and_then(Value::as_str)

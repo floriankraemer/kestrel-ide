@@ -4294,6 +4294,20 @@ mod ffi {
         #[cxx_name = "findImplementations"]
         fn find_implementations(self: Pin<&mut SearchModel>, name: &QString);
 
+        /// N1: Go to Implementation from the caret. A running server's
+        /// `textDocument/implementation` answers first
+        /// (`lsp_core::usable_targets`); the name-based index answers when
+        /// it has nothing. Same `usagesFound` trio as `findImplementations`.
+        #[qinvokable]
+        #[cxx_name = "implementationsAt"]
+        fn implementations_at(
+            self: Pin<&mut SearchModel>,
+            name: &QString,
+            path: &QString,
+            line: u32,
+            character: u32,
+        );
+
         /// N3 — Go to Interface: every supertype `name` declares. Same
         /// signals as `findImplementations`.
         #[qinvokable]

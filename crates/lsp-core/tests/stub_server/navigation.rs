@@ -103,3 +103,47 @@ fn definitions_are_parsed_and_fall_back_to_the_index() {
         DefinitionOutcome::Index
     );
 }
+
+/// N1/N2: implementation and type definition share definition's answer shapes.
+#[test]
+fn implementations_and_type_definitions_are_parsed_like_definitions() {
+    let (manager, _rx) = LspManager::new("file:///workspace");
+    manager.start(&stub_config()).expect("stub starts");
+    let uri = "file:///workspace/main.rs";
+    manager
+        .did_open(uri, LANG, "fn main() {}")
+        .expect("didOpen");
+
+    let implementations = manager.implementation(uri, 0, 1).expect("implementation");
+    assert_eq!(
+        implementations.len(),
+        2,
+        "several implementations are normal"
+    );
+    let type_definition = manager.type_definition(uri, 0, 2).expect("typeDefinition");
+    assert_eq!((type_definition[0].line, type_definition[0].column), (4, 4));
+    assert!(manager
+        .implementation(uri, 0, 9)
+        .expect("implementation")
+        .is_empty());
+    manager.stop(LANG);
+}
+
+/// N2: Go to Declaration asks `declaration` of a server that offers it, and
+/// `definition` of one that does not.
+#[test]
+fn go_to_declaration_prefers_the_declaration_request_when_offered() {
+    let uri = "file:///workspace/main.rs";
+    for (caps, expected_line) in [("declaration", 8), ("", 1)] {
+        let (manager, _rx) = LspManager::new("file:///workspace");
+        manager
+            .start(&tagged_config("a", caps))
+            .expect("stub starts");
+        manager
+            .did_open(uri, LANG, "fn main() {}")
+            .expect("didOpen");
+        let targets = manager.go_to_declaration(uri, 0, 0).expect("declaration");
+        assert_eq!(targets[0].line, expected_line, "caps: {caps:?}");
+        manager.stop(LANG);
+    }
+}

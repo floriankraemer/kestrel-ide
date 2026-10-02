@@ -65,11 +65,13 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
     QObject::connect(goToImplementationAction, &QAction::triggered, window,
                       [docks, findUsagesPanel, editorTabs]() {
                           const QString name = editorTabs->wordUnderCursor();
-                          if (name.isEmpty()) {
+                          const QString path = editorTabs->currentPath();
+                          if (name.isEmpty() || path.isEmpty()) {
                               return;
                           }
+                          const auto at = editorTabs->lspPositionAt(editorTabs->caretPosition());
                           docks->show(QStringLiteral("findUsages"));
-                          findUsagesPanel->findImplementations(name);
+                          findUsagesPanel->findImplementationsAt(name, path, at.first, at.second);
                       });
 
     QAction *goToInterfaceAction =

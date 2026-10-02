@@ -81,7 +81,8 @@ pub use manager::{
     SEMANTIC_TOKENS_TIMEOUT, SIGNATURE_HELP_TIMEOUT,
 };
 pub use navigation::{
-    definition_outcome, parse_definition, virtual_doc_key, DefinitionOutcome, DefinitionTarget,
+    definition_outcome, parse_definition, usable_targets, virtual_doc_key, DefinitionOutcome,
+    DefinitionTarget,
 };
 /// ADR-0052: where a project's tooling runs. Re-exported so an adapter
 /// (`ui-shell`) that already depends on `lsp-core` can hold one — e.g. to

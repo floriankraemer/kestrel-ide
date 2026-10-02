@@ -330,4 +330,34 @@ mod tests {
         assert!(!merged.signature_triggers().supported);
         assert!(!merged.completion_resolve_supported());
     }
+
+    #[test]
+    fn the_navigation_and_formatting_requests_have_their_adr_route_and_capability() {
+        for (method, route, capability) in [
+            (
+                "textDocument/implementation",
+                Route::First,
+                "implementationProvider",
+            ),
+            (
+                "textDocument/typeDefinition",
+                Route::First,
+                "typeDefinitionProvider",
+            ),
+            (
+                "textDocument/declaration",
+                Route::First,
+                "declarationProvider",
+            ),
+            (
+                "textDocument/onTypeFormatting",
+                Route::First,
+                "documentOnTypeFormattingProvider",
+            ),
+            ("workspace/symbol", Route::Merge, "workspaceSymbolProvider"),
+        ] {
+            assert_eq!(route_of(method), route, "{method}");
+            assert_eq!(required_capability(method), Some(capability), "{method}");
+        }
+    }
 }

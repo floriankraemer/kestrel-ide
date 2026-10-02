@@ -99,7 +99,7 @@ baseline() {
 	# and call/type hierarchy (C11) each added a request method and a
 	# dispatch arm here. A split into per-feature request modules is a
 	# real follow-up (tracked separately), not attempted in this chain.
-	crates/lsp-core/src/manager.rs) echo 1944 ;;
+	crates/lsp-core/src/manager.rs) echo 1787 ;;
 	# 1371 -> 1686: the bridge-side call sites for the same feature chain
 	# (C5 watched files, C7 completion resolve, C9-C11 FFI methods).
 	# Raised from 1686 by 7 lines for hover_at's `HoverSettings::scope` gate

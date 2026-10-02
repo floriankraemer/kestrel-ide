@@ -16,7 +16,7 @@ use crate::bridge::registry::index_slot;
 /// A read lock is enough for every query, so several searches can run at
 /// once and only re-indexing serialises them.
 pub struct SearchModelRust {
-    index: mcp_server::IndexHandle,
+    pub(super) index: mcp_server::IndexHandle,
     /// RF12: the index leg of hover is a second round trip that
     /// `LanguageService`'s tracker cannot see, so it needs its own. The rule
     /// is `lsp_core::HoverTracker`'s; only its state lives here.

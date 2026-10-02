@@ -78,6 +78,13 @@ void FindUsagesPanel::findImplementations(const QString &name)
     searchModel_->findImplementations(name);
 }
 
+void FindUsagesPanel::findImplementationsAt(const QString &name, const QString &path,
+                                             quint32 line, quint32 character)
+{
+    beginQuery(tr("Searching implementations of \"%1\"...").arg(name));
+    searchModel_->implementationsAt(name, path, line, character);
+}
+
 void FindUsagesPanel::findSupertypes(const QString &name)
 {
     beginQuery(tr("Searching supertypes of \"%1\"...").arg(name));

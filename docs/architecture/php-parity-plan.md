@@ -165,8 +165,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | I5 — run kinds `php-builtin-server` (`php -S`) and `php-console` (PsySH, otherwise `php -a`) | done | 8d61c39 |
 | I6 — run-configuration dialog pages for I5 | done | b5de8ed |
 | I7 — Settings > PHP page: interpreter (local/container), probed version and Xdebug, language level, include paths, stubs, licence key (secret-store), server toggles | done | cf63262 |
-| I8 — Composer tool window: scripts, packages, install/update/require/remove/dump-autoload/outdated | done | — |
-| I9 — ADR-0068 + `layering.md` row + Qt/tokio gate | open | |
+| I8 — Composer tool window: scripts, packages, install/update/require/remove/dump-autoload/outdated | done | eaf9a0f |
+| I9 — ADR-0068 + `layering.md` row + Qt/tokio gate | done | — |
 
 ### PS — PHP language-server configuration
 | Task | Status | Commit |

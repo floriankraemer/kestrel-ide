@@ -262,23 +262,24 @@ fn reseed_settings(ide: &mut Ide, change: impl FnOnce(&mut app_config::Settings)
     ide.wait_for_ev(Mark::start(), "project_opened");
 }
 
-/// Click the project tree's `.ide` row, so the window has a settled,
+/// Click a folder row of the project tree, so the window has a settled,
 /// on-screen row to act against — the tree's own rows are the one thing
-/// with a reported rect at this point, and clicking `.ide` only selects it
-/// (a file row would open a tab). The *latest* report of the row: the tree
-/// publishes its rows once before the main window is laid out (tiny, wrong
-/// rects) and again after, and `main_window_shown` has already been waited
-/// for here.
+/// with a reported rect at this point, and clicking a folder only selects it
+/// (a file row would open a tab). That is the project's `.ide` folder when
+/// it has one (a fixture seeding its settings), else its `src` folder;
+/// opening a project no longer creates `.ide` itself. The *latest* report
+/// of the row: the tree publishes its rows once before the main window is
+/// laid out (tiny, wrong rects) and again after, and `main_window_shown` has
+/// already been waited for here.
 pub(crate) fn settle(ide: &Ide) {
-    let row = ide
-        .events()
-        .into_iter()
-        .rev()
-        .find(|e| {
-            e["ev"] == "project_tree_row"
-                && e["path"].as_str().is_some_and(|p| p.ends_with("/.ide"))
+    let latest = |suffix: &str| {
+        ide.events().into_iter().rev().find(|e| {
+            e["ev"] == "project_tree_row" && e["path"].as_str().is_some_and(|p| p.ends_with(suffix))
         })
-        .expect("the project tree reported its .ide row");
+    };
+    let row = latest("/.ide")
+        .or_else(|| latest("/src"))
+        .expect("the project tree reported an .ide or src folder row");
     let (x, y) = rect_centre(&row["rect"]);
     ide.click_at(x, y, 1);
     ide.focus_main();

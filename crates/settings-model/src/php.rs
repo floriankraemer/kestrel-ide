@@ -8,7 +8,7 @@
 
 use std::collections::BTreeMap;
 
-use app_config::php::PhpSettings;
+use app_config::php::{PhpServerSetting, PhpSettings};
 use app_config::Settings;
 
 /// Xdebug's default client port.
@@ -130,10 +130,143 @@ fn is_language_level(value: &str) -> bool {
     digits(parts.next()) && digits(parts.next()) && parts.next().is_none()
 }
 
+/// The language servers the PHP page toggles: `(id, shown name, shipped
+/// default for diagnostics)`. Both run by default (ADR-0066).
+pub const PHP_SERVERS: [(&str, &str, bool); 2] = [
+    ("intelephense", "Intelephense", true),
+    ("phpactor", "Phpactor", false),
+];
+
+/// What the Settings > PHP page edits, as the page shows it: text fields
+/// stay text so the rules for reading them live here, not in the view.
+/// Fields the page does not show (`xdebug_port`, `formatter`, servers it
+/// does not know) are untouched by [`PhpForm::apply_to`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PhpForm {
+    pub interpreter: String,
+    pub language_level: String,
+    /// One path per line.
+    pub include_paths: String,
+    /// Comma- or whitespace-separated extension names; blank leaves the
+    /// server's own list.
+    pub stubs: String,
+    pub container_target: String,
+    /// `exec`, `run` or blank.
+    pub container_mode: String,
+    pub intelephense_enabled: bool,
+    pub intelephense_diagnostics: bool,
+    pub phpactor_enabled: bool,
+    pub phpactor_diagnostics: bool,
+}
+
+/// Why a [`PhpForm`] cannot be saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PhpFormError {
+    /// The language level is not `major.minor`.
+    InvalidLanguageLevel(String),
+}
+
+impl std::fmt::Display for PhpFormError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidLanguageLevel(v) => write!(
+                f,
+                "\"{v}\" is not a language level; write it as major.minor, for example 8.3"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for PhpFormError {}
+
+impl PhpForm {
+    pub fn from_settings(php: &PhpSettings) -> Self {
+        let toggles = |id: &str, default_diagnostics: bool| {
+            let server = php.servers.get(id);
+            (
+                server.and_then(|s| s.enabled).unwrap_or(true),
+                server
+                    .and_then(|s| s.diagnostics)
+                    .unwrap_or(default_diagnostics),
+            )
+        };
+        let (intelephense_enabled, intelephense_diagnostics) =
+            toggles(PHP_SERVERS[0].0, PHP_SERVERS[0].2);
+        let (phpactor_enabled, phpactor_diagnostics) = toggles(PHP_SERVERS[1].0, PHP_SERVERS[1].2);
+        Self {
+            interpreter: php.interpreter.clone().unwrap_or_default(),
+            language_level: php.language_level.clone().unwrap_or_default(),
+            include_paths: php.include_paths.join("\n"),
+            stubs: php.stubs.as_ref().map(|s| s.join(", ")).unwrap_or_default(),
+            container_target: php.container_target.clone().unwrap_or_default(),
+            container_mode: php.container_mode.clone().unwrap_or_default(),
+            intelephense_enabled,
+            intelephense_diagnostics,
+            phpactor_enabled,
+            phpactor_diagnostics,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), PhpFormError> {
+        let level = self.language_level.trim();
+        if level.is_empty() || is_language_level(level) {
+            Ok(())
+        } else {
+            Err(PhpFormError::InvalidLanguageLevel(level.to_string()))
+        }
+    }
+
+    /// Write the form into `php`. Blank text is "unset", and a server
+    /// toggle equal to the shipped default is stored as unset, so a later
+    /// change of the default reaches a user who never chose.
+    pub fn apply_to(&self, php: &mut PhpSettings) {
+        let text = |value: &str| Some(value.trim().to_string()).filter(|v| !v.is_empty());
+        php.interpreter = text(&self.interpreter);
+        php.language_level = text(&self.language_level);
+        php.include_paths = self
+            .include_paths
+            .lines()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .collect();
+        let stubs: Vec<String> = self
+            .stubs
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+        php.stubs = (!stubs.is_empty()).then_some(stubs);
+        php.container_target = text(&self.container_target);
+        php.container_mode = text(&self.container_mode).filter(|_| {
+            php.container_target.is_some() && matches!(self.container_mode.trim(), "exec" | "run")
+        });
+        let wanted = [
+            (
+                PHP_SERVERS[0],
+                self.intelephense_enabled,
+                self.intelephense_diagnostics,
+            ),
+            (
+                PHP_SERVERS[1],
+                self.phpactor_enabled,
+                self.phpactor_diagnostics,
+            ),
+        ];
+        for ((id, _, default_diagnostics), enabled, diagnostics) in wanted {
+            let entry = php.servers.entry(id.to_string()).or_default();
+            entry.enabled = (!enabled).then_some(false);
+            entry.diagnostics = (diagnostics != default_diagnostics).then_some(diagnostics);
+            if *entry == PhpServerSetting::default() {
+                php.servers.remove(id);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app_config::php::PhpServerSetting;
 
     fn with(php: PhpSettings) -> Settings {
         Settings {
@@ -231,5 +364,76 @@ mod tests {
         assert!(!r.server_enabled("phpactor", true));
         assert!(r.server_diagnostics("phpactor", false));
         assert!(r.server_enabled("intelephense", true));
+    }
+
+    #[test]
+    fn the_form_round_trips_and_untouched_defaults_write_nothing() {
+        let mut php = PhpSettings {
+            xdebug_port: Some(9100),
+            ..PhpSettings::default()
+        };
+        let form = PhpForm::from_settings(&php);
+        assert!(form.intelephense_enabled && form.intelephense_diagnostics);
+        assert!(form.phpactor_enabled && !form.phpactor_diagnostics);
+        form.apply_to(&mut php);
+        assert_eq!(
+            php,
+            PhpSettings {
+                xdebug_port: Some(9100),
+                ..PhpSettings::default()
+            }
+        );
+    }
+
+    #[test]
+    fn form_text_is_read_by_the_rules() {
+        let mut php = PhpSettings::default();
+        PhpForm {
+            interpreter: " /opt/php ".into(),
+            language_level: "8.3".into(),
+            include_paths: "vendor\n\n  lib  \n".into(),
+            stubs: "redis, mongodb  gd".into(),
+            container_target: "t1".into(),
+            container_mode: "exec".into(),
+            intelephense_enabled: false,
+            intelephense_diagnostics: true,
+            phpactor_enabled: true,
+            phpactor_diagnostics: true,
+        }
+        .apply_to(&mut php);
+        assert_eq!(php.interpreter.as_deref(), Some("/opt/php"));
+        assert_eq!(php.include_paths, ["vendor", "lib"]);
+        assert_eq!(
+            php.stubs.as_deref(),
+            Some(&["redis".to_string(), "mongodb".into(), "gd".into()][..])
+        );
+        assert_eq!(php.container_mode.as_deref(), Some("exec"));
+        assert_eq!(php.servers["intelephense"].enabled, Some(false));
+        assert_eq!(php.servers["intelephense"].diagnostics, None);
+        assert_eq!(php.servers["phpactor"].diagnostics, Some(true));
+    }
+
+    #[test]
+    fn a_container_mode_without_a_target_or_with_a_bogus_word_is_dropped() {
+        let mut php = PhpSettings::default();
+        let mut form = PhpForm::from_settings(&php);
+        form.container_mode = "exec".into();
+        form.apply_to(&mut php);
+        assert_eq!(php.container_mode, None);
+        form.container_target = "t".into();
+        form.container_mode = "bogus".into();
+        form.apply_to(&mut php);
+        assert_eq!(php.container_mode, None);
+    }
+
+    #[test]
+    fn a_bad_language_level_is_refused_and_blank_is_fine() {
+        let mut form = PhpForm::from_settings(&PhpSettings::default());
+        assert_eq!(form.validate(), Ok(()));
+        form.language_level = "^8.1".into();
+        assert!(matches!(
+            form.validate(),
+            Err(PhpFormError::InvalidLanguageLevel(_))
+        ));
     }
 }

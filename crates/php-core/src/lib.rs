@@ -9,3 +9,10 @@
 pub mod composer;
 pub mod level;
 pub mod probe;
+
+/// The `secret-store` service name for PHP secrets, distinct from the
+/// other features' so no two share one keychain namespace.
+pub const SECRET_SERVICE: &str = "ide.php";
+
+/// The `secret-store` entry id holding the Intelephense licence key.
+pub const INTELEPHENSE_LICENCE_ID: &str = "intelephense-licence";

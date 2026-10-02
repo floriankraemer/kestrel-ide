@@ -33,6 +33,7 @@ use crate::bridge::editor_ops::EditorOpsRust;
 use crate::bridge::file_associations::FileAssociationsEditorRust;
 use crate::bridge::icons::IconProviderRust;
 use crate::bridge::language::LanguageServiceRust;
+use crate::bridge::php::PhpSettingsEditorRust;
 use crate::bridge::plugins::PluginCatalogRust;
 use crate::bridge::preview::PreviewProviderRust;
 use crate::bridge::run::{RunConfigEditorRust, RunServiceRust};
@@ -6123,6 +6124,91 @@ mod ffi {
         #[qinvokable]
         fn commit(self: &AnalysisEditor);
     }
+
+    /// Settings > PHP (PHP parity plan, I7), as the page shows it:
+    /// `settings_model::php::PhpForm`'s fields, text kept as text.
+    #[derive(Default)]
+    struct FfiPhpForm {
+        interpreter: QString,
+        language_level: QString,
+        /// One path per line.
+        include_paths: QString,
+        /// Comma- or whitespace-separated extension names.
+        stubs: QString,
+        container_target: QString,
+        /// `exec`, `run` or empty.
+        container_mode: QString,
+        intelephense_enabled: bool,
+        intelephense_diagnostics: bool,
+        phpactor_enabled: bool,
+        phpactor_diagnostics: bool,
+    }
+
+    /// What `php_core::probe` learned about an interpreter, or why it
+    /// learned nothing (`ok == false`, `error` set).
+    #[derive(Default)]
+    struct FfiPhpProbe {
+        ok: bool,
+        version: QString,
+        ini_file: QString,
+        xdebug: bool,
+        /// Xdebug's modes, comma-separated.
+        xdebug_modes: QString,
+        pcov: bool,
+        error: QString,
+    }
+
+    extern "RustQt" {
+        /// The Settings > PHP page's draft (I7), following
+        /// `AnalysisEditor`'s begin_edit(scope)/…/commit shape. The
+        /// Intelephense licence key is not a setting: it is held pending
+        /// here and written to the keychain on `commit`.
+        #[qobject]
+        type PhpSettingsEditor = super::PhpSettingsEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &PhpSettingsEditor, scope: &QString);
+
+        #[qinvokable]
+        fn form(self: &PhpSettingsEditor) -> FfiPhpForm;
+
+        /// Apply `form` to the draft; a non-zero code means it was refused
+        /// (and the draft is unchanged).
+        #[qinvokable]
+        #[cxx_name = "setForm"]
+        fn set_form(self: &PhpSettingsEditor, form: &FfiPhpForm) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "hasLicenceKey"]
+        fn has_licence_key(self: &PhpSettingsEditor) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setLicenceKey"]
+        fn set_licence_key(self: &PhpSettingsEditor, key: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "removeLicenceKey"]
+        fn remove_licence_key(self: &PhpSettingsEditor);
+
+        /// Probe `interpreter` (blank is `php`) off the Qt thread; answers
+        /// via `probeFinished`.
+        #[qinvokable]
+        #[cxx_name = "probeInterpreter"]
+        fn probe_interpreter(self: Pin<&mut PhpSettingsEditor>, interpreter: &QString);
+
+        #[qsignal]
+        #[cxx_name = "probeFinished"]
+        fn probe_finished(self: Pin<&mut PhpSettingsEditor>, result: FfiPhpProbe);
+
+        /// Write the draft (and a pending licence key change). A non-zero
+        /// code means the keychain refused the key; the settings were
+        /// still saved.
+        #[qinvokable]
+        fn commit(self: &PhpSettingsEditor) -> FfiResult;
+    }
+
+    impl cxx_qt::Threading for PhpSettingsEditor {}
 
     /// A Build Tools dock row's kind (the jvm-build-tools plan's B1/B2) —
     /// `jvm_build_core::view::NodeKind` crossed the seam.

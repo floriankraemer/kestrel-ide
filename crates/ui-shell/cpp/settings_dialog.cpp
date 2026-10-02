@@ -2,6 +2,8 @@
 
 #include "ai_providers_page.h"
 #include "analysis_settings_page.h"
+#include "php_settings_page.h"
+#include <QMessageBox>
 #include "build_tools_panel.h"
 #include "build_tools_settings_page.h"
 #include "appearance_page.h"
@@ -122,6 +124,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
+    categoryList->addItem(QObject::tr("PHP"));
     if (hasBuildToolsPage) {
         categoryList->addItem(QObject::tr("Build Tools"));
     }
@@ -352,6 +355,21 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                  analysisService = context.analysisService, scopedPage]() {
           return scopedPage(QStringLiteral("analysis"),
                              buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService));
+      });
+
+    // PHP is project-scoped like Analysis: which interpreter and language
+    // level a checkout runs under belongs to the checkout at least as often
+    // as to the person (ADR-0022). Must stay right after Analysis, in step
+    // with the category list above.
+    // Owned by the dialog itself, like `dataSourceEditor` below: nothing
+    // outside it needs this draft.
+    auto *phpEditorOwned = new PhpSettingsEditor(&dialog);
+    phpEditorOwned->beginEdit(appSettings->settingsScope());
+    const int phpIndex = deferPage(
+      [&dialog, phpEditor = phpEditorOwned, runConfigEditor = context.runConfigEditor,
+       scopedPage]() {
+          return scopedPage(QStringLiteral("php"),
+                            buildPhpSettingsPage(&dialog, phpEditor, runConfigEditor));
       });
 
     // Build Tools is project-scoped for the same reason Analysis is: which
@@ -636,7 +654,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
        languageServerEditor = context.languageServerEditor,
        languageService = context.languageService, terminalPage, terminalIndex,
        tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
-       analysisService = context.analysisService, analysisIndex, containersPage,
+       analysisService = context.analysisService, analysisIndex,
+       phpEditor = phpEditorOwned, phpIndex, containersPage,
        containersIndex, &lazyBuilders, runConfigEditor = context.runConfigEditor,
        containerService = context.containerService,
        buildToolsEditor = context.buildToolsEditor, buildToolsIndex, hasBuildToolsPage,
@@ -711,6 +730,16 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                            buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService)));
               pages->removeWidget(staleAnalysis);
               staleAnalysis->deleteLater();
+          }
+
+          phpEditor->beginEdit(scope);
+          if (!lazyBuilders.contains(phpIndex)) {
+              QWidget *stalePhp = pages->widget(phpIndex);
+              pages->insertWidget(
+                phpIndex, scopedPage(QStringLiteral("php"),
+                                     buildPhpSettingsPage(&dialog, phpEditor, runConfigEditor)));
+              pages->removeWidget(stalePhp);
+              stalePhp->deleteLater();
           }
 
           if (hasBuildToolsPage) {
@@ -887,6 +916,11 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         context.aiChat->applyAiSettings();
         context.languageServerEditor->commit();
         context.analysisEditor->commit();
+        // Before `applyServerSettings` below: the servers are configured
+        // from what this just saved, including the licence key.
+        if (const FfiResult phpResult = phpEditorOwned->commit(); phpResult.code != 0) {
+            QMessageBox::warning(&dialog, QObject::tr("PHP settings"), QString(phpResult.message));
+        }
         // One save and at most one rescope for both Project Scope lists.
         context.projectTreeModel->commitScopeEdit();
         // Reconciling is the Rust side's decision: it stops what the new

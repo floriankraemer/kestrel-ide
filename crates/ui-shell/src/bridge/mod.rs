@@ -65,6 +65,7 @@ pub mod hover_settings;
 pub mod icons;
 pub mod language;
 pub mod layouts;
+pub mod php;
 pub mod plugins;
 pub mod preview;
 pub mod registry;

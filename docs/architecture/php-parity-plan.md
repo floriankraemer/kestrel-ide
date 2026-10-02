@@ -163,8 +163,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | I3 — `process_exec::run_on`/`spawn_on`; interpreter probe (version, ini, xdebug/pcov, `xdebug.mode`) | done | 87be72c |
 | I4 — `ToolchainId::Php`; Composer scripts detected as run configs; Run Current File for `.php` | done | 7ac1fcf |
 | I5 — run kinds `php-builtin-server` (`php -S`) and `php-console` (PsySH, otherwise `php -a`) | done | 8d61c39 |
-| I6 — run-configuration dialog pages for I5 | done | — |
-| I7 — Settings > PHP page: interpreter (local/container), probed version and Xdebug, language level, include paths, stubs, licence key (secret-store), server toggles | open | |
+| I6 — run-configuration dialog pages for I5 | done | b5de8ed |
+| I7 — Settings > PHP page: interpreter (local/container), probed version and Xdebug, language level, include paths, stubs, licence key (secret-store), server toggles | done | — |
 | I8 — Composer tool window: scripts, packages, install/update/require/remove/dump-autoload/outdated | open | |
 | I9 — ADR-0068 + `layering.md` row + Qt/tokio gate | open | |
 

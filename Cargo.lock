@@ -9615,6 +9615,7 @@ dependencies = [
  "lsp-core",
  "markdown-preview",
  "mcp-server",
+ "php-core",
  "plugin-api",
  "plugin-host",
  "process-exec",

@@ -13,6 +13,7 @@
 #include <QComboBox>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -26,6 +27,8 @@
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
+
+#include <initializer_list>
 
 namespace ui_shell {
 
@@ -75,6 +78,23 @@ public:
 
 private:
     int column_;
+};
+
+// A list row as wide as the view, so a long entry is elided by the style
+// instead of widening the list into a horizontal scroll bar.
+class ViewWidthDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        QSize size = QStyledItemDelegate::sizeHint(option, index);
+        if (const auto *view = qobject_cast<const QAbstractItemView *>(parent())) {
+            size.setWidth(view->viewport()->width());
+        }
+        return size;
+    }
 };
 
 // One row, shared by the Variables, Watches and Evaluate trees — a variable
@@ -135,6 +155,10 @@ DebugPanel::DebugPanel(DebugService *debugService, OpenAt openAt, QWidget *paren
     toolbar->addStretch(1);
 
     frames_ = new QListWidget(this);
+    frames_->setItemDelegate(new ViewWidthDelegate(frames_));
+    frames_->setResizeMode(QListView::Adjust);
+    frames_->setTextElideMode(Qt::ElideMiddle);
+    frames_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     variableFilter_ = new QLineEdit(this);
     variableFilter_->setPlaceholderText(tr("Filter variables"));
@@ -143,6 +167,12 @@ DebugPanel::DebugPanel(DebugService *debugService, OpenAt openAt, QWidget *paren
     variables_->setHeaderLabels({tr("Name"), tr("Value")});
     variables_->setItemDelegate(new ColumnEditDelegate(1, variables_));
     variables_->setContextMenuPolicy(Qt::CustomContextMenu);
+    // A name column wide enough for a typical identifier and no wider: a
+    // long one is elided in the middle (the column can be dragged wider),
+    // and the value keeps the rest of the row instead of scrolling away.
+    variables_->setTextElideMode(Qt::ElideMiddle);
+    variables_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    variables_->setColumnWidth(0, fontMetrics().horizontalAdvance(QLatin1Char('x')) * 16);
     auto *variablesColumn = new QVBoxLayout();
     variablesColumn->addWidget(variableFilter_);
     variablesColumn->addWidget(variables_, 1);
@@ -187,6 +217,18 @@ DebugPanel::DebugPanel(DebugService *debugService, OpenAt openAt, QWidget *paren
     consoleColumn->addWidget(evaluateInput_);
     auto *consoleWidget = new QWidget(this);
     consoleWidget->setLayout(consoleColumn);
+
+    // The dock is only a few rows tall by default: let the lists shrink
+    // below their size hints rather than clip the input lines under them.
+    const int listMinimum = fontMetrics().height() * 2;
+    for (QWidget *list : std::initializer_list<QWidget *>{frames_, variables_, watches_, console_,
+                                                           evaluateTree_}) {
+        list->setMinimumHeight(listMinimum);
+    }
+    for (QVBoxLayout *column : {variablesColumn, watchColumn, consoleColumn}) {
+        column->setContentsMargins(4, 2, 4, 2);
+        column->setSpacing(2);
+    }
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
     splitter->addWidget(frames_);

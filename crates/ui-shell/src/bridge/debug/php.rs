@@ -39,29 +39,48 @@ struct XdebugCheck {
 /// error.
 fn launch_after_check(qt_thread: CxxQtThread<ffi::DebugService>, session_id: u64, run: PhpRun) {
     let check = &run.check;
-    let issue = php_core::probe::probe(&check.host, &check.interpreter, &check.cwd)
+    // Only a blocking issue matters here: a run the IDE starts sets
+    // `XDEBUG_MODE` itself, so "xdebug.mode lacks debug" is irrelevant and
+    // is advised on the listen toggle instead.
+    let blocked = php_core::probe::probe(&check.host, &check.interpreter, &check.cwd)
         .ok()
-        .and_then(|probe| probe.xdebug_issue());
-    let advice = issue
-        .as_ref()
-        .map(|issue| (issue.blocks_debugging(), issue.advice(check.in_container)));
+        .and_then(|probe| probe.xdebug_issue())
+        .filter(php_core::probe::XdebugIssue::blocks_debugging)
+        .map(|issue| issue.advice(check.in_container));
     let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
-        match advice {
-            Some((true, advice)) => {
-                let error = DapError::XdebugUnavailable(advice);
-                service
-                    .as_mut()
-                    .debug_failed(session_id, to_ffi_result(&error));
-                return;
-            }
-            Some((false, advice)) => service.as_mut().debug_output(
-                session_id,
-                QString::from("stderr"),
-                QString::from(format!("{advice}\n").as_str()),
-            ),
-            None => {}
+        if let Some(advice) = blocked {
+            let error = DapError::XdebugUnavailable(advice);
+            service
+                .as_mut()
+                .debug_failed(session_id, to_ffi_result(&error));
+            return;
         }
         service.as_mut().request_php_launch(&run);
+    });
+}
+
+/// Probe the `[php]` interpreter and, whatever is wrong with its Xdebug,
+/// say so in the listen session's console: a listener serves requests the
+/// IDE does not start, which do depend on the ini's `xdebug.mode`.
+fn advise_on_listening(qt_thread: CxxQtThread<ffi::DebugService>, check: XdebugCheck) {
+    std::thread::spawn(move || {
+        let Some(issue) = php_core::probe::probe(&check.host, &check.interpreter, &check.cwd)
+            .ok()
+            .and_then(|probe| probe.xdebug_issue())
+        else {
+            return;
+        };
+        let advice = issue.advice(check.in_container);
+        let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
+            let listener = service.php_listen.borrow().session_id();
+            if let Some(session_id) = listener {
+                service.as_mut().debug_output(
+                    session_id,
+                    QString::from("stderr"),
+                    QString::from(format!("{advice}\n").as_str()),
+                );
+            }
+        });
     });
 }
 
@@ -97,7 +116,19 @@ impl ffi::DebugService {
             container_map.as_ref(),
             xdebug_port(),
         );
-        self.listen_when_located(root, plan.listen_arguments, None)
+        let host = php_core::host::interpreter_host(&settings.php, &settings.containers, &root);
+        let check = XdebugCheck {
+            in_container: matches!(host, process_exec::host::ExecHost::Container(_)),
+            host,
+            interpreter: settings_model::php::resolve(&settings).interpreter,
+            cwd: root.clone(),
+        };
+        let qt_thread = self.as_mut().qt_thread();
+        let result = self.listen_when_located(root, plan.listen_arguments, None);
+        if result.code == 0 {
+            advise_on_listening(qt_thread, check);
+        }
+        result
     }
 
     pub fn is_php_listening(&self) -> bool {

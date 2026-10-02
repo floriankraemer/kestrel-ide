@@ -486,6 +486,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Alt+F7",
     },
     ActionDef {
+        id: "navigate.goToTypeDeclaration",
+        label: "Go to Type Declaration",
+        category: "Navigate",
+        default_shortcut: "Ctrl+Shift+B",
+    },
+    ActionDef {
         id: "navigate.goToImplementation",
         label: "Go to Implementation",
         category: "Navigate",

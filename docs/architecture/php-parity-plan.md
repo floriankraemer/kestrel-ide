@@ -178,8 +178,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### N — missing LSP requests
 | Task | Status | Commit |
 |---|---|---|
-| N1 — `implementation`/`typeDefinition`/`declaration`; Go to Implementation tries LSP first and falls back to the index | done | — |
-| N2 — Go to Type Declaration action; Go to Declaration uses `declaration` when the server supports it | open | |
+| N1 — `implementation`/`typeDefinition`/`declaration`; Go to Implementation tries LSP first and falls back to the index | done | 497cad8 |
+| N2 — Go to Type Declaration action; Go to Declaration uses `declaration` when the server supports it | done | — |
 | N3 — `workspace/symbol` merged with index hits; Go to Class | open | |
 | N4 — Reformat Selection → `format_range` | open | |
 | N5 — `onTypeFormatting`, applied as one undo step | open | |

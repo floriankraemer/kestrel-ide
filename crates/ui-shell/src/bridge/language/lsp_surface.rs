@@ -706,7 +706,29 @@ impl ffi::LanguageService {
             .collect()
     }
 
-    pub fn resolve_definition(mut self: Pin<&mut Self>, path: &QString, line: u32, character: u32) {
+    pub fn resolve_definition(self: Pin<&mut Self>, path: &QString, line: u32, character: u32) {
+        self.resolve_location(path, line, character, false);
+    }
+
+    /// N2: Go to Type Declaration. LSP only — the index has no types of
+    /// expressions — so "the server had nothing" is a status message, not
+    /// the index fallback `resolveDefinition` falls back to.
+    pub fn resolve_type_definition(
+        self: Pin<&mut Self>,
+        path: &QString,
+        line: u32,
+        character: u32,
+    ) {
+        self.resolve_location(path, line, character, true);
+    }
+
+    fn resolve_location(
+        mut self: Pin<&mut Self>,
+        path: &QString,
+        line: u32,
+        character: u32,
+        type_declaration: bool,
+    ) {
         let path_string = path.to_string();
         let uri = lsp_core::uri_from_path(&path_string);
         // C12-followup: the language the *originating* document is in —
@@ -717,16 +739,24 @@ impl ffi::LanguageService {
         let language_id = self.config_for_path(&path_string).map(|c| c.language_id);
         let qt_thread = self.as_mut().qt_thread();
         let queued = self.push_job(move |manager| {
-            let outcome =
-                lsp_core::definition_outcome(Some(manager.definition(&uri, line, character)));
+            let response = if type_declaration {
+                manager.type_definition(&uri, line, character)
+            } else {
+                manager.go_to_declaration(&uri, line, character)
+            };
+            let outcome = lsp_core::definition_outcome(Some(response));
             let _ = qt_thread.queue(move |service: Pin<&mut Self>| {
-                service.apply_definition_outcome(outcome, language_id)
+                service.apply_definition_outcome(outcome, language_id, type_declaration)
             });
         });
         if !queued {
             // No worker at all (no project open), which is one more case of
             // "no server answered" — the same rule decides it.
-            self.apply_definition_outcome(lsp_core::definition_outcome(None), None);
+            self.apply_definition_outcome(
+                lsp_core::definition_outcome(None),
+                None,
+                type_declaration,
+            );
         }
     }
 
@@ -737,6 +767,7 @@ impl ffi::LanguageService {
         mut self: Pin<&mut Self>,
         outcome: lsp_core::DefinitionOutcome,
         language_id: Option<String>,
+        type_declaration: bool,
     ) {
         match outcome {
             lsp_core::DefinitionOutcome::Lsp(targets) => {
@@ -748,6 +779,11 @@ impl ffi::LanguageService {
                     });
                 }
                 self.as_mut().definition_finished();
+            }
+            lsp_core::DefinitionOutcome::Index if type_declaration => {
+                self.as_mut().definition_unavailable(QString::from(
+                    "No type declaration found: the language server has no answer here.",
+                ))
             }
             lsp_core::DefinitionOutcome::Index => self.as_mut().definition_fallback(),
             // C12: the server pointed at decompiled/generated source (a

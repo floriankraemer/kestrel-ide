@@ -5163,6 +5163,19 @@ mod ffi {
             character: u32,
         );
 
+        /// N2 — Go to Type Declaration: `textDocument/typeDefinition` at a
+        /// position. Answers on `definitionFound`* + `definitionFinished`,
+        /// or `definitionUnavailable` when the server has nothing (there is
+        /// no index fallback for the type of an expression).
+        #[qinvokable]
+        #[cxx_name = "resolveTypeDefinition"]
+        fn resolve_type_definition(
+            self: Pin<&mut LanguageService>,
+            path: &QString,
+            line: u32,
+            character: u32,
+        );
+
         /// One target of a `resolveDefinition`, in the server's own order.
         #[qsignal]
         #[cxx_name = "definitionFound"]

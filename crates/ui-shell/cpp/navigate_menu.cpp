@@ -34,6 +34,14 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
     QObject::connect(goToDeclarationAction, &QAction::triggered, window,
                       [editorTabs]() { editorTabs->requestDeclarationAtCaret(); });
 
+    QAction *goToTypeDeclarationAction =
+      registerAction(navigateMenu, QStringLiteral("navigate.goToTypeDeclaration"),
+                      QObject::tr("Go to Type Declaration"), appSettings, actions);
+    QObject::connect(goToTypeDeclarationAction, &QAction::triggered, window,
+                      [navigator, editorTabs]() {
+                          navigator->resolveTypeAt(editorTabs->caretPosition());
+                      });
+
     // H4: the hover card's ⋮ menu shows the live binding.
     const auto pushDeclarationShortcut = [goToDeclarationAction]() {
         EditorPopup::instance().setDeclarationShortcut(

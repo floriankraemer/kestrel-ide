@@ -5,6 +5,8 @@
 Accepted and fully implemented: `RunConfigSetting.kind` + the three container-kind sub-tables, `container_core::run_config`'s argv compilers and validators, `run-core`'s dispatch (`to_launch_spec_in`, the containerfile auto-build task, compose stop/down/scale), the run-config dialog's structured per-kind pages (Server combo, tables, disclosure menu, Services picker, live command preview), the Compose tree's Start All/Stop/Down/Scale/Jump-to-Source actions and project dashboard, the Dockerfile/compose gutter popups, and "Create Container..." replacing C4's `createContainerQuick`.
 Extended by C8 (§7 below, "Run targets"): a *plain-process* configuration can now run inside a container too, through `RunConfigSetting.run_on` and `container_core::target`.
 
+Section 7's rejection of an `ExecHost::Container` variant is superseded by [ADR-0067](0067-container-exec-host.md), which adds one for tools the IDE runs itself; run targets still wrap the `LaunchSpec`.
+
 ## Context
 
 ADR-0032/ADR-0039 gave this IDE one run-configuration shape: a program, arguments, a working directory, an environment, and (ADR-0039) a `toolchain`/`target` pair that says which build tool produced it.

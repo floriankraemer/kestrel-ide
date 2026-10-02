@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted.
+Amended by [ADR-0067](0067-container-exec-host.md): `ExecHost` gains a `Container` value that `for_path` never returns, and `is_remote()` splits into `runs_remotely()` and `filesystem_is_remote()`.
 
 ## Context
 

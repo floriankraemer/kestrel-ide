@@ -191,8 +191,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | X2 — `resolve_program` inside the container; NotFound mapping | done | 463118a |
 | X3 — `container_core::target::exec_host` (exec/run modes, Docker/Podman/Compose) | done | 85b2938 |
 | X4 — scheduler, test runner, formatter and `exec="interpreter"` servers run on the interpreter host | done | 6600ce2 |
-| X5 — PHP run configs inherit `run_on` = the interpreter target (including `php -S` ports) | done | — |
-| X6 — ADR-0067 + `layering.md` rows | open | |
+| X5 — PHP run configs inherit `run_on` = the interpreter target (including `php -S` ports) | done | 4169dbe |
+| X6 — ADR-0067 + `layering.md` rows | done | — |
 
 ### D — Xdebug (ADR-0069)
 | Task | Status | Commit |

@@ -330,6 +330,33 @@ mod tests {
     }
 
     #[test]
+    fn php_arrays_matches_groups_heredocs_attributes_and_doc_comments_fold() {
+        let text = "<?php\nuse App\\Models\\{\n    User,\n    Post,\n};\n#[Route(\n    '/x',\n)]\nclass A {\n    /**\n     * Doc.\n     */\n    public function f(int $a) {\n        $x = [\n            1,\n        ];\n        $y = match ($a) {\n            1 => 'a',\n            default => 'b',\n        };\n        $h = <<<EOT\n        text\n        EOT;\n        switch ($a) {\n            case 1: break;\n        }\n    }\n}\nenum E {\n    case A;\n}\n";
+        let mut highlighter = Highlighter::new(php());
+        highlighter.set_text(text);
+        let folded: Vec<&str> = highlighter
+            .fold_ranges()
+            .iter()
+            .map(|r| &text[r.start..r.end])
+            .collect();
+        for opener in [
+            "{\n    User,",
+            "(\n    '/x',\n)",
+            "/**\n     * Doc.",
+            "[\n            1,",
+            "{\n            1 => 'a',",
+            "<<<EOT",
+            "{\n            case 1: break;",
+            "{\n    case A;",
+        ] {
+            assert!(
+                folded.iter().any(|f| f.starts_with(opener)),
+                "no fold starts with {opener:?}: {folded:?}"
+            );
+        }
+    }
+
+    #[test]
     fn twig_directive_pairs_fold_and_nest() {
         let text = "{% block body %}\n{% for u in users %}\n<li>{{ u }}</li>\n{% endfor %}\n{% set x = 1 %}\n{% endblock %}\n";
         let mut highlighter = Highlighter::new(lang("twig"));

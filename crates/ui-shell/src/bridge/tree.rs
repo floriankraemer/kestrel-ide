@@ -15,6 +15,8 @@ use crate::bridge::convert::{push_recent_project, to_ffi_result};
 use crate::bridge::ffi::{self, FfiResult, Roles};
 use crate::bridge::registry::{shared_icons, shared_session, SharedIcons};
 
+mod new_file;
+
 /// Rust side of the `ProjectTreeModel` QObject: handles on the shared
 /// session and icon theme, nothing else — the tree data itself lives in
 /// `app-core`.

@@ -778,6 +778,20 @@ mod ffi {
         more: bool,
     }
 
+    /// One new-file template in the New menu (ADR-0072).
+    struct FfiFileTemplate {
+        id: QString,
+        name: QString,
+    }
+
+    /// The outcome of creating a file from a template: the usual result,
+    /// plus the path of the new file (empty on failure) for the view to open.
+    #[derive(Default)]
+    struct FfiCreateResult {
+        result: FfiResult,
+        path: QString,
+    }
+
     /// One live template in a picker (ADR-0072).
     struct FfiTemplateItem {
         abbreviation: QString,
@@ -2157,6 +2171,22 @@ mod ffi {
             parent_dir: &QString,
             name: &QString,
         ) -> FfiResult;
+
+        /// The new-file templates, for the New menu.
+        #[qinvokable]
+        #[cxx_name = "fileTemplates"]
+        fn file_templates(self: &ProjectTreeModel) -> Vec<FfiFileTemplate>;
+
+        /// Create a file from the template `template_id` named `name` in
+        /// `parent_dir`, refresh the tree, and report the new path.
+        #[qinvokable]
+        #[cxx_name = "createFromTemplate"]
+        fn create_from_template(
+            self: Pin<&mut ProjectTreeModel>,
+            parent_dir: &QString,
+            template_id: &QString,
+            name: &QString,
+        ) -> FfiCreateResult;
 
         /// Create an empty folder named `name` inside `parent_dir` and
         /// refresh the tree.

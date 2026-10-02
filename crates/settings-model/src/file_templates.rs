@@ -17,15 +17,29 @@ pub struct Vars {
 const NAMESPACE_VAR: &str = "${NAMESPACE}";
 
 /// The name as the template wants it: `name_suffix` appended unless the
-/// name already ends with it, and a typed-in extension removed.
-pub fn entity_name(template: &FileTemplateContribution, typed: &str) -> String {
+/// name already ends with it, and a typed-in extension removed. A template
+/// that puts the name into code (`${NAME}` in its body) needs a name that
+/// is an identifier, so anything else is refused with the reason.
+pub fn entity_name(template: &FileTemplateContribution, typed: &str) -> Result<String, String> {
     let dotted = format!(".{}", template.extension);
     let name = typed.trim();
     let name = name.strip_suffix(&dotted).unwrap_or(name);
-    match &template.name_suffix {
+    let name = match &template.name_suffix {
         Some(suffix) if !name.ends_with(suffix.as_str()) => format!("{name}{suffix}"),
         _ => name.to_string(),
+    };
+    if template.body.contains("${NAME}") && !is_identifier(&name) {
+        return Err(format!(
+            "\"{name}\" is not a valid name: use letters, digits and underscores, not starting with a digit"
+        ));
     }
+    Ok(name)
+}
+
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+        && chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
 /// The file name for `name` (already through [`entity_name`]).
@@ -108,10 +122,24 @@ mod tests {
     #[test]
     fn the_name_gets_its_suffix_once_and_loses_a_typed_extension() {
         let t = template("", Some("Test"));
-        assert_eq!(entity_name(&t, "Foo"), "FooTest");
-        assert_eq!(entity_name(&t, " FooTest.php "), "FooTest");
+        assert_eq!(entity_name(&t, "Foo").unwrap(), "FooTest");
+        assert_eq!(entity_name(&t, " FooTest.php ").unwrap(), "FooTest");
         assert_eq!(file_name(&t, "FooTest"), "FooTest.php");
-        assert_eq!(entity_name(&template("", None), "Foo"), "Foo");
+        assert_eq!(entity_name(&template("", None), "Foo").unwrap(), "Foo");
+    }
+
+    #[test]
+    fn a_name_that_goes_into_code_must_be_an_identifier() {
+        let t = template("class ${NAME} {}", None);
+        for bad in ["", "1Foo", "Foo Bar", "Foo-Bar", "a/b"] {
+            assert!(entity_name(&t, bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(entity_name(&t, "_Foo9").unwrap(), "_Foo9");
+        // A template that never uses the name in code takes any name.
+        assert_eq!(
+            entity_name(&template("x", None), "my notes").unwrap(),
+            "my notes"
+        );
     }
 
     #[test]
@@ -134,7 +162,7 @@ mod tests {
         };
 
         let test = by_id("php-test");
-        let name = entity_name(&test, "Foo");
+        let name = entity_name(&test, "Foo").unwrap();
         let v = Vars {
             name: name.clone(),
             ..vars("Tests\\Unit")

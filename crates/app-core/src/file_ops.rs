@@ -125,6 +125,18 @@ impl fmt::Display for ResourceOpError {
 }
 
 impl AppSession {
+    /// Create a file holding `contents` (a rendered new-file template) inside
+    /// `parent_dir`, and say where it landed so the caller can open it. The
+    /// tree refreshes the way [`Self::create_file`]'s does.
+    pub fn create_file_with(
+        &mut self,
+        parent_dir: &Path,
+        name: &str,
+        contents: &str,
+    ) -> Result<PathBuf, AppError> {
+        project_model::create_file_with(parent_dir, name, contents).map_err(AppError::FileOp)
+    }
+
     /// Perform the file operations a refactoring asked for, then retarget
     /// any open tabs they moved (F2; its ADR is unwritten).
     ///
@@ -604,5 +616,31 @@ mod tests {
             ])
             .unwrap();
         assert!(b.exists() && !a.exists());
+    }
+
+    #[test]
+    fn create_file_with_lands_the_contents_and_reports_the_path() {
+        let (mut session, dir) = project_session();
+        let path = session
+            .create_file_with(dir.path(), "Foo.php", "<?php\n")
+            .unwrap();
+        assert_eq!(path, dir.path().join("Foo.php"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "<?php\n");
+    }
+
+    #[test]
+    fn create_file_with_refuses_a_taken_or_malformed_name() {
+        let (mut session, dir) = project_session();
+        session.create_file_with(dir.path(), "a.txt", "x").unwrap();
+        for name in ["a.txt", "../a.txt", ""] {
+            assert!(
+                matches!(
+                    session.create_file_with(dir.path(), name, "y"),
+                    Err(AppError::FileOp(_))
+                ),
+                "{name:?}"
+            );
+        }
+        assert_eq!(fs::read_to_string(dir.path().join("a.txt")).unwrap(), "x");
     }
 }

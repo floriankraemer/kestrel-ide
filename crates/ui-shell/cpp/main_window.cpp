@@ -805,9 +805,7 @@ void buildMainWindow(AppSettings *appSettings,
                     central.terminalPanel->selectShellAction());
 
     QMenu *fileMenu = window->menuBar()->addMenu(QObject::tr("&File"));
-    // Each entry's rect, the same convention `viewMenu` below uses — an E2E
-    // flow needs Preferences'/Project Settings' on-screen position to open
-    // the Settings dialog without guessing tab order.
+    // Each entry's rect (as `viewMenu` below): an E2E flow needs them on screen.
     e2eMarkMenuActions(fileMenu, "file_menu_action");
     QAction *openFolderAction = registerAction(fileMenu, QStringLiteral("file.openFolder"),
                                                 QObject::tr("Open Folder..."), appSettings, *actions);
@@ -827,6 +825,8 @@ void buildMainWindow(AppSettings *appSettings,
     fileMenu->addSeparator();
     QAction *exitAction = registerAction(fileMenu, QStringLiteral("file.exit"),
                                           QObject::tr("Exit"), appSettings, *actions);
+    wireNewMenu(fileMenu, window, central.projectTree, treeModel,
+                [tabs = central.editorTabs](const QString &path) { tabs->openFile(path); });
 
     QObject::connect(openFolderAction, &QAction::triggered, window,
                       [treeModel, window, recentProjectsMenu, appSettings]() {

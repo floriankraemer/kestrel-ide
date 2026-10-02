@@ -563,6 +563,8 @@ pub enum FileOpError {
     AlreadyExists(PathBuf),
     NotFound(PathBuf),
     Io(PathBuf, io::Error),
+    /// A name that cannot be one directory entry: the reason, in words.
+    InvalidName(String),
 }
 
 impl fmt::Display for FileOpError {
@@ -571,26 +573,64 @@ impl fmt::Display for FileOpError {
             FileOpError::AlreadyExists(p) => write!(f, "already exists: {}", p.display()),
             FileOpError::NotFound(p) => write!(f, "no such file or folder: {}", p.display()),
             FileOpError::Io(p, err) => write!(f, "{}: {err}", p.display()),
+            FileOpError::InvalidName(reason) => write!(f, "invalid name: {reason}"),
         }
     }
 }
 
 impl std::error::Error for FileOpError {}
 
+/// Whether `name` can be a single entry of a directory: not empty, not `.`
+/// or `..`, no path separator (it must not reach outside the directory it is
+/// created in) and no control character.
+pub fn validate_entry_name(name: &str) -> Result<(), FileOpError> {
+    let reason = if name.trim().is_empty() {
+        "the name is empty"
+    } else if name == "." || name == ".." {
+        "`.` and `..` are not names"
+    } else if name.contains(['/', '\\']) {
+        "a name cannot contain a path separator"
+    } else if name.chars().any(char::is_control) {
+        "a name cannot contain control characters"
+    } else {
+        return Ok(());
+    };
+    Err(FileOpError::InvalidName(reason.to_string()))
+}
+
 /// Create an empty file named `name` inside `parent_dir`. Errors if
 /// something with that name already exists there.
 pub fn create_file(parent_dir: &Path, name: &str) -> Result<PathBuf, FileOpError> {
+    create_file_with(parent_dir, name, "")
+}
+
+/// Create a file named `name` inside `parent_dir` holding `contents`. The
+/// existence check and the creation are one step, so a file that appears in
+/// between is never overwritten.
+pub fn create_file_with(
+    parent_dir: &Path,
+    name: &str,
+    contents: &str,
+) -> Result<PathBuf, FileOpError> {
+    validate_entry_name(name)?;
     let path = parent_dir.join(name);
-    if path.exists() {
-        return Err(FileOpError::AlreadyExists(path));
-    }
-    fs::File::create(&path).map_err(|e| FileOpError::Io(path.clone(), e))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| match e.kind() {
+            io::ErrorKind::AlreadyExists => FileOpError::AlreadyExists(path.clone()),
+            _ => FileOpError::Io(path.clone(), e),
+        })?;
+    io::Write::write_all(&mut file, contents.as_bytes())
+        .map_err(|e| FileOpError::Io(path.clone(), e))?;
     Ok(path)
 }
 
 /// Create an empty folder named `name` inside `parent_dir`. Errors if
 /// something with that name already exists there.
 pub fn create_folder(parent_dir: &Path, name: &str) -> Result<PathBuf, FileOpError> {
+    validate_entry_name(name)?;
     let path = parent_dir.join(name);
     if path.exists() {
         return Err(FileOpError::AlreadyExists(path));
@@ -602,6 +642,7 @@ pub fn create_folder(parent_dir: &Path, name: &str) -> Result<PathBuf, FileOpErr
 /// Rename `path` (file or folder) to `new_name`, staying in the same parent
 /// directory. Errors if `path` doesn't exist or `new_name` is already taken.
 pub fn rename_path(path: &Path, new_name: &str) -> Result<PathBuf, FileOpError> {
+    validate_entry_name(new_name)?;
     if !path.exists() {
         return Err(FileOpError::NotFound(path.to_path_buf()));
     }

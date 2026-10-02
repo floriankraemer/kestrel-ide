@@ -616,6 +616,49 @@ fn create_file_errors_when_name_taken() {
 }
 
 #[test]
+fn create_file_with_writes_the_contents_and_never_overwrites() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = create_file_with(dir.path(), "a.php", "<?php\n").unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "<?php\n");
+    assert!(matches!(
+        create_file_with(dir.path(), "a.php", "other"),
+        Err(FileOpError::AlreadyExists(_))
+    ));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.php")).unwrap(),
+        "<?php\n"
+    );
+}
+
+#[test]
+fn an_entry_name_must_be_one_plain_name() {
+    let dir = tempfile::tempdir().unwrap();
+    for bad in ["", "  ", ".", "..", "a/b", "a\\b", "../x", "a\nb", "a\0b"] {
+        assert!(
+            matches!(
+                create_file(dir.path(), bad),
+                Err(FileOpError::InvalidName(_))
+            ),
+            "{bad:?}"
+        );
+        assert!(
+            matches!(
+                create_folder(dir.path(), bad),
+                Err(FileOpError::InvalidName(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    let file = create_file(dir.path(), "ok.txt").unwrap();
+    assert!(matches!(
+        rename_path(&file, "../escaped.txt"),
+        Err(FileOpError::InvalidName(_))
+    ));
+    assert!(file.exists());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn create_folder_appears_on_disk() {
     let dir = tempfile::tempdir().unwrap();
     let path = create_folder(dir.path(), "newdir").unwrap();

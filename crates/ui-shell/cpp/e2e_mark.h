@@ -30,7 +30,7 @@ void e2eMarkStartupBegin();
 // time-to-shown from the same origin (fast project open plan, PR1).
 qint64 e2eElapsedMs();
 
-// Reports every action in a menu — label, enabled state and screen rect —
+// Reports every action in a menu — label, enabled and checked state, and screen rect —
 // once the menu is actually laid out.
 //
 // A popup menu is the one widget an E2E flow cannot locate any other way:

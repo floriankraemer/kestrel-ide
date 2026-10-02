@@ -1,5 +1,7 @@
 #include "dock_layout.h"
 
+#include "e2e_mark.h"
+
 #include <QSize>
 #include <QSplitter>
 #include <QTimer>
@@ -42,6 +44,12 @@ ads::CDockAreaWidget *DockRegistry::registerDock(const QString &id, ads::CDockWi
     ads::CDockWidget *anchor =
       relativeTo && !relativeTo->dockWidgets().isEmpty() ? relativeTo->dockWidgets().first() : nullptr;
     applyMinimumDockSize(dock);
+    // Which tool windows are open is the one layout fact a flow cannot read
+    // off another marker.
+    QObject::connect(dock, &ads::CDockWidget::viewToggled, dock, [id](bool visible) {
+        e2eMark(QStringLiteral("{\"ev\":\"dock_visibility\",\"id\":%1,\"visible\":%2}")
+                  .arg(e2eJson(id), visible ? QLatin1String("true") : QLatin1String("false")));
+    });
     docks_.insert(id, Entry{dock, area, anchor});
     return dockManager_->addDockWidget(area, dock, relativeTo);
 }

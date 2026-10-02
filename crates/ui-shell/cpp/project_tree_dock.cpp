@@ -88,6 +88,27 @@ QString selectedTargetDir(QTreeView *treeView, ProjectTreeModel *treeModel)
       : QFileInfo(path).absolutePath();
 }
 
+// A text prompt, marked like every other dialog: `window` is the X window id,
+// because under bare Xvfb nothing hands a new toplevel the input focus and a
+// flow has to focus it before typing. Empty when cancelled.
+QString askText(QMainWindow *window, const QString &title, const QString &label)
+{
+    QInputDialog dialog(window);
+    dialog.setWindowTitle(title);
+    dialog.setLabelText(label);
+    QTimer::singleShot(0, &dialog, [&dialog, title]() {
+        e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"input_dialog\","
+                                "\"title\":%1,\"window\":\"%2\"}")
+                  .arg(e2eJson(title))
+                  .arg(dialog.winId()));
+    });
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"input_dialog\","
+                            "\"accepted\":%1}")
+              .arg(accepted ? QLatin1String("true") : QLatin1String("false")));
+    return accepted ? dialog.textValue() : QString();
+}
+
 // File, Directory, then one entry per file template. Which templates exist,
 // what the name must look like and what ends up in the file are Rust's
 // answers; this asks for a name and shows a refusal.
@@ -99,8 +120,7 @@ QVector<NewEntry> buildNewMenu(QMenu *menu,
 {
     QVector<NewEntry> entries;
     entries.append({ menu->addAction(QObject::tr("File")), [=]() {
-        const QString name = QInputDialog::getText(window, QObject::tr("New File"),
-                                                   QObject::tr("File name:"));
+        const QString name = askText(window, QObject::tr("New File"), QObject::tr("File name:"));
         if (name.isEmpty()) {
             return;
         }
@@ -112,8 +132,8 @@ QVector<NewEntry> buildNewMenu(QMenu *menu,
         openFile(QDir(targetDir).filePath(name));
     } });
     entries.append({ menu->addAction(QObject::tr("Directory")), [=]() {
-        const QString name = QInputDialog::getText(window, QObject::tr("New Directory"),
-                                                   QObject::tr("Directory name:"));
+        const QString name =
+              askText(window, QObject::tr("New Directory"), QObject::tr("Directory name:"));
         if (name.isEmpty()) {
             return;
         }
@@ -131,8 +151,8 @@ QVector<NewEntry> buildNewMenu(QMenu *menu,
         const QString id = entry.id;
         const QString label = entry.name;
         entries.append({ menu->addAction(label), [=]() {
-            const QString name = QInputDialog::getText(window, QObject::tr("New %1").arg(label),
-                                                       QObject::tr("Name:"));
+            const QString name =
+              askText(window, QObject::tr("New %1").arg(label), QObject::tr("Name:"));
             if (name.isEmpty()) {
                 return;
             }
@@ -710,6 +730,7 @@ void wireNewMenu(QMenu *fileMenu,
                  std::function<void(const QString &)> openFile)
 {
     QMenu *newMenu = new QMenu(QObject::tr("&New"), fileMenu);
+    e2eMarkMenuActions(newMenu, "new_menu_action");
     QAction *first = fileMenu->actions().value(0);
     fileMenu->insertMenu(first, newMenu);
     fileMenu->insertSeparator(first);

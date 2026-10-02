@@ -76,6 +76,8 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
     });
     QObject::connect(runMenu, &QMenu::aboutToHide, runMenu,
                       []() { e2eMark("{\"ev\":\"dialog_closed\",\"name\":\"run_menu\"}"); });
+    // Rects and checked state, e.g. the PHP listen toggle's.
+    e2eMarkMenuActions(runMenu, "run_menu_action");
 
     QAction *runAction = registerAction(runMenu, QStringLiteral("run.run"), QObject::tr("Run"),
                                         appSettings, actions);

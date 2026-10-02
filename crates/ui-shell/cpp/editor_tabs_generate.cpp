@@ -5,6 +5,7 @@
 
 #include "editor_tabs.h"
 #include "code_editor.h"
+#include "e2e_mark.h"
 
 #include <QAction>
 #include <QDialog>
@@ -103,7 +104,14 @@ void EditorTabs::showGenerateMenu(bool withServerActions)
         showStatusNotice(tr("Nothing to generate here."));
         return;
     }
+    // A popup menu holds a keyboard grab, so these marks are the only way a
+    // flow can tell it is up and where its entries are.
+    e2eMarkMenuActions(&menu, "generate_menu_action");
+    e2eMark("{\"ev\":\"dialog_shown\",\"name\":\"generate_menu\"}");
     QAction *chosen = menu.exec(editor->mapToGlobal(editor->cursorRect().bottomLeft()));
+    e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"generate_menu\","
+                            "\"accepted\":%1}")
+              .arg(chosen != nullptr ? QLatin1String("true") : QLatin1String("false")));
     if (chosen == nullptr) {
         return;
     }
@@ -139,7 +147,23 @@ void EditorTabs::runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QS
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
-    if (dialog.exec() != QDialog::Accepted) {
+    // `window` is the X window id: with no window manager under Xvfb a new
+    // toplevel is not focused, so a flow focuses it before sending a key.
+    QStringList labels;
+    for (int row = 0; row < list->count(); ++row) {
+        labels << e2eJson(list->item(row)->text());
+    }
+    QTimer::singleShot(0, &dialog, [&dialog, labels]() {
+        e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"generate_members\","
+                                "\"window\":\"%1\",\"items\":[%2]}")
+                  .arg(dialog.winId())
+                  .arg(labels.join(QLatin1Char(','))));
+    });
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"generate_members\","
+                            "\"accepted\":%1}")
+              .arg(accepted ? QLatin1String("true") : QLatin1String("false")));
+    if (!accepted) {
         return;
     }
 

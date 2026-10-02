@@ -4,6 +4,7 @@
 
 #include "editor_tabs.h"
 #include "code_editor.h"
+#include "e2e_mark.h"
 
 #include <QAction>
 #include <QMenu>
@@ -38,7 +39,10 @@ QString EditorTabs::pickTemplate(CodeEditor *editor, const ::rust::Vec<FfiTempla
           tr("%1 — %2").arg(QString(item.abbreviation), QString(item.description)));
         entry->setData(QString(item.abbreviation));
     }
+    e2eMarkMenuActions(&menu, "live_templates_menu_action");
+    e2eMark("{\"ev\":\"dialog_shown\",\"name\":\"live_templates_menu\"}");
     const QAction *chosen = menu.exec(editor->mapToGlobal(editor->cursorRect().bottomLeft()));
+    e2eMark("{\"ev\":\"dialog_closed\",\"name\":\"live_templates_menu\"}");
     return chosen != nullptr ? chosen->data().toString() : QString();
 }
 

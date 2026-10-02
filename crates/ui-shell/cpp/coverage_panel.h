@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -27,6 +28,10 @@ class DockRegistry;
 // widget lays them out and forwards a click.
 class CoveragePanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QWidget`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(CoveragePanel)
+
 public:
     using OpenAt = std::function<void(const QString &, int, int)>;
 

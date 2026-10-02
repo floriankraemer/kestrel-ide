@@ -11,6 +11,7 @@
 #include <QPair>
 #include <QPoint>
 #include <QPointer>
+#include <QCoreApplication>
 #include <QString>
 #include <QStringList>
 #include <functional>
@@ -91,6 +92,10 @@ constexpr int kTabKindImage = 3;
 // editor_tabs.cpp holds the rest — the tab surface itself.
 class EditorTabs : public QObject
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QObject`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(EditorTabs)
+
 public:
     // `containerService`/`databaseService` are C3's/F2.3's Inspect/Files-open
     // and Go to DDL virtual tabs (`virtualDocumentOpened`, wired just like

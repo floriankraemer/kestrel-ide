@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QVector>
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -37,6 +38,10 @@ QColor severityColor(FfiSeverity severity);
 // double-click into a caret jump.
 class ProblemsPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QWidget`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ProblemsPanel)
+
 public:
     // `openAt(path, line, column)` jumps the editor to a diagnostic.
     using OpenAt = std::function<void(const QString &, int, int)>;

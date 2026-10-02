@@ -3,6 +3,7 @@
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <QHash>
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -33,6 +34,10 @@ void setPhpListening(DebugService *debugService, QWidget *parent, bool enabled);
 
 class RunToolbar : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QWidget`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(RunToolbar)
+
 public:
     RunToolbar(RunService *runService, BuildService *buildService, DebugService *debugService,
                QWidget *parent);

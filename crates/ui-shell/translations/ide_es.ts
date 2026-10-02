@@ -697,6 +697,26 @@
         <source>\"%1\" was modified outside the editor.</source>
         <translation>«%1» se modificó fuera del editor.</translation>
     </message>
+    <message>
+        <source>Debug '%1'</source>
+        <translation>Depurar '%1'</translation>
+    </message>
+    <message>
+        <source>Nothing to generate here.</source>
+        <translation>No hay nada que generar aquí.</translation>
+    </message>
+    <message>
+        <source>Run '%1'</source>
+        <translation>Ejecutar '%1'</translation>
+    </message>
+    <message>
+        <source>Run '%1' with Coverage</source>
+        <translation>Ejecutar '%1' con cobertura</translation>
+    </message>
+    <message>
+        <source>Show Diff</source>
+        <translation>Mostrar diferencias</translation>
+    </message>
 </context>
 <context>
     <name>FileHistoryPanel</name>
@@ -2976,6 +2996,14 @@
         <source>php (from PATH)</source>
         <translation>php (desde PATH)</translation>
     </message>
+    <message>
+        <source>Install</source>
+        <translation>Instalar</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Nombre</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>
@@ -3234,6 +3262,14 @@
         <source>Stop</source>
         <translation>Detener</translation>
     </message>
+    <message>
+        <source>Listen</source>
+        <translation>Escuchar</translation>
+    </message>
+    <message>
+        <source>Start Listening for PHP Debug Connections</source>
+        <translation>Escuchar conexiones de depuración de PHP</translation>
+    </message>
 </context>
 <context>
     <name>SearchEverywhereDialog</name>
@@ -3458,6 +3494,41 @@
     <message>
         <source>Test</source>
         <translation>Prueba</translation>
+    </message>
+    <message>
+        <source>No tests matched.</source>
+        <translation>Ningún test coincidió.</translation>
+    </message>
+</context>
+<context>
+    <name>CoveragePanel</name>
+    <message>
+        <source>%1% (%2/%3)</source>
+        <translation>%1% (%2/%3)</translation>
+    </message>
+    <message>
+        <source>All files</source>
+        <translation>Todos los archivos</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Borrar</translation>
+    </message>
+    <message>
+        <source>Element</source>
+        <translation>Elemento</translation>
+    </message>
+    <message>
+        <source>Lines covered</source>
+        <translation>Líneas cubiertas</translation>
+    </message>
+    <message>
+        <source>No coverage collected yet.</source>
+        <translation>Aún no se ha recopilado cobertura.</translation>
+    </message>
+    <message>
+        <source>Run All with Coverage</source>
+        <translation>Ejecutar todo con cobertura</translation>
     </message>
 </context>
 </TS>

@@ -10,7 +10,7 @@ use std::pin::Pin;
 
 use cxx_qt_lib::QString;
 
-use super::RerunSelection;
+use super::{MarkerSelection, RerunSelection};
 use crate::bridge::errors;
 use crate::bridge::ffi;
 
@@ -18,7 +18,7 @@ fn is_php_file(path: &str) -> bool {
     syntax_core::language_for_path(std::path::Path::new(path)).id() == "php"
 }
 
-fn marker_at(path: &QString, text: &QString, line: u32) -> Option<php_core::tests::TestMarker> {
+fn marker_at(path: &QString, text: &QString, line: u32) -> Option<MarkerSelection> {
     let path = path.to_string();
     if !is_php_file(&path) {
         return None;
@@ -26,6 +26,12 @@ fn marker_at(path: &QString, text: &QString, line: u32) -> Option<php_core::test
     php_core::tests::markers(&text.to_string())
         .into_iter()
         .find(|marker| marker.line == line)
+        .map(|marker| MarkerSelection {
+            is_class: marker.scope == php_core::tests::MarkerScope::Group,
+            filter: marker.filter,
+            name: marker.name,
+            file: path,
+        })
 }
 
 fn no_marker() -> ffi::FfiResult {
@@ -60,11 +66,7 @@ impl ffi::TestService {
         line: u32,
     ) -> ffi::FfiResult {
         match marker_at(path, text, line) {
-            Some(marker) => self.start(
-                Some(RerunSelection::Pattern(marker.filter)),
-                Vec::new(),
-                false,
-            ),
+            Some(marker) => self.start(Some(RerunSelection::Marker(marker)), Vec::new(), false),
             None => no_marker(),
         }
     }
@@ -79,7 +81,7 @@ impl ffi::TestService {
     ) -> ffi::FfiResult {
         match marker_at(path, text, line) {
             Some(marker) => {
-                *self.pending_debug.borrow_mut() = Some(marker.filter);
+                *self.pending_debug.borrow_mut() = Some(marker);
                 ffi::FfiResult::default()
             }
             None => no_marker(),
@@ -95,10 +97,10 @@ impl ffi::TestService {
                 "the extra environment is not a list of pairs",
             );
         };
-        let Some(filter) = self.pending_debug.borrow_mut().take() else {
+        let Some(marker) = self.pending_debug.borrow_mut().take() else {
             return errors::failure(errors::CODE_REFUSED, "no test is waiting to be debugged");
         };
-        self.start(Some(RerunSelection::Pattern(filter)), env, false)
+        self.start(Some(RerunSelection::Marker(marker)), env, false)
     }
 }
 
@@ -114,11 +116,7 @@ impl ffi::TestService {
         line: u32,
     ) -> ffi::FfiResult {
         match marker_at(path, text, line) {
-            Some(marker) => self.start(
-                Some(RerunSelection::Pattern(marker.filter)),
-                Vec::new(),
-                true,
-            ),
+            Some(marker) => self.start(Some(RerunSelection::Marker(marker)), Vec::new(), true),
             None => no_marker(),
         }
     }

@@ -57,7 +57,7 @@ pub struct TestServiceRust {
     run_host: RefCell<Option<process_exec::host::ExecHost>>,
     /// The filter a gutter Debug click chose, run once the PHP listener is
     /// up (T3): Xdebug does not retry, so the run starts after it.
-    pending_debug: RefCell<Option<String>>,
+    pending_debug: RefCell<Option<MarkerSelection>>,
     /// The last coverage run's report, local paths (T5).
     coverage: RefCell<Option<test_core::coverage::Coverage>>,
     store: SharedDiagnostics,
@@ -143,8 +143,19 @@ fn framework_host(
 enum RerunSelection {
     Failed(Vec<test_core::TestId>),
     Node(test_core::TestId),
-    /// A ready-made `--filter` pattern, from a gutter marker (T3).
-    Pattern(String),
+    /// A test the editor named, from a gutter marker (T3).
+    Marker(MarkerSelection),
+}
+
+/// A gutter marker's test, kept until the framework's dialect is known.
+#[derive(Clone)]
+struct MarkerSelection {
+    /// The marker's PHPUnit-regex `--filter` pattern.
+    filter: String,
+    name: String,
+    is_class: bool,
+    /// The test file, absolute as the editor spells it.
+    file: String,
 }
 
 fn to_ffi_kind(kind: test_core::NodeKind) -> ffi::FfiTestNodeKind {
@@ -343,22 +354,55 @@ impl ffi::TestService {
                 "this test framework's filter-dialect is not one this build understands",
             );
         };
+        let tree_rerun = matches!(
+            selection,
+            Some(RerunSelection::Failed(_) | RerunSelection::Node(_))
+        );
+        if let Some(reason) = test_core::filter::tree_rerun_refusal(dialect).filter(|_| tree_rerun)
+        {
+            return errors::failure(errors::CODE_REFUSED, reason);
+        }
         let patterns = match &selection {
-            None => Vec::new(),
+            None | Some(RerunSelection::Marker(_)) => Vec::new(),
             Some(RerunSelection::Failed(ids)) => test_core::filter::for_many(ids, dialect),
             Some(RerunSelection::Node(id)) => {
                 test_core::filter::for_node(&self.tree.borrow(), id, dialect)
             }
-            Some(RerunSelection::Pattern(pattern)) => vec![pattern.clone()],
         };
 
         let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
-        args = test_core::filter::apply_filter(
-            &args,
-            framework.filter_flag.as_deref(),
-            framework.filter_template.as_deref(),
-            &patterns,
-        );
+        args = match &selection {
+            Some(RerunSelection::Marker(marker)) => {
+                // The file goes project-relative: the run's working directory
+                // is the project root on every host.
+                let relative = Path::new(&marker.file)
+                    .strip_prefix(&root)
+                    .ok()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"));
+                let run = test_core::filter::MarkerRun {
+                    filter: &marker.filter,
+                    name: &marker.name,
+                    is_class: marker.is_class,
+                    file: relative.as_deref(),
+                };
+                match test_core::filter::marker_args(
+                    &args,
+                    dialect,
+                    framework.filter_flag.as_deref(),
+                    framework.filter_template.as_deref(),
+                    &run,
+                ) {
+                    Ok(args) => args,
+                    Err(reason) => return errors::failure(errors::CODE_REFUSED, reason),
+                }
+            }
+            _ => test_core::filter::apply_filter(
+                &args,
+                framework.filter_flag.as_deref(),
+                framework.filter_template.as_deref(),
+                &patterns,
+            ),
+        };
         if with_coverage {
             if framework.coverage_args.is_empty() {
                 return errors::failure(

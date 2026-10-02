@@ -946,6 +946,30 @@ fn a_test_framework_may_declare_a_non_default_filter_dialect() {
 }
 
 #[test]
+fn the_php_filter_dialects_are_accepted() {
+    for dialect in ["codeception", "behat-name", "none"] {
+        let manifest = PluginManifest::from_toml_str(&with(&format!(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            filter-flag = "--filter"
+            output-format = "junit-xml"
+            filter-dialect = "{dialect}"
+            "#
+        )))
+        .expect("valid");
+        assert_eq!(
+            manifest.contributes.test_frameworks[0]
+                .filter_dialect
+                .as_deref(),
+            Some(dialect)
+        );
+    }
+}
+
+#[test]
 fn an_unknown_filter_dialect_is_a_load_error_not_a_silent_fallback() {
     let err = PluginManifest::from_toml_str(&with(
         r#"

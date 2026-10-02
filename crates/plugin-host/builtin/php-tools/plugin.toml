@@ -155,7 +155,11 @@ program-candidates = ["vendor/bin/codecept"]
 # `--xml` writes `report.xml` into the configured output directory
 # (`tests/_output` by default); there is no streaming format.
 args = ["run", "--xml"]
+# Codeception has no `--filter`: it selects a test as `file:^method$`, and the
+# report does not name the file, so only an editor run can be narrowed. The
+# flag is the manifest's mandatory placeholder.
 filter-flag = "--filter"
+filter-dialect = "codeception"
 output-format = "junit-xml"
 report-glob = "**/_output/report.xml"
 config-file-candidates = ["codeception.yml", "codeception.dist.yml"]
@@ -170,6 +174,7 @@ program-candidates = ["vendor/bin/behat"]
 args = ["--format=junit", "--out=.ide/local/test-reports/behat"]
 # Behat selects scenarios by title, not by PHPUnit-style class name.
 filter-flag = "--name"
+filter-dialect = "behat-name"
 output-format = "junit-xml"
 report-glob = ".ide/local/test-reports/behat/*.xml"
 config-file-candidates = ["behat.yml", "behat.yml.dist"]
@@ -183,9 +188,10 @@ program-candidates = ["vendor/bin/phpspec"]
 # Without `--out` the junit formatter prints the whole document on stdout.
 args = ["run", "--format=junit", "--no-interaction"]
 # PHPSpec has no name filter (it selects by spec path); the flag is the
-# manifest's mandatory placeholder, so rerunning a single PHPSpec node is
-# not supported.
+# manifest's mandatory placeholder, and the `none` dialect makes a rerun of a
+# single node refuse with a message instead of passing it.
 filter-flag = "--example"
+filter-dialect = "none"
 output-format = "junit-xml-stdout"
 config-file-candidates = ["phpspec.yml", "phpspec.yml.dist"]
 composer-package = "phpspec/phpspec"

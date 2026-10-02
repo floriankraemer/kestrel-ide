@@ -622,6 +622,20 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     let (_, phpspec) = &frameworks[3];
     assert_eq!(phpspec.output_format, "junit-xml-stdout");
     assert!(frameworks.iter().all(|(_, f)| f.composer_package.is_some()));
+    let dialects: Vec<_> = frameworks
+        .iter()
+        .map(|(_, f)| f.filter_dialect.as_deref())
+        .collect();
+    assert_eq!(
+        dialects,
+        [
+            None,
+            Some("codeception"),
+            Some("behat-name"),
+            Some("none"),
+            None
+        ]
+    );
     let (owner, phpunit) = &frameworks[4];
     assert_eq!(owner.id(), "php-tools");
     assert_eq!(phpunit.id, "phpunit");

@@ -1119,12 +1119,16 @@ impl Keymap {
 
     /// The shortcut `id` currently responds to: the user's override if it has
     /// one, otherwise the shipped default. Empty means unbound — either
-    /// shipped that way or deliberately cleared.
+    /// shipped that way or deliberately cleared. A default that another
+    /// action's override holds is left unbound.
     pub fn shortcut_for(&self, id: &str) -> &str {
         if let Some(over) = self.overrides.get(id) {
             return over;
         }
-        action(id).map(|a| a.default_shortcut).unwrap_or("")
+        action(id)
+            .map(|a| a.default_shortcut)
+            .filter(|default| !self.overrides.values().any(|over| over == default))
+            .unwrap_or("")
     }
 
     /// Whether `id` still has its shipped default shortcut. An override that
@@ -1492,3 +1496,5 @@ mod tests {
         ids
     }
 }
+#[cfg(test)]
+mod override_precedence_tests;

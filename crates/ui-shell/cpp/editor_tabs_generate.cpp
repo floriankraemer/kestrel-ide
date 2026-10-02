@@ -174,9 +174,12 @@ void EditorTabs::runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QS
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(Qt::Checked);
     }
-    // Sized to its rows, up to a dozen, instead of a big empty box.
-    list->setSizeAdjustPolicy(QAbstractScrollArea::AdjustToContents);
-    list->setMaximumHeight(12 * list->sizeHintForRow(0) + 2 * list->frameWidth());
+    // Exactly its rows, up to a dozen (then it scrolls), instead of a big
+    // empty box: the contents-based size hint left about two rows spare.
+    // The themed list has no frame, only 8px of bottom padding, and
+    // `frameWidth()` reports exactly that (not per side) once polished.
+    list->ensurePolished();
+    list->setFixedHeight(qMin(list->count(), 12) * list->sizeHintForRow(0) + list->frameWidth());
     layout->addWidget(list);
     auto *selection = new QHBoxLayout();
     for (const auto &[label, state] :

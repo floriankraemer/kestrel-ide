@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 
-use cxx_qt::Threading;
+use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 use dap_core::xdebug::{self, HostKind};
 use dap_core::{DapError, DapSession};
@@ -29,6 +29,47 @@ pub(super) struct PhpListen {
 pub(super) struct PhpRun {
     config_id: String,
     env: Vec<(String, String)>,
+    check: XdebugCheck,
+}
+
+/// Where to ask the interpreter whether it can debug.
+struct XdebugCheck {
+    host: process_exec::host::ExecHost,
+    interpreter: String,
+    cwd: PathBuf,
+    in_container: bool,
+}
+
+/// Probe the interpreter, report what is wrong for debugging, and say
+/// whether the run may start. Blocking: call it off the Qt thread. A probe
+/// that fails says nothing about Xdebug, and the run then reports its own
+/// error.
+fn launch_after_check(qt_thread: CxxQtThread<ffi::DebugService>, session_id: u64, run: PhpRun) {
+    let check = &run.check;
+    let issue = php_core::probe::probe(&check.host, &check.interpreter, &check.cwd)
+        .ok()
+        .and_then(|probe| probe.xdebug_issue());
+    let advice = issue
+        .as_ref()
+        .map(|issue| (issue.blocks_debugging(), issue.advice(check.in_container)));
+    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
+        match advice {
+            Some((true, advice)) => {
+                let error = DapError::XdebugUnavailable(advice);
+                service
+                    .as_mut()
+                    .debug_failed(session_id, to_ffi_result(&error));
+                return;
+            }
+            Some((false, advice)) => service.as_mut().debug_output(
+                session_id,
+                QString::from("stderr"),
+                QString::from(format!("{advice}\n").as_str()),
+            ),
+            None => {}
+        }
+        service.as_mut().request_php_launch(&run);
+    });
 }
 
 /// `[php].xdebug_port` in force.
@@ -75,8 +116,10 @@ impl ffi::DebugService {
             .as_ref()
             .is_some_and(|listen| listen.arguments == arguments)
         {
-            if let Some(run) = run {
-                self.as_mut().request_php_launch(&run);
+            let session_id = self.php_listen.borrow().as_ref().map(|l| l.session_id);
+            if let (Some(run), Some(session_id)) = (run, session_id) {
+                let qt_thread = self.as_mut().qt_thread();
+                std::thread::spawn(move || launch_after_check(qt_thread, session_id, run));
             }
             return Ok(());
         }
@@ -117,9 +160,7 @@ impl ffi::DebugService {
         std::thread::spawn(move || {
             let result = handshake(&session, arguments, &breakpoints);
             if let (Ok(()), Some(run)) = (&result, run) {
-                let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
-                    service.as_mut().request_php_launch(&run);
-                });
+                launch_after_check(qt_thread.clone(), session_id, run);
             }
             if let Err(err) = result {
                 let failure = (err.code(), err.to_string());
@@ -165,9 +206,20 @@ impl ffi::DebugService {
             HostKind::Local
         };
         let plan = xdebug::plan(kind, path_map.as_ref(), xdebug_port());
+        // The interpreter the run uses: the `[php]` one, in its container if
+        // it has one.
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let check_host =
+            php_core::host::interpreter_host(&settings.php, &settings.containers, root);
         let run = PhpRun {
             config_id: config.id.clone(),
             env: plan.env,
+            check: XdebugCheck {
+                in_container: matches!(check_host, process_exec::host::ExecHost::Container(_)),
+                host: check_host,
+                interpreter: settings_model::php::resolve(&settings).interpreter,
+                cwd: root.to_path_buf(),
+            },
         };
         match self.ensure_php_listener(root, plan.listen_arguments, Some(run)) {
             Ok(()) => ffi::FfiResult::default(),

@@ -34,6 +34,11 @@ QString probeSummary(const FfiPhpProbe &probe)
     if (probe.pcov) {
         parts << QObject::tr("PCOV");
     }
+    // What stops Xdebug from debugging, if anything (ADR-0069).
+    const QString advice = QString(probe.xdebug_advice);
+    if (!advice.isEmpty()) {
+        return parts.join(QStringLiteral(" · ")) + QStringLiteral("\n") + advice;
+    }
     return parts.join(QStringLiteral(" · "));
 }
 
@@ -59,6 +64,7 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
 
     auto *probeLabel = new QLabel(page);
     probeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    probeLabel->setWordWrap(true);
     formLayout->addRow(QString(), probeLabel);
 
     auto *targetCombo = new QComboBox(page);

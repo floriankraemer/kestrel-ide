@@ -38,11 +38,63 @@ impl PhpProbe {
         self.xdebug && self.xdebug_modes.iter().any(|m| m == "debug")
     }
 
+    /// The first thing wrong for debugging, if anything.
+    pub fn xdebug_issue(&self) -> Option<XdebugIssue> {
+        if !self.xdebug {
+            Some(XdebugIssue::NotLoaded)
+        } else if !self.can_debug() {
+            Some(XdebugIssue::DebugModeOff)
+        } else {
+            None
+        }
+    }
+
     /// Some coverage driver is available (PCOV, or Xdebug in `coverage` mode).
     pub fn can_cover(&self) -> bool {
         self.pcov || (self.xdebug && self.xdebug_modes.iter().any(|m| m == "coverage"))
     }
 }
+
+/// What stands between this interpreter and a debug session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum XdebugIssue {
+    /// The extension is not loaded: no debug run can connect.
+    NotLoaded,
+    /// Loaded, but `xdebug.mode` in the ini lacks `debug`. A run the IDE
+    /// starts sets `XDEBUG_MODE=debug` itself, so only requests started
+    /// elsewhere are affected.
+    DebugModeOff,
+}
+
+impl XdebugIssue {
+    /// A debug run cannot work at all.
+    pub fn blocks_debugging(&self) -> bool {
+        matches!(self, Self::NotLoaded)
+    }
+
+    /// What to tell the user, with the container hint when PHP runs in one.
+    pub fn advice(&self, in_container: bool) -> String {
+        let mut text = match self {
+            Self::NotLoaded => "Xdebug is not loaded in this PHP interpreter. Install the \
+                 xdebug extension and enable it in php.ini."
+                .to_string(),
+            Self::DebugModeOff => "Xdebug is loaded, but xdebug.mode in php.ini does not \
+                 include `debug`. Debug runs started from the IDE enable it themselves; set \
+                 xdebug.mode=debug to debug requests started elsewhere."
+                .to_string(),
+        };
+        if in_container {
+            text.push_str(CONTAINER_HINT);
+        }
+        text
+    }
+}
+
+/// On Linux Docker `host.docker.internal` only resolves when the container
+/// is told how.
+pub const CONTAINER_HINT: &str = " On Linux Docker, the container also needs \
+     `extra_hosts: [\"host.docker.internal:host-gateway\"]` (or \
+     `--add-host=host.docker.internal:host-gateway`) so Xdebug can reach the IDE.";
 
 /// Why the probe produced nothing.
 #[derive(Debug, PartialEq, Eq)]
@@ -142,6 +194,33 @@ mod tests {
         assert_eq!(p.ini_file, None);
         assert!(!p.can_debug());
         assert!(p.can_cover());
+    }
+
+    #[test]
+    fn the_xdebug_issue_is_the_first_thing_wrong() {
+        let report = |json: &str| parse(json).unwrap().xdebug_issue();
+        assert_eq!(
+            report(r#"{"version":"8.3.0","xdebug":false}"#),
+            Some(XdebugIssue::NotLoaded)
+        );
+        assert_eq!(
+            report(r#"{"version":"8.3.0","xdebug":true,"xdebug_mode":"coverage"}"#),
+            Some(XdebugIssue::DebugModeOff)
+        );
+        assert_eq!(
+            report(r#"{"version":"8.3.0","xdebug":true,"xdebug_mode":"debug"}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_missing_extension_blocks_and_a_container_adds_the_host_hint() {
+        assert!(XdebugIssue::NotLoaded.blocks_debugging());
+        assert!(!XdebugIssue::DebugModeOff.blocks_debugging());
+        assert!(!XdebugIssue::NotLoaded
+            .advice(false)
+            .contains("host-gateway"));
+        assert!(XdebugIssue::NotLoaded.advice(true).contains("host-gateway"));
     }
 
     #[test]

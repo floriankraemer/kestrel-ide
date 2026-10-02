@@ -86,6 +86,7 @@ fn from_ffi_form(form: &ffi::FfiPhpForm) -> PhpForm {
 
 fn to_ffi_probe(
     result: Result<php_core::probe::PhpProbe, php_core::probe::ProbeError>,
+    in_container: bool,
 ) -> ffi::FfiPhpProbe {
     match result {
         Ok(probe) => ffi::FfiPhpProbe {
@@ -95,6 +96,13 @@ fn to_ffi_probe(
             xdebug: probe.xdebug,
             xdebug_modes: QString::from(probe.xdebug_modes.join(", ").as_str()),
             pcov: probe.pcov,
+            xdebug_advice: QString::from(
+                probe
+                    .xdebug_issue()
+                    .map(|issue| issue.advice(in_container))
+                    .unwrap_or_default()
+                    .as_str(),
+            ),
             error: QString::default(),
         },
         Err(error) => ffi::FfiPhpProbe {
@@ -173,9 +181,13 @@ impl ffi::PhpSettingsEditor {
             &crate::bridge::convert::load_resolved_settings().containers,
             &root,
         );
+        let in_container = matches!(host, process_exec::host::ExecHost::Container(_));
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
-            let result = to_ffi_probe(php_core::probe::probe(&host, &interpreter, &root));
+            let result = to_ffi_probe(
+                php_core::probe::probe(&host, &interpreter, &root),
+                in_container,
+            );
             let _ = qt_thread.queue(move |mut editor: Pin<&mut Self>| {
                 editor.as_mut().probe_finished(result);
             });

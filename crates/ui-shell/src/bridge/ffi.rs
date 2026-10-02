@@ -6223,6 +6223,9 @@ mod ffi {
         /// Xdebug's modes, comma-separated.
         xdebug_modes: QString,
         pcov: bool,
+        /// What is wrong for debugging (empty when nothing is), with the
+        /// container hint when the interpreter runs in one.
+        xdebug_advice: QString,
         error: QString,
     }
 

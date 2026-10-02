@@ -24,9 +24,51 @@
 //! contract documented on `analysis::publish_result`).
 
 use std::env;
+use std::io::{Read, Write};
 use std::path::Path;
 
+/// The stub's "formatting": tabs become four spaces and the text ends with
+/// exactly one newline — enough to tell formatted from unformatted text.
+fn format_text(text: &str) -> String {
+    format!("{}\n", text.replace('\t', "    ").trim_end_matches('\n'))
+}
+
+/// Formatter mode (ADR-0070), selected by an argument so the same binary
+/// plays php-cs-fixer/Pint (`--format-file <path>`, rewrites the file) and
+/// phpcbf (`--format-stdin`, filters stdin to stdout). `--exit=N` sets the
+/// exit code; `--no-output` makes a stdin run print nothing.
+fn run_formatter(args: &[String]) -> Option<i32> {
+    let stdin_mode = args.iter().any(|a| a == "--format-stdin");
+    let file = args
+        .iter()
+        .position(|a| a == "--format-file")
+        .and_then(|i| args.get(i + 1));
+    if !stdin_mode && file.is_none() {
+        return None;
+    }
+    if stdin_mode {
+        let mut text = String::new();
+        std::io::stdin().read_to_string(&mut text).expect("stdin");
+        if !args.iter().any(|a| a == "--no-output") {
+            std::io::stdout()
+                .write_all(format_text(&text).as_bytes())
+                .expect("stdout");
+        }
+    } else if let Some(file) = file {
+        let text = std::fs::read_to_string(file).expect("file");
+        std::fs::write(file, format_text(&text)).expect("write");
+    }
+    let code = args
+        .iter()
+        .find_map(|a| a.strip_prefix("--exit=")?.parse().ok());
+    Some(code.unwrap_or(0))
+}
+
 fn main() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if let Some(code) = run_formatter(&args) {
+        std::process::exit(code);
+    }
     let project_root = env::args().next_back().unwrap_or_default();
     let file = Path::new(&project_root).join("src/Greeter.php");
     println!(

@@ -98,3 +98,37 @@ fn a_listen_session_sees_each_connection_as_a_thread_and_stops_on_it() {
     next(&events, "stopped", 2);
     session.shutdown();
 }
+
+/// A run (or `[php]` interpreter) in a container makes the adapter listen on
+/// every interface — Xdebug dials in from the container — and map the
+/// container's mount back to the project. A loopback-only listener or an
+/// empty mapping would silently never hit a breakpoint.
+#[test]
+fn a_container_target_listens_on_every_interface_with_path_mappings() {
+    use app_config::{ContainerSettings, ContainerTargetSetting};
+    use process_exec::host::ExecHost;
+
+    let containers = ContainerSettings {
+        targets: vec![ContainerTargetSetting {
+            id: "t1".into(),
+            name: "php".into(),
+            source: "image".into(),
+            image: Some("php:8.3-cli".into()),
+            workdir: "/var/www".into(),
+            ..ContainerTargetSetting::default()
+        }],
+        ..ContainerSettings::default()
+    };
+    let root = std::path::Path::new("/home/me/app");
+    let ExecHost::Container(container) =
+        run_core::container_target::run_host(Some("container:t1"), &containers, root)
+    else {
+        panic!("a known target runs in its container");
+    };
+    let plan = dap_core::xdebug::plan_for(&ExecHost::Local, Some(&container.path_map), 9003);
+    assert_eq!(plan.listen_arguments["hostname"], "0.0.0.0");
+    assert_eq!(
+        plan.listen_arguments["pathMappings"],
+        json!({"/var/www": "/home/me/app"})
+    );
+}

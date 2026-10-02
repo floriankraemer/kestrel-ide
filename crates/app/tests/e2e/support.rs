@@ -169,6 +169,23 @@ pub(crate) fn stub_server_path() -> PathBuf {
     Path::new(APP).with_file_name("stub_server")
 }
 
+/// Where `stub_adapter` lands, beside `app`'s own binary — the scripted
+/// stand-in for vscode-php-debug (`dap-core`'s `[[bin]]`; `e2e-ci` builds it).
+pub(crate) fn stub_adapter_path() -> PathBuf {
+    let name = if cfg!(windows) {
+        "stub_adapter.exe"
+    } else {
+        "stub_adapter"
+    };
+    let path = Path::new(APP).with_file_name(name);
+    assert!(
+        path.is_file(),
+        "{} does not exist — run via `make e2e`, which builds it",
+        path.display()
+    );
+    path
+}
+
 /// Route the `rust` language id at `lsp-core`'s stub server rather than a
 /// real `rust-analyzer` — not installed in this image, and the point of
 /// these flows is the client's own behaviour, which the stub is built to

@@ -7,6 +7,8 @@
 //! (`run_action`, `finish_refactor`, `push_job`) rather than duplicating
 //! them.
 
+mod format_tool;
+
 use core::pin::Pin;
 use std::path::Path;
 
@@ -16,6 +18,7 @@ use cxx_qt_lib::QString;
 use crate::bridge::convert::to_ffi_edits;
 use crate::bridge::ffi::{self};
 use crate::bridge::language::{to_ffi_resource_op, to_file_op, PendingRefactor};
+use format_tool::ToolFormat;
 
 impl ffi::LanguageService {
     pub fn code_actions_at(
@@ -184,6 +187,10 @@ impl ffi::LanguageService {
     /// at, so `touches_other_files` is always false and
     /// `RefactorController::onRefactorReady` applies it straight away: one
     /// Ctrl+Z undoes a reformat exactly as it undoes a rename.
+    ///
+    /// A configured tool formatter (`format_tool.rs`) formats the whole
+    /// file when there is no selection; with a selection, or without a
+    /// usable tool, the language server answers.
     pub fn request_formatting(
         self: Pin<&mut Self>,
         path: &QString,
@@ -194,8 +201,18 @@ impl ffi::LanguageService {
             (selection.start_line, selection.start_character),
             (selection.end_line, selection.end_character),
         );
+        let path = path.to_string();
+        let tool = self
+            .open_docs
+            .borrow()
+            .get(&path)
+            .and_then(|language_id| ToolFormat::resolve(language_id, scope.is_some()));
+        if let Some(tool) = tool {
+            return self.format_with_tool(tool, path, buffer_revision);
+        }
+        let path = QString::from(path.as_str());
         self.format_with(
-            path,
+            &path,
             buffer_revision,
             "Reformat Code",
             false,
@@ -203,6 +220,17 @@ impl ffi::LanguageService {
                 Some((start, end)) => m.format_range(uri, start, end, o),
                 None => m.format(uri, o),
             },
+        );
+    }
+
+    /// Reformat Code's language-server path for the whole file.
+    pub(crate) fn format_whole_with_lsp(self: Pin<&mut Self>, path: &str, buffer_revision: i64) {
+        self.format_with(
+            &QString::from(path),
+            buffer_revision,
+            "Reformat Code",
+            false,
+            |m, uri, o| m.format(uri, o),
         );
     }
 

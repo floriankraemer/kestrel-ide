@@ -23,6 +23,7 @@ pub mod editing;
 /// Which handler a file-association rule (or a shipped default) names for a
 /// path — see [`file_associations::resolve_handler`].
 pub mod file_associations;
+pub mod formatting;
 pub mod languages;
 pub mod php;
 pub mod plugins;

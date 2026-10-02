@@ -7,7 +7,7 @@
 //! `workspace_edit` itself: that module is about what a `WorkspaceEdit`
 //! means and how it applies, not about presenting the result.
 
-use crate::workspace_edit::{apply_to_text, DocumentEdits, EditError};
+use crate::workspace_edit::{apply_to_text, DocumentEdits, EditError, TextEdit};
 
 /// One document's diff for the preview: the text it applies against, the
 /// text it would produce, and the line hunks between them.
@@ -34,6 +34,53 @@ pub fn file_diff(old_text: &str, doc: &DocumentEdits) -> Result<FileDiff, EditEr
         new_text,
         hunks,
     })
+}
+
+/// The minimal line-level edits that turn `old` into `new` — for a
+/// formatter that hands back whole-file text, so the editor applies a few
+/// small replacements (keeping the caret, folds and one undo step) instead
+/// of replacing the document.
+///
+/// One edit per changed run of lines. A diff over
+/// [`editor_core::diff::MAX_DIFF_BYTES`] falls back to one edit replacing
+/// everything.
+pub fn edits_between(old: &str, new: &str) -> Vec<TextEdit> {
+    let old_lines: Vec<&str> = old.split_inclusive('\n').collect();
+    let new_lines: Vec<&str> = new.split_inclusive('\n').collect();
+    let Ok(hunks) = editor_core::diff::diff_lines(old, new) else {
+        return if old == new {
+            Vec::new()
+        } else {
+            vec![replace_lines(
+                &old_lines,
+                0..old_lines.len(),
+                new.to_string(),
+            )]
+        };
+    };
+    hunks
+        .iter()
+        .map(|h| replace_lines(&old_lines, h.old.clone(), new_lines[h.new.clone()].concat()))
+        .collect()
+}
+
+/// An edit replacing `old_lines[range]` (whole lines, newline included).
+/// A range reaching a last line that has no newline ends at that line's end
+/// instead of at the start of a line that does not exist.
+fn replace_lines(old_lines: &[&str], range: std::ops::Range<usize>, new_text: String) -> TextEdit {
+    let (end_line, end_character) = match old_lines.get(range.end.wrapping_sub(1)) {
+        Some(last) if range.end == old_lines.len() && !last.ends_with('\n') => {
+            (range.end - 1, last.encode_utf16().count())
+        }
+        _ => (range.end, 0),
+    };
+    TextEdit {
+        start_line: range.start as u32,
+        start_character: 0,
+        end_line: end_line as u32,
+        end_character: end_character as u32,
+        new_text,
+    }
 }
 
 #[cfg(test)]
@@ -94,5 +141,52 @@ mod tests {
         assert_eq!(diff.new_text, "a\nb\nc\n");
         assert_eq!(diff.hunks.len(), 1);
         assert_eq!(diff.hunks[0].kind, HunkKind::Added);
+    }
+
+    fn roundtrip(old: &str, new: &str) -> Vec<TextEdit> {
+        let edits = edits_between(old, new);
+        assert_eq!(
+            apply_to_text(old, &edits).unwrap(),
+            new,
+            "{old:?} -> {new:?}"
+        );
+        edits
+    }
+
+    #[test]
+    fn identical_texts_need_no_edits() {
+        assert!(roundtrip("a\nb\n", "a\nb\n").is_empty());
+    }
+
+    #[test]
+    fn only_the_changed_lines_are_replaced() {
+        let edits = roundtrip("a\n\tb\nc\n", "a\n    b\nc\n");
+        assert_eq!(edits.len(), 1);
+        assert_eq!(
+            (
+                edits[0].start_line,
+                edits[0].end_line,
+                edits[0].new_text.as_str()
+            ),
+            (1, 2, "    b\n")
+        );
+    }
+
+    #[test]
+    fn insertions_deletions_and_several_hunks_round_trip() {
+        roundtrip("a\nc\n", "a\nb\nc\n");
+        roundtrip("a\nb\nc\n", "a\nc\n");
+        roundtrip("1\n2\n3\n4\n5\n", "1\nx\n3\ny\n5\n");
+        roundtrip("", "<?php\n");
+        roundtrip("<?php\n", "");
+    }
+
+    #[test]
+    fn a_last_line_without_a_newline_is_handled_with_utf16_columns() {
+        roundtrip("a\nb", "a\nb\n");
+        roundtrip("a\nb", "a\n\u{1F600}x");
+        roundtrip("a\r\nb\r\n", "a\r\nc\r\n");
+        let edits = edits_between("é😀", "x");
+        assert_eq!((edits[0].end_line, edits[0].end_character), (0, 3));
     }
 }

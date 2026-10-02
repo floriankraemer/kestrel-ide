@@ -62,7 +62,7 @@ pub use completion::{
 };
 pub use configuration::resolve as resolve_configuration;
 pub use diagnostics::{path_from_uri, to_diagnostics, uri_from_path};
-pub use diff_preview::{file_diff, FileDiff};
+pub use diff_preview::{edits_between, file_diff, FileDiff};
 pub use document_highlight::{parse_document_highlights, DocumentHighlight, HighlightKind};
 pub use hierarchy::{
     parse_hierarchy_items, parse_incoming_calls, parse_outgoing_calls, type_hierarchy_outcome,

@@ -264,7 +264,7 @@ impl EditorOpsRust {
         // LF, not the compiled-for platform's CRLF.
         if rules.line_endings.is_none() {
             let is_remote = crate::bridge::convert::current_project_root()
-                .map(|root| lsp_core::ExecHost::for_path(&root).is_remote())
+                .map(|root| lsp_core::ExecHost::for_path(&root).filesystem_is_remote())
                 .unwrap_or(false);
             if is_remote {
                 rules.line_endings = Some(editor_core::save_rules::LineEnding::Lf);

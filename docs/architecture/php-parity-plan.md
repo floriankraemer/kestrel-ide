@@ -187,7 +187,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### X — container exec host (ADR-0067)
 | Task | Status | Commit |
 |---|---|---|
-| X1 — `ExecHost::Container` (argv/to_remote/to_local); `is_remote` split; walk the match sites | open | |
+| X1 — `ExecHost::Container` (argv/to_remote/to_local); `is_remote` split; walk the match sites | done | — |
 | X2 — `resolve_program` inside the container; NotFound mapping | open | |
 | X3 — `container_core::target::exec_host` (exec/run modes, Docker/Podman/Compose) | open | |
 | X4 — scheduler, test runner, formatter and `exec="interpreter"` servers run on the interpreter host | open | |
@@ -236,7 +236,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Y3 — `.phtml` and `.inc` → PHP | done | a787251 |
 | Y4 — `syntax_core::language_at`; injection-aware comment toggle | done | faac937 |
 | Y5 — richer `php/folds.scm` (arrays, doc comments, use groups, match, heredoc, attributes) | done | d54d9a5 |
-| Y6 — ADR-0071 | done | — |
+| Y6 — ADR-0071 | done | 143e250 |
 
 ### G — code generation (ADR-0072)
 | Task | Status | Commit |

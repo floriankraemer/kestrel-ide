@@ -55,7 +55,7 @@ mod routed;
 /// `uri_from_path` stays exactly as it is (ADR-0046) — this only decides
 /// *which* path string reaches it.
 pub fn uri_for(host: &ExecHost, path: &str) -> String {
-    if host.is_remote() {
+    if host.runs_remotely() {
         crate::diagnostics::uri_from_path(&host.to_remote(Path::new(path)))
     } else {
         crate::diagnostics::uri_from_path(path)
@@ -69,7 +69,7 @@ pub fn uri_for(host: &ExecHost, path: &str) -> String {
 /// that this crate returns to its own caller as a path rather than a URI.
 pub fn path_for(host: &ExecHost, uri: &str) -> Option<String> {
     let raw = crate::diagnostics::path_from_uri(uri)?;
-    if host.is_remote() {
+    if host.runs_remotely() {
         Some(host.to_local(&raw).to_string_lossy().into_owned())
     } else {
         Some(raw)
@@ -540,7 +540,7 @@ impl LspManager {
     /// ingest") back to the Windows path it encoded, then translate it
     /// through this manager's `host`. A no-op on `ExecHost::Local`.
     pub(crate) fn normalize_uri(&self, uri: &str) -> String {
-        if !self.host.is_remote() {
+        if !self.host.runs_remotely() {
             return uri.to_string();
         }
         match crate::diagnostics::path_from_uri(uri) {

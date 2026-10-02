@@ -437,7 +437,7 @@ impl Invocation {
             .map(|(key, value)| (key.as_str(), value.as_str()))
             .collect();
         let mut command = ExecHost::Local.command(&self.program, &arg_refs, cwd, &env_refs);
-        if self.host.is_remote() && !env_refs.is_empty() {
+        if self.host.runs_remotely() && !env_refs.is_empty() {
             command.env("WSLENV", process_exec::host::wslenv_with(&env_refs));
         }
         command

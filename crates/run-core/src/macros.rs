@@ -93,7 +93,7 @@ impl MacroContext {
             .map(process_exec::host::ExecHost::for_path)
             .unwrap_or(process_exec::host::ExecHost::Local);
         let display = |path: &Path| {
-            if host.is_remote() {
+            if host.filesystem_is_remote() {
                 host.to_remote(path)
             } else {
                 path.display().to_string()

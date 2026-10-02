@@ -195,7 +195,7 @@ pub const DEFAULT_PHP_PROGRAM: &str = "php";
 /// this binary itself was compiled for, so it gets the Linux answer even
 /// when `cfg!(windows)` is true.
 pub fn python_program(project_root: &Path) -> &'static str {
-    let is_remote = process_exec::host::ExecHost::for_path(project_root).is_remote();
+    let is_remote = process_exec::host::ExecHost::for_path(project_root).filesystem_is_remote();
     if cfg!(windows) && !is_remote {
         "python"
     } else {

@@ -44,14 +44,14 @@ fn new_translates_root_uri_for_a_wsl_root() {
         "//wsl.localhost/Ubuntu/home/f/proj",
     ));
     assert_eq!(manager.root_uri, "file:///home/f/proj");
-    assert!(manager.host.is_remote());
+    assert!(manager.host.runs_remotely());
 }
 
 #[test]
 fn new_leaves_root_uri_unchanged_for_a_local_root() {
     let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/home/f/proj"));
     assert_eq!(manager.root_uri, "file:///home/f/proj");
-    assert!(!manager.host.is_remote());
+    assert!(!manager.host.runs_remotely());
 }
 
 #[test]

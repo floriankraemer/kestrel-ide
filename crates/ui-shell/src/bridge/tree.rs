@@ -599,7 +599,7 @@ impl ffi::ProjectTreeModel {
         // W6-1 (ADR-0052): the classification lives here, past the
         // domain/support boundary `project-model`/`app-core` stay below —
         // see `ProjectWatcher::start`'s doc comment.
-        let is_remote = lsp_core::ExecHost::for_path(&root).is_remote();
+        let is_remote = lsp_core::ExecHost::for_path(&root).filesystem_is_remote();
         std::thread::spawn(move || {
             let event_root = root.clone();
             // Same off-Qt-thread settings read `SearchModel::open_index`
@@ -941,7 +941,8 @@ impl ffi::ProjectTreeModel {
         match self.session.borrow().root_path() {
             Some(path) => match lsp_core::ExecHost::for_path(path) {
                 lsp_core::ExecHost::Wsl(wsl) => QString::from(wsl.distro.as_str()),
-                lsp_core::ExecHost::Local => QString::default(),
+                // `for_path` never classifies a container (ADR-0067).
+                lsp_core::ExecHost::Local | lsp_core::ExecHost::Container(_) => QString::default(),
             },
             None => QString::default(),
         }
@@ -953,7 +954,7 @@ impl ffi::ProjectTreeModel {
         match self.session.borrow().root_path() {
             Some(path) => {
                 let host = lsp_core::ExecHost::for_path(path);
-                if host.is_remote() {
+                if host.filesystem_is_remote() {
                     QString::from(host.to_remote(path).as_str())
                 } else {
                     QString::default()

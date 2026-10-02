@@ -10,12 +10,12 @@
 //! wraps a launch to run inside a WSL distro (ADR-0052) rather than adding a
 //! third place that builds argv.
 //!
-//! No `process_exec::host::ExecHost::Container` variant: that enum is
-//! path-derived (`ExecHost::for_path`) and every seam that uses it classifies
-//! a filesystem path, which a container connection is not one of — the plan
-//! documents this as a seam fact. [`wrap_launch`] instead rewrites the
-//! launch spec itself, in `run-core`, before `Supervisor::launch` ever sees
-//! it.
+//! [`wrap_launch`] rewrites a *run configuration's* launch spec in
+//! `run-core`, before `Supervisor::launch` sees it. `exec_host` (ADR-0067,
+//! which supersedes ADR-0056's rejection of an `ExecHost::Container`
+//! variant) instead builds an `ExecHost::Container` for tools the IDE runs
+//! itself through `process_exec::run_on`/`spawn_on` — analyzers, test
+//! frameworks, language servers. Both share [`PathMap`].
 
 use std::path::{Path, PathBuf};
 
@@ -27,7 +27,7 @@ use crate::run_config::{self, mount_arg, port_arg, split_shell_words};
 
 /// Where the project root mounts inside a target's container when the
 /// setting leaves [`ContainerTargetSetting::workdir`] empty.
-pub const DEFAULT_WORKDIR: &str = "/workspace";
+pub use process_exec::host::DEFAULT_WORKDIR;
 
 /// Why [`wrap_launch`] refused to wrap a launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,109 +50,9 @@ impl std::fmt::Display for TargetError {
 }
 
 /// The local project root <-> the container's mount root, both directions.
-///
-/// `local_root` is kept exactly as the IDE already knows the project root
-/// (a plain path, or a Windows UNC path for a WSL-hosted project — see
-/// [`wrap_launch`]'s own doc comment on the WSL case) — matching is an exact
-/// prefix match after normalising separators, never a filesystem lookup, so
-/// this stays a pure, cheaply-testable mapping the way
-/// `process_exec::host::ExecHost::to_remote`/`to_local` is.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PathMap {
-    pub local_root: PathBuf,
-    pub remote_root: String,
-}
-
-/// Normalise a path string for prefix comparison: backslashes to forward
-/// slashes, and (Windows-safe) a leading drive letter lower-cased — `C:\`
-/// and `c:/` must match the same root.
-fn normalize(path: &str) -> String {
-    let out = path.replace('\\', "/");
-    let mut chars = out.chars();
-    match (chars.next(), chars.next()) {
-        (Some(drive), Some(':')) if drive.is_ascii_alphabetic() => {
-            format!("{}:{}", drive.to_ascii_lowercase(), &out[2..])
-        }
-        _ => out,
-    }
-}
-
-impl PathMap {
-    /// `local_root` joined with `remote_root` defaulted to
-    /// [`DEFAULT_WORKDIR`] when `workdir` is empty.
-    pub fn new(local_root: impl Into<PathBuf>, workdir: &str) -> Self {
-        let remote_root = if workdir.is_empty() {
-            DEFAULT_WORKDIR.to_string()
-        } else {
-            workdir.to_string()
-        };
-        PathMap {
-            local_root: local_root.into(),
-            remote_root,
-        }
-    }
-
-    /// `path` under [`Self::local_root`] -> the same path under
-    /// [`Self::remote_root`]. `None` when `path` is not under the root at
-    /// all — the caller decides whether that is an error
-    /// ([`TargetError::CwdOutsideProject`]) or simply "leave it alone" (an
-    /// env value that happens not to be a project path).
-    pub fn to_remote(&self, path: &Path) -> Option<String> {
-        let root = normalize(&self.local_root.to_string_lossy());
-        let candidate = normalize(&path.to_string_lossy());
-        let tail = if candidate.eq_ignore_ascii_case(&root) {
-            ""
-        } else {
-            let prefix = if root.ends_with('/') {
-                root.clone()
-            } else {
-                format!("{root}/")
-            };
-            if candidate.len() >= prefix.len()
-                && candidate[..prefix.len()].eq_ignore_ascii_case(&prefix)
-            {
-                &candidate[prefix.len()..]
-            } else {
-                return None;
-            }
-        };
-        if tail.is_empty() {
-            Some(self.remote_root.clone())
-        } else {
-            Some(format!("{}/{tail}", self.remote_root.trim_end_matches('/')))
-        }
-    }
-
-    /// The inverse of [`Self::to_remote`]: `remote` under
-    /// [`Self::remote_root`] -> the same path under [`Self::local_root`],
-    /// played back with `local_root`'s own separator style — the same
-    /// "canonical to the root's own spelling" rule
-    /// `process_exec::host::ExecHost::to_local` documents. `None` when
-    /// `remote` is not under [`Self::remote_root`].
-    pub fn to_local(&self, remote: &str) -> Option<PathBuf> {
-        let root = self.remote_root.trim_end_matches('/');
-        let candidate = remote.trim_end_matches('/');
-        let tail = if candidate == root {
-            ""
-        } else {
-            let prefix = format!("{root}/");
-            candidate.strip_prefix(prefix.as_str())?
-        };
-        let local = self.local_root.to_string_lossy();
-        let sep = if local.contains('\\') { '\\' } else { '/' };
-        if tail.is_empty() {
-            Some(self.local_root.clone())
-        } else {
-            let tail = tail.replace('/', &sep.to_string());
-            let joined = if local.ends_with(sep) {
-                format!("{local}{tail}")
-            } else {
-                format!("{local}{sep}{tail}")
-            };
-            Some(PathBuf::from(joined))
-        }
-    }
-}
+/// Lives in `process-exec` (ADR-0067) so `ExecHost::Container` can use it
+/// without `process-exec` depending on this crate.
+pub use process_exec::host::PathMap;
 
 /// The minimal shape [`wrap_launch`] needs from a plain-process
 /// `run_core::LaunchSpec` — this crate does not depend on `run-core`
@@ -197,7 +97,7 @@ pub fn image_tag_for(target: &ContainerTargetSetting) -> String {
 /// then runs *inside* that distro, so the mount source must already be the
 /// distro's own Linux path, which `ExecHost::to_remote` gives.
 fn mount_source(invocation: &Invocation, project_root: &Path) -> String {
-    if invocation.host.is_remote() {
+    if invocation.host.runs_remotely() {
         invocation.host.to_remote(project_root)
     } else {
         project_root.to_string_lossy().replace('\\', "/")

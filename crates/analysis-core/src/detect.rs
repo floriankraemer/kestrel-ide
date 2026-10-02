@@ -83,7 +83,7 @@ fn resolve_one(
     project_root: &Path,
     host: &process_exec::host::ExecHost,
 ) -> Option<PathBuf> {
-    if host.is_remote() {
+    if host.filesystem_is_remote() {
         return process_exec::host::resolve_program(host, candidate, project_root)
             .map(|remote_path| host.to_local(&remote_path));
     }

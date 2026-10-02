@@ -44,6 +44,141 @@ pub fn set_remote_wsl_enabled(enabled: bool) {
 pub enum ExecHost {
     Local,
     Wsl(WslHost),
+    /// A container (ADR-0067). Never produced by [`ExecHost::for_path`]: a
+    /// container is chosen by configuration (a PHP interpreter target), so
+    /// git, cargo and npm stay on the host and only callers that go through
+    /// `run_on`/`spawn_on` with such a host run inside it.
+    Container(ContainerHost),
+}
+
+/// Where a project root lives on the host and where the container mounts
+/// it, both directions.
+///
+/// Matching is an exact prefix match after normalising separators, never a
+/// filesystem lookup, so this stays a pure, cheaply-testable mapping the way
+/// [`ExecHost::to_remote`]/[`ExecHost::to_local`] is for WSL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathMap {
+    pub local_root: PathBuf,
+    pub remote_root: String,
+}
+
+/// Where the project root mounts inside a container when nothing says
+/// otherwise.
+pub const DEFAULT_WORKDIR: &str = "/workspace";
+
+/// Normalise a path string for prefix comparison: backslashes to forward
+/// slashes, and (Windows-safe) a leading drive letter lower-cased — `C:\`
+/// and `c:/` must match the same root.
+fn normalize(path: &str) -> String {
+    let out = path.replace('\\', "/");
+    let mut chars = out.chars();
+    match (chars.next(), chars.next()) {
+        (Some(drive), Some(':')) if drive.is_ascii_alphabetic() => {
+            format!("{}:{}", drive.to_ascii_lowercase(), &out[2..])
+        }
+        _ => out,
+    }
+}
+
+impl PathMap {
+    /// `local_root` joined with `remote_root` defaulted to
+    /// [`DEFAULT_WORKDIR`] when `workdir` is empty.
+    pub fn new(local_root: impl Into<PathBuf>, workdir: &str) -> Self {
+        let remote_root = if workdir.is_empty() {
+            DEFAULT_WORKDIR.to_string()
+        } else {
+            workdir.to_string()
+        };
+        PathMap {
+            local_root: local_root.into(),
+            remote_root,
+        }
+    }
+
+    /// `path` under [`Self::local_root`] -> the same path under
+    /// [`Self::remote_root`]. `None` when `path` is not under the root at
+    /// all — the caller decides whether that is an error or simply "leave
+    /// it alone" (an env value that happens not to be a project path).
+    pub fn to_remote(&self, path: &Path) -> Option<String> {
+        let root = normalize(&self.local_root.to_string_lossy());
+        let candidate = normalize(&path.to_string_lossy());
+        let tail = if candidate.eq_ignore_ascii_case(&root) {
+            ""
+        } else {
+            let prefix = if root.ends_with('/') {
+                root.clone()
+            } else {
+                format!("{root}/")
+            };
+            if candidate.len() >= prefix.len()
+                && candidate[..prefix.len()].eq_ignore_ascii_case(&prefix)
+            {
+                &candidate[prefix.len()..]
+            } else {
+                return None;
+            }
+        };
+        if tail.is_empty() {
+            Some(self.remote_root.clone())
+        } else {
+            Some(format!("{}/{tail}", self.remote_root.trim_end_matches('/')))
+        }
+    }
+
+    /// The inverse of [`Self::to_remote`]: `remote` under
+    /// [`Self::remote_root`] -> the same path under [`Self::local_root`],
+    /// played back with `local_root`'s own separator style. `None` when
+    /// `remote` is not under [`Self::remote_root`].
+    pub fn to_local(&self, remote: &str) -> Option<PathBuf> {
+        let root = self.remote_root.trim_end_matches('/');
+        let candidate = remote.trim_end_matches('/');
+        let tail = if candidate == root {
+            ""
+        } else {
+            let prefix = format!("{root}/");
+            candidate.strip_prefix(prefix.as_str())?
+        };
+        let local = self.local_root.to_string_lossy();
+        let sep = if local.contains('\\') { '\\' } else { '/' };
+        if tail.is_empty() {
+            Some(self.local_root.clone())
+        } else {
+            let tail = tail.replace('/', &sep.to_string());
+            let joined = if local.ends_with(sep) {
+                format!("{local}{tail}")
+            } else {
+                format!("{local}{sep}{tail}")
+            };
+            Some(PathBuf::from(joined))
+        }
+    }
+}
+
+/// How to reach one container: the engine command line up to the point the
+/// per-call `-w`/`-e` flags go, then the container reference.
+///
+/// Built by `container_core::target::exec_host`; this crate only knows the
+/// shape `<program> <prefix_args> <verb_args> -w <cwd> -e K=V... <target>
+/// <tool> <args...>`, so it stays a leaf (ADR-0047 §4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerHost {
+    /// The engine program, or `wsl.exe` when the engine is reached through
+    /// a WSL distro.
+    pub program: String,
+    /// Connection flags and, for compose, the `compose -f ...` prefix.
+    pub prefix_args: Vec<String>,
+    /// The connection's own environment (`DOCKER_HOST`, ...), set on the
+    /// engine process.
+    pub engine_env: Vec<(String, String)>,
+    /// True when `program` is `wsl.exe`, so `engine_env` needs `WSLENV`.
+    pub via_wsl: bool,
+    /// The verb and its flags, e.g. `exec -i`, `exec -T` or
+    /// `run --rm -i -v src:dst`.
+    pub verb_args: Vec<String>,
+    /// The container, service or image reference.
+    pub target: Vec<String>,
+    pub path_map: PathMap,
 }
 
 /// A WSL distro this project's root lives under, and the exact UNC prefix
@@ -104,7 +239,18 @@ impl ExecHost {
         }
     }
 
-    pub fn is_remote(&self) -> bool {
+    /// The tool runs somewhere other than this machine's own process
+    /// namespace: in a WSL distro or a container. Decides spawn mechanics —
+    /// no local working directory, exit-code mapping.
+    pub fn runs_remotely(&self) -> bool {
+        !matches!(self, ExecHost::Local)
+    }
+
+    /// The project's files are reached over a remote filesystem (WSL's
+    /// UNC share), so local file I/O and the native watcher do not apply.
+    /// A container keeps the project on the local disk (bind mount) and
+    /// answers `false`.
+    pub fn filesystem_is_remote(&self) -> bool {
         matches!(self, ExecHost::Wsl(_))
     }
 
@@ -116,6 +262,12 @@ impl ExecHost {
     /// distro has to agree, and this reparses `path` itself rather than
     /// trusting `self`.
     pub fn to_remote(&self, path: &Path) -> String {
+        if let ExecHost::Container(container) = self {
+            return container
+                .path_map
+                .to_remote(path)
+                .unwrap_or_else(|| path.to_string_lossy().replace('\\', "/"));
+        }
         match parse_unc(path) {
             Some((_, _, remainder)) if remainder.is_empty() => "/".to_string(),
             Some((_, _, remainder)) => format!("/{remainder}"),
@@ -132,6 +284,10 @@ impl ExecHost {
     pub fn to_local(&self, remote: &str) -> PathBuf {
         match self {
             ExecHost::Local => PathBuf::from(remote),
+            ExecHost::Container(container) => container
+                .path_map
+                .to_local(remote)
+                .unwrap_or_else(|| PathBuf::from(remote)),
             ExecHost::Wsl(wsl) => {
                 let sep = if wsl.unc_prefix.contains('\\') {
                     '\\'
@@ -155,7 +311,9 @@ impl ExecHost {
     /// is returned as printed.
     pub fn path_from_tool(&self, printed: &str) -> PathBuf {
         match self {
-            ExecHost::Wsl(_) if printed.starts_with('/') => self.to_local(printed),
+            ExecHost::Wsl(_) | ExecHost::Container(_) if printed.starts_with('/') => {
+                self.to_local(printed)
+            }
             _ => PathBuf::from(printed),
         }
     }
@@ -165,7 +323,38 @@ impl ExecHost {
     /// <args...>` for `Wsl` — `-e`, not `--`, so a commit message or a
     /// `--message-format=json` argument is never reinterpreted by a shell.
     pub fn argv(&self, program: &str, args: &[&str], cwd: &Path) -> (String, Vec<String>) {
+        self.argv_with_env(program, args, cwd, &[])
+    }
+
+    /// [`Self::argv`] with per-call `env`. Only a container needs it in the
+    /// argv (`-e K=V` before the container reference); `Local` and `Wsl`
+    /// carry env on the spawned process instead.
+    fn argv_with_env(
+        &self,
+        program: &str,
+        args: &[&str],
+        cwd: &Path,
+        env: &[(&str, &str)],
+    ) -> (String, Vec<String>) {
         match self {
+            ExecHost::Container(container) => {
+                let remote_cwd = container
+                    .path_map
+                    .to_remote(cwd)
+                    .unwrap_or_else(|| container.path_map.remote_root.clone());
+                let mut full = container.prefix_args.clone();
+                full.extend(container.verb_args.iter().cloned());
+                full.push("-w".to_string());
+                full.push(remote_cwd);
+                for (key, value) in env {
+                    full.push("-e".to_string());
+                    full.push(format!("{key}={value}"));
+                }
+                full.extend(container.target.iter().cloned());
+                full.push(program.to_string());
+                full.extend(args.iter().map(|a| a.to_string()));
+                (container.program.clone(), full)
+            }
             ExecHost::Local => (
                 program.to_string(),
                 args.iter().map(|a| a.to_string()).collect(),
@@ -204,7 +393,7 @@ impl ExecHost {
         cwd: &Path,
         env: &[(&str, &str)],
     ) -> Command {
-        let (resolved_program, resolved_args) = self.argv(program, args, cwd);
+        let (resolved_program, resolved_args) = self.argv_with_env(program, args, cwd, env);
         let mut command = Command::new(&resolved_program);
         command.args(&resolved_args);
         // Only a local host is launched *from* the working directory. For a
@@ -213,15 +402,40 @@ impl ExecHost {
         // nothing — and pinning it to the `\\wsl.localhost\...` path is a
         // way to fail: the spawn needs that UNC path to resolve, which it
         // does not when the distro is stopped or the share is unavailable.
-        if !self.is_remote() {
+        // A container's engine is a local process, and a relative compose
+        // file resolves against its cwd — unless the engine itself sits
+        // behind `wsl.exe`.
+        let local_cwd = match self {
+            ExecHost::Local => true,
+            ExecHost::Wsl(_) => false,
+            ExecHost::Container(container) => !container.via_wsl,
+        };
+        if local_cwd {
             command.current_dir(cwd);
         }
 
-        for (key, value) in env {
-            command.env(key, value);
-        }
-        if self.is_remote() && !env.is_empty() {
-            command.env("WSLENV", wslenv_with(env));
+        match self {
+            ExecHost::Container(container) => {
+                let engine_env: Vec<(&str, &str)> = container
+                    .engine_env
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                for (key, value) in &engine_env {
+                    command.env(key, value);
+                }
+                if container.via_wsl && !engine_env.is_empty() {
+                    command.env("WSLENV", wslenv_with(&engine_env));
+                }
+            }
+            _ => {
+                for (key, value) in env {
+                    command.env(key, value);
+                }
+                if self.runs_remotely() && !env.is_empty() {
+                    command.env("WSLENV", wslenv_with(env));
+                }
+            }
         }
 
         suppress_console_window(&mut command);
@@ -325,8 +539,9 @@ fn resolve_cache() -> &'static ResolveCache {
 /// vocabulary (`VcsError::GitNotInstalled`, `AnalyzerStatus::NotDetected`),
 /// the same split every other `process-exec` failure draws.
 pub fn resolve_program(host: &ExecHost, program: &str, cwd: &Path) -> Option<String> {
-    let ExecHost::Wsl(wsl) = host else {
-        return Some(program.to_string());
+    let wsl = match host {
+        ExecHost::Wsl(wsl) => wsl,
+        ExecHost::Local | ExecHost::Container(_) => return Some(program.to_string()),
     };
 
     let key = (wsl.distro.clone(), program.to_string());
@@ -474,7 +689,7 @@ mod tests {
     #[test]
     fn mixed_separators_and_case_still_classify() {
         let host = wsl(r"\\WSL.LOCALHOST/Ubuntu\home/f");
-        assert!(host.is_remote());
+        assert!(host.filesystem_is_remote());
         let ExecHost::Wsl(wsl) = host else {
             unreachable!()
         };
@@ -799,5 +1014,99 @@ mod tests {
         restore_path(original_path);
 
         assert_eq!(resolved, None);
+    }
+
+    // ----------------------------------------------- container (X1) -----
+
+    fn container() -> ExecHost {
+        ExecHost::Container(ContainerHost {
+            program: "docker".into(),
+            prefix_args: vec!["compose".into(), "-f".into(), "dc.yml".into()],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec!["exec".into(), "-T".into()],
+            target: vec!["php".into()],
+            path_map: PathMap::new("/home/f/proj", "/var/www"),
+        })
+    }
+
+    #[test]
+    fn a_container_argv_is_engine_verb_cwd_env_target_then_the_tool() {
+        let host = container();
+        let (program, args) = host.argv(
+            "vendor/bin/phpstan",
+            &["analyse"],
+            Path::new("/home/f/proj/app"),
+        );
+        assert_eq!(program, "docker");
+        assert_eq!(
+            args,
+            [
+                "compose",
+                "-f",
+                "dc.yml",
+                "exec",
+                "-T",
+                "-w",
+                "/var/www/app",
+                "php",
+                "vendor/bin/phpstan",
+                "analyse"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_container_command_passes_per_call_env_as_dash_e() {
+        let host = container();
+        let command = host.command("php", &["-v"], Path::new("/home/f/proj"), &[("A", "b")]);
+        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
+        assert!(args.windows(2).any(|w| w == ["-e", "A=b"]), "{args:?}");
+        assert_eq!(command.get_current_dir(), Some(Path::new("/home/f/proj")));
+    }
+
+    #[test]
+    fn a_cwd_outside_the_mount_runs_from_the_mount_root() {
+        let (_, args) = container().argv("php", &[], Path::new("/tmp"));
+        assert!(args.windows(2).any(|w| w == ["-w", "/var/www"]), "{args:?}");
+    }
+
+    #[test]
+    fn a_container_translates_paths_through_its_path_map() {
+        let host = container();
+        assert_eq!(
+            host.to_remote(Path::new("/home/f/proj/src/A.php")),
+            "/var/www/src/A.php"
+        );
+        assert_eq!(
+            host.to_local("/var/www/src/A.php"),
+            PathBuf::from("/home/f/proj/src/A.php")
+        );
+        assert_eq!(
+            host.path_from_tool("/var/www/src/A.php"),
+            PathBuf::from("/home/f/proj/src/A.php")
+        );
+        // Outside the mount (e.g. a vendor path baked into the image).
+        assert_eq!(
+            host.path_from_tool("/usr/share/php/X.php"),
+            PathBuf::from("/usr/share/php/X.php")
+        );
+        assert_eq!(host.path_from_tool("rel/A.php"), PathBuf::from("rel/A.php"));
+    }
+
+    #[test]
+    fn a_container_runs_remotely_but_keeps_a_local_filesystem() {
+        let host = container();
+        assert!(host.runs_remotely());
+        assert!(!host.filesystem_is_remote());
+        assert!(wsl(r"\\wsl$\Ubuntu\home").filesystem_is_remote());
+        assert!(!ExecHost::Local.runs_remotely());
+    }
+
+    #[test]
+    fn for_path_never_classifies_a_container() {
+        for path in ["/home/f/proj", "/workspace", r"C:\proj", "//wsl$/Ubuntu/x"] {
+            assert!(!matches!(wsl(path), ExecHost::Container(_)), "{path}");
+        }
     }
 }

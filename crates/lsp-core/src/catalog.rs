@@ -675,7 +675,7 @@ pub fn launch_plan<'a>(
     host: &process_exec::host::ExecHost,
     is_windows: bool,
 ) -> LaunchPlan {
-    let native_windows = is_windows && !host.is_remote();
+    let native_windows = is_windows && !host.runs_remotely();
     let mut plan = LaunchPlan {
         start: Vec::new(),
         skipped: Vec::new(),

@@ -53,7 +53,7 @@ pub struct DocumentEdits {
 impl DocumentEdits {
     /// See [`ResourceOp::retranslate`] — same rule, one field.
     fn retranslate(&mut self, host: &process_exec::host::ExecHost) {
-        if host.is_remote() {
+        if host.runs_remotely() {
             if let Some(p) = crate::manager::path_for(host, &self.uri) {
                 self.path = p;
             }
@@ -205,7 +205,7 @@ impl ResourceOp {
     /// from `uri`/`old_uri`/`new_uri` through `host` instead. A no-op on
     /// `ExecHost::Local`.
     fn retranslate(&mut self, host: &process_exec::host::ExecHost) {
-        if !host.is_remote() {
+        if !host.runs_remotely() {
             return;
         }
         match self {

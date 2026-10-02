@@ -169,7 +169,7 @@ fn resolve_path(path: &str, cwd: &Path, path_map: Option<&PathMap>) -> PathBuf {
         }
     }
     let host = process_exec::host::ExecHost::for_path(cwd);
-    if host.is_remote() {
+    if host.filesystem_is_remote() {
         let linux_path = if path.starts_with('/') {
             path.to_string()
         } else {

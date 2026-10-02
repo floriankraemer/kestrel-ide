@@ -190,7 +190,7 @@ pub fn run_on(
     // (exit 127, or `wsl.exe`'s own "no such distro" stderr) onto the same
     // `Failure::NotFound` a missing local binary already reports, so
     // `VcsError::GitNotInstalled` and friends keep working unmodified.
-    if host.is_remote() && host::is_missing_program(status.code(), &stderr) {
+    if host.runs_remotely() && host::is_missing_program(status.code(), &stderr) {
         return Err(Failure::NotFound);
     }
 

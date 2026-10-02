@@ -259,7 +259,9 @@ impl ffi::DebugService {
             .run_on
             .as_deref()
             .and_then(|run_on| run_core::container_target::path_map(run_on, &containers, root));
-        self.launch_php_debug(config.id.clone(), container_map, root)
+        let check_host =
+            run_core::container_target::run_host(config.run_on.as_deref(), &containers, root);
+        self.launch_php_debug(config.id.clone(), container_map, check_host, root)
     }
 
     /// Debug the gutter test `TestService` has pending: it runs on the
@@ -275,7 +277,9 @@ impl ffi::DebugService {
                 process_exec::host::ExecHost::Container(container) => Some(container.path_map),
                 _ => None,
             };
-        self.launch_php_debug(String::new(), container_map, &root)
+        let check_host =
+            php_core::host::interpreter_host(&settings.php, &settings.containers, &root);
+        self.launch_php_debug(String::new(), container_map, check_host, &root)
     }
 
     /// Listen and start the run once the listener is up; `config_id` is
@@ -284,6 +288,7 @@ impl ffi::DebugService {
         self: Pin<&mut Self>,
         config_id: String,
         container_map: Option<process_exec::host::PathMap>,
+        check_host: process_exec::host::ExecHost,
         root: &Path,
     ) -> ffi::FfiResult {
         let host = process_exec::host::ExecHost::for_path(root);
@@ -301,11 +306,9 @@ impl ffi::DebugService {
             HostKind::Local
         };
         let plan = xdebug::plan(kind, path_map.as_ref(), xdebug_port());
-        // The interpreter the run uses: the `[php]` one, in its container if
-        // it has one.
+        // The interpreter the run uses, on the host the run uses (its
+        // `run_on` target, or the `[php]` interpreter's for the test run).
         let settings = crate::bridge::convert::load_resolved_settings();
-        let check_host =
-            php_core::host::interpreter_host(&settings.php, &settings.containers, root);
         let run = PhpRun {
             config_id,
             env: plan.env,

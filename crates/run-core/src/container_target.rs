@@ -179,6 +179,28 @@ pub fn path_map(
     ))
 }
 
+/// The host a run with this `run_on` executes PHP on — what an Xdebug probe
+/// must ask, not the `[php]` interpreter's host. A target runs a fresh
+/// container (`wrap_launch`'s `run --rm`), so the probe does too; anything
+/// else is the project's own host.
+pub fn run_host(
+    run_on: Option<&str>,
+    containers: &ContainerSettings,
+    project_root: &std::path::Path,
+) -> process_exec::host::ExecHost {
+    run_on
+        .and_then(target_id)
+        .and_then(|id| {
+            target::exec_host_for(
+                containers,
+                id,
+                project_root,
+                Some(container_core::target::ExecMode::Run),
+            )
+        })
+        .unwrap_or_else(|| process_exec::host::ExecHost::for_path(project_root))
+}
+
 /// The before-launch build task a run target needs — the image (or compose
 /// service) has to exist before *anything* else in the configuration's own
 /// before-launch list runs, so `before_launch::tasks_of_with_containers`
@@ -228,6 +250,26 @@ mod tests {
             program: program.to_string(),
             run_on: run_on.map(str::to_string),
             ..RunConfig::default()
+        }
+    }
+
+    #[test]
+    fn the_probe_host_is_the_one_the_run_uses_not_the_php_interpreters() {
+        let containers = containers_with(image_target());
+        let root = std::path::Path::new("/p");
+        assert!(matches!(
+            run_host(Some("container:t1"), &containers, root),
+            process_exec::host::ExecHost::Container(_)
+        ));
+        // Local run, an unknown target and no `run_on` all probe locally.
+        for run_on in [None, Some("container:gone"), Some("")] {
+            assert!(
+                matches!(
+                    run_host(run_on, &containers, root),
+                    process_exec::host::ExecHost::Local
+                ),
+                "{run_on:?}"
+            );
         }
     }
 

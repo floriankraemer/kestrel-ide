@@ -39,13 +39,9 @@ struct XdebugCheck {
 /// error.
 fn launch_after_check(qt_thread: CxxQtThread<ffi::DebugService>, session_id: u64, run: PhpRun) {
     let check = &run.check;
-    // Only a blocking issue matters here: a run the IDE starts sets
-    // `XDEBUG_MODE` itself, so "xdebug.mode lacks debug" is irrelevant and
-    // is advised on the listen toggle instead.
     let blocked = php_core::probe::probe(&check.host, &check.interpreter, &check.cwd)
         .ok()
-        .and_then(|probe| probe.xdebug_issue())
-        .filter(php_core::probe::XdebugIssue::blocks_debugging)
+        .and_then(|probe| probe.ide_run_issue())
         .map(|issue| issue.advice(check.in_container));
     let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
         if let Some(advice) = blocked {

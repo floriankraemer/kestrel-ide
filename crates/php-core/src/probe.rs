@@ -49,6 +49,13 @@ impl PhpProbe {
         }
     }
 
+    /// What stops a run the IDE starts. Such a run sets `XDEBUG_MODE`
+    /// itself, so an ini whose `xdebug.mode` lacks `debug` is no issue
+    /// here; it is advised on the listen toggle (`xdebug_issue`) instead.
+    pub fn ide_run_issue(&self) -> Option<XdebugIssue> {
+        self.xdebug_issue().filter(XdebugIssue::blocks_debugging)
+    }
+
     /// Some coverage driver is available (PCOV, or Xdebug in `coverage` mode).
     pub fn can_cover(&self) -> bool {
         self.pcov || (self.xdebug && self.xdebug_modes.iter().any(|m| m == "coverage"))
@@ -221,6 +228,16 @@ mod tests {
             .advice(false)
             .contains("host-gateway"));
         assert!(XdebugIssue::NotLoaded.advice(true).contains("host-gateway"));
+    }
+
+    #[test]
+    fn an_ide_run_gets_no_xdebug_mode_advice_but_listening_does() {
+        let mode_off =
+            parse(r#"{"version":"8.3.0","xdebug":true,"xdebug_mode":"coverage"}"#).unwrap();
+        assert_eq!(mode_off.ide_run_issue(), None);
+        assert_eq!(mode_off.xdebug_issue(), Some(XdebugIssue::DebugModeOff));
+        let missing = parse(r#"{"version":"8.3.0","xdebug":false,"xdebug_mode":false}"#).unwrap();
+        assert_eq!(missing.ide_run_issue(), Some(XdebugIssue::NotLoaded));
     }
 
     #[test]

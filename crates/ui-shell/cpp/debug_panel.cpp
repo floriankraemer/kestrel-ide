@@ -167,12 +167,14 @@ DebugPanel::DebugPanel(DebugService *debugService, OpenAt openAt, QWidget *paren
     variables_->setHeaderLabels({tr("Name"), tr("Value")});
     variables_->setItemDelegate(new ColumnEditDelegate(1, variables_));
     variables_->setContextMenuPolicy(Qt::CustomContextMenu);
-    // A name column wide enough for a typical identifier and no wider: a
-    // long one is elided in the middle (the column can be dragged wider),
-    // and the value keeps the rest of the row instead of scrolling away.
+    // Name and value share the row evenly: a fixed 16-character name column
+    // elided PHP's `$__composer_autoload_files` and `CURL_...` constants. A
+    // long entry is still elided in the middle (the divider can be dragged),
+    // and nothing scrolls sideways.
     variables_->setTextElideMode(Qt::ElideMiddle);
     variables_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    variables_->setColumnWidth(0, fontMetrics().horizontalAdvance(QLatin1Char('x')) * 16);
+    variables_->header()->setStretchLastSection(false);
+    variables_->header()->setSectionResizeMode(QHeaderView::Stretch);
     auto *variablesColumn = new QVBoxLayout();
     variablesColumn->addWidget(variableFilter_);
     variablesColumn->addWidget(variables_, 1);
@@ -235,8 +237,10 @@ DebugPanel::DebugPanel(DebugService *debugService, OpenAt openAt, QWidget *paren
     splitter->addWidget(variablesWidget);
     splitter->addWidget(watchWidget);
     splitter->addWidget(consoleWidget);
-    splitter->setStretchFactor(1, 2);
-    splitter->setStretchFactor(3, 2);
+    // The variables are the widest data, so they get the largest share.
+    for (const auto &[index, weight] : {std::pair{0, 2}, {1, 3}, {2, 2}, {3, 2}}) {
+        splitter->setStretchFactor(index, weight);
+    }
 
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);

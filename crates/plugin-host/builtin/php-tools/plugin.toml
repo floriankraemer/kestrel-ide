@@ -142,6 +142,9 @@ program-candidates = ["vendor/bin/pest"]
 # Pest (2+) speaks PHPUnit's `--teamcity` and `--filter`.
 args = ["--teamcity"]
 filter-flag = "--filter"
+# Pest prints a PHPUnit class's `testGreetsByName` as `Greets by name`, so a
+# rerun cannot filter on the reported name as it is.
+filter-dialect = "pest-regex"
 output-format = "teamcity"
 config-file-candidates = ["phpunit.xml", "phpunit.xml.dist", "pest.php"]
 # A coverage run writes Clover XML to a project-relative path, so it lands

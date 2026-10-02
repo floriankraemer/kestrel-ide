@@ -633,7 +633,7 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     assert_eq!(
         dialects,
         [
-            None,
+            Some("pest-regex"),
             Some("codeception"),
             Some("behat-name"),
             Some("none"),

@@ -973,7 +973,7 @@ fn a_test_framework_may_declare_a_non_default_filter_dialect() {
 
 #[test]
 fn the_php_filter_dialects_are_accepted() {
-    for dialect in ["codeception", "behat-name", "none"] {
+    for dialect in ["pest-regex", "codeception", "behat-name", "none"] {
         let manifest = PluginManifest::from_toml_str(&with(&format!(
             r#"
             [[contributes.test-frameworks]]

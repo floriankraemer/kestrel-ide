@@ -371,7 +371,9 @@ pub struct TestFrameworkContribution {
     pub report_glob: Option<String>,
     /// Which target-selection syntax [`Self::filter_flag`]/
     /// [`Self::filter_template`] speaks: `"phpunit-regex"` (PHPUnit's own
-    /// PCRE `--filter`, the default when absent), `"surefire"` (Maven's
+    /// PCRE `--filter`, the default when absent), `"pest-regex"` (the same
+    /// flag, but a leaf name is matched through Pest's prettified test names),
+    /// `"surefire"` (Maven's
     /// `-Dtest=Class#method`), `"gradle"` (Gradle's dotted
     /// `--tests pkg.Class.method`), `"codeception"` (`run file:^method$`,
     /// editor-run tests only), `"behat-name"` (`--name /regex/`) or `"none"`
@@ -958,11 +960,17 @@ impl PluginManifest {
                 non_empty("contributes.test-frameworks.filter-dialect", dialect)?;
                 if !matches!(
                     dialect.as_str(),
-                    "phpunit-regex" | "surefire" | "gradle" | "codeception" | "behat-name" | "none"
+                    "phpunit-regex"
+                        | "pest-regex"
+                        | "surefire"
+                        | "gradle"
+                        | "codeception"
+                        | "behat-name"
+                        | "none"
                 ) {
                     return Err(LoadErrorKind::MalformedManifest(format!(
                         "contributes.test-frameworks.filter-dialect `{dialect}` must be one of \
-                         `phpunit-regex`, `surefire`, `gradle`, `codeception`, `behat-name`, \
+                         `phpunit-regex`, `pest-regex`, `surefire`, `gradle`, `codeception`, `behat-name`, \
                          `none`"
                     )));
                 }

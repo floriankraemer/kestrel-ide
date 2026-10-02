@@ -26,6 +26,11 @@ pub enum FilterDialect {
     /// `Namespace\Class::method` name. The only dialect that existed before
     /// this field did, and every manifest's default.
     PhpUnitRegex,
+    /// Pest's `--filter`: PHPUnit's regex, but Pest reports a PHPUnit
+    /// class's `testGreetsByName` as `Greets by name` and its own `it(...)`
+    /// as `it greets by name`, so a leaf is matched by its words (see
+    /// [`pest_leaf_pattern`]) instead of by the reported name.
+    PestRegex,
     /// Maven Surefire's/Failsafe's `-Dtest=`: `Class#method`, comma-joined
     /// for several, or a bare `Class` to select a whole suite.
     Surefire,
@@ -67,6 +72,7 @@ impl std::error::Error for UnknownFilterDialect {}
 pub fn parse_filter_dialect(value: Option<&str>) -> Result<FilterDialect, UnknownFilterDialect> {
     match value {
         None | Some("phpunit-regex") => Ok(FilterDialect::PhpUnitRegex),
+        Some("pest-regex") => Ok(FilterDialect::PestRegex),
         Some("surefire") => Ok(FilterDialect::Surefire),
         Some("gradle") => Ok(FilterDialect::Gradle),
         Some("codeception") => Ok(FilterDialect::Codeception),
@@ -92,6 +98,32 @@ pub fn escape_regex(value: &str) -> String {
         escaped.push(c);
     }
     escaped
+}
+
+/// The PCRE for one leaf of a Pest run, `Suite::name`.
+///
+/// Pest prettifies a PHPUnit class's test names in its TeamCity output:
+/// `testGreetsByName`, `test_greets_by_name` and `greetsByName` all come out
+/// as `Greets by name`, which no `--filter` matches (a rerun then runs nothing
+/// and still exits 0). Pest's own tests (`it greets by name`, `` `Group` → it
+/// x ``) are the opposite: they only match under their reported name. So the
+/// pattern accepts either: the reported name as it is, or its words joined by
+/// an optional `_` behind the `test`/`__pest_evaluable_` prefix PHPUnit and
+/// Pest put on the real method name (PHPUnit's `/i` covers the case change).
+/// All three shapes were checked against real Pest 3. A name with a data set
+/// (`... with data set #0`) is the real, exact name and stays as it is.
+fn pest_leaf_pattern(id: &TestId) -> String {
+    let (suite, name) = split_suite_title(id);
+    if name.contains(" with data set ") {
+        return format!("^{}$", escape_regex(id.as_str()));
+    }
+    let words: Vec<String> = name.split_whitespace().map(escape_regex).collect();
+    format!(
+        "^{}::(?:{}|(?:test_?|__pest_evaluable_)?{})$",
+        escape_regex(suite),
+        escape_regex(name),
+        words.join("_?")
+    )
 }
 
 /// Split a JVM-shaped [`TestId`] — `"com.example.GreeterTest::deliberatelyFails"`
@@ -179,7 +211,7 @@ pub fn marker_args(
     marker: &MarkerRun<'_>,
 ) -> Result<Vec<String>, &'static str> {
     match dialect {
-        FilterDialect::PhpUnitRegex => {
+        FilterDialect::PhpUnitRegex | FilterDialect::PestRegex => {
             let mut args = apply_filter(
                 base,
                 filter_flag,
@@ -242,6 +274,10 @@ pub fn for_node(tree: &TestTree, id: &TestId, dialect: FilterDialect) -> Vec<Str
             };
             vec![pattern]
         }
+        FilterDialect::PestRegex => match tree.node(id).map(|node| node.kind) {
+            Some(NodeKind::Suite) => vec![format!("^{}::", escape_regex(id.as_str()))],
+            _ => vec![pest_leaf_pattern(id)],
+        },
         FilterDialect::Surefire => vec![surefire_pattern(id)],
         FilterDialect::Gradle => vec![gradle_pattern(id)],
     }
@@ -262,6 +298,18 @@ pub fn for_many(ids: &[TestId], dialect: FilterDialect) -> Vec<String> {
         FilterDialect::PhpUnitRegex => {
             let alternatives: Vec<String> =
                 ids.iter().map(|id| escape_regex(id.as_str())).collect();
+            vec![format!("^(?:{})$", alternatives.join("|"))]
+        }
+        FilterDialect::PestRegex => {
+            let alternatives: Vec<String> = ids
+                .iter()
+                .map(|id| {
+                    let pattern = pest_leaf_pattern(id);
+                    // One alternation: drop each pattern's own anchors.
+                    let inner = pattern.strip_prefix('^').unwrap_or(&pattern);
+                    inner.strip_suffix('$').unwrap_or(inner).to_string()
+                })
+                .collect();
             vec![format!("^(?:{})$", alternatives.join("|"))]
         }
         FilterDialect::Surefire => {
@@ -352,6 +400,10 @@ mod tests {
     #[test]
     fn parse_filter_dialect_accepts_the_three_known_values() {
         assert_eq!(
+            parse_filter_dialect(Some("pest-regex")),
+            Ok(FilterDialect::PestRegex)
+        );
+        assert_eq!(
             parse_filter_dialect(Some("phpunit-regex")),
             Ok(FilterDialect::PhpUnitRegex)
         );
@@ -369,6 +421,94 @@ mod tests {
     fn parse_filter_dialect_rejects_an_unknown_value_as_a_typed_error_not_a_panic() {
         let err = parse_filter_dialect(Some("checkstyle-xml")).unwrap_err();
         assert_eq!(err, UnknownFilterDialect("checkstyle-xml".to_string()));
+    }
+
+    // --- pest-regex dialect -----------------------------------------------
+
+    /// Pest names a PHPUnit class's `testGreetsByName` `Greets by name` and
+    /// its own `it('greets by name')` `it greets by name`; both patterns were
+    /// checked against real Pest 3 (a rerun on the reported name ran nothing).
+    #[test]
+    fn pest_leaf_is_matched_by_its_reported_name_or_its_words() {
+        let id = TestId("Tests\\GreeterTest::Greets by name".into());
+        let pattern = for_node(&TestTree::new(), &id, FilterDialect::PestRegex);
+        assert_eq!(
+            pattern,
+            vec![
+                "^Tests\\\\GreeterTest::(?:Greets by name|(?:test_?|__pest_evaluable_)?Greets_?by_?name)$"
+            ]
+        );
+        let native = TestId("Tests\\Feature\\GreeterPestTest::it greets by name".into());
+        assert_eq!(
+            for_node(&TestTree::new(), &native, FilterDialect::PestRegex),
+            vec![
+                "^Tests\\\\Feature\\\\GreeterPestTest::(?:it greets by name|(?:test_?|__pest_evaluable_)?it_?greets_?by_?name)$"
+            ]
+        );
+    }
+
+    #[test]
+    fn pest_suite_is_a_prefix_like_phpunits() {
+        let tree = tree_with_suite_and_test();
+        let pattern = for_node(
+            &tree,
+            &TestId("Tests\\GreeterTest".into()),
+            FilterDialect::PestRegex,
+        );
+        assert_eq!(pattern, vec!["^Tests\\\\GreeterTest::"]);
+    }
+
+    #[test]
+    fn pest_data_set_names_are_the_real_names_and_stay_exact() {
+        let id = TestId("Tests\\GreeterTest::testGreets with data set #0".into());
+        assert_eq!(
+            for_node(&TestTree::new(), &id, FilterDialect::PestRegex),
+            vec!["^Tests\\\\GreeterTest::testGreets with data set \\#0$"]
+        );
+    }
+
+    #[test]
+    fn pest_several_leaves_become_one_alternation() {
+        let pattern = for_many(
+            &[
+                TestId("A::Greets by name".into()),
+                TestId("B::it works".into()),
+            ],
+            FilterDialect::PestRegex,
+        );
+        assert_eq!(
+            pattern,
+            vec![
+                "^(?:A::(?:Greets by name|(?:test_?|__pest_evaluable_)?Greets_?by_?name)|B::(?:it works|(?:test_?|__pest_evaluable_)?it_?works))$"
+            ]
+        );
+    }
+
+    #[test]
+    fn pest_markers_are_filtered_like_phpunits() {
+        let marker = MarkerRun {
+            filter: "Tests\\\\GreeterTest::testGreets",
+            name: "testGreets",
+            is_class: false,
+            file: Some("tests/GreeterTest.php"),
+        };
+        let args = marker_args(
+            &["--teamcity".to_string()],
+            FilterDialect::PestRegex,
+            Some("--filter"),
+            None,
+            &marker,
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            [
+                "--teamcity",
+                "--filter",
+                marker.filter,
+                "tests/GreeterTest.php"
+            ]
+        );
     }
 
     // --- phpunit-regex dialect --------------------------------------------

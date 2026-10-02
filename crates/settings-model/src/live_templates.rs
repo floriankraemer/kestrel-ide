@@ -7,6 +7,7 @@
 //! load.
 
 use app_config::LiveTemplateSetting;
+use edit_ops::templates::Site;
 use plugin_api::{LiveTemplateContribution, TemplateContext};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +21,16 @@ pub struct LiveTemplate {
 }
 
 impl LiveTemplate {
+    /// Whether the template may be offered at `site`.
+    pub fn fits(&self, site: Site) -> bool {
+        match self.context {
+            TemplateContext::Any => true,
+            TemplateContext::Statement => site == Site::Statement,
+            TemplateContext::Expression => site == Site::Expression,
+            TemplateContext::Class => site == Site::ClassBody,
+        }
+    }
+
     fn same_slot(&self, other: &LiveTemplate) -> bool {
         self.language == other.language
             && self.abbreviation == other.abbreviation
@@ -142,6 +153,25 @@ mod tests {
         let all = resolve(&[], &[row("", "b"), row("a", ""), odd]);
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].context, TemplateContext::Any);
+    }
+
+    #[test]
+    fn context_decides_where_a_template_fits() {
+        let mut t = LiveTemplate::from(&plugin("a", "b"));
+        assert!(t.fits(Site::Other));
+        t.context = TemplateContext::Statement;
+        assert!(t.fits(Site::Statement) && !t.fits(Site::Expression));
+        t.context = TemplateContext::Class;
+        assert!(t.fits(Site::ClassBody) && !t.fits(Site::Statement));
+    }
+
+    #[test]
+    fn the_two_crates_spell_the_variables_alike() {
+        assert_eq!(
+            edit_ops::templates::SELECTION_VAR,
+            plugin_api::SELECTION_VAR
+        );
+        assert_eq!(edit_ops::templates::EXPR_VAR, plugin_api::EXPR_VAR);
     }
 
     #[test]

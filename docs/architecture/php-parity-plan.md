@@ -241,8 +241,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### G — code generation (ADR-0072)
 | Task | Status | Commit |
 |---|---|---|
-| G1 — `live-templates` point + user `[[live_template]]` | done | — |
-| G2 — `edit_ops::templates`: expand, surround, postfix → Transaction + snippet stops | open | |
+| G1 — `live-templates` point + user `[[live_template]]` | done | dd628ec |
+| G2 — `edit_ops::templates`: expand, surround, postfix → Transaction + snippet stops | done | — |
 | G3 — PHP live and postfix templates in php-tools | open | |
 | G4 — view: Tab expansion, Ctrl+J, Ctrl+Alt+T, postfix in completion | open | |
 | G5 — `file-templates` point; `php_core::psr4::namespace_for`; Class/Interface/Trait/Enum/Test templates | open | |

@@ -60,7 +60,7 @@ private:
     void onTestRunStarted();
     void onTestTreeChanged();
     void onTestOutputAppended(const QString &text);
-    void onTestRunFinished(bool ok, const QString &message);
+    void onTestRunFinished(bool ok, bool matchedNothing, const QString &message);
     void onSelectionChanged();
     void onFailureLinkActivated(int textPosition);
     void showContextMenu(const QPoint &pos);

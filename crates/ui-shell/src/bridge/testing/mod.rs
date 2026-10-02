@@ -476,6 +476,9 @@ impl ffi::TestService {
                     .and_then(|xml| test_core::coverage::parse_clover(&xml).ok())
                     .map(|coverage| coverage.map_paths_from(&host))
             });
+            let matched_nothing = result
+                .as_ref()
+                .is_ok_and(|code| handle.matched_nothing(*code));
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
                 if let Some(coverage) = coverage {
@@ -494,9 +497,11 @@ impl ffi::TestService {
                     }
                     Err(test_core::RunFailure::Io(msg)) => (false, msg),
                 };
-                service
-                    .as_mut()
-                    .test_run_finished(ok, QString::from(message.as_str()));
+                service.as_mut().test_run_finished(
+                    ok,
+                    matched_nothing,
+                    QString::from(message.as_str()),
+                );
             });
         });
         ffi::FfiResult::default()

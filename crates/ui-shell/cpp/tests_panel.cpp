@@ -388,12 +388,13 @@ void TestsPanel::onTestOutputAppended(const QString &text)
     output_->verticalScrollBar()->setValue(output_->verticalScrollBar()->maximum());
 }
 
-void TestsPanel::onTestRunFinished(bool ok, const QString &message)
+void TestsPanel::onTestRunFinished(bool ok, bool matchedNothing, const QString &message)
 {
     stopButton_->setEnabled(false);
-    statusLabel_->setText(ok ? tr("Run finished.") : message);
-    e2eMark(QStringLiteral("{\"ev\":\"test_run_finished\",\"ok\":%1,\"message\":%2}")
+    statusLabel_->setText(!ok ? message : matchedNothing ? tr("No tests matched.") : tr("Run finished."));
+    e2eMark(QStringLiteral("{\"ev\":\"test_run_finished\",\"ok\":%1,\"matched_nothing\":%2,\"message\":%3}")
               .arg(ok ? "true" : "false")
+              .arg(matchedNothing ? "true" : "false")
               .arg(e2eJson(message)));
 }
 

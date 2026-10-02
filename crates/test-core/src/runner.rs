@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -230,11 +231,20 @@ fn collect_junit_cases(
 #[derive(Clone, Default)]
 pub struct TestRunHandle {
     spawned: Arc<Mutex<Option<process_exec::Spawned>>>,
+    /// Tree events and report cases the run delivered to its sink.
+    reported: Arc<AtomicUsize>,
 }
 
 impl TestRunHandle {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A run that exited cleanly but reported no test at all: a `--filter`
+    /// that matched nothing makes Pest and PHPUnit exit 0 with an empty
+    /// report, which must not read as a green run.
+    pub fn matched_nothing(&self, exit_code: Option<i32>) -> bool {
+        exit_code == Some(0) && self.reported.load(Ordering::Relaxed) == 0
     }
 
     /// Kill the running process, if any. Stopping a run that has already
@@ -386,12 +396,14 @@ pub fn run_on_env(
             collected.push_str(&chunk);
         } else {
             for event in parser.feed(&chunk) {
+                handle.reported.fetch_add(1, Ordering::Relaxed);
                 sink.event(event);
             }
         }
         sink.output(&chunk);
     }
     for event in parser.finish() {
+        handle.reported.fetch_add(1, Ordering::Relaxed);
         sink.event(event);
     }
     let _ = stderr_reader.join();
@@ -404,10 +416,14 @@ pub fn run_on_env(
         .map_err(|_| RunFailure::Io("run handle lock poisoned".into()))? = None;
 
     if let (OutputFormat::JunitXml, Some(pattern)) = (format, report_glob) {
-        sink.junit(collect_junit_cases(work_dir, pattern, &pre_run_reports));
+        let cases = collect_junit_cases(work_dir, pattern, &pre_run_reports);
+        handle.reported.fetch_add(cases.len(), Ordering::Relaxed);
+        sink.junit(cases);
     }
     if format == OutputFormat::JunitXmlStdout {
-        sink.junit(junit_cases_from_stdout(&collected));
+        let cases = junit_cases_from_stdout(&collected);
+        handle.reported.fetch_add(cases.len(), Ordering::Relaxed);
+        sink.junit(cases);
     }
 
     Ok(exit_code)
@@ -434,6 +450,45 @@ mod tests {
         fn junit(&mut self, cases: Vec<JUnitTestCase>) {
             self.junit_cases = cases;
         }
+    }
+
+    #[test]
+    fn a_clean_exit_with_no_reported_test_matched_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = TestRunHandle::new();
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), "echo 'Tests: 0 passed'".into()],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut Collected::default(),
+        )
+        .unwrap();
+        assert!(handle.matched_nothing(code));
+        assert!(
+            !handle.matched_nothing(Some(1)),
+            "a failing exit is not 'no match'"
+        );
+    }
+
+    #[test]
+    fn a_run_that_reports_a_test_matched_something() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = TestRunHandle::new();
+        let script = "echo \"##teamcity[testStarted name='t']\"";
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), script.into()],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut Collected::default(),
+        )
+        .unwrap();
+        assert!(!handle.matched_nothing(code));
     }
 
     #[test]

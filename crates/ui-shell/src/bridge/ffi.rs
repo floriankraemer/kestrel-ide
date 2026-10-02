@@ -7136,10 +7136,16 @@ mod ffi {
         /// The run finished. `ok` is false for a run failure (not found,
         /// an I/O error) — a nonzero *test* exit code (failures found) is
         /// still `ok`, the same distinction `AnalysisService::
-        /// analyzerFinished` draws.
+        /// analyzerFinished` draws. `matched_nothing` is a clean exit that
+        /// reported no test (a `--filter` that matched nothing).
         #[qsignal]
         #[cxx_name = "testRunFinished"]
-        fn test_run_finished(self: Pin<&mut TestService>, ok: bool, message: QString);
+        fn test_run_finished(
+            self: Pin<&mut TestService>,
+            ok: bool,
+            matched_nothing: bool,
+            message: QString,
+        );
     }
 
     impl cxx_qt::Threading for TestService {}

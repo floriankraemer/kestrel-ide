@@ -248,6 +248,10 @@
 <context>
     <name>QWidget</name>
     <message>
+        <source>No tests matched.</source>
+        <translation>Keine Tests gefunden.</translation>
+    </message>
+    <message>
         <source>%1% (%2/%3)</source>
         <translation>%1% (%2/%3)</translation>
     </message>

@@ -1767,6 +1767,9 @@ mod ffi {
         Ready,
         Exited,
         Failed,
+        /// Never launched: the platform rules it out (`lsp_core::launch_plan`).
+        /// `detail` carries the reason.
+        Unavailable,
     }
 
     extern "Rust" {

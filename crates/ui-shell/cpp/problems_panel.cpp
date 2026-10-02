@@ -176,6 +176,10 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
                 case FfiServerState::Failed:
                     serverStatus_ = tr("%1 is not running: %2").arg(name, detail);
                     break;
+                case FfiServerState::Unavailable:
+                    // A server the platform rules out is not a fault in the
+                    // results shown; the Language Servers page says why.
+                    break;
                 }
                 applyFilter();
             });

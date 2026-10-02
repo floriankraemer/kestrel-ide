@@ -554,6 +554,47 @@ pub fn enabled_servers<'a>(
         .filter(move |c| c.language_id == language_id && c.enabled)
 }
 
+/// Which of a language's enabled servers to launch, and which to skip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchPlan {
+    pub start: Vec<ServerConfig>,
+    /// Servers left out, each with the reason to show the user.
+    pub skipped: Vec<(ServerConfig, String)>,
+}
+
+/// Split `servers` into those to launch and those the platform rules out.
+///
+/// A `posix_only` server (Phpactor) cannot run on native Windows, so it is
+/// skipped when `is_windows` and its process would run there: on a local
+/// host, not inside WSL and not on an interpreter host such as a container.
+/// `is_windows` is a parameter so the rule is testable on any platform.
+pub fn launch_plan<'a>(
+    servers: impl IntoIterator<Item = &'a ServerConfig>,
+    host: &process_exec::host::ExecHost,
+    is_windows: bool,
+) -> LaunchPlan {
+    let native_windows = is_windows && !host.is_remote();
+    let mut plan = LaunchPlan {
+        start: Vec::new(),
+        skipped: Vec::new(),
+    };
+    for cfg in servers {
+        if cfg.posix_only && native_windows && cfg.exec == ServerExec::Host {
+            plan.skipped.push((
+                cfg.clone(),
+                format!(
+                    "{} needs a POSIX system and does not run on native Windows. \
+                     Open the project in WSL or run the server in a container.",
+                    cfg.name
+                ),
+            ));
+        } else {
+            plan.start.push(cfg.clone());
+        }
+    }
+    plan
+}
+
 /// Catalog language id -> LSP language id, for the few languages whose
 /// protocol identifier is not their grammar id.
 ///
@@ -890,5 +931,58 @@ mod tests {
                 plugin_id: "csharp".into()
             }
         );
+    }
+
+    fn php_servers() -> Vec<ServerConfig> {
+        enabled_servers(&resolve_servers(&[], &[]), "php")
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn on_native_windows_a_posix_only_server_is_skipped_with_a_reason() {
+        let servers = php_servers();
+        let plan = launch_plan(&servers, &process_exec::host::ExecHost::Local, true);
+        assert_eq!(
+            plan.start.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["intelephense"]
+        );
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(plan.skipped[0].0.id, "phpactor");
+        assert!(
+            plan.skipped[0].1.contains("Phpactor"),
+            "{}",
+            plan.skipped[0].1
+        );
+        assert!(plan.skipped[0].1.contains("WSL"), "{}", plan.skipped[0].1);
+    }
+
+    #[test]
+    fn everything_starts_off_windows() {
+        let servers = php_servers();
+        let plan = launch_plan(&servers, &process_exec::host::ExecHost::Local, false);
+        assert_eq!(plan.start.len(), 2);
+        assert!(plan.skipped.is_empty());
+    }
+
+    #[test]
+    fn a_posix_only_server_runs_in_wsl_and_on_an_interpreter_host() {
+        let wsl = process_exec::host::ExecHost::Wsl(process_exec::host::WslHost {
+            distro: "Ubuntu".into(),
+            unc_prefix: "//wsl.localhost/Ubuntu".into(),
+        });
+        let servers = php_servers();
+        assert!(launch_plan(&servers, &wsl, true).skipped.is_empty());
+
+        let in_container: Vec<_> = servers
+            .iter()
+            .cloned()
+            .map(|c| ServerConfig {
+                exec: ServerExec::Interpreter,
+                ..c
+            })
+            .collect();
+        let local = process_exec::host::ExecHost::Local;
+        assert!(launch_plan(&in_container, &local, true).skipped.is_empty());
     }
 }

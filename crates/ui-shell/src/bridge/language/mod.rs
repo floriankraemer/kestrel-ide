@@ -1401,11 +1401,27 @@ impl ffi::LanguageService {
     /// frees the language again, so opening another file of it retries
     /// rather than staying silently dead for the session; one server failing
     /// beside a working one does not, or a missing Phpactor would be
-    /// relaunched on every file open.
+    /// relaunched on every file open. A server the platform rules out
+    /// (`lsp_core::launch_plan`) is reported `Unavailable`, with the reason,
+    /// and never launched.
     fn start_servers(mut self: Pin<&mut Self>, configs: Vec<lsp_core::ServerConfig>) {
         let Some(language_id) = configs.first().map(|c| c.language_id.clone()) else {
             return;
         };
+        let plan = lsp_core::launch_plan(&configs, &self.host.borrow(), cfg!(windows));
+        for (config, reason) in &plan.skipped {
+            self.as_mut().server_state_changed(
+                QString::from(config.id.as_str()),
+                QString::from(config.name.as_str()),
+                ffi::FfiServerState::Unavailable,
+                QString::from(reason.as_str()),
+                0,
+            );
+        }
+        let configs = plan.start;
+        if configs.is_empty() {
+            return;
+        }
         let qt_thread = self.as_mut().qt_thread();
         for config in &configs {
             self.as_mut().server_state_changed(

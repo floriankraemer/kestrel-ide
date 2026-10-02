@@ -52,6 +52,8 @@ QString liveStatusText(const LiveState &live)
         return QObject::tr("Running");
     case FfiServerState::Exited:
         return QObject::tr("Crashed, retrying");
+    case FfiServerState::Unavailable:
+        return QObject::tr("Unavailable");
     case FfiServerState::Failed:
         // The one distinction worth drawing: a command that was never there
         // is a typo to fix, a command that died is a program to investigate.
@@ -71,6 +73,7 @@ QColor liveStatusColor(const LiveState &live)
     case FfiServerState::Ready:
         return colors.ok;
     case FfiServerState::Exited:
+    case FfiServerState::Unavailable:
         return colors.warning;
     case FfiServerState::Failed:
         return colors.error;
@@ -96,6 +99,8 @@ QString detailLines(const LiveState &live)
         }
         return QObject::tr("%1 stopped: %2\nFix the command, then press Restart Server.")
           .arg(name, live.detail.isEmpty() ? QObject::tr("no further detail.") : live.detail);
+    case FfiServerState::Unavailable:
+        return live.detail;
     case FfiServerState::Starting:
     case FfiServerState::Ready:
         break;

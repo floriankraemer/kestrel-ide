@@ -149,8 +149,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | L5 — `routing` module: method → `First`/`Merge`; `request()` / `request_all()` | done | fe1c1eb |
 | L6 — merge rules (completion dedupe, code actions, references/symbols); origin tagging so resolve/executeCommand reach the right server | done | 66ffeaf |
 | L7 — diagnostics source `lsp:<server-id>`; `diagnostics=false`; trigger characters are the union | done | f6ba0fb |
-| L8 — `ExecHost` and URI translation per server (process, `rootUri` and `did*` URIs; request params wait for the container path map, ADR-0067) | done | — |
-| L9 — `posix_only` skipped on native Windows, with status text | open | |
+| L8 — `ExecHost` and URI translation per server (process, `rootUri` and `did*` URIs; request params wait for the container path map, ADR-0067) | done | 835b382 |
+| L9 — `posix_only` skipped on native Windows, with status text | done | — |
 | L10 — settings save → `update_settings` or restart via `catalog::reload_kind` | open | |
 | L11 — Language Servers page shows N servers per language | open | |
 | L12 — ADR-0066 + `layering.md` note | open | |

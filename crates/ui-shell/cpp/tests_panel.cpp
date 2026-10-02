@@ -420,7 +420,13 @@ void TestsPanel::showContextMenu(const QPoint &pos)
       kind == FfiTestNodeKind::Suite ? tr("Rerun Suite") : tr("Rerun Test");
 
     QMenu menu(tree_);
+    menu.setToolTipsVisible(true);
     QAction *rerun = menu.addAction(label);
+    // The framework cannot narrow a rerun to a tree node (decided in Rust):
+    // show the action greyed out with the reason rather than refuse a click.
+    const QString block = testService_->rerunBlock();
+    rerun->setEnabled(block.isEmpty());
+    rerun->setToolTip(block);
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
     if (chosen == rerun) {
         report(testService_->runNode(id));

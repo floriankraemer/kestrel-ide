@@ -52,6 +52,9 @@ pub struct TestServiceRust {
     /// The framework last run, for the diagnostics `source` column and
     /// this store's key. Empty until the first run.
     framework_name: RefCell<String>,
+    /// Why the last run's framework cannot rerun from the tree (empty when
+    /// it can) — what the tree's Rerun action greys out on.
+    rerun_block: RefCell<String>,
     /// Where the last run executed, so the paths its failures print map
     /// back to local files (ADR-0067). `None` until the first run.
     run_host: RefCell<Option<process_exec::host::ExecHost>>,
@@ -286,6 +289,11 @@ impl ffi::TestService {
         self.start(Some(RerunSelection::Failed(ids)), Vec::new(), false)
     }
 
+    /// Why a node cannot be rerun from the tree; empty when it can.
+    pub fn rerun_block(&self) -> QString {
+        QString::from(self.rerun_block.borrow().as_str())
+    }
+
     pub fn run_node(self: Pin<&mut Self>, node_id: &QString) -> ffi::FfiResult {
         let id = test_core::TestId(node_id.to_string());
         self.start(Some(RerunSelection::Node(id)), Vec::new(), false)
@@ -346,6 +354,9 @@ impl ffi::TestService {
         // Surefire's `-Dtest=` and Gradle's `--tests` each need their own
         // pattern shape built from the node being rerun, not a PHPUnit-
         // shaped one that would compile fine and match nothing.
+        *self.rerun_block.borrow_mut() =
+            test_core::filter::tree_rerun_block(framework.filter_dialect.as_deref())
+                .unwrap_or_default();
         let Ok(dialect) =
             test_core::filter::parse_filter_dialect(framework.filter_dialect.as_deref())
         else {

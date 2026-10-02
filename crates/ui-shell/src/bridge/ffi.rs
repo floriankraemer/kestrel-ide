@@ -7021,6 +7021,12 @@ mod ffi {
         #[cxx_name = "runFailed"]
         fn run_failed(self: Pin<&mut TestService>) -> FfiResult;
 
+        /// Why the last run's framework cannot rerun a node from the tree
+        /// (Codeception, path-selected frameworks); empty when it can.
+        #[qinvokable]
+        #[cxx_name = "rerunBlock"]
+        fn rerun_block(self: &TestService) -> QString;
+
         /// Rerun one node — a single test, or every test under a suite —
         /// from the tree's context menu (D6).
         #[qinvokable]

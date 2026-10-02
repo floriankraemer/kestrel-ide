@@ -139,6 +139,19 @@ pub fn tree_rerun_refusal(dialect: FilterDialect) -> Option<&'static str> {
     }
 }
 
+/// [`tree_rerun_refusal`] for a framework's declared `filter-dialect` word:
+/// what the Tests dock shows as the disabled Rerun's reason, so the action
+/// is greyed out up front instead of failing after the click. An unknown
+/// dialect cannot be narrowed either.
+pub fn tree_rerun_block(dialect: Option<&str>) -> Option<String> {
+    match parse_filter_dialect(dialect) {
+        Ok(dialect) => tree_rerun_refusal(dialect).map(str::to_string),
+        Err(_) => Some(
+            "this test framework's filter-dialect is not one this build understands".to_string(),
+        ),
+    }
+}
+
 /// A test the editor can name: what a gutter marker run is built from.
 #[derive(Debug, Clone, Copy)]
 pub struct MarkerRun<'a> {
@@ -604,6 +617,22 @@ mod tests {
         }
         assert!(tree_rerun_refusal(FilterDialect::PhpUnitRegex).is_none());
         assert!(tree_rerun_refusal(FilterDialect::BehatName).is_none());
+    }
+
+    #[test]
+    fn the_rerun_block_names_why_codeception_and_none_cannot_rerun_from_the_tree() {
+        for word in ["codeception", "none", "no-such-dialect"] {
+            assert!(tree_rerun_block(Some(word)).is_some(), "{word}");
+        }
+        for word in [
+            None,
+            Some("phpunit-regex"),
+            Some("behat-name"),
+            Some("surefire"),
+            Some("gradle"),
+        ] {
+            assert_eq!(tree_rerun_block(word), None, "{word:?}");
+        }
     }
 
     fn marker(file: Option<&str>) -> MarkerRun<'_> {

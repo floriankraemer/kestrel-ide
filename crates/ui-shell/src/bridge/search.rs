@@ -1348,7 +1348,9 @@ impl ffi::SearchModel {
         });
     }
 
-    pub fn find_implementations(self: Pin<&mut Self>, name: &QString) {
+    /// The index fallback of `implementationsAt` (`search_lsp.rs`); not
+    /// invokable from the view on its own any more.
+    pub(crate) fn find_implementations(self: Pin<&mut Self>, name: &QString) {
         self.stream_usages(name.to_string(), |index, name| {
             index.find_implementations(name)
         });
@@ -1358,11 +1360,11 @@ impl ffi::SearchModel {
         self.stream_usages(name.to_string(), |index, name| index.find_supertypes(name));
     }
 
-    /// Shared body of `find_implementations`/`find_supertypes` (N3): run
+    /// Body of `find_implementations`/`find_supertypes` (N3): run
     /// a name-keyed index query on a background thread and stream its
     /// rows out on the `usagesFound` trio, which is what `find_usages`
-    /// itself does — see `findImplementations`' doc comment for why they
-    /// share one signal set rather than each getting their own.
+    /// itself does — the Find Usages dock already renders
+    /// that shape, so it needs no signal set of its own.
     fn stream_usages(
         self: Pin<&mut Self>,
         name: String,

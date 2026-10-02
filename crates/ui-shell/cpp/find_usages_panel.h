@@ -43,7 +43,6 @@ public:
     // lists of file:line locations, which is exactly what this dock
     // already renders, so they stream in on the same signals rather than
     // getting a near-identical panel of their own.
-    void findImplementations(const QString &name);
     // From the caret: the language server's `implementation` answer first,
     // the index when it has none.
     void findImplementationsAt(const QString &name, const QString &path, quint32 line,

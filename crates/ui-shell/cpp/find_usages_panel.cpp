@@ -72,12 +72,6 @@ void FindUsagesPanel::findUsagesAt(const QString &name, const QString &path, qui
     searchModel_->usagesAt(name, path, line, character);
 }
 
-void FindUsagesPanel::findImplementations(const QString &name)
-{
-    beginQuery(tr("Searching implementations of \"%1\"...").arg(name));
-    searchModel_->findImplementations(name);
-}
-
 void FindUsagesPanel::findImplementationsAt(const QString &name, const QString &path,
                                              quint32 line, quint32 character)
 {

@@ -4307,7 +4307,7 @@ mod ffi {
             character: u32,
         );
 
-        /// One usage — or, from `findImplementations`/`findSupertypes`,
+        /// One usage — or, from `implementationsAt`/`findSupertypes`,
         /// one hierarchy row. `is_definition` distinguishes the defining
         /// occurrence from a reference.
         #[qsignal]
@@ -4373,23 +4373,13 @@ mod ffi {
         #[cxx_name = "declarationFailed"]
         fn declaration_failed(self: Pin<&mut SearchModel>, message: QString);
 
-        /// N3 — Go to Implementation: every type declaring `name` as a
-        /// base class, implemented interface, or (in Rust) an implemented
-        /// trait.
-        ///
-        /// Results arrive on the `usagesFound`/`usagesFinished`/
-        /// `usagesFailed` trio rather than a trio of their own: a list of
-        /// file:line locations is exactly what the Find Usages dock
-        /// already renders, and a second identical signal set would buy
-        /// nothing but a second set of connections to keep in sync.
-        #[qinvokable]
-        #[cxx_name = "findImplementations"]
-        fn find_implementations(self: Pin<&mut SearchModel>, name: &QString);
-
         /// N1: Go to Implementation from the caret. A running server's
         /// `textDocument/implementation` answers first
         /// (`lsp_core::usable_targets`); the name-based index answers when
-        /// it has nothing. Same `usagesFound` trio as `findImplementations`.
+        /// it has nothing. Results arrive on the `usagesFound`/
+        /// `usagesFinished`/`usagesFailed` trio rather than one of their
+        /// own: a list of file:line locations is exactly what the Find
+        /// Usages dock already renders.
         #[qinvokable]
         #[cxx_name = "implementationsAt"]
         fn implementations_at(
@@ -4401,7 +4391,7 @@ mod ffi {
         );
 
         /// N3 — Go to Interface: every supertype `name` declares. Same
-        /// signals as `findImplementations`.
+        /// signals as `implementationsAt`.
         #[qinvokable]
         #[cxx_name = "findSupertypes"]
         fn find_supertypes(self: Pin<&mut SearchModel>, name: &QString);

@@ -9,6 +9,7 @@
 //! severity string.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use diagnostics_core::Severity;
 use plugin_api::AnalyzerContribution;
@@ -76,6 +77,23 @@ impl AnalyzerDef {
             requires_interpreter: contribution.requires_interpreter.clone(),
             severities,
         }
+    }
+
+    /// The full argv tail for a single-file run against `file` (the path the
+    /// tool should read: the real file, or a temp copy).
+    ///
+    /// `args`, then `file_args` with `{file}` replaced; when no `file_args`
+    /// entry names the file and the buffer goes over stdin, the path is
+    /// appended, because the tool has to be told which file to read.
+    pub fn file_run_args(&self, file: &Path) -> Vec<String> {
+        let file = file.to_string_lossy();
+        let mut argv = self.args.clone();
+        let names_file = self.file_args.iter().any(|a| a.contains("{file}"));
+        argv.extend(self.file_args.iter().map(|a| a.replace("{file}", &file)));
+        if !names_file && self.buffer != BufferStrategy::Stdin {
+            argv.push(file.into_owned());
+        }
+        argv
     }
 
     /// The severity a tool's own word maps to, or [`Severity::Warning`]
@@ -147,6 +165,28 @@ mod tests {
         assert_eq!(def.file_args, vec!["--stdin-path={file}", "-"]);
         assert_eq!(def.buffer, BufferStrategy::Stdin);
         assert_eq!(def.requires_interpreter.as_deref(), Some("php"));
+    }
+
+    #[test]
+    fn a_saved_only_file_run_appends_the_path() {
+        let def = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(
+            def.file_run_args(Path::new("/p/a.php")),
+            vec!["analyse", "/p/a.php"]
+        );
+    }
+
+    #[test]
+    fn a_stdin_file_run_substitutes_the_placeholder_and_appends_nothing() {
+        let mut c = contribution();
+        c.args = vec!["--report=checkstyle".into()];
+        c.file_args = vec!["--stdin-path={file}".into(), "-".into()];
+        c.buffer = Some("stdin".into());
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.file_run_args(Path::new("/p/a.php")),
+            vec!["--report=checkstyle", "--stdin-path=/p/a.php", "-"]
+        );
     }
 
     #[test]

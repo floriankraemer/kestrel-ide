@@ -24,7 +24,7 @@
 //! a bare `QString` sentinel.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
@@ -35,12 +35,17 @@ use cxx_qt_lib::QString;
 use crate::bridge::errors;
 use crate::bridge::ffi;
 use crate::bridge::registry::SharedDiagnostics;
+use settings_model::analysis::FileEvent;
 
 /// A project-wide run can take much longer than a per-file one; generous
 /// rather than tuned. `run_manual`'s "serialized, never concurrent" rule
 /// means a slow tool only blocks its own turn in this batch's queue, not
 /// the editor.
 const MANUAL_RUN_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// A per-file run analyses one file on a keystroke or save; a tool that has
+/// not answered in this long is stuck, not thorough.
+const FILE_RUN_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Rust side of the `AnalysisService` QObject.
 #[derive(Default)]
@@ -51,6 +56,12 @@ pub struct AnalysisServiceRust {
     /// concurrent" rule holds across analyzers too, not only within one.
     queue: RefCell<VecDeque<analysis_core::AnalyzerDef>>,
     store: SharedDiagnostics,
+    /// Resolved program per analyzer id (a miss is cached too): per-file
+    /// runs fire on every debounced edit, and `find_program` spawns
+    /// `wsl.exe` on a WSL root. Cleared whenever detection is redone
+    /// (`refresh_analyzer_status_async`, `inspect_project`) and for one
+    /// analyzer when its program turns out to be gone.
+    program_cache: RefCell<HashMap<String, Option<PathBuf>>>,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -171,6 +182,7 @@ impl ffi::AnalysisService {
             return;
         };
         let contributions = contributed_analyzers();
+        self.program_cache.borrow_mut().clear();
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
             // The explicit-root, cache-backed reader (ADR-0037's
@@ -212,6 +224,7 @@ impl ffi::AnalysisService {
             );
         }
 
+        self.program_cache.borrow_mut().clear();
         let draft = analysis_draft();
         let defs: VecDeque<analysis_core::AnalyzerDef> = contributed_analyzers()
             .iter()
@@ -232,6 +245,100 @@ impl ffi::AnalysisService {
         this.as_mut().analysis_started();
         this.run_next(root);
         ffi::FfiResult::default()
+    }
+
+    /// The editor's debounced buffer change: run every analyzer whose
+    /// trigger is On Type against `text`.
+    pub fn file_changed(self: Pin<&mut Self>, path: &QString, text: &QString) {
+        self.schedule_file_analysis(FileEvent::Edit, path, text);
+    }
+
+    /// The editor wrote `path` to disk: run every analyzer whose trigger is
+    /// On Type or On Save.
+    pub fn file_saved(self: Pin<&mut Self>, path: &QString, text: &QString) {
+        self.schedule_file_analysis(FileEvent::Save, path, text);
+    }
+
+    /// Which analyzers fire is `settings_model::analysis::file_jobs`'s rule;
+    /// this only resolves each one's program, hands it the buffer the way
+    /// its manifest says it can read one, and publishes what comes back.
+    fn schedule_file_analysis(
+        mut self: Pin<&mut Self>,
+        event: FileEvent,
+        path: &QString,
+        text: &QString,
+    ) {
+        let Some(root) = current_project_root() else {
+            return;
+        };
+        let path = PathBuf::from(path.to_string());
+        if !path.starts_with(&root) {
+            return;
+        }
+        let language_id = syntax_core::language_for_path(&path).id();
+        let contributions = contributed_analyzers();
+        let draft = settings_model::analysis::AnalysisDraft::new(
+            &crate::bridge::convert::load_resolved_settings(),
+            &contributions,
+        );
+        let jobs = settings_model::analysis::file_jobs(event, &language_id, &draft, &contributions);
+        let text = text.to_string();
+        for job in jobs {
+            let Some(contribution) = contributions.iter().find(|c| c.id == job.analyzer_id) else {
+                continue;
+            };
+            let analyzer = analysis_core::AnalyzerDef::from_contribution(contribution);
+            let Some(program) = self.resolve_program(&analyzer, &root) else {
+                continue;
+            };
+            let (target, guard, stdin) = match analyzer.buffer {
+                analysis_core::BufferStrategy::Stdin => {
+                    (path.clone(), None, Some(text.clone().into_bytes()))
+                }
+                analysis_core::BufferStrategy::SavedOnly => (path.clone(), None, None),
+                analysis_core::BufferStrategy::TempCopy => {
+                    match analysis_core::write_temp_copy(&root, &path, text.as_bytes()) {
+                        Ok(guard) => (guard.path().to_path_buf(), Some(guard), None),
+                        Err(_) => continue,
+                    }
+                }
+            };
+            let args = analyzer.file_run_args(&target);
+            let qt_thread = self.as_mut().qt_thread();
+            let file = path.clone();
+            self.scheduler.schedule_file_run(
+                &analyzer.id.clone(),
+                program,
+                args,
+                &root,
+                &path,
+                stdin,
+                Duration::ZERO,
+                FILE_RUN_TIMEOUT,
+                move |result| {
+                    drop(guard); // the run is over; delete the temp copy
+                    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
+                        if result == Err(analysis_core::RunFailure::NotFound) {
+                            service.program_cache.borrow_mut().remove(&analyzer.id);
+                        }
+                        publish_file_result(&service, &analyzer, &result, &file);
+                        service.as_mut().diagnostics_changed();
+                    });
+                },
+            );
+        }
+    }
+
+    fn resolve_program(
+        &self,
+        analyzer: &analysis_core::AnalyzerDef,
+        root: &Path,
+    ) -> Option<PathBuf> {
+        self.program_cache
+            .borrow_mut()
+            .entry(analyzer.id.clone())
+            .or_insert_with(|| analysis_core::find_program(&analyzer.program_candidates, root))
+            .clone()
     }
 
     /// Pop and run the next queued analyzer, or announce the batch is
@@ -327,6 +434,38 @@ fn publish_result(
         let uri = diagnostics_core::uri_from_path(file);
         store.replace(&key, &uri, diagnostics);
     }
+}
+
+/// Publish a single-file run's findings as `file`'s rows for this analyzer,
+/// leaving every other file's rows alone. The tool analysed exactly one
+/// file (possibly under a temp-copy name), so every finding belongs to it
+/// whatever path the report spells.
+fn publish_file_result(
+    service: &ffi::AnalysisService,
+    analyzer: &analysis_core::AnalyzerDef,
+    result: &analysis_core::RunResult,
+    file: &Path,
+) {
+    let Ok(output) = result else {
+        return;
+    };
+    if analyzer.output_format != "checkstyle-xml" {
+        return;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let Ok(findings) = analysis_core::parse_checkstyle_xml(&text) else {
+        return;
+    };
+    let reported: BTreeSet<&str> = findings.iter().map(|f| f.file.as_str()).collect();
+    let diagnostics = reported
+        .into_iter()
+        .flat_map(|reported| analysis_core::to_diagnostics(&findings, reported, analyzer))
+        .collect();
+    let uri = diagnostics_core::uri_from_path(&file.to_string_lossy());
+    service
+        .store
+        .borrow_mut()
+        .replace(&source_key(&analyzer.id), &uri, diagnostics);
 }
 
 /// Rust side of the Analysis settings page's `AnalysisEditor` QObject (B9).

@@ -926,6 +926,9 @@ bool EditorTabs::saveEditor(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdi
         // Servers that only re-analyse on save (and linters behind them)
         // need this; the buffer itself already went across as didChange.
         languageService_->documentSaved(path);
+        if (analysisService_) {
+            analysisService_->fileSaved(path, editor->toPlainText());
+        }
         if (documentSavedCallback_) {
             documentSavedCallback_(path);
         }

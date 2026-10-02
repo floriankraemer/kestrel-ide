@@ -6002,6 +6002,19 @@ mod ffi {
         #[cxx_name = "inspectProject"]
         fn inspect_project(self: Pin<&mut AnalysisService>) -> FfiResult;
 
+        /// The buffer of `path` changed (the editor's debounced timer):
+        /// run the On Type analyzers on `text`. Findings arrive through
+        /// `diagnosticsChanged`; a file no analyzer covers is a no-op.
+        #[qinvokable]
+        #[cxx_name = "fileChanged"]
+        fn file_changed(self: Pin<&mut AnalysisService>, path: &QString, text: &QString);
+
+        /// `path` was saved with content `text`: run the On Type and On
+        /// Save analyzers.
+        #[qinvokable]
+        #[cxx_name = "fileSaved"]
+        fn file_saved(self: Pin<&mut AnalysisService>, path: &QString, text: &QString);
+
         /// A project-wide analysis run began.
         #[qsignal]
         #[cxx_name = "analysisStarted"]

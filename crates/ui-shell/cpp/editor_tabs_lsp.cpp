@@ -615,6 +615,11 @@ void EditorTabs::setDiagnosticsService(DiagnosticsService *diagnosticsService)
     diagnosticsService_ = diagnosticsService;
 }
 
+void EditorTabs::setAnalysisService(AnalysisService *analysisService)
+{
+    analysisService_ = analysisService;
+}
+
 void EditorTabs::goToDiagnostic(bool forward)
 {
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
@@ -663,6 +668,7 @@ DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *lan
     // have changed.
     auto *diagnosticsService = new DiagnosticsService(parent);
     editorTabs->setDiagnosticsService(diagnosticsService);
+    editorTabs->setAnalysisService(analysisService);
     QObject::connect(languageService, &LanguageService::diagnosticsChanged, editorTabs,
                       [editorTabs]() { editorTabs->applyDiagnostics(); });
     QObject::connect(buildService, &BuildService::diagnosticsChanged, editorTabs,
@@ -1046,6 +1052,9 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         const QString current = editor->property("lspPath").toString();
         if (!current.isEmpty()) {
             languageService_->documentChanged(current, editor->toPlainText());
+            if (analysisService_) {
+                analysisService_->fileChanged(current, editor->toPlainText());
+            }
         }
         // F2-11: a content change shifts every hint position on the lines
         // after it, so the visible set is asked for again on the same

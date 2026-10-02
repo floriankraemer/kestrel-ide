@@ -621,6 +621,9 @@ public:
     // signals, never from the constructor) reads this, so retrofitting it
     // post-construction is safe, unlike `ProblemsPanel`'s own copy.
     void setDiagnosticsService(DiagnosticsService *diagnosticsService);
+    // PHP parity P0-4: forwards the debounced buffer change and every save to
+    // the analyzers; which of them fire is Rust's call.
+    void setAnalysisService(AnalysisService *analysisService);
 
     // D2-5: push this file's breakpoints into its gutter, and turn a gutter
     // click into `DebugService::toggleBreakpoint`.
@@ -1025,6 +1028,7 @@ private:
     // ADR-0046: null until `wireDiagnosticsService` sets it — see that
     // setter's own comment for why this is safe.
     DiagnosticsService *diagnosticsService_ = nullptr;
+    AnalysisService *analysisService_ = nullptr;
     // F3-16: null for a project with no Git — set once, after construction,
     // the same retrofit shape setContextMenuCallback uses.
     VcsService *vcsService_ = nullptr;

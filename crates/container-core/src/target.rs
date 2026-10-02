@@ -158,6 +158,12 @@ pub fn wrap_launch(
             argv.push("-e".to_string());
             argv.push(format!("{key}={value}"));
         }
+        // `--service-ports` publishes what the compose file declares; a
+        // binding the target adds (a PHP server's port) goes on top.
+        for binding in &target.port_bindings {
+            argv.push("-p".to_string());
+            argv.push(port_arg(binding));
+        }
         if !target.run_options.is_empty() {
             argv.extend(split_shell_words(&target.run_options));
         }
@@ -202,8 +208,10 @@ pub fn wrap_launch(
         argv.push(image_reference(target));
     }
 
-    argv.push(spec.program.to_string());
-    argv.extend(spec.args.iter().cloned());
+    // The program and its arguments are written with the IDE's paths (the
+    // file to run, the document root); the container sees them mounted.
+    argv.push(path_map.rebase_arg(spec.program));
+    argv.extend(spec.args.iter().map(|arg| path_map.rebase_arg(arg)));
 
     Ok(WrappedLaunch {
         program: invocation.program.clone(),
@@ -702,6 +710,58 @@ mod tests {
     }
 
     // ------------------------------------------------------ before_launch ----
+
+    #[test]
+    fn project_paths_in_the_program_and_args_are_rebased_onto_the_mount() {
+        let project_root = Path::new("/home/f/proj");
+        let args = vec![
+            "/home/f/proj/public/index.php".to_string(),
+            "--config=/home/f/proj/app.ini".to_string(),
+            "--verbose".to_string(),
+        ];
+        let launch = SimpleLaunch {
+            program: "php",
+            args: &args,
+            cwd: Some(project_root),
+            env: &[],
+        };
+        let wrapped = wrap_launch(
+            &launch,
+            &image_target(),
+            &local_invocation(),
+            project_root,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            wrapped.args[wrapped.args.len() - 4..],
+            [
+                "php",
+                "/workspace/public/index.php",
+                "--config=/workspace/app.ini",
+                "--verbose"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compose_target_publishes_the_ports_it_was_given() {
+        let project_root = Path::new("/p");
+        let launch = spec(Some(project_root), &[]);
+        let target = ContainerTargetSetting {
+            port_bindings: vec![PortBinding {
+                host_port: "8000".to_string(),
+                container_port: "8000".to_string(),
+                ..Default::default()
+            }],
+            ..compose_target()
+        };
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
+        let at = wrapped.args.iter().position(|a| a == "-p").unwrap();
+        assert_eq!(wrapped.args[at + 1], "8000:8000");
+        assert!(at < wrapped.args.iter().position(|a| a == "php").unwrap());
+    }
 
     #[test]
     fn an_image_target_has_no_before_launch_task() {

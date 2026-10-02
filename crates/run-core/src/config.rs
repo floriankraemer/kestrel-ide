@@ -107,7 +107,12 @@ impl RunConfigExt for RunConfig {
             _ => None,
         }
         .unwrap_or_else(|| {
-            let materialized = crate::php_run::materialize(self, context);
+            let target = self
+                .run_on
+                .as_deref()
+                .and_then(|run_on| crate::container_target::target_id(run_on))
+                .filter(|id| containers.targets.iter().any(|t| t.id == *id));
+            let materialized = crate::php_run::materialize(self, context, target.is_some());
             let spec = process_launch_spec(materialized.as_ref().unwrap_or(self), context);
             // Run targets (C8) only apply to a plain process configuration
             // — a container-kind one's launch already *is* a container
@@ -119,15 +124,14 @@ impl RunConfigExt for RunConfig {
             // is where the interactive path checks this ahead of time and
             // reports it instead of silently running locally (see
             // `crate::container_target::validate_run_on`).
-            self.run_on
-                .as_deref()
-                .and_then(|run_on| crate::container_target::target_id(run_on))
+            target
                 .and_then(|target_id| {
                     crate::container_target::wrap_process_spec(
                         &spec,
                         target_id,
                         context,
                         &containers,
+                        &crate::php_run::published_ports(self),
                     )
                     .ok()
                     .flatten()

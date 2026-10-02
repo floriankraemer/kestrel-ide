@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use app_config::container_run::PortBinding;
 use app_config::php::PhpBuiltinServerRunSetting;
 
 use crate::config::RunConfig;
@@ -29,13 +30,19 @@ const PSYSH: &str = "vendor/bin/psysh";
 /// ponytail: only a project-local `vendor/bin/psysh` is looked for. A
 /// globally installed PsySH is not on this path because finding it means
 /// searching `PATH` on whichever host runs PHP; add that probe if asked.
-pub fn materialize(config: &RunConfig, context: &MacroContext) -> Option<RunConfig> {
+pub fn materialize(
+    config: &RunConfig,
+    context: &MacroContext,
+    in_container: bool,
+) -> Option<RunConfig> {
     let program = context
         .php_interpreter
         .clone()
         .unwrap_or_else(|| DEFAULT_PHP_PROGRAM.to_string());
     let args = match config.kind.as_deref()? {
-        KIND_BUILTIN_SERVER => server_args(&config.php_server.clone().unwrap_or_default()),
+        KIND_BUILTIN_SERVER => {
+            server_args(&config.php_server.clone().unwrap_or_default(), in_container)
+        }
         KIND_CONSOLE => console_args(context.project_root.as_deref()),
         _ => return None,
     };
@@ -47,13 +54,59 @@ pub fn materialize(config: &RunConfig, context: &MacroContext) -> Option<RunConf
     })
 }
 
-fn server_args(server: &PhpBuiltinServerRunSetting) -> Vec<String> {
-    let host = non_blank(&server.host).unwrap_or(DEFAULT_HOST);
-    let port = if server.port == 0 {
+/// Inside a container the server must listen on every interface, or the
+/// published port reaches nothing.
+const CONTAINER_BIND_HOST: &str = "0.0.0.0";
+
+fn server_port(server: &PhpBuiltinServerRunSetting) -> u16 {
+    if server.port == 0 {
         DEFAULT_PORT
     } else {
         server.port
+    }
+}
+
+/// The port a `php-builtin-server` configuration must publish when it runs
+/// in a container; nothing for any other kind.
+pub fn published_ports(config: &RunConfig) -> Vec<PortBinding> {
+    if config.kind.as_deref() != Some(KIND_BUILTIN_SERVER) {
+        return Vec::new();
+    }
+    let port = server_port(&config.php_server.clone().unwrap_or_default()).to_string();
+    vec![PortBinding {
+        host_port: port.clone(),
+        container_port: port,
+        ..PortBinding::default()
+    }]
+}
+
+/// `config` with the interpreter's container target as its `run_on`, when
+/// it is a PHP configuration (the PHP toolchain, or one of the PHP kinds)
+/// that names no `run_on` of its own — an explicit `local` or another
+/// target is the user's choice and stays. `None`/blank `target` changes
+/// nothing.
+pub fn inherit_container_target(config: &RunConfig, target: Option<&str>) -> RunConfig {
+    let is_php = config.toolchain.as_deref() == Some(ToolchainId::Php.as_str())
+        || matches!(
+            config.kind.as_deref(),
+            Some(KIND_BUILTIN_SERVER | KIND_CONSOLE)
+        );
+    let mut config = config.clone();
+    if let Some(id) = target.map(str::trim).filter(|id| !id.is_empty()) {
+        if is_php && config.run_on.is_none() {
+            config.run_on = Some(format!("container:{id}"));
+        }
+    }
+    config
+}
+
+fn server_args(server: &PhpBuiltinServerRunSetting, in_container: bool) -> Vec<String> {
+    let host = if in_container {
+        CONTAINER_BIND_HOST
+    } else {
+        non_blank(&server.host).unwrap_or(DEFAULT_HOST)
     };
+    let port = server_port(server);
     let mut args = vec![
         "-S".to_string(),
         format!("{host}:{port}"),
@@ -130,6 +183,89 @@ mod tests {
 
     #[test]
     fn other_kinds_are_left_alone() {
-        assert!(materialize(&RunConfig::default(), &MacroContext::default()).is_none());
+        assert!(materialize(&RunConfig::default(), &MacroContext::default(), false).is_none());
+    }
+
+    #[test]
+    fn in_a_container_the_server_listens_on_every_interface_and_publishes_its_port() {
+        let config = server(PhpBuiltinServerRunSetting {
+            host: "localhost".into(),
+            port: 8081,
+            ..Default::default()
+        });
+        let materialized = materialize(&config, &MacroContext::for_project("/p"), true).unwrap();
+        assert_eq!(materialized.args[..2], ["-S", "0.0.0.0:8081"]);
+        let ports = published_ports(&config);
+        assert_eq!(
+            (
+                ports[0].host_port.as_str(),
+                ports[0].container_port.as_str()
+            ),
+            ("8081", "8081")
+        );
+        assert!(published_ports(&RunConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn a_php_configuration_inherits_the_interpreters_container_but_keeps_an_explicit_choice() {
+        let php = RunConfig {
+            toolchain: Some("php".into()),
+            ..RunConfig::default()
+        };
+        assert_eq!(
+            inherit_container_target(&php, Some("t1")).run_on.as_deref(),
+            Some("container:t1")
+        );
+        assert_eq!(
+            inherit_container_target(&server(Default::default()), Some("t1"))
+                .run_on
+                .as_deref(),
+            Some("container:t1")
+        );
+        let local = RunConfig {
+            run_on: Some("local".into()),
+            ..php.clone()
+        };
+        assert_eq!(
+            inherit_container_target(&local, Some("t1"))
+                .run_on
+                .as_deref(),
+            Some("local")
+        );
+        assert_eq!(inherit_container_target(&php, None).run_on, None);
+        assert_eq!(inherit_container_target(&php, Some(" ")).run_on, None);
+        // Not PHP: cargo stays on the host.
+        let cargo = RunConfig {
+            toolchain: Some("cargo".into()),
+            ..RunConfig::default()
+        };
+        assert_eq!(inherit_container_target(&cargo, Some("t1")).run_on, None);
+    }
+
+    #[test]
+    fn a_server_run_on_a_container_target_publishes_its_port_and_mounts_the_project() {
+        let mut config = server(Default::default());
+        config.run_on = Some("container:t1".into());
+        let containers = app_config::ContainerSettings {
+            targets: vec![app_config::ContainerTargetSetting {
+                id: "t1".into(),
+                source: "image".into(),
+                image: Some("php:8.3-cli".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let context = MacroContext::for_project("/p").with_containers(containers);
+        let spec = config.to_launch_spec_in(&context);
+        assert_eq!(spec.program, "docker");
+        let args = spec.args;
+        assert!(
+            args.windows(2).any(|w| w == ["-p", "8000:8000"]),
+            "{args:?}"
+        );
+        assert_eq!(
+            args[args.len() - 5..],
+            ["php", "-S", "0.0.0.0:8000", "-t", "/workspace"]
+        );
     }
 }

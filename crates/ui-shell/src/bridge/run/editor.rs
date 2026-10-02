@@ -152,6 +152,10 @@ impl ffi::RunConfigEditor {
         let context = run_core::MacroContext::for_project(&root)
             .with_containers(effective_container_settings())
             .with_php_interpreter(super::effective_php_interpreter());
+        let scratch = run_core::php_run::inherit_container_target(
+            &scratch,
+            super::effective_php_container_target().as_deref(),
+        );
         let spec = {
             use run_core::RunConfigExt as _;
             scratch.to_launch_spec_in(&context)

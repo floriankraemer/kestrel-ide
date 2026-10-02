@@ -127,10 +127,16 @@ pub fn wrap_process_spec(
     target_id: &str,
     context: &MacroContext,
     containers: &ContainerSettings,
+    extra_ports: &[app_config::container_run::PortBinding],
 ) -> Result<Option<LaunchSpec>, TargetLaunchError> {
     let Some(target) = find_target(containers, target_id) else {
         return Ok(None);
     };
+    // Ports the launch itself needs published (a PHP server's), on top of
+    // the target's own.
+    let mut target = target.clone();
+    target.port_bindings.extend_from_slice(extra_ports);
+    let target = &target;
     let project_root = context
         .project_root
         .clone()
@@ -262,7 +268,7 @@ mod tests {
             console: crate::config::ConsoleKind::Pty,
             path_map: None,
         };
-        let wrapped = wrap_process_spec(&spec, "t1", &context, &containers)
+        let wrapped = wrap_process_spec(&spec, "t1", &context, &containers, &[])
             .unwrap()
             .unwrap();
         assert_eq!(wrapped.program, "docker");
@@ -284,7 +290,7 @@ mod tests {
             path_map: None,
         };
         assert_eq!(
-            wrap_process_spec(&spec, "missing", &context, &containers),
+            wrap_process_spec(&spec, "missing", &context, &containers, &[]),
             Ok(None)
         );
     }

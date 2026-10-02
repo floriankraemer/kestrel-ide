@@ -254,6 +254,14 @@ pub(super) fn effective_php_interpreter() -> String {
     settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings()).interpreter
 }
 
+/// The `[containers.target]` the PHP interpreter runs in, if any — what a
+/// PHP configuration with no `run_on` of its own inherits (ADR-0067).
+pub(super) fn effective_php_container_target() -> Option<String> {
+    settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings())
+        .container
+        .map(|container| container.target_id)
+}
+
 /// Trim `output` down to `max_bytes` from the front, on a UTF-8 char
 /// boundary — never a raw byte cut, which could split a multi-byte
 /// character and produce invalid UTF-8 in a `String`.
@@ -892,6 +900,10 @@ impl ffi::RunService {
         root: &Path,
         context: &run_core::MacroContext,
     ) -> ffi::FfiResult {
+        let config = run_core::php_run::inherit_container_target(
+            &config,
+            effective_php_container_target().as_deref(),
+        );
         let config_id = config.id.clone();
         if config.kind.as_deref() == Some("sql-script") {
             return sql_script::launch(self, &config, root);

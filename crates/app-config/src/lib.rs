@@ -24,6 +24,7 @@ pub mod containers;
 pub mod database; // Data sources, no secrets (ADR-0061 §1).
 pub mod ignored_names; // `Settings::ignored_names`'s default list, `Default` impl and add/remove/reset rules (ADR-0064).
 pub mod language_server; // One `[[language_server]]` entry (ADR-0066).
+pub mod live_template; // One `[[live_template]]` row (ADR-0072).
 pub mod php; // The `[php]` section: interpreter, language level, container target (PHP parity plan).
 use ignored_names::default_ignored_names;
 pub use ignored_names::DEFAULT_IGNORED_NAMES;
@@ -85,6 +86,7 @@ pub use hover::{HoverScope, HoverSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
 pub use language_server::LanguageServerSetting;
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
+pub use live_template::LiveTemplateSetting;
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
 pub use tab_padding::TabPaddingSettings;
 pub use terminal::TerminalSettings;
@@ -307,6 +309,8 @@ pub struct Settings {
     /// this crate only stores them.
     #[serde(default, rename = "language_server")]
     pub language_servers: Vec<LanguageServerSetting>,
+    #[serde(default, rename = "live_template")]
+    pub live_templates: Vec<LiveTemplateSetting>,
     /// AI chat providers, written as `[[ai_provider]]` blocks. Only entries
     /// that differ from the default catalog are written, so changing a
     /// shipped default still reaches a user who never touched it — the same
@@ -1009,6 +1013,7 @@ mod tests {
                 command: Some("/opt/rust-analyzer".to_string()),
                 ..LanguageServerSetting::default()
             }],
+            live_templates: Vec::new(),
             disabled_languages: vec!["vala".to_string()],
             ai_providers: vec![AiProviderSetting {
                 id: "local".to_string(),
@@ -1390,37 +1395,6 @@ use_spaces = false
             loaded.syntax_colors_by_language["rust"]["macro"].fg(),
             Some("#bbb529")
         );
-    }
-
-    #[test]
-    fn language_server_overrides_round_trip_as_array_of_tables() {
-        let dir = tempfile::tempdir().unwrap();
-        let settings = Settings {
-            language_servers: vec![
-                LanguageServerSetting {
-                    language_id: "rust".into(),
-                    command: Some("/opt/ra".into()),
-                    args: Some(vec!["--log".into()]),
-                    ..LanguageServerSetting::default()
-                },
-                LanguageServerSetting {
-                    language_id: "go".into(),
-                    enabled: Some(false),
-                    ..LanguageServerSetting::default()
-                },
-            ],
-            ..Settings::default()
-        };
-
-        save(dir.path(), &settings).unwrap();
-        let toml = fs::read_to_string(dir.path().join(SETTINGS_FILE)).unwrap();
-        assert!(toml.contains("[[language_server]]"), "{toml}");
-
-        let loaded = load(dir.path()).unwrap();
-        assert_eq!(loaded.language_servers, settings.language_servers);
-        // Unset fields stay unset rather than being written as empty strings,
-        // so "only disable it" cannot silently wipe the shipped command.
-        assert!(loaded.language_servers[1].command.is_none());
     }
 
     #[test]

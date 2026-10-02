@@ -44,6 +44,7 @@ pub struct LanguageServerSetting {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{load, save, Settings, SETTINGS_FILE};
 
     #[test]
     fn an_entry_written_before_servers_had_ids_still_loads() {
@@ -68,5 +69,36 @@ mod tests {
         let again: LanguageServerSetting =
             toml::from_str(&toml::to_string(&parsed).unwrap()).unwrap();
         assert_eq!(again, parsed);
+    }
+
+    #[test]
+    fn language_server_overrides_round_trip_as_array_of_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = Settings {
+            language_servers: vec![
+                LanguageServerSetting {
+                    language_id: "rust".into(),
+                    command: Some("/opt/ra".into()),
+                    args: Some(vec!["--log".into()]),
+                    ..LanguageServerSetting::default()
+                },
+                LanguageServerSetting {
+                    language_id: "go".into(),
+                    enabled: Some(false),
+                    ..LanguageServerSetting::default()
+                },
+            ],
+            ..Settings::default()
+        };
+
+        save(dir.path(), &settings).unwrap();
+        let toml = std::fs::read_to_string(dir.path().join(SETTINGS_FILE)).unwrap();
+        assert!(toml.contains("[[language_server]]"), "{toml}");
+
+        let loaded = load(dir.path()).unwrap();
+        assert_eq!(loaded.language_servers, settings.language_servers);
+        // Unset fields stay unset rather than being written as empty strings,
+        // so "only disable it" cannot silently wipe the shipped command.
+        assert!(loaded.language_servers[1].command.is_none());
     }
 }

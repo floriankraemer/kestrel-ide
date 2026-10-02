@@ -25,6 +25,7 @@ pub mod editing;
 pub mod file_associations;
 pub mod formatting;
 pub mod languages;
+pub mod live_templates;
 pub mod php;
 pub mod plugins;
 pub mod scope;

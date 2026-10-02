@@ -46,7 +46,7 @@ Two more facts forced the shape:
 - **Who opts in.**
   Analyzers, test frameworks and (later) formatters whose contribution says `requires-interpreter = "php"`, and language servers with `exec = "interpreter"`, run on the interpreter's host through `run_on`/`spawn_on`.
   `analysis_core::Scheduler`, `test_core::run_on`, `find_program_on`, `status_on`, `locate_file_on` and `diagnostics_by_file_on` take the host.
-  There is no formatter path yet; the formatter phase takes `php_core::host::interpreter_host` the same way.
+  The formatter path (ADR-0070) takes `php_core::host::interpreter_host` the same way.
 - **Language servers.**
   For a server whose host differs from the project's, `lsp-core` translates every URI at the wire, in one place: `Server::send` rewrites outgoing messages and the reader rewrites incoming ones.
   The fields rewritten are `uri`, `targetUri`, `rootUri`, `oldUri`, `newUri`, `scopeUri` and the keys of a `changes` map.

@@ -174,6 +174,14 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
                      });
     QObject::connect(treeModel, &ProjectTreeModel::projectOpened, panel,
                      [reload](const QString &) { reload(); });
+    // `composer require` in a terminal, or this dock's own actions finishing,
+    // rewrite the manifest while the dock stays open.
+    QObject::connect(treeModel, &ProjectTreeModel::watchedFileChanged, panel,
+                     [reload, composerService](const QString &path, qint32) {
+                         if (composerService->affectsRows(path)) {
+                             reload();
+                         }
+                     });
     reload();
     return panel;
 }

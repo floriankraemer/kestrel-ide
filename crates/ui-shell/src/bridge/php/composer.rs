@@ -27,6 +27,10 @@ impl ffi::ComposerService {
         current_project_root().is_some_and(|root| root.join("composer.json").is_file())
     }
 
+    pub fn affects_rows(&self, path: &QString) -> bool {
+        composer_view::is_manifest_path(std::path::Path::new(&path.to_string()))
+    }
+
     pub fn rows(&self) -> Vec<ffi::FfiComposerRow> {
         let Some(root) = current_project_root() else {
             return Vec::new();

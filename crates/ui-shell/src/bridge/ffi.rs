@@ -6495,6 +6495,12 @@ mod ffi {
         #[cxx_name = "hasComposerJson"]
         fn has_composer_json(self: &ComposerService) -> bool;
 
+        /// Whether a change to `path` can change `rows` (the manifest or the
+        /// lock file), so the dock re-reads when one changes under it.
+        #[qinvokable]
+        #[cxx_name = "affectsRows"]
+        fn affects_rows(self: &ComposerService, path: &QString) -> bool;
+
         /// Re-read from disk on every call; the files are small.
         #[qinvokable]
         fn rows(self: &ComposerService) -> Vec<FfiComposerRow>;

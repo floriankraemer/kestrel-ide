@@ -35,6 +35,13 @@ pub struct ComposerView {
     pub packages: Vec<PackageRow>,
 }
 
+/// Whether a change to `path` can change what [`view`] lists: the manifest
+/// and the lock file, wherever the project root is.
+pub fn is_manifest_path(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name == "composer.json" || name == "composer.lock")
+}
+
 /// `Ok(None)` when the project has no `composer.json`.
 pub fn view(project: &Path) -> Result<Option<ComposerView>, ComposerError> {
     let Some(json) = ComposerJson::read(project)? else {
@@ -196,6 +203,16 @@ fn is_package_spec(spec: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_the_manifest_and_the_lock_file_change_the_view() {
+        assert!(is_manifest_path(Path::new("/p/composer.json")));
+        assert!(is_manifest_path(Path::new("/p/composer.lock")));
+        assert!(!is_manifest_path(Path::new("/p/src/composer.php")));
+        assert!(!is_manifest_path(Path::new(
+            "/p/vendor/composer/installed.json"
+        )));
+    }
+
     use super::*;
 
     fn args(action: &str, arg: &str) -> Vec<String> {

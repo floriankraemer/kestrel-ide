@@ -132,6 +132,56 @@ pub const BUILTIN_LANGUAGES: &[LanguageDef] = &[
         grammar: || tree_sitter_php::LANGUAGE_PHP.into(),
         queries: queries!("php", injections),
     },
+    // The body-only PHP grammar, reached only by injection from Blade
+    // (ADR-0071): a `{{ $x }}` or `@php` region holds PHP with no `<?php`.
+    LanguageDef {
+        id: "php_only",
+        name: "PHP (embedded)",
+        extensions: &[],
+        filenames: &[],
+        line_comment: Some("//"),
+        block_comment: Some(("/*", "*/")),
+        brackets: BRACKETS,
+        quotes: QUOTES_DOUBLE_SINGLE,
+        grammar: || tree_sitter_php::LANGUAGE_PHP_ONLY.into(),
+        queries: queries!("php"),
+    },
+    // `blade.php` is a compound extension: it outranks `php` for
+    // `home.blade.php` (see `LanguageRegistry::language_for_path`).
+    LanguageDef {
+        id: "blade",
+        name: "Blade",
+        extensions: &["blade.php"],
+        filenames: &[],
+        line_comment: None,
+        block_comment: Some(("{{--", "--}}")),
+        brackets: BRACKETS,
+        quotes: QUOTES_DOUBLE_SINGLE,
+        grammar: || crate::vendored::BLADE.into(),
+        queries: QuerySet {
+            highlights: Some(include_str!("../queries/blade/highlights.scm")),
+            folds: Some(include_str!("../queries/blade/folds.scm")),
+            injections: Some(include_str!("../queries/blade/injections.scm")),
+            ..QuerySet::NONE
+        },
+    },
+    LanguageDef {
+        id: "twig",
+        name: "Twig",
+        extensions: &["twig"],
+        filenames: &[],
+        line_comment: None,
+        block_comment: Some(("{#", "#}")),
+        brackets: BRACKETS,
+        quotes: QUOTES_DOUBLE_SINGLE,
+        grammar: || crate::vendored::TWIG.into(),
+        queries: QuerySet {
+            highlights: Some(include_str!("../queries/twig/highlights.scm")),
+            folds: Some(include_str!("../queries/twig/folds.scm")),
+            injections: Some(include_str!("../queries/twig/injections.scm")),
+            ..QuerySet::NONE
+        },
+    },
     LanguageDef {
         id: "python",
         name: "Python",

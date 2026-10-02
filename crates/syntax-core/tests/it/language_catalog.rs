@@ -354,6 +354,40 @@ fn php_markup_outside_the_tags_is_highlighted_as_html() {
     assert_scope_at(php, text, "echo", "keyword");
 }
 
+/// ADR-0071: `.blade.php` is Blade although `.php` is PHP, in any case, and
+/// a file merely named `blade.php` stays PHP.
+#[test]
+fn a_blade_file_outranks_the_php_extension() {
+    let id = |name: &str| syntax_core::language_for_path(Path::new(name)).id();
+    assert_eq!(id("/app/resources/views/home.blade.php"), "blade");
+    assert_eq!(id("home.BLADE.php"), "blade");
+    assert_eq!(id("home.php"), "php");
+    assert_eq!(id("blade.php"), "php");
+    assert_eq!(id("base.html.twig"), "twig");
+}
+
+/// Twig's HTML outside the tags is the injected `html` language, one
+/// document across the `{% %}` breaks.
+#[test]
+fn twig_markup_is_html_and_its_tags_are_twig() {
+    let text = "<p class=\"note\">{% if ok %}{{ \"hi\"|upper }}{% endif %}</p>\n";
+    let twig = language("twig");
+    assert_scope_at(twig, text, "class=", "attribute");
+    assert_scope_at(twig, text, "if ok", "keyword");
+    assert_scope_at(twig, text, "upper", "function.call");
+}
+
+/// Blade hands `{{ … }}` and `@php` to the body-only PHP grammar, so there
+/// is no `<?php` for the PHP highlighter to wait for.
+#[test]
+fn blade_expressions_are_highlighted_as_php() {
+    let text = "<a href=\"/x\">{{ strtoupper($name) }}</a>\n@php $total = 1; @endphp\n";
+    let blade = language("blade");
+    assert_scope_at(blade, text, "href", "attribute");
+    assert_scope_at(blade, text, "strtoupper", "function");
+    assert_scope_at(blade, text, "1;", "number");
+}
+
 // ---- naming conventions (#16) ---------------------------------------
 
 /// The two naming conventions every mainstream editor paints, per

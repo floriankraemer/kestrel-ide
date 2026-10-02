@@ -231,8 +231,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### Y — templating languages (ADR-0071)
 | Task | Status | Commit |
 |---|---|---|
-| Y1 — vendor the Twig/Blade sources, `build.rs` + `cc` | done | — |
-| Y2 — `twig` and `blade` rows (`.blade.php` beats `.php`), hidden `php_only` row, queries | open | |
+| Y1 — vendor the Twig/Blade sources, `build.rs` + `cc` | done | 16b6fd5 |
+| Y2 — `twig` and `blade` rows (`.blade.php` beats `.php`), hidden `php_only` row, queries | done | — |
 | Y3 — `.phtml` and `.inc` → PHP | open | |
 | Y4 — `syntax_core::language_at`; injection-aware comment toggle | open | |
 | Y5 — richer `php/folds.scm` (arrays, doc comments, use groups, match, heredoc, attributes) | open | |

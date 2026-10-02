@@ -44,7 +44,7 @@ baseline() {
 	# `FfiHighlightSpan` carries back across the seam when overlaying
 	# semantic-token spans onto tree-sitter ones (`ui-shell`'s
 	# `overlay_semantic_tokens`). No split planned otherwise.
-	crates/syntax-core/src/lib.rs) echo 2582 ;;
+	crates/syntax-core/src/lib.rs) echo 2436 ;;
 	crates/mcp-server/src/lib.rs) echo 1832 ;;         # no split planned; ratcheted so it cannot grow
 	# Raised from 1608 by 35 lines for ADR-0064: `expand_folder` gained the
 	# `excluded`/`ignored_names` parameters and now prunes its walk with

@@ -363,6 +363,9 @@ fn a_blade_file_outranks_the_php_extension() {
     assert_eq!(id("home.BLADE.php"), "blade");
     assert_eq!(id("home.php"), "php");
     assert_eq!(id("blade.php"), "php");
+    // Legacy PHP template and include files.
+    assert_eq!(id("layout.phtml"), "php");
+    assert_eq!(id("config.inc"), "php");
     assert_eq!(id("base.html.twig"), "twig");
 }
 

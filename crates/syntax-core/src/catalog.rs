@@ -117,7 +117,7 @@ pub const BUILTIN_LANGUAGES: &[LanguageDef] = &[
     LanguageDef {
         id: "php",
         name: "PHP",
-        extensions: &["php"],
+        extensions: &["php", "phtml", "inc"],
         filenames: &[],
         // `LANGUAGE_PHP` (the grammar that also parses the markup around
         // `<?php … ?>`), not `LANGUAGE_PHP_ONLY`. The body-only grammar

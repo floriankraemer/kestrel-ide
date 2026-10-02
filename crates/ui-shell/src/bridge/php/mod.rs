@@ -144,9 +144,10 @@ impl ffi::PhpSettingsEditor {
             .collect();
         settings_model::php::formatter_choices(installed, self.draft.borrow().formatter.as_deref())
             .into_iter()
-            .map(|(id, name)| ffi::FfiFormatterChoice {
-                id: QString::from(id.as_str()),
-                name: QString::from(name.as_str()),
+            .map(|choice| ffi::FfiFormatterChoice {
+                id: QString::from(choice.id.as_str()),
+                name: QString::from(choice.name.as_str()),
+                installed: choice.installed,
             })
             .collect()
     }

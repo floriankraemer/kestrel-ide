@@ -268,6 +268,17 @@ impl PhpForm {
     }
 }
 
+/// One entry of the PHP page's formatter combo. The view words an
+/// uninstalled one ("<id> (not installed)") itself, so the text is
+/// translatable (ADR-0049).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatterChoice {
+    pub id: String,
+    /// The plugin's display name; the id itself when not installed.
+    pub name: String,
+    pub installed: bool,
+}
+
 /// The formatter choices the PHP page offers: the installed ones, plus the
 /// configured id when no plugin offers it any more. Dropping that id from the
 /// list would make the page reset it to "Language server" on the first edit
@@ -275,11 +286,22 @@ impl PhpForm {
 pub fn formatter_choices(
     installed: Vec<(String, String)>,
     configured: Option<&str>,
-) -> Vec<(String, String)> {
-    let mut choices = installed;
+) -> Vec<FormatterChoice> {
+    let mut choices: Vec<FormatterChoice> = installed
+        .into_iter()
+        .map(|(id, name)| FormatterChoice {
+            id,
+            name,
+            installed: true,
+        })
+        .collect();
     if let Some(id) = non_blank(&configured.map(str::to_string)) {
-        if !choices.iter().any(|(known, _)| known == id) {
-            choices.push((id.to_string(), format!("{id} (not installed)")));
+        if !choices.iter().any(|known| known.id == id) {
+            choices.push(FormatterChoice {
+                id: id.to_string(),
+                name: id.to_string(),
+                installed: false,
+            });
         }
     }
     choices
@@ -464,20 +486,33 @@ mod tests {
     #[test]
     fn a_configured_formatter_nobody_offers_stays_a_choice() {
         let installed = vec![("pint".to_string(), "Pint".to_string())];
+        let pint = FormatterChoice {
+            id: "pint".into(),
+            name: "Pint".into(),
+            installed: true,
+        };
         assert_eq!(
             formatter_choices(installed.clone(), Some("pint")),
-            installed
+            vec![pint.clone()]
         );
-        assert_eq!(formatter_choices(installed.clone(), None), installed);
-        assert_eq!(formatter_choices(installed.clone(), Some("  ")), installed);
+        assert_eq!(
+            formatter_choices(installed.clone(), None),
+            vec![pint.clone()]
+        );
+        assert_eq!(
+            formatter_choices(installed.clone(), Some("  ")),
+            vec![pint.clone()]
+        );
+        // Structured, not pre-worded: the view translates "(not installed)".
         assert_eq!(
             formatter_choices(installed, Some("old-fixer")),
             vec![
-                ("pint".to_string(), "Pint".to_string()),
-                (
-                    "old-fixer".to_string(),
-                    "old-fixer (not installed)".to_string()
-                )
+                pint,
+                FormatterChoice {
+                    id: "old-fixer".into(),
+                    name: "old-fixer".into(),
+                    installed: false,
+                }
             ]
         );
     }

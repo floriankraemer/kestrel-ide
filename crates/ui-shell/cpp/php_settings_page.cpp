@@ -87,7 +87,10 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
     auto *formatterCombo = new QComboBox(page);
     formatterCombo->addItem(QObject::tr("Language server"), QString());
     for (const FfiFormatterChoice &choice : editor->formatterChoices()) {
-        formatterCombo->addItem(QString(choice.name), QString(choice.id));
+        formatterCombo->addItem(choice.installed
+                                  ? QString(choice.name)
+                                  : QObject::tr("%1 (not installed)").arg(QString(choice.name)),
+                                QString(choice.id));
     }
     const int formatterIndex = formatterCombo->findData(QString(form.formatter));
     formatterCombo->setCurrentIndex(formatterIndex >= 0 ? formatterIndex : 0);

@@ -949,13 +949,15 @@ impl ffi::EditorOps {
         let text = text.to_string();
         let language = language_of(&self.session.borrow(), tab_id);
         let rules = self.save_rules(language);
-        let (formatted, notice) = match self.format_on_save(tab_id, language, &text) {
-            Ok(formatted) => (formatted, String::new()),
-            Err(notice) => (None, notice),
+        let (formatted, (failed_tool, failure)) = match self.format_on_save(tab_id, language, &text)
+        {
+            Ok(formatted) => (formatted, Default::default()),
+            Err(failed) => (None, failed),
         };
         ffi::FfiSaveEdits {
             edits: self.tidy_edits(&text, &rules, formatted),
-            notice: QString::from(notice.as_str()),
+            failed_tool: QString::from(failed_tool.as_str()),
+            failure: QString::from(failure.as_str()),
         }
     }
 
@@ -1000,13 +1002,14 @@ impl ffi::EditorOps {
     /// Blocks the caller for at most `FORMAT_ON_SAVE_TIMEOUT`. A failing or
     /// timed-out formatter must not keep the file from being saved: the save
     /// goes ahead unformatted and the failure comes back as the notice the
-    /// view shows. `Ok(None)` means nothing was asked of a formatter.
+    /// view shows, as `(tool name, its message)`. `Ok(None)` means nothing
+    /// was asked of a formatter.
     fn format_on_save(
         &self,
         tab_id: u64,
         language: Language,
         text: &str,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Option<String>, (String, String)> {
         let Some(path) = self
             .session
             .borrow()
@@ -1028,7 +1031,7 @@ impl ffi::EditorOps {
         let timeout = crate::bridge::format_tool::FORMAT_ON_SAVE_TIMEOUT;
         tool.run(text, &path, timeout)
             .map(Some)
-            .map_err(|error| format!("Saved without formatting: {} failed: {error}", tool.name()))
+            .map_err(|error| (tool.name().to_string(), error.to_string()))
     }
 
     /// The tab width `text` in this tab renders at, resolved through

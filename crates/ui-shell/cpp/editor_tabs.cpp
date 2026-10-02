@@ -900,17 +900,19 @@ bool EditorTabs::saveEditor(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdi
         return true;
     }
     // F1-11: trim, final newline and line-ending normalisation, applied
-    // *before* the file is read for writing — so they are one undo entry,
-    // separate from whatever the user's last edit was, and the caret lands
-    // wherever the splice's own cursor adjustment puts it rather than
-    // jumping to column 0. Only real editors have this (a hex tab has no
+    // *before* the file is read for writing — one undo entry apart from the
+    // user's last edit, the caret where the splice's own cursor adjustment
+    // puts it rather than column 0. Real editors only (a hex tab has no
     // language and nothing to tidy).
     if (codeEditor) {
         const FfiSaveEdits tidy = editorOps_->saveRuleEdits(tabId, editor->toPlainText());
         if (!tidy.edits.empty()) {
             applyEditsTo(editor, tidy.edits);
         }
-        showStatusNotice(tidy.notice); // a formatter that failed: saved anyway, user told
+        if (!tidy.failed_tool.isEmpty()) { // a formatter failed: saved anyway, user told
+            showStatusNotice(tr("Saved without formatting: %1 failed: %2")
+                               .arg(QString(tidy.failed_tool), QString(tidy.failure)));
+        }
     }
     const auto result = docManager_->saveTab(tabId, editor->toPlainText());
     if (result.code != 0) {

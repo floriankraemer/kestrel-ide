@@ -516,6 +516,10 @@
 <context>
     <name>EditorTabs</name>
     <message>
+        <source>Saved without formatting: %1 failed: %2</source>
+        <translation>Ohne Formatierung gespeichert: %1 ist fehlgeschlagen: %2</translation>
+    </message>
+    <message>
         <source>%1 — %2</source>
         <translation>%1 — %2</translation>
     </message>
@@ -851,6 +855,10 @@
 </context>
 <context>
     <name>QObject</name>
+    <message>
+        <source>%1 (not installed)</source>
+        <translation>%1 (nicht installiert)</translation>
+    </message>
     <message>
         <source>%1 (pending)</source>
         <translation>%1 (ausstehend)</translation>

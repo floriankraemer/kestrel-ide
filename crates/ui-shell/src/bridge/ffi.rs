@@ -779,11 +779,13 @@ mod ffi {
     }
 
     /// What a save changes before it writes the file, and what the user
-    /// must be told: `notice` is non-empty when a formatter failed and the
-    /// file is saved unformatted.
+    /// must be told: `failed_tool` is non-empty when a formatter failed and
+    /// the file is saved unformatted; `failure` is the tool's own message.
+    /// The view words the notice (ADR-0049).
     struct FfiSaveEdits {
         edits: Vec<FfiTextEdit>,
-        notice: QString,
+        failed_tool: QString,
+        failure: QString,
     }
 
     /// What Alt+Insert can generate for a PHP class (ADR-0072).
@@ -6382,6 +6384,9 @@ mod ffi {
     struct FfiFormatterChoice {
         id: QString,
         name: QString,
+        /// False for a configured id no plugin offers any more; the view
+        /// words that ("<name> (not installed)").
+        installed: bool,
     }
 
     /// What `php_core::probe` learned about an interpreter, or why it

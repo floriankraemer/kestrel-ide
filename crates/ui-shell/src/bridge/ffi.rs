@@ -1436,6 +1436,9 @@ mod ffi {
         /// The `sql-script` kind's own sub-table (F3.6) — meaningless (and
         /// left at its default) unless `kind == "sql-script"`.
         sql_script: FfiSqlScriptOptions,
+        /// The `php-builtin-server` kind's own sub-table (PHP parity plan,
+        /// I6) — meaningless (and left at its default) for any other kind.
+        php_server: FfiPhpServerOptions,
         /// Run targets (C8): empty for "Local" (run on this machine, as
         /// always), else `"container:<target-id>"` — the "Run on" combo's
         /// selection. Meaningless for a container-kind configuration
@@ -1455,6 +1458,17 @@ mod ffi {
         /// `app_config::SqlScriptRunSetting::tx_mode`'s own doc comment.
         tx_mode: QString,
         stop_on_error: bool,
+    }
+
+    /// The `php-builtin-server` run configuration's own page (PHP parity
+    /// plan, I6): `app_config::php::PhpBuiltinServerRunSetting`'s exact
+    /// fields. Blank/zero mean "the default", which `run-core` decides.
+    #[derive(Default)]
+    struct FfiPhpServerOptions {
+        host: QString,
+        port: u32,
+        document_root: QString,
+        router: QString,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with

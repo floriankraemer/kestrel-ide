@@ -772,6 +772,10 @@ fn main() {
         // own page, registered alongside the container-kind pages above.
         .cpp_file("cpp/run_config_sql_page.h")
         .cpp_file("cpp/run_config_sql_page.cpp")
+        // PHP parity plan I6: the `php-builtin-server` run configuration's
+        // own page.
+        .cpp_file("cpp/run_config_php_page.h")
+        .cpp_file("cpp/run_config_php_page.cpp")
         // database-tools-plan F5b: export/import/dump/copy-table/ER
         // diagram/schema-and-data-compare dialogs.
         .cpp_file("cpp/database_exchange_actions.cpp")

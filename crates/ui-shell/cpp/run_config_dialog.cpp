@@ -3,6 +3,7 @@
 #include "container_target_wizard.h"
 #include "e2e_mark.h"
 #include "run_config_container_pages.h"
+#include "run_config_php_page.h"
 #include "run_config_sql_page.h"
 
 #include <QAction>
@@ -122,6 +123,9 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     QAction *addContainerfileAction = containersMenu->addAction(QObject::tr("Containerfile"));
     QAction *addComposeAction = containersMenu->addAction(QObject::tr("Compose"));
     QAction *addSqlScriptAction = addMenu->addAction(QObject::tr("SQL Script"));
+    QMenu *phpMenu = addMenu->addMenu(QObject::tr("PHP"));
+    QAction *addPhpServerAction = phpMenu->addAction(QObject::tr("PHP Built-in Server"));
+    QAction *addPhpConsoleAction = phpMenu->addAction(QObject::tr("PHP Console"));
     addButton->setMenu(addMenu);
     auto *removeButton = new QPushButton(QObject::tr("Remove"), &dialog);
     auto *listButtons = new QHBoxLayout();
@@ -166,6 +170,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     auto *containerPage = new ContainerOptionsPage(containerService, editor, &dialog);
     auto *sqlPage = new SqlScriptOptionsPage(consoleService, &dialog);
     sqlPage->setVisible(false);
+    auto *phpServerPage = new PhpServerOptionsPage(&dialog);
+    phpServerPage->setVisible(false);
 
     auto *commandPreviewEdit = new QPlainTextEdit(&dialog);
     commandPreviewEdit->setReadOnly(true);
@@ -192,6 +198,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     form->addWidget(envEdit, 1);
     form->addWidget(containerPage, 1);
     form->addWidget(sqlPage, 1);
+    form->addWidget(phpServerPage);
     form->addWidget(new QLabel(QObject::tr("Command preview:"), &dialog));
     form->addWidget(commandPreviewEdit);
 
@@ -233,6 +240,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.kind = *currentKind;
         form.container = containerPage->options();
         form.sql_script = sqlPage->options();
+        form.php_server = phpServerPage->options();
         form.run_on = runOnCombo->currentData().toString();
         editor->updateConfiguration(static_cast<quint32>(index), form);
     };
@@ -245,6 +253,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.kind = *currentKind;
         form.container = containerPage->options();
         form.sql_script = sqlPage->options();
+        form.php_server = phpServerPage->options();
         const QString preview = editor->commandPreview(form);
         commandPreviewEdit->setPlainText(preview);
         e2eMark(QStringLiteral("{\"ev\":\"run_config_preview\",\"kind\":%1,\"preview\":%2}")
@@ -285,6 +294,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         containerPage->setOptions(config.container);
         sqlPage->setVisible(config.kind == QLatin1String("sql-script"));
         sqlPage->setOptions(config.sql_script);
+        phpServerPage->setVisible(config.kind == QLatin1String("php-builtin-server"));
+        phpServerPage->setOptions(config.php_server);
         refreshPreview();
     };
 
@@ -310,6 +321,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
 
     QObject::connect(containerPage, &ContainerOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(sqlPage, &SqlScriptOptionsPage::changed, &dialog, refreshPreview);
+    QObject::connect(phpServerPage, &PhpServerOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(programEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
     QObject::connect(argsEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
 
@@ -354,6 +366,11 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
                       [=]() { addWithKind(QStringLiteral("compose")); });
     QObject::connect(addSqlScriptAction, &QAction::triggered, &dialog,
                       [=]() { addWithKind(QStringLiteral("sql-script")); });
+
+    QObject::connect(addPhpServerAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QStringLiteral("php-builtin-server")); });
+    QObject::connect(addPhpConsoleAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QStringLiteral("php-console")); });
 
     QObject::connect(removeButton, &QPushButton::clicked, &dialog, [=]() {
         const int index = list->currentRow();

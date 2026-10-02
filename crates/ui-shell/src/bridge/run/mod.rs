@@ -48,6 +48,8 @@ use crate::bridge::ffi;
 mod container_form;
 mod editor;
 mod gutter;
+/// `FfiPhpServerOptions` <-> `RunConfig`'s `php_server` sub-table (I6).
+mod php_server_form;
 /// `RunConfig` <-> `FfiRunConfig`, split out under the file-size ratchet.
 mod run_config_form;
 mod sql_script; // `sql-script` configs (F3.6) — see that module's own doc comment.
@@ -244,6 +246,12 @@ fn tasks_from_string(text: &str) -> Vec<app_config::BeforeLaunchSetting> {
 /// it, previewing its command, and its Services picker.
 pub(super) fn effective_container_settings() -> app_config::ContainerSettings {
     crate::bridge::convert::load_resolved_settings().containers
+}
+
+/// The `[php]` interpreter, effective settings — what a PHP-toolchain
+/// configuration launches under.
+pub(super) fn effective_php_interpreter() -> String {
+    settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings()).interpreter
 }
 
 /// Trim `output` down to `max_bytes` from the front, on a UTF-8 char
@@ -914,13 +922,10 @@ impl ffi::RunService {
                 message: QString::from(err.to_string().as_str()),
             };
         }
-        let php_interpreter =
-            settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings())
-                .interpreter;
         let context = context
             .clone()
             .with_containers(containers.clone())
-            .with_php_interpreter(php_interpreter);
+            .with_php_interpreter(effective_php_interpreter());
         let mut spec = config.to_launch_spec_in(&context);
         let cwd = spec.cwd.clone().unwrap_or_else(|| root.clone());
         // `to_launch_spec` leaves `cwd` as `None` for a configuration with

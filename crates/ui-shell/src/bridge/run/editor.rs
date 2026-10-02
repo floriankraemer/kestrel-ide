@@ -94,6 +94,7 @@ impl ffi::RunConfigEditor {
         config.before_launch = super::tasks_from_string(&form.before_launch.to_string());
         container_form::apply_options(config, &form.kind.to_string(), &form.container);
         super::sql_script_form::apply_options(config, &form.kind.to_string(), &form.sql_script);
+        super::php_server_form::apply_options(config, &form.kind.to_string(), &form.php_server);
         let run_on = form.run_on.to_string();
         config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
         // Editing a temporary configuration is how IntelliJ's "Save
@@ -141,10 +142,16 @@ impl ffi::RunConfigEditor {
             ..run_core::RunConfig::default()
         };
         container_form::apply_options(&mut scratch, &form.kind.to_string(), &form.container);
+        super::php_server_form::apply_options(
+            &mut scratch,
+            &form.kind.to_string(),
+            &form.php_server,
+        );
 
         let root = current_project_root().unwrap_or_default();
         let context = run_core::MacroContext::for_project(&root)
-            .with_containers(effective_container_settings());
+            .with_containers(effective_container_settings())
+            .with_php_interpreter(super::effective_php_interpreter());
         let spec = {
             use run_core::RunConfigExt as _;
             scratch.to_launch_spec_in(&context)
@@ -414,6 +421,10 @@ impl ffi::RunConfigEditor {
                     .compose
                     .as_ref()
                     .and_then(container_core::run_config::validate_compose),
+                // Both PHP kinds compile their own argv; nothing to check.
+                Some(run_core::php_run::KIND_BUILTIN_SERVER | run_core::php_run::KIND_CONSOLE) => {
+                    None
+                }
                 _ => config
                     .program
                     .trim()

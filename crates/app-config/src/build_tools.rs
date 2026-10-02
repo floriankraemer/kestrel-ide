@@ -79,6 +79,11 @@ pub struct BuildToolsSettings {
     pub maven: MavenToolSettings,
 }
 
+/// `skip_serializing_if` for `Settings::build_tools`.
+pub fn is_default(value: &BuildToolsSettings) -> bool {
+    value == &BuildToolsSettings::default()
+}
+
 fn is_default_gradle(settings: &GradleToolSettings) -> bool {
     settings == &GradleToolSettings::default()
 }

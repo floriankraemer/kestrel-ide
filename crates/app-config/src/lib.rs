@@ -23,12 +23,12 @@ pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0
 pub mod containers;
 pub mod database; // Data sources, no secrets (ADR-0061 §1).
 pub mod ignored_names; // `Settings::ignored_names`'s default list, `Default` impl and add/remove/reset rules (ADR-0064).
+pub mod php; // The `[php]` section: interpreter, language level, container target (PHP parity plan).
 use ignored_names::default_ignored_names;
 pub use ignored_names::DEFAULT_IGNORED_NAMES;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
-/// The `[file_associations]` section: which handler a file pattern opens
-/// with.
+/// The `[file_associations]` section: which handler a file pattern opens with.
 pub mod file_associations;
 pub mod hover; // The `[hover]` section: what the hover card shows, and its dwell delay.
 pub mod keymap;
@@ -122,9 +122,6 @@ pub struct LanguageServerSetting {
 
 pub(crate) fn is_false(b: &bool) -> bool {
     !*b
-}
-fn is_default_build_tools(value: &BuildToolsSettings) -> bool {
-    value == &BuildToolsSettings::default()
 }
 
 /// The `[minimap]` section: whether the editor's right-hand code map shows
@@ -387,10 +384,12 @@ pub struct Settings {
     pub containers: ContainerSettings,
     /// The `[build_tools]` section (ADR-0057) — `trusted_roots` is global
     /// only, see [`build_tools`]'s doc comment.
-    #[serde(default, skip_serializing_if = "is_default_build_tools")]
+    #[serde(default, skip_serializing_if = "build_tools::is_default")]
     pub build_tools: BuildToolsSettings,
     #[serde(default, skip_serializing_if = "database::is_default")]
     pub database: database::DatabaseSettings,
+    #[serde(default, skip_serializing_if = "php::is_default")]
+    pub php: php::PhpSettings,
     /// Gitignore-syntax names the project scope skips at any depth
     /// (ADR-0064); see [`DEFAULT_IGNORED_NAMES`]. Global; the project's own
     /// excludes are [`project_settings::ProjectSettings::excluded`] instead.
@@ -993,6 +992,7 @@ mod tests {
             analysis: AnalysisSettings::default(),
             build_tools: BuildToolsSettings::default(),
             database: database::DatabaseSettings::default(),
+            php: php::PhpSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),

@@ -24,6 +24,7 @@ pub mod editing;
 /// path — see [`file_associations::resolve_handler`].
 pub mod file_associations;
 pub mod languages;
+pub mod php;
 pub mod plugins;
 pub mod scope;
 pub mod servers;

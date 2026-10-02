@@ -211,6 +211,14 @@ pub struct ProjectSettings {
     #[serde(default, rename = "analyzer", skip_serializing_if = "Option::is_none")]
     pub analysis: Option<Vec<crate::AnalyzerSetting>>,
 
+    /// The project's `[php]` override — interpreter, language level,
+    /// container target and the rest, replacing the global layer's section
+    /// wholesale like `[editing]`/`[terminal]` (PHP parity plan, P0-5).
+    ///
+    /// Sparse like the rest: `None` is "the project says nothing about PHP".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub php: Option<crate::php::PhpSettings>,
+
     /// The project's `[containers]` override — its own connections,
     /// registries and dock filters, replacing the global layer's wholesale
     /// (ADR-0055), same rule as `[editing]`/`[terminal]`.
@@ -284,6 +292,7 @@ impl ProjectSettings {
             && self.terminal.is_none()
             && self.layouts.is_none()
             && self.analysis.is_none()
+            && self.php.is_none()
             && self.tab_padding.is_none()
             && self.unknown.is_empty()
     }
@@ -1069,6 +1078,26 @@ mod tests {
         let body =
             fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
         assert!(body.contains("[[analyzer]]"), "{body}");
+    }
+
+    #[test]
+    fn a_php_section_round_trips_through_the_project_file() {
+        let root = project();
+        update(root.path(), |s| {
+            s.php = Some(crate::php::PhpSettings {
+                interpreter: Some("/opt/php/bin/php".into()),
+                xdebug_port: Some(9100),
+                ..crate::php::PhpSettings::default()
+            });
+        })
+        .unwrap();
+
+        let php = load(root.path()).unwrap().php.expect("php section");
+        assert_eq!(php.interpreter.as_deref(), Some("/opt/php/bin/php"));
+        assert_eq!(php.xdebug_port, Some(9100));
+        let body =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        assert!(body.contains("[php]"), "{body}");
     }
 
     #[test]

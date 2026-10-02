@@ -47,6 +47,10 @@ const MANUAL_RUN_TIMEOUT: Duration = Duration::from_secs(180);
 /// not answered in this long is stuck, not thorough.
 const FILE_RUN_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// A resolved analyzer program and the argv prefix that runs it under the
+/// configured interpreter.
+type Launch = (PathBuf, Vec<String>);
+
 /// Rust side of the `AnalysisService` QObject.
 #[derive(Default)]
 pub struct AnalysisServiceRust {
@@ -56,12 +60,13 @@ pub struct AnalysisServiceRust {
     /// concurrent" rule holds across analyzers too, not only within one.
     queue: RefCell<VecDeque<analysis_core::AnalyzerDef>>,
     store: SharedDiagnostics,
-    /// Resolved program per analyzer id (a miss is cached too): per-file
+    /// Resolved launch (program plus interpreter argv prefix) per analyzer id
+    /// and interpreter (a miss is cached too): per-file
     /// runs fire on every debounced edit, and `find_program` spawns
     /// `wsl.exe` on a WSL root. Cleared whenever detection is redone
     /// (`refresh_analyzer_status_async`, `inspect_project`) and for one
     /// analyzer when its program turns out to be gone.
-    program_cache: RefCell<HashMap<String, Option<PathBuf>>>,
+    program_cache: RefCell<HashMap<String, Option<Launch>>>,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -288,7 +293,7 @@ impl ffi::AnalysisService {
                 continue;
             };
             let analyzer = analysis_core::AnalyzerDef::from_contribution(contribution);
-            let Some(program) = self.resolve_program(&analyzer, &root) else {
+            let Some((program, prefix)) = self.resolve_launch(&analyzer, &root) else {
                 continue;
             };
             let (target, guard, stdin) = match analyzer.buffer {
@@ -303,7 +308,7 @@ impl ffi::AnalysisService {
                     }
                 }
             };
-            let args = analyzer.file_run_args(&target);
+            let args = [prefix, analyzer.file_run_args(&target)].concat();
             let qt_thread = self.as_mut().qt_thread();
             let file = path.clone();
             self.scheduler.schedule_file_run(
@@ -319,7 +324,10 @@ impl ffi::AnalysisService {
                     drop(guard); // the run is over; delete the temp copy
                     let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
                         if result == Err(analysis_core::RunFailure::NotFound) {
-                            service.program_cache.borrow_mut().remove(&analyzer.id);
+                            service
+                                .program_cache
+                                .borrow_mut()
+                                .retain(|key, _| !key.starts_with(&format!("{}\0", analyzer.id)));
                         }
                         publish_file_result(&service, &analyzer, &result, &file);
                         service.as_mut().diagnostics_changed();
@@ -329,15 +337,19 @@ impl ffi::AnalysisService {
         }
     }
 
-    fn resolve_program(
-        &self,
-        analyzer: &analysis_core::AnalyzerDef,
-        root: &Path,
-    ) -> Option<PathBuf> {
+    /// The analyzer's program and the argv prefix that runs it under the
+    /// configured PHP interpreter when its manifest requires one (P0-6).
+    fn resolve_launch(&self, analyzer: &analysis_core::AnalyzerDef, root: &Path) -> Option<Launch> {
+        let interpreter =
+            settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings())
+                .interpreter;
         self.program_cache
             .borrow_mut()
-            .entry(analyzer.id.clone())
-            .or_insert_with(|| analysis_core::find_program(&analyzer.program_candidates, root))
+            .entry(format!("{}\0{interpreter}", analyzer.id))
+            .or_insert_with(|| {
+                analysis_core::find_program(&analyzer.program_candidates, root)
+                    .map(|program| analyzer.invocation(&program, &interpreter))
+            })
             .clone()
     }
 
@@ -348,13 +360,13 @@ impl ffi::AnalysisService {
             self.as_mut().analysis_finished();
             return;
         };
-        let Some(program) = analysis_core::find_program(&analyzer.program_candidates, &root) else {
+        let Some((program, prefix)) = self.resolve_launch(&analyzer, &root) else {
             // Detected when the batch was built, gone by the time its turn
             // came (uninstalled mid-run) — skip it rather than fail the
             // whole batch over one analyzer.
             return self.run_next(root);
         };
-        let mut args = analyzer.args.clone();
+        let mut args = [prefix, analyzer.args.clone()].concat();
         args.push(root.to_string_lossy().into_owned());
 
         let qt_thread = self.as_mut().qt_thread();

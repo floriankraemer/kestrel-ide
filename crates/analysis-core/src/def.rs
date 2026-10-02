@@ -9,7 +9,7 @@
 //! severity string.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use diagnostics_core::Severity;
 use plugin_api::AnalyzerContribution;
@@ -76,6 +76,17 @@ impl AnalyzerDef {
             buffer: BufferStrategy::from_manifest(contribution.buffer.as_deref()),
             requires_interpreter: contribution.requires_interpreter.clone(),
             severities,
+        }
+    }
+
+    /// How to spawn `program` for this analyzer: under `php_binary` when the
+    /// manifest says `requires-interpreter = "php"` and the program needs
+    /// it (see [`crate::php_invocation`]), otherwise as is. The returned
+    /// prefix goes before [`Self::args`].
+    pub fn invocation(&self, program: &Path, php_binary: &str) -> (PathBuf, Vec<String>) {
+        match self.requires_interpreter.as_deref() {
+            Some("php") => crate::php::invocation(program, Some(php_binary)),
+            _ => (program.to_path_buf(), Vec::new()),
         }
     }
 
@@ -165,6 +176,25 @@ mod tests {
         assert_eq!(def.file_args, vec!["--stdin-path={file}", "-"]);
         assert_eq!(def.buffer, BufferStrategy::Stdin);
         assert_eq!(def.requires_interpreter.as_deref(), Some("php"));
+    }
+
+    #[test]
+    fn only_an_analyzer_requiring_php_is_launched_under_the_interpreter() {
+        let dir = tempfile::tempdir().unwrap();
+        let phar = dir.path().join("tool.phar");
+        std::fs::write(&phar, "x").unwrap();
+        let plain = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(plain.invocation(&phar, "php8"), (phar.clone(), vec![]));
+        let mut c = contribution();
+        c.requires_interpreter = Some("php".into());
+        let php = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            php.invocation(&phar, "php8"),
+            (
+                PathBuf::from("php8"),
+                vec![phar.to_string_lossy().into_owned()]
+            )
+        );
     }
 
     #[test]

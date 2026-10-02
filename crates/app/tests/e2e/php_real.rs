@@ -260,6 +260,14 @@ fn e2e_php_real_xdebug_cli_breakpoint() {
     let started = ide.wait_for_event(mark, "the session to start", |e| e["ev"] == "debug_started");
     let session_id = started["session_id"].as_u64().expect("session_id");
     wait_for_stop_at(&ide, mark, 9);
+    // One fetch per scope (Locals, Superglobals, constants), not one per
+    // path that selects the top frame.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    assert_eq!(
+        ide.events_since_of(mark, "debug_variables").len(),
+        3,
+        "a stop fetches each scope once"
+    );
 
     // Resume: the script finishes. The listener stays up for the next
     // connection (ADR-0069), so the session itself does not end here.

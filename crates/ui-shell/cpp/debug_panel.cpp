@@ -210,6 +210,13 @@ DebugPanel::DebugPanel(DebugService *debugService, OpenAt openAt, QWidget *paren
             sessionId_ = chosen;
             refreshThreads();
             refreshFrames();
+            // `refreshFrames` selects its top row silently (the stop path has
+            // already asked for that frame's variables); a session switch has
+            // no such request in flight.
+            const ::rust::Vec<FfiStackFrame> frames = debugService_->frames();
+            if (!frames.empty()) {
+                debugService_->selectFrame(sessionId_, frames[0].id);
+            }
         }
     });
     connect(threadPicker_, &QComboBox::currentIndexChanged, this, [this](int index) {
@@ -601,6 +608,11 @@ void DebugPanel::refreshFrames()
         frames_->addItem(where);
     }
     if (frames_->count() > 0) {
+        // Silent: the caller that refreshed the frames (a stop, a thread
+        // switch) fetches the top frame's variables itself, and a second
+        // fetch from the row change doubled every scopes and variables
+        // request.
+        const QSignalBlocker blocker(frames_);
         frames_->setCurrentRow(0);
     }
 }

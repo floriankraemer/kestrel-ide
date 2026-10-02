@@ -6194,6 +6194,8 @@ dependencies = [
 name = "php-core"
 version = "0.1.0"
 dependencies = [
+ "app-config",
+ "container-core",
  "lsp-core",
  "process-exec",
  "serde_json",

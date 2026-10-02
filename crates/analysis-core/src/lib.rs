@@ -24,10 +24,14 @@ pub use buffer::{
     TEMP_COPY_GITIGNORE_PATTERN,
 };
 pub use checkstyle::{
-    locate_file, parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding, ParseError,
+    locate_file, locate_file_on, parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding,
+    ParseError,
 };
 pub use def::{AnalyzerDef, Trigger};
-pub use detect::{composer_require_dev, find_config_file, find_program, status, AnalyzerStatus};
+pub use detect::{
+    composer_require_dev, find_config_file, find_program, find_program_on, status, status_on,
+    AnalyzerStatus,
+};
 pub use php::{
     invocation as php_invocation, needs_php_prefix, PHPCS_CONFIG_CANDIDATES,
     PHPSTAN_CONFIG_CANDIDATES, PHPUNIT_CONFIG_CANDIDATES,

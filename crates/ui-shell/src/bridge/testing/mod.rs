@@ -50,6 +50,9 @@ pub struct TestServiceRust {
     /// The framework last run, for the diagnostics `source` column and
     /// this store's key. Empty until the first run.
     framework_name: RefCell<String>,
+    /// Where the last run executed, so the paths its failures print map
+    /// back to local files (ADR-0067). `None` until the first run.
+    run_host: RefCell<Option<process_exec::host::ExecHost>>,
     store: SharedDiagnostics,
 }
 
@@ -82,10 +85,12 @@ fn contributed_frameworks() -> Vec<(
 /// candidate-search, the same reuse the manifest's own D7 note asks for.
 fn detect_framework(
     root: &Path,
+    settings: &app_config::Settings,
 ) -> Option<(
     plugin_host::LoadedPlugin,
     plugin_api::TestFrameworkContribution,
     PathBuf,
+    process_exec::host::ExecHost,
 )> {
     let owners = contributed_frameworks();
     let contributions: Vec<plugin_api::TestFrameworkContribution> = owners
@@ -102,10 +107,24 @@ fn detect_framework(
         &contributions,
         &detected_refs,
         test_core::SUPPORTED_OUTPUT_FORMATS,
-        |candidates| analysis_core::find_program(candidates, root),
+        |framework| {
+            let host = framework_host(framework, settings, root);
+            analysis_core::find_program_on(&framework.program_candidates, root, &host)
+        },
     )?;
     let (plugin, framework) = owners.into_iter().nth(index)?;
-    Some((plugin, framework, program))
+    let host = framework_host(&framework, settings, root);
+    Some((plugin, framework, program, host))
+}
+
+/// Where `framework` runs: the PHP interpreter's host when it requires one
+/// (ADR-0067), the project's own otherwise.
+fn framework_host(
+    framework: &plugin_api::TestFrameworkContribution,
+    settings: &app_config::Settings,
+    root: &Path,
+) -> process_exec::host::ExecHost {
+    crate::bridge::php::tool_host(framework.requires_interpreter.as_deref(), settings, root)
 }
 
 /// What `start` was asked to rerun, carried from `run_failed`/`run_node`
@@ -259,7 +278,8 @@ impl ffi::TestService {
         let Some(root) = current_project_root() else {
             return errors::failure(errors::CODE_NO_PROJECT, "no project is open");
         };
-        let Some((plugin, framework, program)) = detect_framework(&root) else {
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let Some((plugin, framework, program, host)) = detect_framework(&root, &settings) else {
             return errors::failure(
                 errors::CODE_REFUSED,
                 "no installed test framework is contributed for this project",
@@ -287,6 +307,7 @@ impl ffi::TestService {
             self.tree.borrow_mut().reset();
         }
         *self.framework_name.borrow_mut() = framework.name.clone();
+        *self.run_host.borrow_mut() = Some(host.clone());
         // Diagnostics from the framework this run uses are recomputed as
         // events arrive (`republish`); a stale row from a source this
         // project no longer contributes would otherwise never be cleared.
@@ -323,6 +344,16 @@ impl ffi::TestService {
             framework.filter_template.as_deref(),
             &patterns,
         );
+        // A PHP framework runs under the configured interpreter, which is
+        // what makes it run inside that interpreter's container.
+        let (program, args) = match framework.requires_interpreter.as_deref() {
+            Some("php") => {
+                let interpreter = settings_model::php::resolve(&settings).interpreter;
+                let (program, prefix) = analysis_core::php_invocation(&program, Some(&interpreter));
+                (program, [prefix, args].concat())
+            }
+            _ => (program, args),
+        };
 
         let Ok(output_format) = test_core::parse_output_format(&framework.output_format) else {
             return errors::failure(
@@ -346,7 +377,8 @@ impl ffi::TestService {
                 ansi: run_core::AnsiStripper::default(),
             };
             let program_str = program.to_string_lossy().into_owned();
-            let result = test_core::run(
+            let result = test_core::run_on(
+                &host,
                 &handle,
                 &program_str,
                 &args,
@@ -396,7 +428,13 @@ fn republish(service: &ffi::TestService) {
     let Some(work_dir) = current_project_root() else {
         return;
     };
-    let grouped = test_core::diagnostics_by_file(&service.tree.borrow(), &framework, &work_dir);
+    let host = service
+        .run_host
+        .borrow()
+        .clone()
+        .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&work_dir));
+    let grouped =
+        test_core::diagnostics_by_file_on(&host, &service.tree.borrow(), &framework, &work_dir);
     for (uri, diagnostics) in grouped {
         store.replace(&key, &uri, diagnostics);
     }

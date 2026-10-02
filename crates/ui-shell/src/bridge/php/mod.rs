@@ -23,6 +23,19 @@ use crate::bridge::ffi::{self, FfiResult};
 
 pub use composer::ComposerServiceRust;
 
+/// The host a PHP-aware tool runs on (ADR-0067): the interpreter's, when
+/// the tool `requires_interpreter`, else the project's own.
+pub(crate) fn tool_host(
+    requires_interpreter: Option<&str>,
+    settings: &app_config::Settings,
+    root: &std::path::Path,
+) -> process_exec::host::ExecHost {
+    match requires_interpreter {
+        Some(_) => php_core::host::interpreter_host(&settings.php, &settings.containers, root),
+        None => process_exec::host::ExecHost::for_path(root),
+    }
+}
+
 /// A licence-key edit waiting for the dialog's OK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LicenceChange {
@@ -153,9 +166,15 @@ impl ffi::PhpSettingsEditor {
         };
         let root =
             crate::bridge::convert::current_project_root().unwrap_or_else(std::env::temp_dir);
+        // The draft's container choice, not the saved one: the user is
+        // editing it and presses Detect to see whether it works.
+        let host = php_core::host::interpreter_host(
+            &self.draft.borrow(),
+            &crate::bridge::convert::load_resolved_settings().containers,
+            &root,
+        );
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
-            let host = process_exec::host::ExecHost::for_path(&root);
             let result = to_ffi_probe(php_core::probe::probe(&host, &interpreter, &root));
             let _ = qt_thread.queue(move |mut editor: Pin<&mut Self>| {
                 editor.as_mut().probe_finished(result);

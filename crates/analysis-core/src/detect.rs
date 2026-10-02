@@ -72,10 +72,26 @@ impl AnalyzerStatus {
 /// function defers to it entirely rather than trying to guess executability
 /// from the Windows side of the share.
 pub fn find_program(candidates: &[String], project_root: &Path) -> Option<PathBuf> {
-    let host = process_exec::host::ExecHost::for_path(project_root);
+    find_program_on(
+        candidates,
+        project_root,
+        &process_exec::host::ExecHost::for_path(project_root),
+    )
+}
+
+/// [`find_program`] against an explicit `host` — the PHP interpreter's
+/// container, say, rather than the one the project root implies. A tool in
+/// a container is found *inside* it (`command -v`/`test -x`); a path it
+/// reports under the project mount comes back as the local file, any other
+/// as the container's own path.
+pub fn find_program_on(
+    candidates: &[String],
+    project_root: &Path,
+    host: &process_exec::host::ExecHost,
+) -> Option<PathBuf> {
     candidates
         .iter()
-        .find_map(|candidate| resolve_one(candidate, project_root, &host))
+        .find_map(|candidate| resolve_one(candidate, project_root, host))
 }
 
 fn resolve_one(
@@ -83,7 +99,7 @@ fn resolve_one(
     project_root: &Path,
     host: &process_exec::host::ExecHost,
 ) -> Option<PathBuf> {
-    if host.filesystem_is_remote() {
+    if host.runs_remotely() {
         return process_exec::host::resolve_program(host, candidate, project_root)
             .map(|remote_path| host.to_local(&remote_path));
     }
@@ -151,7 +167,22 @@ pub fn status(
     project_root: &Path,
     composer_packages: &[&str],
 ) -> AnalyzerStatus {
-    if let Some(program) = find_program(program_candidates, project_root) {
+    status_on(
+        &process_exec::host::ExecHost::for_path(project_root),
+        program_candidates,
+        project_root,
+        composer_packages,
+    )
+}
+
+/// [`status`] against an explicit `host` ([`find_program_on`]).
+pub fn status_on(
+    host: &process_exec::host::ExecHost,
+    program_candidates: &[String],
+    project_root: &Path,
+    composer_packages: &[&str],
+) -> AnalyzerStatus {
+    if let Some(program) = find_program_on(program_candidates, project_root, host) {
         return AnalyzerStatus::Detected { program };
     }
     if let Some(declared) = composer_require_dev(project_root) {
@@ -344,5 +375,35 @@ mod tests {
                 "//wsl.localhost/Ubuntu/usr/bin/phpstan"
             ))
         );
+    }
+
+    fn container_that_finds_everything(root: &Path) -> process_exec::host::ExecHost {
+        // Answers the `command -v`/`test -x` probe with its last argument.
+        let engine = r#"for a; do last=$a; done; echo "$last""#;
+        process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec!["-c".into(), engine.into(), "sh".into()],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: process_exec::host::PathMap::new(root, "/var/www"),
+        })
+    }
+
+    #[test]
+    fn a_tool_found_in_a_container_under_the_mount_is_the_local_file() {
+        let root = project();
+        let host = container_that_finds_everything(root.path());
+        let found = find_program_on(&["vendor/bin/phpstan".to_string()], root.path(), &host);
+        assert_eq!(found, Some(root.path().join("vendor/bin/phpstan")));
+    }
+
+    #[test]
+    fn a_global_tool_in_a_container_keeps_the_containers_own_path() {
+        let root = project();
+        let host = container_that_finds_everything(root.path());
+        let found = find_program_on(&["/usr/local/bin/phpcs".to_string()], root.path(), &host);
+        assert_eq!(found, Some(PathBuf::from("/usr/local/bin/phpcs")));
     }
 }

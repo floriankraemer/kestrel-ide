@@ -189,8 +189,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 |---|---|---|
 | X1 — `ExecHost::Container` (argv/to_remote/to_local); `is_remote` split; walk the match sites | done | 1d1806e |
 | X2 — `resolve_program` inside the container; NotFound mapping | done | 463118a |
-| X3 — `container_core::target::exec_host` (exec/run modes, Docker/Podman/Compose) | done | — |
-| X4 — scheduler, test runner, formatter and `exec="interpreter"` servers run on the interpreter host | open | |
+| X3 — `container_core::target::exec_host` (exec/run modes, Docker/Podman/Compose) | done | 85b2938 |
+| X4 — scheduler, test runner, formatter and `exec="interpreter"` servers run on the interpreter host | done | — |
 | X5 — PHP run configs inherit `run_on` = the interpreter target (including `php -S` ports) | open | |
 | X6 — ADR-0067 + `layering.md` rows | open | |
 

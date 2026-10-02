@@ -18,6 +18,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
+use process_exec::host::ExecHost;
+
 /// A finished run's raw output, before any output-format parsing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunOutput {
@@ -39,6 +41,7 @@ pub enum RunFailure {
 pub type RunResult = Result<RunOutput, RunFailure>;
 
 fn run_process(
+    host: &process_exec::host::ExecHost,
     program: &Path,
     args: &[String],
     project_root: &Path,
@@ -47,16 +50,24 @@ fn run_process(
 ) -> RunResult {
     let program_str = program.to_string_lossy();
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    process_exec::run(&program_str, &arg_refs, project_root, stdin, timeout, &[])
-        .map(|out| RunOutput {
-            stdout: out.stdout,
-            stderr: out.stderr,
-        })
-        .map_err(|e| match e {
-            process_exec::Failure::NotFound => RunFailure::NotFound,
-            process_exec::Failure::TimedOut => RunFailure::TimedOut,
-            process_exec::Failure::Io(msg) => RunFailure::Io(msg),
-        })
+    process_exec::run_on(
+        host,
+        &program_str,
+        &arg_refs,
+        project_root,
+        stdin,
+        timeout,
+        &[],
+    )
+    .map(|out| RunOutput {
+        stdout: out.stdout,
+        stderr: out.stderr,
+    })
+    .map_err(|e| match e {
+        process_exec::Failure::NotFound => RunFailure::NotFound,
+        process_exec::Failure::TimedOut => RunFailure::TimedOut,
+        process_exec::Failure::Io(msg) => RunFailure::Io(msg),
+    })
 }
 
 /// One (analyzer, file) key's generation counter.
@@ -107,6 +118,7 @@ impl Scheduler {
     pub fn schedule_file_run<F>(
         &self,
         analyzer_id: &str,
+        host: ExecHost,
         program: PathBuf,
         args: Vec<String>,
         project_root: &Path,
@@ -137,7 +149,14 @@ impl Scheduler {
             if generation.load(Ordering::SeqCst) != my_generation {
                 return; // superseded before the run even started
             }
-            let result = run_process(&program, &args, &project_root, stdin.as_deref(), timeout);
+            let result = run_process(
+                &host,
+                &program,
+                &args,
+                &project_root,
+                stdin.as_deref(),
+                timeout,
+            );
             if generation.load(Ordering::SeqCst) != my_generation {
                 return; // superseded while the process was running
             }
@@ -153,6 +172,7 @@ impl Scheduler {
     /// queueing a second one silently.
     pub fn run_manual<F>(
         &self,
+        host: ExecHost,
         program: PathBuf,
         args: Vec<String>,
         project_root: &Path,
@@ -168,7 +188,7 @@ impl Scheduler {
         let running = self.manual_running.clone();
         let project_root = project_root.to_path_buf();
         thread::spawn(move || {
-            let result = run_process(&program, &args, &project_root, None, timeout);
+            let result = run_process(&host, &program, &args, &project_root, None, timeout);
             // Cleared *before* the callback, not after: a caller that has
             // been handed the result is entitled to start the next manual
             // run from inside it, and to see `is_manual_run_in_progress()`
@@ -197,6 +217,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         scheduler.schedule_file_run(
             "phpstan",
+            ExecHost::Local,
             PathBuf::from("this-program-does-not-exist-anywhere"),
             vec![],
             Path::new("."),
@@ -217,6 +238,7 @@ mod tests {
         let tx1 = tx.clone();
         scheduler.schedule_file_run(
             "phpstan",
+            ExecHost::Local,
             PathBuf::from("nope"),
             vec![],
             Path::new("."),
@@ -229,6 +251,7 @@ mod tests {
         // Supersede before the first call's debounce elapses.
         scheduler.schedule_file_run(
             "phpstan",
+            ExecHost::Local,
             PathBuf::from("nope"),
             vec![],
             Path::new("."),
@@ -250,6 +273,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         scheduler.schedule_file_run(
             "phpstan",
+            ExecHost::Local,
             PathBuf::from("nope"),
             vec![],
             Path::new("."),
@@ -264,6 +288,7 @@ mod tests {
         );
         scheduler.schedule_file_run(
             "phpstan",
+            ExecHost::Local,
             PathBuf::from("nope"),
             vec![],
             Path::new("."),
@@ -286,6 +311,7 @@ mod tests {
         let scheduler = Scheduler::new();
         let (tx, rx) = mpsc::channel();
         let started = scheduler.run_manual(
+            ExecHost::Local,
             PathBuf::from("/bin/sh"),
             vec!["-c".to_string(), "sleep 0.3".to_string()],
             Path::new("."),
@@ -295,6 +321,7 @@ mod tests {
         assert!(started);
         assert!(scheduler.is_manual_run_in_progress());
         let refused = scheduler.run_manual(
+            ExecHost::Local,
             PathBuf::from("/bin/sh"),
             vec!["-c".to_string(), "true".to_string()],
             Path::new("."),
@@ -313,6 +340,7 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         let inner = Arc::clone(&scheduler);
         let started = scheduler.run_manual(
+            ExecHost::Local,
             PathBuf::from("/bin/sh"),
             vec!["-c".to_string(), "true".to_string()],
             Path::new("."),
@@ -321,6 +349,7 @@ mod tests {
                 // The run this callback reports is over, so the flag must
                 // already be clear and a second run must be accepted.
                 let again = inner.run_manual(
+                    ExecHost::Local,
                     PathBuf::from("/bin/sh"),
                     vec!["-c".to_string(), "true".to_string()],
                     Path::new("."),
@@ -334,6 +363,42 @@ mod tests {
         assert!(
             rx.recv_timeout(Duration::from_secs(5)).unwrap(),
             "a manual run started from the previous run's callback must be accepted"
+        );
+    }
+
+    #[test]
+    fn a_run_on_a_container_host_goes_through_the_engine_with_project_paths_rebased() {
+        let root = tempfile::tempdir().unwrap();
+        // A `sh` stands in for the container engine: it answers the
+        // program probe with its last argument and otherwise prints its argv.
+        let engine = r#"for a; do last=$a; done; case "$*" in *"test -x"*) echo "$last";; *) echo "$@";; esac"#;
+        let host = ExecHost::Container(process_exec::host::ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec!["-c".into(), engine.into(), "sh".into()],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec!["exec".into(), "-T".into()],
+            target: vec!["php".into()],
+            path_map: process_exec::host::PathMap::new(root.path(), "/var/www"),
+        });
+        let file = root.path().join("src/A.php");
+        let (tx, rx) = mpsc::channel();
+        Scheduler::new().schedule_file_run(
+            "phpstan",
+            host,
+            root.path().join("vendor/bin/phpstan"),
+            vec!["analyse".into(), file.to_string_lossy().into_owned()],
+            root.path(),
+            &file,
+            None,
+            Duration::ZERO,
+            Duration::from_secs(5),
+            move |result| tx.send(result).unwrap(),
+        );
+        let output = rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "exec -T -w /var/www php /var/www/vendor/bin/phpstan analyse /var/www/src/A.php"
         );
     }
 }

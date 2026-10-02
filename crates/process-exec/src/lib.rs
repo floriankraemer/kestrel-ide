@@ -326,8 +326,14 @@ pub fn spawn_on(
     env: &[(&str, &str)],
     stdin_file: Option<&Path>,
 ) -> Result<Spawned, Failure> {
-    let resolved_program =
-        host::resolve_program(host, program, work_dir).unwrap_or_else(|| program.to_string());
+    let resolved_program = match host::resolve_program(host, program, work_dir) {
+        Some(resolved) => resolved,
+        // A spawned child's exit is never inspected here, so a container
+        // that is down or lacks the tool would surface as a process that
+        // dies with engine text on a pipe. Say so up front instead.
+        None if matches!(host, ExecHost::Container(_)) => return Err(Failure::NotFound),
+        None => program.to_string(),
+    };
 
     let stdin = match stdin_file {
         Some(path) => {
@@ -386,6 +392,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.stdout, b"hi\n");
+    }
+
+    #[test]
+    fn spawn_on_a_container_without_the_tool_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        // `false` as the engine fails every probe, like a stopped container.
+        let host = ExecHost::Container(host::ContainerHost {
+            program: "false".into(),
+            prefix_args: vec![],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: host::PathMap::new(dir.path(), "/workspace"),
+        });
+        assert!(matches!(
+            spawn_on(&host, "phpunit", &[], dir.path(), &[], None),
+            Err(Failure::NotFound)
+        ));
     }
 
     #[test]

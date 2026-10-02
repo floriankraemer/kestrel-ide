@@ -143,7 +143,13 @@ fn attr(tag: &quick_xml::events::BytesStart<'_>, key: &str) -> Result<Option<Str
 /// which is always `root`) is resolved against `root` so the file's URI
 /// matches the one the editor opened.
 pub fn locate_file(root: &Path, file: &str) -> PathBuf {
-    let path = process_exec::host::ExecHost::for_path(root).path_from_tool(file);
+    locate_file_on(&process_exec::host::ExecHost::for_path(root), root, file)
+}
+
+/// [`locate_file`] for a tool that ran on `host`: a container's paths
+/// under the project mount map back to the local file.
+pub fn locate_file_on(host: &process_exec::host::ExecHost, root: &Path, file: &str) -> PathBuf {
+    let path = host.path_from_tool(file);
     if path.is_relative() {
         root.join(path)
     } else {
@@ -296,5 +302,28 @@ mod tests {
         let findings = parse(&fixture("checkstyle_two_files.xml")).unwrap();
         let diagnostics = to_diagnostics(&findings, "/project/src/A.php", &phpstan());
         assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn a_file_a_container_tool_printed_maps_back_to_the_local_file() {
+        let root = Path::new("/home/f/proj");
+        let host = process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+            program: "docker".into(),
+            prefix_args: vec![],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: process_exec::host::PathMap::new(root, "/var/www"),
+        });
+        assert_eq!(
+            locate_file_on(&host, root, "/var/www/src/A.php"),
+            root.join("src/A.php")
+        );
+        // PHPStan prints paths relative to the working directory.
+        assert_eq!(
+            locate_file_on(&host, root, "src/A.php"),
+            root.join("src/A.php")
+        );
     }
 }

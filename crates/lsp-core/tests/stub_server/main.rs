@@ -6,6 +6,7 @@ mod support;
 
 mod code_lens;
 mod completion;
+mod container_host;
 mod f2_surface;
 mod formatting;
 mod hierarchy;

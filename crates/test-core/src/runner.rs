@@ -266,6 +266,33 @@ pub fn run(
     report_glob: Option<&str>,
     sink: &mut dyn TestSink,
 ) -> Result<Option<i32>, RunFailure> {
+    run_on(
+        &process_exec::host::ExecHost::for_path(work_dir),
+        handle,
+        program,
+        args,
+        work_dir,
+        format,
+        report_glob,
+        sink,
+    )
+}
+
+/// [`run`] on an explicit `host` — the PHP interpreter's container, say,
+/// rather than the one `work_dir` implies. The JUnit report glob still
+/// reads under `work_dir`: a container mounts the project, so the report it
+/// writes there is the local file.
+#[allow(clippy::too_many_arguments)]
+pub fn run_on(
+    host: &process_exec::host::ExecHost,
+    handle: &TestRunHandle,
+    program: &str,
+    args: &[String],
+    work_dir: &Path,
+    format: OutputFormat,
+    report_glob: Option<&str>,
+    sink: &mut dyn TestSink,
+) -> Result<Option<i32>, RunFailure> {
     // Taken before the process is even spawned (finding 4): the clock-free
     // snapshot this run's own reports are diffed against, so a run that
     // writes nothing at all never gets mistaken for a run whose reports
@@ -275,15 +302,17 @@ pub fn run(
         _ => HashMap::new(),
     };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let spawned = process_exec::spawn(program, &arg_refs, work_dir).map_err(|e| match e {
-        process_exec::Failure::NotFound => RunFailure::NotFound,
-        process_exec::Failure::Io(msg) => RunFailure::Io(msg),
-        // `spawn` never blocks waiting for exit, so it has no timeout to
-        // report; kept as an arm rather than matched away so a future
-        // change to `process_exec::Failure` is a compile error here, not a
-        // silent gap.
-        process_exec::Failure::TimedOut => RunFailure::Io("unexpected timeout".into()),
-    })?;
+    let spawned = process_exec::spawn_on(host, program, &arg_refs, work_dir, &[], None).map_err(
+        |e| match e {
+            process_exec::Failure::NotFound => RunFailure::NotFound,
+            process_exec::Failure::Io(msg) => RunFailure::Io(msg),
+            // `spawn` never blocks waiting for exit, so it has no timeout to
+            // report; kept as an arm rather than matched away so a future
+            // change to `process_exec::Failure` is a compile error here, not a
+            // silent gap.
+            process_exec::Failure::TimedOut => RunFailure::Io("unexpected timeout".into()),
+        },
+    )?;
     *handle
         .spawned
         .lock()
@@ -379,6 +408,38 @@ mod tests {
         assert_eq!(code, Some(0));
         assert_eq!(collected.events.len(), 2);
         assert!(collected.output.contains("teamcity"));
+    }
+
+    #[test]
+    fn a_run_on_a_container_host_streams_what_the_engine_prints() {
+        let dir = tempfile::tempdir().unwrap();
+        // A `sh` stands in for the container engine: it answers the program
+        // probe with its last argument, and otherwise "runs" the tests.
+        let engine = r###"for a; do last=$a; done; case "$*" in *"test -x"*) echo "$last";; *) echo "##teamcity[testStarted name='t']"; echo "##teamcity[testFinished name='t' duration='1']";; esac"###;
+        let host = process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec!["-c".into(), engine.into(), "sh".into()],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: process_exec::host::PathMap::new(dir.path(), "/var/www"),
+        });
+        let handle = TestRunHandle::new();
+        let mut collected = Collected::default();
+        let code = run_on(
+            &host,
+            &handle,
+            "/usr/local/bin/phpunit",
+            &[],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut collected,
+        )
+        .unwrap();
+        assert_eq!(code, Some(0));
+        assert_eq!(collected.events.len(), 2);
     }
 
     #[test]

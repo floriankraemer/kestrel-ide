@@ -110,6 +110,7 @@ fn analysis_draft() -> settings_model::analysis::AnalysisDraft {
 /// between "do it yourself" and "hand me the already-computed answer".
 fn build_analyzer_rows(
     root: &Path,
+    settings: &app_config::Settings,
     draft: &settings_model::analysis::AnalysisDraft,
     contributions: &[plugin_api::AnalyzerContribution],
 ) -> Vec<ffi::FfiAnalyzerRow> {
@@ -127,7 +128,12 @@ fn build_analyzer_rows(
                 .and_then(|c| c.composer_package.as_deref())
                 .into_iter()
                 .collect();
-            let status = analysis_core::status(&candidates, root, &packages);
+            let host = crate::bridge::php::tool_host(
+                contribution.and_then(|c| c.requires_interpreter.as_deref()),
+                settings,
+                root,
+            );
+            let status = analysis_core::status_on(&host, &candidates, root, &packages);
             let status_kind = match status {
                 analysis_core::AnalyzerStatus::Detected { .. } => {
                     ffi::FfiAnalyzerStatusKind::Detected
@@ -167,7 +173,8 @@ impl ffi::AnalysisService {
         };
         let draft = analysis_draft();
         let contributions = contributed_analyzers();
-        build_analyzer_rows(&root, &draft, &contributions)
+        let settings = crate::bridge::convert::load_resolved_settings();
+        build_analyzer_rows(&root, &settings, &draft, &contributions)
     }
 
     /// `analyzer_rows`'s answer, computed off the Qt thread and delivered
@@ -196,7 +203,7 @@ impl ffi::AnalysisService {
             // Qt thread.
             let settings = crate::bridge::convert::load_resolved_settings_for(&root);
             let draft = settings_model::analysis::AnalysisDraft::new(&settings, &contributions);
-            let rows = build_analyzer_rows(&root, &draft, &contributions);
+            let rows = build_analyzer_rows(&root, &settings, &draft, &contributions);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
                 if current_project_root().as_deref() != Some(root.as_path()) {
                     return;
@@ -231,10 +238,18 @@ impl ffi::AnalysisService {
 
         self.program_cache.borrow_mut().clear();
         let draft = analysis_draft();
+        let settings = crate::bridge::convert::load_resolved_settings();
         let defs: VecDeque<analysis_core::AnalyzerDef> = contributed_analyzers()
             .iter()
             .filter(|c| draft.row(&c.id).is_some_and(|row| row.enabled))
-            .filter(|c| analysis_core::find_program(&c.program_candidates, &root).is_some())
+            .filter(|c| {
+                let host = crate::bridge::php::tool_host(
+                    c.requires_interpreter.as_deref(),
+                    &settings,
+                    &root,
+                );
+                analysis_core::find_program_on(&c.program_candidates, &root, &host).is_some()
+            })
             .map(analysis_core::AnalyzerDef::from_contribution)
             .collect();
 
@@ -293,7 +308,7 @@ impl ffi::AnalysisService {
                 continue;
             };
             let analyzer = analysis_core::AnalyzerDef::from_contribution(contribution);
-            let Some((program, prefix)) = self.resolve_launch(&analyzer, &root) else {
+            let Some((host, (program, prefix))) = self.resolve_launch(&analyzer, &root) else {
                 continue;
             };
             let (target, guard, stdin) = match analyzer.buffer {
@@ -313,6 +328,7 @@ impl ffi::AnalysisService {
             let file = path.clone();
             self.scheduler.schedule_file_run(
                 &analyzer.id.clone(),
+                host,
                 program,
                 args,
                 &root,
@@ -339,18 +355,32 @@ impl ffi::AnalysisService {
 
     /// The analyzer's program and the argv prefix that runs it under the
     /// configured PHP interpreter when its manifest requires one (P0-6).
-    fn resolve_launch(&self, analyzer: &analysis_core::AnalyzerDef, root: &Path) -> Option<Launch> {
-        let interpreter =
-            settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings())
-                .interpreter;
-        self.program_cache
+    ///
+    /// Also the host it runs on: the PHP interpreter's (a container, when
+    /// the `[php]` settings name one) for an analyzer that requires it, the
+    /// project's own otherwise (ADR-0067).
+    fn resolve_launch(
+        &self,
+        analyzer: &analysis_core::AnalyzerDef,
+        root: &Path,
+    ) -> Option<(process_exec::host::ExecHost, Launch)> {
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let interpreter = settings_model::php::resolve(&settings).interpreter;
+        let host = crate::bridge::php::tool_host(
+            analyzer.requires_interpreter.as_deref(),
+            &settings,
+            root,
+        );
+        let launch = self
+            .program_cache
             .borrow_mut()
-            .entry(format!("{}\0{interpreter}", analyzer.id))
+            .entry(format!("{}\0{interpreter}\0{host:?}", analyzer.id))
             .or_insert_with(|| {
-                analysis_core::find_program(&analyzer.program_candidates, root)
+                analysis_core::find_program_on(&analyzer.program_candidates, root, &host)
                     .map(|program| analyzer.invocation(&program, &interpreter))
             })
-            .clone()
+            .clone()?;
+        Some((host, launch))
     }
 
     /// Pop and run the next queued analyzer, or announce the batch is
@@ -360,7 +390,7 @@ impl ffi::AnalysisService {
             self.as_mut().analysis_finished();
             return;
         };
-        let Some((program, prefix)) = self.resolve_launch(&analyzer, &root) else {
+        let Some((host, (program, prefix))) = self.resolve_launch(&analyzer, &root) else {
             // Detected when the batch was built, gone by the time its turn
             // came (uninstalled mid-run) — skip it rather than fail the
             // whole batch over one analyzer.
@@ -374,36 +404,46 @@ impl ffi::AnalysisService {
         self.as_mut().analyzer_started(QString::from(id.as_str()));
         let root_for_next = root.clone();
         let root_for_publish = root.clone();
-        let started =
-            self.scheduler
-                .run_manual(program, args, &root, MANUAL_RUN_TIMEOUT, move |result| {
-                    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
-                        publish_result(&service, &analyzer, &result, &root_for_publish);
-                        // The store just changed for this analyzer's rows —
-                        // tell the editor and the Problems dock, the same
-                        // signal `LanguageService`/`BuildService` emit for
-                        // their own writes (ADR-0046).
-                        service.as_mut().diagnostics_changed();
-                        let (ok, message) = match &result {
-                            Ok(_) => (true, String::new()),
-                            Err(analysis_core::RunFailure::NotFound) => {
-                                (false, format!("{id}: program not found"))
-                            }
-                            Err(analysis_core::RunFailure::TimedOut) => {
-                                (false, format!("{id}: timed out"))
-                            }
-                            Err(analysis_core::RunFailure::Io(msg)) => {
-                                (false, format!("{id}: {msg}"))
-                            }
-                        };
-                        service.as_mut().analyzer_finished(
-                            QString::from(id.as_str()),
-                            ok,
-                            QString::from(message.as_str()),
-                        );
-                        service.run_next(root_for_next);
-                    });
+        let host_for_publish = host.clone();
+        let started = self.scheduler.run_manual(
+            host,
+            program,
+            args,
+            &root,
+            MANUAL_RUN_TIMEOUT,
+            move |result| {
+                let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
+                    publish_result(
+                        &service,
+                        &analyzer,
+                        &result,
+                        &root_for_publish,
+                        &host_for_publish,
+                    );
+                    // The store just changed for this analyzer's rows —
+                    // tell the editor and the Problems dock, the same
+                    // signal `LanguageService`/`BuildService` emit for
+                    // their own writes (ADR-0046).
+                    service.as_mut().diagnostics_changed();
+                    let (ok, message) = match &result {
+                        Ok(_) => (true, String::new()),
+                        Err(analysis_core::RunFailure::NotFound) => {
+                            (false, format!("{id}: program not found"))
+                        }
+                        Err(analysis_core::RunFailure::TimedOut) => {
+                            (false, format!("{id}: timed out"))
+                        }
+                        Err(analysis_core::RunFailure::Io(msg)) => (false, format!("{id}: {msg}")),
+                    };
+                    service.as_mut().analyzer_finished(
+                        QString::from(id.as_str()),
+                        ok,
+                        QString::from(message.as_str()),
+                    );
+                    service.run_next(root_for_next);
                 });
+            },
+        );
         if !started {
             // The scheduler itself refused (should not happen: this
             // adapter is the only caller of `run_manual`), so the batch
@@ -428,6 +468,7 @@ fn publish_result(
     analyzer: &analysis_core::AnalyzerDef,
     result: &analysis_core::RunResult,
     root: &Path,
+    host: &process_exec::host::ExecHost,
 ) {
     let Ok(output) = result else {
         return;
@@ -445,7 +486,7 @@ fn publish_result(
     store.clear_source(&key);
     for file in files {
         let diagnostics = analysis_core::to_diagnostics(&findings, file, analyzer);
-        let local = analysis_core::locate_file(root, file);
+        let local = analysis_core::locate_file_on(host, root, file);
         let uri = diagnostics_core::uri_from_path(&local.to_string_lossy());
         store.replace(&key, &uri, diagnostics);
     }

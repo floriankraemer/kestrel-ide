@@ -126,6 +126,26 @@ impl PathMap {
         }
     }
 
+    /// `arg` as the container should see it: a project path (or a
+    /// `--flag=<project path>` value) is rebased onto the mount root,
+    /// anything else is passed through. The tool is told paths in the
+    /// IDE's own spelling (the file to analyse, the project root, the
+    /// program itself); only the container knows they live elsewhere.
+    pub fn rebase_arg(&self, arg: &str) -> String {
+        if let Some(remote) = self.to_remote(Path::new(arg)) {
+            return remote;
+        }
+        match arg.split_once('=') {
+            Some((flag, value)) if flag.starts_with('-') => {
+                match self.to_remote(Path::new(value)) {
+                    Some(remote) => format!("{flag}={remote}"),
+                    None => arg.to_string(),
+                }
+            }
+            _ => arg.to_string(),
+        }
+    }
+
     /// The inverse of [`Self::to_remote`]: `remote` under
     /// [`Self::remote_root`] -> the same path under [`Self::local_root`],
     /// played back with `local_root`'s own separator style. `None` when
@@ -351,8 +371,8 @@ impl ExecHost {
                     full.push(format!("{key}={value}"));
                 }
                 full.extend(container.target.iter().cloned());
-                full.push(program.to_string());
-                full.extend(args.iter().map(|a| a.to_string()));
+                full.push(container.path_map.rebase_arg(program));
+                full.extend(args.iter().map(|a| container.path_map.rebase_arg(a)));
                 (container.program.clone(), full)
             }
             ExecHost::Local => (
@@ -1164,6 +1184,34 @@ mod tests {
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
         assert!(args.windows(2).any(|w| w == ["-e", "A=b"]), "{args:?}");
         assert_eq!(command.get_current_dir(), Some(Path::new("/home/f/proj")));
+    }
+
+    #[test]
+    fn project_paths_in_the_program_and_args_are_rebased_onto_the_mount() {
+        let (_, args) = container().argv(
+            "/home/f/proj/vendor/bin/phpstan",
+            &[
+                "analyse",
+                "/home/f/proj/src/A.php",
+                "--configuration=/home/f/proj/phpstan.neon",
+                "--level=5",
+                "src/relative.php",
+                "/etc/hosts",
+            ],
+            Path::new("/home/f/proj"),
+        );
+        assert_eq!(
+            args[args.len() - 7..],
+            [
+                "/var/www/vendor/bin/phpstan",
+                "analyse",
+                "/var/www/src/A.php",
+                "--configuration=/var/www/phpstan.neon",
+                "--level=5",
+                "src/relative.php",
+                "/etc/hosts"
+            ]
+        );
     }
 
     #[test]

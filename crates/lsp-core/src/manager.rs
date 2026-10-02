@@ -47,6 +47,7 @@ mod host_translation_tests;
 #[cfg(test)]
 mod no_server_document_lifecycle_tests;
 mod routed;
+mod wire_uris;
 
 /// Windows path -> Linux path (if `host` is remote) -> `file://` URI.
 ///
@@ -345,6 +346,9 @@ struct Server {
     /// Where this server's process runs (ADR-0066): the project's host unless
     /// the server's `exec` says otherwise.
     host: ExecHost,
+    /// The project's own host, whose URI spelling every caller and every
+    /// result uses. When it differs from `host`, the wire is translated.
+    project_host: ExecHost,
     /// Whether its `publishDiagnostics` are forwarded (`ServerConfig::diagnostics`).
     diagnostics: bool,
     conn: Mutex<Option<Conn>>,
@@ -406,14 +410,15 @@ struct Server {
     /// cannot cost the client every other capability.
     capabilities: Mutex<Value>,
     /// The document URIs this server has been sent `didOpen` for and not yet
-    /// `didClose`, as it spells them. A server started after a document was
+    /// `didClose`, as the project host spells them. A server started after a document was
     /// opened gets its `didOpen` without the others getting a second one.
     opened: Mutex<HashSet<String>>,
 }
 
 impl Server {
     fn send(&self, message: &Value) -> Result<(), LspError> {
-        let payload = serde_json::to_vec(message).map_err(io::Error::from)?;
+        let message = self.message_to_wire(message);
+        let payload = serde_json::to_vec(&message).map_err(io::Error::from)?;
         let mut guard = self.conn.lock().unwrap();
         let conn = guard
             .as_mut()
@@ -561,9 +566,9 @@ impl LspManager {
     /// [`Self::start`], with the server's process on `host` rather than the
     /// project's — the seam for a server with `exec = "interpreter"`.
     ///
-    /// Only the process, the `rootUri` and the document URIs of `didOpen` and
-    /// its siblings follow `host`; request params and results are not yet
-    /// retranslated, which a host with a path map (ADR-0067) will need.
+    /// Every URI crossing the wire is translated between the project's host
+    /// and `host` (`wire_uris`), so callers and results keep speaking in
+    /// project paths while a container's server sees its own.
     pub fn start_on(&self, cfg: &ServerConfig, host: ExecHost) -> Result<(), LspError> {
         if self.servers.lock().unwrap().contains_key(&cfg.id) {
             return Ok(());
@@ -573,6 +578,7 @@ impl LspManager {
             language_id: cfg.language_id.clone(),
             priority: cfg.priority,
             host: host.clone(),
+            project_host: self.host.clone(),
             diagnostics: cfg.diagnostics,
             conn: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
@@ -733,13 +739,10 @@ impl LspManager {
         self.notify_servers_where(
             language_id,
             "textDocument/didOpen",
-            |server| {
-                let wire_uri = self.uri_on(&server.host, &uri);
-                server.opened.lock().unwrap().insert(wire_uri)
-            },
-            |server| {
+            |server| server.opened.lock().unwrap().insert(uri.clone()),
+            |_| {
                 json!({"textDocument": {
-                    "uri": self.uri_on(&server.host, &uri),
+                    "uri": uri,
                     "languageId": language_id, "version": version, "text": text
                 }})
             },
@@ -785,8 +788,7 @@ impl LspManager {
         let language_id = self.language_of(&uri)?;
         self.documents.lock().unwrap().remove(&uri);
         for server in self.servers_of(&language_id) {
-            let wire_uri = self.uri_on(&server.host, &uri);
-            server.opened.lock().unwrap().remove(&wire_uri);
+            server.opened.lock().unwrap().remove(&uri);
         }
         self.notify_document(
             &language_id,
@@ -796,8 +798,8 @@ impl LspManager {
         )
     }
 
-    /// Send a document notification to every server of the language, each
-    /// with the document's URI as that server's own host spells it.
+    /// Send a document notification to every server of the language. The
+    /// URI is the project host's; each server's wire translates it.
     fn notify_document(
         &self,
         language_id: &str,
@@ -805,9 +807,7 @@ impl LspManager {
         uri: &str,
         params: impl Fn(&str) -> Value,
     ) -> Result<(), LspError> {
-        self.notify_servers(language_id, method, |server| {
-            params(&self.uri_on(&server.host, uri))
-        })
+        self.notify_servers(language_id, method, |_| params(uri))
     }
 
     /// The workspace root as `host` spells it.
@@ -816,18 +816,6 @@ impl LspManager {
             self.root_uri.clone()
         } else {
             uri_for(host, &self.root_path)
-        }
-    }
-
-    /// A project-host URI as `host` spells it: unchanged for the project's
-    /// own host, otherwise through the local path both agree on.
-    fn uri_on(&self, host: &ExecHost, uri: &str) -> String {
-        if *host == self.host {
-            return uri.to_string();
-        }
-        match path_for(&self.host, uri) {
-            Some(path) => uri_for(host, &path),
-            None => uri.to_string(),
         }
     }
 
@@ -1230,7 +1218,11 @@ fn connect(
                 command: cfg.command.clone(),
                 source: io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("{} not found inside the WSL distro", cfg.command),
+                    format!(
+                        "{} not found inside the {}",
+                        cfg.command,
+                        wire_uris::host_noun(host)
+                    ),
                 ),
             },
         )?;
@@ -1254,7 +1246,7 @@ fn connect(
     // The handshake is done inline, before the connection is published, so
     // nothing else can be in flight and no dispatch table is needed yet.
     let mut init_params = json!({
-        "processId": std::process::id(),
+        "processId": wire_uris::parent_process_id(host),
         "rootUri": root_uri,
         "capabilities": capabilities::client_capabilities(),
         "workspaceFolders": Value::Null,
@@ -1345,7 +1337,12 @@ fn read_loop(
     loop {
         match read_message(&mut stdout) {
             Ok(Some(body)) => match serde_json::from_slice::<Value>(&body) {
-                Ok(message) => dispatch(server, language_id, message, events),
+                Ok(message) => dispatch(
+                    server,
+                    language_id,
+                    server.message_from_wire(message),
+                    events,
+                ),
                 // A single unparsable message is not worth killing the
                 // session over; the framing is still in sync.
                 Err(_) => continue,

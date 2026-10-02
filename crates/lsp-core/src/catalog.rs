@@ -668,20 +668,26 @@ pub struct LaunchPlan {
 ///
 /// A `posix_only` server (Phpactor) cannot run on native Windows, so it is
 /// skipped when `is_windows` and its process would run there: on a local
-/// host, not inside WSL and not on an interpreter host such as a container.
-/// `is_windows` is a parameter so the rule is testable on any platform.
+/// host, not inside WSL and not in a container. Which host that is depends
+/// on the server's `exec`: the project's (`project_host`) or the PHP
+/// interpreter's (`interpreter_host`, ADR-0067). `is_windows` is a
+/// parameter so the rule is testable on any platform.
 pub fn launch_plan<'a>(
     servers: impl IntoIterator<Item = &'a ServerConfig>,
-    host: &process_exec::host::ExecHost,
+    project_host: &process_exec::host::ExecHost,
+    interpreter_host: &process_exec::host::ExecHost,
     is_windows: bool,
 ) -> LaunchPlan {
-    let native_windows = is_windows && !host.runs_remotely();
     let mut plan = LaunchPlan {
         start: Vec::new(),
         skipped: Vec::new(),
     };
     for cfg in servers {
-        if cfg.posix_only && native_windows && cfg.exec == ServerExec::Host {
+        let host = match cfg.exec {
+            ServerExec::Host => project_host,
+            ServerExec::Interpreter => interpreter_host,
+        };
+        if cfg.posix_only && is_windows && !host.runs_remotely() {
             plan.skipped.push((
                 cfg.clone(),
                 format!(
@@ -1044,7 +1050,12 @@ mod tests {
     #[test]
     fn on_native_windows_a_posix_only_server_is_skipped_with_a_reason() {
         let servers = php_servers();
-        let plan = launch_plan(&servers, &process_exec::host::ExecHost::Local, true);
+        let plan = launch_plan(
+            &servers,
+            &process_exec::host::ExecHost::Local,
+            &process_exec::host::ExecHost::Local,
+            true,
+        );
         assert_eq!(
             plan.start.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
             ["intelephense"]
@@ -1062,7 +1073,12 @@ mod tests {
     #[test]
     fn everything_starts_off_windows() {
         let servers = php_servers();
-        let plan = launch_plan(&servers, &process_exec::host::ExecHost::Local, false);
+        let plan = launch_plan(
+            &servers,
+            &process_exec::host::ExecHost::Local,
+            &process_exec::host::ExecHost::Local,
+            false,
+        );
         assert_eq!(plan.start.len(), 2);
         assert!(plan.skipped.is_empty());
     }
@@ -1074,7 +1090,7 @@ mod tests {
             unc_prefix: "//wsl.localhost/Ubuntu".into(),
         });
         let servers = php_servers();
-        assert!(launch_plan(&servers, &wsl, true).skipped.is_empty());
+        assert!(launch_plan(&servers, &wsl, &wsl, true).skipped.is_empty());
 
         let in_container: Vec<_> = servers
             .iter()
@@ -1085,7 +1101,24 @@ mod tests {
             })
             .collect();
         let local = process_exec::host::ExecHost::Local;
-        assert!(launch_plan(&in_container, &local, true).skipped.is_empty());
+        let container =
+            process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+                program: "docker".into(),
+                prefix_args: vec![],
+                engine_env: vec![],
+                via_wsl: false,
+                verb_args: vec![],
+                target: vec![],
+                path_map: process_exec::host::PathMap::new("/p", ""),
+            });
+        assert!(launch_plan(&in_container, &local, &container, true)
+            .skipped
+            .is_empty());
+        // An interpreter that is itself native Windows does not help.
+        assert_eq!(
+            launch_plan(&in_container, &wsl, &local, true).skipped.len(),
+            1
+        );
     }
 
     fn php_config(id: &str) -> ServerConfig {

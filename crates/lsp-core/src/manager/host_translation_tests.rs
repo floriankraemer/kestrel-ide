@@ -1,3 +1,4 @@
+use super::wire_uris::translate_uri;
 use super::*;
 
 fn wsl_host() -> ExecHost {
@@ -56,23 +57,61 @@ fn new_leaves_root_uri_unchanged_for_a_local_root() {
 
 #[test]
 fn a_server_on_the_projects_own_host_gets_the_uri_unchanged() {
-    let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-        "//wsl.localhost/Ubuntu/home/f/proj",
-    ));
+    let host = wsl_host();
     let uri = "file:///home/f/proj/src/main.rs";
-    assert_eq!(manager.uri_on(&manager.host.clone(), uri), uri);
+    assert_eq!(translate_uri(&host, &host, uri), uri);
 }
 
 #[test]
 fn a_server_on_another_host_gets_the_uri_that_host_spells() {
-    let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-        "//wsl.localhost/Ubuntu/home/f/proj",
-    ));
     // The project is in the distro; this server runs on the Windows side
     // and sees the document through its UNC path.
+    let forward_slashes = ExecHost::for_path(Path::new("//wsl.localhost/Ubuntu/home/f/proj"));
     assert_eq!(
-        manager.uri_on(&ExecHost::Local, "file:///home/f/proj/src/main.rs"),
+        translate_uri(
+            &forward_slashes,
+            &ExecHost::Local,
+            "file:///home/f/proj/src/main.rs"
+        ),
         "file:////wsl.localhost/Ubuntu/home/f/proj/src/main.rs"
+    );
+}
+
+fn container_host() -> ExecHost {
+    ExecHost::Container(process_exec::host::ContainerHost {
+        program: "docker".into(),
+        prefix_args: vec![],
+        engine_env: vec![],
+        via_wsl: false,
+        verb_args: vec![],
+        target: vec![],
+        path_map: process_exec::host::PathMap::new("/home/f/proj", "/var/www"),
+    })
+}
+
+#[test]
+fn a_container_server_sees_and_answers_in_container_paths() {
+    let (local, container) = (ExecHost::Local, container_host());
+    assert_eq!(
+        translate_uri(&local, &container, "file:///home/f/proj/src/A.php"),
+        "file:///var/www/src/A.php"
+    );
+    assert_eq!(
+        translate_uri(&container, &local, "file:///var/www/src/A.php"),
+        "file:///home/f/proj/src/A.php"
+    );
+    // A file only the container has stays in the container's spelling.
+    assert_eq!(
+        translate_uri(&container, &local, "file:///usr/share/php/X.php"),
+        "file:///usr/share/php/X.php"
+    );
+}
+
+#[test]
+fn a_non_file_uri_is_left_alone() {
+    assert_eq!(
+        translate_uri(&ExecHost::Local, &container_host(), "untitled:Untitled-1"),
+        "untitled:Untitled-1"
     );
 }
 

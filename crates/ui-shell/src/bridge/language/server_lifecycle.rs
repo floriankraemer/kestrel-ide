@@ -163,7 +163,18 @@ impl ffi::LanguageService {
         let Some(language_id) = configs.first().map(|c| c.language_id.clone()) else {
             return;
         };
-        let plan = lsp_core::launch_plan(&configs, &self.host.borrow(), cfg!(windows));
+        // A server with `exec = "interpreter"` runs where PHP does: in the
+        // container the `[php]` settings name, if any (ADR-0067).
+        let project_host = self.host.borrow().clone();
+        let interpreter_host = match crate::bridge::convert::current_project_root() {
+            Some(root) => crate::bridge::php::tool_host(
+                Some("php"),
+                &crate::bridge::convert::load_resolved_settings(),
+                &root,
+            ),
+            None => project_host.clone(),
+        };
+        let plan = lsp_core::launch_plan(&configs, &project_host, &interpreter_host, cfg!(windows));
         for (config, reason) in &plan.skipped {
             self.as_mut().server_state_changed(
                 QString::from(config.id.as_str()),
@@ -190,7 +201,11 @@ impl ffi::LanguageService {
         self.push_job(move |manager| {
             let mut failures = Vec::new();
             for config in &configs {
-                if let Err(err) = manager.start(config) {
+                let host = match config.exec {
+                    lsp_core::catalog::ServerExec::Host => project_host.clone(),
+                    lsp_core::catalog::ServerExec::Interpreter => interpreter_host.clone(),
+                };
+                if let Err(err) = manager.start_on(config, host) {
                     failures.push((
                         config.id.clone(),
                         config.name.clone(),

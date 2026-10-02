@@ -97,10 +97,7 @@ impl ffi::DebugService {
             container_map.as_ref(),
             xdebug_port(),
         );
-        match self.ensure_php_listener(&root, plan.listen_arguments, None) {
-            Ok(()) => ffi::FfiResult::default(),
-            Err(err) => to_ffi_result(&err),
-        }
+        self.listen_when_located(root, plan.listen_arguments, None)
     }
 
     pub fn is_php_listening(&self) -> bool {
@@ -288,10 +285,39 @@ impl ffi::DebugService {
                 cwd: root.to_path_buf(),
             },
         };
-        match self.ensure_php_listener(root, plan.listen_arguments, Some(run)) {
-            Ok(()) => ffi::FfiResult::default(),
-            Err(err) => to_ffi_result(&err),
+        self.listen_when_located(root.to_path_buf(), plan.listen_arguments, Some(run))
+    }
+
+    /// [`Self::ensure_php_listener`], once the adapter script is known. For
+    /// a WSL project the first lookup is a blocking `wsl.exe` call
+    /// (`dap_core::catalog::resolve_on`), so it runs on a worker and the
+    /// listener starts back on the Qt thread; a failure then reaches the
+    /// debug console like any listener failure, since the caller has
+    /// already returned.
+    fn listen_when_located(
+        mut self: Pin<&mut Self>,
+        root: PathBuf,
+        arguments: Value,
+        run: Option<PhpRun>,
+    ) -> ffi::FfiResult {
+        let host = process_exec::host::ExecHost::for_path(&root);
+        if dap_core::catalog::php_debug_is_located(&host) {
+            return match self.ensure_php_listener(&root, arguments, run) {
+                Ok(()) => ffi::FfiResult::default(),
+                Err(err) => to_ffi_result(&err),
+            };
         }
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            // Fills the per-distro cache; the answer itself is not needed.
+            let _ = dap_core::catalog::resolve_on(dap_core::catalog::PHP_DEBUG, &[], &host, &root);
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
+                if let Err(err) = service.as_mut().ensure_php_listener(&root, arguments, run) {
+                    service.as_mut().debug_failed(0, to_ffi_result(&err));
+                }
+            });
+        });
+        ffi::FfiResult::default()
     }
 
     fn request_php_launch(self: Pin<&mut Self>, run: &PhpRun) {

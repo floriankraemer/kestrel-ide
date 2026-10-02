@@ -123,12 +123,57 @@ fn newest_listed(stdout: &str) -> Option<String> {
         .map(|(_, script)| script)
 }
 
-/// [`locate_php_debug`] inside the WSL distro `host` names; `None` on any
-/// other host, or when the distro has no copy.
-fn locate_php_debug_on(host: &process_exec::host::ExecHost, cwd: &Path) -> Option<String> {
-    if !matches!(host, process_exec::host::ExecHost::Wsl(_)) {
-        return None;
+/// Where phpDebug.js was found in each distro already: the probe is a
+/// blocking `wsl.exe` round trip, so it runs once per distro. Only a hit is
+/// kept — a distro without the extension is probed again, so installing it
+/// takes effect without a restart.
+static LOCATED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+/// The distro name of a WSL `host`; `None` for any other host.
+fn distro_of(host: &process_exec::host::ExecHost) -> Option<&str> {
+    match host {
+        process_exec::host::ExecHost::Wsl(wsl) => Some(&wsl.distro),
+        _ => None,
     }
+}
+
+/// Whether [`resolve_on`] for `host` answers without a blocking probe: any
+/// host but WSL, or a distro already located. Callers that must not block
+/// (the Qt thread) call [`resolve_on`] on a worker when this is false.
+pub fn php_debug_is_located(host: &process_exec::host::ExecHost) -> bool {
+    distro_of(host).is_none_or(|distro| {
+        LOCATED
+            .lock()
+            .is_ok_and(|map| map.as_ref().is_some_and(|map| map.contains_key(distro)))
+    })
+}
+
+/// [`locate_php_debug`] inside the WSL distro `host` names; `None` on any
+/// other host, or when the distro has no copy. Cached per distro.
+fn locate_php_debug_on(host: &process_exec::host::ExecHost, cwd: &Path) -> Option<String> {
+    located_once(distro_of(host)?, || probe_distro(host, cwd))
+}
+
+/// `distro`'s cached location, probing with `probe` (and keeping a hit) when
+/// there is none.
+fn located_once(distro: &str, probe: impl FnOnce() -> Option<String>) -> Option<String> {
+    let cached = LOCATED
+        .lock()
+        .ok()
+        .and_then(|map| map.as_ref()?.get(distro).cloned());
+    if cached.is_some() {
+        return cached;
+    }
+    let found = probe()?;
+    if let Ok(mut map) = LOCATED.lock() {
+        map.get_or_insert_with(Default::default)
+            .insert(distro.to_string(), found.clone());
+    }
+    Some(found)
+}
+
+fn probe_distro(host: &process_exec::host::ExecHost, cwd: &Path) -> Option<String> {
     let script = wsl_listing_script();
     let out = process_exec::run_on(
         host,
@@ -168,8 +213,8 @@ fn php_debug_script() -> String {
 /// adapter of a WSL project is looked up in the distro's own home and run
 /// there with its Linux path, not the IDE host's `$HOME` copy.
 ///
-/// ponytail: one blocking `wsl.exe` call on a WSL project's first PHP debug
-/// start; cache per distro if it is ever felt.
+/// The first call for a WSL distro blocks on `wsl.exe` (cached per distro
+/// after that): off the Qt thread unless [`php_debug_is_located`].
 pub fn resolve_on(
     id: &str,
     overrides: &[DebugAdapterSetting],
@@ -238,6 +283,41 @@ pub const CLASS_RELOAD_REQUEST: &str = "redefineClasses";
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_distro_is_probed_once_and_a_miss_is_probed_again() {
+        use std::cell::Cell;
+        let calls = Cell::new(0);
+        let distro = "cache-test-distro";
+        let wsl = process_exec::host::ExecHost::Wsl(process_exec::host::WslHost {
+            distro: distro.into(),
+            unc_prefix: "//wsl.localhost/cache-test-distro".into(),
+        });
+        assert!(!php_debug_is_located(&wsl));
+        assert_eq!(
+            located_once(distro, || {
+                calls.set(calls.get() + 1);
+                None
+            }),
+            None
+        );
+        assert!(!php_debug_is_located(&wsl), "a miss is not kept");
+        let hit = || {
+            calls.set(calls.get() + 1);
+            Some("/home/u/phpDebug.js".to_string())
+        };
+        assert_eq!(
+            located_once(distro, hit).as_deref(),
+            Some("/home/u/phpDebug.js")
+        );
+        assert_eq!(
+            located_once(distro, hit),
+            Some("/home/u/phpDebug.js".to_string())
+        );
+        assert_eq!(calls.get(), 2, "the second hit came from the cache");
+        assert!(php_debug_is_located(&wsl));
+        assert!(php_debug_is_located(&process_exec::host::ExecHost::Local));
+    }
+
     use super::*;
 
     #[test]

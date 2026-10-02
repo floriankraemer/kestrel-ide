@@ -24,12 +24,13 @@
 //! derived from `CARGO_BIN_EXE_app`'s directory instead — see
 //! [`stub_analyzer_bin`].
 //!
-//! There is no `OnType`/`OnSave` wiring from a live keystroke or a save into
-//! `analysis_core::Scheduler::schedule_file_run` yet — only the "Inspect
-//! Project" menu action (B9) reaches `AnalysisServiceRust` today, and that
-//! is a real, if narrower, path for a project's own findings to reach the
-//! editor. This flow drives that action rather than typing and waiting out
-//! a debounce interval nothing currently arms.
+//! Live runs (`OnType`/`OnSave` through
+//! `analysis_core::Scheduler::schedule_file_run`) are wired in
+//! `AnalysisServiceRust`, and `settings_model::analysis::file_jobs` decides
+//! which analyzer runs for which event; they are covered by unit tests
+//! there. This flow drives the "Inspect Project" menu action instead of
+//! typing and waiting out a debounce interval: it is the deterministic path
+//! for a project's findings to reach the editor.
 
 use std::path::{Path, PathBuf};
 

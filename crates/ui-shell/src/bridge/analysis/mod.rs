@@ -373,11 +373,12 @@ impl ffi::AnalysisService {
         let id = analyzer.id.clone();
         self.as_mut().analyzer_started(QString::from(id.as_str()));
         let root_for_next = root.clone();
+        let root_for_publish = root.clone();
         let started =
             self.scheduler
                 .run_manual(program, args, &root, MANUAL_RUN_TIMEOUT, move |result| {
                     let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
-                        publish_result(&service, &analyzer, &result);
+                        publish_result(&service, &analyzer, &result, &root_for_publish);
                         // The store just changed for this analyzer's rows —
                         // tell the editor and the Problems dock, the same
                         // signal `LanguageService`/`BuildService` emit for
@@ -426,6 +427,7 @@ fn publish_result(
     service: &ffi::AnalysisService,
     analyzer: &analysis_core::AnalyzerDef,
     result: &analysis_core::RunResult,
+    root: &Path,
 ) {
     let Ok(output) = result else {
         return;
@@ -443,7 +445,8 @@ fn publish_result(
     store.clear_source(&key);
     for file in files {
         let diagnostics = analysis_core::to_diagnostics(&findings, file, analyzer);
-        let uri = diagnostics_core::uri_from_path(file);
+        let local = analysis_core::locate_file(root, file);
+        let uri = diagnostics_core::uri_from_path(&local.to_string_lossy());
         store.replace(&key, &uri, diagnostics);
     }
 }

@@ -136,8 +136,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | P0-3 — `settings_model::analysis::file_jobs(event, path, …)`: which analyzers fire for a file on type or save, with the SavedOnly→OnSave downgrade | done | e178fbc |
 | P0-4 — `AnalysisService` calls `Scheduler::schedule_file_run` on debounced didChange and on didSave | done | 7ef569b |
 | P0-5 — `[php]` settings section (interpreter, language_level, include_paths, stubs, container target/mode, xdebug_port, formatter, per-server toggles), `ScopedField::Php`, `settings_model::php::resolve` | done | 980226c |
-| P0-6 — `analysis_core::php::invocation` wired with the resolved interpreter for `requires-interpreter="php"` | done | — |
-| P0-7 — checkstyle `file=` and TeamCity `php_qn://` locations mapped through `ExecHost::to_local` (also fixes a latent WSL bug) | open | |
+| P0-6 — `analysis_core::php::invocation` wired with the resolved interpreter for `requires-interpreter="php"` | done | bdfc119 |
+| P0-7 — checkstyle `file=` and TeamCity `php_qn://` locations mapped through `ExecHost::to_local` (also fixes a latent WSL bug) | done | — |
 
 ### L — several servers per language (ADR-0066)
 | Task | Status | Commit |

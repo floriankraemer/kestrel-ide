@@ -24,7 +24,7 @@ pub use buffer::{
     TEMP_COPY_GITIGNORE_PATTERN,
 };
 pub use checkstyle::{
-    parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding, ParseError,
+    locate_file, parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding, ParseError,
 };
 pub use def::{AnalyzerDef, Trigger};
 pub use detect::{composer_require_dev, find_config_file, find_program, status, AnalyzerStatus};

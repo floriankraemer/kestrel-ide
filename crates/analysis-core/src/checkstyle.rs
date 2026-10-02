@@ -16,6 +16,8 @@
 //! </checkstyle>
 //! ```
 
+use std::path::{Path, PathBuf};
+
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -133,6 +135,22 @@ fn attr(tag: &quick_xml::events::BytesStart<'_>, key: &str) -> Result<Option<Str
     Ok(None)
 }
 
+/// The local file a checkstyle `file=` names for a run rooted at `root`.
+///
+/// A tool run under WSL prints Linux paths, which this process cannot open
+/// until [`process_exec::host::ExecHost::path_from_tool`] translates them;
+/// a relative path (PHPStan reports relative to its working directory,
+/// which is always `root`) is resolved against `root` so the file's URI
+/// matches the one the editor opened.
+pub fn locate_file(root: &Path, file: &str) -> PathBuf {
+    let path = process_exec::host::ExecHost::for_path(root).path_from_tool(file);
+    if path.is_relative() {
+        root.join(path)
+    } else {
+        path
+    }
+}
+
 /// Turn every finding for `path` into a [`Diagnostic`], resolving each
 /// one's severity through `analyzer`'s `severity-map` and naming the
 /// diagnostic's source after the analyzer (`phpstan`, `phpcs`, ...) rather
@@ -199,6 +217,29 @@ mod tests {
                 .join(name),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_relative_finding_path_resolves_against_the_project_root() {
+        assert_eq!(
+            locate_file(Path::new("/p"), "src/a.php"),
+            PathBuf::from("/p/src/a.php")
+        );
+        assert_eq!(
+            locate_file(Path::new("/p"), "/p/src/a.php"),
+            PathBuf::from("/p/src/a.php")
+        );
+    }
+
+    #[test]
+    fn a_linux_finding_path_under_a_wsl_root_becomes_a_unc_path() {
+        assert_eq!(
+            locate_file(
+                Path::new("//wsl.localhost/Ubuntu/home/f/proj"),
+                "/home/f/proj/src/a.php"
+            ),
+            PathBuf::from("//wsl.localhost/Ubuntu/home/f/proj/src/a.php")
+        );
     }
 
     #[test]

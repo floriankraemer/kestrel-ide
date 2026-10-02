@@ -72,7 +72,9 @@ pub fn diagnostics_by_file(
         let Some((path, line)) = locate(failure, &node.id, work_dir) else {
             continue;
         };
-        let uri = diagnostics_core::uri_from_path(&path);
+        // PHPUnit run under WSL prints Linux paths; open them as UNC.
+        let local = process_exec::host::ExecHost::for_path(work_dir).path_from_tool(&path);
+        let uri = diagnostics_core::uri_from_path(&local.to_string_lossy());
         grouped.entry(uri).or_default().push(Diagnostic {
             range: Range {
                 start: Position {
@@ -202,6 +204,17 @@ mod tests {
             grouped[&uri][0].message,
             "Failed asserting that 1 matches 2."
         );
+    }
+
+    #[test]
+    fn a_linux_path_in_a_wsl_run_locates_the_unc_file() {
+        let tree = failing_tree("/home/f/proj/tests/GreeterTest.php:20");
+        let root = Path::new("//wsl.localhost/Ubuntu/home/f/proj");
+        let grouped = diagnostics_by_file(&tree, "phpunit", root);
+        let uri = diagnostics_core::uri_from_path(
+            "//wsl.localhost/Ubuntu/home/f/proj/tests/GreeterTest.php",
+        );
+        assert_eq!(grouped[&uri].len(), 1);
     }
 
     #[test]

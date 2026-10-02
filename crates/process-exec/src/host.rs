@@ -149,6 +149,17 @@ impl ExecHost {
         }
     }
 
+    /// A path a tool printed while running on this host, as a path this
+    /// process can open: a Linux absolute path under WSL is translated with
+    /// [`Self::to_local`]; anything else (a local path, or a relative one)
+    /// is returned as printed.
+    pub fn path_from_tool(&self, printed: &str) -> PathBuf {
+        match self {
+            ExecHost::Wsl(_) if printed.starts_with('/') => self.to_local(printed),
+            _ => PathBuf::from(printed),
+        }
+    }
+
     /// Build the argv this host actually runs: unchanged for `Local`,
     /// wrapped in `wsl.exe -d <distro> --cd <linux-cwd> -e <program>
     /// <args...>` for `Wsl` — `-e`, not `--`, so a commit message or a
@@ -508,6 +519,25 @@ mod tests {
         assert_eq!(
             host.to_remote(Path::new(r"\\wsl$\Ubuntu\home\f\proj")),
             "/home/f/proj"
+        );
+    }
+
+    #[test]
+    fn a_linux_path_a_tool_printed_under_wsl_becomes_a_unc_path() {
+        let host = wsl(r"\\wsl.localhost\Ubuntu\home\f\proj");
+        assert_eq!(
+            host.path_from_tool("/home/f/proj/src/a.php"),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\f\proj\src\a.php")
+        );
+    }
+
+    #[test]
+    fn a_relative_or_local_tool_path_is_left_alone() {
+        let host = wsl(r"\\wsl.localhost\Ubuntu\home\f\proj");
+        assert_eq!(host.path_from_tool("src/a.php"), PathBuf::from("src/a.php"));
+        assert_eq!(
+            ExecHost::Local.path_from_tool("/p/a.php"),
+            PathBuf::from("/p/a.php")
         );
     }
 

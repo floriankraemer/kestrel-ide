@@ -48,11 +48,11 @@ pub use manifest::{
     check_api_version, expand_capability_path, AdbcArtifact, AdbcDriverSection,
     AnalyzerContribution, BuildToolContribution, Capabilities, ColorThemeContribution,
     CommandContribution, Contributes, ContributionPoint, DatabaseDriverContribution,
-    FormatterContribution, IconThemeContribution, LanguageServerContribution,
-    LiveTemplateContribution, PluginManifest, PreviewContribution, SettingsPageContribution,
-    SettingsPageScope, SqlDialectContribution, TemplateContext, TestFrameworkContribution,
-    ToolWindowArea, ToolWindowContribution, WasmSection, EXPR_VAR, ID_MAX_LEN, MANIFEST_FILE,
-    PLUGIN_DIR_TOKEN, SELECTION_VAR,
+    FileTemplateContribution, FormatterContribution, IconThemeContribution,
+    LanguageServerContribution, LiveTemplateContribution, PluginManifest, PreviewContribution,
+    SettingsPageContribution, SettingsPageScope, SqlDialectContribution, TemplateContext,
+    TestFrameworkContribution, ToolWindowArea, ToolWindowContribution, WasmSection, EXPR_VAR,
+    ID_MAX_LEN, MANIFEST_FILE, PLUGIN_DIR_TOKEN, SELECTION_VAR,
 };
 
 /// The newest contract revision this build speaks.

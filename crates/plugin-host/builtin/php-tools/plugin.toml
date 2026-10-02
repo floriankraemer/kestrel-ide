@@ -434,3 +434,105 @@ abbreviation = "par"
 description = "(expr)"
 body = "($EXPR$)"
 postfix = true
+
+# New-file templates (ADR-0072). `${NAMESPACE}` comes from the Composer PSR-4
+# roots; with none, its line is omitted.
+
+[[contributes.file-templates]]
+id = "php-class"
+name = "PHP Class"
+language = "php"
+extension = "php"
+body = '''
+<?php
+
+declare(strict_types=1);
+
+namespace ${NAMESPACE};
+
+class ${NAME}
+{
+}
+'''
+
+[[contributes.file-templates]]
+id = "php-interface"
+name = "PHP Interface"
+language = "php"
+extension = "php"
+body = '''
+<?php
+
+declare(strict_types=1);
+
+namespace ${NAMESPACE};
+
+interface ${NAME}
+{
+}
+'''
+
+[[contributes.file-templates]]
+id = "php-trait"
+name = "PHP Trait"
+language = "php"
+extension = "php"
+body = '''
+<?php
+
+declare(strict_types=1);
+
+namespace ${NAMESPACE};
+
+trait ${NAME}
+{
+}
+'''
+
+[[contributes.file-templates]]
+id = "php-enum"
+name = "PHP Enum"
+language = "php"
+extension = "php"
+body = '''
+<?php
+
+declare(strict_types=1);
+
+namespace ${NAMESPACE};
+
+enum ${NAME}
+{
+}
+'''
+
+[[contributes.file-templates]]
+id = "php-test"
+name = "PHPUnit Test"
+language = "php"
+extension = "php"
+name-suffix = "Test"
+body = '''
+<?php
+
+declare(strict_types=1);
+
+namespace ${NAMESPACE};
+
+use PHPUnit\Framework\TestCase;
+
+final class ${NAME} extends TestCase
+{
+}
+'''
+
+[[contributes.file-templates]]
+id = "php-file"
+name = "PHP File"
+language = "php"
+extension = "php"
+body = '''
+<?php
+
+declare(strict_types=1);
+'''

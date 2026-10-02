@@ -17,7 +17,9 @@ use crate::API_VERSION;
 mod formatter;
 pub use formatter::FormatterContribution;
 mod template;
-pub use template::{LiveTemplateContribution, TemplateContext, EXPR_VAR, SELECTION_VAR};
+pub use template::{
+    FileTemplateContribution, LiveTemplateContribution, TemplateContext, EXPR_VAR, SELECTION_VAR,
+};
 
 /// File a plugin directory is recognised by.
 pub const MANIFEST_FILE: &str = "plugin.toml";
@@ -47,6 +49,7 @@ pub enum ContributionPoint {
     TestFrameworks,
     Formatters,
     LiveTemplates,
+    FileTemplates,
     BuildTools,
     ToolWindows,
     SettingsPages,
@@ -67,6 +70,7 @@ impl ContributionPoint {
             Self::TestFrameworks => "test-frameworks",
             Self::Formatters => "formatters",
             Self::LiveTemplates => "live-templates",
+            Self::FileTemplates => "file-templates",
             Self::BuildTools => "build-tools",
             Self::ToolWindows => "tool-windows",
             Self::SettingsPages => "settings-pages",
@@ -636,6 +640,8 @@ pub struct Contributes {
     pub formatters: Vec<FormatterContribution>,
     #[serde(default, rename = "live-templates")]
     pub live_templates: Vec<LiveTemplateContribution>,
+    #[serde(default, rename = "file-templates")]
+    pub file_templates: Vec<FileTemplateContribution>,
     #[serde(default, rename = "build-tools")]
     pub build_tools: Vec<BuildToolContribution>,
     #[serde(default, rename = "tool-windows")]
@@ -664,6 +670,7 @@ impl Contributes {
             && self.test_frameworks.is_empty()
             && self.formatters.is_empty()
             && self.live_templates.is_empty()
+            && self.file_templates.is_empty()
             && self.build_tools.is_empty()
             && self.tool_windows.is_empty()
             && self.settings_pages.is_empty()
@@ -970,6 +977,17 @@ impl PluginManifest {
         check_unique(
             ContributionPoint::LiveTemplates,
             template_keys.iter().map(String::as_str),
+        )?;
+
+        for template in &self.contributes.file_templates {
+            template.validate()?;
+        }
+        check_unique(
+            ContributionPoint::FileTemplates,
+            self.contributes
+                .file_templates
+                .iter()
+                .map(|t| t.id.as_str()),
         )?;
 
         for tool in &self.contributes.build_tools {

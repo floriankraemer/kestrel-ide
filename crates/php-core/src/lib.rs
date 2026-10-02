@@ -12,6 +12,7 @@ pub mod host;
 pub mod level;
 pub mod lsp;
 pub mod probe;
+pub mod psr4;
 pub mod tests;
 
 /// The `secret-store` service name for PHP secrets, distinct from the

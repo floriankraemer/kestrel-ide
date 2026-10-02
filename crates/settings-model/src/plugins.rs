@@ -219,6 +219,12 @@ fn contributes(manifest: &PluginManifest) -> String {
         [only] => parts.push(format!("Formatter: {}", only.name)),
         many => parts.push(format!("{} formatters", many.len())),
     }
+    if !manifest.contributes.file_templates.is_empty() {
+        parts.push(format!(
+            "{} file templates",
+            manifest.contributes.file_templates.len()
+        ));
+    }
     if !manifest.contributes.live_templates.is_empty() {
         parts.push(format!(
             "{} live templates",

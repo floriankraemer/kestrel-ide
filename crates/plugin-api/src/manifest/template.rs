@@ -1,11 +1,12 @@
-//! The `live-templates` contribution point (ADR-0072): abbreviation,
-//! surround and postfix snippets a plugin offers for a language.
+//! The `live-templates` and `file-templates` contribution points (ADR-0072):
+//! abbreviation, surround and postfix snippets a plugin offers for a
+//! language, and the new-file templates of the New menu.
 //!
 //! Split out of `mod.rs` to keep that file under the file-size ceiling.
 
 use serde::Deserialize;
 
-use super::non_empty;
+use super::{check_extension, check_id, non_empty};
 use crate::error::LoadErrorKind;
 
 /// Placeholder a surround template puts where the selected text goes.
@@ -89,6 +90,42 @@ impl LiveTemplateContribution {
     }
 }
 
+/// One new-file template a plugin offers (New > PHP Class).
+///
+/// `body` may use `${NAME}`, `${NAMESPACE}`, `${DATE}` and `${YEAR}`. When
+/// the namespace is empty, the lines that mention `${NAMESPACE}` and the
+/// blank line after them are dropped, so a file outside any autoload root
+/// has no dangling `namespace ;`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileTemplateContribution {
+    pub id: String,
+    /// The menu entry: `PHP Class`.
+    pub name: String,
+    pub language: String,
+    /// Extension without the dot, e.g. `php`.
+    pub extension: String,
+    /// Appended to the entered name unless it already ends with it
+    /// (`Test`: `Foo` becomes `FooTest`).
+    #[serde(default, rename = "name-suffix")]
+    pub name_suffix: Option<String>,
+    pub body: String,
+}
+
+impl FileTemplateContribution {
+    pub(super) fn validate(&self) -> Result<(), LoadErrorKind> {
+        check_id("contributes.file-templates.id", &self.id)?;
+        non_empty("contributes.file-templates.name", &self.name)?;
+        non_empty("contributes.file-templates.language", &self.language)?;
+        check_extension(&self.extension)?;
+        non_empty("contributes.file-templates.body", &self.body)?;
+        if let Some(suffix) = &self.name_suffix {
+            non_empty("contributes.file-templates.name-suffix", suffix)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::tests::with;
@@ -156,5 +193,38 @@ mod tests {
             .replace("context = \"statement\"", "postfix = true")
             .replace("foreach ($1", "foreach ($EXPR$");
         assert!(PluginManifest::from_toml_str(&with(&format!("{FORE}{postfix}"))).is_ok());
+    }
+
+    const CLASS: &str = r#"
+        [[contributes.file-templates]]
+        id = "php-class"
+        name = "PHP Class"
+        language = "php"
+        extension = "php"
+        name-suffix = "Test"
+        body = "<?php\n\nclass ${NAME} {}\n"
+    "#;
+
+    #[test]
+    fn a_file_template_round_trips() {
+        let manifest = PluginManifest::from_toml_str(&with(CLASS)).expect("valid");
+        let t = &manifest.contributes.file_templates[0];
+        assert_eq!(t.name, "PHP Class");
+        assert_eq!(t.name_suffix.as_deref(), Some("Test"));
+        assert!(!manifest.contributes.is_empty());
+        assert_eq!(ContributionPoint::FileTemplates.key(), "file-templates");
+    }
+
+    #[test]
+    fn a_file_template_needs_a_plain_extension_and_a_unique_id() {
+        let dotted = CLASS.replace("extension = \"php\"", "extension = \".php\"");
+        assert!(matches!(
+            PluginManifest::from_toml_str(&with(&dotted)).unwrap_err(),
+            LoadErrorKind::InvalidExtension(_)
+        ));
+        assert!(matches!(
+            PluginManifest::from_toml_str(&with(&format!("{CLASS}{CLASS}"))).unwrap_err(),
+            LoadErrorKind::DuplicateContributionId { .. }
+        ));
     }
 }

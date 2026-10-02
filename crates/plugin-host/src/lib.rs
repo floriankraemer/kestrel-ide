@@ -48,10 +48,11 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use plugin_api::{
     AnalyzerContribution, BuildToolContribution, ColorThemeContribution, CommandContribution,
-    ContributionPoint, DatabaseDriverContribution, FormatterContribution, IconThemeContribution,
-    LanguageServerContribution, LiveTemplateContribution, LoadErrorKind, PluginLoadError,
-    PluginManifest, PreviewContribution, SettingsPageContribution, SqlDialectContribution,
-    TestFrameworkContribution, ToolWindowContribution, MANIFEST_FILE, QUARANTINE_DIR,
+    ContributionPoint, DatabaseDriverContribution, FileTemplateContribution, FormatterContribution,
+    IconThemeContribution, LanguageServerContribution, LiveTemplateContribution, LoadErrorKind,
+    PluginLoadError, PluginManifest, PreviewContribution, SettingsPageContribution,
+    SqlDialectContribution, TestFrameworkContribution, ToolWindowContribution, MANIFEST_FILE,
+    QUARANTINE_DIR,
 };
 
 pub use plugin::{expand_asset_dir, BuiltinPlugin, LoadedPlugin, PluginSource};
@@ -216,6 +217,21 @@ impl PluginRegistry {
                 .formatters
                 .iter()
                 .map(move |formatter| (plugin, formatter))
+        })
+    }
+
+    /// Every `file-templates` contribution, with the plugin that offers it
+    /// (ADR-0072).
+    pub fn file_templates(
+        &self,
+    ) -> impl Iterator<Item = (&LoadedPlugin, &FileTemplateContribution)> {
+        self.plugins.iter().flat_map(|plugin| {
+            plugin
+                .manifest()
+                .contributes
+                .file_templates
+                .iter()
+                .map(move |template| (plugin, template))
         })
     }
 

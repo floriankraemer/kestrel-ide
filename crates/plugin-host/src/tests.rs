@@ -697,6 +697,28 @@ fn the_php_tools_builtin_contributes_live_and_postfix_templates() {
 }
 
 #[test]
+fn the_php_tools_builtin_contributes_the_php_file_templates() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+    let ids: Vec<_> = registry
+        .file_templates()
+        .map(|(_, t)| t.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "php-class",
+            "php-interface",
+            "php-trait",
+            "php-enum",
+            "php-test",
+            "php-file"
+        ]
+    );
+}
+
+#[test]
 fn an_analyzer_contribution_needs_no_wasm_component_either() {
     let fixture = Fixture::new();
     let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);

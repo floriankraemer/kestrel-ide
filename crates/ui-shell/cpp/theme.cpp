@@ -551,21 +551,22 @@ QCheckBox, QRadioButton {
     spacing: 6px;
 }
 
-QCheckBox::indicator, QRadioButton::indicator {
+QCheckBox::indicator, QRadioButton::indicator, QAbstractItemView::indicator {
     width: 14px;
     height: 14px;
     border: 1px solid {textDim};
     background-color: {surface2};
 }
 
-QCheckBox::indicator { border-radius: 3px; }
+QCheckBox::indicator, QAbstractItemView::indicator { border-radius: 3px; }
 QRadioButton::indicator { border-radius: 8px; }
-QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: {accent}; }
-/* White tick on the accent fill, which both themes share. */
-QCheckBox::indicator:checked { background-color: {accent}; border-color: {accent}; image: url(:/ui/icons/check.png); }
+QCheckBox::indicator:hover, QRadioButton::indicator:hover, QAbstractItemView::indicator:hover { border-color: {accent}; }
+/* White tick on the accent fill, which both themes share. The item-view
+   indicator (checkable list and tree rows) wears the same box. */
+QCheckBox::indicator:checked, QAbstractItemView::indicator:checked { background-color: {accent}; border-color: {accent}; image: url(:/ui/icons/check.png); }
 QRadioButton::indicator:checked { background-color: {surface2}; border: 4px solid {accent}; }
-QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: {border}; }
-QCheckBox::indicator:checked:disabled { background-color: {textDim}; border-color: {textDim}; }
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled, QAbstractItemView::indicator:disabled { border-color: {border}; }
+QCheckBox::indicator:checked:disabled, QAbstractItemView::indicator:checked:disabled { background-color: {textDim}; border-color: {textDim}; }
 
 QProgressBar {
     background-color: {surface2};

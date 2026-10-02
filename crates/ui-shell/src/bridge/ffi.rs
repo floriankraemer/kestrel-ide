@@ -4904,7 +4904,8 @@ mod ffi {
         fn end_snippet(self: Pin<&mut EditorOps>, tab_id: u64);
 
         /// The edits a save would make before it writes the file (F1-11):
-        /// trim, final newline, line-ending normalisation. Splice these
+        /// the language's formatter when format-on-save is on (ADR-0070),
+        /// then trim, final newline, line-ending normalisation. Splice these
         /// into the buffer first so the tidying is one undo entry, then
         /// read the (now tidied) text to hand to `saveTab`.
         #[qinvokable]
@@ -6206,10 +6207,19 @@ mod ffi {
         container_target: QString,
         /// `exec`, `run` or empty.
         container_mode: QString,
+        /// A `formatters` contribution id, or empty for the language server.
+        formatter: QString,
         intelephense_enabled: bool,
         intelephense_diagnostics: bool,
         phpactor_enabled: bool,
         phpactor_diagnostics: bool,
+    }
+
+    /// One `formatters` contribution a language's formatter setting can name.
+    #[derive(Default)]
+    struct FfiFormatterChoice {
+        id: QString,
+        name: QString,
     }
 
     /// What `php_core::probe` learned about an interpreter, or why it
@@ -6243,6 +6253,11 @@ mod ffi {
 
         #[qinvokable]
         fn form(self: &PhpSettingsEditor) -> FfiPhpForm;
+
+        /// The formatters PHP can use, for the page's formatter choice.
+        #[qinvokable]
+        #[cxx_name = "formatterChoices"]
+        fn formatter_choices(self: &PhpSettingsEditor) -> Vec<FfiFormatterChoice>;
 
         /// Apply `form` to the draft; a non-zero code means it was refused
         /// (and the draft is unchanged).
@@ -8419,6 +8434,8 @@ mod ffi {
         trim_trailing_whitespace: bool,
         has_insert_final_newline: bool,
         insert_final_newline: bool,
+        has_format_on_save: bool,
+        format_on_save: bool,
         has_wrap_column: bool,
         wrap_column: u32,
         has_soft_wrap: bool,

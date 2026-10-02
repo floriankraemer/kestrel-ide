@@ -73,6 +73,12 @@ pub struct EditingSettings {
     /// chosen".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub insert_final_newline: Option<bool>,
+    /// Run the language's formatter (a `formatters` tool such as
+    /// php-cs-fixer, Pint or phpcbf) just before a save writes the file.
+    /// `None` means "never chosen", which is off: a save must not rewrite
+    /// code the user did not ask to have reformatted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_on_save: Option<bool>,
     /// Column the wrap guide sits at, `Some(0)` for "never wrap". `None`
     /// means "never chosen"; see the module docs for why this one field is
     /// not a zero-sentinel.
@@ -127,6 +133,12 @@ impl EditingSettings {
     /// disagree all complain about the same missing byte.
     pub fn insert_final_newline_or_default(&self) -> bool {
         self.insert_final_newline.unwrap_or(true)
+    }
+
+    /// Whether to format with the language's formatter on save. Off by
+    /// default.
+    pub fn format_on_save_or_default(&self) -> bool {
+        self.format_on_save.unwrap_or(false)
     }
 
     /// The wrap column: `0` for "never wrap", otherwise clamped into

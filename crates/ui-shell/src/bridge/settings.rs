@@ -12,6 +12,7 @@ use cxx_qt_lib::{QString, QStringList};
 use syntax_core::theme;
 
 use crate::bridge::convert::{load_settings, user_styles};
+use crate::bridge::editing_row::{from_ffi_editing_row, to_ffi_editing_row};
 use crate::bridge::errors;
 use crate::bridge::ffi::{
     self, FfiEditingProblem, FfiEditingRow, FfiEditorColors, FfiEditorFont, FfiMinimapOptions,
@@ -1252,48 +1253,6 @@ fn editing_page_languages() -> Vec<(String, String)> {
         .filter(|language| *language != syntax_core::Language::PLAIN_TEXT)
         .map(|language| (language.id(), language.name()))
         .collect()
-}
-
-fn to_ffi_editing_row(
-    language_id: &str,
-    language_name: &str,
-    settings: &app_config::editing::EditingSettings,
-) -> FfiEditingRow {
-    FfiEditingRow {
-        language_id: QString::from(language_id),
-        language_name: QString::from(language_name),
-        tab_width: settings.tab_width,
-        has_use_spaces: settings.use_spaces.is_some(),
-        use_spaces: settings.use_spaces.unwrap_or(false),
-        has_trim_trailing_whitespace: settings.trim_trailing_whitespace.is_some(),
-        trim_trailing_whitespace: settings.trim_trailing_whitespace.unwrap_or(false),
-        has_insert_final_newline: settings.insert_final_newline.is_some(),
-        insert_final_newline: settings.insert_final_newline.unwrap_or(false),
-        has_wrap_column: settings.wrap_column.is_some(),
-        wrap_column: settings.wrap_column.unwrap_or(0),
-        has_soft_wrap: settings.soft_wrap.is_some(),
-        soft_wrap: settings.soft_wrap.unwrap_or(false),
-        default_encoding: QString::from(settings.default_encoding.as_str()),
-        line_endings: QString::from(settings.line_endings.as_str()),
-    }
-}
-
-fn from_ffi_editing_row(row: &FfiEditingRow) -> app_config::editing::EditingSettings {
-    app_config::editing::EditingSettings {
-        tab_width: row.tab_width,
-        use_spaces: row.has_use_spaces.then_some(row.use_spaces),
-        trim_trailing_whitespace: row
-            .has_trim_trailing_whitespace
-            .then_some(row.trim_trailing_whitespace),
-        insert_final_newline: row
-            .has_insert_final_newline
-            .then_some(row.insert_final_newline),
-        wrap_column: row.has_wrap_column.then_some(row.wrap_column),
-        soft_wrap: row.has_soft_wrap.then_some(row.soft_wrap),
-        default_encoding: row.default_encoding.to_string(),
-        line_endings: row.line_endings.to_string(),
-        languages: HashMap::new(),
-    }
 }
 
 fn to_ffi_editing_problem(problem: &settings_model::editing::EditingProblem) -> FfiEditingProblem {

@@ -105,11 +105,6 @@ baseline() {
 	# Raised from 1686 by 7 lines for hover_at's `HoverSettings::scope` gate
 	# and the service's `hover_settings` field (H6); the settings plumbing lives in bridge/hover_settings.rs.
 	crates/ui-shell/src/bridge/language/mod.rs) echo 1535 ;;
-	# Raised from the 1500 ceiling by 5 lines for minimapOptions/
-	# saveMinimapOptions (issue #199) — the same load/mutate/save pair
-	# whitespaceOptions/saveWhitespaceOptions just above them already uses.
-	# No split planned.
-	crates/ui-shell/src/bridge/settings.rs) echo 1505 ;;
 	# Raised from the 1200 ceiling by 11 lines for the PHP tooling plan's
 	# B9: constructing AnalysisEditor/AnalysisService alongside the other
 	# per-window settings-page editors and services, two new

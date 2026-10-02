@@ -84,6 +84,15 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
     modeCombo->setCurrentIndex(modeIndex >= 0 ? modeIndex : 0);
     formLayout->addRow(QObject::tr("Container mode:"), modeCombo);
 
+    auto *formatterCombo = new QComboBox(page);
+    formatterCombo->addItem(QObject::tr("Language server"), QString());
+    for (const FfiFormatterChoice &choice : editor->formatterChoices()) {
+        formatterCombo->addItem(QString(choice.name), QString(choice.id));
+    }
+    const int formatterIndex = formatterCombo->findData(QString(form.formatter));
+    formatterCombo->setCurrentIndex(formatterIndex >= 0 ? formatterIndex : 0);
+    formLayout->addRow(QObject::tr("Formatter:"), formatterCombo);
+
     auto *levelEdit = new QLineEdit(QString(form.language_level), page);
     levelEdit->setPlaceholderText(QObject::tr("From composer.json, else the interpreter"));
     formLayout->addRow(QObject::tr("Language level:"), levelEdit);
@@ -145,6 +154,7 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
         next.stubs = stubsEdit->text();
         next.container_target = targetCombo->currentData().toString();
         next.container_mode = modeCombo->currentData().toString();
+        next.formatter = formatterCombo->currentData().toString();
         next.intelephense_enabled = intelephenseOn->isChecked();
         next.intelephense_diagnostics = intelephenseDiagnostics->isChecked();
         next.phpactor_enabled = phpactorOn->isChecked();
@@ -159,7 +169,7 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
         QObject::connect(edit, &QLineEdit::textChanged, page, push);
     }
     QObject::connect(includeEdit, &QPlainTextEdit::textChanged, page, push);
-    for (QComboBox *combo : {targetCombo, modeCombo}) {
+    for (QComboBox *combo : {targetCombo, modeCombo, formatterCombo}) {
         QObject::connect(combo, &QComboBox::currentIndexChanged, page, push);
     }
     for (QCheckBox *check :

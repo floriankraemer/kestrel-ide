@@ -139,7 +139,7 @@ pub const PHP_SERVERS: [(&str, &str, bool); 2] = [
 
 /// What the Settings > PHP page edits, as the page shows it: text fields
 /// stay text so the rules for reading them live here, not in the view.
-/// Fields the page does not show (`xdebug_port`, `formatter`, servers it
+/// Fields the page does not show (`xdebug_port`, servers it
 /// does not know) are untouched by [`PhpForm::apply_to`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PhpForm {
@@ -153,6 +153,8 @@ pub struct PhpForm {
     pub container_target: String,
     /// `exec`, `run` or blank.
     pub container_mode: String,
+    /// A `formatters` contribution id, or blank for the language server.
+    pub formatter: String,
     pub intelephense_enabled: bool,
     pub intelephense_diagnostics: bool,
     pub phpactor_enabled: bool,
@@ -200,6 +202,7 @@ impl PhpForm {
             stubs: php.stubs.as_ref().map(|s| s.join(", ")).unwrap_or_default(),
             container_target: php.container_target.clone().unwrap_or_default(),
             container_mode: php.container_mode.clone().unwrap_or_default(),
+            formatter: php.formatter.clone().unwrap_or_default(),
             intelephense_enabled,
             intelephense_diagnostics,
             phpactor_enabled,
@@ -241,6 +244,7 @@ impl PhpForm {
         php.container_mode = text(&self.container_mode).filter(|_| {
             php.container_target.is_some() && matches!(self.container_mode.trim(), "exec" | "run")
         });
+        php.formatter = text(&self.formatter);
         let wanted = [
             (
                 PHP_SERVERS[0],
@@ -395,6 +399,7 @@ mod tests {
             stubs: "redis, mongodb  gd".into(),
             container_target: "t1".into(),
             container_mode: "exec".into(),
+            formatter: " pint ".into(),
             intelephense_enabled: false,
             intelephense_diagnostics: true,
             phpactor_enabled: true,
@@ -408,6 +413,8 @@ mod tests {
             Some(&["redis".to_string(), "mongodb".into(), "gd".into()][..])
         );
         assert_eq!(php.container_mode.as_deref(), Some("exec"));
+        assert_eq!(php.formatter.as_deref(), Some("pint"));
+        assert_eq!(PhpForm::from_settings(&php).formatter, "pint");
         assert_eq!(php.servers["intelephense"].enabled, Some(false));
         assert_eq!(php.servers["intelephense"].diagnostics, None);
         assert_eq!(php.servers["phpactor"].diagnostics, Some(true));

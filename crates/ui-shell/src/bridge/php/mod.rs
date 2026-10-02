@@ -62,6 +62,7 @@ fn to_ffi_form(form: &PhpForm) -> ffi::FfiPhpForm {
         stubs: QString::from(form.stubs.as_str()),
         container_target: QString::from(form.container_target.as_str()),
         container_mode: QString::from(form.container_mode.as_str()),
+        formatter: QString::from(form.formatter.as_str()),
         intelephense_enabled: form.intelephense_enabled,
         intelephense_diagnostics: form.intelephense_diagnostics,
         phpactor_enabled: form.phpactor_enabled,
@@ -77,6 +78,7 @@ fn from_ffi_form(form: &ffi::FfiPhpForm) -> PhpForm {
         stubs: form.stubs.to_string(),
         container_target: form.container_target.to_string(),
         container_mode: form.container_mode.to_string(),
+        formatter: form.formatter.to_string(),
         intelephense_enabled: form.intelephense_enabled,
         intelephense_diagnostics: form.intelephense_diagnostics,
         phpactor_enabled: form.phpactor_enabled,
@@ -132,6 +134,17 @@ impl ffi::PhpSettingsEditor {
 
     pub fn form(&self) -> ffi::FfiPhpForm {
         to_ffi_form(&PhpForm::from_settings(&self.draft.borrow()))
+    }
+
+    pub fn formatter_choices(&self) -> Vec<ffi::FfiFormatterChoice> {
+        plugin_host::registry()
+            .formatters()
+            .filter(|(_, f)| f.languages.iter().any(|l| l == "php"))
+            .map(|(_, f)| ffi::FfiFormatterChoice {
+                id: QString::from(f.id.as_str()),
+                name: QString::from(f.name.as_str()),
+            })
+            .collect()
     }
 
     pub fn set_form(&self, form: &ffi::FfiPhpForm) -> FfiResult {

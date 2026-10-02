@@ -7,8 +7,6 @@
 //! (`run_action`, `finish_refactor`, `push_job`) rather than duplicating
 //! them.
 
-mod format_tool;
-
 use core::pin::Pin;
 use std::path::Path;
 
@@ -17,8 +15,8 @@ use cxx_qt_lib::QString;
 
 use crate::bridge::convert::to_ffi_edits;
 use crate::bridge::ffi::{self};
+use crate::bridge::format_tool::ToolFormat;
 use crate::bridge::language::{to_ffi_resource_op, to_file_op, PendingRefactor};
-use format_tool::ToolFormat;
 
 impl ffi::LanguageService {
     pub fn code_actions_at(
@@ -221,6 +219,54 @@ impl ffi::LanguageService {
                 None => m.format(uri, o),
             },
         );
+    }
+
+    /// Reformat the whole file `path` with `tool`. A tool that turns out not
+    /// to be installed falls back to the language server, silently: the
+    /// setting names a formatter the machine may not have.
+    pub(crate) fn format_with_tool(
+        mut self: Pin<&mut Self>,
+        tool: ToolFormat,
+        path: String,
+        buffer_revision: i64,
+    ) {
+        let Some(text) = self.session.borrow().content_for_path(Path::new(&path)) else {
+            return;
+        };
+        self.edits.borrow_mut().begin(buffer_revision);
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let result = tool.run(
+                &text,
+                Path::new(&path),
+                crate::bridge::format_tool::FORMAT_TIMEOUT,
+            );
+            let _ = qt_thread.queue(move |service: Pin<&mut Self>| match result {
+                Err(analysis_core::FormatError::NotInstalled) => {
+                    service.format_whole_with_lsp(&path, buffer_revision)
+                }
+                Err(error) => service
+                    .finish_refactor(Err(format!("{} could not format: {error}", tool.name()))),
+                Ok(formatted) => {
+                    let edits = lsp_core::edits_between(&text, &formatted);
+                    if edits.is_empty() {
+                        return service.finish_refactor(Ok(()));
+                    }
+                    let plan = lsp_core::EditPlan {
+                        buffers: vec![lsp_core::DocumentEdits {
+                            uri: lsp_core::uri_from_path(&path),
+                            path,
+                            version: None,
+                            edits,
+                        }],
+                        files: Vec::new(),
+                        ops: Vec::new(),
+                        touches_other_files: false,
+                    };
+                    service.publish_refactor("Reformat Code".to_string(), plan, None);
+                }
+            });
+        });
     }
 
     /// Reformat Code's language-server path for the whole file.

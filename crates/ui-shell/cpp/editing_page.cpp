@@ -48,6 +48,7 @@ struct RowFields
     QCheckBox *useSpaces;
     QCheckBox *trimTrailingWhitespace;
     QCheckBox *insertFinalNewline;
+    QCheckBox *formatOnSave;
     QSpinBox *wrapColumn;
     QCheckBox *softWrap;
 };
@@ -62,6 +63,7 @@ RowFields addRowFields(QFormLayout *form)
     QCheckBox *useSpaces = addTriState(form, QObject::tr("Indent with spaces:"));
     QCheckBox *trim = addTriState(form, QObject::tr("Trim trailing whitespace on save:"));
     QCheckBox *finalNewline = addTriState(form, QObject::tr("Insert final newline on save:"));
+    QCheckBox *formatOnSave = addTriState(form, QObject::tr("Format with the formatter on save:"));
 
     auto *wrapColumn = new QSpinBox(form->parentWidget());
     wrapColumn->setRange(0, kMaxWrapColumn);
@@ -70,7 +72,7 @@ RowFields addRowFields(QFormLayout *form)
 
     QCheckBox *softWrap = addTriState(form, QObject::tr("Wrap lines at the guide (soft wrap):"));
 
-    return RowFields{tabWidth, useSpaces, trim, finalNewline, wrapColumn, softWrap};
+    return RowFields{tabWidth, useSpaces, trim, finalNewline, formatOnSave, wrapColumn, softWrap};
 }
 
 void setRowFields(const RowFields &fields, const FfiEditingRow &row)
@@ -82,6 +84,7 @@ void setRowFields(const RowFields &fields, const FfiEditingRow &row)
                row.trim_trailing_whitespace);
     setTriState(fields.insertFinalNewline, row.has_insert_final_newline,
                row.insert_final_newline);
+    setTriState(fields.formatOnSave, row.has_format_on_save, row.format_on_save);
     const QSignalBlocker wrapBlocker(fields.wrapColumn);
     fields.wrapColumn->setValue(static_cast<int>(row.wrap_column));
     setTriState(fields.softWrap, row.has_soft_wrap, row.soft_wrap);
@@ -108,6 +111,8 @@ FfiEditingRow readRowFields(const RowFields &fields, const QString &languageId,
     row.has_insert_final_newline =
       fields.insertFinalNewline->checkState() != Qt::PartiallyChecked;
     row.insert_final_newline = fields.insertFinalNewline->checkState() == Qt::Checked;
+    row.has_format_on_save = fields.formatOnSave->checkState() != Qt::PartiallyChecked;
+    row.format_on_save = fields.formatOnSave->checkState() == Qt::Checked;
     // `Some(0)` and unset are the same "never wrap" answer
     // (`EditingSettings::wrap_column_or_default`), so the widget need not
     // distinguish them — zero always reads back as unset.
@@ -170,6 +175,7 @@ QWidget *buildEditingPage(QWidget *parent, EditingEditor *editor)
                      pushGlobalRow);
     QObject::connect(globalFields.insertFinalNewline, &QCheckBox::stateChanged, page,
                      pushGlobalRow);
+    QObject::connect(globalFields.formatOnSave, &QCheckBox::stateChanged, page, pushGlobalRow);
     QObject::connect(globalFields.wrapColumn, &QSpinBox::valueChanged, page, pushGlobalRow);
     QObject::connect(globalFields.softWrap, &QCheckBox::stateChanged, page, pushGlobalRow);
     QObject::connect(encodingEdit, &QLineEdit::textChanged, page, pushGlobalRow);
@@ -229,6 +235,8 @@ QWidget *buildEditingPage(QWidget *parent, EditingEditor *editor)
     QObject::connect(languageFields.trimTrailingWhitespace, &QCheckBox::stateChanged, page,
                      pushLanguageRow);
     QObject::connect(languageFields.insertFinalNewline, &QCheckBox::stateChanged, page,
+                     pushLanguageRow);
+    QObject::connect(languageFields.formatOnSave, &QCheckBox::stateChanged, page,
                      pushLanguageRow);
     QObject::connect(languageFields.wrapColumn, &QSpinBox::valueChanged, page, pushLanguageRow);
     QObject::connect(languageFields.softWrap, &QCheckBox::stateChanged, page, pushLanguageRow);

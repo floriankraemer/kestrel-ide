@@ -80,6 +80,8 @@ pub struct EditingRules {
     pub use_spaces: bool,
     pub trim_trailing_whitespace: bool,
     pub insert_final_newline: bool,
+    /// Run the language's tool formatter just before a save writes the file.
+    pub format_on_save: bool,
     /// `0` means "never wrap".
     pub wrap_column: u32,
     /// Whether the editor reflows text at `wrap_column` rather than only
@@ -153,6 +155,9 @@ pub fn resolve_for_language(settings: &Settings, language_id: &str) -> EditingRu
         insert_final_newline: language
             .and_then(|l| l.insert_final_newline)
             .unwrap_or_else(|| global.insert_final_newline_or_default()),
+        format_on_save: language
+            .and_then(|l| l.format_on_save)
+            .unwrap_or_else(|| global.format_on_save_or_default()),
         wrap_column: pick_u32(
             language
                 .filter(|l| l.wrap_column.is_some())
@@ -283,6 +288,7 @@ fn is_unset(overrides: &EditingSettings) -> bool {
         && overrides.use_spaces.is_none()
         && overrides.trim_trailing_whitespace.is_none()
         && overrides.insert_final_newline.is_none()
+        && overrides.format_on_save.is_none()
         && overrides.wrap_column.is_none()
         && overrides.soft_wrap.is_none()
         && overrides.default_encoding.is_empty()
@@ -428,6 +434,32 @@ mod tests {
                 use_spaces: true
             }
         );
+    }
+
+    #[test]
+    fn format_on_save_is_off_unless_a_language_or_the_global_section_turns_it_on() {
+        let off = Settings::default();
+        assert!(!resolve_for_language(&off, "php").format_on_save);
+
+        let mut editing = EditingSettings::default();
+        language(
+            &mut editing,
+            "php",
+            EditingSettings {
+                format_on_save: Some(true),
+                ..EditingSettings::default()
+            },
+        );
+        let settings = Settings {
+            editing,
+            ..Settings::default()
+        };
+        assert!(resolve_for_language(&settings, "php").format_on_save);
+        assert!(!resolve_for_language(&settings, "rust").format_on_save);
+
+        let mut global = Settings::default();
+        global.editing.format_on_save = Some(true);
+        assert!(resolve_for_language(&global, "rust").format_on_save);
     }
 
     #[test]
@@ -622,6 +654,7 @@ mod tests {
             use_spaces: false,
             trim_trailing_whitespace: false,
             insert_final_newline: true,
+            format_on_save: false,
             wrap_column: 80,
             soft_wrap: true,
             encoding: "utf-8".into(),

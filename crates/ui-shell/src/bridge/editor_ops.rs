@@ -946,11 +946,59 @@ impl ffi::EditorOps {
         let text = text.to_string();
         let language = language_of(&self.session.borrow(), tab_id);
         let rules = self.save_rules(language);
+        if let Some(formatted) = self.format_on_save(tab_id, language, &text) {
+            // The tidy rules run on the formatted text, and the two are
+            // handed over as one diff against what the buffer holds now.
+            let tidied = editor_core::save_rules::on_save(&formatted, &rules)
+                .apply(&formatted)
+                .unwrap_or(formatted);
+            return lsp_core::edits_between(&text, &tidied)
+                .into_iter()
+                .map(|edit| ffi::FfiTextEdit {
+                    path: QString::default(),
+                    in_buffer: true,
+                    start_line: edit.start_line,
+                    start_character: edit.start_character,
+                    end_line: edit.end_line,
+                    end_character: edit.end_character,
+                    new_text: QString::from(edit.new_text.as_str()),
+                })
+                .collect();
+        }
         let transaction = editor_core::save_rules::on_save(&text, &rules);
         if transaction.is_empty() {
             return Vec::new();
         }
         self.to_ffi_edits(&text, &transaction)
+    }
+
+    /// `text` formatted by the language's tool formatter, when
+    /// `format_on_save` is on for it and a tool is configured (ADR-0070).
+    ///
+    /// Blocks the caller for at most `FORMAT_ON_SAVE_TIMEOUT`. A failing or
+    /// timed-out formatter must not keep the file from being saved, so the
+    /// failure is logged and the save goes ahead unformatted.
+    fn format_on_save(&self, tab_id: u64, language: Language, text: &str) -> Option<String> {
+        let path = self
+            .session
+            .borrow()
+            .tab_path(app_core::TabId::from_raw(tab_id))?;
+        let wanted = {
+            let settings = self.settings.borrow();
+            settings_model::editing::resolve_for_language(&settings, &language.id()).format_on_save
+        };
+        if !wanted {
+            return None;
+        }
+        let tool = crate::bridge::format_tool::ToolFormat::resolve(&language.id(), false)?;
+        let timeout = crate::bridge::format_tool::FORMAT_ON_SAVE_TIMEOUT;
+        match tool.run(text, &path, timeout) {
+            Ok(formatted) => Some(formatted),
+            Err(error) => {
+                eprintln!("format on save: {} could not format: {error}", tool.name());
+                None
+            }
+        }
     }
 
     /// The tab width `text` in this tab renders at, resolved through

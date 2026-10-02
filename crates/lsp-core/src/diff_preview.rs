@@ -41,7 +41,9 @@ pub fn file_diff(old_text: &str, doc: &DocumentEdits) -> Result<FileDiff, EditEr
 /// small replacements (keeping the caret, folds and one undo step) instead
 /// of replacing the document.
 ///
-/// One edit per changed run of lines. A diff over
+/// One edit per changed run of lines, last edit first — the order every
+/// producer hands the editor, since each edit is applied against the text
+/// the earlier ones already changed. A diff over
 /// [`editor_core::diff::MAX_DIFF_BYTES`] falls back to one edit replacing
 /// everything.
 pub fn edits_between(old: &str, new: &str) -> Vec<TextEdit> {
@@ -60,6 +62,7 @@ pub fn edits_between(old: &str, new: &str) -> Vec<TextEdit> {
     };
     hunks
         .iter()
+        .rev()
         .map(|h| replace_lines(&old_lines, h.old.clone(), new_lines[h.new.clone()].concat()))
         .collect()
 }
@@ -176,7 +179,8 @@ mod tests {
     fn insertions_deletions_and_several_hunks_round_trip() {
         roundtrip("a\nc\n", "a\nb\nc\n");
         roundtrip("a\nb\nc\n", "a\nc\n");
-        roundtrip("1\n2\n3\n4\n5\n", "1\nx\n3\ny\n5\n");
+        let edits = roundtrip("1\n2\n3\n4\n5\n", "1\nx\n3\ny\n5\n");
+        assert!(edits[0].start_line > edits[1].start_line, "descending");
         roundtrip("", "<?php\n");
         roundtrip("<?php\n", "");
     }

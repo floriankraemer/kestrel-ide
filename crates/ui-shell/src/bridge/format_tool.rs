@@ -1,21 +1,20 @@
-//! Reformat Code through a `formatters` contribution (ADR-0070): php-cs-fixer,
-//! Pint or phpcbf instead of the language server.
+//! Reformat Code and format-on-save through a `formatters` contribution
+//! (ADR-0070): php-cs-fixer, Pint or phpcbf instead of the language server.
 //!
 //! Which one runs is `settings_model::formatting::plan`'s rule; this file
 //! resolves the program's host, runs it off the Qt thread and publishes the
 //! result as minimal line edits through the same pending-edit path an LSP
 //! reformat uses, so Ctrl+Z undoes the whole reformat in one step.
 
-use core::pin::Pin;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use cxx_qt::Threading;
-
-use crate::bridge::ffi;
-
-/// A formatter tool run that has not finished within this is abandoned.
+/// A Reformat Code run that has not finished within this is abandoned.
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Format-on-save blocks the Qt thread (the save has to wait for the text),
+/// so it gets a much shorter leash.
+pub(crate) const FORMAT_ON_SAVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Everything needed to run the configured formatter on a worker thread.
 pub(crate) struct ToolFormat {
@@ -68,6 +67,7 @@ impl ToolFormat {
         &self,
         text: &str,
         path: &Path,
+        timeout: Duration,
     ) -> Result<String, analysis_core::FormatError> {
         analysis_core::format(
             &self.def,
@@ -76,53 +76,7 @@ impl ToolFormat {
             &self.root,
             &self.host,
             &self.php_binary,
-            FORMAT_TIMEOUT,
+            timeout,
         )
-    }
-}
-
-impl ffi::LanguageService {
-    /// Reformat the whole file `path` with `tool`. A tool that turns out not
-    /// to be installed falls back to the language server, silently: the
-    /// setting names a formatter the machine may not have.
-    pub(crate) fn format_with_tool(
-        mut self: Pin<&mut Self>,
-        tool: ToolFormat,
-        path: String,
-        buffer_revision: i64,
-    ) {
-        let Some(text) = self.session.borrow().content_for_path(Path::new(&path)) else {
-            return;
-        };
-        self.edits.borrow_mut().begin(buffer_revision);
-        let qt_thread = self.as_mut().qt_thread();
-        std::thread::spawn(move || {
-            let result = tool.run(&text, Path::new(&path));
-            let _ = qt_thread.queue(move |service: Pin<&mut Self>| match result {
-                Err(analysis_core::FormatError::NotInstalled) => {
-                    service.format_whole_with_lsp(&path, buffer_revision)
-                }
-                Err(error) => service
-                    .finish_refactor(Err(format!("{} could not format: {error}", tool.name()))),
-                Ok(formatted) => {
-                    let edits = lsp_core::edits_between(&text, &formatted);
-                    if edits.is_empty() {
-                        return service.finish_refactor(Ok(()));
-                    }
-                    let plan = lsp_core::EditPlan {
-                        buffers: vec![lsp_core::DocumentEdits {
-                            uri: lsp_core::uri_from_path(&path),
-                            path,
-                            version: None,
-                            edits,
-                        }],
-                        files: Vec::new(),
-                        ops: Vec::new(),
-                        touches_other_files: false,
-                    };
-                    service.publish_refactor("Reformat Code".to_string(), plan, None);
-                }
-            });
-        });
     }
 }

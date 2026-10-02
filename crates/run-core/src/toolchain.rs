@@ -162,8 +162,9 @@ impl ToolchainId {
             ToolchainId::Cargo | ToolchainId::Cmake => Some("codelldb"),
             ToolchainId::Python => Some("debugpy"),
             ToolchainId::Maven | ToolchainId::Gradle => Some("java-debug"),
-            // vscode-php-debug arrives with the Xdebug phase (ADR-0069).
-            ToolchainId::Npm | ToolchainId::Make | ToolchainId::Php => None,
+            // vscode-php-debug, driven in listen mode (ADR-0069).
+            ToolchainId::Php => Some("php-debug"),
+            ToolchainId::Npm | ToolchainId::Make => None,
         }
     }
 }
@@ -384,5 +385,6 @@ mod tests {
         assert_eq!(ToolchainId::Maven.debug_adapter(), Some("java-debug"));
         assert_eq!(ToolchainId::Gradle.debug_adapter(), Some("java-debug"));
         assert_eq!(ToolchainId::Make.debug_adapter(), None);
+        assert_eq!(ToolchainId::Php.debug_adapter(), Some("php-debug"));
     }
 }

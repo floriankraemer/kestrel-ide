@@ -6,6 +6,8 @@
 //! default for a project comes from `run_core::toolchain` — which adapter a
 //! toolchain implies is that table's answer (ADR-0039), not a second one.
 
+use std::path::{Path, PathBuf};
+
 use app_config::DebugAdapterSetting;
 use run_core::ToolchainId;
 
@@ -50,7 +52,71 @@ pub fn shipped() -> Vec<Adapter> {
                 "Install the Java debug adapter (microsoft/java-debug) and put its launcher on PATH."
                     .into(),
         },
+        Adapter {
+            id: PHP_DEBUG.into(),
+            program: "node".into(),
+            args: vec![php_debug_script()],
+            install_hint: "Install the PHP Debug extension (xdebug.php-debug) in VS Code or a \
+                           compatible editor so its `phpDebug.js` can be found, or point a \
+                           `[[debug_adapter]]` with id \"php-debug\" at `node` and your copy."
+                .into(),
+        },
     ]
+}
+
+/// The catalog id of vscode-php-debug (ADR-0069).
+pub const PHP_DEBUG: &str = "php-debug";
+
+/// Editor extension folders under the home directory that may hold the
+/// `xdebug.php-debug` extension.
+const EXTENSION_HOMES: &[&str] = &[
+    ".vscode",
+    ".vscode-server",
+    ".vscode-insiders",
+    ".vscode-oss",
+    ".cursor",
+    ".windsurf",
+];
+
+const PHP_DEBUG_PREFIX: &str = "xdebug.php-debug-";
+
+/// `phpDebug.js` of the newest installed `xdebug.php-debug` extension under
+/// `home`, if any.
+pub fn locate_php_debug(home: &Path) -> Option<PathBuf> {
+    EXTENSION_HOMES
+        .iter()
+        .filter_map(|editor| std::fs::read_dir(home.join(editor).join("extensions")).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let version = extension_version(name.strip_prefix(PHP_DEBUG_PREFIX)?);
+            let script = entry.path().join("out").join("phpDebug.js");
+            script.is_file().then_some((version, script))
+        })
+        .max()
+        .map(|(_, script)| script)
+}
+
+/// `1.36.0` out of `1.36.0-linux-x64`, as comparable numbers.
+fn extension_version(suffix: &str) -> Vec<u64> {
+    suffix
+        .split('-')
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+/// The script argument for the shipped `php-debug` row: the located file, or
+/// the bare name, which makes `node` fail and the install hint show.
+fn php_debug_script() -> String {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .and_then(|home| locate_php_debug(Path::new(&home)))
+        .map(|script| script.display().to_string())
+        .unwrap_or_else(|| "phpDebug.js".to_string())
 }
 
 /// The adapter for `id`, with any project override applied.
@@ -126,6 +192,7 @@ mod tests {
             ToolchainId::Python,
             ToolchainId::Maven,
             ToolchainId::Gradle,
+            ToolchainId::Php,
         ] {
             assert!(
                 for_toolchain(toolchain, &[]).is_some(),
@@ -167,6 +234,62 @@ mod tests {
             args: None,
         }];
         assert!(resolve("delve", &overrides).is_none());
+    }
+
+    fn install(home: &Path, editor: &str, folder: &str, with_script: bool) -> PathBuf {
+        let out = home
+            .join(editor)
+            .join("extensions")
+            .join(folder)
+            .join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let script = out.join("phpDebug.js");
+        if with_script {
+            std::fs::write(&script, "").unwrap();
+        }
+        script
+    }
+
+    #[test]
+    fn php_debug_is_found_in_the_newest_extension_of_any_editor() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), ".vscode", "xdebug.php-debug-1.9.0", true);
+        let newest = install(
+            home.path(),
+            ".cursor",
+            "xdebug.php-debug-1.36.0-linux-x64",
+            true,
+        );
+        install(
+            home.path(),
+            ".vscode-server",
+            "xdebug.php-debug-1.40.0",
+            false,
+        );
+        install(home.path(), ".vscode", "ms-python.python-2025.1.0", true);
+        assert_eq!(locate_php_debug(home.path()), Some(newest));
+    }
+
+    #[test]
+    fn php_debug_is_not_found_in_an_empty_home() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(locate_php_debug(home.path()), None);
+    }
+
+    #[test]
+    fn php_debug_runs_under_node_and_can_be_overridden() {
+        let adapter = resolve(PHP_DEBUG, &[]).unwrap();
+        assert_eq!(adapter.program, "node");
+        assert_eq!(adapter.args.len(), 1);
+        let overrides = vec![DebugAdapterSetting {
+            id: PHP_DEBUG.into(),
+            command: None,
+            args: Some(vec!["/opt/phpDebug.js".into()]),
+        }];
+        assert_eq!(
+            resolve(PHP_DEBUG, &overrides).unwrap().args,
+            vec!["/opt/phpDebug.js"]
+        );
     }
 
     #[test]

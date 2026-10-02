@@ -106,6 +106,7 @@ QTreeWidgetItem *addVariableRow(QTreeWidgetItem *under, QTreeWidget *tree,
     auto *row = under ? new QTreeWidgetItem(under) : new QTreeWidgetItem(tree);
     row->setText(0, QString(variable.name));
     row->setText(1, QString(variable.value));
+    row->setToolTip(0, QString(variable.name));
     row->setToolTip(1, QString(variable.type_name));
     row->setData(0, kReferenceRole, static_cast<qlonglong>(variable.variables_reference));
     row->setData(0, kContainerReferenceRole, static_cast<qlonglong>(containerReference));

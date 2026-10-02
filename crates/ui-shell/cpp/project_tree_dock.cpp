@@ -275,13 +275,33 @@ void wireRowMarkers(QTreeView *treeView)
     treeView->viewport()->installEventFilter(new ViewportResizeRelay(coalesce));
 }
 
+// An arrow drawn directly, tinted like `locateIcon`: `QStyle::SP_ArrowUp`
+// is the platform's own glyph, a black triangle on Windows and a green disc
+// under other styles, so it matched neither the theme nor the other OS.
+QIcon sortIcon(const QColor &tint, bool descending)
+{
+    constexpr int kSide = 16;
+    QPixmap pixmap(kSide, kSide);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(tint, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    const qreal tip = descending ? 13.0 : 3.0;
+    const qreal tail = descending ? 3.0 : 13.0;
+    const qreal wing = descending ? -3.5 : 3.5;
+    constexpr qreal kMiddle = kSide / 2.0;
+    painter.drawLine(QPointF(kMiddle, tail), QPointF(kMiddle, tip));
+    painter.drawLine(QPointF(kMiddle - 3.5, tip + wing), QPointF(kMiddle, tip));
+    painter.drawLine(QPointF(kMiddle + 3.5, tip + wing), QPointF(kMiddle, tip));
+    return QIcon(pixmap);
+}
+
 // Icon + tooltip for the title-bar sort toggle reflect its current state —
 // the title-bar button is icon-only (DockAreaTitleBar wraps it with no
 // text), so the direction has to read from the arrow, JetBrains-style.
 void updateSortAction(QAction *action, QWidget *iconSource, bool descending)
 {
-    const auto standardIcon = descending ? QStyle::SP_ArrowDown : QStyle::SP_ArrowUp;
-    action->setIcon(iconSource->style()->standardIcon(standardIcon));
+    action->setIcon(sortIcon(iconSource->palette().color(QPalette::WindowText), descending));
     action->setToolTip(descending ? QObject::tr("Sort Z to A") : QObject::tr("Sort A to Z"));
 }
 

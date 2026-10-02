@@ -91,6 +91,9 @@ args = ["--teamcity"]
 filter-flag = "--filter"
 output-format = "teamcity"
 config-file-candidates = ["phpunit.xml", "phpunit.xml.dist", "pest.php"]
+# A coverage run writes Clover XML to a project-relative path, so it lands
+# in the project mount whether PHP runs here, in WSL or in a container.
+coverage-args = ["--coverage-clover", "$COVERAGE_FILE$"]
 composer-package = "pestphp/pest"
 requires-interpreter = "php"
 
@@ -113,11 +116,11 @@ id = "behat"
 name = "Behat"
 program-candidates = ["vendor/bin/behat"]
 # The junit formatter writes one `<suite>.xml` per suite into `--out`.
-args = ["--format=junit", "--out=.ide/test-reports/behat"]
+args = ["--format=junit", "--out=.ide/local/test-reports/behat"]
 # Behat selects scenarios by title, not by PHPUnit-style class name.
 filter-flag = "--name"
 output-format = "junit-xml"
-report-glob = ".ide/test-reports/behat/*.xml"
+report-glob = ".ide/local/test-reports/behat/*.xml"
 config-file-candidates = ["behat.yml", "behat.yml.dist"]
 composer-package = "behat/behat"
 requires-interpreter = "php"
@@ -162,5 +165,8 @@ args = ["--teamcity"]
 filter-flag = "--filter"
 output-format = "teamcity"
 config-file-candidates = ["phpunit.xml", "phpunit.xml.dist"]
+# A coverage run writes Clover XML to a project-relative path, so it lands
+# in the project mount whether PHP runs here, in WSL or in a container.
+coverage-args = ["--coverage-clover", "$COVERAGE_FILE$"]
 composer-package = "phpunit/phpunit"
 requires-interpreter = "php"

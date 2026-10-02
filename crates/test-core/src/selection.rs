@@ -73,6 +73,7 @@ mod tests {
             filter_dialect: None,
             composer_package: None,
             requires_interpreter: None,
+            coverage_args: vec![],
         }
     }
 

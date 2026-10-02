@@ -20,6 +20,8 @@
 //!   the suite/class/method hierarchy, filled incrementally.
 //! - [`teamcity`] — the primary streaming format, PHPUnit's `--teamcity`.
 //! - [`junit`] — the batch fallback format, `--log-junit`.
+//! - [`coverage`] — Clover reports: per-file line hits and per-directory
+//!   summaries (PHP parity plan T4).
 //! - [`runner`] — spawning the process and turning its output into tree
 //!   events, over pipes rather than a PTY (same reasoning as analyzers).
 //! - [`diagnostics`] — a failing test becomes a `diagnostics_core::
@@ -27,6 +29,7 @@
 //! - [`filter`] — building a `--filter` pattern from tree nodes (D6): run
 //!   all failed, or one node, from the tree's context menu.
 
+pub mod coverage;
 mod diagnostics;
 pub mod filter;
 mod junit;

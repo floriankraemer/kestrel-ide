@@ -351,6 +351,12 @@ pub struct TestFrameworkContribution {
     /// Same meaning as [`AnalyzerContribution::requires_interpreter`].
     #[serde(default, rename = "requires-interpreter")]
     pub requires_interpreter: Option<String>,
+    /// Arguments that make a run write a Clover coverage report, where
+    /// `$COVERAGE_FILE$` stands for the report's path
+    /// (`["--coverage-clover", "$COVERAGE_FILE$"]`). Empty means the
+    /// framework offers no coverage run.
+    #[serde(default, rename = "coverage-args")]
+    pub coverage_args: Vec<String>,
 }
 
 /// One build tool a plugin offers (the jvm-build-tools plan's A1).
@@ -864,6 +870,17 @@ impl PluginManifest {
                 framework.composer_package.as_deref(),
                 framework.requires_interpreter.as_deref(),
             )?;
+            if !framework.coverage_args.is_empty()
+                && !framework
+                    .coverage_args
+                    .iter()
+                    .any(|arg| arg.contains("$COVERAGE_FILE$"))
+            {
+                return Err(LoadErrorKind::MalformedManifest(
+                    "contributes.test-frameworks.coverage-args must contain `$COVERAGE_FILE$`"
+                        .to_string(),
+                ));
+            }
             if let Some(dialect) = &framework.filter_dialect {
                 non_empty("contributes.test-frameworks.filter-dialect", dialect)?;
                 if !matches!(dialect.as_str(), "phpunit-regex" | "surefire" | "gradle") {

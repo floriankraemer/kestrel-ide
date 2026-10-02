@@ -596,6 +596,31 @@ fn a_test_framework_reads_composer_package_and_interpreter() {
 }
 
 #[test]
+fn coverage_args_must_name_the_report_path() {
+    let toml = |args: &str| {
+        with(&format!(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            coverage-args = {args}
+            "#
+        ))
+    };
+    let ok = PluginManifest::from_toml_str(&toml(r#"["--coverage-clover", "$COVERAGE_FILE$"]"#))
+        .expect("valid");
+    assert_eq!(
+        ok.contributes.test_frameworks[0].coverage_args,
+        ["--coverage-clover", "$COVERAGE_FILE$"]
+    );
+    let err = PluginManifest::from_toml_str(&toml(r#"["--coverage-clover"]"#)).unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
 fn an_analyzer_contribution_round_trips() {
     let manifest = PluginManifest::from_toml_str(&with(
         r#"

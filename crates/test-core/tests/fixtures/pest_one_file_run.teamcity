@@ -1,0 +1,7 @@
+##teamcity[testSuiteStarted name='Tests\GreeterTest' locationHint='pest_qn://Greeter (Tests\Greeter)']
+##teamcity[testCount count='2']
+##teamcity[testStarted name='Greets by name' locationHint='pest_qn://Greeter (Tests\Greeter)::Greets by name']
+##teamcity[testFinished name='Greets by name' duration='1']
+##teamcity[testStarted name='Whispers in lower case' locationHint='pest_qn://Greeter (Tests\Greeter)::Whispers in lower case']
+##teamcity[testFinished name='Whispers in lower case' duration='0']
+##teamcity[testSuiteFinished name='Tests\GreeterTest']

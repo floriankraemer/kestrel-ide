@@ -69,7 +69,30 @@ pub enum TeamCityEvent {
 #[derive(Debug, Default)]
 pub struct TeamCityParser {
     buffer: String,
-    stacks: HashMap<String, Vec<TestId>>,
+    stacks: HashMap<String, Vec<Frame>>,
+}
+
+/// One open suite. PHPUnit-based runners (Pest above all) wrap a whole run in
+/// a suite named after the config file's absolute path and, inside it, the
+/// `<testsuite>` (`default`). A run narrowed to one file omits both, so
+/// keeping them would give the same class two different ids across runs and
+/// two chains in the tree. They are tracked for nesting but never reported.
+#[derive(Debug)]
+struct Frame {
+    id: TestId,
+    hidden: bool,
+    config: bool,
+}
+
+impl Frame {
+    fn visible(stack: &[Frame]) -> Option<TestId> {
+        stack.iter().rev().find(|f| !f.hidden).map(|f| f.id.clone())
+    }
+}
+
+/// `/proj/phpunit.xml`, `C:\proj\phpunit.xml.dist`: a path, not a class name.
+fn is_config_suite(name: &str) -> bool {
+    (name.ends_with(".xml") || name.ends_with(".xml.dist")) && name.contains(['/', '\\'])
 }
 
 impl TeamCityParser {
@@ -110,19 +133,22 @@ impl TeamCityParser {
         let message = ServiceMessage::parse(line)?;
         let flow = message.get("flowId").unwrap_or("").to_string();
         let stack = self.stacks.entry(flow).or_default();
-        let parent = stack.last().cloned();
+        let parent = Frame::visible(stack);
         match message.name.as_str() {
             "testSuiteStarted" => {
                 let name = message.get("name")?.to_string();
+                let config = is_config_suite(&name);
+                let wrapper = stack.last().is_some_and(|f| f.config);
                 let id = TestId::child(parent.as_ref(), &name);
-                stack.push(id);
-                Some(TeamCityEvent::SuiteStarted { parent, name })
+                let hidden = config || wrapper;
+                stack.push(Frame { id, hidden, config });
+                (!hidden).then_some(TeamCityEvent::SuiteStarted { parent, name })
             }
             "testSuiteFinished" => {
                 let name = message.get("name")?.to_string();
-                stack.pop();
-                let parent = stack.last().cloned();
-                Some(TeamCityEvent::SuiteFinished { parent, name })
+                let closed = stack.pop()?;
+                let parent = Frame::visible(stack);
+                (!closed.hidden).then_some(TeamCityEvent::SuiteFinished { parent, name })
             }
             "testStarted" => Some(TeamCityEvent::TestStarted {
                 parent,
@@ -425,5 +451,39 @@ mod tests {
         };
         assert_eq!(name, "shallow");
         assert_eq!(parent.as_ref().unwrap().as_str(), "Outer");
+    }
+
+    fn tree_after(runs: &[&str]) -> crate::tree::TestTree {
+        let mut tree = crate::tree::TestTree::new();
+        for run in runs {
+            events(run).into_iter().for_each(|e| tree.apply(e));
+        }
+        tree
+    }
+
+    const PEST_FULL_RUN: &str = include_str!("../tests/fixtures/pest_full_run.teamcity");
+    const PEST_ONE_FILE_RUN: &str = include_str!("../tests/fixtures/pest_one_file_run.teamcity");
+
+    #[test]
+    fn pests_config_and_testsuite_wrappers_are_not_tree_nodes() {
+        let tree = tree_after(&[PEST_FULL_RUN]);
+        let roots: Vec<&str> = tree.roots().iter().map(TestId::as_str).collect();
+        assert_eq!(
+            roots,
+            ["Tests\\Feature\\GreeterPestTest", "Tests\\GreeterTest"]
+        );
+        let leaf = TestId("Tests\\GreeterTest::Greets by name".into());
+        assert!(tree.node(&leaf).is_some());
+    }
+
+    #[test]
+    fn a_run_narrowed_to_one_file_updates_the_same_nodes_as_a_full_run() {
+        let tree = tree_after(&[PEST_FULL_RUN, PEST_ONE_FILE_RUN]);
+        assert_eq!(
+            tree.roots().len(),
+            2,
+            "one chain per class, got {:?}",
+            tree.roots()
+        );
     }
 }

@@ -14,6 +14,7 @@
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMenu>
+#include <QSizeGrip>
 #include <QStatusBar>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -35,7 +36,19 @@ void EditorTabs::showStatusNotice(const QString &message)
         return;
     }
     if (auto *main = qobject_cast<QMainWindow *>(window_)) {
-        main->statusBar()->showMessage(message, 10000);
+        QStatusBar *bar = main->statusBar();
+        // A tool's own message can be several long lines; the bar clips what
+        // runs under its permanent widgets, so keep the first line and elide
+        // it to the room those widgets leave.
+        int taken = 0;
+        for (const QWidget *child : bar->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly)) {
+            if (child->isVisibleTo(bar) && !qobject_cast<const QSizeGrip *>(child)) {
+                taken += child->width();
+            }
+        }
+        const int room = qMax(200, bar->width() - taken - 40);
+        const QString firstLine = message.section(QLatin1Char('\n'), 0, 0);
+        bar->showMessage(bar->fontMetrics().elidedText(firstLine, Qt::ElideRight, room), 10000);
     }
 }
 

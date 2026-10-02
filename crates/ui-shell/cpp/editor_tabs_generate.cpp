@@ -28,6 +28,16 @@ constexpr int kServerWaitMs = 300;
 
 } // namespace
 
+void EditorTabs::showStatusNotice(const QString &message)
+{
+    if (message.isEmpty()) {
+        return;
+    }
+    if (auto *main = qobject_cast<QMainWindow *>(window_)) {
+        main->statusBar()->showMessage(message, 10000);
+    }
+}
+
 void EditorTabs::showGenerateNow()
 {
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
@@ -90,9 +100,7 @@ void EditorTabs::showGenerateMenu(bool withServerActions)
     }
 
     if (menu.isEmpty()) {
-        if (auto *main = qobject_cast<QMainWindow *>(window_)) {
-            main->statusBar()->showMessage(tr("Nothing to generate here."), 4000);
-        }
+        showStatusNotice(tr("Nothing to generate here."));
         return;
     }
     QAction *chosen = menu.exec(editor->mapToGlobal(editor->cursorRect().bottomLeft()));

@@ -907,6 +907,8 @@ private:
     // request, opens the popup immediately.
     void onIntentionsReady();
     void showGenerateMenu(bool withServerActions);
+    // Shows `message` in the main window's status bar; empty shows nothing.
+    void showStatusNotice(const QString &message);
     void runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QString &title);
 
     // The grouped popup itself, shared by the bulb's click and Alt+Return.

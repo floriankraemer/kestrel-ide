@@ -945,14 +945,33 @@ impl ffi::EditorOps {
     /// A pure computation: it touches no caret state and never emits
     /// `caretsChanged`, because nothing about where the carets are changes
     /// here — only what the text says.
-    pub fn save_rule_edits(&self, tab_id: u64, text: &QString) -> Vec<ffi::FfiTextEdit> {
+    pub fn save_rule_edits(&self, tab_id: u64, text: &QString) -> ffi::FfiSaveEdits {
         let text = text.to_string();
         let language = language_of(&self.session.borrow(), tab_id);
         let rules = self.save_rules(language);
-        if let Some(formatted) = self.format_on_save(tab_id, language, &text) {
+        let (formatted, notice) = match self.format_on_save(tab_id, language, &text) {
+            Ok(formatted) => (formatted, String::new()),
+            Err(notice) => (None, notice),
+        };
+        ffi::FfiSaveEdits {
+            edits: self.tidy_edits(&text, &rules, formatted),
+            notice: QString::from(notice.as_str()),
+        }
+    }
+
+    /// The edits that bring `text` to its saved shape: the formatter's
+    /// output when there is one, then the language's tidy rules.
+    fn tidy_edits(
+        &self,
+        text: &str,
+        rules: &editor_core::save_rules::SaveRules,
+        formatted: Option<String>,
+    ) -> Vec<ffi::FfiTextEdit> {
+        let text = text.to_string();
+        if let Some(formatted) = formatted {
             // The tidy rules run on the formatted text, and the two are
             // handed over as one diff against what the buffer holds now.
-            let tidied = editor_core::save_rules::on_save(&formatted, &rules)
+            let tidied = editor_core::save_rules::on_save(&formatted, rules)
                 .apply(&formatted)
                 .unwrap_or(formatted);
             return lsp_core::edits_between(&text, &tidied)
@@ -968,7 +987,7 @@ impl ffi::EditorOps {
                 })
                 .collect();
         }
-        let transaction = editor_core::save_rules::on_save(&text, &rules);
+        let transaction = editor_core::save_rules::on_save(&text, rules);
         if transaction.is_empty() {
             return Vec::new();
         }
@@ -979,29 +998,37 @@ impl ffi::EditorOps {
     /// `format_on_save` is on for it and a tool is configured (ADR-0070).
     ///
     /// Blocks the caller for at most `FORMAT_ON_SAVE_TIMEOUT`. A failing or
-    /// timed-out formatter must not keep the file from being saved, so the
-    /// failure is logged and the save goes ahead unformatted.
-    fn format_on_save(&self, tab_id: u64, language: Language, text: &str) -> Option<String> {
-        let path = self
+    /// timed-out formatter must not keep the file from being saved: the save
+    /// goes ahead unformatted and the failure comes back as the notice the
+    /// view shows. `Ok(None)` means nothing was asked of a formatter.
+    fn format_on_save(
+        &self,
+        tab_id: u64,
+        language: Language,
+        text: &str,
+    ) -> Result<Option<String>, String> {
+        let Some(path) = self
             .session
             .borrow()
-            .tab_path(app_core::TabId::from_raw(tab_id))?;
+            .tab_path(app_core::TabId::from_raw(tab_id))
+        else {
+            return Ok(None);
+        };
         let wanted = {
             let settings = self.settings.borrow();
             settings_model::editing::resolve_for_language(&settings, &language.id()).format_on_save
         };
         if !wanted {
-            return None;
+            return Ok(None);
         }
-        let tool = crate::bridge::format_tool::ToolFormat::resolve(&language.id(), false)?;
+        let Some(tool) = crate::bridge::format_tool::ToolFormat::resolve(&language.id(), false)
+        else {
+            return Ok(None);
+        };
         let timeout = crate::bridge::format_tool::FORMAT_ON_SAVE_TIMEOUT;
-        match tool.run(text, &path, timeout) {
-            Ok(formatted) => Some(formatted),
-            Err(error) => {
-                eprintln!("format on save: {} could not format: {error}", tool.name());
-                None
-            }
-        }
+        tool.run(text, &path, timeout)
+            .map(Some)
+            .map_err(|error| format!("Saved without formatting: {} failed: {error}", tool.name()))
     }
 
     /// The tab width `text` in this tab renders at, resolved through

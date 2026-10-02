@@ -778,6 +778,14 @@ mod ffi {
         more: bool,
     }
 
+    /// What a save changes before it writes the file, and what the user
+    /// must be told: `notice` is non-empty when a formatter failed and the
+    /// file is saved unformatted.
+    struct FfiSaveEdits {
+        edits: Vec<FfiTextEdit>,
+        notice: QString,
+    }
+
     /// What Alt+Insert can generate for a PHP class (ADR-0072).
     #[derive(Debug)]
     enum FfiGenerateKind {
@@ -5057,10 +5065,11 @@ mod ffi {
         /// the language's formatter when format-on-save is on (ADR-0070),
         /// then trim, final newline, line-ending normalisation. Splice these
         /// into the buffer first so the tidying is one undo entry, then
-        /// read the (now tidied) text to hand to `saveTab`.
+        /// read the (now tidied) text to hand to `saveTab`. A formatter that
+        /// failed does not stop the save; its failure is the `notice`.
         #[qinvokable]
         #[cxx_name = "saveRuleEdits"]
-        fn save_rule_edits(self: &EditorOps, tab_id: u64, text: &QString) -> Vec<FfiTextEdit>;
+        fn save_rule_edits(self: &EditorOps, tab_id: u64, text: &QString) -> FfiSaveEdits;
 
         /// The tab width this tab's language resolves to (show-whitespace-
         /// characters task): what `CodeEditor::setTabStopDistance` uses.

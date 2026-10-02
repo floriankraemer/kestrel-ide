@@ -906,11 +906,11 @@ bool EditorTabs::saveEditor(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdi
     // jumping to column 0. Only real editors have this (a hex tab has no
     // language and nothing to tidy).
     if (codeEditor) {
-        const ::rust::Vec<FfiTextEdit> tidyEdits =
-          editorOps_->saveRuleEdits(tabId, editor->toPlainText());
-        if (!tidyEdits.empty()) {
-            applyEditsTo(editor, tidyEdits);
+        const FfiSaveEdits tidy = editorOps_->saveRuleEdits(tabId, editor->toPlainText());
+        if (!tidy.edits.empty()) {
+            applyEditsTo(editor, tidy.edits);
         }
+        showStatusNotice(tidy.notice); // a formatter that failed: saved anyway, user told
     }
     const auto result = docManager_->saveTab(tabId, editor->toPlainText());
     if (result.code != 0) {

@@ -454,8 +454,8 @@ The OS keychain is written only by the Settings fields that store a secret, so a
 #### E4 results — Linux column (2026-10-02)
 
 Driven in the real app under Xvfb in the `linux-php` image (real PHP 8.3, Xdebug, PCOV, Intelephense, Phpactor, vscode-php-debug), over the `php_app` fixture, in the dark and light themes at 100% and at 150% (`QT_SCALE_FACTOR=1.5`).
-WSL and Windows columns are pending.
-E4 stays open until they are filled.
+The WSL and Windows columns follow in the next section.
+E4 stays open until rows 5, 6 (container, WSL, Windows), 16 and the Windows half of 2 are walked.
 
 | Row | Linux result | Notes |
 |---|---|---|
@@ -477,6 +477,34 @@ E4 stays open until they are filled.
 | 16. A real Laravel or Symfony project | pending | Not run. |
 | 17. `composer require` mid-session | pass after fix | `composer require --dev` was picked up by the dock only after fixing its reload. |
 | 18. The "Verify ..." lines | done in E3 | See the E3 results. |
+
+#### E4 results — WSL and Windows columns (2026-10-03)
+
+Driven in the real Windows build (`dist/php-windows`, mingw cross-build) on the Windows 11 desktop, German layout, 2560x1440 at 100% scale (the display's real scale), light and dark, and once at `QT_SCALE_FACTOR=1.5`.
+Config isolated with `IDE_CONFIG_DIR` (see above); the fixture lives under `C:\Users\flori\ide-phptest\proj`, and for WSL under `\\wsl.localhost\Ubuntu\home\florian\ide-phptest-wsl`.
+The distro has PHP 8.4.6 with Xdebug, Composer and Node, but no Intelephense and no Phpactor.
+Windows itself has no PHP.
+Screenshots: `screens/win-*.png`, cropped to the IDE window.
+
+| Row | Windows (native) | WSL project | Notes |
+|---|---|---|---|
+| 1. Settings > PHP | pass | pass | Detect inside the WSL project reports `PHP 8.4.6 · Xdebug (develop)` with the `xdebug.mode` advice. The search box placeholder elided to "Search settin..." with Windows' wider UI font (fixed). |
+| 3. Phpactor reason | pass after fix | n/a | Status `Unavailable` with "Phpactor needs a POSIX system and does not run on native Windows. Open the project in WSL or run the server in a container."; Intelephense shows `Stopped` and "program not found. Install it with: npm i -g intelephense". The Status column and detail strip were blank because the page only listened to state changes while open (fixed; Linux showed the same blank rows). |
+| 4. WSL interpreter | n/a | pass after fix | The status bar shows `WSL: Ubuntu`; Phpactor is not skipped: it is started in the distro and reports `Stopped`, "phpactor not found inside the WSL distro. Install it with: composer global require phpactor/phpactor, or download phpactor.phar and put it on PATH as phpactor". The status reads `Stopped` rather than `Command not found` (follow-up). |
+| 7. Listen toggle | pass | not run | Run menu check and toolbar highlight agree on and off. |
+| 8. Composer dock | pass after fix | not run | The dock opened as its own right column and squeezed the editor; it now tabs beside Structure and AI Chat (fixed, seen on Linux and Windows). |
+| 9. Coverage dock | empty state only | not run | No PHP on Windows, so no run; the dock, its toolbar and the Tests dock render in both themes. |
+| 10. Generate | pass | not run | Alt+Insert menu with the disabled reasons, and the Getters picker with Select All and None. |
+| 11. New menu | pass | not run | File > New lists the PHP kinds. |
+| 12. Ctrl+J and Ctrl+Alt+T | pass | not run | The active layout is de-DE. Ctrl+J, Ctrl+Alt+T with the left Alt and with the right Alt (AltGr) all open their menus. `fore` plus Tab expands to `foreach ($array as $item)` inside a method body (at file level it is not a template context and Tab indents). |
+| 13. Twig and Blade | pass | not run | Both highlighted in both themes (Twig delimiters, keywords, strings, comments; Blade directives). |
+| 15. Search Everywhere | pass | not run | Ctrl+N opens the Classes tab with kind and path (backslashes on Windows). |
+
+Pixel findings fixed from this walk: the Language Servers status above; the project tree's sort arrow was the platform's `SP_ArrowUp` (a black triangle on Windows, a green disc on Linux), now drawn in the theme colour; checkable list and table rows (the Getters picker, the Language Servers On column) kept the platform's box while every `QCheckBox` had the themed tick, now the same box; the settings search placeholder (above).
+At 150% the Settings dialog is taller than the 1600x1000 main window, which is how the walk window was sized, not a defect.
+
+Not checked here: row 2 on Windows (the walk enters no licence key and writes nothing to the keychain), rows 5 and 16 (not run), row 6 on Windows and WSL (no `vscode-php-debug` adapter, so no stop at a breakpoint; the listen toggle's glyph and sync are row 7), the Variables name tooltip (set on every variable row, checked by reading the code only because the walk cannot stop at a breakpoint).
+Follow-ups: the live status says `Stopped` for a server missing inside WSL (the C++ page matches only `No such file`); the `Unavailable` detail strip is red like an error although it is a platform rule; `index-core`'s cache directory still follows the real `%LOCALAPPDATA%` and is not covered by `IDE_CONFIG_DIR`.
 
 Batch 3 settings fixes: opening a project or confirming the Settings dialog no longer rewrites `.ide/settings.toml`.
 Detected run configurations are shown and never saved, an update that changes nothing writes nothing, and unset editing fields are not serialised.

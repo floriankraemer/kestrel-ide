@@ -234,6 +234,13 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Ctrl+Alt+L",
     },
     ActionDef {
+        // No default: Reformat Code already formats a selection.
+        id: "code.reformatSelection",
+        label: "Reformat Selection",
+        category: "Code",
+        default_shortcut: "",
+    },
+    ActionDef {
         id: "code.showIntentions",
         label: "Show Intention Actions",
         category: "Code",

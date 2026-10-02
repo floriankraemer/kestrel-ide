@@ -396,13 +396,28 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
     refactorMenu->addSeparator();
     QAction *reformatAction = registerAction(refactorMenu, QStringLiteral("code.reformat"),
                                              tr("Reformat Code"), appSettings, actions);
-    connect(reformatAction, &QAction::triggered, this, [this]() {
+    // N4: the selection (the caret twice when there is none) goes along; the
+    // Rust side decides whether that means a range or the whole file.
+    const auto reformat = [this](bool selectionOnly) {
         const QString path = editorTabs_->currentPath();
         if (path.isEmpty()) {
             return;
         }
-        languageService_->requestFormatting(path, editorTabs_->documentRevision());
-    });
+        const auto range = editorTabs_->selectionRange();
+        const FfiSelection selection{range.first.first, range.first.second, range.second.first,
+                                     range.second.second};
+        if (selectionOnly) {
+            languageService_->requestSelectionFormatting(path, editorTabs_->documentRevision(),
+                                                         selection);
+        } else {
+            languageService_->requestFormatting(path, editorTabs_->documentRevision(), selection);
+        }
+    };
+    connect(reformatAction, &QAction::triggered, this, [reformat]() { reformat(false); });
+    QAction *reformatSelectionAction =
+      registerAction(refactorMenu, QStringLiteral("code.reformatSelection"),
+                      tr("Reformat Selection"), appSettings, actions);
+    connect(reformatSelectionAction, &QAction::triggered, this, [reformat]() { reformat(true); });
 
     // F2-10: Alt+Return. `EditorTabs` owns the bulb this shares its popup
     // with; this only wires the shortcut to asking for it right now.

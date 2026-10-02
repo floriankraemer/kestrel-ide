@@ -813,6 +813,16 @@ mod ffi {
         new_text: QString,
     }
 
+    /// A selection as LSP line/character pairs; start and end are equal for a
+    /// bare caret (`lsp_core::formatting::selection_scope` decides what that
+    /// means).
+    struct FfiSelection {
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
+    }
+
     /// What happened to a run of lines in a diff, 1:1 with
     /// `editor_core::diff::HunkKind` (F3-13).
     enum FfiHunkKind {
@@ -5379,16 +5389,30 @@ mod ffi {
         #[cxx_name = "codeActions"]
         fn code_actions(self: &LanguageService) -> Vec<FfiCodeAction>;
 
-        /// Reformat one open document, whole-file (F1-14). Answers through
-        /// the same `refactorReady`/`refactorFailed`/`pendingEdits`
-        /// protocol a rename uses — `touches_other_files` is always false,
-        /// so the view applies it straight away, and one Ctrl+Z undoes it.
+        /// Reformat Code (F1-14, N4): the selection when it is not empty,
+        /// the whole file otherwise. Answers through the same
+        /// `refactorReady`/`refactorFailed`/`pendingEdits` protocol a rename
+        /// uses — `touches_other_files` is always false, so the view applies
+        /// it straight away, and one Ctrl+Z undoes it.
         #[qinvokable]
         #[cxx_name = "requestFormatting"]
         fn request_formatting(
             self: Pin<&mut LanguageService>,
             path: &QString,
             buffer_revision: i64,
+            selection: FfiSelection,
+        );
+
+        /// Reformat Selection (N4): like `requestFormatting`, but an empty
+        /// selection is reported through `refactorFailed` instead of
+        /// reformatting the file.
+        #[qinvokable]
+        #[cxx_name = "requestSelectionFormatting"]
+        fn request_selection_formatting(
+            self: Pin<&mut LanguageService>,
+            path: &QString,
+            buffer_revision: i64,
+            selection: FfiSelection,
         );
 
         /// A `codeActionsAt` answered. Empty is a legitimate answer and is

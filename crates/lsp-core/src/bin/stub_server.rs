@@ -1365,16 +1365,12 @@ fn main() {
                     ),
                 }
             }
-            // F1: range formatting is never implemented by the stub, so the
-            // client's fall back to whole-document formatting is exercised.
+            // F1: range formatting is not implemented by the stub — the
+            // client's fall back to whole-document formatting is exercised —
+            // except for tab size 3 (N4), which answers with one edit whose
+            // text names the range it was asked about.
             ("textDocument/rangeFormatting", Some(id)) => {
-                send(
-                    &out,
-                    json!({"jsonrpc": "2.0", "id": id, "error": {
-                        "code": -32601,
-                        "message": "textDocument/rangeFormatting is not implemented",
-                    }}),
-                );
+                send(&out, fixtures::range_formatting(id, &params));
             }
             // RF3: rename, again by line — 0 -> a versioned documentChanges
             // edit, 1 -> a legacy `changes` edit, 2 -> null (nothing to do),

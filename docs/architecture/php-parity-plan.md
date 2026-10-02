@@ -180,8 +180,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 |---|---|---|
 | N1 — `implementation`/`typeDefinition`/`declaration`; Go to Implementation tries LSP first and falls back to the index | done | 497cad8 |
 | N2 — Go to Type Declaration action; Go to Declaration uses `declaration` when the server supports it | done | bf163dd |
-| N3 — `workspace/symbol` merged with index hits; Go to Class | done | — |
-| N4 — Reformat Selection → `format_range` | open | |
+| N3 — `workspace/symbol` merged with index hits; Go to Class | done | 8b487fb |
+| N4 — Reformat Selection → `format_range` | done | — |
 | N5 — `onTypeFormatting`, applied as one undo step | open | |
 
 ### X — container exec host (ADR-0067)

@@ -128,6 +128,20 @@ pub fn supports_range_formatting(capabilities: &Value) -> bool {
     capability_enabled(capabilities, "documentRangeFormattingProvider")
 }
 
+/// A text range as `(line, character)` start and end, in LSP positions.
+pub type Selection = ((u32, u32), (u32, u32));
+
+/// The range Reformat Code formats: the selection when there is one (given
+/// in either direction), `None` — the whole document — when the caret is
+/// just a caret.
+pub fn selection_scope(anchor: (u32, u32), caret: (u32, u32)) -> Option<Selection> {
+    match anchor.cmp(&caret) {
+        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Less => Some((anchor, caret)),
+        std::cmp::Ordering::Greater => Some((caret, anchor)),
+    }
+}
+
 /// A capability is present when it is `true` or an options object. `false`,
 /// `null` and absent all mean no — the protocol allows all three and servers
 /// use all three.
@@ -252,6 +266,13 @@ mod tests {
             },
             "newText": text,
         })
+    }
+
+    #[test]
+    fn a_caret_formats_the_document_and_a_selection_its_own_range() {
+        assert_eq!(selection_scope((3, 4), (3, 4)), None);
+        assert_eq!(selection_scope((1, 0), (2, 5)), Some(((1, 0), (2, 5))));
+        assert_eq!(selection_scope((2, 5), (1, 0)), Some(((1, 0), (2, 5))));
     }
 
     #[test]

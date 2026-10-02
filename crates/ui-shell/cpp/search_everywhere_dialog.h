@@ -30,7 +30,7 @@ class SearchEverywhereDialog : public QDialog
 public:
     // Which tier the popup opens filtered to. `All` shows every tier.
     // Declared in the same order as `FfiTierFilter`, which it maps onto.
-    enum class Tier { All, Files, Symbols, Text, Actions };
+    enum class Tier { All, Classes, Files, Symbols, Text, Actions };
 
     using OpenAt = std::function<void(const QString &, int, int)>;
 

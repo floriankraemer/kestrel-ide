@@ -9,6 +9,8 @@ use cxx_qt_lib::QString;
 
 use crate::bridge::convert::to_ffi_symbol_match;
 use crate::bridge::ffi;
+use crate::bridge::registry::push_lsp_job;
+use crate::bridge::search::{hit, symbol_detail};
 
 impl ffi::SearchModel {
     pub fn implementations_at(
@@ -60,4 +62,110 @@ impl ffi::SearchModel {
             self.find_implementations(&QString::from(name.as_str()));
         }
     }
+}
+
+/// Ask every running server for `workspace/symbol` on the LSP worker, and get
+/// the answer on a channel so the caller can run its index query meanwhile.
+/// `None` when no servers are running at all.
+pub(super) fn request_server_symbols(
+    query: &str,
+) -> Option<std::sync::mpsc::Receiver<Vec<lsp_core::WorkspaceSymbol>>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let query = query.to_string();
+    push_lsp_job(Box::new(move |manager| {
+        let _ = sender.send(manager.workspace_symbols(&query).unwrap_or_default());
+    }))
+    .then_some(receiver)
+}
+
+/// The server's answer, or nothing once it has had its time.
+pub(super) fn server_symbols(
+    receiver: std::sync::mpsc::Receiver<Vec<lsp_core::WorkspaceSymbol>>,
+) -> Vec<lsp_core::WorkspaceSymbol> {
+    receiver
+        .recv_timeout(
+            lsp_core::symbols::WORKSPACE_SYMBOL_TIMEOUT + std::time::Duration::from_millis(500),
+        )
+        .unwrap_or_default()
+}
+
+/// The symbol tier of Search Everywhere (Go to Symbol), or with
+/// `classes_only` Go to Class: the index's ranked definitions, then whatever
+/// the running servers' `workspace/symbol` adds that the index did not list.
+pub(super) fn emit_symbol_tier(
+    index: &index_core::TextIndex,
+    query: &str,
+    limit: usize,
+    classes_only: bool,
+    emit: &dyn Fn(Vec<ffi::FfiSearchHit>),
+) {
+    // ponytail: symbol rows carry no highlight positions —
+    // `find_definitions_ranked` scores without reporting match indices.
+    // Thread them through if the visual inconsistency with the file tier
+    // starts to show.
+    //
+    // The server is asked first so it works while the index is queried.
+    let from_server = request_server_symbols(query);
+    let ranked_limit = if classes_only { usize::MAX } else { limit };
+    let indexed: Vec<_> = index
+        .find_definitions_ranked(query, ranked_limit)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|m| {
+            !classes_only
+                || m.kind
+                    .is_some_and(|k| k.category() == syntax_core::SymbolCategory::NestedTypes)
+        })
+        .take(limit)
+        .collect();
+    let known: Vec<(String, String, u32)> = indexed
+        .iter()
+        .map(|m| {
+            (
+                m.name.clone(),
+                m.path.to_string_lossy().into_owned(),
+                m.line as u32,
+            )
+        })
+        .collect();
+    emit(
+        indexed
+            .into_iter()
+            .map(|m| {
+                let mut row = hit(
+                    ffi::FfiHitKind::Symbol,
+                    &m.name,
+                    &symbol_detail(&m),
+                    Vec::new(),
+                );
+                row.path = QString::from(m.path.to_string_lossy().as_ref());
+                row.line = m.line as u32;
+                row
+            })
+            .collect(),
+    );
+    let Some(receiver) = from_server else {
+        return;
+    };
+    let fresh = lsp_core::beyond_index(
+        known.iter().map(|(n, p, l)| (n.as_str(), p.as_str(), *l)),
+        server_symbols(receiver),
+    );
+    emit(
+        fresh
+            .into_iter()
+            .filter(|s| !classes_only || s.is_class_like())
+            .take(limit)
+            .map(|s| {
+                let detail = match &s.container {
+                    Some(container) => format!("{} in {container}", s.kind_word()),
+                    None => s.kind_word().to_string(),
+                };
+                let mut row = hit(ffi::FfiHitKind::Symbol, &s.name, &detail, Vec::new());
+                row.path = QString::from(s.path.as_str());
+                row.line = s.line;
+                row
+            })
+            .collect(),
+    );
 }

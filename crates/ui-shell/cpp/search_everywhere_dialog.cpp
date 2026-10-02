@@ -51,6 +51,7 @@ SearchEverywhereDialog::SearchEverywhereDialog(SearchModel *searchModel,
 
     tabs_ = new QTabBar(this);
     tabs_->addTab(tr("All"));
+    tabs_->addTab(tr("Classes"));
     tabs_->addTab(tr("Files"));
     tabs_->addTab(tr("Symbols"));
     tabs_->addTab(tr("Text"));
@@ -160,6 +161,8 @@ bool SearchEverywhereDialog::tierIsVisible(FfiHitKind kind) const
     switch (static_cast<Tier>(tabs_->currentIndex())) {
     case Tier::All:
         return true;
+    case Tier::Classes:
+        return kind == FfiHitKind::Symbol;
     case Tier::Files:
         return kind == FfiHitKind::File || kind == FfiHitKind::RecentFile;
     case Tier::Symbols:

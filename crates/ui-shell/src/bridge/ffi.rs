@@ -301,6 +301,7 @@ mod ffi {
     /// symbols — the work is skipped, not discarded.
     enum FfiTierFilter {
         All,
+        Classes,
         Files,
         Symbols,
         Text,

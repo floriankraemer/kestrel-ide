@@ -147,3 +147,28 @@ fn go_to_declaration_prefers_the_declaration_request_when_offered() {
         manager.stop(LANG);
     }
 }
+
+/// N3: `workspace/symbol` of every server, parsed and merged across servers.
+#[test]
+fn workspace_symbols_come_from_every_server_of_the_language() {
+    let (manager, _rx) = LspManager::new("file:///workspace");
+    for (id, priority) in [("a", 0), ("b", 1)] {
+        manager
+            .start(&ServerConfig {
+                priority,
+                ..tagged_config(id, "workspaceSymbol")
+            })
+            .expect("stub starts");
+    }
+    let symbols = manager.workspace_symbols("sym").expect("workspace/symbol");
+    let names: Vec<_> = symbols.iter().map(|s| s.name.as_str()).collect();
+    // "Shared" is answered by both servers and listed once.
+    assert_eq!(names, ["Shared", "Syma", "Symb"]);
+    assert!(symbols.iter().all(|s| s.is_class_like()));
+    manager.stop(LANG);
+
+    assert!(manager
+        .workspace_symbols("sym")
+        .expect("no server is not an error here")
+        .is_empty());
+}

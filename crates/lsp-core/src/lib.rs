@@ -35,6 +35,7 @@ pub mod rename;
 pub mod routing;
 pub mod semantic_tokens;
 pub mod signature_help;
+pub mod symbols;
 pub mod tracker;
 pub mod watched_files;
 pub mod workspace_edit;
@@ -110,6 +111,7 @@ pub use signature_help::{
     should_request as should_request_signature_help, CallSite, ParameterInfo, SignatureHelp,
     SignatureInfo, SignatureTriggers,
 };
+pub use symbols::{beyond_index, parse_workspace_symbols, WorkspaceSymbol};
 pub use tracker::RequestTracker;
 pub use workspace_edit::{
     apply_to_text, descending, parse_workspace_changes, parse_workspace_edit, plan as plan_edit,

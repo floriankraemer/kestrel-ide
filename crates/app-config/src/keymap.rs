@@ -348,6 +348,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Ctrl+Shift+E",
     },
     ActionDef {
+        id: "view.goToClass",
+        label: "Go to Class...",
+        category: "View",
+        default_shortcut: "Ctrl+N",
+    },
+    ActionDef {
         id: "view.goToFile",
         label: "Go to File...",
         category: "View",

@@ -42,6 +42,20 @@ impl LspManager {
             .any(|server| server.can_answer(method))
     }
 
+    /// The languages that have at least one server in the manager, sorted.
+    pub fn running_languages(&self) -> Vec<String> {
+        let mut languages: Vec<String> = self
+            .servers
+            .lock()
+            .unwrap()
+            .values()
+            .map(|s| s.language_id.clone())
+            .collect();
+        languages.sort();
+        languages.dedup();
+        languages
+    }
+
     pub(super) fn route(
         &self,
         servers: &[Arc<Server>],

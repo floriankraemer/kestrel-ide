@@ -1062,27 +1062,18 @@ void buildMainWindow(AppSettings *appSettings,
     });
     // Every entry point opens the same popup, just preselected on a
     // different tab — one search surface, several doors into it.
-    QAction *searchEverywhereAction =
-      registerAction(viewMenu, QStringLiteral("view.searchEverywhere"),
-                     QObject::tr("Search Everywhere..."), appSettings, *actions);
-    QObject::connect(searchEverywhereAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::All);
-    });
-    QAction *goToFileAction = registerAction(viewMenu, QStringLiteral("view.goToFile"),
-                                             QObject::tr("Go to File..."), appSettings, *actions);
-    QObject::connect(goToFileAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::Files);
-    });
-    QAction *findActionAction = registerAction(viewMenu, QStringLiteral("view.findAction"),
-                                               QObject::tr("Find Action..."), appSettings, *actions);
-    QObject::connect(findActionAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::Actions);
-    });
-    QAction *goToSymbolAction = registerAction(viewMenu, QStringLiteral("view.goToSymbol"),
-                                               QObject::tr("Go to Symbol..."), appSettings, *actions);
-    QObject::connect(goToSymbolAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::Symbols);
-    });
+    using Tier = SearchEverywhereDialog::Tier;
+    const auto addSearchAction = [&](const char *id, const QString &label, Tier tier) {
+        QAction *action = registerAction(viewMenu, QString::fromLatin1(id), label, appSettings,
+                                         *actions);
+        QObject::connect(action, &QAction::triggered, window,
+                         [central, tier]() { central.searchEverywhereDialog->popup(tier); });
+    };
+    addSearchAction("view.searchEverywhere", QObject::tr("Search Everywhere..."), Tier::All);
+    addSearchAction("view.goToFile", QObject::tr("Go to File..."), Tier::Files);
+    addSearchAction("view.goToClass", QObject::tr("Go to Class..."), Tier::Classes);
+    addSearchAction("view.findAction", QObject::tr("Find Action..."), Tier::Actions);
+    addSearchAction("view.goToSymbol", QObject::tr("Go to Symbol..."), Tier::Symbols);
     QAction *goToLineAction = registerAction(viewMenu, QStringLiteral("view.goToLine"),
                                              QObject::tr("Go to Line..."), appSettings, *actions);
     QObject::connect(goToLineAction, &QAction::triggered, window, [editorTabs]() {

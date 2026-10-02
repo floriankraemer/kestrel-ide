@@ -105,7 +105,12 @@ const SEARCH_BATCH_SIZE: usize = 256;
 const MAX_FIND_IN_FILES_MATCHES: usize = 10_000;
 
 /// Build one Search Everywhere row.
-fn hit(kind: ffi::FfiHitKind, text: &str, detail: &str, positions: Vec<u32>) -> ffi::FfiSearchHit {
+pub(super) fn hit(
+    kind: ffi::FfiHitKind,
+    text: &str,
+    detail: &str,
+    positions: Vec<u32>,
+) -> ffi::FfiSearchHit {
     ffi::FfiSearchHit {
         kind,
         path: QString::from(""),
@@ -120,7 +125,7 @@ fn hit(kind: ffi::FfiHitKind, text: &str, detail: &str, positions: Vec<u32>) -> 
 }
 
 /// Human label for a symbol hit's secondary column.
-fn symbol_detail(m: &index_core::SymbolMatch) -> String {
+pub(super) fn symbol_detail(m: &index_core::SymbolMatch) -> String {
     let kind = symbol_kind_word(m.kind);
     match &m.container {
         Some(container) => format!("{kind} in {container}"),
@@ -414,26 +419,16 @@ impl ffi::SearchModel {
                 return;
             }
 
-            if !query.is_empty() && wanted(ffi::FfiTierFilter::Symbols) {
-                // ponytail: symbol rows carry no highlight positions —
-                // `find_definitions_ranked` scores without reporting match
-                // indices. Thread them through if the visual inconsistency
-                // with the file tier starts to show.
-                if let Ok(symbols) = index.find_definitions_ranked(&query, limit) {
-                    emit(
-                        symbols
-                            .into_iter()
-                            .map(|m| {
-                                let detail = symbol_detail(&m);
-                                let mut row =
-                                    hit(ffi::FfiHitKind::Symbol, &m.name, &detail, Vec::new());
-                                row.path = QString::from(m.path.to_string_lossy().as_ref());
-                                row.line = m.line as u32;
-                                row
-                            })
-                            .collect(),
-                    );
-                }
+            if !query.is_empty()
+                && (wanted(ffi::FfiTierFilter::Symbols) || tiers == ffi::FfiTierFilter::Classes)
+            {
+                crate::bridge::search_lsp::emit_symbol_tier(
+                    index,
+                    &query,
+                    limit,
+                    tiers == ffi::FfiTierFilter::Classes,
+                    &emit,
+                );
             }
 
             if superseded() {

@@ -6194,7 +6194,9 @@ dependencies = [
 name = "php-core"
 version = "0.1.0"
 dependencies = [
+ "process-exec",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

@@ -8,3 +8,4 @@
 
 pub mod composer;
 pub mod level;
+pub mod probe;

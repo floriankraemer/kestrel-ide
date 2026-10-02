@@ -86,8 +86,30 @@ pub fn run(
     timeout: Duration,
     env: &[(&str, &str)],
 ) -> Result<Output, Failure> {
-    let host = ExecHost::for_path(work_dir);
-    let resolved_program = match host::resolve_program(&host, program, work_dir) {
+    run_on(
+        &ExecHost::for_path(work_dir),
+        program,
+        args,
+        work_dir,
+        stdin,
+        timeout,
+        env,
+    )
+}
+
+/// [`run`] on an explicit `host` instead of the one `work_dir`'s path
+/// implies — for the callers that pick a host by configuration (a PHP
+/// interpreter target), not by where the project lives.
+pub fn run_on(
+    host: &ExecHost,
+    program: &str,
+    args: &[&str],
+    work_dir: &Path,
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+    env: &[(&str, &str)],
+) -> Result<Output, Failure> {
+    let resolved_program = match host::resolve_program(host, program, work_dir) {
         Some(resolved) => resolved,
         // Not found in the distro: fall through with the bare name so the
         // spawn below still happens and fails the normal way (`wsl.exe`
@@ -284,9 +306,28 @@ pub fn spawn_with_stdin(
     env: &[(&str, &str)],
     stdin_file: Option<&Path>,
 ) -> Result<Spawned, Failure> {
-    let host = ExecHost::for_path(work_dir);
+    spawn_on(
+        &ExecHost::for_path(work_dir),
+        program,
+        args,
+        work_dir,
+        env,
+        stdin_file,
+    )
+}
+
+/// [`spawn_with_stdin`] on an explicit `host`, the streaming counterpart
+/// of [`run_on`].
+pub fn spawn_on(
+    host: &ExecHost,
+    program: &str,
+    args: &[&str],
+    work_dir: &Path,
+    env: &[(&str, &str)],
+    stdin_file: Option<&Path>,
+) -> Result<Spawned, Failure> {
     let resolved_program =
-        host::resolve_program(&host, program, work_dir).unwrap_or_else(|| program.to_string());
+        host::resolve_program(host, program, work_dir).unwrap_or_else(|| program.to_string());
 
     let stdin = match stdin_file {
         Some(path) => {
@@ -329,6 +370,37 @@ mod tests {
         .unwrap();
         assert!(out.status.success());
         assert_eq!(out.stdout, b"hello\n");
+    }
+
+    #[test]
+    fn run_on_an_explicit_local_host_runs_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = run_on(
+            &ExecHost::Local,
+            "echo",
+            &["hi"],
+            dir.path(),
+            None,
+            Duration::from_secs(5),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(out.stdout, b"hi\n");
+    }
+
+    #[test]
+    fn spawn_on_an_explicit_local_host_streams() {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let child = spawn_on(&ExecHost::Local, "echo", &["yo"], dir.path(), &[], None).unwrap();
+        let mut out = String::new();
+        child
+            .take_stdout()
+            .unwrap()
+            .read_to_string(&mut out)
+            .unwrap();
+        child.wait().unwrap();
+        assert_eq!(out, "yo\n");
     }
 
     #[test]

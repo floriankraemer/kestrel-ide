@@ -5,3 +5,9 @@ edition = "2021"
 
 [dependencies]
 serde_json = "1"
+# `run_on`/`ExecHost`: the probe runs on whichever host the interpreter
+# lives on (local, WSL, and later a container).
+process-exec = { path = "../process-exec" }
+
+[dev-dependencies]
+tempfile = "3"

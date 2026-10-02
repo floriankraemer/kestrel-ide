@@ -22,6 +22,7 @@ use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 /// intentions for a `.sql` file attached to a data source, injected the
 /// same way — a third non-LSP file kind alongside containers and build
 /// files.
+mod analyzer_fixes;
 mod build_files;
 mod containers;
 mod database;
@@ -1489,7 +1490,7 @@ impl ffi::LanguageService {
 #[cfg(test)]
 mod hover_popup_tests {
     use super::build_hover_card;
-    use diagnostics_core::{Diagnostic, DiagnosticStore, Position, Range, Severity};
+    use diagnostics_core::{Diagnostic, DiagnosticStore, Range, Severity};
 
     #[test]
     fn card_combines_signature_docs_and_problems() {
@@ -1498,13 +1499,8 @@ mod hover_popup_tests {
             "lsp:rust",
             "file:///a.rs",
             vec![Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: None,
-                },
+                code: None,
+                range: Range::default(),
                 severity: Severity::Error,
                 message: "mismatched types".into(),
                 source: "rustc".into(),

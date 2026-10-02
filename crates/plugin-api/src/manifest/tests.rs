@@ -531,6 +531,46 @@ fn an_analyzer_contribution_reads_the_file_run_and_composer_fields() {
 }
 
 #[test]
+fn an_analyzer_reads_the_suppress_and_fixer_fields() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "psalm"
+            name = "Psalm"
+            program-candidates = ["psalm"]
+            output-format = "checkstyle-xml"
+            suppress-comment = "/** @psalm-suppress {code} */"
+            code-in-message = true
+            fixer = "phpcbf"
+            "#,
+    ))
+    .expect("valid");
+    let a = &manifest.contributes.analyzers[0];
+    assert_eq!(
+        a.suppress_comment.as_deref(),
+        Some("/** @psalm-suppress {code} */")
+    );
+    assert!(a.code_in_message);
+    assert_eq!(a.fixer.as_deref(), Some("phpcbf"));
+}
+
+#[test]
+fn a_suppress_comment_without_the_code_placeholder_is_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            output-format = "checkstyle-xml"
+            suppress-comment = "// ignore"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
 fn an_unknown_analyzer_buffer_strategy_is_rejected() {
     let err = PluginManifest::from_toml_str(&with(
         r#"

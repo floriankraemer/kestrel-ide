@@ -28,6 +28,9 @@ pub struct FormatterDef {
     pub buffer: BufferStrategy,
     pub success_exit_codes: Vec<i32>,
     pub requires_interpreter: Option<String>,
+    /// Arguments that narrow a run to one rule (`{code}` = the rule id,
+    /// `{sniff}` = its first three dot-separated parts).
+    pub fix_args: Vec<String>,
 }
 
 impl FormatterDef {
@@ -44,7 +47,26 @@ impl FormatterDef {
             },
             success_exit_codes: c.success_exit_codes.clone(),
             requires_interpreter: c.requires_interpreter.clone(),
+            fix_args: c.fix_args.clone(),
         }
+    }
+
+    /// This formatter narrowed to the single rule `code` names, or `None`
+    /// when its manifest declares no `fix-args`. The narrowing arguments go
+    /// before the usual ones.
+    pub fn for_rule(&self, code: &str) -> Option<Self> {
+        if self.fix_args.is_empty() {
+            return None;
+        }
+        let sniff = code.splitn(4, '.').take(3).collect::<Vec<_>>().join(".");
+        let mut def = self.clone();
+        def.args = self
+            .fix_args
+            .iter()
+            .map(|a| a.replace("{code}", code).replace("{sniff}", &sniff))
+            .chain(self.args.iter().cloned())
+            .collect();
+        Some(def)
     }
 
     /// The argv for a run reading `file` (the temp copy, or the real path
@@ -189,6 +211,7 @@ mod tests {
             config_file_candidates: vec![],
             composer_package: None,
             requires_interpreter: None,
+            fix_args: vec![],
         }
     }
 
@@ -211,6 +234,21 @@ mod tests {
             def.run_args(Path::new("/p/.A.php.tmp.php")),
             vec!["--quiet", "/p/.A.php.tmp.php"]
         );
+    }
+
+    #[test]
+    fn a_rule_fix_puts_the_narrowing_arguments_first() {
+        let mut c = contribution(Some("stdin"));
+        c.args = vec!["-q".into(), "-".into()];
+        assert_eq!(FormatterDef::from_contribution(&c).for_rule("A.B"), None);
+        c.fix_args = vec!["--sniffs={code}".into()];
+        let def = FormatterDef::from_contribution(&c).for_rule("A.B").unwrap();
+        assert_eq!(def.args, vec!["--sniffs=A.B", "-q", "-"]);
+        c.fix_args = vec!["--sniffs={sniff}".into()];
+        let def = FormatterDef::from_contribution(&c)
+            .for_rule("PSR12.Files.EndFileNewline.NoneFound")
+            .unwrap();
+        assert_eq!(def.args[0], "--sniffs=PSR12.Files.EndFileNewline");
     }
 
     #[test]

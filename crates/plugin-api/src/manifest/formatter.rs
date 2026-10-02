@@ -58,6 +58,13 @@ pub struct FormatterContribution {
     /// Same meaning as `AnalyzerContribution::requires_interpreter`.
     #[serde(default, rename = "requires-interpreter")]
     pub requires_interpreter: Option<String>,
+    /// Arguments placed before [`Self::args`] to narrow a run to the one
+    /// rule an analyzer finding names (`["--sniffs={code}"]`). Empty means
+    /// this formatter cannot fix a single finding. Must contain `{code}`
+    /// (the whole rule id) or `{sniff}` (its first three dot-separated
+    /// parts, PHPCS's `Standard.Category.Sniff`).
+    #[serde(default, rename = "fix-args")]
+    pub fix_args: Vec<String>,
 }
 
 impl FormatterContribution {
@@ -102,6 +109,12 @@ impl FormatterContribution {
                     .to_string(),
             ));
         }
+        let names_rule = |a: &String| a.contains("{code}") || a.contains("{sniff}");
+        if !self.fix_args.is_empty() && !self.fix_args.iter().any(names_rule) {
+            return Err(LoadErrorKind::MalformedManifest(
+                "contributes.formatters.fix-args must contain `{code}` or `{sniff}`".to_string(),
+            ));
+        }
         check_tool_package_and_interpreter(
             "contributes.formatters",
             self.composer_package.as_deref(),
@@ -141,6 +154,27 @@ mod tests {
         assert_eq!(f.requires_interpreter.as_deref(), Some("php"));
         assert!(!manifest.contributes.is_empty());
         assert_eq!(ContributionPoint::Formatters.key(), "formatters");
+    }
+
+    #[test]
+    fn fix_args_must_name_the_code() {
+        let base = "languages = [\"php\"]\nprogram-candidates = [\"x\"]\nargs = [\"{file}\"]\n";
+        assert!(matches!(
+            rejected(&format!("{base}fix-args = [\"--sniffs\"]")),
+            LoadErrorKind::MalformedManifest(_)
+        ));
+        let ok = PluginManifest::from_toml_str(&with(&format!(
+            "[[contributes.formatters]]\nid = \"x\"\nname = \"X\"\n{base}fix-args = [\"--sniffs={{code}}\"]"
+        )))
+        .expect("valid");
+        assert_eq!(
+            ok.contributes.formatters[0].fix_args,
+            vec!["--sniffs={code}"]
+        );
+        assert!(PluginManifest::from_toml_str(&with(&format!(
+            "[[contributes.formatters]]\nid = \"x\"\nname = \"X\"\n{base}fix-args = [\"--sniffs={{sniff}}\"]"
+        )))
+        .is_ok());
     }
 
     #[test]

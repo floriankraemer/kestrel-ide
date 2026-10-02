@@ -222,6 +222,9 @@ mod tests {
             buffer: None,
             composer_package: None,
             requires_interpreter: None,
+            suppress_comment: None,
+            code_in_message: false,
+            fixer: None,
         }
     }
 

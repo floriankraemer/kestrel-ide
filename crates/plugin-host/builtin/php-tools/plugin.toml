@@ -43,6 +43,8 @@ languages = ["php"]
 # PHPStan reads only files on disk, so an unsaved buffer downgrades On Type
 # to On Save.
 buffer = "saved-only"
+# PHPStan's checkstyle `source` is the error identifier.
+suppress-comment = "// @phpstan-ignore {code}"
 
 # Quirk: PHPStan's checkstyle report emits every finding as `<error
 # severity="error">` — PHPStan has no notion of a "warning" level distinct
@@ -69,6 +71,9 @@ languages = ["php"]
 # ruleset matching and reports it under its real path.
 buffer = "stdin"
 file-args = ["--stdin-path={file}", "-"]
+suppress-comment = "// phpcs:ignore {code}"
+# `phpcbf --sniffs=<sniff>` fixes one finding's rule.
+fixer = "phpcbf"
 
 # Unlike PHPStan, PHPCS's checkstyle report does distinguish `error` from
 # `warning` (a sniff can be configured at either severity), so both words are
@@ -88,6 +93,10 @@ requires-interpreter = "php"
 languages = ["php"]
 # Psalm analyses files on disk (it needs a psalm.xml in the project).
 buffer = "saved-only"
+# Psalm's checkstyle report has no `source`; the issue type leads the
+# message (`UndefinedVariable: ...`).
+code-in-message = true
+suppress-comment = "/** @psalm-suppress {code} */"
 
 # Psalm's checkstyle report uses `error` and `info`.
 [contributes.analyzers.severity-map]
@@ -252,6 +261,7 @@ buffer = "stdin"
 # 0 = nothing to fix, 1 = everything fixable was fixed, 2 = fixed what it
 # could and some violations remain. All three print the resulting source.
 success-exit-codes = [0, 1, 2]
+fix-args = ["--sniffs={sniff}"]
 config-file-candidates = [".phpcs.xml", "phpcs.xml", ".phpcs.xml.dist", "phpcs.xml.dist"]
 composer-package = "squizlabs/php_codesniffer"
 requires-interpreter = "php"

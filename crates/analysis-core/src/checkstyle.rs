@@ -47,6 +47,24 @@ pub struct CheckstyleFinding {
     pub source: Option<String>,
 }
 
+impl CheckstyleFinding {
+    /// This finding's rule id: its `source` attribute, or — for a tool that
+    /// reports none and prefixes its messages with the rule (`Id: text`,
+    /// Psalm) — that prefix.
+    pub fn code(&self, analyzer: &AnalyzerDef) -> Option<String> {
+        if let Some(source) = self.source.as_deref().filter(|s| !s.is_empty()) {
+            return Some(source.to_string());
+        }
+        if !analyzer.code_in_message {
+            return None;
+        }
+        let (id, _) = self.message.split_once(": ")?;
+        let is_identifier =
+            !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        is_identifier.then(|| id.to_string())
+    }
+}
+
 /// Why a checkstyle-xml document could not be parsed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError(pub String);
@@ -175,6 +193,7 @@ pub fn to_diagnostics(
         .iter()
         .filter(|f| f.file == path)
         .map(|f| Diagnostic {
+            code: f.code(analyzer),
             range: Range {
                 start: Position {
                     line: f.line.saturating_sub(1),
@@ -213,6 +232,9 @@ mod tests {
             buffer: None,
             composer_package: None,
             requires_interpreter: None,
+            suppress_comment: None,
+            code_in_message: false,
+            fixer: None,
         })
     }
 
@@ -325,5 +347,44 @@ mod tests {
             locate_file_on(&host, root, "src/A.php"),
             root.join("src/A.php")
         );
+    }
+
+    fn finding(source: Option<&str>, message: &str) -> CheckstyleFinding {
+        CheckstyleFinding {
+            file: "a.php".into(),
+            line: 1,
+            column: None,
+            severity: "error".into(),
+            message: message.into(),
+            source: source.map(String::from),
+        }
+    }
+
+    #[test]
+    fn the_code_is_the_source_attribute() {
+        let def = phpstan();
+        assert_eq!(
+            finding(Some("variable.undefined"), "x")
+                .code(&def)
+                .as_deref(),
+            Some("variable.undefined")
+        );
+        assert_eq!(finding(None, "Foo: bar").code(&def), None);
+    }
+
+    #[test]
+    fn a_code_in_message_tool_reads_the_message_prefix() {
+        let mut def = phpstan();
+        def.code_in_message = true;
+        let f = finding(None, "UndefinedVariable: Cannot find $x");
+        assert_eq!(f.code(&def).as_deref(), Some("UndefinedVariable"));
+        assert_eq!(finding(None, "no prefix here").code(&def), None);
+        assert_eq!(finding(None, "Has spaces: x").code(&def), None);
+    }
+
+    #[test]
+    fn diagnostics_carry_the_code() {
+        let diagnostics = to_diagnostics(&[finding(Some("a.b"), "m")], "a.php", &phpstan());
+        assert_eq!(diagnostics[0].code.as_deref(), Some("a.b"));
     }
 }

@@ -241,6 +241,22 @@ pub struct AnalyzerContribution {
     /// binary when the program is a `.phar` or not executable.
     #[serde(default, rename = "requires-interpreter")]
     pub requires_interpreter: Option<String>,
+    /// The comment that silences one finding, with `{code}` standing for the
+    /// finding's rule id (`// @phpstan-ignore {code}`). Absent means the
+    /// IDE offers no "suppress" quick fix for this analyzer. The comment is
+    /// inserted on its own line above the finding.
+    #[serde(default, rename = "suppress-comment")]
+    pub suppress_comment: Option<String>,
+    /// The tool prefixes each message with its rule id as `Id: text` and
+    /// reports no `source` attribute (Psalm's checkstyle report), so the
+    /// rule id is read from the message instead.
+    #[serde(default, rename = "code-in-message")]
+    pub code_in_message: bool,
+    /// The id of a `formatters` contribution that can fix this analyzer's
+    /// findings (PHPCS and phpcbf). That formatter's `fix-args` say how to
+    /// narrow it to one finding's rule.
+    #[serde(default)]
+    pub fixer: Option<String>,
 }
 
 /// Interpreters a contribution may name in `requires-interpreter`.
@@ -823,6 +839,16 @@ impl PluginManifest {
                          `temp-copy`, `saved-only`"
                     )));
                 }
+            }
+            if let Some(comment) = &analyzer.suppress_comment {
+                if !comment.contains("{code}") {
+                    return Err(LoadErrorKind::MalformedManifest(
+                        "contributes.analyzers.suppress-comment must contain `{code}`".to_string(),
+                    ));
+                }
+            }
+            if let Some(fixer) = &analyzer.fixer {
+                check_id("contributes.analyzers.fixer", fixer)?;
             }
             check_tool_package_and_interpreter(
                 "contributes.analyzers",

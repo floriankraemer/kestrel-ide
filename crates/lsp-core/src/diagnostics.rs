@@ -47,6 +47,7 @@ pub fn to_diagnostics(diagnostics: Vec<lsp_types::Diagnostic>) -> Vec<Diagnostic
 fn to_diagnostic(diagnostic: lsp_types::Diagnostic) -> Diagnostic {
     let raw = serde_json::to_value(&diagnostic).ok();
     Diagnostic {
+        code: None,
         range: Range {
             start: Position {
                 line: diagnostic.range.start.line,

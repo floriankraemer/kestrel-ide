@@ -34,7 +34,15 @@ impl ffi::LanguageService {
             return;
         }
         let build_file_quick_fix = self.build_file_quick_fix(&path, line, character);
+        let analyzer_fixes = self.analyzer_intentions(&path, line, character);
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
+            // No language server for this file: analyzer fixes still apply.
+            if !analyzer_fixes.is_empty() {
+                self.intentions_tracker.borrow_mut().begin();
+                *self.intentions.borrow_mut() = analyzer_fixes;
+                self.intentions_language.borrow_mut().clear();
+                self.as_mut().intentions_ready();
+            }
             return;
         };
         let uri = lsp_core::uri_from_path(&path);
@@ -55,6 +63,8 @@ impl ffi::LanguageService {
                 if let Some(quick_fix) = build_file_quick_fix {
                     intentions.push(quick_fix);
                 }
+                intentions.extend(analyzer_fixes);
+                intentions.sort_by_key(|i| (i.group, !i.preferred));
                 *service.intentions.borrow_mut() = intentions;
                 *service.intentions_language.borrow_mut() = language_id;
                 service.as_mut().intentions_ready();

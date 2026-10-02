@@ -53,6 +53,12 @@ pub struct AnalyzerDef {
     pub buffer: BufferStrategy,
     /// `Some("php")` when the program must run under the PHP interpreter.
     pub requires_interpreter: Option<String>,
+    /// The comment template that silences one finding (`{code}` = rule id).
+    pub suppress_comment: Option<String>,
+    /// Rule ids are `Id: text` message prefixes, not `source` attributes.
+    pub code_in_message: bool,
+    /// Id of the `formatters` contribution that can fix a single finding.
+    pub fixer: Option<String>,
     severities: HashMap<String, Severity>,
 }
 
@@ -75,6 +81,9 @@ impl AnalyzerDef {
             file_args: contribution.file_args.clone(),
             buffer: BufferStrategy::from_manifest(contribution.buffer.as_deref()),
             requires_interpreter: contribution.requires_interpreter.clone(),
+            suppress_comment: contribution.suppress_comment.clone(),
+            code_in_message: contribution.code_in_message,
+            fixer: contribution.fixer.clone(),
             severities,
         }
     }
@@ -172,6 +181,9 @@ mod tests {
             buffer: None,
             composer_package: None,
             requires_interpreter: None,
+            suppress_comment: None,
+            code_in_message: false,
+            fixer: None,
         }
     }
 

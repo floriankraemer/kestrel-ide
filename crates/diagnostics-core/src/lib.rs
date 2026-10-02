@@ -70,6 +70,11 @@ pub struct Diagnostic {
     /// exactly as they sent it. `None` for a source with no such payload
     /// (a build tool's diagnostics have none).
     pub raw: Option<Value>,
+    /// The rule id a source with no raw LSP payload reports (a checkstyle
+    /// `source` such as `PHPStan.undefinedVariable`), so the Problems dock
+    /// and suppress quick fixes can name the rule. `None` when the source
+    /// has none or keeps it in [`Self::raw`].
+    pub code: Option<String>,
 }
 
 /// One row of the Problems panel, addressed the way the editor jumps:
@@ -331,6 +336,9 @@ fn row(uri: &str, diagnostic: &Diagnostic) -> DiagnosticRow {
 }
 
 fn code_of(diagnostic: &Diagnostic) -> String {
+    if let Some(code) = &diagnostic.code {
+        return code.clone();
+    }
     match diagnostic.raw.as_ref().and_then(|raw| raw.get("code")) {
         Some(Value::String(code)) => code.clone(),
         Some(Value::Number(code)) => code.to_string(),
@@ -411,6 +419,7 @@ mod tests {
 
     fn point_diagnostic(line: u32, column: u32, severity: Severity, message: &str) -> Diagnostic {
         Diagnostic {
+            code: None,
             range: Range {
                 start: Position {
                     line,
@@ -669,6 +678,7 @@ mod tests {
             "build:cargo",
             "file:///p/a.rs",
             vec![Diagnostic {
+                code: None,
                 range: Range {
                     start: Position {
                         line: 3,
@@ -711,6 +721,7 @@ mod tests {
             "file:///p/a.rs",
             vec![
                 Diagnostic {
+                    code: None,
                     range: Range {
                         start: Position {
                             line: 2,
@@ -895,6 +906,24 @@ mod tests {
             wrapped.message, "second",
             "wraps to the file's last diagnostic"
         );
+    }
+
+    #[test]
+    fn a_diagnostic_code_field_is_the_rows_code_without_a_raw_payload() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "analysis:phpstan",
+            "file:///a.php",
+            vec![Diagnostic {
+                code: Some("variable.undefined".into()),
+                range: Range::default(),
+                severity: Severity::Error,
+                message: "m".into(),
+                source: "PHPStan".into(),
+                raw: None,
+            }],
+        );
+        assert_eq!(store.rows()[0].code, "variable.undefined");
     }
 
     #[test]

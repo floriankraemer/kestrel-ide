@@ -92,6 +92,7 @@ pub fn diagnostics_by_file_on(
         let local = host.path_from_tool(&path);
         let uri = diagnostics_core::uri_from_path(&local.to_string_lossy());
         grouped.entry(uri).or_default().push(Diagnostic {
+            code: None,
             range: Range {
                 start: Position {
                     line: line.saturating_sub(1),

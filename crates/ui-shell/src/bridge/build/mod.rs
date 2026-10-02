@@ -83,6 +83,7 @@ fn source_key(toolchain: &str) -> String {
 /// `docs/architecture/php-tooling-plan.md`'s phase A.
 fn to_diagnostic_core(diagnostic: &BuildDiagnostic, source: &str) -> diagnostics_core::Diagnostic {
     diagnostics_core::Diagnostic {
+        code: None,
         range: diagnostics_core::Range {
             start: diagnostics_core::Position {
                 line: diagnostic.line.saturating_sub(1),

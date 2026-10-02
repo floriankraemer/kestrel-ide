@@ -19,6 +19,7 @@ fn def(buffer: BufferStrategy, args: &[&str], success: &[i32]) -> FormatterDef {
         buffer,
         success_exit_codes: success.to_vec(),
         requires_interpreter: None,
+        fix_args: vec![],
     }
 }
 

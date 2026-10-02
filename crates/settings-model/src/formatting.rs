@@ -71,6 +71,7 @@ mod tests {
             config_file_candidates: vec![],
             composer_package: None,
             requires_interpreter: None,
+            fix_args: vec![],
         }
     }
 

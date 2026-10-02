@@ -19,6 +19,7 @@ mod detect;
 mod format;
 mod php;
 mod scheduler;
+pub mod suppress;
 
 pub use buffer::{
     degradation_reason, effective_trigger, write_temp_copy, BufferStrategy, TempCopyGuard,

@@ -148,6 +148,9 @@ pub struct ServerAdvert {
     pub trigger_characters: Vec<String>,
     pub signature_triggers: SignatureTriggers,
     pub completion_resolve: bool,
+    /// `documentOnTypeFormattingProvider`'s first and further trigger
+    /// characters.
+    pub on_type_triggers: Vec<String>,
 }
 
 /// What every server of one language advertised, merged for the language:
@@ -195,6 +198,12 @@ impl Advertised {
                     .map(|(_, a)| &a.signature_triggers.retrigger),
             ),
         }
+    }
+
+    /// Characters after which any server wants `onTypeFormatting`: the union,
+    /// first occurrence first.
+    pub fn on_type_triggers(&self) -> Vec<String> {
+        union(self.servers.iter().map(|(_, a)| &a.on_type_triggers))
     }
 
     /// Whether any server offers `completionItem/resolve`; the request itself
@@ -313,6 +322,7 @@ mod tests {
                 retrigger: vec![],
             },
             completion_resolve: resolve,
+            on_type_triggers: chars.iter().map(|c| c.to_string()).collect(),
         };
         let mut merged = Advertised::default();
         assert!(!merged.completion_resolve_supported());
@@ -322,6 +332,7 @@ mod tests {
         assert!(merged.signature_triggers().supported);
         assert_eq!(merged.signature_triggers().trigger, [".", ":", ">"]);
         assert!(merged.completion_resolve_supported());
+        assert_eq!(merged.on_type_triggers(), [".", ":", ">"]);
 
         merged.set("b", advert(&["$"], false, false));
         merged.set("c", advert(&["@"], false, false));

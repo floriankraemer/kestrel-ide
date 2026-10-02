@@ -43,6 +43,12 @@ pub fn capabilities(tag: &str) -> Map<String, Value> {
                     json!({"resolveProvider": true}),
                 );
             }
+            "onTypeFormatting" => {
+                caps.insert(
+                    "documentOnTypeFormattingProvider".into(),
+                    json!({"firstTriggerCharacter": "}", "moreTriggerCharacter": [";"]}),
+                );
+            }
             "executeCommand" => {
                 caps.insert(
                     "executeCommandProvider".into(),
@@ -106,6 +112,14 @@ pub fn answer(tag: &str, method: &str, params: &Value) -> Option<Value> {
             action["edit"] = json!({"changes": {}});
             action["title"] = json!(format!("{} (resolved by {tag})", params["title"].as_str()?));
             action
+        }
+        // One edit, from the start of the typed line to the caret, naming the
+        // character that was typed.
+        "textDocument/onTypeFormatting" => {
+            let position = params.get("position")?;
+            let line = position.get("line")?.clone();
+            json!([{"range": {"start": {"line": line, "character": 0}, "end": position},
+                    "newText": format!("typed {}", params["ch"].as_str()?)}])
         }
         "workspace/executeCommand" => json!({"ranOn": tag, "command": params["command"]}),
         _ => return None,

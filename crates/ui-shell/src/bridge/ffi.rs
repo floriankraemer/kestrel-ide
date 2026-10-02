@@ -5415,6 +5415,22 @@ mod ffi {
             selection: FfiSelection,
         );
 
+        /// N5: `typed` was just typed with the caret now at `line`/
+        /// `character`. Does nothing unless a running server named it an
+        /// on-type formatting trigger; then its edits are applied through
+        /// the same `refactorReady` protocol, as one undo step, and never
+        /// reported as a failure.
+        #[qinvokable]
+        #[cxx_name = "requestOnTypeFormatting"]
+        fn request_on_type_formatting(
+            self: Pin<&mut LanguageService>,
+            path: &QString,
+            buffer_revision: i64,
+            line: u32,
+            character: u32,
+            typed: &QString,
+        );
+
         /// A `codeActionsAt` answered. Empty is a legitimate answer and is
         /// still signalled, so the view can say "nothing here" rather than
         /// leaving the gesture hanging.

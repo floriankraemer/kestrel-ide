@@ -902,6 +902,7 @@ private:
     // after it pauses. `showing` is `signatureTipVisible_`; `explicitRequest`
     // is Ctrl+P's, which asks again even without a trigger character.
     void requestSignatureHelpFor(CodeEditor *editor, bool explicitRequest = false);
+    void requestOnTypeFormattingFor(CodeEditor *editor, const QString &typed);
 
     void onSignatureHelpReady();
 

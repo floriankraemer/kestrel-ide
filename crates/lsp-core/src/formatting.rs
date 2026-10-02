@@ -20,6 +20,10 @@ use serde_json::{json, Value};
 use crate::manager::{LspError, FORMATTING_TIMEOUT, METHOD_NOT_FOUND};
 use crate::workspace_edit::TextEdit;
 
+/// On-type formatting rides on a keystroke, and an answer that arrives after
+/// the user typed on is discarded by the edit gate anyway.
+const ON_TYPE_FORMATTING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// What a formatting request produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormattingOutcome {
@@ -142,6 +146,24 @@ pub fn selection_scope(anchor: (u32, u32), caret: (u32, u32)) -> Option<Selectio
     }
 }
 
+/// The characters a server wants `textDocument/onTypeFormatting` after, from
+/// its `ServerCapabilities`: the first trigger plus any further ones.
+pub fn parse_on_type_triggers(capabilities: &Value) -> Vec<String> {
+    let Some(provider) = capabilities.get("documentOnTypeFormattingProvider") else {
+        return Vec::new();
+    };
+    let first = provider
+        .get("firstTriggerCharacter")
+        .and_then(Value::as_str);
+    let more = provider
+        .get("moreTriggerCharacter")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    first.into_iter().chain(more).map(str::to_string).collect()
+}
+
 /// A capability is present when it is `true` or an options object. `false`,
 /// `null` and absent all mean no — the protocol allows all three and servers
 /// use all three.
@@ -211,6 +233,37 @@ impl crate::manager::LspManager {
             Err(err) => Err(err),
         }
     }
+    /// `textDocument/onTypeFormatting` after `ch` was typed at a position
+    /// (N5). A server answering `MethodNotFound` is "nothing to do", not a
+    /// failure: this fires on keystrokes, where an error would be noise.
+    pub fn format_on_type(
+        &self,
+        uri: &str,
+        position: (u32, u32),
+        ch: &str,
+        options: &FormattingOptions,
+    ) -> Result<FormattingOutcome, LspError> {
+        let uri = &self.normalize_uri(uri);
+        let language_id = self.language_of(uri)?;
+        let params = json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": position.0, "character": position.1},
+            "ch": ch,
+            "options": options.to_json(),
+        });
+        match self.request_with_timeout(
+            &language_id,
+            "textDocument/onTypeFormatting",
+            params,
+            ON_TYPE_FORMATTING_TIMEOUT,
+        ) {
+            Ok(result) => Ok(parse_formatting(&result)),
+            Err(LspError::Response { code, .. }) if code == METHOD_NOT_FOUND => {
+                Ok(FormattingOutcome::Unsupported)
+            }
+            Err(err) => Err(err),
+        }
+    }
     /// `textDocument/rangeFormatting` for a selection.
     ///
     /// Servers commonly implement one of the two and not the other, so this
@@ -266,6 +319,17 @@ mod tests {
             },
             "newText": text,
         })
+    }
+
+    #[test]
+    fn on_type_triggers_are_the_first_character_then_the_more_ones() {
+        let caps = json!({"documentOnTypeFormattingProvider": {
+            "firstTriggerCharacter": "}", "moreTriggerCharacter": [";", "\n"]}});
+        assert_eq!(parse_on_type_triggers(&caps), ["}", ";", "\n"]);
+        assert!(parse_on_type_triggers(&json!({})).is_empty());
+        let only_first =
+            json!({"documentOnTypeFormattingProvider": {"firstTriggerCharacter": "}"}});
+        assert_eq!(parse_on_type_triggers(&only_first), ["}"]);
     }
 
     #[test]

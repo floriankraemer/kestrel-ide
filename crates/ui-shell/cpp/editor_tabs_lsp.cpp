@@ -282,6 +282,19 @@ void EditorTabs::requestSignatureHelpFor(CodeEditor *editor, bool explicitReques
                                            explicitRequest, signatureTipVisible_);
 }
 
+// N5: whether `typed` triggers on-type formatting is the Rust side's call;
+// this only says what was typed and where the caret is now.
+void EditorTabs::requestOnTypeFormattingFor(CodeEditor *editor, const QString &typed)
+{
+    const QString path = editor->property("lspPath").toString();
+    if (path.isEmpty()) {
+        return;
+    }
+    const auto at = lspPosition(editor, editor->textCursor().position());
+    languageService_->requestOnTypeFormatting(path, documentRevision(), at.first, at.second,
+                                              typed);
+}
+
 void EditorTabs::requestSignatureHelpNow()
 {
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
@@ -911,6 +924,7 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
           editorOps_->typeText(tabId, editor->toPlainText(), typed);
         applyEditsTo(editor, edits);
         refreshCarets(editor);
+        requestOnTypeFormattingFor(editor, typed);
     });
     connect(editor, &CodeEditor::multiCaretBackspace, this, [this, editor, tabId]() {
         applyEditsTo(editor, editorOps_->backspace(tabId, editor->toPlainText()));
@@ -923,6 +937,7 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     connect(editor, &CodeEditor::multiCaretNewline, this, [this, editor, tabId]() {
         applyEditsTo(editor, editorOps_->newline(tabId, editor->toPlainText()));
         refreshCarets(editor);
+        requestOnTypeFormattingFor(editor, QStringLiteral("\n"));
     });
     // R1: Tab/Shift+Tab.
     connect(editor, &CodeEditor::multiCaretIndent, this, [this, editor, tabId](bool outdent) {

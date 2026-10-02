@@ -36,6 +36,16 @@ use crate::watched_files::{FileChangeKind, WatchedFiles};
 use process_exec::host::ExecHost;
 
 mod capabilities;
+#[cfg(test)]
+mod host_translation_tests;
+/// D0 (jvm-build-tools plan): build files (`pom.xml`, `build.gradle`, …)
+/// are registered as open documents with no server configured for their
+/// language, so `did_open`/`did_change`/`did_close` must tolerate that
+/// without panicking or corrupting the manager's document map — the
+/// bridge's `open_build_file_document` (`ui-shell/src/bridge/language/
+/// mod.rs`) relies on exactly this.
+#[cfg(test)]
+mod no_server_document_lifecycle_tests;
 mod routed;
 
 /// Windows path -> Linux path (if `host` is remote) -> `file://` URI.
@@ -173,6 +183,8 @@ pub enum LspEvent {
         /// than sending it to every server and reading `MethodNotFound`
         /// back one keystroke at a time.
         completion_resolve_supported: bool,
+        /// N5: the characters this server wants `onTypeFormatting` after.
+        on_type_triggers: Vec<String>,
     },
     /// The server's stdout hit EOF or errored, i.e. it died. A respawn follows
     /// after `retry_in` unless the restart budget is used up.
@@ -1120,6 +1132,9 @@ fn spawn_supervisor(
                         trigger_characters,
                         signature_triggers,
                         completion_resolve_supported,
+                        on_type_triggers: crate::formatting::parse_on_type_triggers(
+                            &server.capabilities.lock().unwrap(),
+                        ),
                     });
                     let started = Instant::now();
                     read_loop(&server, &cfg.language_id, stdout, &events);
@@ -1574,214 +1589,5 @@ fn response_error(error: &Value) -> LspError {
             .and_then(Value::as_str)
             .unwrap_or("unknown error")
             .to_string(),
-    }
-}
-
-/// D0 (jvm-build-tools plan): build files (`pom.xml`, `build.gradle`, …)
-/// are registered as open documents with no server configured for their
-/// language, so `did_open`/`did_change`/`did_close` must tolerate that
-/// without panicking or corrupting the manager's document map — the
-/// bridge's `open_build_file_document` (`ui-shell/src/bridge/language/
-/// mod.rs`) relies on exactly this.
-#[cfg(test)]
-mod no_server_document_lifecycle_tests {
-    use super::*;
-
-    fn manager() -> LspManager {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/tmp/proj"));
-        manager
-    }
-
-    #[test]
-    fn did_open_with_no_server_records_the_document_and_returns_no_server() {
-        let manager = manager();
-        let uri = "file:///tmp/proj/pom.xml";
-        let err = manager.did_open(uri, "xml", "<project/>").unwrap_err();
-        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
-        // The document is still tracked, even though no server was
-        // notified — did_change below depends on this.
-        assert!(manager.documents.lock().unwrap().contains_key(uri));
-    }
-
-    #[test]
-    fn did_change_with_no_server_bumps_the_version_and_returns_no_server() {
-        let manager = manager();
-        let uri = "file:///tmp/proj/pom.xml";
-        manager.did_open(uri, "xml", "<project/>").unwrap_err();
-        let err = manager
-            .did_change(uri, "<project><x/></project>")
-            .unwrap_err();
-        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
-    }
-
-    #[test]
-    fn did_close_with_no_server_forgets_the_document_and_returns_no_server() {
-        let manager = manager();
-        let uri = "file:///tmp/proj/pom.xml";
-        manager.did_open(uri, "xml", "<project/>").unwrap_err();
-        let err = manager.did_close(uri).unwrap_err();
-        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
-        assert!(!manager.documents.lock().unwrap().contains_key(uri));
-    }
-}
-
-#[cfg(test)]
-mod host_translation_tests {
-    use super::*;
-
-    fn wsl_host() -> ExecHost {
-        ExecHost::for_path(Path::new(r"\\wsl.localhost\Ubuntu\home\f\proj"))
-    }
-
-    #[test]
-    fn uri_for_is_unchanged_on_a_local_host() {
-        assert_eq!(
-            uri_for(&ExecHost::Local, "/home/f/proj/src/main.rs"),
-            crate::diagnostics::uri_from_path("/home/f/proj/src/main.rs")
-        );
-    }
-
-    #[test]
-    fn uri_for_translates_a_windows_unc_path_to_a_linux_file_uri() {
-        let host = wsl_host();
-        assert_eq!(
-            uri_for(&host, r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs"),
-            "file:///home/f/proj/src/main.rs"
-        );
-    }
-
-    #[test]
-    fn path_for_translates_a_linux_file_uri_back_to_the_unc_path() {
-        let host = wsl_host();
-        assert_eq!(
-            path_for(&host, "file:///home/f/proj/src/main.rs"),
-            Some(r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs".to_string())
-        );
-    }
-
-    #[test]
-    fn uri_for_then_path_for_round_trips_to_identity() {
-        let host = wsl_host();
-        let original = r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs";
-        let uri = uri_for(&host, original);
-        assert_eq!(path_for(&host, &uri).as_deref(), Some(original));
-    }
-
-    #[test]
-    fn new_translates_root_uri_for_a_wsl_root() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-            "//wsl.localhost/Ubuntu/home/f/proj",
-        ));
-        assert_eq!(manager.root_uri, "file:///home/f/proj");
-        assert!(manager.host.is_remote());
-    }
-
-    #[test]
-    fn new_leaves_root_uri_unchanged_for_a_local_root() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/home/f/proj"));
-        assert_eq!(manager.root_uri, "file:///home/f/proj");
-        assert!(!manager.host.is_remote());
-    }
-
-    #[test]
-    fn a_server_on_the_projects_own_host_gets_the_uri_unchanged() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-            "//wsl.localhost/Ubuntu/home/f/proj",
-        ));
-        let uri = "file:///home/f/proj/src/main.rs";
-        assert_eq!(manager.uri_on(&manager.host.clone(), uri), uri);
-    }
-
-    #[test]
-    fn a_server_on_another_host_gets_the_uri_that_host_spells() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-            "//wsl.localhost/Ubuntu/home/f/proj",
-        ));
-        // The project is in the distro; this server runs on the Windows side
-        // and sees the document through its UNC path.
-        assert_eq!(
-            manager.uri_on(&ExecHost::Local, "file:///home/f/proj/src/main.rs"),
-            "file:////wsl.localhost/Ubuntu/home/f/proj/src/main.rs"
-        );
-    }
-
-    /// normalize_uri applied twice must be a no-op — `format_range` falling
-    /// back to `self.format(uri, options)` and every other re-entrant call
-    /// in this crate depends on it.
-    #[test]
-    fn normalize_uri_is_idempotent() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-            "//wsl.localhost/Ubuntu/home/f/proj",
-        ));
-        let naive =
-            crate::diagnostics::uri_from_path("//wsl.localhost/Ubuntu/home/f/proj/src/main.rs");
-        let once = manager.normalize_uri(&naive);
-        let twice = manager.normalize_uri(&once);
-        assert_eq!(once, "file:///home/f/proj/src/main.rs");
-        assert_eq!(once, twice);
-    }
-
-    /// W3-3: a server binary absent from the distro is reported plainly,
-    /// not as a generic spawn failure — proven with the same fake-`wsl.exe`
-    /// trick `process-exec`'s own tests use, since `command -v` (and
-    /// therefore `resolve_program`) genuinely finds nothing for it.
-    #[test]
-    fn starting_a_server_missing_from_the_distro_says_so() {
-        use std::sync::Mutex;
-        static PATH_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = PATH_LOCK.lock().unwrap();
-
-        let bin_dir = tempfile::tempdir().unwrap();
-        let script_path = bin_dir.path().join("wsl.exe");
-        std::fs::write(&script_path, "#!/bin/sh\nexit 1\n").unwrap();
-        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        std::fs::set_permissions(&script_path, perms).unwrap();
-
-        // Not created on disk, and deliberately so: the WSL root is only
-        // ever parsed for its UNC spelling — nothing here touches the
-        // filesystem under it. Creating it would write `/wsl.localhost` at
-        // the filesystem root, which only succeeds when the test runs as
-        // root (see #251 for the same trap in analysis-core).
-        let root = PathBuf::from("//wsl.localhost/Ubuntu/tmp/lsp-core-e2e");
-
-        let original_path = std::env::var("PATH").unwrap_or_default();
-        // SAFETY: serialized by PATH_LOCK.
-        unsafe {
-            std::env::set_var(
-                "PATH",
-                format!("{}:{original_path}", bin_dir.path().display()),
-            );
-        }
-        let (manager, _rx) =
-            LspManager::new(crate::diagnostics::uri_from_path(&root.to_string_lossy()));
-        let result = manager.start(&ServerConfig {
-            id: "rust".to_string(),
-            language_id: "rust".to_string(),
-            name: "rust-analyzer".to_string(),
-            command: "rust-analyzer".to_string(),
-            args: Vec::new(),
-            enabled: true,
-            settings_section: None,
-            settings: Value::Null,
-            initialization_options: Value::Null,
-            diagnostics: true,
-            posix_only: false,
-            exec: crate::catalog::ServerExec::Host,
-            priority: 0,
-            source: crate::catalog::ServerSource::Builtin,
-        });
-        unsafe {
-            std::env::set_var("PATH", original_path);
-        }
-
-        let err = result.unwrap_err();
-        assert!(
-            matches!(&err, LspError::Spawn { source, .. } if source.to_string().contains("not found inside the WSL distro")),
-            "expected a WSL-specific not-found message, got {err:?}"
-        );
     }
 }

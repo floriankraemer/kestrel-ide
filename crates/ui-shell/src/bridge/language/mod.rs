@@ -951,26 +951,6 @@ impl ffi::LanguageService {
         }
     }
 
-    /// Store the translated card labels: loading-fixes, more-actions,
-    /// source, error, warning, info, hint. A list of any other length is
-    /// ignored (the English defaults stay).
-    pub fn set_hover_labels(self: Pin<&mut Self>, labels: &cxx_qt_lib::QStringList) {
-        let words: Vec<String> = labels.iter().map(ToString::to_string).collect();
-        let [loading_fixes, more_actions, source, error, warning, info, hint] = words.as_slice()
-        else {
-            return;
-        };
-        update_hover_labels(|labels| {
-            labels.loading_fixes.clone_from(loading_fixes);
-            labels.more_actions.clone_from(more_actions);
-            labels.source.clone_from(source);
-            labels.error.clone_from(error);
-            labels.warning.clone_from(warning);
-            labels.info.clone_from(info);
-            labels.hint.clone_from(hint);
-        });
-    }
-
     pub fn cancel_hover(self: Pin<&mut Self>) {
         self.hover.borrow_mut().cancel();
     }
@@ -1366,6 +1346,7 @@ impl ffi::LanguageService {
                 trigger_characters,
                 signature_triggers,
                 completion_resolve_supported,
+                on_type_triggers,
                 ..
             } => {
                 let name = name_of(&server_id);
@@ -1379,6 +1360,7 @@ impl ffi::LanguageService {
                             trigger_characters,
                             signature_triggers,
                             completion_resolve: completion_resolve_supported,
+                            on_type_triggers,
                         },
                     );
                 self.as_mut().server_state_changed(

@@ -194,7 +194,16 @@ impl ffi::LanguageService {
             (selection.start_line, selection.start_character),
             (selection.end_line, selection.end_character),
         );
-        self.format_scope(path, buffer_revision, scope, "Reformat Code");
+        self.format_with(
+            path,
+            buffer_revision,
+            "Reformat Code",
+            false,
+            move |m, uri, o| match scope {
+                Some((start, end)) => m.format_range(uri, start, end, o),
+                None => m.format(uri, o),
+            },
+        );
     }
 
     /// Reformat Selection (N4): the selection only; with none, say so
@@ -209,22 +218,73 @@ impl ffi::LanguageService {
             (selection.start_line, selection.start_character),
             (selection.end_line, selection.end_character),
         );
-        if scope.is_none() {
+        let Some((start, end)) = scope else {
             self.edits.borrow_mut().begin(buffer_revision);
             self.as_mut()
                 .finish_refactor(Err("Select the text to reformat first.".to_string()));
             return;
-        }
-        self.format_scope(path, buffer_revision, scope, "Reformat Selection");
+        };
+        self.format_with(
+            path,
+            buffer_revision,
+            "Reformat Selection",
+            false,
+            move |m, uri, o| m.format_range(uri, start, end, o),
+        );
     }
 
-    fn format_scope(
+    /// N5: `typed` was just typed at `line`/`character` (the position after
+    /// it). When a running server named it as an on-type formatting trigger
+    /// the server's edits are applied like any reformat — silently: nothing
+    /// to do, no formatter and failures are not worth interrupting typing.
+    pub fn request_on_type_formatting(
+        self: Pin<&mut Self>,
+        path: &QString,
+        buffer_revision: i64,
+        line: u32,
+        character: u32,
+        typed: &QString,
+    ) {
+        let typed = typed.to_string();
+        let Some(language_id) = self.open_docs.borrow().get(&path.to_string()).cloned() else {
+            return;
+        };
+        let is_trigger = self
+            .advertised
+            .borrow()
+            .get(&language_id)
+            .is_some_and(|a| a.on_type_triggers().contains(&typed));
+        if !is_trigger {
+            return;
+        }
+        self.format_with(
+            path,
+            buffer_revision,
+            "Format on Typing",
+            true,
+            move |m, uri, o| m.format_on_type(uri, (line, character), &typed, o),
+        );
+    }
+
+    /// The shared tail of every reformat: options from the settings, one
+    /// request on the LSP worker, the answer published as a one-file edit
+    /// plan. `quiet` swallows "no formatter" and errors.
+    fn format_with(
         mut self: Pin<&mut Self>,
         path: &QString,
         buffer_revision: i64,
-        scope: Option<lsp_core::formatting::Selection>,
         title: &'static str,
+        quiet: bool,
+        ask: impl FnOnce(
+                &lsp_core::LspManager,
+                &str,
+                &lsp_core::formatting::FormattingOptions,
+            )
+                -> Result<lsp_core::formatting::FormattingOutcome, lsp_core::LspError>
+            + Send
+            + 'static,
     ) {
+        use lsp_core::formatting::FormattingOutcome;
         let path = path.to_string();
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
             return;
@@ -243,13 +303,10 @@ impl ffi::LanguageService {
         self.edits.borrow_mut().begin(buffer_revision);
         let qt_thread = self.as_mut().qt_thread();
         self.push_job(move |manager| {
-            let outcome = match scope {
-                Some((start, end)) => manager.format_range(&uri, start, end, &options),
-                None => manager.format(&uri, &options),
-            };
+            let outcome = ask(manager, &uri, &options);
             let version = manager.document_version(&uri);
             let _ = qt_thread.queue(move |service: Pin<&mut Self>| match outcome {
-                Ok(lsp_core::formatting::FormattingOutcome::Edits(edits)) => {
+                Ok(FormattingOutcome::Edits(edits)) => {
                     let plan = lsp_core::EditPlan {
                         buffers: vec![lsp_core::DocumentEdits {
                             uri,
@@ -263,14 +320,11 @@ impl ffi::LanguageService {
                     };
                     service.publish_refactor(title.to_string(), plan, None);
                 }
-                Ok(lsp_core::formatting::FormattingOutcome::AlreadyFormatted) => {
-                    service.finish_refactor(Ok(()));
-                }
-                Ok(lsp_core::formatting::FormattingOutcome::Unsupported) => {
-                    service.finish_refactor(Err(format!(
-                        "No formatter is available for {language_id}."
-                    )));
-                }
+                Ok(FormattingOutcome::AlreadyFormatted) => service.finish_refactor(Ok(())),
+                Ok(FormattingOutcome::Unsupported) if quiet => service.finish_refactor(Ok(())),
+                Ok(FormattingOutcome::Unsupported) => service
+                    .finish_refactor(Err(format!("No formatter is available for {language_id}."))),
+                Err(_) if quiet => service.finish_refactor(Ok(())),
                 Err(error) => service.finish_refactor(Err(error.to_string())),
             });
         });

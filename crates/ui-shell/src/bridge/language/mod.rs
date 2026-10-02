@@ -263,6 +263,7 @@ pub struct LanguageServiceRust {
 
 impl Default for LanguageServiceRust {
     fn default() -> Self {
+        crate::bridge::php::prime_licence_key();
         LanguageServiceRust {
             session: crate::bridge::registry::shared_session(),
             jobs: RefCell::default(),

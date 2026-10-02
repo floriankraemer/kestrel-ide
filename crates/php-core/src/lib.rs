@@ -11,6 +11,7 @@ pub mod composer_view;
 pub mod generate;
 pub mod host;
 pub mod level;
+pub mod licence;
 pub mod lsp;
 pub mod probe;
 pub mod psr4;

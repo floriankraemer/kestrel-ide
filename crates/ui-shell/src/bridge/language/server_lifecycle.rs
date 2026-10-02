@@ -37,10 +37,7 @@ pub(super) fn resolved_server_configs(
     );
     // The key is a secret: the keychain, never a settings file. Unreadable
     // reads as "no key", the page says why.
-    let licence_key = secret_store::SecretStore::new(php_core::SECRET_SERVICE)
-        .load(php_core::INTELEPHENSE_LICENCE_ID)
-        .ok()
-        .flatten();
+    let licence_key = crate::bridge::php::licence_key();
     let input = php_core::lsp::LspInput {
         language_level,
         include_paths: &php.include_paths,

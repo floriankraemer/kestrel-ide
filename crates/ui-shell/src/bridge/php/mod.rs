@@ -54,6 +54,25 @@ fn secrets() -> secret_store::SecretStore {
     secret_store::SecretStore::new(php_core::SECRET_SERVICE)
 }
 
+static LICENCE_KEY: php_core::licence::LicenceCache = php_core::licence::LicenceCache::new();
+
+/// The Intelephense licence key: the keychain on the first call, the cache
+/// after (the settings page keeps it current). Unreadable reads as no key.
+pub(crate) fn licence_key() -> Option<String> {
+    LICENCE_KEY.get(|| {
+        secrets()
+            .load(php_core::INTELEPHENSE_LICENCE_ID)
+            .ok()
+            .flatten()
+    })
+}
+
+/// Read the key on a worker, so the first use on the Qt thread finds it
+/// cached instead of waiting on a slow keychain.
+pub(crate) fn prime_licence_key() {
+    std::thread::spawn(licence_key);
+}
+
 fn to_ffi_form(form: &PhpForm) -> ffi::FfiPhpForm {
     ffi::FfiPhpForm {
         interpreter: QString::from(form.interpreter.as_str()),
@@ -237,9 +256,19 @@ impl ffi::PhpSettingsEditor {
         let change = self.licence.borrow_mut().take();
         let outcome = match change {
             Some(LicenceChange::Set(key)) => {
-                secrets().store(php_core::INTELEPHENSE_LICENCE_ID, &key)
+                let stored = secrets().store(php_core::INTELEPHENSE_LICENCE_ID, &key);
+                if stored.is_ok() {
+                    LICENCE_KEY.set(Some(key));
+                }
+                stored
             }
-            Some(LicenceChange::Remove) => secrets().delete(php_core::INTELEPHENSE_LICENCE_ID),
+            Some(LicenceChange::Remove) => {
+                let removed = secrets().delete(php_core::INTELEPHENSE_LICENCE_ID);
+                if removed.is_ok() {
+                    LICENCE_KEY.set(None);
+                }
+                removed
+            }
             None => Ok(()),
         };
         match outcome {

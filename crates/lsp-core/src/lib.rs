@@ -26,6 +26,7 @@ pub mod hover_card;
 pub mod inlay_hint;
 pub mod intentions;
 pub mod manager;
+pub mod merge;
 pub mod navigation;
 pub mod progress;
 pub mod references;

@@ -233,3 +233,87 @@ fn request_all_returns_every_capable_servers_answer_in_order() {
     assert_eq!(tags, [("a", json!("hover a")), ("b", json!("hover b"))]);
     manager.stop(LANG);
 }
+
+fn open_pair_with_document(
+    a_caps: &str,
+    b_caps: &str,
+) -> (LspManager, Receiver<LspEvent>, &'static str) {
+    let (manager, rx) = started_pair(a_caps, b_caps);
+    let uri = "file:///workspace/a.stub";
+    manager.did_open(uri, LANG, "hello\n").expect("didOpen");
+    (manager, rx, uri)
+}
+
+#[test]
+fn completion_merges_without_duplicates_and_resolves_at_the_origin() {
+    let (manager, _rx, uri) = open_pair_with_document("completion", "completion");
+    let list = manager.completion(uri, 0, 0).expect("completion");
+    let labels: Vec<_> = list.items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        ["shared", "only_a", "only_b"],
+        "shared appears once"
+    );
+    assert!(
+        list.is_incomplete,
+        "a's list is incomplete, so the merge is"
+    );
+
+    let from_b = list.items.iter().find(|i| i.label == "only_b").unwrap();
+    let resolved = manager
+        .resolve_completion_item(LANG, &from_b.raw)
+        .expect("resolve");
+    assert_eq!(resolved["detail"], "resolved by b");
+    manager.stop(LANG);
+}
+
+#[test]
+fn code_actions_from_both_servers_run_and_resolve_at_their_origin() {
+    let (manager, _rx, uri) =
+        open_pair_with_document("codeAction,executeCommand", "codeAction,executeCommand");
+    let actions = manager
+        .code_action(uri, (0, 0), (0, 1), &[])
+        .expect("code actions");
+    let titles: Vec<_> = actions.iter().map(|a| a.title.as_str()).collect();
+    assert_eq!(titles, ["fix from a", "run a", "fix from b", "run b"]);
+
+    let fix_b = actions.iter().find(|a| a.title == "fix from b").unwrap();
+    let resolved = manager.resolve_code_action(LANG, fix_b).expect("resolve");
+    assert_eq!(resolved[0].title, "fix from b (resolved by b)");
+
+    let run_b = actions.iter().find(|a| a.title == "run b").unwrap();
+    let command = run_b.command.clone().expect("a command");
+    let ran = manager.execute_command(LANG, &command).expect("execute");
+    assert_eq!(ran["ranOn"], "b");
+    manager.stop(LANG);
+}
+
+#[test]
+fn references_and_workspace_symbols_merge_without_duplicates() {
+    let (manager, _rx, uri) =
+        open_pair_with_document("references,workspaceSymbol", "references,workspaceSymbol");
+    let refs = manager
+        .request(
+            LANG,
+            "textDocument/references",
+            json!({"textDocument": {"uri": uri}, "position": {"line": 0, "character": 0},
+                   "context": {"includeDeclaration": true}}),
+        )
+        .unwrap();
+    assert_eq!(refs.as_array().unwrap().len(), 3, "shared + a + b: {refs}");
+    let symbols = manager
+        .request(LANG, "workspace/symbol", json!({"query": ""}))
+        .unwrap();
+    assert_eq!(symbols.as_array().unwrap().len(), 3, "{symbols}");
+    manager.stop(LANG);
+}
+
+#[test]
+fn a_merged_answer_survives_one_server_being_stopped() {
+    let (manager, _rx, uri) = open_pair_with_document("completion", "completion");
+    manager.stop_server("b");
+    let list = manager.completion(uri, 0, 0).expect("completion");
+    let labels: Vec<_> = list.items.iter().map(|i| i.label.as_str()).collect();
+    assert_eq!(labels, ["shared", "only_a"]);
+    manager.stop(LANG);
+}

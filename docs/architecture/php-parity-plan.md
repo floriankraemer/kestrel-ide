@@ -146,8 +146,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | L2 — `LanguageServerSetting` gains `id`, `settings`, `initialization_options`; legacy entries still load | done | edbf427 |
 | L3 — `initialize` sends `initializationOptions`; the full `ServerCapabilities` is stored per server (as raw JSON) | done | b6c7a10 |
 | L4 — servers keyed by id with a per-language order; did* fans out; `LspEvent.server_id`; stop/restart per server (the bridge's diagnostics key is already `lsp:<server-id>` from here) | done | 5207174 |
-| L5 — `routing` module: method → `First`/`Merge`; `request()` / `request_all()` | done | — |
-| L6 — merge rules (completion dedupe, code actions, references/symbols); origin tagging so resolve/executeCommand reach the right server | open | |
+| L5 — `routing` module: method → `First`/`Merge`; `request()` / `request_all()` | done | fe1c1eb |
+| L6 — merge rules (completion dedupe, code actions, references/symbols); origin tagging so resolve/executeCommand reach the right server | done | — |
 | L7 — diagnostics source `lsp:<server-id>`; `diagnostics=false`; trigger characters are the union | open | |
 | L8 — `ExecHost` and URI translation per server | open | |
 | L9 — `posix_only` skipped on native Windows, with status text | open | |

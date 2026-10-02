@@ -736,11 +736,23 @@ impl LspManager {
                     (None, None) => Err(no_capable_server(method)),
                 }
             }
-            // ponytail: merging arrives with L6; until then the first capable server answers.
-            Route::Merge => match capable.first() {
-                Some(server) => server.request(method, params, timeout),
-                None => Err(no_capable_server(method)),
-            },
+            Route::Merge => {
+                let mut answers = Vec::new();
+                let mut first_error = None;
+                for (id, result) in fan_out(&capable, method, &params, timeout) {
+                    match result {
+                        Ok(answer) => answers.push((id, answer)),
+                        Err(e) => {
+                            first_error.get_or_insert(e);
+                        }
+                    }
+                }
+                match (answers.is_empty(), first_error) {
+                    (false, _) => Ok(crate::merge::merge(method, answers)),
+                    (true, Some(e)) => Err(e),
+                    (true, None) => Err(no_capable_server(method)),
+                }
+            }
         }
     }
 

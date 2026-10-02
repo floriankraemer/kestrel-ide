@@ -24,7 +24,7 @@
 //! a bare `QString` sentinel.
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
@@ -63,10 +63,10 @@ pub struct AnalysisServiceRust {
     /// Resolved launch (program plus interpreter argv prefix) per analyzer id
     /// and interpreter (a miss is cached too): per-file
     /// runs fire on every debounced edit, and `find_program` spawns
-    /// `wsl.exe` on a WSL root. Cleared whenever detection is redone
-    /// (`refresh_analyzer_status_async`, `inspect_project`) and for one
-    /// analyzer when its program turns out to be gone.
-    program_cache: RefCell<HashMap<String, Option<Launch>>>,
+    /// `wsl.exe` on a WSL root. Invalidation is `LaunchCache`'s rule, plus
+    /// a clear whenever detection is redone (`refresh_analyzer_status_async`,
+    /// `inspect_project`).
+    program_cache: RefCell<analysis_core::LaunchCache<Launch>>,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -340,11 +340,11 @@ impl ffi::AnalysisService {
                 move |result| {
                     drop(guard); // the run is over; delete the temp copy
                     let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
-                        if result == Err(analysis_core::RunFailure::NotFound) {
+                        if let Err(failure) = &result {
                             service
                                 .program_cache
                                 .borrow_mut()
-                                .retain(|key, _| !key.starts_with(&format!("{}\0", analyzer.id)));
+                                .note_failure(&analyzer.id, failure);
                         }
                         publish_file_result(&service, &analyzer, &result, &file);
                         service.as_mut().diagnostics_changed();
@@ -372,15 +372,15 @@ impl ffi::AnalysisService {
             &settings,
             root,
         );
-        let launch = self
-            .program_cache
-            .borrow_mut()
-            .entry(format!("{}\0{interpreter}\0{host:?}", analyzer.id))
-            .or_insert_with(|| {
+        let launch = self.program_cache.borrow_mut().get_or_resolve(
+            root,
+            &analyzer.id,
+            &format!("{interpreter}\0{host:?}"),
+            || {
                 analysis_core::find_program_on(&analyzer.program_candidates, root, &host)
                     .map(|program| analyzer.invocation(&program, &interpreter))
-            })
-            .clone()?;
+            },
+        )?;
         Some((host, launch))
     }
 
@@ -413,6 +413,12 @@ impl ffi::AnalysisService {
             MANUAL_RUN_TIMEOUT,
             move |result| {
                 let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
+                    if let Err(failure) = &result {
+                        service
+                            .program_cache
+                            .borrow_mut()
+                            .note_failure(&analyzer.id, failure);
+                    }
                     publish_result(
                         &service,
                         &analyzer,

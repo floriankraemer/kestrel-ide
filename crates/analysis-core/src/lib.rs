@@ -17,6 +17,7 @@ mod checkstyle;
 mod def;
 mod detect;
 mod format;
+mod launch_cache;
 mod php;
 mod scheduler;
 pub mod suppress;
@@ -35,6 +36,7 @@ pub use detect::{
     AnalyzerStatus,
 };
 pub use format::{format, FormatError, FormatterDef};
+pub use launch_cache::LaunchCache;
 pub use php::{
     invocation as php_invocation, needs_php_prefix, PHPCS_CONFIG_CANDIDATES,
     PHPSTAN_CONFIG_CANDIDATES, PHPUNIT_CONFIG_CANDIDATES,

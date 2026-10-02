@@ -890,6 +890,7 @@ mod tests {
     #[test]
     fn compose_services_reports_the_engine_being_missing_rather_than_panicking() {
         let broken = Invocation {
+            compose_override: None,
             program: "definitely-not-a-real-engine-binary".to_string(),
             prefix_args: Vec::new(),
             env: Vec::new(),
@@ -902,6 +903,7 @@ mod tests {
     #[test]
     fn compose_service_needs_build_reports_the_engine_being_missing_rather_than_panicking() {
         let broken = Invocation {
+            compose_override: None,
             program: "definitely-not-a-real-engine-binary".to_string(),
             prefix_args: Vec::new(),
             env: Vec::new(),

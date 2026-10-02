@@ -146,9 +146,13 @@ pub fn wrap_launch(
     let env = rebased_env(spec.env, &path_map);
 
     let mut argv: Vec<String> = Vec::new();
+    let (mut program, mut prefix_args) =
+        (invocation.program.clone(), invocation.prefix_args.clone());
 
     if target.source == "compose-service" {
-        argv.extend(compose_prefix(target));
+        let (compose_program, compose_args, plugin) = invocation.compose_form();
+        (program, prefix_args) = (compose_program, compose_args);
+        argv.extend(compose_prefix(target, plugin));
         argv.push("run".to_string());
         argv.push("--rm".to_string());
         argv.push("--service-ports".to_string());
@@ -214,17 +218,21 @@ pub fn wrap_launch(
     argv.extend(spec.args.iter().map(|arg| path_map.rebase_arg(arg)));
 
     Ok(WrappedLaunch {
-        program: invocation.program.clone(),
-        args: invocation.argv(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
+        program,
+        args: prefix_args.into_iter().chain(argv).collect(),
         cwd: Some(project_root.to_path_buf()),
         env: invocation.env.clone(),
         path_map,
     })
 }
 
-/// `compose -f <file>...`: what precedes every compose verb for `target`.
-fn compose_prefix(target: &ContainerTargetSetting) -> Vec<String> {
-    let mut argv = vec!["compose".to_string()];
+/// `compose -f <file>...`: what precedes every compose verb for `target`;
+/// `plugin_subcommand` is false for a standalone `docker-compose` override.
+fn compose_prefix(target: &ContainerTargetSetting, plugin_subcommand: bool) -> Vec<String> {
+    let mut argv = Vec::new();
+    if plugin_subcommand {
+        argv.push("compose".to_string());
+    }
     for file in &target.compose_files {
         argv.push("-f".to_string());
         argv.push(file.clone());
@@ -309,10 +317,14 @@ pub fn exec_host(
     let path_map = PathMap::new(project_root.to_path_buf(), &target.workdir);
     let mode = effective_mode(target, mode);
 
+    let mut program = invocation.program.clone();
     let mut prefix_args = invocation.prefix_args.clone();
     let mut verb_args = Vec::new();
     let reference = if target.source == "compose-service" {
-        prefix_args.extend(compose_prefix(target));
+        let (compose_program, compose_args, plugin) = invocation.compose_form();
+        program = compose_program;
+        prefix_args = compose_args;
+        prefix_args.extend(compose_prefix(target, plugin));
         let verb: &[&str] = match mode {
             ExecMode::Exec => &["exec", "-T"],
             ExecMode::Run => &["run", "--rm", "-T"],
@@ -341,7 +353,7 @@ pub fn exec_host(
     };
 
     ExecHost::Container(ContainerHost {
-        program: invocation.program.clone(),
+        program,
         prefix_args,
         engine_env: invocation.env.clone(),
         via_wsl: invocation.host.runs_remotely(),
@@ -392,13 +404,11 @@ pub fn before_launch_for(
             ))
         }
         "compose-service" if target.needs_build => {
-            let mut argv = compose_prefix(target);
+            let (program, mut argv, plugin) = invocation.compose_form();
+            argv.extend(compose_prefix(target, plugin));
             argv.push("build".to_string());
             argv.push(target.service.clone().unwrap_or_default());
-            Some((
-                invocation.program.clone(),
-                invocation.argv(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
-            ))
+            Some((program, argv))
         }
         _ => None,
     }
@@ -810,6 +820,7 @@ mod tests {
     #[test]
     fn a_wsl_connection_mounts_the_distros_own_path() {
         let invocation = Invocation {
+            compose_override: None,
             program: "docker".to_string(),
             prefix_args: vec![
                 "-d".to_string(),
@@ -917,6 +928,115 @@ mod tests {
         assert_eq!(argv_of(&host, "php", &[], root)[..2], ["podman", "compose"]);
     }
 
+    fn standalone_compose_invocation() -> Invocation {
+        ConnectionConfig {
+            compose_executable: Some("docker-compose".to_string()),
+            ..local_config()
+        }
+        .invocation()
+    }
+
+    fn local_config() -> ConnectionConfig {
+        ConnectionConfig {
+            engine: Engine::Docker,
+            kind: crate::connection::ConnectionKind::Auto,
+            executable: None,
+            compose_executable: None,
+        }
+    }
+
+    #[test]
+    fn a_compose_executable_override_replaces_the_engine_and_its_subcommand_for_exec() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(
+            &compose_target(),
+            &standalone_compose_invocation(),
+            root,
+            None,
+            false,
+        );
+        assert_eq!(
+            argv_of(&host, "php", &["-v"], root),
+            [
+                "docker-compose",
+                "-f",
+                "docker-compose.yml",
+                "exec",
+                "-T",
+                "-w",
+                "/var/www",
+                "php",
+                "php",
+                "-v"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compose_executable_override_does_not_touch_image_targets() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(
+            &image_target(),
+            &standalone_compose_invocation(),
+            root,
+            None,
+            false,
+        );
+        assert_eq!(argv_of(&host, "php", &[], root)[0], "docker");
+    }
+
+    #[test]
+    fn a_compose_executable_override_is_honoured_by_wrap_launch_and_the_build_task() {
+        let project_root = Path::new("/p");
+        let target = ContainerTargetSetting {
+            needs_build: true,
+            ..compose_target()
+        };
+        let wrapped = wrap_launch(
+            &spec(Some(project_root), &[]),
+            &target,
+            &standalone_compose_invocation(),
+            project_root,
+            false,
+        )
+        .unwrap();
+        assert_eq!(wrapped.program, "docker-compose");
+        assert_eq!(
+            wrapped.args[..4],
+            ["-f", "docker-compose.yml", "run", "--rm"]
+        );
+
+        let (program, args) = before_launch_for(&target, &standalone_compose_invocation()).unwrap();
+        assert_eq!(program, "docker-compose");
+        assert_eq!(args, ["-f", "docker-compose.yml", "build", "php"]);
+    }
+
+    #[test]
+    fn a_compose_executable_override_replaces_the_engine_inside_a_wsl_wrap() {
+        let root = Path::new("/home/f/proj");
+        let invocation = ConnectionConfig {
+            kind: crate::connection::ConnectionKind::Wsl {
+                distro: "Ubuntu".to_string(),
+            },
+            compose_executable: Some("docker-compose".to_string()),
+            ..local_config()
+        }
+        .invocation();
+        let host = exec_host(&compose_target(), &invocation, root, None, false);
+        assert_eq!(
+            argv_of(&host, "php", &[], root)[..7],
+            [
+                "wsl.exe",
+                "-d",
+                "Ubuntu",
+                "--",
+                "docker-compose",
+                "-f",
+                "docker-compose.yml"
+            ]
+        );
+    }
+
     #[test]
     fn an_image_always_runs_with_the_project_mounted() {
         let root = Path::new("/home/f/proj");
@@ -982,6 +1102,7 @@ mod tests {
     #[test]
     fn a_wsl_connection_mounts_the_distros_path_and_marks_the_engine_as_wsl() {
         let invocation = Invocation {
+            compose_override: None,
             program: "wsl.exe".to_string(),
             prefix_args: vec!["-d".into(), "Ubuntu".into(), "--".into(), "docker".into()],
             env: Vec::new(),

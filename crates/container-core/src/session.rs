@@ -265,6 +265,7 @@ mod tests {
 
     fn invocation(engine: Engine) -> Invocation {
         Invocation {
+            compose_override: None,
             program: match engine {
                 Engine::Docker => "docker".to_string(),
                 Engine::Podman => "podman".to_string(),
@@ -340,6 +341,7 @@ mod tests {
         // connection's `prefix_args` (`wsl.exe -d <distro> --`, built by
         // `connection.rs`) still appears exactly once here too.
         let invocation = Invocation {
+            compose_override: None,
             program: "wsl.exe".to_string(),
             prefix_args: vec![
                 "-d".to_string(),
@@ -439,6 +441,7 @@ mod tests {
     #[test]
     fn a_wsl_connection_wraps_sh_after_its_own_prefix_instead_of_the_engine_program() {
         let invocation = Invocation {
+            compose_override: None,
             program: "wsl.exe".to_string(),
             prefix_args: vec![
                 "-d".to_string(),

@@ -338,6 +338,7 @@ impl ConnectionConfig {
                         distro: distro.clone(),
                         unc_prefix: format!("//wsl.localhost/{distro}"),
                     }),
+                    compose_override: self.compose_executable.clone(),
                 };
             }
         }
@@ -347,6 +348,7 @@ impl ConnectionConfig {
             prefix_args,
             env,
             host: ExecHost::Local,
+            compose_override: self.compose_executable.clone(),
         }
     }
 }
@@ -372,9 +374,34 @@ pub struct Invocation {
     pub prefix_args: Vec<String>,
     pub env: Vec<(String, String)>,
     pub host: ExecHost,
+    /// The connection's standalone compose program (`docker-compose`), when
+    /// one overrides the engine's own `compose` subcommand. Read through
+    /// [`Invocation::compose_form`].
+    pub compose_override: Option<String>,
 }
 
 impl Invocation {
+    /// The program, its leading arguments, and whether the argv needs the
+    /// `compose` subcommand for a compose command. A standalone override
+    /// replaces the engine program (inside the `wsl.exe -d <distro> --`
+    /// wrap when the connection is a WSL one) and takes no subcommand:
+    /// `docker-compose -f ...`, not `docker-compose compose -f ...`.
+    pub fn compose_form(&self) -> (String, Vec<String>, bool) {
+        let Some(compose) = &self.compose_override else {
+            return (self.program.clone(), self.prefix_args.clone(), true);
+        };
+        let mut prefix_args = self.prefix_args.clone();
+        if self.host.runs_remotely() {
+            // `ConnectionKind::Wsl` ends its prefix with the engine program.
+            if let Some(engine) = prefix_args.last_mut() {
+                *engine = compose.clone();
+            }
+            (self.program.clone(), prefix_args, false)
+        } else {
+            (compose.clone(), prefix_args, false)
+        }
+    }
+
     /// `prefix_args` followed by `args`, as owned strings — what every
     /// caller (`ops.rs`, `session.rs`, ...) hands `process_exec::run`/
     /// `spawn` or a `pty_core::ShellSpec`.
@@ -839,6 +866,7 @@ mod tests {
     #[test]
     fn with_extra_env_lets_a_later_value_win() {
         let invocation = Invocation {
+            compose_override: None,
             program: "docker".to_string(),
             prefix_args: Vec::new(),
             env: vec![("DOCKER_HOST".to_string(), "old".to_string())],

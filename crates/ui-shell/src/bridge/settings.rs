@@ -911,8 +911,8 @@ impl ffi::LanguageServerEditor {
             .rows()
             .iter()
             .map(|row| ffi::FfiLanguageServerRow {
-                language_id: QString::from(row.language_id.as_str()),
-                language_name: QString::from(row.language_name.as_str()),
+                id: QString::from(row.id.as_str()),
+                label: QString::from(row.label.as_str()),
                 command: QString::from(row.command.as_str()),
                 args: QString::from(row.args.as_str()),
                 enabled: row.enabled,
@@ -927,30 +927,30 @@ impl ffi::LanguageServerEditor {
             .collect()
     }
 
-    pub fn set_command(&self, language_id: &QString, command: &QString) {
+    pub fn set_command(&self, id: &QString, command: &QString) {
         if let Some(draft) = self.draft.borrow_mut().as_mut() {
-            draft.set_command(&language_id.to_string(), &command.to_string());
+            draft.set_command(&id.to_string(), &command.to_string());
         }
     }
 
-    pub fn set_args(&self, language_id: &QString, args: &QString) {
+    pub fn set_args(&self, id: &QString, args: &QString) {
         if let Some(draft) = self.draft.borrow_mut().as_mut() {
-            draft.set_args(&language_id.to_string(), &args.to_string());
+            draft.set_args(&id.to_string(), &args.to_string());
         }
     }
 
-    pub fn set_enabled(&self, language_id: &QString, enabled: bool) {
+    pub fn set_enabled(&self, id: &QString, enabled: bool) {
         if let Some(draft) = self.draft.borrow_mut().as_mut() {
-            draft.set_enabled(&language_id.to_string(), enabled);
+            draft.set_enabled(&id.to_string(), enabled);
         }
     }
 
-    pub fn is_dirty(&self, language_id: &QString) -> bool {
-        let language_id = language_id.to_string();
+    pub fn is_dirty(&self, id: &QString) -> bool {
+        let id = id.to_string();
         let draft = self.draft.borrow();
         let saved = self.saved.borrow();
         match (draft.as_ref(), saved.as_ref()) {
-            (Some(draft), Some(saved)) => draft.row(&language_id) != saved.row(&language_id),
+            (Some(draft), Some(saved)) => draft.row(&id) != saved.row(&id),
             _ => false,
         }
     }

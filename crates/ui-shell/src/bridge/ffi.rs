@@ -7800,8 +7800,11 @@ mod ffi {
 
     /// One row of the Language Servers page (L6).
     struct FfiLanguageServerRow {
-        language_id: QString,
-        language_name: QString,
+        /// The server's id: the language id when the language has one
+        /// server. Every editor method below takes it.
+        id: QString,
+        /// What the Language column shows (`settings_model::ServerRow::label`).
+        label: QString,
         command: QString,
         /// One space-separated line, not a list (see `settings_model::ServerRow`).
         args: QString,

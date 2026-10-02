@@ -74,8 +74,11 @@ pub struct ServerRow {
     pub id: String,
     /// LSP language id, the key both the catalog and the settings use.
     pub language_id: String,
-    /// What the Language column shows.
+    /// The language's own name.
     pub language_name: String,
+    /// What the Language column shows: the language's name, plus the
+    /// server's when the language has several, so the rows tell apart.
+    pub label: String,
     pub command: String,
     /// The Arguments field, one space-separated line.
     ///
@@ -198,15 +201,29 @@ impl ServerDraft {
             }
         }
 
-        let mut rows: Vec<ServerRow> = resolve_servers(&overrides, plugin_servers)
-            .into_iter()
-            .map(|config| ServerRow {
-                id: config.id,
-                language_name: name_of(&config.language_id),
-                language_id: config.language_id,
-                args: config.args.join(" "),
-                command: config.command,
-                enabled: config.enabled,
+        let configs = resolve_servers(&overrides, plugin_servers);
+        let mut rows: Vec<ServerRow> = configs
+            .iter()
+            .map(|config| {
+                let language_name = name_of(&config.language_id);
+                let several = configs
+                    .iter()
+                    .filter(|c| c.language_id == config.language_id)
+                    .count()
+                    > 1;
+                ServerRow {
+                    id: config.id.clone(),
+                    label: if several {
+                        format!("{language_name} ({})", config.name)
+                    } else {
+                        language_name.clone()
+                    },
+                    language_name,
+                    language_id: config.language_id.clone(),
+                    args: config.args.join(" "),
+                    command: config.command.clone(),
+                    enabled: config.enabled,
+                }
             })
             .collect();
 
@@ -218,6 +235,7 @@ impl ServerDraft {
                 id: language_id.clone(),
                 language_id: language_id.clone(),
                 language_name: name.clone(),
+                label: name.clone(),
                 command: String::new(),
                 args: String::new(),
                 enabled: false,
@@ -612,5 +630,24 @@ mod tests {
         let mapped = overrides_from_settings(&[entry]);
         assert_eq!(mapped[0].id.as_deref(), Some("phpactor"));
         assert_eq!(mapped[0].settings, Some(serde_json::json!({"a": 1})));
+    }
+
+    #[test]
+    fn a_language_with_several_servers_labels_each_row_with_its_server() {
+        let draft = ServerDraft::new(&Settings::default(), &languages(), &[]);
+        let php: Vec<_> = draft
+            .rows()
+            .iter()
+            .filter(|row| row.language_id == "php")
+            .map(|row| (row.id.as_str(), row.label.as_str()))
+            .collect();
+        assert_eq!(
+            php,
+            [
+                ("intelephense", "php (Intelephense)"),
+                ("phpactor", "php (Phpactor)")
+            ]
+        );
+        assert_eq!(draft.row("rust").unwrap().label, "Rust");
     }
 }

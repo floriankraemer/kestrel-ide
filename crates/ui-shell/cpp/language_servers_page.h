@@ -6,9 +6,9 @@ class QWidget;
 
 namespace ui_shell {
 
-// Settings > Language Servers (task L6): one row per language, the command
-// and arguments behind it, and a Status column that is live while the page
-// is open.
+// Settings > Language Servers (task L6): one row per server (a language that
+// runs several has several), the command and arguments behind it, and a
+// Status column that is live while the page is open.
 //
 // Humble view (ADR-0002): which rows exist, in which order, what is worth
 // persisting and whether a row differs from what is saved are all

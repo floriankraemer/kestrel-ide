@@ -640,6 +640,20 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
 }
 
 #[test]
+fn the_php_tools_builtin_contributes_three_formatters() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+    let formatters: Vec<_> = registry.formatters().map(|(_, f)| f).collect();
+    let ids: Vec<_> = formatters.iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(ids, ["php-cs-fixer", "pint", "phpcbf"]);
+    let phpcbf = formatters[2];
+    assert_eq!(phpcbf.buffer.as_deref(), Some("stdin"));
+    assert_eq!(phpcbf.success_exit_codes, vec![0, 1, 2]);
+    assert!(formatters.iter().all(|f| f.composer_package.is_some()));
+}
+
+#[test]
 fn an_analyzer_contribution_needs_no_wasm_component_either() {
     let fixture = Fixture::new();
     let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);

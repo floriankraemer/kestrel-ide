@@ -16,7 +16,7 @@ name = "PHP Tools"
 version = "1.0.0"
 api_version = 1
 license = "MIT"
-description = "PHPStan, Psalm, PHPMD, PHP_CodeSniffer and PHPUnit for PHP projects."
+description = "PHPStan, Psalm, PHPMD, PHP_CodeSniffer, PHPUnit and the php-cs-fixer, Pint and phpcbf formatters for PHP projects."
 
 # The Composer dock (PHP parity plan, I8). `composer` is the id
 # `tool_window_factories.cpp` has a native host for.
@@ -211,4 +211,47 @@ config-file-candidates = ["phpunit.xml", "phpunit.xml.dist"]
 # in the project mount whether PHP runs here, in WSL or in a container.
 coverage-args = ["--coverage-clover", "$COVERAGE_FILE$"]
 composer-package = "phpunit/phpunit"
+requires-interpreter = "php"
+
+# Formatters (ADR-0070). A `temp-copy` tool rewrites a copy of the buffer
+# beside the original (a dotfile that keeps the `.php` extension), which is
+# read back; a `stdin` tool prints the formatted text.
+[[contributes.formatters]]
+id = "php-cs-fixer"
+name = "PHP CS Fixer"
+languages = ["php"]
+program-candidates = ["vendor/bin/php-cs-fixer", "php-cs-fixer.phar", "php-cs-fixer"]
+# `--using-cache=no` keeps a one-file run from reading or writing
+# `.php-cs-fixer.cache`; without a config file it applies @PSR12.
+args = ["fix", "--using-cache=no", "--quiet", "{file}"]
+buffer = "temp-copy"
+config-file-candidates = [".php-cs-fixer.php", ".php-cs-fixer.dist.php"]
+composer-package = "friendsofphp/php-cs-fixer"
+requires-interpreter = "php"
+
+[[contributes.formatters]]
+id = "pint"
+name = "Laravel Pint"
+languages = ["php"]
+program-candidates = ["vendor/bin/pint", "pint.phar", "pint"]
+args = ["--quiet", "{file}"]
+buffer = "temp-copy"
+config-file-candidates = ["pint.json"]
+composer-package = "laravel/pint"
+requires-interpreter = "php"
+
+[[contributes.formatters]]
+id = "phpcbf"
+name = "PHP Code Beautifier (phpcbf)"
+languages = ["php"]
+program-candidates = ["vendor/bin/phpcbf", "phpcbf.phar", "phpcbf"]
+# `-q` silences the progress output so stdout is only the fixed source;
+# `--stdin-path` keeps the file's own ruleset matching.
+args = ["-q", "--stdin-path={file}", "-"]
+buffer = "stdin"
+# 0 = nothing to fix, 1 = everything fixable was fixed, 2 = fixed what it
+# could and some violations remain. All three print the resulting source.
+success-exit-codes = [0, 1, 2]
+config-file-candidates = [".phpcs.xml", "phpcs.xml", ".phpcs.xml.dist", "phpcs.xml.dist"]
+composer-package = "squizlabs/php_codesniffer"
 requires-interpreter = "php"

@@ -14,6 +14,9 @@ use serde::Deserialize;
 use crate::error::LoadErrorKind;
 use crate::API_VERSION;
 
+mod formatter;
+pub use formatter::FormatterContribution;
+
 /// File a plugin directory is recognised by.
 pub const MANIFEST_FILE: &str = "plugin.toml";
 
@@ -40,6 +43,7 @@ pub enum ContributionPoint {
     LanguageServers,
     Analyzers,
     TestFrameworks,
+    Formatters,
     BuildTools,
     ToolWindows,
     SettingsPages,
@@ -58,6 +62,7 @@ impl ContributionPoint {
             Self::LanguageServers => "language-servers",
             Self::Analyzers => "analyzers",
             Self::TestFrameworks => "test-frameworks",
+            Self::Formatters => "formatters",
             Self::BuildTools => "build-tools",
             Self::ToolWindows => "tool-windows",
             Self::SettingsPages => "settings-pages",
@@ -604,6 +609,8 @@ pub struct Contributes {
     pub analyzers: Vec<AnalyzerContribution>,
     #[serde(default, rename = "test-frameworks")]
     pub test_frameworks: Vec<TestFrameworkContribution>,
+    #[serde(default)]
+    pub formatters: Vec<FormatterContribution>,
     #[serde(default, rename = "build-tools")]
     pub build_tools: Vec<BuildToolContribution>,
     #[serde(default, rename = "tool-windows")]
@@ -630,6 +637,7 @@ impl Contributes {
             && self.language_servers.is_empty()
             && self.analyzers.is_empty()
             && self.test_frameworks.is_empty()
+            && self.formatters.is_empty()
             && self.build_tools.is_empty()
             && self.tool_windows.is_empty()
             && self.settings_pages.is_empty()
@@ -901,6 +909,14 @@ impl PluginManifest {
 
         // Same reasoning again: a test framework is a native process, not a
         // wasm guest.
+
+        for formatter in &self.contributes.formatters {
+            formatter.validate()?;
+        }
+        check_unique(
+            ContributionPoint::Formatters,
+            self.contributes.formatters.iter().map(|f| f.id.as_str()),
+        )?;
 
         for tool in &self.contributes.build_tools {
             check_id("contributes.build-tools.id", &tool.id)?;

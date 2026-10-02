@@ -214,6 +214,11 @@ fn contributes(manifest: &PluginManifest) -> String {
         [only] => parts.push(format!("Test framework: {}", only.name)),
         many => parts.push(format!("{} test frameworks", many.len())),
     }
+    match manifest.contributes.formatters.as_slice() {
+        [] => {}
+        [only] => parts.push(format!("Formatter: {}", only.name)),
+        many => parts.push(format!("{} formatters", many.len())),
+    }
     parts.join(", ")
 }
 
@@ -591,6 +596,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!(contributes(&one_test_framework), "Test framework: PHPUnit");
+
+        let formatter = "\n[[contributes.formatters]]\nid = \"pint\"\nname = \"Pint\"\n\
+             languages = [\"php\"]\nprogram-candidates = [\"pint\"]\nargs = [\"{file}\"]\n";
+        let head = "id = \"php-tools\"\nname = \"PHP Tools\"\nversion = \"1\"\napi_version = 1\n";
+        let one = PluginManifest::from_toml_str(&format!("{head}{formatter}")).unwrap();
+        assert_eq!(contributes(&one), "Formatter: Pint");
+        let two = PluginManifest::from_toml_str(&format!(
+            "{head}{formatter}{}",
+            formatter.replace("pint", "fixer")
+        ))
+        .unwrap();
+        assert_eq!(contributes(&two), "2 formatters");
     }
 
     #[test]

@@ -114,3 +114,14 @@ pub fn stub_config_with_call_hierarchy_static() -> ServerConfig {
 pub fn stub_config_with_type_hierarchy_static() -> ServerConfig {
     config("env", &["STUB_LSP_TYPE_HIERARCHY_STATIC=1", STUB])
 }
+
+/// E1/L3: a stub with the tagged profile (`src/bin/stub_server/profile.rs`),
+/// running as server `id` for [`LANG`] and advertising `caps`.
+pub fn tagged_config(id: &str, caps: &str) -> ServerConfig {
+    let tag = format!("STUB_LSP_TAG={id}");
+    let caps = format!("STUB_LSP_CAPS={caps}");
+    ServerConfig {
+        id: id.into(),
+        ..config("env", &[&tag, &caps, STUB])
+    }
+}

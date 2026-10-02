@@ -11,6 +11,7 @@ mod formatting;
 mod hierarchy;
 mod lifecycle;
 mod metadata;
+mod multi_server;
 mod navigation;
 mod progress;
 mod refactor;

@@ -366,6 +366,12 @@ struct Server {
     /// C11: the type-hierarchy twin of `call_hierarchy_supported`, for
     /// `typeHierarchyProvider`.
     type_hierarchy_supported: Mutex<bool>,
+    /// L3: the `capabilities` object of this server's `initialize` result,
+    /// whole, as the server wrote it. Routing reads it to decide which
+    /// servers a request may go to. Raw JSON rather than
+    /// `lsp_types::ServerCapabilities` so one field a server spells oddly
+    /// cannot cost the client every other capability.
+    capabilities: Mutex<Value>,
 }
 
 impl Server {
@@ -521,6 +527,7 @@ impl LspManager {
             code_lens_supported: Mutex::new(false),
             call_hierarchy_supported: Mutex::new(false),
             type_hierarchy_supported: Mutex::new(false),
+            capabilities: Mutex::new(Value::Null),
         });
 
         let (ready_tx, ready_rx) = channel();
@@ -771,6 +778,14 @@ impl LspManager {
             .lock()
             .unwrap()
             .clone()
+    }
+
+    /// The `capabilities` this language's server declared in `initialize`
+    /// (`Null` before it answered, or when it is not running).
+    pub fn capabilities(&self, language_id: &str) -> Value {
+        self.server(language_id)
+            .map(|s| s.capabilities.lock().unwrap().clone())
+            .unwrap_or(Value::Null)
     }
 
     /// The version last sent for a document, if it is open.
@@ -1047,16 +1062,20 @@ fn connect(
 
     // The handshake is done inline, before the connection is published, so
     // nothing else can be in flight and no dispatch table is needed yet.
+    let mut init_params = json!({
+        "processId": std::process::id(),
+        "rootUri": root_uri,
+        "capabilities": client_capabilities(),
+        "workspaceFolders": Value::Null,
+    });
+    if !cfg.initialization_options.is_null() {
+        init_params["initializationOptions"] = cfg.initialization_options.clone();
+    }
     let init = json!({
         "jsonrpc": "2.0",
         "id": 0,
         "method": "initialize",
-        "params": {
-            "processId": std::process::id(),
-            "rootUri": root_uri,
-            "capabilities": client_capabilities(),
-            "workspaceFolders": Value::Null,
-        }
+        "params": init_params,
     });
     write_message(
         &mut stdin,
@@ -1077,6 +1096,8 @@ fn connect(
             // What the server can do is read here, once, and published with
             // `ServerReady` — nothing else ever sees the raw result.
             let result = message.get("result").unwrap_or(&Value::Null);
+            *server.capabilities.lock().unwrap() =
+                result.get("capabilities").cloned().unwrap_or(Value::Null);
             // C9: read once, here, same as the other capabilities above —
             // but stored on `server` rather than threaded through the
             // return tuple, because a server may instead only tell us via a

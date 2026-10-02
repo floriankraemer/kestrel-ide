@@ -143,8 +143,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Task | Status | Commit |
 |---|---|---|
 | L1 — `ServerDef`/`ServerConfig`: `id`, `initialization_options`, `diagnostics`, `posix_only`, `exec`; `resolve_servers` keyed by id; `intelephense` + `phpactor` rows | done | 2662562 |
-| L2 — `LanguageServerSetting` gains `id`, `settings`, `initialization_options`; legacy entries still load | done | — |
-| L3 — `initialize` sends `initializationOptions`; the full `ServerCapabilities` is stored per server | open | |
+| L2 — `LanguageServerSetting` gains `id`, `settings`, `initialization_options`; legacy entries still load | done | edbf427 |
+| L3 — `initialize` sends `initializationOptions`; the full `ServerCapabilities` is stored per server (as raw JSON) | done | — |
 | L4 — servers keyed by id with a per-language order; did* fans out; `LspEvent.server_id`; stop/restart per server | open | |
 | L5 — `routing` module: method → `First`/`Merge`; `request()` / `request_all()` | open | |
 | L6 — merge rules (completion dedupe, code actions, references/symbols); origin tagging so resolve/executeCommand reach the right server | open | |
@@ -253,7 +253,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### E — verification and docs
 | Task | Status | Commit |
 |---|---|---|
-| E1 — `stub_server` capability-profile flag | open | |
+| E1 — `stub_server` capability-profile flag (`STUB_LSP_TAG`/`STUB_LSP_CAPS`, done with L3) | done | — |
 | E2 — E2E `e2e_php_two_servers_and_on_save_analysis` | open | |
 | E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | open | |
 | E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | open | |

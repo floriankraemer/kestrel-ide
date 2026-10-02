@@ -95,6 +95,8 @@ use std::time::Duration;
 
 #[path = "stub_server/fixtures.rs"]
 mod fixtures;
+#[path = "stub_server/profile.rs"]
+mod profile;
 
 use fixtures::{
     canned_diagnostic, greet_problem, hierarchy_item, highlight, location, position_line, progress,
@@ -199,6 +201,7 @@ fn main() {
     let code_lens_static = std::env::var(CODE_LENS_STATIC).is_ok_and(|v| v == "1");
     let call_hierarchy_static = std::env::var(CALL_HIERARCHY_STATIC).is_ok_and(|v| v == "1");
     let type_hierarchy_static = std::env::var(TYPE_HIERARCHY_STATIC).is_ok_and(|v| v == "1");
+    let profile_tag = profile::tag();
 
     while let Some(body) = read_message(&mut input).expect("read from stdin") {
         let message: Value = match serde_json::from_slice(&body) {
@@ -224,8 +227,17 @@ fn main() {
         let id = message.get("id").cloned();
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
+        // E1: with `STUB_LSP_TAG` set, the tagged profile answers first.
+        if let (Some(tag), Some(id)) = (&profile_tag, &id) {
+            if let Some(result) = profile::answer(tag, method, &params) {
+                send(&out, json!({"jsonrpc": "2.0", "id": id, "result": result}));
+                io::stdout().flush().ok();
+                continue;
+            }
+        }
         match (method, id) {
             ("initialize", Some(id)) => {
+                profile::remember_initialize(&params);
                 *client_capabilities.lock().expect("capabilities lock") =
                     params.get("capabilities").cloned().unwrap_or(Value::Null);
                 let mut completion_provider = json!({
@@ -263,6 +275,12 @@ fn main() {
                 }
                 if type_hierarchy_static {
                     capabilities["typeHierarchyProvider"] = json!(true);
+                }
+                if let Some(tag) = &profile_tag {
+                    capabilities
+                        .as_object_mut()
+                        .expect("object")
+                        .extend(profile::capabilities(tag));
                 }
                 send(
                     &out,

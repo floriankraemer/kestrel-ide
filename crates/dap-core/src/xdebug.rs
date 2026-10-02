@@ -6,7 +6,9 @@
 //! DAP thread. What differs is only where PHP runs, which decides the
 //! address it must dial and the one the adapter must listen on.
 
-use process_exec::host::PathMap;
+use std::path::{Path, PathBuf};
+
+use process_exec::host::{ExecHost, PathMap};
 use serde_json::Value;
 
 use crate::launch::php_listen_arguments;
@@ -122,6 +124,128 @@ pub fn decide_listen(
     }
 }
 
+/// The plan for PHP whose container mount is `container_map` (`None` for
+/// PHP running beside the project). `adapter_host` is where the adapter
+/// runs: the mapping's local side must be a path it can read (the distro
+/// path for a WSL root).
+pub fn plan_for(adapter_host: &ExecHost, container_map: Option<&PathMap>, port: u16) -> Plan {
+    let path_map = container_map.map(|map| PathMap {
+        local_root: PathBuf::from(crate::source_path(adapter_host, &map.local_root)),
+        remote_root: map.remote_root.clone(),
+    });
+    let kind = if path_map.is_some() {
+        HostKind::Container
+    } else {
+        HostKind::Local
+    };
+    plan(kind, path_map.as_ref(), port)
+}
+
+/// A request that waited for the old adapter to shut down.
+#[derive(Debug, PartialEq)]
+pub struct PendingListen<R> {
+    pub root: PathBuf,
+    pub arguments: Value,
+    pub run: Option<R>,
+}
+
+/// What the owner of a [`ListenSession`] must do for a request.
+#[derive(Debug, PartialEq)]
+pub enum ListenAction<R> {
+    /// Nothing more (queued, or reused with no run to launch).
+    Nothing,
+    /// Start the listener now, then launch `run` once it is ready.
+    Start(PendingListen<R>),
+    /// Launch `run` on the already running listener `session_id`.
+    Launch { session_id: u64, run: R },
+    /// Stop the running adapter off-thread, then `take_pending` and start.
+    Replace,
+}
+
+/// The one PHP listen session's lifecycle, independent of how sessions are
+/// started: what runs, what waits behind a shutdown, and the run to launch
+/// once the listener is up. `R` is the owner's run payload.
+#[derive(Debug)]
+pub struct ListenSession<R> {
+    running: Option<(u64, Value)>,
+    pending: Option<PendingListen<R>>,
+}
+
+impl<R> Default for ListenSession<R> {
+    fn default() -> Self {
+        Self {
+            running: None,
+            pending: None,
+        }
+    }
+}
+
+impl<R> ListenSession<R> {
+    pub fn is_listening(&self) -> bool {
+        self.running.is_some()
+    }
+
+    pub fn session_id(&self) -> Option<u64> {
+        self.running.as_ref().map(|(id, _)| *id)
+    }
+
+    /// Ask to listen with `arguments`, optionally followed by `run`.
+    pub fn request(&mut self, root: &Path, arguments: Value, run: Option<R>) -> ListenAction<R> {
+        let decision = decide_listen(
+            self.running.as_ref().map(|(_, args)| args),
+            self.pending.is_some(),
+            &arguments,
+        );
+        let request = PendingListen {
+            root: root.to_path_buf(),
+            arguments,
+            run,
+        };
+        match decision {
+            ListenDecision::Reuse => match (request.run, self.session_id()) {
+                (Some(run), Some(session_id)) => ListenAction::Launch { session_id, run },
+                _ => ListenAction::Nothing,
+            },
+            ListenDecision::Start => ListenAction::Start(request),
+            ListenDecision::Queue => {
+                self.pending = Some(request);
+                ListenAction::Nothing
+            }
+            ListenDecision::Replace => {
+                self.pending = Some(request);
+                ListenAction::Replace
+            }
+        }
+    }
+
+    /// The request waiting behind the old adapter, if the user has not
+    /// stopped listening meanwhile.
+    pub fn take_pending(&mut self) -> Option<PendingListen<R>> {
+        self.pending.take()
+    }
+
+    /// The adapter for `session_id` is up and listens with `arguments`.
+    pub fn started(&mut self, session_id: u64, arguments: Value) {
+        self.running = Some((session_id, arguments));
+    }
+
+    /// The user turned listening off: drop what was queued. Returns the
+    /// session to shut down, if any.
+    pub fn stop(&mut self) -> Option<u64> {
+        self.pending = None;
+        self.session_id()
+    }
+
+    /// A session ended; true when it was the listener.
+    pub fn ended(&mut self, session_id: u64) -> bool {
+        let was_listener = self.session_id() == Some(session_id);
+        if was_listener {
+            self.running = None;
+        }
+        was_listener
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,5 +310,94 @@ mod tests {
         // The old adapter still holds the port: queue, whatever was asked.
         assert_eq!(decide_listen(None, true, &b), ListenDecision::Queue);
         assert_eq!(decide_listen(None, true, &a), ListenDecision::Queue);
+    }
+
+    #[test]
+    fn plan_for_a_container_map_listens_on_every_interface() {
+        let map = PathMap::new("/home/me/app", "/var/www");
+        let local = ExecHost::Local;
+        let plan = plan_for(&local, Some(&map), DEFAULT_PORT);
+        assert_eq!(plan.listen_arguments["hostname"], "0.0.0.0");
+        assert_eq!(
+            plan.listen_arguments["pathMappings"]["/var/www"],
+            "/home/me/app"
+        );
+        let plan = plan_for(&local, None, DEFAULT_PORT);
+        assert_eq!(plan.listen_arguments["hostname"], LOOPBACK);
+    }
+
+    fn up(session: &mut ListenSession<&'static str>, id: u64, args: &Value) {
+        session.started(id, args.clone());
+    }
+
+    #[test]
+    fn a_run_reuses_the_running_listener() {
+        let args = serde_json::json!({"port": 1});
+        let mut s = ListenSession::default();
+        assert!(!s.is_listening());
+        up(&mut s, 7, &args);
+        assert!(s.is_listening());
+        let root = Path::new("/p");
+        assert_eq!(
+            s.request(root, args.clone(), Some("run")),
+            ListenAction::Launch {
+                session_id: 7,
+                run: "run"
+            }
+        );
+        // A bare toggle on an already listening session does nothing.
+        assert_eq!(s.request(root, args, None), ListenAction::Nothing);
+    }
+
+    #[test]
+    fn a_run_waits_for_the_listener_it_needs_and_launches_once() {
+        let (a, b) = (
+            serde_json::json!({"port": 1}),
+            serde_json::json!({"port": 2}),
+        );
+        let root = Path::new("/p");
+        let mut s = ListenSession::default();
+        let ListenAction::Start(first) = s.request(root, a.clone(), Some("one")) else {
+            panic!("nothing runs: start");
+        };
+        assert_eq!(first.run, Some("one"));
+        s.started(1, a);
+        // Different arguments replace the listener; the run is queued.
+        assert_eq!(s.request(root, b, Some("two")), ListenAction::Replace);
+        assert!(s.ended(1));
+        let pending = s.take_pending().expect("queued run");
+        assert_eq!(pending.run, Some("two"));
+        assert!(s.take_pending().is_none(), "the queued run starts once");
+    }
+
+    #[test]
+    fn requests_during_shutdown_replace_the_queue() {
+        let (a, b) = (
+            serde_json::json!({"port": 1}),
+            serde_json::json!({"port": 2}),
+        );
+        let root = Path::new("/p");
+        let mut s = ListenSession::default();
+        s.started(1, a.clone());
+        assert_eq!(s.request(root, b, Some("two")), ListenAction::Replace);
+        s.ended(1);
+        assert_eq!(s.request(root, a, Some("three")), ListenAction::Nothing);
+        assert_eq!(s.take_pending().unwrap().run, Some("three"));
+    }
+
+    #[test]
+    fn turning_listening_off_drops_the_queue_and_session_end_clears_state() {
+        let a = serde_json::json!({"port": 1});
+        let root = Path::new("/p");
+        let mut s = ListenSession::default();
+        s.started(3, a.clone());
+        s.request(root, serde_json::json!({"port": 2}), Some("r"));
+        assert_eq!(s.stop(), Some(3));
+        assert!(s.take_pending().is_none());
+        assert!(!s.ended(99), "another session's end is not the listener's");
+        assert!(s.is_listening());
+        assert!(s.ended(3));
+        assert!(!s.is_listening());
+        assert_eq!(s.stop(), None);
     }
 }

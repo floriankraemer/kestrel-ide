@@ -130,10 +130,8 @@ pub struct DebugServiceRust {
     watch_references: RefCell<Vec<i64>>,
     /// Expressions the Evaluate box has run, most recent first (R5).
     evaluate_history: RefCell<EvaluateHistory>,
-    /// The PHP listen session, while there is one (ADR-0069).
-    php_listen: RefCell<Option<php::PhpListen>>,
-    /// A listener waiting for the old adapter's shutdown to finish.
-    php_pending: RefCell<Option<php::PendingListen>>,
+    /// The PHP listen session's lifecycle (ADR-0069).
+    php_listen: RefCell<dap_core::xdebug::ListenSession<php::PhpRun>>,
 }
 
 fn current_project_root() -> Option<PathBuf> {

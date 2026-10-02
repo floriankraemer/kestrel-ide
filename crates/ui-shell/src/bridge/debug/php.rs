@@ -10,28 +10,12 @@ use std::sync::Arc;
 
 use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
-use dap_core::xdebug::{self, HostKind, ListenDecision};
+use dap_core::xdebug::{self, ListenAction};
 use dap_core::{DapError, DapSession};
 use serde_json::Value;
 
 use super::{current_project_root, handshake, no_project, to_ffi_result, QtListener, SessionState};
 use crate::bridge::ffi;
-
-/// The one listen session, and the adapter arguments it was started with —
-/// a debug launch that needs a different listen address (a container)
-/// replaces it.
-pub(super) struct PhpListen {
-    pub(super) session_id: u64,
-    pub(super) arguments: Value,
-}
-
-/// A listener to start once the previous adapter has shut down (and freed
-/// its port); a newer request replaces it.
-pub(super) struct PendingListen {
-    root: PathBuf,
-    arguments: Value,
-    run: Option<PhpRun>,
-}
 
 /// A run to start once the listener is up, with the Xdebug environment.
 pub(super) struct PhpRun {
@@ -90,16 +74,29 @@ impl ffi::DebugService {
     /// The "Start Listening for PHP Debug Connections" toggle.
     pub fn set_php_listening(mut self: Pin<&mut Self>, enabled: bool) -> ffi::FfiResult {
         if !enabled {
-            self.php_pending.borrow_mut().take();
-            if let Some(old) = self.as_mut().stop_php_listener() {
-                std::thread::spawn(move || old.shutdown());
+            let stopping = self.php_listen.borrow_mut().stop();
+            if stopping.is_some() {
+                if let Some(old) = self.as_mut().stop_php_listener() {
+                    std::thread::spawn(move || old.shutdown());
+                }
             }
             return ffi::FfiResult::default();
         }
         let Some(root) = current_project_root() else {
             return no_project();
         };
-        let plan = dap_core::xdebug::plan(dap_core::xdebug::HostKind::Local, None, xdebug_port());
+        // Listen the way the `[php]` interpreter's host needs, like a run does.
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let container_map =
+            match php_core::host::interpreter_host(&settings.php, &settings.containers, &root) {
+                process_exec::host::ExecHost::Container(container) => Some(container.path_map),
+                _ => None,
+            };
+        let plan = xdebug::plan_for(
+            &process_exec::host::ExecHost::for_path(&root),
+            container_map.as_ref(),
+            xdebug_port(),
+        );
         match self.ensure_php_listener(&root, plan.listen_arguments, None) {
             Ok(()) => ffi::FfiResult::default(),
             Err(err) => to_ffi_result(&err),
@@ -107,7 +104,7 @@ impl ffi::DebugService {
     }
 
     pub fn is_php_listening(&self) -> bool {
-        self.php_listen.borrow().is_some()
+        self.php_listen.borrow().is_listening()
     }
 
     /// Make sure a listen session with `arguments` is running, replacing
@@ -124,35 +121,18 @@ impl ffi::DebugService {
         arguments: Value,
         run: Option<PhpRun>,
     ) -> Result<(), DapError> {
-        let decision = xdebug::decide_listen(
-            self.php_listen.borrow().as_ref().map(|l| &l.arguments),
-            self.php_pending.borrow().is_some(),
-            &arguments,
-        );
-        match decision {
-            ListenDecision::Reuse => {
-                let session_id = self.php_listen.borrow().as_ref().map(|l| l.session_id);
-                if let (Some(run), Some(session_id)) = (run, session_id) {
-                    let qt_thread = self.as_mut().qt_thread();
-                    std::thread::spawn(move || launch_after_check(qt_thread, session_id, run));
-                }
+        let action = self.php_listen.borrow_mut().request(root, arguments, run);
+        match action {
+            ListenAction::Nothing => Ok(()),
+            ListenAction::Launch { session_id, run } => {
+                let qt_thread = self.as_mut().qt_thread();
+                std::thread::spawn(move || launch_after_check(qt_thread, session_id, run));
                 Ok(())
             }
-            ListenDecision::Start => self.start_php_listener(root, arguments, run),
-            ListenDecision::Queue => {
-                *self.php_pending.borrow_mut() = Some(PendingListen {
-                    root: root.to_path_buf(),
-                    arguments,
-                    run,
-                });
-                Ok(())
+            ListenAction::Start(request) => {
+                self.start_php_listener(&request.root, request.arguments, request.run)
             }
-            ListenDecision::Replace => {
-                *self.php_pending.borrow_mut() = Some(PendingListen {
-                    root: root.to_path_buf(),
-                    arguments,
-                    run,
-                });
+            ListenAction::Replace => {
                 let old = self.as_mut().stop_php_listener();
                 let qt_thread = self.as_mut().qt_thread();
                 std::thread::spawn(move || {
@@ -171,16 +151,14 @@ impl ffi::DebugService {
     /// The old adapter is gone: start the listener queued behind it, if
     /// the user has not stopped listening meanwhile.
     fn start_pending_php_listener(mut self: Pin<&mut Self>) {
-        let pending = self.php_pending.borrow_mut().take();
-        let Some(PendingListen {
-            root,
-            arguments,
-            run,
-        }) = pending
-        else {
+        let pending = self.php_listen.borrow_mut().take_pending();
+        let Some(request) = pending else {
             return;
         };
-        if let Err(err) = self.as_mut().start_php_listener(&root, arguments, run) {
+        if let Err(err) =
+            self.as_mut()
+                .start_php_listener(&request.root, request.arguments, request.run)
+        {
             // No session exists to attach the failure to; the debug console
             // shows it whatever the id.
             self.as_mut().debug_failed(0, to_ffi_result(&err));
@@ -216,10 +194,9 @@ impl ffi::DebugService {
         self.sessions
             .borrow_mut()
             .insert(session_id, SessionState::new(Arc::clone(&session)));
-        *self.php_listen.borrow_mut() = Some(PhpListen {
-            session_id,
-            arguments: arguments.clone(),
-        });
+        self.php_listen
+            .borrow_mut()
+            .started(session_id, arguments.clone());
         self.as_mut()
             .debug_started(session_id, QString::from("PHP"));
         self.as_mut().php_listening_changed(true);
@@ -291,21 +268,13 @@ impl ffi::DebugService {
         check_host: process_exec::host::ExecHost,
         root: &Path,
     ) -> ffi::FfiResult {
-        let host = process_exec::host::ExecHost::for_path(root);
         // The adapter runs beside the project (in the distro, for a WSL
         // root), so the mapping's local side is a path it can read.
-        let path_map = container_map
-            .as_ref()
-            .map(|map| process_exec::host::PathMap {
-                local_root: PathBuf::from(dap_core::source_path(&host, &map.local_root)),
-                remote_root: map.remote_root.clone(),
-            });
-        let kind = if path_map.is_some() {
-            HostKind::Container
-        } else {
-            HostKind::Local
-        };
-        let plan = xdebug::plan(kind, path_map.as_ref(), xdebug_port());
+        let plan = xdebug::plan_for(
+            &process_exec::host::ExecHost::for_path(root),
+            container_map.as_ref(),
+            xdebug_port(),
+        );
         // The interpreter the run uses, on the host the run uses (its
         // `run_on` target, or the `[php]` interpreter's for the test run).
         let settings = crate::bridge::convert::load_resolved_settings();
@@ -341,7 +310,7 @@ impl ffi::DebugService {
     /// running: shutting it down blocks, so the caller does that off the
     /// Qt thread.
     fn stop_php_listener(mut self: Pin<&mut Self>) -> Option<Arc<DapSession>> {
-        let session_id = self.php_listen.borrow().as_ref().map(|l| l.session_id)?;
+        let session_id = self.php_listen.borrow().session_id()?;
         let session = self.as_mut().session_handle(session_id);
         self.as_mut().finish_session(session_id, 0);
         session
@@ -349,14 +318,7 @@ impl ffi::DebugService {
 
     /// A session ended: if it was the listen session, say so.
     pub(super) fn forget_php_listener(mut self: Pin<&mut Self>, session_id: u64) {
-        let was_listener = {
-            let mut listen = self.php_listen.borrow_mut();
-            let matches = listen.as_ref().is_some_and(|l| l.session_id == session_id);
-            if matches {
-                *listen = None;
-            }
-            matches
-        };
+        let was_listener = self.php_listen.borrow_mut().ended(session_id);
         if was_listener {
             self.as_mut().php_listening_changed(false);
         }

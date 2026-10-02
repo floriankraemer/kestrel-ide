@@ -211,6 +211,8 @@ TestsPanel::TestsPanel(TestService *testService, OpenAt openAt, QWidget *parent)
     failureEdit->setActivateCallback(
       [this](int position) { onFailureLinkActivated(position); });
 
+    failureDetails_->setPlaceholderText(tr("Select a failed test to see why it failed."));
+
     output_ = new QPlainTextEdit(this);
     output_->setReadOnly(true);
     output_->setMaximumBlockCount(kMaxDisplayBlocks);

@@ -717,6 +717,30 @@
         <source>Show Diff</source>
         <translation>Afficher le diff</translation>
     </message>
+    <message>
+        <source>Select fields to generate a constructor</source>
+        <translation>Sélectionnez les champs pour générer le constructeur</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters</source>
+        <translation>Sélectionnez les champs pour générer les accesseurs</translation>
+    </message>
+    <message>
+        <source>Select fields to generate setters</source>
+        <translation>Sélectionnez les champs pour générer les mutateurs</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters and setters</source>
+        <translation>Sélectionnez les champs pour générer les accesseurs et mutateurs</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>Tout sélectionner</translation>
+    </message>
+    <message>
+        <source>Select None</source>
+        <translation>Tout désélectionner</translation>
+    </message>
 </context>
 <context>
     <name>FileHistoryPanel</name>
@@ -3004,6 +3028,10 @@
         <source>Name</source>
         <translation>Nom</translation>
     </message>
+    <message>
+        <source>More</source>
+        <translation>Plus</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>
@@ -3499,6 +3527,10 @@
         <source>No tests matched.</source>
         <translation>Aucun test ne correspond.</translation>
     </message>
+    <message>
+        <source>Select a failed test to see why it failed.</source>
+        <translation>Sélectionnez un test en échec pour voir pourquoi il a échoué.</translation>
+    </message>
 </context>
 <context>
     <name>CoveragePanel</name>
@@ -3529,6 +3561,10 @@
     <message>
         <source>Run All with Coverage</source>
         <translation>Tout exécuter avec la couverture</translation>
+    </message>
+    <message>
+        <source>No executable lines</source>
+        <translation>Aucune ligne exécutable</translation>
     </message>
 </context>
 </TS>

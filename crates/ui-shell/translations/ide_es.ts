@@ -717,6 +717,30 @@
         <source>Show Diff</source>
         <translation>Mostrar diferencias</translation>
     </message>
+    <message>
+        <source>Select fields to generate a constructor</source>
+        <translation>Seleccione los campos para generar el constructor</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters</source>
+        <translation>Seleccione los campos para generar los getters</translation>
+    </message>
+    <message>
+        <source>Select fields to generate setters</source>
+        <translation>Seleccione los campos para generar los setters</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters and setters</source>
+        <translation>Seleccione los campos para generar los getters y setters</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>Seleccionar todo</translation>
+    </message>
+    <message>
+        <source>Select None</source>
+        <translation>Seleccionar ninguno</translation>
+    </message>
 </context>
 <context>
     <name>FileHistoryPanel</name>
@@ -3004,6 +3028,10 @@
         <source>Name</source>
         <translation>Nombre</translation>
     </message>
+    <message>
+        <source>More</source>
+        <translation>Más</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>
@@ -3499,6 +3527,10 @@
         <source>No tests matched.</source>
         <translation>Ningún test coincidió.</translation>
     </message>
+    <message>
+        <source>Select a failed test to see why it failed.</source>
+        <translation>Seleccione una prueba fallida para ver por qué falló.</translation>
+    </message>
 </context>
 <context>
     <name>CoveragePanel</name>
@@ -3529,6 +3561,10 @@
     <message>
         <source>Run All with Coverage</source>
         <translation>Ejecutar todo con cobertura</translation>
+    </message>
+    <message>
+        <source>No executable lines</source>
+        <translation>Sin líneas ejecutables</translation>
     </message>
 </context>
 </TS>

@@ -88,6 +88,12 @@ pub struct CoverageRow {
 }
 
 impl CoverageRow {
+    /// Whether the row has any executable line: an interface or a file of
+    /// declarations has none, and "0% (0/0)" would read as a failure.
+    pub fn has_lines(&self) -> bool {
+        self.total > 0
+    }
+
     /// Share of executable lines that ran, 0 to 100; 0 for no lines.
     pub fn percent(&self) -> f64 {
         if self.total == 0 {
@@ -262,6 +268,26 @@ mod tests {
             ]
         );
         assert!((rows[2].percent() - 66.666).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_file_without_executable_lines_has_no_percentage_to_show() {
+        let xml = r#"<coverage><project><file name="/app/src/Contract.php"></file>
+            <file name="/app/src/Run.php"><line num="3" type="stmt" count="1"/></file></project></coverage>"#;
+        let rows = parse_clover(xml).unwrap().rows(Path::new("/app"));
+        let has_lines: Vec<(String, bool)> = rows
+            .iter()
+            .map(|r| (r.path.display().to_string(), r.has_lines()))
+            .collect();
+        assert_eq!(
+            has_lines,
+            vec![
+                ("".to_string(), true),
+                ("src".to_string(), true),
+                ("src/Contract.php".to_string(), false),
+                ("src/Run.php".to_string(), true),
+            ]
+        );
     }
 
     #[test]

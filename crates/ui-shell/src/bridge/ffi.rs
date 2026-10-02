@@ -6943,6 +6943,9 @@ mod ffi {
         total: u32,
         /// 0 to 100, from `test_core::coverage::CoverageRow::percent`.
         percent: f64,
+        /// `CoverageRow::has_lines`: without it the percentage is not shown.
+        #[cxx_name = "hasLines"]
+        has_lines: bool,
     }
 
     /// One row of the Tests dock's tree (D4/D5): a flattened

@@ -88,7 +88,12 @@ void CoveragePanel::refresh()
         QTreeWidgetItem *parent = itemsByPath.value(parentOf(path), nullptr);
         auto *item = parent != nullptr ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(tree_);
         item->setText(0, path.isEmpty() ? tr("All files") : nameOf(path));
-        item->setText(1, tr("%1% (%2/%3)").arg(row.percent, 0, 'f', 1).arg(row.covered).arg(row.total));
+        if (row.hasLines) {
+            item->setText(1, tr("%1% (%2/%3)").arg(row.percent, 0, 'f', 1).arg(row.covered).arg(row.total));
+        } else {
+            item->setText(1, QStringLiteral("\u2014"));
+            item->setToolTip(1, tr("No executable lines"));
+        }
         item->setData(0, kAbsPathRole, QString(row.absPath));
         item->setData(0, kIsFileRole, row.isFile);
         itemsByPath.insert(path, item);

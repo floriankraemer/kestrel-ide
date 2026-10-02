@@ -69,6 +69,8 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
     probeLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
     probeLabel->setWordWrap(true);
     formLayout->addRow(QString(), probeLabel);
+    // No result yet: the row would only be a gap under the Interpreter row.
+    formLayout->setRowVisible(probeLabel, false);
 
     auto *targetCombo = new QComboBox(page);
     targetCombo->addItem(QObject::tr("This machine"), QString());
@@ -196,10 +198,15 @@ QWidget *buildPhpSettingsPage(QWidget *parent, PhpSettingsEditor *editor,
 
     QObject::connect(detectButton, &QPushButton::clicked, page, [=]() {
         probeLabel->setText(QObject::tr("Detecting…"));
+        formLayout->setRowVisible(probeLabel, true);
         editor->probeInterpreter(interpreterEdit->text());
     });
     QObject::connect(editor, &PhpSettingsEditor::probeFinished, page,
-                     [=](const FfiPhpProbe &probe) { probeLabel->setText(probeSummary(probe)); });
+                     [=](const FfiPhpProbe &probe) {
+                         const QString summary = probeSummary(probe);
+                         probeLabel->setText(summary);
+                         formLayout->setRowVisible(probeLabel, !summary.isEmpty());
+                     });
 
     return page;
 }

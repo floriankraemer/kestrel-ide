@@ -69,7 +69,9 @@ public:
         }
         document.setHtml(html);
         painter->save();
-        painter->translate(textRect.topLeft());
+        // Centred on the row, like the plain-text path and the icon beside it.
+        painter->translate(textRect.left(),
+                           textRect.top() + (textRect.height() - document.size().height()) / 2);
         QAbstractTextDocumentLayout::PaintContext context;
         context.palette = styled.palette;
         context.palette.setColor(

@@ -164,6 +164,7 @@ impl ffi::TestService {
                 covered: row.covered as u32,
                 total: row.total as u32,
                 percent: row.percent(),
+                has_lines: row.has_lines(),
             })
             .collect()
     }

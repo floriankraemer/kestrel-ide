@@ -717,6 +717,30 @@
         <source>Show Diff</source>
         <translation>Diff anzeigen</translation>
     </message>
+    <message>
+        <source>Select fields to generate a constructor</source>
+        <translation>Felder für den Konstruktor auswählen</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters</source>
+        <translation>Felder für Getter auswählen</translation>
+    </message>
+    <message>
+        <source>Select fields to generate setters</source>
+        <translation>Felder für Setter auswählen</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters and setters</source>
+        <translation>Felder für Getter und Setter auswählen</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>Alle auswählen</translation>
+    </message>
+    <message>
+        <source>Select None</source>
+        <translation>Keine auswählen</translation>
+    </message>
 </context>
 <context>
     <name>FileHistoryPanel</name>
@@ -3004,6 +3028,10 @@
         <source>Name</source>
         <translation>Name</translation>
     </message>
+    <message>
+        <source>More</source>
+        <translation>Mehr</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>
@@ -3499,6 +3527,10 @@
         <source>No tests matched.</source>
         <translation>Keine Tests gefunden.</translation>
     </message>
+    <message>
+        <source>Select a failed test to see why it failed.</source>
+        <translation>Wählen Sie einen fehlgeschlagenen Test aus, um den Grund zu sehen.</translation>
+    </message>
 </context>
 <context>
     <name>CoveragePanel</name>
@@ -3529,6 +3561,10 @@
     <message>
         <source>Run All with Coverage</source>
         <translation>Alle mit Abdeckung ausführen</translation>
+    </message>
+    <message>
+        <source>No executable lines</source>
+        <translation>Keine ausführbaren Zeilen</translation>
     </message>
 </context>
 </TS>

@@ -61,6 +61,9 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
         }
     };
 
+    // Install and Update stay one click away; the rest sit behind "More", so
+    // the row fits the dock's default width and the dock never needs a
+    // horizontal scroll bar to hold six buttons.
     auto *toolbar = new QHBoxLayout();
     toolbar->setContentsMargins(4, 4, 4, 0);
     const auto addButton = [&](const QString &text, std::function<void()> onClick) {
@@ -70,6 +73,7 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
         QObject::connect(button, &QToolButton::clicked, panel, std::move(onClick));
         toolbar->addWidget(button);
     };
+    auto *moreMenu = new QMenu(panel);
     auto *tree = new QTreeWidget(panel);
     const auto refresh = [=]() {
         tree->clear();
@@ -97,7 +101,7 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
     };
     addButton(QObject::tr("Install"), [=]() { run(QStringLiteral("install"), QString()); });
     addButton(QObject::tr("Update"), [=]() { run(QStringLiteral("update"), QString()); });
-    addButton(QObject::tr("Require…"), [=]() {
+    moreMenu->addAction(QObject::tr("Require…"), [=]() {
         bool ok = false;
         const QString package = QInputDialog::getText(
           panel, QObject::tr("Require Package"),
@@ -107,19 +111,34 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
             run(QStringLiteral("require"), package);
         }
     });
-    addButton(QObject::tr("Dump Autoload"), [=]() { run(QStringLiteral("dump-autoload"), QString()); });
-    addButton(QObject::tr("Outdated"), [=]() { run(QStringLiteral("outdated"), QString()); });
-    addButton(QObject::tr("Refresh"), refresh);
+    moreMenu->addAction(QObject::tr("Dump Autoload"),
+                        [=]() { run(QStringLiteral("dump-autoload"), QString()); });
+    moreMenu->addAction(QObject::tr("Outdated"), [=]() { run(QStringLiteral("outdated"), QString()); });
+    moreMenu->addAction(QObject::tr("Refresh"), refresh);
+    auto *moreButton = new QToolButton(panel);
+    moreButton->setText(QObject::tr("More"));
+    moreButton->setAutoRaise(true);
+    moreButton->setPopupMode(QToolButton::InstantPopup);
+    moreButton->setMenu(moreMenu);
+    toolbar->addWidget(moreButton);
     toolbar->addStretch(1);
     layout->addLayout(toolbar);
 
     tree->setColumnCount(2);
     tree->setHeaderLabels({QObject::tr("Name"), QObject::tr("Version")});
+    // The version always shows; a long package name is elided to the room
+    // left, and the dock never scrolls sideways.
+    tree->header()->setStretchLastSection(false);
     tree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    tree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    tree->setTextElideMode(Qt::ElideMiddle);
+    tree->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     tree->setContextMenuPolicy(Qt::CustomContextMenu);
 
     auto *empty = new QLabel(QObject::tr("No composer.json in this project."), panel);
     empty->setAlignment(Qt::AlignCenter);
+    // Wrapped, so the notice does not set the dock's minimum width.
+    empty->setWordWrap(true);
     empty->setEnabled(false);
     auto *stack = new QStackedWidget(panel);
     stack->addWidget(tree);

@@ -10,10 +10,13 @@
 #include <QAction>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QHBoxLayout>
 #include <QHash>
+#include <QLabel>
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMenu>
+#include <QPushButton>
 #include <QSizeGrip>
 #include <QStatusBar>
 #include <QTimer>
@@ -135,6 +138,21 @@ void EditorTabs::showGenerateMenu(bool withServerActions)
     }
 }
 
+QString EditorTabs::pickerHeading(FfiGenerateKind kind)
+{
+    switch (kind) {
+    case FfiGenerateKind::Constructor:
+        return tr("Select fields to generate a constructor");
+    case FfiGenerateKind::Getters:
+        return tr("Select fields to generate getters");
+    case FfiGenerateKind::Setters:
+        return tr("Select fields to generate setters");
+    case FfiGenerateKind::GettersAndSetters:
+        return tr("Select fields to generate getters and setters");
+    }
+    return QString();
+}
+
 void EditorTabs::runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QString &title)
 {
     const quint64 tabId = editor->property("tabId").toULongLong();
@@ -146,7 +164,9 @@ void EditorTabs::runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QS
 
     QDialog dialog(window_);
     dialog.setWindowTitle(title);
+    dialog.setMinimumWidth(360);
     auto *layout = new QVBoxLayout(&dialog);
+    layout->addWidget(new QLabel(pickerHeading(kind), &dialog));
     auto *list = new QListWidget(&dialog);
     for (const FfiGenerateMember &member : members) {
         auto *item = new QListWidgetItem(QString(member.label), list);
@@ -154,7 +174,24 @@ void EditorTabs::runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QS
         item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
         item->setCheckState(Qt::Checked);
     }
+    // Sized to its rows (up to a dozen) instead of a big empty box.
+    const int visibleRows = qMin(list->count(), 12);
+    list->setFixedHeight(visibleRows * list->sizeHintForRow(0) + 2 * list->frameWidth());
     layout->addWidget(list);
+    auto *selection = new QHBoxLayout();
+    for (const auto &[label, state] :
+         {std::pair{tr("Select All"), Qt::Checked}, std::pair{tr("Select None"), Qt::Unchecked}}) {
+        auto *button = new QPushButton(label, &dialog);
+        button->setAutoDefault(false);
+        connect(button, &QPushButton::clicked, &dialog, [list, state = state]() {
+            for (int row = 0; row < list->count(); ++row) {
+                list->item(row)->setCheckState(state);
+            }
+        });
+        selection->addWidget(button);
+    }
+    selection->addStretch(1);
+    layout->addLayout(selection);
     auto *buttons =
       new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);

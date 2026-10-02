@@ -194,9 +194,11 @@ impl ffi::DebugService {
         run: Option<PhpRun>,
     ) -> Result<(), DapError> {
         let settings = app_config::project_settings::load(root).unwrap_or_default();
-        let adapter = dap_core::catalog::resolve(
+        let adapter = dap_core::catalog::resolve_on(
             dap_core::catalog::PHP_DEBUG,
             &settings.debug_adapters.unwrap_or_default(),
+            &process_exec::host::ExecHost::for_path(root),
+            root,
         )
         .ok_or_else(|| DapError::NoAdapter("PHP".to_string()))?;
 

@@ -98,6 +98,51 @@ pub fn locate_php_debug(home: &Path) -> Option<PathBuf> {
         .map(|(_, script)| script)
 }
 
+/// The `sh` script that lists every `phpDebug.js` under the *distro's* home,
+/// one per line — [`locate_php_debug`] for a WSL project, whose adapter runs
+/// inside the distro and cannot read the IDE host's extensions.
+fn wsl_listing_script() -> String {
+    let globs: Vec<String> = EXTENSION_HOMES
+        .iter()
+        .map(|editor| format!("\"$HOME\"/{editor}/extensions/{PHP_DEBUG_PREFIX}*/out/phpDebug.js"))
+        .collect();
+    format!("ls -1 {} 2>/dev/null", globs.join(" "))
+}
+
+/// The newest `phpDebug.js` in [`wsl_listing_script`]'s output.
+fn newest_listed(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let extension = Path::new(line).parent()?.parent()?.file_name()?.to_str()?;
+            let version = extension_version(extension.strip_prefix(PHP_DEBUG_PREFIX)?);
+            Some((version, line.to_string()))
+        })
+        .max()
+        .map(|(_, script)| script)
+}
+
+/// [`locate_php_debug`] inside the WSL distro `host` names; `None` on any
+/// other host, or when the distro has no copy.
+fn locate_php_debug_on(host: &process_exec::host::ExecHost, cwd: &Path) -> Option<String> {
+    if !matches!(host, process_exec::host::ExecHost::Wsl(_)) {
+        return None;
+    }
+    let script = wsl_listing_script();
+    let out = process_exec::run_on(
+        host,
+        "sh",
+        &["-c", &script],
+        cwd,
+        None,
+        std::time::Duration::from_secs(10),
+        &[],
+    )
+    .ok()?;
+    newest_listed(&String::from_utf8_lossy(&out.stdout))
+}
+
 /// `1.36.0` out of `1.36.0-linux-x64`, as comparable numbers.
 fn extension_version(suffix: &str) -> Vec<u64> {
     suffix
@@ -117,6 +162,29 @@ fn php_debug_script() -> String {
         .and_then(|home| locate_php_debug(Path::new(&home)))
         .map(|script| script.display().to_string())
         .unwrap_or_else(|| "phpDebug.js".to_string())
+}
+
+/// [`resolve`] for an adapter that runs on `host` (the project's). The PHP
+/// adapter of a WSL project is looked up in the distro's own home and run
+/// there with its Linux path, not the IDE host's `$HOME` copy.
+///
+/// ponytail: one blocking `wsl.exe` call on a WSL project's first PHP debug
+/// start; cache per distro if it is ever felt.
+pub fn resolve_on(
+    id: &str,
+    overrides: &[DebugAdapterSetting],
+    host: &process_exec::host::ExecHost,
+    cwd: &Path,
+) -> Option<Adapter> {
+    let mut adapter = resolve(id, overrides)?;
+    let overridden_args = overrides
+        .iter()
+        .any(|setting| setting.id == id && setting.args.is_some());
+    if id == PHP_DEBUG && !overridden_args && host.runs_remotely() {
+        adapter.args =
+            vec![locate_php_debug_on(host, cwd).unwrap_or_else(|| "phpDebug.js".to_string())];
+    }
+    Some(adapter)
 }
 
 /// The adapter for `id`, with any project override applied.
@@ -268,6 +336,37 @@ mod tests {
         );
         install(home.path(), ".vscode", "ms-python.python-2025.1.0", true);
         assert_eq!(locate_php_debug(home.path()), Some(newest));
+    }
+
+    #[test]
+    fn a_wsl_listing_picks_the_newest_extension_in_the_distro() {
+        let listing = "/home/f/.vscode-server/extensions/xdebug.php-debug-1.9.0/out/phpDebug.js\n\
+                       /home/f/.cursor/extensions/xdebug.php-debug-1.36.0-linux-x64/out/phpDebug.js\n";
+        assert_eq!(
+            newest_listed(listing).as_deref(),
+            Some("/home/f/.cursor/extensions/xdebug.php-debug-1.36.0-linux-x64/out/phpDebug.js")
+        );
+        assert_eq!(newest_listed(""), None);
+    }
+
+    #[test]
+    fn the_wsl_script_searches_the_distros_home_for_every_editor() {
+        let script = wsl_listing_script();
+        assert!(script
+            .contains("\"$HOME\"/.vscode-server/extensions/xdebug.php-debug-*/out/phpDebug.js"));
+        assert!(script.contains(".cursor"));
+    }
+
+    #[test]
+    fn a_local_host_keeps_the_host_home_lookup() {
+        let adapter = resolve_on(
+            PHP_DEBUG,
+            &[],
+            &process_exec::host::ExecHost::Local,
+            Path::new("/p"),
+        )
+        .unwrap();
+        assert_eq!(adapter, resolve(PHP_DEBUG, &[]).unwrap());
     }
 
     #[test]

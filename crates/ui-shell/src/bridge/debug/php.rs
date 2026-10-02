@@ -176,6 +176,9 @@ impl ffi::DebugService {
             root,
         )
         .ok_or_else(|| DapError::NoAdapter("PHP".to_string()))?;
+        if let Some(missing) = dap_core::catalog::not_located(&adapter) {
+            return Err(missing);
+        }
 
         let session_id = self.next_id.get() + 1;
         self.next_id.set(session_id);

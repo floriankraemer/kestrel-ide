@@ -9,6 +9,8 @@
 use std::path::{Path, PathBuf};
 
 use app_config::DebugAdapterSetting;
+
+use crate::error::DapError;
 use run_core::ToolchainId;
 
 /// One adapter: what to run, and what to say when it is missing.
@@ -79,6 +81,10 @@ const EXTENSION_HOMES: &[&str] = &[
 ];
 
 const PHP_DEBUG_PREFIX: &str = "xdebug.php-debug-";
+
+/// The script argument when no `phpDebug.js` was found: a bare name nothing
+/// resolves, which [`not_located`] recognises.
+const PHP_DEBUG_UNLOCATED: &str = "phpDebug.js";
 
 /// `phpDebug.js` of the newest installed `xdebug.php-debug` extension under
 /// `home`, if any.
@@ -206,7 +212,24 @@ fn php_debug_script() -> String {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .and_then(|home| locate_php_debug(Path::new(&home)))
         .map(|script| script.display().to_string())
-        .unwrap_or_else(|| "phpDebug.js".to_string())
+        .unwrap_or_else(|| PHP_DEBUG_UNLOCATED.to_string())
+}
+
+/// The error to report instead of starting `adapter` when it is the shipped
+/// vscode-php-debug row and no `phpDebug.js` was found.
+///
+/// Starting `node phpDebug.js` anyway spawns fine and then dies with
+/// `MODULE_NOT_FOUND`, which reaches the user as an opaque "the debug
+/// adapter disconnected" with none of the install hint
+/// ([`crate::session::DapSession::start`] only attaches it when the *spawn*
+/// fails). An override with its own program or arguments is never
+/// second-guessed (the E2E flows point the row at a stub adapter).
+pub fn not_located(adapter: &Adapter) -> Option<DapError> {
+    (adapter.id == PHP_DEBUG && adapter.program == "node" && adapter.args == [PHP_DEBUG_UNLOCATED])
+        .then(|| DapError::AdapterNotStarted {
+            adapter: adapter.id.clone(),
+            reason: format!("phpDebug.js was not found. {}", adapter.install_hint),
+        })
 }
 
 /// [`resolve`] for an adapter that runs on `host` (the project's). The PHP
@@ -227,7 +250,7 @@ pub fn resolve_on(
         .any(|setting| setting.id == id && setting.args.is_some());
     if id == PHP_DEBUG && !overridden_args && host.runs_remotely() {
         adapter.args =
-            vec![locate_php_debug_on(host, cwd).unwrap_or_else(|| "phpDebug.js".to_string())];
+            vec![locate_php_debug_on(host, cwd).unwrap_or_else(|| PHP_DEBUG_UNLOCATED.to_string())];
     }
     Some(adapter)
 }
@@ -330,6 +353,26 @@ mod tests {
             );
             assert!(!adapter.program.is_empty());
         }
+    }
+
+    #[test]
+    fn an_unlocated_php_adapter_is_reported_with_its_install_hint_not_started() {
+        let mut adapter = resolve(PHP_DEBUG, &[]).unwrap();
+        adapter.args = vec![PHP_DEBUG_UNLOCATED.to_string()];
+        let message = not_located(&adapter).expect("unlocated").to_string();
+        assert!(message.contains("phpDebug.js was not found"), "{message}");
+        assert!(message.contains("xdebug.php-debug"), "{message}");
+
+        adapter.args = vec!["/home/u/phpDebug.js".to_string()];
+        assert_eq!(not_located(&adapter), None, "a located script starts");
+        let other = resolve("debugpy", &[]).unwrap();
+        assert_eq!(not_located(&other), None);
+        let stub = DebugAdapterSetting {
+            id: PHP_DEBUG.into(),
+            command: Some("/stub_adapter".into()),
+            args: None,
+        };
+        assert_eq!(not_located(&resolve(PHP_DEBUG, &[stub]).unwrap()), None);
     }
 
     #[test]

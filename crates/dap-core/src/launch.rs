@@ -58,9 +58,52 @@ pub fn arguments(adapter_id: &str, spec: &LaunchSpec) -> Value {
             arguments.insert("type".into(), json!("java"));
             arguments.insert("request".into(), json!("launch"));
         }
+        // PHP is never launched by the adapter: Xdebug connects back to it
+        // (listen mode). The program is started separately with the Xdebug
+        // environment, so this body carries no `program` at all — only the
+        // mapping a container launch implies.
+        "php-debug" => {
+            let mappings: Vec<(String, String)> = spec
+                .path_map
+                .iter()
+                .map(|map| {
+                    (
+                        map.remote_root.clone(),
+                        map.local_root.display().to_string(),
+                    )
+                })
+                .collect();
+            return php_listen_arguments(
+                crate::xdebug::DEFAULT_PORT,
+                crate::xdebug::LOOPBACK,
+                &mappings,
+            );
+        }
         _ => {}
     }
     Value::Object(arguments)
+}
+
+/// vscode-php-debug's listen-mode `launch` body (ADR-0069): no `program`,
+/// so the adapter waits for Xdebug connections on `port` instead of
+/// starting anything. `path_mappings` is `(server path, local path)` and
+/// goes out as an object, which is the shape that adapter reads.
+pub fn php_listen_arguments(
+    port: u16,
+    hostname: &str,
+    path_mappings: &[(String, String)],
+) -> Value {
+    let mappings: Map<String, Value> = path_mappings
+        .iter()
+        .map(|(server, local)| (server.clone(), json!(local)))
+        .collect();
+    json!({
+        "type": "php",
+        "request": "launch",
+        "port": port,
+        "hostname": hostname,
+        "pathMappings": Value::Object(mappings),
+    })
 }
 
 /// The `attach` arguments for joining a process that is already running.
@@ -254,6 +297,41 @@ mod tests {
         let arguments = arguments("debugpy", &spec());
         assert_eq!(arguments["program"], "scripts/etl.py");
         assert_eq!(arguments["args"], json!(["--verbose"]));
+    }
+
+    #[test]
+    fn php_debug_listens_instead_of_launching_a_program() {
+        let arguments = arguments("php-debug", &spec());
+        assert!(arguments.get("program").is_none());
+        assert_eq!(arguments["port"], 9003);
+        assert_eq!(arguments["pathMappings"], json!({}));
+    }
+
+    #[test]
+    fn php_debug_path_mappings_are_an_object_from_server_to_local() {
+        let arguments = php_listen_arguments(
+            9100,
+            "0.0.0.0",
+            &[("/workspace".to_string(), "/home/me/app".to_string())],
+        );
+        assert_eq!(arguments["port"], 9100);
+        assert_eq!(arguments["hostname"], "0.0.0.0");
+        assert_eq!(arguments["pathMappings"]["/workspace"], "/home/me/app");
+    }
+
+    #[test]
+    fn a_container_launch_maps_its_mount_back_to_the_checkout() {
+        let spec = LaunchSpec {
+            path_map: Some(process_exec::host::PathMap::new(
+                "/home/me/app",
+                "/workspace",
+            )),
+            ..spec()
+        };
+        assert_eq!(
+            arguments("php-debug", &spec)["pathMappings"]["/workspace"],
+            "/home/me/app"
+        );
     }
 
     #[test]

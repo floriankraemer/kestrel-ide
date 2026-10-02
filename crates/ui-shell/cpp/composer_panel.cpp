@@ -46,6 +46,10 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
     auto *panel = new QWidget(dockManager);
     auto *layout = new QVBoxLayout(panel);
     layout->setContentsMargins(0, 0, 0, 0);
+    // Wide enough for a typical vendor/package and its version without
+    // eliding (the dock floor of 200px showed "frien...fixer"); the dock
+    // keeps a panel's own larger minimum, as Changes does.
+    panel->setMinimumWidth(320);
 
     // Launch `action` (with `argument`) in the Run console; a refusal from
     // the model (a malformed package name) is shown as it is worded there.

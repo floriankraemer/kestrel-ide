@@ -199,9 +199,9 @@ A row's status and commit hash are updated in the commit that finishes it.
 |---|---|---|
 | D0 — `stub_adapter` bin in `dap-core` | done | 3320bee |
 | D1 — `php-debug` catalog row, automatic location of `phpDebug.js`, `ToolchainId::Php.debug_adapter()` | done | 210eefe |
-| D2 — `launch.rs` `php-debug` arm (`pathMappings` as an object) | done | — |
+| D2 — `launch.rs` `php-debug` arm (`pathMappings` as an object) | done | 5995082 |
 | D3 — "Start Listening for PHP Debug Connections" toggle; connections arrive as threads | open | |
-| D4 — `dap_core::xdebug::env` | open | |
+| D4 — `dap_core::xdebug::env` | done | — |
 | D5 — debug PHP run configs and tests in a container (lift the refusal for `php-debug` only) | open | |
 | D6 — Xdebug check (extension missing, mode without `debug`) on the PHP page and in the debug start error | open | |
 | D7 — ADR-0069 | open | |

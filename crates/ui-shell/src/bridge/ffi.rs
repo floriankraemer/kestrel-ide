@@ -5578,7 +5578,8 @@ mod ffi {
         /// N5: `typed` was just typed with the caret now at `line`/
         /// `character`. Does nothing unless a running server named it an
         /// on-type formatting trigger; then its edits are applied through
-        /// the same `refactorReady` protocol, as one undo step, and never
+        /// its own `onTypeFormatReady` / `takeOnTypeEdits` slot (never the
+        /// Rename/code-action pending slot), as one undo step, and never
         /// reported as a failure.
         #[qinvokable]
         #[cxx_name = "requestOnTypeFormatting"]
@@ -5590,6 +5591,18 @@ mod ffi {
             character: u32,
             typed: &QString,
         );
+
+        /// An on-type formatting answer is parked; fetch it with
+        /// `takeOnTypeEdits(documentRevision())`.
+        #[qsignal]
+        #[cxx_name = "onTypeFormatReady"]
+        fn on_type_format_ready(self: Pin<&mut LanguageService>);
+
+        /// N5's edits, once, last-first, in-buffer; empty when the buffer
+        /// moved since `requestOnTypeFormatting` (`lsp_core::EditGate`).
+        #[qinvokable]
+        #[cxx_name = "takeOnTypeEdits"]
+        fn take_on_type_edits(self: &LanguageService, buffer_revision: i64) -> Vec<FfiTextEdit>;
 
         /// A `codeActionsAt` answered. Empty is a legitimate answer and is
         /// still signalled, so the view can say "nothing here" rather than

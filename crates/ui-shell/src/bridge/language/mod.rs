@@ -242,6 +242,8 @@ pub struct LanguageServiceRust {
     /// RF2's staleness rule. The comparison is `lsp_core`'s; only its state
     /// lives here.
     edits: RefCell<lsp_core::EditGate>,
+    /// N5's own gate and slot (see `refactor::OnTypeSlot`).
+    on_type: RefCell<refactor::OnTypeSlot>,
     /// F0-16: what each server is currently working on, as its own
     /// `$/progress` reported it (`lsp_core::ProgressTracker` decides that
     /// per server; this only collects the answers). A `BTreeMap` because
@@ -308,6 +310,7 @@ impl Default for LanguageServiceRust {
             index: crate::bridge::registry::index_slot(),
             pending: RefCell::default(),
             edits: RefCell::default(),
+            on_type: RefCell::default(),
             busy: RefCell::default(),
             watched_changes: RefCell::default(),
             watch_flush_pending: Cell::default(),
@@ -938,18 +941,6 @@ impl ffi::LanguageService {
                 }
             });
         });
-    }
-
-    /// Report a refactoring that produced nothing, answering anything that
-    /// was waiting on it.
-    pub(crate) fn finish_refactor(mut self: Pin<&mut Self>, outcome: Result<(), String>) {
-        if let Some(pending) = self.pending.borrow_mut().take() {
-            pending.settle(false, "the refactoring could not be applied");
-        }
-        if let Err(message) = outcome {
-            self.as_mut()
-                .refactor_failed(QString::from(message.as_str()));
-        }
     }
 
     pub fn cancel_hover(self: Pin<&mut Self>) {

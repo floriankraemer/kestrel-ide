@@ -1124,6 +1124,24 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_gate_is_not_rearmed_by_a_separate_on_type_gate() {
+        let (mut rename, mut on_type) = (EditGate::default(), EditGate::default());
+        rename.begin(10);
+        // The user types a trigger character: revision 11, on-type begins.
+        on_type.begin(11);
+
+        // The rename answer was computed at 10; the buffer is at 11.
+        assert!(!rename.accept(11), "the rename's edits are stale");
+        assert!(on_type.accept(11));
+
+        // Sharing one gate is the bug: the second `begin` hides the staleness.
+        let mut shared = EditGate::default();
+        shared.begin(10);
+        shared.begin(11);
+        assert!(shared.accept(11));
+    }
+
+    #[test]
     fn the_gate_refuses_an_answer_nobody_asked_for() {
         let mut gate = EditGate::default();
         assert!(!gate.accept(0));

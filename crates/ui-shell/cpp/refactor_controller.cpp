@@ -45,6 +45,14 @@ RefactorController::RefactorController(LanguageService *languageService, SearchM
             });
     connect(languageService_, &LanguageService::refactorReady, this,
             &RefactorController::onRefactorReady);
+    // N5: on-type formatting answers through its own slot, so a trigger
+    // keystroke never touches a Rename in flight. Rust decides whether the
+    // answer is still fresh; an empty vector means it is not.
+    connect(languageService_, &LanguageService::onTypeFormatReady, this, [this]() {
+        editorTabs_->applyBufferEdits(
+          languageService_->takeOnTypeEdits(editorTabs_->documentRevision()));
+    });
+
     connect(languageService_, &LanguageService::refactorFallback, this,
             &RefactorController::askIndexToRename);
     connect(languageService_, &LanguageService::refactorFailed, this,

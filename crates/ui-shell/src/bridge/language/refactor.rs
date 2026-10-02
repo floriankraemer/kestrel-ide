@@ -18,6 +18,16 @@ use crate::bridge::ffi::{self};
 use crate::bridge::format_tool::ToolFormat;
 use crate::bridge::language::{to_ffi_resource_op, to_file_op, PendingRefactor};
 
+/// On-type formatting fires on every trigger keystroke, so it must not share
+/// `edits`/`pending` with Rename and code actions: a typed `;` would re-arm
+/// the Rename's gate against the moved buffer (applying its stale edits) or
+/// replace its pending plan.
+#[derive(Default)]
+pub(crate) struct OnTypeSlot {
+    gate: lsp_core::EditGate,
+    plan: Option<lsp_core::EditPlan>,
+}
+
 impl ffi::LanguageService {
     pub fn code_actions_at(
         mut self: Pin<&mut Self>,
@@ -384,7 +394,13 @@ impl ffi::LanguageService {
             trim_final_newlines: None,
         };
         let uri = lsp_core::uri_from_path(&path);
-        self.edits.borrow_mut().begin(buffer_revision);
+        // `quiet` is on-type formatting: its own gate and slot, so a trigger
+        // keystroke can never disturb a Rename or code action in flight.
+        if quiet {
+            self.on_type.borrow_mut().gate.begin(buffer_revision);
+        } else {
+            self.edits.borrow_mut().begin(buffer_revision);
+        }
         let qt_thread = self.as_mut().qt_thread();
         self.push_job(move |manager| {
             let outcome = ask(manager, &uri, &options);
@@ -402,16 +418,41 @@ impl ffi::LanguageService {
                         ops: Vec::new(),
                         touches_other_files: false,
                     };
-                    service.publish_refactor(title.to_string(), plan, None);
+                    if quiet {
+                        service.publish_on_type(plan);
+                    } else {
+                        service.publish_refactor(title.to_string(), plan, None);
+                    }
                 }
-                Ok(FormattingOutcome::AlreadyFormatted) => service.finish_refactor(Ok(())),
-                Ok(FormattingOutcome::Unsupported) if quiet => service.finish_refactor(Ok(())),
-                Ok(FormattingOutcome::Unsupported) => service
+                Ok(FormattingOutcome::AlreadyFormatted) if !quiet => {
+                    service.finish_refactor(Ok(()))
+                }
+                Ok(FormattingOutcome::Unsupported) if !quiet => service
                     .finish_refactor(Err(format!("No formatter is available for {language_id}."))),
-                Err(_) if quiet => service.finish_refactor(Ok(())),
-                Err(error) => service.finish_refactor(Err(error.to_string())),
+                Err(error) if !quiet => service.finish_refactor(Err(error.to_string())),
+                // Quiet: nothing to apply, nothing to report, and the
+                // pending refactoring (someone else's) stays untouched.
+                Ok(_) | Err(_) => {}
             });
         });
+    }
+
+    /// Park N5's plan in its own slot and tell the view; never touches the
+    /// pending refactoring.
+    fn publish_on_type(mut self: Pin<&mut Self>, plan: lsp_core::EditPlan) {
+        self.on_type.borrow_mut().plan = Some(plan);
+        self.as_mut().on_type_format_ready();
+    }
+
+    /// The on-type edits, once, if the buffer is still at the revision they
+    /// were computed against (`lsp_core::EditGate`'s rule).
+    pub fn take_on_type_edits(&self, buffer_revision: i64) -> Vec<ffi::FfiTextEdit> {
+        let mut slot = self.on_type.borrow_mut();
+        let fresh = slot.gate.accept(buffer_revision);
+        match slot.plan.take() {
+            Some(plan) if fresh => to_ffi_edits(&plan, &[]),
+            _ => Vec::new(),
+        }
     }
     pub fn pending_edits(&self) -> Vec<ffi::FfiTextEdit> {
         match self.pending.borrow().as_ref() {
@@ -535,6 +576,17 @@ impl ffi::LanguageService {
         self.edits.borrow_mut().cancel();
         if let Some(pending) = self.pending.borrow_mut().take() {
             pending.settle(false, "the refactoring was cancelled");
+        }
+    }
+    /// Report a refactoring that produced nothing, answering anything that
+    /// was waiting on it.
+    pub(crate) fn finish_refactor(mut self: Pin<&mut Self>, outcome: Result<(), String>) {
+        if let Some(pending) = self.pending.borrow_mut().take() {
+            pending.settle(false, "the refactoring could not be applied");
+        }
+        if let Err(message) = outcome {
+            self.as_mut()
+                .refactor_failed(QString::from(message.as_str()));
         }
     }
     /// Publish a plan for the view to apply, replacing (and answering) any

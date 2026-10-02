@@ -105,6 +105,10 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                       updateProblemsButton);
     QObject::connect(buildService, &BuildService::diagnosticsChanged, window,
                       updateProblemsButton);
+    // The analyzers (PHPStan, PHP_CodeSniffer, ...) publish into the same
+    // model; without this the counter stayed one finding behind the dock.
+    QObject::connect(analysisService, &AnalysisService::diagnosticsChanged, window,
+                      updateProblemsButton);
     // F3-18: the branch widget (vcs_menu.cpp).
     auto *branchButton = buildBranchWidget(vcsService, window, statusBar);
     // The project index builds on a background thread for seconds to minutes

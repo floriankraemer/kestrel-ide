@@ -22,3 +22,9 @@ serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
+
+# D0: a scripted stand-in for vscode-php-debug; tests reach it through
+# `env!("CARGO_BIN_EXE_stub_adapter")`.
+[[bin]]
+name = "stub_adapter"
+path = "src/bin/stub_adapter.rs"

@@ -192,12 +192,12 @@ A row's status and commit hash are updated in the commit that finishes it.
 | X3 — `container_core::target::exec_host` (exec/run modes, Docker/Podman/Compose) | done | 85b2938 |
 | X4 — scheduler, test runner, formatter and `exec="interpreter"` servers run on the interpreter host | done | 6600ce2 |
 | X5 — PHP run configs inherit `run_on` = the interpreter target (including `php -S` ports) | done | 4169dbe |
-| X6 — ADR-0067 + `layering.md` rows | done | — |
+| X6 — ADR-0067 + `layering.md` rows | done | 0c30f43 |
 
 ### D — Xdebug (ADR-0069)
 | Task | Status | Commit |
 |---|---|---|
-| D0 — `stub_adapter` bin in `dap-core` | open | |
+| D0 — `stub_adapter` bin in `dap-core` | done | — |
 | D1 — `php-debug` catalog row, automatic location of `phpDebug.js`, `ToolchainId::Php.debug_adapter()` | open | |
 | D2 — `launch.rs` `php-debug` arm (`pathMappings` as an object) | open | |
 | D3 — "Start Listening for PHP Debug Connections" toggle; connections arrive as threads | open | |

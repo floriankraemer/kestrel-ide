@@ -3238,10 +3238,6 @@
 <context>
     <name>SearchEverywhereDialog</name>
     <message>
-        <source>%1    %2</source>
-        <translation>%1    %2</translation>
-    </message>
-    <message>
         <source>Actions</source>
         <translation>Acciones</translation>
     </message>
@@ -3272,6 +3268,10 @@
     <message>
         <source>Text</source>
         <translation>Texto</translation>
+    </message>
+    <message>
+        <source>Classes</source>
+        <translation>Clases</translation>
     </message>
 </context>
 <context>

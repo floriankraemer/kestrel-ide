@@ -38,7 +38,7 @@ baseline() {
 	# helper rather than the old `excludes.rs` override-set builder, which
 	# is why the net is one line rather than the whole feature's size — the
 	# ADR-0064 tests themselves moved to tests/it/scope.rs. No split planned.
-	crates/index-core/src/lib.rs) echo 3996 ;;
+	crates/index-core/src/lib.rs) echo 3949 ;;
 	# Raised from 2572 by 10 lines for `Scope::from_id` (C9) — the inverse of
 	# `Scope::id`, needed to rebuild a `Scope` from the raw id a
 	# `FfiHighlightSpan` carries back across the seam when overlaying

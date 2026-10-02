@@ -118,6 +118,7 @@ pub(super) fn emit_symbol_tier(
         })
         .take(limit)
         .collect();
+    let root = index.root().to_path_buf();
     let known: Vec<(String, String, u32)> = indexed
         .iter()
         .map(|m| {
@@ -132,12 +133,8 @@ pub(super) fn emit_symbol_tier(
         indexed
             .into_iter()
             .map(|m| {
-                let mut row = hit(
-                    ffi::FfiHitKind::Symbol,
-                    &m.name,
-                    &symbol_detail(&m),
-                    Vec::new(),
-                );
+                let detail = with_location(&symbol_detail(&m), &m.path, &root);
+                let mut row = hit(ffi::FfiHitKind::Symbol, &m.name, &detail, Vec::new());
                 row.path = QString::from(m.path.to_string_lossy().as_ref());
                 row.line = m.line as u32;
                 row
@@ -161,6 +158,7 @@ pub(super) fn emit_symbol_tier(
                     Some(container) => format!("{} in {container}", s.kind_word()),
                     None => s.kind_word().to_string(),
                 };
+                let detail = with_location(&detail, std::path::Path::new(&s.path), &root);
                 let mut row = hit(ffi::FfiHitKind::Symbol, &s.name, &detail, Vec::new());
                 row.path = QString::from(s.path.as_str());
                 row.line = s.line;
@@ -168,4 +166,12 @@ pub(super) fn emit_symbol_tier(
             })
             .collect(),
     );
+}
+
+/// `detail` followed by the file the symbol lives in, relative to the
+/// project, so two classes with one name (the project's and a vendored
+/// copy's) can be told apart in the list.
+fn with_location(detail: &str, path: &std::path::Path, root: &std::path::Path) -> String {
+    let shown = path.strip_prefix(root).unwrap_or(path);
+    format!("{detail}  {}", shown.display())
 }

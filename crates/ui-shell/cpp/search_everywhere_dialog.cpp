@@ -175,7 +175,7 @@ bool SearchEverywhereDialog::tierIsVisible(FfiHitKind kind) const
     return true;
 }
 
-QString SearchEverywhereDialog::sectionTitle(FfiHitKind kind)
+QString SearchEverywhereDialog::sectionTitle(FfiHitKind kind) const
 {
     switch (kind) {
     case FfiHitKind::RecentFile:
@@ -183,7 +183,8 @@ QString SearchEverywhereDialog::sectionTitle(FfiHitKind kind)
     case FfiHitKind::File:
         return tr("Files");
     case FfiHitKind::Symbol:
-        return tr("Symbols");
+        return static_cast<Tier>(tabs_->currentIndex()) == Tier::Classes ? tr("Classes")
+                                                                         : tr("Symbols");
     case FfiHitKind::Text:
         return tr("Text");
     case FfiHitKind::Action:
@@ -215,8 +216,8 @@ void SearchEverywhereDialog::appendHits(quint64 generation, const ::rust::Vec<Ff
 
         const QString text = hit.text;
         const QString detail = hit.detail;
-        auto *item = new QListWidgetItem(
-          detail.isEmpty() ? text : tr("%1    %2").arg(text, detail), results_);
+        auto *item = new QListWidgetItem(text, results_);
+        item->setData(kDetailRole, detail);
         item->setData(kPathRole, hit.path);
         // A null icon for an action row, which names no file — the Rust side
         // answers with no key at all rather than the pack's default.

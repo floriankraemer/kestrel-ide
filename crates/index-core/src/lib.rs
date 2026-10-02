@@ -76,6 +76,7 @@ pub mod lifecycle;
 mod replace_preview;
 pub use replace_preview::FileDiffPreview;
 mod search_scope;
+mod symbol_rank;
 pub use search_scope::{literal_prefix, FileMask, ScopedSearchResult, SearchScope};
 use tantivy::{doc, Index, IndexReader, IndexWriter, Term};
 
@@ -1835,39 +1836,6 @@ impl TextIndex {
         Ok(matches)
     }
 
-    /// Go-to-symbol for search-as-you-type: the same definition set as
-    /// [`find_definitions`](Self::find_definitions), but fuzzy-matched and
-    /// ranked best-first rather than exact-substring filtered and ordered by
-    /// file. An empty query returns the first `limit` definitions.
-    pub fn find_definitions_ranked(
-        &self,
-        query: &str,
-        limit: usize,
-    ) -> Result<Vec<SymbolMatch>, IndexError> {
-        let mut matches = self.find_definitions("")?;
-        if query.is_empty() {
-            matches.truncate(limit);
-            return Ok(matches);
-        }
-
-        let mut matcher = nucleo_matcher::Matcher::new(Config::DEFAULT);
-        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-        let mut buf = Vec::new();
-        let mut scored: Vec<(u32, SymbolMatch)> = matches
-            .into_iter()
-            .filter_map(|m| {
-                let score = pattern.score(Utf32Str::new(&m.name, &mut buf), &mut matcher)?;
-                Some((score, m))
-            })
-            .collect();
-        scored.sort_by(|a, b| {
-            b.0.cmp(&a.0)
-                .then_with(|| a.1.name.len().cmp(&b.1.name.len()))
-                .then_with(|| (&a.1.path, a.1.line).cmp(&(&b.1.path, b.1.line)))
-        });
-        Ok(scored.into_iter().take(limit).map(|(_, m)| m).collect())
-    }
-
     /// Find-usages: every occurrence (definitions and references alike) of
     /// the exact name `exact_name`, across every indexed file. Name-based
     /// per ADR-0008 — no cross-file type/binding resolution, so unrelated
@@ -2597,21 +2565,6 @@ mod tests {
 
         let index = TextIndex::open_or_build(dir.path()).unwrap();
         assert_eq!(index.search("hello", false, true).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn find_definitions_ranked_puts_the_best_fuzzy_hit_first() {
-        let dir = tempfile::tempdir().unwrap();
-        write(
-            dir.path(),
-            "a.rs",
-            "fn open_file() {}\nfn open_project_file_dialog() {}\n",
-        );
-        let index = TextIndex::build(dir.path()).unwrap();
-
-        let hits = index.find_definitions_ranked("openfile", 10).unwrap();
-        assert_eq!(hits[0].name, "open_file");
-        assert_eq!(index.find_definitions_ranked("", 1).unwrap().len(), 1);
     }
 
     #[test]

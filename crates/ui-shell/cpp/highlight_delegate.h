@@ -18,6 +18,9 @@
 
 // Character offsets (into the item's display text) to highlight.
 inline constexpr int kMatchPositionsRole = Qt::UserRole + 10;
+// Secondary text painted greyed after the display text (a symbol's kind and
+// file, an action's shortcut). Optional: a row without it paints as before.
+inline constexpr int kDetailRole = Qt::UserRole + 11;
 
 class HighlightDelegate : public QStyledItemDelegate
 {
@@ -29,7 +32,8 @@ public:
                const QModelIndex &index) const override
     {
         const QVariantList positions = index.data(kMatchPositionsRole).toList();
-        if (positions.isEmpty()) {
+        const QString detail = index.data(kDetailRole).toString();
+        if (positions.isEmpty() && detail.isEmpty()) {
             QStyledItemDelegate::paint(painter, option, index);
             return;
         }
@@ -45,10 +49,25 @@ public:
         QTextDocument document;
         document.setDefaultFont(styled.font);
         document.setDocumentMargin(0);
-        document.setHtml(highlighted(text, positions));
 
         const QRect textRect =
           style->subElementRect(QStyle::SE_ItemViewItemText, &styled, styled.widget);
+        QString html = highlighted(text, positions);
+        if (!detail.isEmpty()) {
+            // Elide the detail to the room the name leaves, so a long path
+            // ends in an ellipsis instead of being cut off at the edge.
+            const QFontMetrics metrics(styled.font);
+            const int gap = metrics.horizontalAdvance(QStringLiteral("    "));
+            const int room = textRect.width() - metrics.horizontalAdvance(text) - gap;
+            const QColor grey = styled.state & QStyle::State_Selected
+                                  ? styled.palette.color(QPalette::HighlightedText)
+                                  : styled.palette.color(QPalette::Disabled, QPalette::Text);
+            html += QStringLiteral("&nbsp;&nbsp;&nbsp;&nbsp;<span style=\"color:%1\">%2</span>")
+                      .arg(grey.name(),
+                           metrics.elidedText(detail, Qt::ElideMiddle, qMax(room, 0))
+                             .toHtmlEscaped());
+        }
+        document.setHtml(html);
         painter->save();
         painter->translate(textRect.topLeft());
         QAbstractTextDocumentLayout::PaintContext context;

@@ -1,0 +1,7 @@
+{
+  "name": "fixture/app",
+  "scripts": {
+    "test": "phpunit",
+    "ci": ["@test", "phpstan analyse"]
+  }
+}

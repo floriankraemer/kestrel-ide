@@ -914,7 +914,13 @@ impl ffi::RunService {
                 message: QString::from(err.to_string().as_str()),
             };
         }
-        let context = context.clone().with_containers(containers.clone());
+        let php_interpreter =
+            settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings())
+                .interpreter;
+        let context = context
+            .clone()
+            .with_containers(containers.clone())
+            .with_php_interpreter(php_interpreter);
         let mut spec = config.to_launch_spec_in(&context);
         let cwd = spec.cwd.clone().unwrap_or_else(|| root.clone());
         // `to_launch_spec` leaves `cwd` as `None` for a configuration with

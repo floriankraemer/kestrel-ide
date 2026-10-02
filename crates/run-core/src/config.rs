@@ -140,11 +140,24 @@ impl RunConfigExt for RunConfig {
     }
 }
 
+/// A PHP-toolchain configuration detected with the default `php` runs under
+/// the configured interpreter; a hand-edited program is left alone.
+fn program_for(config: &RunConfig, context: &MacroContext) -> String {
+    match (&context.php_interpreter, config.toolchain()) {
+        (Some(interpreter), Some(ToolchainId::Php))
+            if config.program == crate::toolchain::DEFAULT_PHP_PROGRAM =>
+        {
+            interpreter.clone()
+        }
+        _ => config.program.clone(),
+    }
+}
+
 /// The plain process launch every configuration compiled to before C5, and
 /// what one with no (or an unrecognised) `kind` still compiles to.
 fn process_launch_spec(config: &RunConfig, context: &MacroContext) -> LaunchSpec {
     LaunchSpec {
-        program: config.program.clone(),
+        program: program_for(config, context),
         args: config
             .args
             .iter()
@@ -176,6 +189,29 @@ mod tests {
             args: vec!["run".into()],
             ..RunConfig::default()
         }
+    }
+
+    #[test]
+    fn php_configs_launch_under_the_configured_interpreter() {
+        let php = RunConfig {
+            program: "php".into(),
+            toolchain: Some("php".into()),
+            ..config()
+        };
+        let context = MacroContext::for_project("/p").with_php_interpreter("/opt/php83/bin/php");
+        assert_eq!(
+            php.to_launch_spec_in(&context).program,
+            "/opt/php83/bin/php"
+        );
+        // Without a configured interpreter, a hand-edited program or another
+        // toolchain, the program is untouched.
+        assert_eq!(php.to_launch_spec(Path::new("/p")).program, "php");
+        let custom = RunConfig {
+            program: "/x/php".into(),
+            ..php.clone()
+        };
+        assert_eq!(custom.to_launch_spec_in(&context).program, "/x/php");
+        assert_eq!(config().to_launch_spec_in(&context).program, "cargo");
     }
 
     #[test]

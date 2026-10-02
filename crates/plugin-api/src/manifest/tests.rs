@@ -571,6 +571,32 @@ fn a_suppress_comment_without_the_code_placeholder_is_rejected() {
 }
 
 #[test]
+fn a_ruleset_placeholder_needs_a_default_and_reads_the_config_candidates() {
+    let toml = |extra: &str| {
+        with(&format!(
+            r#"
+            [[contributes.analyzers]]
+            id = "phpmd"
+            name = "PHPMD"
+            program-candidates = ["phpmd"]
+            output-format = "checkstyle-xml"
+            args = ["{{file}}", "checkstyle", "{{ruleset}}"]
+            config-file-candidates = ["phpmd.xml"]
+            {extra}
+            "#
+        ))
+    };
+    assert!(matches!(
+        PluginManifest::from_toml_str(&toml("")).unwrap_err(),
+        LoadErrorKind::MalformedManifest(_)
+    ));
+    let manifest = PluginManifest::from_toml_str(&toml(r#"ruleset-default = "design""#)).unwrap();
+    let a = &manifest.contributes.analyzers[0];
+    assert_eq!(a.config_file_candidates, vec!["phpmd.xml"]);
+    assert_eq!(a.ruleset_default.as_deref(), Some("design"));
+}
+
+#[test]
 fn an_unknown_analyzer_buffer_strategy_is_rejected() {
     let err = PluginManifest::from_toml_str(&with(
         r#"

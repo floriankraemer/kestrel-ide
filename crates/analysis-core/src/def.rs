@@ -59,6 +59,8 @@ pub struct AnalyzerDef {
     pub code_in_message: bool,
     /// Id of the `formatters` contribution that can fix a single finding.
     pub fixer: Option<String>,
+    config_file_candidates: Vec<String>,
+    ruleset_default: Option<String>,
     severities: HashMap<String, Severity>,
 }
 
@@ -84,8 +86,30 @@ impl AnalyzerDef {
             suppress_comment: contribution.suppress_comment.clone(),
             code_in_message: contribution.code_in_message,
             fixer: contribution.fixer.clone(),
+            config_file_candidates: contribution.config_file_candidates.clone(),
+            ruleset_default: contribution.ruleset_default.clone(),
             severities,
         }
+    }
+
+    /// This analyzer with `{ruleset}` resolved for the project at `root`:
+    /// the first `config-file-candidates` entry that exists there (kept
+    /// project-relative, so it means the same inside a container or WSL,
+    /// where the tool runs from the project root), else `ruleset-default`.
+    #[must_use]
+    pub fn with_ruleset_for(mut self, root: &Path) -> Self {
+        let ruleset = self
+            .config_file_candidates
+            .iter()
+            .find(|candidate| root.join(candidate).is_file())
+            .cloned()
+            .or_else(|| self.ruleset_default.clone());
+        if let Some(ruleset) = ruleset {
+            for arg in self.args.iter_mut().chain(self.file_args.iter_mut()) {
+                *arg = arg.replace("{ruleset}", &ruleset);
+            }
+        }
+        self
     }
 
     /// How to spawn `program` for this analyzer: under `php_binary` when the
@@ -184,6 +208,8 @@ mod tests {
             suppress_comment: None,
             code_in_message: false,
             fixer: None,
+            config_file_candidates: vec![],
+            ruleset_default: None,
         }
     }
 
@@ -269,6 +295,28 @@ mod tests {
         assert_eq!(
             def.project_run_args(Path::new("/p")),
             vec!["/p", "checkstyle", "cleancode"]
+        );
+    }
+
+    #[test]
+    fn ruleset_is_the_projects_config_file_when_one_exists_else_the_default() {
+        let mut c = contribution();
+        c.args = vec!["{file}".into(), "checkstyle".into(), "{ruleset}".into()];
+        c.config_file_candidates = vec!["phpmd.xml".into(), "phpmd.xml.dist".into()];
+        c.ruleset_default = Some("cleancode,codesize".into());
+        let def = AnalyzerDef::from_contribution(&c);
+
+        let bare = tempfile::tempdir().unwrap();
+        assert_eq!(
+            def.clone().with_ruleset_for(bare.path()).args,
+            vec!["{file}", "checkstyle", "cleancode,codesize"]
+        );
+
+        let configured = tempfile::tempdir().unwrap();
+        std::fs::write(configured.path().join("phpmd.xml.dist"), "<ruleset/>").unwrap();
+        assert_eq!(
+            def.with_ruleset_for(configured.path()).args,
+            vec!["{file}", "checkstyle", "phpmd.xml.dist"]
         );
     }
 

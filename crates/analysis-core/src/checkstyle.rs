@@ -235,6 +235,8 @@ mod tests {
             suppress_comment: None,
             code_in_message: false,
             fixer: None,
+            config_file_candidates: vec![],
+            ruleset_default: None,
         })
     }
 

@@ -265,6 +265,16 @@ pub struct AnalyzerContribution {
     /// narrow it to one finding's rule.
     #[serde(default)]
     pub fixer: Option<String>,
+    /// Project-relative config files, in order, that the tool must be told
+    /// about explicitly (PHPMD's positional ruleset). The first that exists
+    /// at the project root replaces `{ruleset}` in `args`/`file-args`;
+    /// [`Self::ruleset_default`] is used when none does.
+    #[serde(default, rename = "config-file-candidates")]
+    pub config_file_candidates: Vec<String>,
+    /// What `{ruleset}` becomes when no config file exists. Required when
+    /// `args`/`file-args` use the placeholder.
+    #[serde(default, rename = "ruleset-default")]
+    pub ruleset_default: Option<String>,
 }
 
 /// Interpreters a contribution may name in `requires-interpreter`.
@@ -866,6 +876,18 @@ impl PluginManifest {
             }
             if let Some(fixer) = &analyzer.fixer {
                 check_id("contributes.analyzers.fixer", fixer)?;
+            }
+            let uses_ruleset = analyzer
+                .args
+                .iter()
+                .chain(&analyzer.file_args)
+                .any(|a| a.contains("{ruleset}"));
+            if uses_ruleset && analyzer.ruleset_default.is_none() {
+                return Err(LoadErrorKind::MalformedManifest(
+                    "contributes.analyzers.args use `{ruleset}`, so \
+                     contributes.analyzers.ruleset-default is required"
+                        .to_string(),
+                ));
             }
             check_tool_package_and_interpreter(
                 "contributes.analyzers",

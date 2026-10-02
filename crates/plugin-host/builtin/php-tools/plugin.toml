@@ -109,16 +109,18 @@ name = "PHPMD"
 program-candidates = ["vendor/bin/phpmd", "phpmd.phar", "phpmd"]
 # PHPMD's argv is positional: `<path> <format> <ruleset> [options]`, so the
 # path is the `{file}` placeholder (the file, or the project root for a
-# project run). The ruleset is PHPMD's built-in set, not the project's
-# `phpmd.xml`.
+# project run). `{ruleset}` is the project's `phpmd.xml`/`phpmd.xml.dist`
+# when one exists, else PHPMD's built-in set (`ruleset-default`).
 args = [
   "{file}",
   "checkstyle",
-  "cleancode,codesize,controversial,design,naming,unusedcode",
+  "{ruleset}",
   "--exclude",
   "*/vendor/*,*/node_modules/*",
 ]
 output-format = "checkstyle-xml"
+config-file-candidates = ["phpmd.xml", "phpmd.xml.dist"]
+ruleset-default = "cleancode,codesize,controversial,design,naming,unusedcode"
 composer-package = "phpmd/phpmd"
 requires-interpreter = "php"
 languages = ["php"]

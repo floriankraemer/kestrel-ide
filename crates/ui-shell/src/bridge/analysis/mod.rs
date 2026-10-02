@@ -250,7 +250,7 @@ impl ffi::AnalysisService {
                 );
                 analysis_core::find_program_on(&c.program_candidates, &root, &host).is_some()
             })
-            .map(analysis_core::AnalyzerDef::from_contribution)
+            .map(|c| analysis_core::AnalyzerDef::from_contribution(c).with_ruleset_for(&root))
             .collect();
 
         if defs.is_empty() {
@@ -307,7 +307,8 @@ impl ffi::AnalysisService {
             let Some(contribution) = contributions.iter().find(|c| c.id == job.analyzer_id) else {
                 continue;
             };
-            let analyzer = analysis_core::AnalyzerDef::from_contribution(contribution);
+            let analyzer =
+                analysis_core::AnalyzerDef::from_contribution(contribution).with_ruleset_for(&root);
             let Some((host, (program, prefix))) = self.resolve_launch(&analyzer, &root) else {
                 continue;
             };

@@ -558,7 +558,11 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     assert_eq!(psalm.composer_package.as_deref(), Some("vimeo/psalm"));
     assert_eq!(psalm.buffer.as_deref(), Some("saved-only"));
     let phpmd = analyzers.iter().find(|(_, a)| a.id == "phpmd").unwrap().1;
-    assert_eq!(phpmd.args[..2], ["{file}", "checkstyle"]);
+    assert_eq!(phpmd.args[..3], ["{file}", "checkstyle", "{ruleset}"]);
+    assert_eq!(
+        phpmd.config_file_candidates,
+        vec!["phpmd.xml", "phpmd.xml.dist"]
+    );
     assert_eq!(phpmd.languages, vec!["php"]);
 
     let phpstan = analyzers

@@ -152,8 +152,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | L8 — `ExecHost` and URI translation per server (process, `rootUri` and `did*` URIs; request params wait for the container path map, ADR-0067) | done | 835b382 |
 | L9 — `posix_only` skipped on native Windows, with status text | done | 63faf37 |
 | L10 — settings save → `update_settings` or restart via `catalog::reload_kind` | done | 2a538cd |
-| L11 — Language Servers page shows N servers per language | done | — |
-| L12 — ADR-0066 + `layering.md` note | open | |
+| L11 — Language Servers page shows N servers per language | done | 4ae6c97 |
+| L12 — ADR-0066 + `layering.md` note | done | — |
 
 ### I — `php-core`, interpreter, Composer, running PHP (ADR-0068)
 | Task | Status | Commit |

@@ -7,7 +7,7 @@
 mod catalog;
 mod folds;
 mod injections;
-use injections::injection_regions;
+pub use injections::{language_at, LanguageMap};
 mod registry;
 pub mod runtime;
 pub mod theme;
@@ -824,7 +824,7 @@ fn spans_with_injections(
         spans_from_tree(query, &compiled.highlight_scopes, tree, text)
     });
     let regions = match compiled.injections.as_ref() {
-        Some(query) if depth < MAX_INJECTION_DEPTH => injection_regions(query, tree, text),
+        Some(query) if depth < MAX_INJECTION_DEPTH => injections::regions(query, tree, text),
         _ => Vec::new(),
     };
     if regions.is_empty() {

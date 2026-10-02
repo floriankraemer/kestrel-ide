@@ -233,8 +233,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 |---|---|---|
 | Y1 — vendor the Twig/Blade sources, `build.rs` + `cc` | done | 16b6fd5 |
 | Y2 — `twig` and `blade` rows (`.blade.php` beats `.php`), hidden `php_only` row, queries | done | 5e2da04 |
-| Y3 — `.phtml` and `.inc` → PHP | done | — |
-| Y4 — `syntax_core::language_at`; injection-aware comment toggle | open | |
+| Y3 — `.phtml` and `.inc` → PHP | done | a787251 |
+| Y4 — `syntax_core::language_at`; injection-aware comment toggle | done | — |
 | Y5 — richer `php/folds.scm` (arrays, doc comments, use groups, match, heredoc, attributes) | open | |
 | Y6 — ADR-0071 | open | |
 

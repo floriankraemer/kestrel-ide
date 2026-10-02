@@ -2,9 +2,13 @@
 //! they use. Split out of `lib.rs` for its size ceiling.
 
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Query, QueryCursor};
+use tree_sitter::{Parser, Query, QueryCursor};
 
-use crate::{pattern_is_guarded_by_an_unevaluated_predicate, HighlightSpan};
+use crate::registry::{self, CompiledLanguage, Language};
+use crate::{
+    pattern_is_guarded_by_an_unevaluated_predicate, HighlightSpan, MAX_HIGHLIGHT_BYTES,
+    MAX_INJECTION_DEPTH,
+};
 
 /// One injected region found by an `injections.scm` match: the language
 /// it is written in, and the byte ranges of its `@injection.content`
@@ -95,11 +99,7 @@ fn canonical_injection_language(name: &str) -> &str {
 /// a `(#set! injection.language "css")` pattern directive. The directive
 /// wins when a pattern somehow carries both, since it is the literal the
 /// query author wrote rather than text read out of the document.
-pub(crate) fn injection_regions(
-    query: &Query,
-    tree: &tree_sitter::Tree,
-    text: &str,
-) -> Vec<InjectionRegion> {
+pub(crate) fn regions(query: &Query, tree: &tree_sitter::Tree, text: &str) -> Vec<InjectionRegion> {
     let capture_names = query.capture_names();
     let mut regions: Vec<InjectionRegion> = Vec::new();
     let mut cursor = QueryCursor::new();
@@ -170,4 +170,90 @@ pub(crate) fn injection_regions(
         region.ranges.dedup_by_key(|r| r.start_byte);
     }
     regions
+}
+
+/// Which language each part of a document is written in: the host's, or an
+/// injected one's (PHP markup is HTML, a `<script>` in it is JavaScript).
+///
+/// Built once per text and asked per offset, so an operation over many lines
+/// (toggling comments) parses the document once.
+#[derive(Debug, Clone)]
+pub struct LanguageMap {
+    host: Language,
+    /// `(byte range, language, depth)` of every injected range, nested ones
+    /// included; the innermost (deepest) covering range names the language.
+    regions: Vec<(std::ops::Range<usize>, Language, usize)>,
+}
+
+impl LanguageMap {
+    /// Map `text`, a document in `host`. A document with no injections, a
+    /// language with none, or one past [`MAX_HIGHLIGHT_BYTES`] maps wholly to
+    /// `host`.
+    pub fn of(host: Language, text: &str) -> Self {
+        let mut regions = Vec::new();
+        if text.len() <= MAX_HIGHLIGHT_BYTES {
+            if let Some(compiled) = registry::compiled(host) {
+                let mut parser = Parser::new();
+                if parser.set_language(&compiled.grammar).is_ok() {
+                    if let Some(tree) = parser.parse(text, None) {
+                        collect(&compiled, &tree, text, 0, &mut regions);
+                    }
+                }
+            }
+        }
+        Self { host, regions }
+    }
+
+    /// The language `offset` (a byte offset into the mapped text) is written in.
+    pub fn at(&self, offset: usize) -> Language {
+        self.regions
+            .iter()
+            .filter(|(range, _, _)| range.contains(&offset))
+            .max_by_key(|(_, _, depth)| *depth)
+            .map_or(self.host, |(_, language, _)| *language)
+    }
+}
+
+/// The language `offset` is written in: the innermost injected language
+/// covering it, else `host`. See [`LanguageMap`] to ask about many offsets.
+pub fn language_at(host: Language, text: &str, offset: usize) -> Language {
+    LanguageMap::of(host, text).at(offset)
+}
+
+fn collect(
+    compiled: &CompiledLanguage,
+    tree: &tree_sitter::Tree,
+    text: &str,
+    depth: usize,
+    out: &mut Vec<(std::ops::Range<usize>, Language, usize)>,
+) {
+    let Some(query) = compiled.injections.as_ref() else {
+        return;
+    };
+    if depth >= MAX_INJECTION_DEPTH {
+        return;
+    }
+    for region in regions(query, tree, text) {
+        let Some(language) = registry::language_by_id(&region.language) else {
+            continue;
+        };
+        let Some(inner) = registry::compiled(language) else {
+            continue;
+        };
+        out.extend(
+            region
+                .ranges
+                .iter()
+                .map(|r| (r.start_byte..r.end_byte, language, depth + 1)),
+        );
+        let mut parser = Parser::new();
+        if parser.set_language(&inner.grammar).is_err()
+            || parser.set_included_ranges(&region.ranges).is_err()
+        {
+            continue;
+        }
+        if let Some(subtree) = parser.parse(text, None) {
+            collect(&inner, &subtree, text, depth + 1, out);
+        }
+    }
 }

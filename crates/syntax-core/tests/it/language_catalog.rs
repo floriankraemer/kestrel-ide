@@ -391,6 +391,32 @@ fn blade_expressions_are_highlighted_as_php() {
     assert_scope_at(blade, text, "1;", "number");
 }
 
+/// ADR-0071: the language under an offset is the innermost injected one.
+#[test]
+fn the_language_at_an_offset_is_the_innermost_injected_one() {
+    let text = "<p>hi</p>\n<?php echo 1; ?>\n<script>let a = 1;</script>\n";
+    let php = language("php");
+    let at = |needle: &str| syntax_core::language_at(php, text, text.find(needle).unwrap()).id();
+    assert_eq!(at("<p>"), "html");
+    assert_eq!(at("echo"), "php");
+    assert_eq!(at("let a"), "javascript");
+    // One parse answers every offset.
+    let map = syntax_core::LanguageMap::of(php, text);
+    assert_eq!(map.at(text.find("hi").unwrap()).id(), "html");
+    assert_eq!(map.at(text.find("echo").unwrap()).id(), "php");
+}
+
+/// A document with nothing injected maps wholly to its own language.
+#[test]
+fn a_plain_document_maps_to_its_host_language() {
+    let rust = language("rust");
+    assert_eq!(syntax_core::language_at(rust, "fn main() {}", 3), rust);
+    assert_eq!(
+        syntax_core::language_at(Language::PLAIN_TEXT, "text", 1),
+        Language::PLAIN_TEXT
+    );
+}
+
 // ---- naming conventions (#16) ---------------------------------------
 
 /// The two naming conventions every mainstream editor paints, per

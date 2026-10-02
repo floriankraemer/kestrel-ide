@@ -249,6 +249,25 @@ impl DiagnosticStore {
         rows
     }
 
+    /// [`Self::at`], plus every row with no end on `line` (0-based): a tool
+    /// that reports a line, not a span (PHPStan), means the whole line, so
+    /// its quick fixes must be reachable from any caret column on it.
+    pub fn at_or_line_anchored(&self, uri: &str, line: u32, character: u32) -> Vec<DiagnosticRow> {
+        let mut rows: Vec<DiagnosticRow> = self
+            .by_key
+            .iter()
+            .filter(|((_, key_uri), _)| key_uri == uri)
+            .flat_map(|(_, diags)| diags.iter())
+            .filter(|d| {
+                covers(&d.range, line, character)
+                    || (d.range.end.is_none() && d.range.start.line == line)
+            })
+            .map(|d| row(uri, d))
+            .collect();
+        rows.sort_by_key(|r| r.severity);
+        rows
+    }
+
     /// The first diagnostic in `uri` strictly after the 0-based
     /// `(line, character)`, wrapping to the file's first diagnostic when
     /// none follows — F2's answer (R4). `rows_for_uri`'s own order already
@@ -809,6 +828,27 @@ mod tests {
             rows[0].message, "mismatched types",
             "the worse severity sorts first"
         );
+    }
+
+    #[test]
+    fn a_row_without_an_end_is_reachable_from_anywhere_on_its_line() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "analyzer:phpstan",
+            "file:///p/a.php",
+            vec![Diagnostic {
+                range: Range {
+                    end: None,
+                    ..point_diagnostic(2, 0, Severity::Error, "line finding").range
+                },
+                ..point_diagnostic(2, 0, Severity::Error, "line finding")
+            }],
+        );
+        assert!(store.at("file:///p/a.php", 2, 9).is_empty());
+        assert_eq!(store.at_or_line_anchored("file:///p/a.php", 2, 9).len(), 1);
+        assert!(store
+            .at_or_line_anchored("file:///p/a.php", 3, 0)
+            .is_empty());
     }
 
     #[test]

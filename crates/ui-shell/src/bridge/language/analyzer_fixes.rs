@@ -30,7 +30,10 @@ impl ffi::LanguageService {
         character: u32,
     ) -> Vec<lsp_core::Intention> {
         let uri = lsp_core::uri_from_path(path);
-        let rows = self.store.borrow().at(&uri, line, character);
+        let rows = self
+            .store
+            .borrow()
+            .at_or_line_anchored(&uri, line, character);
         if rows.iter().all(|row| row.code.is_empty()) {
             return Vec::new();
         }

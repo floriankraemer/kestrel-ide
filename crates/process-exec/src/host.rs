@@ -541,7 +541,10 @@ fn resolve_cache() -> &'static ResolveCache {
 pub fn resolve_program(host: &ExecHost, program: &str, cwd: &Path) -> Option<String> {
     let wsl = match host {
         ExecHost::Wsl(wsl) => wsl,
-        ExecHost::Local | ExecHost::Container(_) => return Some(program.to_string()),
+        ExecHost::Container(container) => {
+            return resolve_in_container(host, container, program, cwd)
+        }
+        ExecHost::Local => return Some(program.to_string()),
     };
 
     let key = (wsl.distro.clone(), program.to_string());
@@ -561,6 +564,60 @@ pub fn resolve_program(host: &ExecHost, program: &str, cwd: &Path) -> Option<Str
         .unwrap()
         .insert(key, resolved.clone());
     resolved
+}
+
+/// [`resolve_program`] inside a container: `sh -c 'command -v "$1"'` for a
+/// bare name, `test -x` for a path. Only a hit is memoised — a miss may just
+/// mean the container is not up yet, and caching that would keep reporting
+/// it missing after the user starts it.
+fn resolve_in_container(
+    host: &ExecHost,
+    container: &ContainerHost,
+    program: &str,
+    cwd: &Path,
+) -> Option<String> {
+    let key = (
+        format!(
+            "container:{} {:?} {:?}",
+            container.program, container.prefix_args, container.target
+        ),
+        program.to_string(),
+    );
+    if let Some(Some(hit)) = resolve_cache().lock().unwrap().get(&key) {
+        return Some(hit.clone());
+    }
+
+    let is_path = program.contains('/') || program.contains('\\');
+    let candidate = if is_path {
+        host.to_remote(&cwd.join(program))
+    } else {
+        program.to_string()
+    };
+    let script = if is_path {
+        r#"test -x "$1" && echo "$1""#
+    } else {
+        r#"command -v "$1""#
+    };
+    let mut command = host.command("sh", &["-c", script, "sh", &candidate], cwd, &[]);
+    suppress_console_window(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let resolved = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if resolved.is_empty() {
+        return None;
+    }
+    resolve_cache()
+        .lock()
+        .unwrap()
+        .insert(key, Some(resolved.clone()));
+    Some(resolved)
 }
 
 fn probe_executable(distro: &str, remote_path: &str) -> bool {
@@ -595,6 +652,49 @@ const WSL_ITSELF_FAILED_MARKERS: [&str; 2] = [
     "no installed distributions",
 ];
 
+/// What a container engine says on stderr when the container, not the tool
+/// inside it, is the problem, paired with the sentence to show the user.
+/// Matched case-insensitively. Docker, Podman and Compose phrase it
+/// differently: `No such container`, `no container with name or ID`,
+/// `service "x" is not running`, `no such service`, and a missing binary as
+/// `executable file not found`.
+const CONTAINER_UNAVAILABLE_MARKERS: [(&str, &str); 6] = [
+    (
+        "no such container",
+        "The container does not exist. Start it, or check the interpreter's container target.",
+    ),
+    (
+        "no container with name or id",
+        "The container does not exist. Start it, or check the interpreter's container target.",
+    ),
+    (
+        "is not running",
+        "The container or compose service is not running. Start it (for example `docker compose up -d`).",
+    ),
+    (
+        "no such service",
+        "The compose file has no such service. Check the interpreter's container target.",
+    ),
+    (
+        "executable file not found",
+        "The program is not installed in the container.",
+    ),
+    (
+        "cannot connect to the docker daemon",
+        "The container engine is not reachable. Start Docker or Podman.",
+    ),
+];
+
+/// A clear sentence when `stderr` shows the container (not the tool in it)
+/// is unavailable; `None` for an ordinary failure of the tool itself.
+pub fn container_unavailable_reason(stderr: &[u8]) -> Option<&'static str> {
+    let lower = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    CONTAINER_UNAVAILABLE_MARKERS
+        .iter()
+        .find(|(marker, _)| lower.contains(marker))
+        .map(|(_, reason)| *reason)
+}
+
 /// Whether a finished remote-host run should be reported as
 /// [`crate::Failure::NotFound`] rather than a normal (possibly failing)
 /// [`crate::Output`].
@@ -614,6 +714,7 @@ pub fn is_missing_program(exit_code: Option<i32>, stderr: &[u8]) -> bool {
     WSL_ITSELF_FAILED_MARKERS
         .iter()
         .any(|marker| stderr_lower.contains(marker))
+        || container_unavailable_reason(stderr).is_some()
 }
 
 #[cfg(test)]
@@ -1108,5 +1209,77 @@ mod tests {
         for path in ["/home/f/proj", "/workspace", r"C:\proj", "//wsl$/Ubuntu/x"] {
             assert!(!matches!(wsl(path), ExecHost::Container(_)), "{path}");
         }
+    }
+
+    // ------------------------------------------- container (X2) -----
+
+    #[test]
+    fn a_stopped_container_or_service_is_a_missing_program() {
+        for stderr in [
+            "Error response from daemon: No such container: web",
+            "service \"php\" is not running",
+            "Error: no container with name or ID \"web\" found",
+            "no such service: php",
+        ] {
+            assert!(is_missing_program(Some(1), stderr.as_bytes()), "{stderr}");
+            assert!(container_unavailable_reason(stderr.as_bytes()).is_some());
+        }
+        assert!(!is_missing_program(Some(1), b"PHP Parse error"));
+        assert_eq!(container_unavailable_reason(b"PHP Parse error"), None);
+    }
+
+    /// A "container engine" that is `echo` (or `sh -c`), so no test writes an
+    /// executable and races another test's fork (ETXTBSY).
+    fn fake_container(program: &str, prefix: &[&str], root: &Path) -> ExecHost {
+        ExecHost::Container(ContainerHost {
+            program: program.into(),
+            prefix_args: prefix.iter().map(|a| a.to_string()).collect(),
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec!["exec".into(), "-i".into()],
+            target: vec!["web".into()],
+            // The engine is spawned with the project as its cwd, so it must exist.
+            path_map: PathMap::new(root, "/workspace"),
+        })
+    }
+
+    #[test]
+    fn a_bare_name_resolves_with_command_v_inside_the_container() {
+        let dir = tempfile::tempdir().unwrap();
+        // `echo` prints the argv it was given, which is what the probe reads back.
+        let host = fake_container("echo", &[], dir.path());
+        let resolved = resolve_program(&host, "phpcs-x", dir.path());
+        assert_eq!(
+            resolved.as_deref(),
+            Some(r#"exec -i -w /workspace web sh -c command -v "$1" sh phpcs-x"#)
+        );
+    }
+
+    #[test]
+    fn a_path_candidate_is_tested_inside_the_container_by_its_remote_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = fake_container("echo", &[], dir.path());
+        let resolved = resolve_program(&host, "vendor/bin/phpstan", dir.path());
+        assert!(
+            resolved
+                .as_deref()
+                .is_some_and(|r| r.ends_with("sh /workspace/vendor/bin/phpstan")),
+            "{resolved:?}"
+        );
+    }
+
+    #[test]
+    fn a_failing_probe_is_none_and_is_not_cached() {
+        let dir = tempfile::tempdir().unwrap();
+        let flag = dir.path().join("up");
+        let script = format!("[ -e {} ] && echo /usr/bin/nope-x", flag.display());
+        let host = fake_container("sh", &["-c", &script, "sh"], dir.path());
+        assert_eq!(resolve_program(&host, "nope-x", dir.path()), None);
+        // The container comes up: the next lookup must reach it again.
+        std::fs::write(&flag, "").unwrap();
+        assert_eq!(
+            resolve_program(&host, "nope-x", dir.path()),
+            Some("/usr/bin/nope-x".to_string())
+        );
     }
 }

@@ -44,6 +44,11 @@ pub fn title(analyzer_name: &str, code: &str) -> String {
     format!("Suppress {code} ({analyzer_name})")
 }
 
+/// The "fix with the tool that can fix this rule" quick fix's menu title.
+pub fn fix_title(fixer_id: &str, code: &str) -> String {
+    format!("Fix with {fixer_id} ({code})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +96,6 @@ mod tests {
             "/** @psalm-suppress UndefinedVariable */"
         );
         assert_eq!(title("PHPStan", "a.b"), "Suppress a.b (PHPStan)");
+        assert_eq!(fix_title("phpcbf", "a.b.c"), "Fix with phpcbf (a.b.c)");
     }
 }

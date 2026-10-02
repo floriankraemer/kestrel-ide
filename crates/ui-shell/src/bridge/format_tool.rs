@@ -47,16 +47,39 @@ impl ToolFormat {
             return None;
         };
         let contribution = contributions.iter().find(|c| c.id == id)?;
-        Some(Self {
+        Some(Self::for_contribution(contribution, &settings, root))
+    }
+
+    /// The formatter `id`, narrowed to the one rule `code` names (Q7: "Fix
+    /// with phpcbf"), regardless of which formatter the settings choose.
+    /// `None` when no such formatter exists or it declares no `fix-args`.
+    pub(crate) fn fixer(id: &str, code: &str) -> Option<Self> {
+        let root = crate::bridge::convert::current_project_root()?;
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let (_, contribution) = plugin_host::registry()
+            .formatters()
+            .find(|(_, f)| f.id == id)
+            .map(|(p, f)| (p.id().to_string(), f.clone()))?;
+        let mut tool = Self::for_contribution(&contribution, &settings, root);
+        tool.def = tool.def.for_rule(code)?;
+        Some(tool)
+    }
+
+    fn for_contribution(
+        contribution: &plugin_api::FormatterContribution,
+        settings: &app_config::Settings,
+        root: PathBuf,
+    ) -> Self {
+        Self {
             host: crate::bridge::php::tool_host(
                 contribution.requires_interpreter.as_deref(),
-                &settings,
+                settings,
                 &root,
             ),
             def: analysis_core::FormatterDef::from_contribution(contribution),
             root,
-            php_binary: php.interpreter,
-        })
+            php_binary: settings_model::php::resolve(settings).interpreter,
+        }
     }
 
     pub(crate) fn name(&self) -> &str {

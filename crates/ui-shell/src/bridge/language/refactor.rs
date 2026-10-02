@@ -206,7 +206,13 @@ impl ffi::LanguageService {
             .get(&path)
             .and_then(|language_id| ToolFormat::resolve(language_id, scope.is_some()));
         if let Some(tool) = tool {
-            return self.format_with_tool(tool, path, buffer_revision);
+            return self.format_with_tool(
+                tool,
+                path,
+                buffer_revision,
+                "Reformat Code".to_string(),
+                true,
+            );
         }
         let path = QString::from(path.as_str());
         self.format_with(
@@ -221,14 +227,17 @@ impl ffi::LanguageService {
         );
     }
 
-    /// Reformat the whole file `path` with `tool`. A tool that turns out not
-    /// to be installed falls back to the language server, silently: the
-    /// setting names a formatter the machine may not have.
+    /// Rewrite the whole file `path` with `tool` and apply the difference as
+    /// one undo step. With `lsp_fallback` (Reformat Code) a tool that turns
+    /// out not to be installed falls back to the language server, silently:
+    /// the setting names a formatter the machine may not have.
     pub(crate) fn format_with_tool(
         mut self: Pin<&mut Self>,
         tool: ToolFormat,
         path: String,
         buffer_revision: i64,
+        title: String,
+        lsp_fallback: bool,
     ) {
         let Some(text) = self.session.borrow().content_for_path(Path::new(&path)) else {
             return;
@@ -242,11 +251,12 @@ impl ffi::LanguageService {
                 crate::bridge::format_tool::FORMAT_TIMEOUT,
             );
             let _ = qt_thread.queue(move |service: Pin<&mut Self>| match result {
-                Err(analysis_core::FormatError::NotInstalled) => {
+                Err(analysis_core::FormatError::NotInstalled) if lsp_fallback => {
                     service.format_whole_with_lsp(&path, buffer_revision)
                 }
-                Err(error) => service
-                    .finish_refactor(Err(format!("{} could not format: {error}", tool.name()))),
+                Err(error) => {
+                    service.finish_refactor(Err(format!("{} failed: {error}", tool.name())))
+                }
                 Ok(formatted) => {
                     let edits = lsp_core::edits_between(&text, &formatted);
                     if edits.is_empty() {
@@ -263,7 +273,7 @@ impl ffi::LanguageService {
                         ops: Vec::new(),
                         touches_other_files: false,
                     };
-                    service.publish_refactor("Reformat Code".to_string(), plan, None);
+                    service.publish_refactor(title, plan, None);
                 }
             });
         });

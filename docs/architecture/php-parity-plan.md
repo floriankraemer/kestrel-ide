@@ -224,8 +224,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Q3 — `analysis_core::format` through the buffer strategies; formatter mode in the stub analyzer | done | d8e9042 |
 | Q4 — Reformat Code uses the configured formatter, otherwise LSP; result applied as diff edits in one undo step | done | c21a39d |
 | Q5 — `format_on_save` per language | done | aca9bd6 |
-| Q6 — suppress quick fixes (`@phpstan-ignore`, `@psalm-suppress`, `phpcs:ignore`) in Alt+Enter | done | — |
-| Q7 — "Fix with phpcbf" intention | open | |
+| Q6 — suppress quick fixes (`@phpstan-ignore`, `@psalm-suppress`, `phpcs:ignore`) in Alt+Enter | done | 86451ff |
+| Q7 — "Fix with phpcbf" intention | done | — |
 | Q8 — ADR-0070 | open | |
 
 ### Y — templating languages (ADR-0071)

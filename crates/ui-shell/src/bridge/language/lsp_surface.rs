@@ -117,6 +117,12 @@ impl ffi::LanguageService {
         if self.as_mut().apply_database_intention(&intention.item) {
             return;
         }
+        if self
+            .as_mut()
+            .apply_analyzer_fix(&intention.item, buffer_revision)
+        {
+            return;
+        }
         let language_id = self.intentions_language.borrow().clone();
         self.as_mut()
             .run_action(intention.item, language_id, buffer_revision);

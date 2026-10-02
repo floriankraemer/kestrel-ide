@@ -8,6 +8,7 @@
 // each pushed in from outside and none of them decided here.
 
 #include "code_editor.h"
+#include "e2e_mark.h"
 #include "intention_bulb.h"
 
 #include "theme.h"
@@ -269,6 +270,20 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
                 painter.setBrush(QColor(0x4c, 0xaf, 0x50));
                 painter.drawPolygon(play);
                 painter.setBrush(Qt::NoBrush);
+                // The icon's screen rect: the one place its position is known.
+                const QRect iconRect(lineNumberArea_->mapToGlobal(QPoint(0, top)),
+                                     QSize(kRunMarkerWidth, fontMetrics().height()));
+                if (reportedRunIcons_.value(blockNumber) != iconRect) {
+                    reportedRunIcons_.insert(blockNumber, iconRect);
+                    e2eMark(QStringLiteral("{\"ev\":\"run_icon\",\"tab_id\":%1,\"line\":%2,"
+                                           "\"rect\":[%3,%4,%5,%6]}")
+                              .arg(property("tabId").toULongLong())
+                              .arg(blockNumber)
+                              .arg(iconRect.x())
+                              .arg(iconRect.y())
+                              .arg(iconRect.width())
+                              .arg(iconRect.height()));
+                }
             }
 
             if (breakpointLines_.contains(blockNumber)) {

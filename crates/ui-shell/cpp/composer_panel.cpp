@@ -1,6 +1,7 @@
 #include "composer_panel.h"
 
 #include "dock_layout.h"
+#include "e2e_mark.h"
 
 #include "DockAreaWidget.h"
 #include "DockManager.h"
@@ -74,8 +75,12 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
         tree->clear();
         QTreeWidgetItem *group = nullptr;
         QString groupKind;
+        QStringList reported;
         for (const FfiComposerRow &row : composerService->rows()) {
             const QString kind = QString(row.kind);
+            reported << QStringLiteral("{\"kind\":%1,\"name\":%2,\"detail\":%3,\"installed\":%4}")
+                          .arg(e2eJson(kind), e2eJson(QString(row.name)), e2eJson(QString(row.detail)),
+                               row.installed ? QStringLiteral("true") : QStringLiteral("false"));
             if (group == nullptr || kind != groupKind) {
                 group = new QTreeWidgetItem(tree, {groupTitle(kind)});
                 groupKind = kind;
@@ -87,6 +92,8 @@ QWidget *buildComposerDock(ads::CDockManager *dockManager, DockRegistry *docks,
             }
         }
         tree->expandAll();
+        e2eMark(QStringLiteral("{\"ev\":\"composer_rows\",\"rows\":[%1]}")
+                  .arg(reported.join(QLatin1Char(','))));
     };
     addButton(QObject::tr("Install"), [=]() { run(QStringLiteral("install"), QString()); });
     addButton(QObject::tr("Update"), [=]() { run(QStringLiteral("update"), QString()); });

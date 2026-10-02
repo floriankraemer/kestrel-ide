@@ -17,6 +17,7 @@
 #include "e2e_mark.h"
 #include "run_config_dialog.h"
 
+#include <algorithm>
 #include <QAction>
 #include <QCursor>
 #include <QDesktopServices>
@@ -154,6 +155,19 @@ void EditorTabs::refreshRunMarker(CodeEditor *editor)
         }
     }
     editor->setCoverageLines(covered, uncovered);
+    if (!covered.isEmpty() || !uncovered.isEmpty()) {
+        const auto joined = [](const QSet<int> &set) {
+            QList<int> sorted(set.begin(), set.end());
+            std::sort(sorted.begin(), sorted.end());
+            QStringList numbers;
+            for (const int line : sorted) {
+                numbers << QString::number(line);
+            }
+            return numbers.join(QLatin1Char(','));
+        };
+        e2eMark(QStringLiteral("{\"ev\":\"coverage_lines\",\"path\":%1,\"covered\":[%2],\"uncovered\":[%3]}")
+                  .arg(e2eJson(path), joined(covered), joined(uncovered)));
+    }
     QStringList lineNumbers;
     for (const int line : lines) {
         lineNumbers << QString::number(line);

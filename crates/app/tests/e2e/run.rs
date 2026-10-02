@@ -416,7 +416,7 @@ fn php_listen_fixture() -> tempfile::TempDir {
 }
 
 /// Click the Run menu entry `label`; true when it was checked beforehand.
-fn click_run_menu_item(ide: &Ide, label: &str) -> bool {
+pub(crate) fn click_run_menu_item(ide: &Ide, label: &str) -> bool {
     let mark = ide.mark();
     ide.key("alt+r");
     ide.wait_for_event(mark, "the Run menu to open", |e| {

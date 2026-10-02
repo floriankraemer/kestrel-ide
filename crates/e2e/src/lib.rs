@@ -543,9 +543,21 @@ fn copy_tree(from: &Path, to: &Path) {
     for entry in std::fs::read_dir(from).unwrap_or_else(|e| panic!("{}: {e}", from.display())) {
         let entry = entry.expect("readable fixture entry");
         let target = to.join(entry.file_name());
-        if entry.file_type().expect("file type").is_dir() {
+        let file_type = entry.file_type().expect("file type");
+        if file_type.is_dir() {
             std::fs::create_dir_all(&target).expect("fixture subdirectory");
             copy_tree(&entry.path(), &target);
+        } else if file_type.is_symlink() {
+            // Kept as a link, not followed: a Composer `vendor/bin/phpunit`
+            // finds its autoloader relative to its *real* location, so a
+            // copied-out file there cannot run.
+            #[cfg(unix)]
+            {
+                let link = std::fs::read_link(entry.path()).expect("readable symlink");
+                std::os::unix::fs::symlink(link, &target).expect("fixture symlink");
+            }
+            #[cfg(not(unix))]
+            std::fs::copy(entry.path(), &target).expect("fixture file");
         } else {
             std::fs::copy(entry.path(), &target).expect("fixture file");
         }

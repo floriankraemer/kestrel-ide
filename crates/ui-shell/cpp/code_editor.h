@@ -807,6 +807,9 @@ private:
     // R1-7/C6: set from RunService::runLines; a non-empty set widens the
     // gutter by one icon column and puts a Run triangle on each line.
     QSet<int> runLines_;
+    // E2E only: the last global rect reported for each run icon, so the
+    // marker stream (e2e_mark.h) hears about a line's icon once per move.
+    QHash<int, QRect> reportedRunIcons_;
     QSet<int> coveredLines_;
     QSet<int> uncoveredLines_;
     // D2-5: breakpoints in this file, and the suspended line.

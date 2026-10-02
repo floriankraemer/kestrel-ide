@@ -9,7 +9,7 @@ on:
   workflow_call:
     inputs:
       target:
-        description: Dockerfile stage to build (linux-builder or lsp-conformance)
+        description: Dockerfile stage to build (linux-builder, lsp-conformance, linux-jvm or linux-php)
         type: string
         default: linux-builder
     outputs:

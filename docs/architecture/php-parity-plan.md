@@ -254,8 +254,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | Task | Status | Commit |
 |---|---|---|
 | E1 — `stub_server` capability-profile flag (`STUB_LSP_TAG`/`STUB_LSP_CAPS`, done with L3) | done | b6c7a10 |
-| E2 — per-PR E2E: `e2e_php_two_servers_and_on_save_analysis`, `e2e_php_listen_session_stops_for_two_connections`, `e2e_php_generate_templates_and_new_class` | done | — |
-| E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | open | |
+| E2 — per-PR E2E: `e2e_php_two_servers_and_on_save_analysis`, `e2e_php_listen_session_stops_for_two_connections`, `e2e_php_generate_templates_and_new_class` | done | 40db0bb |
+| E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | done | — |
 | E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | open | |
 | Z1 — `overview.md`, `layering.md`, README index, keymap defaults | open | |
 
@@ -402,6 +402,26 @@ Agreed by the testing expert and the product owner on 2026-10-02.
   - b) Xdebug from the CLI, a listen session, and `php -S` with `?XDEBUG_TRIGGER=1`;
   - c) a gutter test, debug from the gutter, coverage, the Pest marker and a namespaced rerun;
   - d) the container interpreter, in `test-php-container` only.
+
+#### E3 results (run locally, 2026-10-02)
+
+`make test-php` ran flows a to c green (six tests with the skipped container flow) and `make test-php-container` ran flow d green against `php:8.3-cli` through the host's Docker socket.
+Running real tools found and fixed three bugs:
+- A missing `phpDebug.js` started `node phpDebug.js`, which spawns and then dies with an opaque "adapter disconnected"; the start is now refused with the install hint (`dap_core::catalog::not_located`).
+- A rerun of a PHPUnit class's test in a Pest project filtered on Pest's prettified name (`Greets by name` for `testGreetsByName`), matched nothing and still reported success; the Pest framework now uses the `pest-regex` filter dialect, which accepts the reported name or its words.
+- The harness copied `vendor/bin` symlinks as files, which cannot find the autoloader; `copy_tree` keeps symlinks.
+
+Verdicts for the "Verify" lines of `followups.md`:
+- **vscode-php-debug in listen mode** sends no `terminated` when a connection ends: one session served two `php -S` requests in turn, and only the toggle ended it.
+- **PHPStan relative paths:** its checkstyle names files relative to its working directory (`src/Greeter.php`); the IDE runs it from the project root and the Problems row carries the absolute path.
+- **Pest filter shape:** `Suite::<reported name>` matches Pest's own tests, including a `describe` block's `` `Group` → it x `` name; a PHPUnit class's tests only match by method name, which the gutter marker uses and the tree rerun now reconstructs.
+- **php-cs-fixer and Pint on the dotfile temp copy** both rewrite it (php-cs-fixer in the editor flow, Pint on the command line with the same file name shape).
+- **phpcbf `--sniffs`** accepts `Standard.Category.Sniff` and refuses the four-part message code, so `fix-args = ["--sniffs={sniff}"]` is right.
+- **PHPStan stacked ignores:** two stacked `// @phpstan-ignore` lines suppress the finding without an unused-ignore report.
+- **Intelephense `didChangeConfiguration` with `settings: null`** makes it send `workspace/configuration` again and re-index, so the null push is enough.
+
+The container flow proves PHP runs in the service by a test that asserts the service's hostname.
+It does not debug in the container: the official image has no Xdebug, which stays in the manual matrix (E4 item 6).
 
 ### E4 — manual matrix (Linux, WSL, Windows; light and dark; 100% and 150% DPI)
 

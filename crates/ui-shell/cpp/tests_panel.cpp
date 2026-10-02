@@ -335,6 +335,23 @@ void TestsPanel::onTestTreeChanged()
     e2eMark(QStringLiteral("{\"ev\":\"test_tree_changed\",\"nodes\":%1}").arg(total));
 }
 
+void TestsPanel::markE2eRows() const
+{
+    QStringList rows;
+    for (auto it = itemsById_.constBegin(); it != itemsById_.constEnd(); ++it) {
+        const QRect rect = tree_->visualItemRect(it.value());
+        const QPoint origin = tree_->viewport()->mapToGlobal(rect.topLeft());
+        rows << QStringLiteral("{\"id\":%1,\"name\":%2,\"rect\":[%3,%4,%5,%6]}")
+                  .arg(e2eJson(it.key()), e2eJson(it.value()->text(0)))
+                  .arg(origin.x())
+                  .arg(origin.y())
+                  .arg(rect.width())
+                  .arg(rect.height());
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"test_tree_rects\",\"rows\":[%1]}")
+              .arg(rows.join(QLatin1Char(','))));
+}
+
 void TestsPanel::markE2eToolbar() const
 {
     struct ButtonEntry
@@ -427,6 +444,7 @@ void TestsPanel::showContextMenu(const QPoint &pos)
     const QString block = testService_->rerunBlock();
     rerun->setEnabled(block.isEmpty());
     rerun->setToolTip(block);
+    e2eMarkMenuActions(&menu, "tests_menu_action");
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
     if (chosen == rerun) {
         report(testService_->runNode(id));
@@ -448,7 +466,10 @@ TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
     // real geometry until this dock is actually on screen and laid out.
     QObject::connect(dock, &ads::CDockWidget::visibilityChanged, panel, [panel](bool visible) {
         if (visible) {
-            QTimer::singleShot(0, panel, [panel]() { panel->markE2eToolbar(); });
+            QTimer::singleShot(0, panel, [panel]() {
+                panel->markE2eToolbar();
+                panel->markE2eRows();
+            });
         }
     });
     return panel;

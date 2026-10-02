@@ -54,6 +54,7 @@ public:
     // calls this once per `visibilityChanged(true)`, since neither button
     // has a real screen geometry before the dock is actually shown.
     void markE2eToolbar() const;
+    void markE2eRows() const;
 
 private:
     void onTestRunStarted();

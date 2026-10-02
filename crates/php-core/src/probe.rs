@@ -260,4 +260,27 @@ mod tests {
             Err(ProbeError::NotFound)
         );
     }
+
+    #[test]
+    fn a_stopped_container_surfaces_the_engines_reason() {
+        use process_exec::host::{ContainerHost, PathMap};
+        let dir = tempfile::tempdir().unwrap();
+        let host = ExecHost::Container(ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec![
+                "-c".into(),
+                "echo 'Error response from daemon: container web is not running' >&2; exit 1"
+                    .into(),
+                "sh".into(),
+            ],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: PathMap::new(dir.path(), "/workspace"),
+        });
+        let error = probe(&host, "php", dir.path()).unwrap_err();
+        assert!(error.to_string().contains("not running"), "got: {error}");
+        assert_ne!(error, ProbeError::NotFound);
+    }
 }

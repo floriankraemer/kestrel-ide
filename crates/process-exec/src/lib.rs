@@ -61,7 +61,8 @@ pub enum Failure {
     TimedOut,
     /// Spawning, writing stdin, draining a pipe, or waiting failed for a
     /// reason that isn't "not found" or "timed out" — the message is
-    /// `io::Error::to_string()`.
+    /// `io::Error::to_string()`, or, for a stopped/missing container, the
+    /// sentence from [`host::container_unavailable_reason`].
     Io(String),
 }
 
@@ -215,7 +216,14 @@ pub fn run_on(
     // `Failure::NotFound` a missing local binary already reports, so
     // `VcsError::GitNotInstalled` and friends keep working unmodified.
     if host.runs_remotely() && host::is_missing_program(status.code(), &stderr) {
-        return Err(Failure::NotFound);
+        // A stopped/missing container says why on stderr; keep that rather
+        // than the bare "not found", which reads as a missing interpreter.
+        return Err(match host::container_unavailable_reason(&stderr) {
+            Some(reason) if matches!(host, ExecHost::Container(_)) => {
+                Failure::Io(reason.to_string())
+            }
+            _ => Failure::NotFound,
+        });
     }
 
     Ok(Output {
@@ -350,13 +358,16 @@ pub fn spawn_on(
     env: &[(&str, &str)],
     stdin_file: Option<&Path>,
 ) -> Result<Spawned, Failure> {
-    let resolved_program = match host::resolve_program(host, program, work_dir) {
-        Some(resolved) => resolved,
+    let resolved_program = match host::resolve_program_or_reason(host, program, work_dir) {
+        Ok(resolved) => resolved,
         // A spawned child's exit is never inspected here, so a container
         // that is down or lacks the tool would surface as a process that
-        // dies with engine text on a pipe. Say so up front instead.
-        None if matches!(host, ExecHost::Container(_)) => return Err(Failure::NotFound),
-        None => program.to_string(),
+        // dies with engine text on a pipe. Say so up front instead — with
+        // the engine's own reason when it gave one.
+        Err(reason) if matches!(host, ExecHost::Container(_)) => {
+            return Err(reason.map_or(Failure::NotFound, |r| Failure::Io(r.to_string())))
+        }
+        Err(_) => program.to_string(),
     };
 
     let stdin = match stdin_file {
@@ -457,6 +468,47 @@ mod tests {
             spawn_on(&host, "phpunit", &[], dir.path(), &[], None),
             Err(Failure::NotFound)
         ));
+    }
+
+    fn stopped_container(dir: &Path) -> ExecHost {
+        ExecHost::Container(host::ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec![
+                "-c".into(),
+                "echo 'Error response from daemon: container web is not running' >&2; exit 1"
+                    .into(),
+                "sh".into(),
+            ],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: host::PathMap::new(dir, "/workspace"),
+        })
+    }
+
+    #[test]
+    fn a_stopped_container_reports_the_engines_reason_not_a_missing_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = stopped_container(dir.path());
+        let expect = host::container_unavailable_reason(b"is not running").unwrap();
+
+        match spawn_on(&host, "php", &[], dir.path(), &[], None) {
+            Err(Failure::Io(reason)) => assert_eq!(reason, expect),
+            other => panic!("spawn_on: {other:?}"),
+        }
+        match run_on(
+            &host,
+            "php",
+            &[],
+            dir.path(),
+            None,
+            Duration::from_secs(5),
+            &[],
+        ) {
+            Err(Failure::Io(reason)) => assert_eq!(reason, expect),
+            other => panic!("run_on: {other:?}"),
+        }
     }
 
     #[test]

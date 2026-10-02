@@ -559,17 +559,29 @@ fn resolve_cache() -> &'static ResolveCache {
 /// vocabulary (`VcsError::GitNotInstalled`, `AnalyzerStatus::NotDetected`),
 /// the same split every other `process-exec` failure draws.
 pub fn resolve_program(host: &ExecHost, program: &str, cwd: &Path) -> Option<String> {
+    resolve_program_or_reason(host, program, cwd).ok()
+}
+
+/// [`resolve_program`] that also says *why* a container lookup missed:
+/// `Err(Some(reason))` when the container itself is unavailable (stopped,
+/// no such service, engine down — [`container_unavailable_reason`]), else
+/// `Err(None)`.
+pub fn resolve_program_or_reason(
+    host: &ExecHost,
+    program: &str,
+    cwd: &Path,
+) -> Result<String, Option<&'static str>> {
     let wsl = match host {
         ExecHost::Wsl(wsl) => wsl,
         ExecHost::Container(container) => {
             return resolve_in_container(host, container, program, cwd)
         }
-        ExecHost::Local => return Some(program.to_string()),
+        ExecHost::Local => return Ok(program.to_string()),
     };
 
     let key = (wsl.distro.clone(), program.to_string());
     if let Some(cached) = resolve_cache().lock().unwrap().get(&key) {
-        return cached.clone();
+        return cached.clone().ok_or(None);
     }
 
     let resolved = if program.contains('/') || program.contains('\\') {
@@ -583,7 +595,7 @@ pub fn resolve_program(host: &ExecHost, program: &str, cwd: &Path) -> Option<Str
         .lock()
         .unwrap()
         .insert(key, resolved.clone());
-    resolved
+    resolved.ok_or(None)
 }
 
 /// [`resolve_program`] inside a container: `sh -c 'command -v "$1"'` for a
@@ -595,7 +607,7 @@ fn resolve_in_container(
     container: &ContainerHost,
     program: &str,
     cwd: &Path,
-) -> Option<String> {
+) -> Result<String, Option<&'static str>> {
     let key = (
         format!(
             "container:{} {:?} {:?}",
@@ -604,7 +616,7 @@ fn resolve_in_container(
         program.to_string(),
     );
     if let Some(Some(hit)) = resolve_cache().lock().unwrap().get(&key) {
-        return Some(hit.clone());
+        return Ok(hit.clone());
     }
 
     let is_path = program.contains('/') || program.contains('\\');
@@ -620,9 +632,9 @@ fn resolve_in_container(
     };
     let mut command = host.command("sh", &["-c", script, "sh", &candidate], cwd, &[]);
     suppress_console_window(&mut command);
-    let output = crate::retry_text_busy(|| command.output()).ok()?;
+    let output = crate::retry_text_busy(|| command.output()).map_err(|_| None)?;
     if !output.status.success() {
-        return None;
+        return Err(container_unavailable_reason(&output.stderr));
     }
     let resolved = String::from_utf8_lossy(&output.stdout)
         .lines()
@@ -631,13 +643,13 @@ fn resolve_in_container(
         .trim()
         .to_string();
     if resolved.is_empty() {
-        return None;
+        return Err(None);
     }
     resolve_cache()
         .lock()
         .unwrap()
         .insert(key, Some(resolved.clone()));
-    Some(resolved)
+    Ok(resolved)
 }
 
 fn probe_executable(distro: &str, remote_path: &str) -> bool {

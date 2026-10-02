@@ -182,7 +182,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 | N2 — Go to Type Declaration action; Go to Declaration uses `declaration` when the server supports it | done | bf163dd |
 | N3 — `workspace/symbol` merged with index hits; Go to Class | done | 8b487fb |
 | N4 — Reformat Selection → `format_range` | done | 1ac97c6 |
-| N5 — `onTypeFormatting`, applied as one undo step | done | — |
+| N5 — `onTypeFormatting`, applied as one undo step | done | f58eec3 |
 
 ### X — container exec host (ADR-0067)
 | Task | Status | Commit |
@@ -231,7 +231,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### Y — templating languages (ADR-0071)
 | Task | Status | Commit |
 |---|---|---|
-| Y1 — vendor the Twig/Blade sources, `build.rs` + `cc` | open | |
+| Y1 — vendor the Twig/Blade sources, `build.rs` + `cc` | done | — |
 | Y2 — `twig` and `blade` rows (`.blade.php` beats `.php`), hidden `php_only` row, queries | open | |
 | Y3 — `.phtml` and `.inc` → PHP | open | |
 | Y4 — `syntax_core::language_at`; injection-aware comment toggle | open | |

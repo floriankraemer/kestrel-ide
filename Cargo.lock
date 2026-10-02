@@ -8402,6 +8402,7 @@ dependencies = [
 name = "syntax-core"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "libloading 0.9.0",
  "serde",
  "streaming-iterator",

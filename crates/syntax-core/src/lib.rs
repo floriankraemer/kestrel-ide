@@ -9,6 +9,7 @@ mod folds;
 mod registry;
 pub mod runtime;
 pub mod theme;
+pub mod vendored;
 
 use std::ops::Range;
 use std::sync::Arc;

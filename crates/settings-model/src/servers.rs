@@ -11,6 +11,47 @@ use std::collections::HashMap;
 use app_config::{LanguageServerSetting, Settings};
 use lsp_core::{resolve_servers, PluginServer, ServerOverride};
 
+/// The saved `[[language_server]]` entries as the overrides `resolve_servers`
+/// layers over the catalog — the one mapping the runtime and this page share.
+pub fn overrides_from_settings(entries: &[LanguageServerSetting]) -> Vec<ServerOverride> {
+    let json = |table: &Option<toml::Table>| {
+        table
+            .as_ref()
+            .map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null))
+    };
+    entries
+        .iter()
+        .map(|entry| ServerOverride {
+            id: entry.id.clone(),
+            language_id: entry.language_id.clone(),
+            name: entry.name.clone(),
+            command: entry.command.clone(),
+            args: entry.args.clone(),
+            enabled: entry.enabled,
+            settings: json(&entry.settings),
+            initialization_options: json(&entry.initialization_options),
+            diagnostics: entry.diagnostics,
+            exec: None,
+        })
+        .collect()
+}
+
+/// The parts of an entry this page has no widget for. They are carried
+/// through untouched so saving the page never discards a hand-written
+/// `settings` table or an `initialization_options` licence.
+#[derive(Debug, Clone, PartialEq, Default)]
+struct Extras {
+    diagnostics: Option<bool>,
+    settings: Option<toml::Table>,
+    initialization_options: Option<toml::Table>,
+}
+
+impl Extras {
+    fn is_empty(&self) -> bool {
+        *self == Extras::default()
+    }
+}
+
 /// What the Status column says before the live state is known — the part
 /// that is a property of the configuration rather than of a running
 /// process. The live states (`Starting`, `Running`, `Crashed, retrying`)
@@ -88,9 +129,11 @@ pub fn can_have_server(language: syntax_core::Language) -> bool {
 }
 
 /// The page's draft: one row per language, committed on OK.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ServerDraft {
     rows: Vec<ServerRow>,
+    /// Per server id, what the saved entry said beyond command/args/enabled.
+    extras: HashMap<String, Extras>,
     /// Per-language `(command, args)` each row is diffed against by
     /// `override_for` — the shipped catalog's default, or the contributing
     /// plugin's own default when a plugin supplies this language's server
@@ -114,18 +157,7 @@ impl ServerDraft {
         languages: &[(String, String)],
         plugin_servers: &[PluginServer],
     ) -> Self {
-        let overrides: Vec<ServerOverride> = settings
-            .language_servers
-            .iter()
-            .map(|entry| ServerOverride {
-                language_id: entry.language_id.clone(),
-                name: entry.name.clone(),
-                command: entry.command.clone(),
-                args: entry.args.clone(),
-                enabled: entry.enabled,
-                ..Default::default()
-            })
-            .collect();
+        let overrides = overrides_from_settings(&settings.language_servers);
 
         let name_of = |language_id: &str| {
             languages
@@ -138,11 +170,33 @@ impl ServerDraft {
         // The baseline every row is diffed against: the catalog/plugin
         // default *before* any user override, which is exactly what
         // `resolve_servers` builds when given no overrides at all.
-        let baselines: HashMap<String, (String, Vec<String>)> =
-            resolve_servers(&[], plugin_servers)
-                .into_iter()
-                .map(|config| (config.id, (config.command, config.args)))
-                .collect();
+        let defaults = resolve_servers(&[], plugin_servers);
+        let baselines: HashMap<String, (String, Vec<String>)> = defaults
+            .iter()
+            .map(|config| {
+                (
+                    config.id.clone(),
+                    (config.command.clone(), config.args.clone()),
+                )
+            })
+            .collect();
+        let mut extras: HashMap<String, Extras> = HashMap::new();
+        for entry in &settings.language_servers {
+            let id = entry.id.clone().unwrap_or_else(|| {
+                defaults
+                    .iter()
+                    .find(|c| c.language_id == entry.language_id)
+                    .map_or_else(|| entry.language_id.clone(), |c| c.id.clone())
+            });
+            let carried = Extras {
+                diagnostics: entry.diagnostics,
+                settings: entry.settings.clone(),
+                initialization_options: entry.initialization_options.clone(),
+            };
+            if !carried.is_empty() {
+                extras.insert(id, carried);
+            }
+        }
 
         let mut rows: Vec<ServerRow> = resolve_servers(&overrides, plugin_servers)
             .into_iter()
@@ -171,7 +225,11 @@ impl ServerDraft {
         }
 
         rows.sort_by_key(|row| row.language_name.to_lowercase());
-        Self { rows, baselines }
+        Self {
+            rows,
+            baselines,
+            extras,
+        }
     }
 
     pub fn rows(&self) -> &[ServerRow] {
@@ -215,7 +273,24 @@ impl ServerDraft {
     pub fn overrides(&self) -> Vec<LanguageServerSetting> {
         self.rows
             .iter()
-            .filter_map(|row| override_for(row, self.baselines.get(&row.id)))
+            .filter_map(|row| {
+                let mut entry = override_for(row, self.baselines.get(&row.id));
+                if let Some(extras) = self.extras.get(&row.id) {
+                    let entry = entry.get_or_insert_with(|| LanguageServerSetting {
+                        language_id: row.language_id.clone(),
+                        ..Default::default()
+                    });
+                    entry.diagnostics = extras.diagnostics;
+                    entry.settings = extras.settings.clone();
+                    entry.initialization_options = extras.initialization_options.clone();
+                }
+                entry.map(|mut e| {
+                    if row.id != row.language_id {
+                        e.id = Some(row.id.clone());
+                    }
+                    e
+                })
+            })
             .collect()
     }
 
@@ -245,10 +320,10 @@ fn override_for(
             }
             Some(LanguageServerSetting {
                 language_id: row.language_id.clone(),
-                name: None,
                 command: command_differs.then(|| command.to_string()),
                 args: args_differ.then_some(args),
                 enabled: (!row.enabled).then_some(false),
+                ..Default::default()
             })
         }
         // No catalog or plugin entry: the row only exists once the user
@@ -256,10 +331,10 @@ fn override_for(
         None if command.is_empty() => None,
         None => Some(LanguageServerSetting {
             language_id: row.language_id.clone(),
-            name: None,
             command: Some(command.to_string()),
             args: (!args.is_empty()).then_some(args),
             enabled: (!row.enabled).then_some(false),
+            ..Default::default()
         }),
     }
 }
@@ -488,5 +563,54 @@ mod tests {
                 def.id()
             );
         }
+    }
+
+    #[test]
+    fn a_second_server_of_a_language_is_edited_by_id_and_written_with_its_id() {
+        let mut draft = draft();
+        assert_eq!(draft.row("phpactor").unwrap().language_id, "php");
+        assert_eq!(draft.row("intelephense").unwrap().command, "intelephense");
+        draft.set_enabled("phpactor", false);
+        let overrides = draft.overrides();
+        assert_eq!(overrides.len(), 1);
+        assert_eq!(overrides[0].id.as_deref(), Some("phpactor"));
+        assert_eq!(overrides[0].enabled, Some(false));
+    }
+
+    #[test]
+    fn hand_written_settings_and_options_survive_a_save() {
+        let mut settings = Settings::default();
+        settings.language_servers = vec![LanguageServerSetting {
+            language_id: "php".into(),
+            diagnostics: Some(true),
+            settings: Some(toml::from_str("[intelephense]\nx = 1\n").unwrap()),
+            initialization_options: Some(toml::from_str("licenceKey = \"k\"").unwrap()),
+            ..Default::default()
+        }];
+        let draft = ServerDraft::new(&settings, &languages(), &[]);
+        let overrides = draft.overrides();
+        assert_eq!(overrides.len(), 1);
+        // The id-less legacy entry addressed the first server, so it is
+        // written back against that server's own id.
+        assert_eq!(overrides[0].id.as_deref(), Some("intelephense"));
+        assert_eq!(overrides[0].diagnostics, Some(true));
+        assert_eq!(overrides[0].settings, settings.language_servers[0].settings);
+        assert_eq!(
+            overrides[0].initialization_options,
+            settings.language_servers[0].initialization_options
+        );
+    }
+
+    #[test]
+    fn saved_entries_become_overrides_with_json_settings() {
+        let entry = LanguageServerSetting {
+            id: Some("phpactor".into()),
+            language_id: "php".into(),
+            settings: Some(toml::from_str("a = 1").unwrap()),
+            ..Default::default()
+        };
+        let mapped = overrides_from_settings(&[entry]);
+        assert_eq!(mapped[0].id.as_deref(), Some("phpactor"));
+        assert_eq!(mapped[0].settings, Some(serde_json::json!({"a": 1})));
     }
 }

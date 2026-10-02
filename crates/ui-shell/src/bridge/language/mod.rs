@@ -542,18 +542,8 @@ impl ffi::LanguageService {
         // own language servers (ADR-0022). Deliberately synchronous, unlike
         // `SearchModel::open_index`'s matching read (ADR-0037 § Alternatives).
         let settings = crate::bridge::convert::load_resolved_settings();
-        let overrides: Vec<lsp_core::ServerOverride> = settings
-            .language_servers
-            .iter()
-            .map(|entry| lsp_core::ServerOverride {
-                language_id: entry.language_id.clone(),
-                name: entry.name.clone(),
-                command: entry.command.clone(),
-                args: entry.args.clone(),
-                enabled: entry.enabled,
-                ..Default::default()
-            })
-            .collect();
+        let overrides =
+            settings_model::servers::overrides_from_settings(&settings.language_servers);
         *self.configs.borrow_mut() = lsp_core::resolve_servers(&overrides, &plugin_servers());
         *self.host.borrow_mut() = lsp_core::ExecHost::for_path(std::path::Path::new(&root));
 
@@ -784,18 +774,8 @@ impl ffi::LanguageService {
         // own language servers (ADR-0022), and a project that pins a
         // toolchain-local server is the reason that field is project-scoped.
         let settings = crate::bridge::convert::load_resolved_settings();
-        let overrides: Vec<lsp_core::ServerOverride> = settings
-            .language_servers
-            .iter()
-            .map(|entry| lsp_core::ServerOverride {
-                language_id: entry.language_id.clone(),
-                name: entry.name.clone(),
-                command: entry.command.clone(),
-                args: entry.args.clone(),
-                enabled: entry.enabled,
-                ..Default::default()
-            })
-            .collect();
+        let overrides =
+            settings_model::servers::overrides_from_settings(&settings.language_servers);
         let resolved = lsp_core::resolve_servers(&overrides, &plugin_servers());
 
         // Which running servers the new settings no longer describe: the

@@ -142,8 +142,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### L — several servers per language (ADR-0066)
 | Task | Status | Commit |
 |---|---|---|
-| L1 — `ServerDef`/`ServerConfig`: `id`, `initialization_options`, `diagnostics`, `posix_only`, `exec`; `resolve_servers` keyed by id; `intelephense` + `phpactor` rows | done | — |
-| L2 — `LanguageServerSetting` gains `id`, `settings`, `initialization_options`; legacy entries still load | open | |
+| L1 — `ServerDef`/`ServerConfig`: `id`, `initialization_options`, `diagnostics`, `posix_only`, `exec`; `resolve_servers` keyed by id; `intelephense` + `phpactor` rows | done | 2662562 |
+| L2 — `LanguageServerSetting` gains `id`, `settings`, `initialization_options`; legacy entries still load | done | — |
 | L3 — `initialize` sends `initializationOptions`; the full `ServerCapabilities` is stored per server | open | |
 | L4 — servers keyed by id with a per-language order; did* fans out; `LspEvent.server_id`; stop/restart per server | open | |
 | L5 — `routing` module: method → `First`/`Merge`; `request()` / `request_all()` | open | |

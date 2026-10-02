@@ -23,6 +23,7 @@ pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0
 pub mod containers;
 pub mod database; // Data sources, no secrets (ADR-0061 §1).
 pub mod ignored_names; // `Settings::ignored_names`'s default list, `Default` impl and add/remove/reset rules (ADR-0064).
+pub mod language_server; // One `[[language_server]]` entry (ADR-0066).
 pub mod php; // The `[php]` section: interpreter, language level, container target (PHP parity plan).
 use ignored_names::default_ignored_names;
 pub use ignored_names::DEFAULT_IGNORED_NAMES;
@@ -82,6 +83,7 @@ pub use editing::EditingSettings;
 pub use file_associations::{FileAssociationRule, FileAssociationSettings};
 pub use hover::{HoverScope, HoverSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
+pub use language_server::LanguageServerSetting;
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
 pub use tab_padding::TabPaddingSettings;
@@ -95,30 +97,6 @@ const SETTINGS_FILE: &str = "settings.toml";
 /// [`SETTINGS_FILE`]. Same directory, so the rename stays within one
 /// filesystem and is therefore atomic.
 const TEMP_SETTINGS_FILE: &str = "settings.toml.tmp";
-
-/// One `[[language_server]]` entry: what the user says about the language
-/// server for one language id.
-///
-/// Every field but `language_id` is optional, so `enabled = false` alone
-/// switches a shipped server off without wiping its command. This mirrors
-/// `lsp_core::ServerOverride` field for field but is declared here so the
-/// config crate keeps no dependency on the LSP client (ADR-0016) — `ui-shell`
-/// maps one to the other at the seam.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
-pub struct LanguageServerSetting {
-    /// LSP language id, e.g. `"rust"`. The key both the shipped catalog and
-    /// this table are keyed by.
-    #[serde(default)]
-    pub language_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub args: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-}
 
 pub(crate) fn is_false(b: &bool) -> bool {
     !*b

@@ -203,8 +203,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | D3 — "Start Listening for PHP Debug Connections" toggle; connections arrive as threads | done | 88d670f |
 | D4 — `dap_core::xdebug::env` | done | cfb5cb9 |
 | D5 — debug PHP run configs and tests in a container (lift the refusal for `php-debug` only) | done | c0c6d6d |
-| D6 — Xdebug check (extension missing, mode without `debug`) on the PHP page and in the debug start error | done | — |
-| D7 — ADR-0069 | open | |
+| D6 — Xdebug check (extension missing, mode without `debug`) on the PHP page and in the debug start error | done | 03cb350 |
+| D7 — ADR-0069 | done | — |
 
 ### T — testing
 | Task | Status | Commit |

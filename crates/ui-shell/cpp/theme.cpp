@@ -554,20 +554,17 @@ QCheckBox, QRadioButton {
 QCheckBox::indicator, QRadioButton::indicator {
     width: 14px;
     height: 14px;
-    border: 1px solid {border};
+    border: 1px solid {textDim};
     background-color: {surface2};
 }
 
 QCheckBox::indicator { border-radius: 3px; }
 QRadioButton::indicator { border-radius: 8px; }
 QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: {accent}; }
-QCheckBox::indicator:checked { background-color: {accent}; border-color: {accent}; }
-
-/* No check-glyph asset exists yet (only the chevron/close/search masks) — a
-   solid fill reads as "checked" without a new icon pipeline for one
-   control; the radio's ring-style fill keeps it visually distinct. */
+/* White tick on the accent fill, which both themes share. */
+QCheckBox::indicator:checked { background-color: {accent}; border-color: {accent}; image: url(:/ui/icons/check.png); }
 QRadioButton::indicator:checked { background-color: {surface2}; border: 4px solid {accent}; }
-QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: {textDim}; }
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: {border}; }
 QCheckBox::indicator:checked:disabled { background-color: {textDim}; border-color: {textDim}; }
 
 QProgressBar {

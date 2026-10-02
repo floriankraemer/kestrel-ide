@@ -171,8 +171,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 ### PS — PHP language-server configuration
 | Task | Status | Commit |
 |---|---|---|
-| PS1 — `php_core::lsp::{intelephense, phpactor}` → (initialization options, settings), golden JSON | done | — |
-| PS2 — ui-shell joins PS1 into `ServerConfig` on start and on settings save | open | |
+| PS1 — `php_core::lsp::{intelephense, phpactor}` → (initialization options, settings), golden JSON | done | 0c4f605 |
+| PS2 — ui-shell joins PS1 into `ServerConfig` on start and on settings save | done | — |
 | PS3 — install hints (npm / phar) in the server start error | open | |
 
 ### N — missing LSP requests

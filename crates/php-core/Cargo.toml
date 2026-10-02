@@ -9,5 +9,9 @@ serde_json = "1"
 # lives on (local, WSL, and later a container).
 process-exec = { path = "../process-exec" }
 
+# `ServerConfig`: the join of the `[php]` JSON into the resolved server
+# configs lives here, so the rule is testable without Qt (PS2).
+lsp-core = { path = "../lsp-core" }
+
 [dev-dependencies]
 tempfile = "3"

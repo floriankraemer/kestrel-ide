@@ -21,7 +21,9 @@ One support crate, `php-core`, Qt-free and tokio-free, depended on only by `ui-s
   - the language-level rule: an explicit `[php] language_level`, else the lower bound of `require.php`, else the probed interpreter version;
   - the interpreter probe, one `php -r` call that reports the version, the loaded ini, and whether Xdebug (with its `xdebug.mode`) and PCOV are loaded;
   - the Composer tool window's rows and the argv of every action, with arguments refused when they could be read as options;
-  - the mapping from `[php]` to each language server's initialization options and settings (phase PS).
+  - the mapping from `[php]` to each language server's initialization options and settings (`lsp`), and `lsp::apply`, which lays it over the resolved `ServerConfig`s of Intelephense and Phpactor: the per-server toggles, the language level, include paths, stubs and the licence key.
+    A hand-written `[[language_server]]` table stays on top of what is derived, and a user disable is not undone.
+    A language-level or include-path change differs only in `settings` and is pushed with `didChangeConfiguration`; a licence-key change differs in the initialization options and restarts Intelephense (`catalog::reload_kind`).
 - **Does not own** the toolchain table, Composer-script detection, `php -S` and console argv, or Run Current File for `.php`.
   They stay in `run-core` (`ToolchainId::Php`, `detect`, `context`, `php_run`), which must not depend on `php-core`.
   `run-core` receives the `[php]` interpreter through `MacroContext::php_interpreter`, set by the bridge when it launches.
@@ -43,6 +45,7 @@ One support crate, `php-core`, Qt-free and tokio-free, depended on only by `ui-s
 
 ## Consequences
 
+- The language level handed to the servers is the explicit setting, else `require.php`; the probed interpreter version is not used there, because probing runs a process and a server start must not wait for it.
 - A global PsySH install is not detected for the PHP console; only `vendor/bin/psysh` is.
 - The interpreter probe runs on the local or WSL host.
   A container interpreter is probed once the container exec host exists (ADR-0067).

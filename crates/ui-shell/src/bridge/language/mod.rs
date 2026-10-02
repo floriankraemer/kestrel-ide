@@ -522,9 +522,8 @@ impl ffi::LanguageService {
         // own language servers (ADR-0022). Deliberately synchronous, unlike
         // `SearchModel::open_index`'s matching read (ADR-0037 § Alternatives).
         let settings = crate::bridge::convert::load_resolved_settings();
-        let overrides =
-            settings_model::servers::overrides_from_settings(&settings.language_servers);
-        *self.configs.borrow_mut() = lsp_core::resolve_servers(&overrides, &plugin_servers());
+        *self.configs.borrow_mut() =
+            server_lifecycle::resolved_server_configs(&settings, Some(std::path::Path::new(&root)));
         *self.host.borrow_mut() = lsp_core::ExecHost::for_path(std::path::Path::new(&root));
 
         let (manager, events) = lsp_core::LspManager::new(lsp_core::uri_from_path(&root));

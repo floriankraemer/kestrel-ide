@@ -15,6 +15,7 @@
 
 use std::path::Path;
 
+use lsp_core::ServerConfig;
 use serde_json::{json, Map, Value};
 
 use crate::level::LanguageLevel;
@@ -101,6 +102,45 @@ pub fn phpactor(input: &LspInput) -> ServerJson {
     ServerJson {
         initialization_options: Value::Object(init),
         settings: Value::Null,
+    }
+}
+
+/// The server ids [`apply`] configures.
+pub const INTELEPHENSE_ID: &str = "intelephense";
+pub const PHPACTOR_ID: &str = "phpactor";
+
+/// A server's `[php.servers.<id>]` toggles; `None` keeps what the resolved
+/// configuration already says.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Toggles {
+    pub enabled: Option<bool>,
+    pub diagnostics: Option<bool>,
+}
+
+/// Lay the `[php]` settings over the resolved server configs of the two PHP
+/// servers: their toggles, initialization options and (Intelephense) pulled
+/// settings. Anything the user wrote into a `[[language_server]]` table
+/// stays on top of what is derived, and a `[[language_server]]` that
+/// disables a server is not undone by `[php]`.
+pub fn apply(configs: &mut [ServerConfig], input: &LspInput, toggles: impl Fn(&str) -> Toggles) {
+    for cfg in configs.iter_mut() {
+        let json = match cfg.id.as_str() {
+            INTELEPHENSE_ID => intelephense(input),
+            PHPACTOR_ID => phpactor(input),
+            _ => continue,
+        };
+        let toggle = toggles(&cfg.id);
+        cfg.enabled &= toggle.enabled.unwrap_or(true);
+        cfg.diagnostics = toggle.diagnostics.unwrap_or(cfg.diagnostics);
+        cfg.initialization_options = merge_user(
+            json.initialization_options,
+            &std::mem::take(&mut cfg.initialization_options),
+        );
+        if cfg.id == INTELEPHENSE_ID {
+            cfg.settings_section
+                .get_or_insert_with(|| INTELEPHENSE_SECTION.to_string());
+            cfg.settings = merge_user(json.settings, &std::mem::take(&mut cfg.settings));
+        }
     }
 }
 
@@ -215,6 +255,77 @@ mod tests {
             })
         );
         assert_eq!(json.settings, Value::Null);
+    }
+
+    fn php_configs() -> Vec<ServerConfig> {
+        lsp_core::resolve_servers(&[], &[])
+            .into_iter()
+            .filter(|c| c.language_id == "php")
+            .collect()
+    }
+
+    #[test]
+    fn apply_configures_both_servers_and_their_toggles() {
+        let mut configs = php_configs();
+        let paths = vec!["lib".to_string()];
+        apply(&mut configs, &input(Path::new("/p"), &paths), |id| {
+            Toggles {
+                enabled: (id == PHPACTOR_ID).then_some(false),
+                diagnostics: (id == PHPACTOR_ID).then_some(true),
+            }
+        });
+        let by_id = |id: &str| configs.iter().find(|c| c.id == id).unwrap();
+        let intelephense = by_id(INTELEPHENSE_ID);
+        assert!(intelephense.enabled && intelephense.diagnostics);
+        assert_eq!(
+            intelephense.settings_section.as_deref(),
+            Some("intelephense")
+        );
+        assert_eq!(intelephense.initialization_options["licenceKey"], "KEY123");
+        assert_eq!(
+            intelephense.settings["environment"]["includePaths"],
+            json!(["/p/lib"])
+        );
+        let phpactor = by_id(PHPACTOR_ID);
+        assert!(!phpactor.enabled);
+        assert!(phpactor.diagnostics);
+        assert_eq!(phpactor.initialization_options["php.version"], "8.3");
+    }
+
+    #[test]
+    fn a_user_disable_and_user_keys_survive() {
+        let mut configs = php_configs();
+        configs[0].enabled = false;
+        configs[0].settings = json!({"environment": {"phpVersion": "7.4.0"}});
+        apply(&mut configs, &input(Path::new("/p"), &[]), |_| Toggles {
+            enabled: Some(true),
+            diagnostics: None,
+        });
+        assert!(!configs[0].enabled);
+        assert_eq!(configs[0].settings["environment"]["phpVersion"], "7.4.0");
+    }
+
+    #[test]
+    fn a_changed_level_is_a_settings_push_and_a_changed_licence_a_restart() {
+        use lsp_core::{reload_kind, ReloadKind};
+        let build = |level: &str, key: &str| {
+            let mut c = php_configs();
+            let mut i = input(Path::new("/p"), &[]);
+            i.language_level = Some(level.parse().unwrap());
+            i.licence_key = Some(key);
+            apply(&mut c, &i, |_| Toggles::default());
+            c.remove(0)
+        };
+        let base = build("8.2", "A");
+        assert_eq!(
+            reload_kind(&base, &build("8.3", "A")),
+            ReloadKind::PushSettings
+        );
+        assert_eq!(reload_kind(&base, &build("8.2", "B")), ReloadKind::Restart);
+        assert_eq!(
+            reload_kind(&base, &build("8.2", "A")),
+            ReloadKind::Unchanged
+        );
     }
 
     #[test]

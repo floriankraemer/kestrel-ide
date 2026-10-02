@@ -13,15 +13,62 @@ use cxx_qt_lib::QString;
 use super::plugin_servers;
 use crate::bridge::ffi::{self};
 
+/// The server configurations in force: the catalog, plugins and the user's
+/// `[[language_server]]` entries (`lsp_core::resolve_servers`), then the
+/// `[php]` layer on the two PHP servers (`php_core::lsp::apply`). One
+/// function for the start at project open and for a settings save, so both
+/// derive the same configs and `reload_plan` sees only real differences.
+pub(super) fn resolved_server_configs(
+    settings: &app_config::Settings,
+    root: Option<&std::path::Path>,
+) -> Vec<lsp_core::ServerConfig> {
+    let overrides = settings_model::servers::overrides_from_settings(&settings.language_servers);
+    let mut configs = lsp_core::resolve_servers(&overrides, &plugin_servers());
+    let Some(root) = root else {
+        return configs;
+    };
+    let php = settings_model::php::resolve(settings);
+    // An unreadable composer.json only means "no level from composer".
+    let composer = php_core::composer::ComposerJson::read(root).ok().flatten();
+    let language_level = php_core::level::resolve(
+        php.language_level.as_deref(),
+        composer.as_ref().and_then(|c| c.require_php.as_deref()),
+        None,
+    );
+    // The key is a secret: the keychain, never a settings file. Unreadable
+    // reads as "no key", the page says why.
+    let licence_key = secret_store::SecretStore::new(php_core::SECRET_SERVICE)
+        .load(php_core::INTELEPHENSE_LICENCE_ID)
+        .ok()
+        .flatten();
+    let input = php_core::lsp::LspInput {
+        language_level,
+        include_paths: &php.include_paths,
+        stubs: php.stubs.as_deref(),
+        licence_key: licence_key.as_deref(),
+        storage_path: None,
+        project_root: root,
+    };
+    php_core::lsp::apply(&mut configs, &input, |id| {
+        let toggles = php.servers.get(id).copied().unwrap_or_default();
+        php_core::lsp::Toggles {
+            enabled: toggles.enabled,
+            diagnostics: toggles.diagnostics,
+        }
+    });
+    configs
+}
+
 impl ffi::LanguageService {
     pub fn apply_server_settings(mut self: Pin<&mut Self>) {
         // The resolved layer, not the global file: a project may name its
         // own language servers (ADR-0022), and a project that pins a
         // toolchain-local server is the reason that field is project-scoped.
         let settings = crate::bridge::convert::load_resolved_settings();
-        let overrides =
-            settings_model::servers::overrides_from_settings(&settings.language_servers);
-        let resolved = lsp_core::resolve_servers(&overrides, &plugin_servers());
+        let resolved = resolved_server_configs(
+            &settings,
+            crate::bridge::convert::current_project_root().as_deref(),
+        );
 
         // What the new settings mean for the running servers is
         // `lsp_core::reload_plan`'s rule: restart what was fixed at launch,

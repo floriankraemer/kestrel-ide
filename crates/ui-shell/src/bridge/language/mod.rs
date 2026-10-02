@@ -551,6 +551,7 @@ impl ffi::LanguageService {
                 command: entry.command.clone(),
                 args: entry.args.clone(),
                 enabled: entry.enabled,
+                ..Default::default()
             })
             .collect();
         *self.configs.borrow_mut() = lsp_core::resolve_servers(&overrides, &plugin_servers());
@@ -792,6 +793,7 @@ impl ffi::LanguageService {
                 command: entry.command.clone(),
                 args: entry.args.clone(),
                 enabled: entry.enabled,
+                ..Default::default()
             })
             .collect();
         let resolved = lsp_core::resolve_servers(&overrides, &plugin_servers());

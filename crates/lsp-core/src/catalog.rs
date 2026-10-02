@@ -11,7 +11,11 @@
 /// human-readable name the settings UI shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerDef {
-    /// LSP language id, e.g. `"rust"`. Unique across the table.
+    /// Stable server id, unique across the table. It is the language id for a
+    /// language with one server, so the id a diagnostics source key or a
+    /// user entry names does not change for the common case.
+    pub id: &'static str,
+    /// LSP language id, e.g. `"rust"`. Several rows may share one.
     pub language_id: &'static str,
     /// Display name, e.g. `"rust-analyzer"`.
     pub name: &'static str,
@@ -19,178 +23,276 @@ pub struct ServerDef {
     pub command: &'static str,
     /// Arguments passed on every launch.
     pub args: &'static [&'static str],
+    /// Whether this server's `publishDiagnostics` reach the Problems panel.
+    pub diagnostics: bool,
+    /// The server cannot run on native Windows (it still runs on WSL and in
+    /// a container).
+    pub posix_only: bool,
 }
 
-/// Default language servers, one per language id. Nothing here is installed
+/// Default language servers, in the order they answer a `First` request. Nothing here is installed
 /// by us — a missing executable simply means no server for that language.
 pub const SERVERS: &[ServerDef] = &[
     ServerDef {
+        id: "rust",
         language_id: "rust",
         name: "rust-analyzer",
         command: "rust-analyzer",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "python",
         language_id: "python",
         name: "Pyright",
         command: "pyright-langserver",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "go",
         language_id: "go",
         name: "gopls",
         command: "gopls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "c",
         language_id: "c",
         name: "clangd",
         command: "clangd",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "cpp",
         language_id: "cpp",
         name: "clangd",
         command: "clangd",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "typescript",
         language_id: "typescript",
         name: "TypeScript Language Server",
         command: "typescript-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "javascript",
         language_id: "javascript",
         name: "TypeScript Language Server",
         command: "typescript-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     // `typescriptreact` is a separate LSP language id, but the same server
     // handles it — it keys JSX parsing off the id it is told.
     ServerDef {
+        id: "typescriptreact",
         language_id: "typescriptreact",
         name: "TypeScript Language Server",
         command: "typescript-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "json",
         language_id: "json",
         name: "JSON Language Server",
         command: "vscode-json-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "yaml",
         language_id: "yaml",
         name: "YAML Language Server",
         command: "yaml-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "bash",
         language_id: "bash",
         name: "Bash Language Server",
         command: "bash-language-server",
         args: &["start"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "lua",
         language_id: "lua",
         name: "lua-language-server",
         command: "lua-language-server",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "intelephense",
         language_id: "php",
         name: "Intelephense",
         command: "intelephense",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+    },
+    // Runs beside Intelephense (ADR-0066). Its diagnostics are off by default
+    // because Intelephense already reports them; Phpactor is the second
+    // opinion for navigation, completion and refactoring.
+    ServerDef {
+        id: "phpactor",
+        language_id: "php",
+        name: "Phpactor",
+        command: "phpactor",
+        args: &["language-server"],
+        diagnostics: false,
+        posix_only: true,
     },
     ServerDef {
+        id: "java",
         language_id: "java",
         name: "Eclipse JDT.LS",
         command: "jdtls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "kotlin",
         language_id: "kotlin",
         name: "kotlin-language-server",
         command: "kotlin-language-server",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "swift",
         language_id: "swift",
         name: "SourceKit-LSP",
         command: "sourcekit-lsp",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "scala",
         language_id: "scala",
         name: "Metals",
         command: "metals",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "haskell",
         language_id: "haskell",
         name: "Haskell Language Server",
         command: "haskell-language-server-wrapper",
         args: &["--lsp"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "fsharp",
         language_id: "fsharp",
         name: "FsAutoComplete",
         command: "fsautocomplete",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "zig",
         language_id: "zig",
         name: "ZLS",
         command: "zls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "ruby",
         language_id: "ruby",
         name: "Solargraph",
         command: "solargraph",
         args: &["stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "toml",
         language_id: "toml",
         name: "Taplo",
         command: "taplo",
         args: &["lsp", "stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "sql",
         language_id: "sql",
         name: "sqls",
         command: "sqls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "html",
         language_id: "html",
         name: "HTML Language Server",
         command: "vscode-html-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "css",
         language_id: "css",
         name: "CSS Language Server",
         command: "vscode-css-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "xml",
         language_id: "xml",
         name: "Lemminx",
         command: "lemminx",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
     },
     ServerDef {
+        id: "dockerfile",
         language_id: "dockerfile",
         name: "Docker Language Server",
         command: "docker-language-server",
         args: &["start", "--stdio"],
+        diagnostics: true,
+        posix_only: false,
     },
 ];
 
-/// The shipped default for a language id, if we know one.
+/// The first shipped default for a language id, if we know one.
 pub fn default_server(language_id: &str) -> Option<&'static ServerDef> {
     SERVERS.iter().find(|s| s.language_id == language_id)
 }
@@ -210,6 +312,8 @@ pub enum ServerSource {
 /// top.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
+    /// Stable server id; the key the manager runs the server under.
+    pub id: String,
     pub language_id: String,
     pub name: String,
     pub command: String,
@@ -222,12 +326,31 @@ pub struct ServerConfig {
     /// Default settings for `settings_section`, sent to the server as JSON.
     /// `Null` when the server takes no pulled configuration.
     pub settings: serde_json::Value,
+    /// Sent as `initialize.initializationOptions`; `Null` sends none.
+    pub initialization_options: serde_json::Value,
+    /// Whether this server's diagnostics are shown.
+    pub diagnostics: bool,
+    /// Skipped on native Windows with a local host.
+    pub posix_only: bool,
+    /// Which host the server's process runs on.
+    pub exec: ServerExec,
     pub source: ServerSource,
+}
+
+/// Where a server's process runs when the project has an interpreter target.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ServerExec {
+    /// The project's own host (`ExecHost::for_path`).
+    #[default]
+    Host,
+    /// The configured interpreter's host, e.g. a container (ADR-0067).
+    Interpreter,
 }
 
 impl From<&ServerDef> for ServerConfig {
     fn from(def: &ServerDef) -> Self {
         ServerConfig {
+            id: def.id.to_string(),
             language_id: def.language_id.to_string(),
             name: def.name.to_string(),
             command: def.command.to_string(),
@@ -235,6 +358,10 @@ impl From<&ServerDef> for ServerConfig {
             enabled: true,
             settings_section: None,
             settings: serde_json::Value::Null,
+            initialization_options: serde_json::Value::Null,
+            diagnostics: def.diagnostics,
+            posix_only: def.posix_only,
+            exec: ServerExec::Host,
             source: ServerSource::Builtin,
         }
     }
@@ -264,6 +391,7 @@ pub struct PluginServer {
 impl From<&PluginServer> for ServerConfig {
     fn from(plugin: &PluginServer) -> Self {
         ServerConfig {
+            id: plugin.language_id.clone(),
             language_id: plugin.language_id.clone(),
             name: plugin.name.clone(),
             command: plugin.command.clone(),
@@ -271,6 +399,10 @@ impl From<&PluginServer> for ServerConfig {
             enabled: true,
             settings_section: plugin.settings_section.clone(),
             settings: plugin.settings.clone(),
+            initialization_options: serde_json::Value::Null,
+            diagnostics: true,
+            posix_only: false,
+            exec: ServerExec::Host,
             source: ServerSource::Plugin {
                 plugin_id: plugin.plugin_id.clone(),
             },
@@ -278,29 +410,38 @@ impl From<&PluginServer> for ServerConfig {
     }
 }
 
-/// What a user may say about one language's server. Every field but the id is
+/// What a user may say about one server. Every field but the language id is
 /// optional: overriding only `enabled` must not wipe the shipped command.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServerOverride {
+    /// The server this entry is about. Absent addresses the first server of
+    /// `language_id`, which is how an entry written before a language had
+    /// several servers keeps working.
+    pub id: Option<String>,
     pub language_id: String,
     pub name: Option<String>,
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
     pub enabled: Option<bool>,
+    pub settings: Option<serde_json::Value>,
+    pub initialization_options: Option<serde_json::Value>,
+    pub diagnostics: Option<bool>,
+    pub exec: Option<ServerExec>,
 }
 
 /// Merge plugin contributions and user entries over the shipped catalog,
 /// low to high precedence: `SERVERS` -> `plugin_servers` -> `overrides`.
 ///
-/// A plugin entry for a language the const catalog already has REPLACES
-/// that row entirely — it is a full alternate definition, not a
-/// field-by-field patch like a [`ServerOverride`]. A plugin entry for a
-/// language with no catalog row is appended. Catalog order is preserved
-/// otherwise; user entries for unknown languages are appended in the order
-/// given and must carry a command (one without a command has nothing to
-/// launch and is dropped). Disabled entries are kept in the result so a
-/// settings page can show them — callers start only the ones with
-/// `enabled`.
+/// Servers are keyed by `id`; a language may have several, kept in catalog
+/// order. A plugin entry for a language the const catalog already has
+/// REPLACES every row of that language — it is a full alternate definition,
+/// not a field-by-field patch like a [`ServerOverride`]. A plugin entry for a
+/// language with no catalog row is appended. An override names its server by
+/// `id`, or by language alone for the first server of that language; one for
+/// an unknown server is appended in the order given and must carry a command
+/// (without one there is nothing to launch, so it is dropped). Disabled
+/// entries are kept so a settings page can show them — callers start only
+/// the ones with `enabled`.
 pub fn resolve_servers(
     overrides: &[ServerOverride],
     plugin_servers: &[PluginServer],
@@ -310,25 +451,30 @@ pub fn resolve_servers(
     for plugin in plugin_servers {
         let cfg = ServerConfig::from(plugin);
         match resolved
-            .iter_mut()
-            .find(|c| c.language_id == cfg.language_id)
+            .iter()
+            .position(|c| c.language_id == cfg.language_id)
         {
-            Some(existing) => *existing = cfg,
+            Some(first) => {
+                resolved.retain(|c| c.language_id != cfg.language_id);
+                resolved.insert(first.min(resolved.len()), cfg);
+            }
             None => resolved.push(cfg),
         }
     }
 
     for ov in overrides {
-        match resolved
-            .iter_mut()
-            .find(|c| c.language_id == ov.language_id)
-        {
+        let target = resolved.iter_mut().find(|c| match &ov.id {
+            Some(id) => &c.id == id,
+            None => c.language_id == ov.language_id,
+        });
+        match target {
             Some(cfg) => apply(cfg, ov),
             None => {
                 let Some(command) = ov.command.clone() else {
                     continue;
                 };
                 let mut cfg = ServerConfig {
+                    id: ov.id.clone().unwrap_or_else(|| ov.language_id.clone()),
                     language_id: ov.language_id.clone(),
                     name: ov.name.clone().unwrap_or_else(|| command.clone()),
                     command,
@@ -336,6 +482,10 @@ pub fn resolve_servers(
                     enabled: true,
                     settings_section: None,
                     settings: serde_json::Value::Null,
+                    initialization_options: serde_json::Value::Null,
+                    diagnostics: true,
+                    posix_only: false,
+                    exec: ServerExec::Host,
                     source: ServerSource::User,
                 };
                 apply(&mut cfg, ov);
@@ -359,20 +509,40 @@ fn apply(cfg: &mut ServerConfig, ov: &ServerOverride) {
     if let Some(enabled) = ov.enabled {
         cfg.enabled = enabled;
     }
+    if let Some(settings) = &ov.settings {
+        cfg.settings = settings.clone();
+    }
+    if let Some(options) = &ov.initialization_options {
+        cfg.initialization_options = options.clone();
+    }
+    if let Some(diagnostics) = ov.diagnostics {
+        cfg.diagnostics = diagnostics;
+    }
+    if let Some(exec) = ov.exec {
+        cfg.exec = exec;
+    }
 }
 
-/// Which of the resolved servers, if any, may serve `language_id`.
+/// Which of the resolved servers, if any, may serve `language_id` first.
 ///
 /// "May" is the rule: a disabled entry stays in `resolve_servers`' output so
 /// a settings page can list it, and this is the single place that decides
 /// callers must not launch it.
 pub fn enabled_server<'a>(
     resolved: &'a [ServerConfig],
-    language_id: &str,
+    language_id: &'a str,
 ) -> Option<&'a ServerConfig> {
+    enabled_servers(resolved, language_id).next()
+}
+
+/// Every enabled server for `language_id`, in answer order.
+pub fn enabled_servers<'a>(
+    resolved: &'a [ServerConfig],
+    language_id: &'a str,
+) -> impl Iterator<Item = &'a ServerConfig> {
     resolved
         .iter()
-        .find(|c| c.language_id == language_id && c.enabled)
+        .filter(move |c| c.language_id == language_id && c.enabled)
 }
 
 /// Catalog language id -> LSP language id, for the few languages whose
@@ -407,15 +577,82 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn language_ids_are_unique() {
+    fn server_ids_are_unique() {
         let mut seen = HashSet::new();
         for def in SERVERS {
-            assert!(
-                seen.insert(def.language_id),
-                "duplicate language id {:?}",
-                def.language_id
-            );
+            assert!(seen.insert(def.id), "duplicate server id {:?}", def.id);
         }
+    }
+
+    #[test]
+    fn a_single_server_language_uses_its_language_id_as_server_id() {
+        for def in SERVERS {
+            let siblings = SERVERS
+                .iter()
+                .filter(|d| d.language_id == def.language_id)
+                .count();
+            if siblings == 1 {
+                assert_eq!(def.id, def.language_id);
+            }
+        }
+    }
+
+    #[test]
+    fn php_runs_intelephense_then_phpactor_with_phpactor_quiet_and_posix_only() {
+        let resolved = resolve_servers(&[], &[]);
+        let php: Vec<_> = enabled_servers(&resolved, "php").collect();
+        assert_eq!(
+            php.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["intelephense", "phpactor"]
+        );
+        assert_eq!(php[1].command, "phpactor");
+        assert_eq!(php[1].args, ["language-server"]);
+        assert!(php[0].diagnostics && !php[0].posix_only);
+        assert!(!php[1].diagnostics && php[1].posix_only);
+    }
+
+    #[test]
+    fn an_override_with_an_id_hits_that_server_and_one_without_hits_the_first() {
+        let resolved = resolve_servers(
+            &[
+                ServerOverride {
+                    id: Some("phpactor".into()),
+                    language_id: "php".into(),
+                    diagnostics: Some(true),
+                    initialization_options: Some(serde_json::json!({"a": 1})),
+                    ..Default::default()
+                },
+                ServerOverride {
+                    language_id: "php".into(),
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+            ],
+            &[],
+        );
+        let by_id = |id: &str| resolved.iter().find(|c| c.id == id).unwrap();
+        assert!(by_id("phpactor").diagnostics && by_id("phpactor").enabled);
+        assert_eq!(by_id("phpactor").initialization_options["a"], 1);
+        assert!(!by_id("intelephense").enabled);
+    }
+
+    #[test]
+    fn a_plugin_entry_replaces_all_rows_of_its_language_in_place() {
+        let plugin = PluginServer {
+            plugin_id: "php-alt".into(),
+            language_id: "php".into(),
+            name: "Alt".into(),
+            command: "alt".into(),
+            args: vec![],
+            settings_section: None,
+            settings: serde_json::Value::Null,
+        };
+        let resolved = resolve_servers(&[], std::slice::from_ref(&plugin));
+        assert_eq!(
+            resolved.iter().filter(|c| c.language_id == "php").count(),
+            1
+        );
+        assert_eq!(resolved.iter().filter(|c| c.id == "php").count(), 1);
     }
 
     #[test]

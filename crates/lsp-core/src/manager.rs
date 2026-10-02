@@ -1691,6 +1691,7 @@ mod host_translation_tests {
         let (manager, _rx) =
             LspManager::new(crate::diagnostics::uri_from_path(&root.to_string_lossy()));
         let result = manager.start(&ServerConfig {
+            id: "rust".to_string(),
             language_id: "rust".to_string(),
             name: "rust-analyzer".to_string(),
             command: "rust-analyzer".to_string(),
@@ -1698,6 +1699,10 @@ mod host_translation_tests {
             enabled: true,
             settings_section: None,
             settings: Value::Null,
+            initialization_options: Value::Null,
+            diagnostics: true,
+            posix_only: false,
+            exec: crate::catalog::ServerExec::Host,
             source: crate::catalog::ServerSource::Builtin,
         });
         unsafe {

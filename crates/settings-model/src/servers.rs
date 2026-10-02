@@ -28,6 +28,9 @@ pub enum ServerRowStatus {
 /// One row: a language, and what should be run for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerRow {
+    /// Server id: the language id for a language with one server, the
+    /// catalog's own id (`phpactor`) for one of several.
+    pub id: String,
     /// LSP language id, the key both the catalog and the settings use.
     pub language_id: String,
     /// What the Language column shows.
@@ -120,6 +123,7 @@ impl ServerDraft {
                 command: entry.command.clone(),
                 args: entry.args.clone(),
                 enabled: entry.enabled,
+                ..Default::default()
             })
             .collect();
 
@@ -137,12 +141,13 @@ impl ServerDraft {
         let baselines: HashMap<String, (String, Vec<String>)> =
             resolve_servers(&[], plugin_servers)
                 .into_iter()
-                .map(|config| (config.language_id, (config.command, config.args)))
+                .map(|config| (config.id, (config.command, config.args)))
                 .collect();
 
         let mut rows: Vec<ServerRow> = resolve_servers(&overrides, plugin_servers)
             .into_iter()
             .map(|config| ServerRow {
+                id: config.id,
                 language_name: name_of(&config.language_id),
                 language_id: config.language_id,
                 args: config.args.join(" "),
@@ -156,6 +161,7 @@ impl ServerDraft {
                 continue;
             }
             rows.push(ServerRow {
+                id: language_id.clone(),
                 language_id: language_id.clone(),
                 language_name: name.clone(),
                 command: String::new(),
@@ -172,13 +178,13 @@ impl ServerDraft {
         &self.rows
     }
 
-    pub fn row(&self, language_id: &str) -> Option<&ServerRow> {
-        self.rows.iter().find(|row| row.language_id == language_id)
+    pub fn row(&self, id: &str) -> Option<&ServerRow> {
+        self.rows.iter().find(|row| row.id == id)
     }
 
-    pub fn set_command(&mut self, language_id: &str, command: &str) {
-        let has_default = self.baselines.contains_key(language_id);
-        if let Some(row) = self.row_mut(language_id) {
+    pub fn set_command(&mut self, id: &str, command: &str) {
+        let has_default = self.baselines.contains_key(id);
+        if let Some(row) = self.row_mut(id) {
             row.command = command.trim().to_string();
             // A language with no shipped or plugin-contributed default only
             // has a row at all because the user typed a command into it —
@@ -189,14 +195,14 @@ impl ServerDraft {
         }
     }
 
-    pub fn set_args(&mut self, language_id: &str, args: &str) {
-        if let Some(row) = self.row_mut(language_id) {
+    pub fn set_args(&mut self, id: &str, args: &str) {
+        if let Some(row) = self.row_mut(id) {
             row.args = args.split_whitespace().collect::<Vec<_>>().join(" ");
         }
     }
 
-    pub fn set_enabled(&mut self, language_id: &str, enabled: bool) {
-        if let Some(row) = self.row_mut(language_id) {
+    pub fn set_enabled(&mut self, id: &str, enabled: bool) {
+        if let Some(row) = self.row_mut(id) {
             row.enabled = enabled;
         }
     }
@@ -209,7 +215,7 @@ impl ServerDraft {
     pub fn overrides(&self) -> Vec<LanguageServerSetting> {
         self.rows
             .iter()
-            .filter_map(|row| override_for(row, self.baselines.get(&row.language_id)))
+            .filter_map(|row| override_for(row, self.baselines.get(&row.id)))
             .collect()
     }
 
@@ -218,10 +224,8 @@ impl ServerDraft {
         settings.language_servers = self.overrides();
     }
 
-    fn row_mut(&mut self, language_id: &str) -> Option<&mut ServerRow> {
-        self.rows
-            .iter_mut()
-            .find(|row| row.language_id == language_id)
+    fn row_mut(&mut self, id: &str) -> Option<&mut ServerRow> {
+        self.rows.iter_mut().find(|row| row.id == id)
     }
 }
 

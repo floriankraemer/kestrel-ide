@@ -22,6 +22,7 @@ pub const LANG: &str = "stub";
 
 pub fn config(command: &str, args: &[&str]) -> ServerConfig {
     ServerConfig {
+        id: LANG.into(),
         language_id: LANG.into(),
         name: "stub".into(),
         command: command.into(),
@@ -29,6 +30,10 @@ pub fn config(command: &str, args: &[&str]) -> ServerConfig {
         enabled: true,
         settings_section: None,
         settings: serde_json::Value::Null,
+        initialization_options: serde_json::Value::Null,
+        diagnostics: true,
+        posix_only: false,
+        exec: lsp_core::catalog::ServerExec::Host,
         source: lsp_core::catalog::ServerSource::Builtin,
     }
 }

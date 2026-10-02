@@ -125,6 +125,7 @@ impl Fixture {
 
 fn config() -> ServerConfig {
     ServerConfig {
+        id: LANG.into(),
         language_id: LANG.into(),
         name: "csharp-ls".into(),
         command: "csharp-ls".into(),
@@ -134,6 +135,10 @@ fn config() -> ServerConfig {
         // pulled configuration under the `csharp` section, analyzers on.
         settings_section: Some("csharp".into()),
         settings: json!({"analyzersEnabled": true}),
+        initialization_options: serde_json::Value::Null,
+        diagnostics: true,
+        posix_only: false,
+        exec: lsp_core::catalog::ServerExec::Host,
         source: lsp_core::catalog::ServerSource::Plugin {
             plugin_id: "csharp".into(),
         },

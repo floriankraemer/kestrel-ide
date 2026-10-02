@@ -153,12 +153,12 @@ A row's status and commit hash are updated in the commit that finishes it.
 | L9 — `posix_only` skipped on native Windows, with status text | done | 63faf37 |
 | L10 — settings save → `update_settings` or restart via `catalog::reload_kind` | done | 2a538cd |
 | L11 — Language Servers page shows N servers per language | done | 4ae6c97 |
-| L12 — ADR-0066 + `layering.md` note | done | — |
+| L12 — ADR-0066 + `layering.md` note | done | e8eed54 |
 
 ### I — `php-core`, interpreter, Composer, running PHP (ADR-0068)
 | Task | Status | Commit |
 |---|---|---|
-| I1 — crate `php-core`: composer.json/composer.lock model | open | |
+| I1 — crate `php-core`: composer.json/composer.lock model | done | — |
 | I2 — language level: explicit → `require.php` lower bound → probed version | open | |
 | I3 — `process_exec::run_on`/`spawn_on`; interpreter probe (version, ini, xdebug/pcov, `xdebug.mode`) | open | |
 | I4 — `ToolchainId::Php`; Composer scripts detected as run configs; Run Current File for `.php` | open | |

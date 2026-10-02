@@ -51,7 +51,16 @@ fn the_root_and_published_diagnostics_use_each_sides_own_paths() {
     });
     assert_eq!(published, local_uri);
 
-    let wire = std::fs::read_to_string(&wire_log).unwrap();
+    // `tee` forwards a chunk before it writes it to the log, so the stub can
+    // answer before the log has the `didOpen`: wait for it, don't race it.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let wire = loop {
+        let wire = std::fs::read_to_string(&wire_log).unwrap_or_default();
+        if wire.contains("didOpen") || std::time::Instant::now() > deadline {
+            break wire;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
     assert!(wire.contains(r#""rootUri":"file:///workspace""#), "{wire}");
     assert!(
         wire.contains(r#""uri":"file:///workspace/a.php""#),

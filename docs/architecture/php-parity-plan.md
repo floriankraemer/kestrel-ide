@@ -256,8 +256,8 @@ A row's status and commit hash are updated in the commit that finishes it.
 | E1 — `stub_server` capability-profile flag (`STUB_LSP_TAG`/`STUB_LSP_CAPS`, done with L3) | done | b6c7a10 |
 | E2 — per-PR E2E: `e2e_php_two_servers_and_on_save_analysis`, `e2e_php_listen_session_stops_for_two_connections`, `e2e_php_generate_templates_and_new_class` | done | 40db0bb |
 | E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | done | 6e0bd8e |
-| E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | open | |
-| Z1 — `overview.md`, `layering.md`, README index, keymap defaults | done | — |
+| E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | done | — |
+| Z1 — `overview.md`, `layering.md`, README index, keymap defaults | done | d442627 |
 
 ## Acceptance per phase (as the user sees it)
 
@@ -421,7 +421,7 @@ Verdicts for the "Verify" lines of `followups.md`:
 - **Intelephense `didChangeConfiguration` with `settings: null`** makes it send `workspace/configuration` again and re-index, so the null push is enough.
 
 The container flow proves PHP runs in the service by a test that asserts the service's hostname.
-It does not debug in the container: the official image has no Xdebug, which stays in the manual matrix (E4 item 6).
+It does not debug in the container: the official image has no Xdebug, so that was walked by hand in E4 item 6 with an image that adds it.
 
 ### E4 — manual matrix (Linux, WSL, Windows; light and dark; 100% and 150% DPI)
 
@@ -455,16 +455,16 @@ The OS keychain is written only by the Settings fields that store a secret, so a
 
 Driven in the real app under Xvfb in the `linux-php` image (real PHP 8.3, Xdebug, PCOV, Intelephense, Phpactor, vscode-php-debug), over the `php_app` fixture, in the dark and light themes at 100% and at 150% (`QT_SCALE_FACTOR=1.5`).
 The WSL and Windows columns follow in the next section.
-E4 stays open until rows 5, 6 (container, WSL, Windows), 16 and the Windows half of 2 are walked.
+Rows 5, 6 (container) and 16 were walked afterwards, see the container section below; the Windows half of row 2 is recorded as not checked.
 
 | Row | Linux result | Notes |
 |---|---|---|
 | 1. Settings > PHP | pass after fixes | Probe line, advice, language level, formatter combo and masked licence field render in both themes and at 150%; Detect took the dialog's default button (fixed); the stock OK/Cancel icons come from the container's missing icon theme. |
 | 2. Licence key only in the secret store | pass | A typed key with no OS keychain gives the "No OS keychain available" warning; the key is in no file under the config dir, the project or `HOME`. The keychain-present path needs a desktop session. |
-| 3. Windows without WSL shows the Phpactor reason | pending | Windows only. |
-| 4. WSL interpreter | pending | WSL only. |
-| 5. Container `exec` against `run` latency | pending | Needs the Docker host; flow d covers the function, not the timing. |
-| 6. Xdebug from the CLI, `php -S`, PHPUnit | CLI pass after fixes | Run configuration stops at the breakpoint under real Xdebug, three scope fetches per stop; `php -S` and the gutter test are the green E3 flows. The Debug dock's inputs, frame path and variable names were cut off at the default height (fixed), and the `xdebug.mode` advice no longer prints on IDE-started runs, only when the listen toggle starts a listener. Container and WSL pending. |
+| 3. Windows without WSL shows the Phpactor reason | n/a | Windows only; see the Windows column below. |
+| 4. WSL interpreter | n/a | WSL only; see the WSL column below. |
+| 5. Container `exec` against `run` latency | measured | See the container section below. |
+| 6. Xdebug from the CLI, `php -S`, PHPUnit | CLI pass after fixes | Run configuration stops at the breakpoint under real Xdebug, three scope fetches per stop; `php -S` and the gutter test are the green E3 flows. The Debug dock's inputs, frame path and variable names were cut off at the default height (fixed), and the `xdebug.mode` advice no longer prints on IDE-started runs, only when the listen toggle starts a listener. Container: see the container section below. WSL: not checkable (see the WSL column). |
 | 7. Listen toggle glyph and sync | pass after fix | Run menu check and toolbar highlight agree in both states; the toolbar clipped the checked button and the config combo (fixed). |
 | 8. Composer dock | pass after fixes | Lists the locked packages; stayed stale after a change on disk (fixed). At the default width its button row forced a horizontal scroll bar and clipped the version column (fixed: Install and Update stay, the rest sit behind More; the version always shows, names elide in the middle). |
 | 9. Coverage colours | pass after fixes | Covered lines green, uncovered red in the gutter, per-file and per-directory percentages in the dock; a file with no executable lines shows a dash instead of `0.0% (0/0)` (fixed). Captured at 150% once the harness scaled marker coordinates (fixed). |
@@ -474,7 +474,7 @@ E4 stays open until rows 5, 6 (container, WSL, Windows), 16 and the Windows half
 | 13. Twig and Blade | pass | Both highlighted in both themes. |
 | 14. Format-on-save failure notice | pass after fixes | A project's `[editing] format_on_save` was never applied (fixed); the notice then clipped under the status bar's widgets (fixed). |
 | 15. Search Everywhere with six tabs, Ctrl+N | pass after fixes | Classes tab lists the project's and vendor's classes, headed Classes, each with its kind and file greyed after the name; exact, prefix and substring matches now rank before loose subsequences. The first results take 1 to 3 s on a cold index. The dock tab bar seen under the popup is the popup overlapping it, not a rendering fault. |
-| 16. A real Laravel or Symfony project | pending | Not run. |
+| 16. A real Laravel or Symfony project | pass after fixes | Laravel 12.69.3, see the Laravel section below. |
 | 17. `composer require` mid-session | pass after fix | `composer require --dev` was picked up by the dock only after fixing its reload. |
 | 18. The "Verify ..." lines | done in E3 | See the E3 results. |
 
@@ -490,7 +490,7 @@ Screenshots: `screens/win-*.png`, cropped to the IDE window.
 |---|---|---|---|
 | 1. Settings > PHP | pass | pass | Detect inside the WSL project reports `PHP 8.4.6 · Xdebug (develop)` with the `xdebug.mode` advice. The search box placeholder elided to "Search settin..." with Windows' wider UI font (fixed). |
 | 3. Phpactor reason | pass after fix | n/a | Status `Unavailable` with "Phpactor needs a POSIX system and does not run on native Windows. Open the project in WSL or run the server in a container."; Intelephense shows `Stopped` and "program not found. Install it with: npm i -g intelephense". The Status column and detail strip were blank because the page only listened to state changes while open (fixed; Linux showed the same blank rows). |
-| 4. WSL interpreter | n/a | pass after fix | The status bar shows `WSL: Ubuntu`; Phpactor is not skipped: it is started in the distro and reports `Stopped`, "phpactor not found inside the WSL distro. Install it with: composer global require phpactor/phpactor, or download phpactor.phar and put it on PATH as phpactor". The status reads `Stopped` rather than `Command not found` (follow-up). |
+| 4. WSL interpreter | n/a | pass after fix | The status bar shows `WSL: Ubuntu`; Phpactor is not skipped: it is started in the distro and reports `Stopped`, "phpactor not found inside the WSL distro. Install it with: composer global require phpactor/phpactor, or download phpactor.phar and put it on PATH as phpactor". The status read `Stopped` rather than `Command not found`; fixed, the start failure is now classified in `lsp-core` (`StartFailure::NotFound`). |
 | 7. Listen toggle | pass | not run | Run menu check and toolbar highlight agree on and off. |
 | 8. Composer dock | pass after fix | not run | The dock opened as its own right column and squeezed the editor; it now tabs beside Structure and AI Chat (fixed, seen on Linux and Windows). |
 | 9. Coverage dock | empty state only | not run | No PHP on Windows, so no run; the dock, its toolbar and the Tests dock render in both themes. |
@@ -499,12 +499,82 @@ Screenshots: `screens/win-*.png`, cropped to the IDE window.
 | 12. Ctrl+J and Ctrl+Alt+T | pass | not run | The active layout is de-DE. Ctrl+J, Ctrl+Alt+T with the left Alt and with the right Alt (AltGr) all open their menus. `fore` plus Tab expands to `foreach ($array as $item)` inside a method body (at file level it is not a template context and Tab indents). |
 | 13. Twig and Blade | pass | not run | Both highlighted in both themes (Twig delimiters, keywords, strings, comments; Blade directives). |
 | 15. Search Everywhere | pass | not run | Ctrl+N opens the Classes tab with kind and path (backslashes on Windows). |
+| 6. Xdebug at a breakpoint | not checkable | not checkable | Windows has no PHP, and the user's WSL distro has no vscode-php-debug; installing it would modify the distro's home, which the walk must not do. The listen toggle is row 7. |
 
 Pixel findings fixed from this walk: the Language Servers status above; the project tree's sort arrow was the platform's `SP_ArrowUp` (a black triangle on Windows, a green disc on Linux), now drawn in the theme colour; checkable list and table rows (the Getters picker, the Language Servers On column) kept the platform's box while every `QCheckBox` had the themed tick, now the same box; the settings search placeholder (above).
 At 150% the Settings dialog is taller than the 1600x1000 main window, which is how the walk window was sized, not a defect.
 
-Not checked here: row 2 on Windows (the walk enters no licence key and writes nothing to the keychain), rows 5 and 16 (not run), row 6 on Windows and WSL (no `vscode-php-debug` adapter, so no stop at a breakpoint; the listen toggle's glyph and sync are row 7), the Variables name tooltip (set on every variable row, checked by reading the code only because the walk cannot stop at a breakpoint).
-Follow-ups: the live status says `Stopped` for a server missing inside WSL (the C++ page matches only `No such file`); the `Unavailable` detail strip is red like an error although it is a platform rule; `index-core`'s cache directory still follows the real `%LOCALAPPDATA%` and is not covered by `IDE_CONFIG_DIR`.
+Not checked in these columns: row 2 on Windows (the walk enters no licence key and writes nothing to the keychain; recorded here as not checkable without touching the user's keychain), rows 5 and 16 (walked on Linux, see the container section), row 6 on Windows and WSL (no `vscode-php-debug` adapter, so no stop at a breakpoint; the listen toggle's glyph and sync are row 7), the Variables name tooltip (set on every variable row, checked by reading the code only because the walk cannot stop at a breakpoint).
+Follow-ups, all fixed afterwards: the live status said `Stopped` for a server missing inside WSL (the C++ page matched only `No such file`; the classification now lives in `lsp-core`); the `Unavailable` detail strip was red like an error although it is a platform rule (now muted); `index-core`'s cache directory followed the real `%LOCALAPPDATA%` (it now lives under `IDE_CONFIG_DIR/cache` when that is set, resolved in `project_model::default_cache_dir`); the Analysis page's Status column elided at the default width (it takes the free width now, checked at 100% and 150%).
+
+#### E4 results — container, Xdebug and Laravel (2026-10-03)
+
+Driven in the real app under Xvfb in the `linux-php` image, with the host Docker engine reached through its socket (the engine is Docker Desktop style: `host-gateway` resolves to `192.168.65.254`).
+Screenshots are in `screens/row5-*.png`, `screens/row6-*.png` and `screens/row16-*.png` of the walk kit.
+
+**Row 5, container `exec` against `run`.**
+The interpreter is the compose service `php` (`php:8.3-cli`) from `docker/php-compose.yml`, `container_mode` `exec` or `run`.
+The baseline is PHP in the test container itself.
+Every number is wall time from the key press, read from the app's marker stream (20 ms poll), on the `php_app` fixture.
+
+| | local | exec | run |
+|---|---|---|---|
+| One `php -v` through the engine | 0.02 s | 0.13 to 0.16 s | 0.9 to 1.3 s |
+| Open `Greeter.php` to the first PHPCS result | 6.3 to 6.6 s | 6.4 s | 8.6 to 9.3 s |
+| Ctrl+S with format-on-save (php-cs-fixer): time until the UI answers | 0.20 to 0.24 s | 1.49 s | 8.2 to 8.6 s |
+| On-type, first squiggle refresh after the keystroke (3 samples) | 0.48 to 0.51 s | 0.61 to 0.64 s | none in 90 s |
+| On-type, second refresh | 6.26 to 6.28 s | 1.40 to 1.43 s | none |
+
+- The second refresh is the slower of the sources that answer after PHPCS; the marker does not say which, so it is not attributed. In the local case the image loads Xdebug into PHP, which PHPStan restarts without.
+- Format-on-save blocks the UI thread: the UI answers a request only when the formatter has finished. In `exec` mode that is 1.5 s, above the 500 ms line, and 8.3 s in `run` mode. It is recorded for an issue and was not reworked.
+- In `run` mode every program lookup and every tool run starts a container (about 23 in the first 30 s). The lookups happen on the Qt thread (`resolve_launch`), which is where the 8 s come from.
+- After the 8 s save in `run` mode a modal "modified outside the editor" prompt appeared (seen once), and the keystrokes that followed went to it, so no on-type result could be measured in that mode. In `exec` mode the prompt did not appear.
+
+**Row 6, Xdebug in a container.**
+The service is built `FROM php:8.3-cli` with `pecl install xdebug` and `extra_hosts: ["host.docker.internal:host-gateway"]`, and mounts the project at `/app`, so the path mapping is not the identity (`/app/<dir>` to the local checkout).
+The test container publishes the listen port (`-p 9003:9003`) because the engine here is not the test container's own network.
+
+| Case | Result |
+|---|---|
+| CLI script (`php bin/console.php Xdebug`, run configuration through `compose run`) | The breakpoint at line 9 stops at the local line 9 with the local frame path and variables; resume finishes the script with exit 0 and output. |
+| `php -S` request (built-in server run configuration, port 8123 published, listen toggle started first) | Two `?XDEBUG_TRIGGER=1` requests in turn each stop at `public/index.php:9` in one session, with no second `debug_started`; both bodies come back after resume. |
+| Listen toggle | The Run menu check and the toolbar highlight agree while the session listens. |
+| PHPUnit | Not repeated in the container: the gutter debug path is the E3 flow, and it goes through the same listen session. |
+| WSL | Not checkable here: vscode-php-debug is not installed in the user's distro, and the walk must not modify the distro's home. |
+
+Found and fixed: a `php -S` run configuration in a compose service exited at once with "--service-ports and --publish are incompatible" (`wrap_launch` added both); the flag is now added only when the target publishes nothing itself.
+
+**Row 16, a real Laravel project.**
+`composer create-project laravel/laravel:^12.0` (Laravel Framework 12.69.3, 73 MB with `vendor/`), plus `phpstan/phpstan` and `squizlabs/php_codesniffer` with a `phpstan.neon` at level 5 over `app`, `routes` and `tests` and a PSR-12 `phpcs.xml`.
+Laravel 11 could not be installed: every release matching `^11.31` is blocked by Composer's security advisories.
+
+| Measurement | Value |
+|---|---|
+| Launch to `project_opened` | 1.6 to 2.1 s |
+| Launch to index complete | 10.9 to 11.7 s |
+| Peak RSS (`VmHWM`) after the index | 477 to 527 MB |
+| After opening and saving four files (PHPStan, PHPCS on type) | 509 to 597 MB |
+| At the end of the walk (Inspect Project, `composer require`, Settings, PHPUnit) | 660 to 744 MB |
+| Problems after opening four files | 6 |
+| Problems after Inspect Project (PHPStan, PHPCS, PHPMD; after the fix below) | 10: 5 errors, 5 PHPMD warnings |
+| Psalm | Detected after `composer require --dev vimeo/psalm phpmd/phpmd` in the running session (Settings > Analysis lists four analyzers); with no `psalm.xml` it produced no rows and no message. |
+| Pint | Present in Laravel's `require-dev`; Reformat Code with `[php] formatter = "pint"` rewrote an unsaved messy line in 0.4 s. |
+| phpcbf | "Fix with phpcbf" on a real finding offers the three PHPCS sniffs of the line; it did nothing until the fix below, then rewrote `$walk=1;` to `$walk = 1;` as one edit. |
+| PHPUnit | The gutter run of `Tests\Unit\ExampleTest::test_that_true_is_true` passes in the Tests dock (1 test, 1 assertion). |
+
+Defects found and fixed, one commit each:
+- "Fix with phpcbf" and Reformat Code through a tool formatter read the Rust rope, which keystrokes bypass (ADR-0003), so on an unsaved buffer the tool saw stale text, changed nothing and said nothing. The view now forwards the live text first (`EditorTabs::syncLiveText`); the new `php_real` flow types an unsaved finding and fixes it.
+- Inspect Project appended the project root to `phpstan analyse` and to `phpcs`, which replaces the config's `paths` and `<file>` elements, so PHPStan analysed `vendor/`: 2500+ findings, the app at 100% CPU for minutes with the search popup not opening, and "Analysis: running..." that never ended. An analyzer may now list `project-paths-config` files, and a project run passes no path when the first that exists names paths.
+- The status bar's "Analysis: N detected" was computed once at project open and said 2 after `composer require` of two more analyzers; it is refreshed when a project run ends.
+
+**Not fixed, for issues:**
+- Format-on-save runs on the UI thread: 1.5 s in `exec` mode and 8.3 s in `run` mode (see row 5).
+- `resolve_launch` looks programs up on the Qt thread, which in `run` mode starts a container per candidate; on-type analysis in `run` mode could not be measured because of the next point.
+- In `run` mode a modal "modified outside the editor" prompt followed a slow format-on-save and swallowed typing (seen once).
+- The Problems panel with thousands of rows (what a project run over `vendor/` produced) keeps the UI thread at 100% CPU; the volume itself came from the path fix above, but a legitimate large result set will hit the same wall.
+- A project run of PHPCS or PHPStan with no config that names paths still analyses everything under the root, `vendor/` included.
+- Psalm without a `psalm.xml` fails silently.
+- The Windows half of row 2 and the WSL half of row 6 are not checked (see above).
 
 Batch 3 settings fixes: opening a project or confirming the Settings dialog no longer rewrites `.ide/settings.toml`.
 Detected run configurations are shown and never saved, an update that changes nothing writes nothing, and unset editing fields are not serialised.

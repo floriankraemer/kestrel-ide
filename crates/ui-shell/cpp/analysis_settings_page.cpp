@@ -5,6 +5,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QHash>
+#include <QFontMetrics>
 #include <QHeaderView>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
@@ -33,7 +34,16 @@ QWidget *buildAnalysisSettingsPage(QWidget *parent, AnalysisEditor *editor,
     tree->setColumnCount(4);
     tree->setHeaderLabels({QObject::tr("On"), QObject::tr("Analyzer"), QObject::tr("Run"),
                           QObject::tr("Status")});
-    tree->header()->setSectionResizeMode(kNameColumn, QHeaderView::Stretch);
+    // Status holds the longest text (the detected command line), so it takes
+    // the slack; the other columns fit their contents instead of splitting
+    // the width and eliding Status at the dialog's default size.
+    tree->header()->setSectionResizeMode(kOnColumn, QHeaderView::ResizeToContents);
+    tree->header()->setSectionResizeMode(kNameColumn, QHeaderView::ResizeToContents);
+    // The Run column holds combo boxes, which ResizeToContents does not see,
+    // so it is sized from the widest combo once the rows exist.
+    tree->header()->setSectionResizeMode(kTriggerColumn, QHeaderView::Fixed);
+    tree->header()->setSectionResizeMode(kStatusColumn, QHeaderView::Stretch);
+    tree->setTextElideMode(Qt::ElideMiddle);
     tree->setRootIsDecorated(false);
     layout->addWidget(tree);
 
@@ -44,12 +54,14 @@ QWidget *buildAnalysisSettingsPage(QWidget *parent, AnalysisEditor *editor,
         statusById.insert(row.id, row.statusText);
     }
 
+    int triggerWidth = 0;
     for (const FfiAnalysisRow &row : editor->rows()) {
         auto *item = new QTreeWidgetItem(tree);
         item->setData(kNameColumn, kAnalyzerIdRole, row.id);
         item->setCheckState(kOnColumn, row.enabled ? Qt::Checked : Qt::Unchecked);
         item->setText(kNameColumn, row.name);
         item->setText(kStatusColumn, statusById.value(row.id));
+        item->setToolTip(kStatusColumn, statusById.value(row.id));
 
         auto *triggerBox = new QComboBox(tree);
         triggerBox->addItem(QObject::tr("On Type"), QStringLiteral("on-type"));
@@ -58,12 +70,24 @@ QWidget *buildAnalysisSettingsPage(QWidget *parent, AnalysisEditor *editor,
         const int index = triggerBox->findData(row.triggerId);
         triggerBox->setCurrentIndex(index >= 0 ? index : 0);
         tree->setItemWidget(item, kTriggerColumn, triggerBox);
+        // The themed combo's size hint leaves out its own padding and arrow,
+        // which clipped the last letter of "On Type"; measure the widest
+        // entry and add room for both.
+        const QFontMetrics metrics(triggerBox->font());
+        int widest = 0;
+        for (int i = 0; i < triggerBox->count(); ++i) {
+            widest = qMax(widest, metrics.horizontalAdvance(triggerBox->itemText(i)));
+        }
+        triggerBox->setMinimumWidth(widest + 44);
+        triggerWidth = qMax(triggerWidth, widest + 44 + 8);
 
         QObject::connect(triggerBox, &QComboBox::currentIndexChanged, editor,
                          [editor, id = row.id, triggerBox](int) {
                              editor->setTrigger(id, triggerBox->currentData().toString());
                          });
     }
+
+    tree->setColumnWidth(kTriggerColumn, triggerWidth);
 
     QObject::connect(tree, &QTreeWidget::itemChanged, editor,
                      [editor](QTreeWidgetItem *item, int column) {

@@ -16,7 +16,7 @@ use crate::bridge::registry::index_slot;
 /// A read lock is enough for every query, so several searches can run at
 /// once and only re-indexing serialises them.
 pub struct SearchModelRust {
-    index: mcp_server::IndexHandle,
+    pub(super) index: mcp_server::IndexHandle,
     /// RF12: the index leg of hover is a second round trip that
     /// `LanguageService`'s tracker cannot see, so it needs its own. The rule
     /// is `lsp_core::HoverTracker`'s; only its state lives here.
@@ -105,7 +105,12 @@ const SEARCH_BATCH_SIZE: usize = 256;
 const MAX_FIND_IN_FILES_MATCHES: usize = 10_000;
 
 /// Build one Search Everywhere row.
-fn hit(kind: ffi::FfiHitKind, text: &str, detail: &str, positions: Vec<u32>) -> ffi::FfiSearchHit {
+pub(super) fn hit(
+    kind: ffi::FfiHitKind,
+    text: &str,
+    detail: &str,
+    positions: Vec<u32>,
+) -> ffi::FfiSearchHit {
     ffi::FfiSearchHit {
         kind,
         path: QString::from(""),
@@ -120,7 +125,7 @@ fn hit(kind: ffi::FfiHitKind, text: &str, detail: &str, positions: Vec<u32>) -> 
 }
 
 /// Human label for a symbol hit's secondary column.
-fn symbol_detail(m: &index_core::SymbolMatch) -> String {
+pub(super) fn symbol_detail(m: &index_core::SymbolMatch) -> String {
     let kind = symbol_kind_word(m.kind);
     match &m.container {
         Some(container) => format!("{kind} in {container}"),
@@ -414,26 +419,16 @@ impl ffi::SearchModel {
                 return;
             }
 
-            if !query.is_empty() && wanted(ffi::FfiTierFilter::Symbols) {
-                // ponytail: symbol rows carry no highlight positions —
-                // `find_definitions_ranked` scores without reporting match
-                // indices. Thread them through if the visual inconsistency
-                // with the file tier starts to show.
-                if let Ok(symbols) = index.find_definitions_ranked(&query, limit) {
-                    emit(
-                        symbols
-                            .into_iter()
-                            .map(|m| {
-                                let detail = symbol_detail(&m);
-                                let mut row =
-                                    hit(ffi::FfiHitKind::Symbol, &m.name, &detail, Vec::new());
-                                row.path = QString::from(m.path.to_string_lossy().as_ref());
-                                row.line = m.line as u32;
-                                row
-                            })
-                            .collect(),
-                    );
-                }
+            if !query.is_empty()
+                && (wanted(ffi::FfiTierFilter::Symbols) || tiers == ffi::FfiTierFilter::Classes)
+            {
+                crate::bridge::search_lsp::emit_symbol_tier(
+                    index,
+                    &query,
+                    limit,
+                    tiers == ffi::FfiTierFilter::Classes,
+                    &emit,
+                );
             }
 
             if superseded() {
@@ -1353,7 +1348,9 @@ impl ffi::SearchModel {
         });
     }
 
-    pub fn find_implementations(self: Pin<&mut Self>, name: &QString) {
+    /// The index fallback of `implementationsAt` (`search_lsp.rs`); not
+    /// invokable from the view on its own any more.
+    pub(crate) fn find_implementations(self: Pin<&mut Self>, name: &QString) {
         self.stream_usages(name.to_string(), |index, name| {
             index.find_implementations(name)
         });
@@ -1363,11 +1360,11 @@ impl ffi::SearchModel {
         self.stream_usages(name.to_string(), |index, name| index.find_supertypes(name));
     }
 
-    /// Shared body of `find_implementations`/`find_supertypes` (N3): run
+    /// Body of `find_implementations`/`find_supertypes` (N3): run
     /// a name-keyed index query on a background thread and stream its
     /// rows out on the `usagesFound` trio, which is what `find_usages`
-    /// itself does — see `findImplementations`' doc comment for why they
-    /// share one signal set rather than each getting their own.
+    /// itself does — the Find Usages dock already renders
+    /// that shape, so it needs no signal set of its own.
     fn stream_usages(
         self: Pin<&mut Self>,
         name: String,

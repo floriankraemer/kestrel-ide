@@ -77,6 +77,18 @@ void DeclarationNavigator::resolveAt(int documentPosition)
     languageService_->resolveDefinition(path, at.first, at.second);
 }
 
+void DeclarationNavigator::resolveTypeAt(int documentPosition)
+{
+    const QString path = editorTabs_->currentPath();
+    if (path.isEmpty()) {
+        return;
+    }
+    candidates_.clear();
+    position_ = documentPosition;
+    const QPair<quint32, quint32> at = editorTabs_->lspPositionAt(documentPosition);
+    languageService_->resolveTypeDefinition(path, at.first, at.second);
+}
+
 void DeclarationNavigator::askIndex()
 {
     const QString path = editorTabs_->currentPath();

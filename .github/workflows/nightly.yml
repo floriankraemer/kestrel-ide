@@ -40,6 +40,15 @@ jobs:
     with:
       target: linux-jvm
 
+  php-image:
+    name: PHP image
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/builder-image.yml
+    with:
+      target: linux-php
+
   e2e:
     name: E2E flows
     needs: builder-image
@@ -127,5 +136,40 @@ jobs:
         if: failure()
         with:
           name: jvm-integration-artifacts
+          path: target/e2e-artifacts/**
+          if-no-files-found: warn
+
+  # The PHP parity plan's E3 flows (a-c) against real PHP, Composer,
+  # Intelephense, Phpactor, Xdebug and vscode-php-debug. Flow d (the container
+  # interpreter) needs the host's Docker socket and the path-identical bind
+  # mount `make test-php-container` sets up, so it stays a local/on-demand run.
+  php-integration:
+    name: PHP integration
+    needs: php-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: ${{ needs.php-image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # The image's vscode-php-debug lives under this HOME; the job container
+      # would otherwise run with the runner's.
+      env:
+        HOME: /opt/vscode-home
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: PHP real-toolchain flows
+        run: make php-ci
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: php-integration-artifacts
           path: target/e2e-artifacts/**
           if-no-files-found: warn

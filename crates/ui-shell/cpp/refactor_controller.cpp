@@ -45,6 +45,14 @@ RefactorController::RefactorController(LanguageService *languageService, SearchM
             });
     connect(languageService_, &LanguageService::refactorReady, this,
             &RefactorController::onRefactorReady);
+    // N5: on-type formatting answers through its own slot, so a trigger
+    // keystroke never touches a Rename in flight. Rust decides whether the
+    // answer is still fresh; an empty vector means it is not.
+    connect(languageService_, &LanguageService::onTypeFormatReady, this, [this]() {
+        editorTabs_->applyBufferEdits(
+          languageService_->takeOnTypeEdits(editorTabs_->documentRevision()));
+    });
+
     connect(languageService_, &LanguageService::refactorFallback, this,
             &RefactorController::askIndexToRename);
     connect(languageService_, &LanguageService::refactorFailed, this,
@@ -396,13 +404,46 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
     refactorMenu->addSeparator();
     QAction *reformatAction = registerAction(refactorMenu, QStringLiteral("code.reformat"),
                                              tr("Reformat Code"), appSettings, actions);
-    connect(reformatAction, &QAction::triggered, this, [this]() {
+    // N4: the selection (the caret twice when there is none) goes along; the
+    // Rust side decides whether that means a range or the whole file.
+    const auto reformat = [this](bool selectionOnly) {
         const QString path = editorTabs_->currentPath();
         if (path.isEmpty()) {
             return;
         }
-        languageService_->requestFormatting(path, editorTabs_->documentRevision());
-    });
+        const auto range = editorTabs_->selectionRange();
+        const FfiSelection selection{range.first.first, range.first.second, range.second.first,
+                                     range.second.second};
+        if (selectionOnly) {
+            languageService_->requestSelectionFormatting(path, editorTabs_->documentRevision(),
+                                                         selection);
+        } else {
+            editorTabs_->syncLiveText();
+            languageService_->requestFormatting(path, editorTabs_->documentRevision(), selection);
+        }
+    };
+    connect(reformatAction, &QAction::triggered, this, [reformat]() { reformat(false); });
+    QAction *reformatSelectionAction =
+      registerAction(refactorMenu, QStringLiteral("code.reformatSelection"),
+                      tr("Reformat Selection"), appSettings, actions);
+    connect(reformatSelectionAction, &QAction::triggered, this, [reformat]() { reformat(true); });
+
+    // ADR-0072: Alt+Insert.
+    QAction *generateAction = registerAction(refactorMenu, QStringLiteral("code.generate"),
+                                             tr("Generate..."), appSettings, actions);
+    connect(generateAction, &QAction::triggered, this, [this]() { editorTabs_->showGenerateNow(); });
+    // ADR-0072: Ctrl+J and Ctrl+Alt+T. Which templates fit, and what each
+    // expands to, is Rust's; this only opens the pickers.
+    QAction *insertTemplateAction =
+      registerAction(refactorMenu, QStringLiteral("code.insertLiveTemplate"),
+                      tr("Insert Live Template..."), appSettings, actions);
+    connect(insertTemplateAction, &QAction::triggered, this,
+            [this]() { editorTabs_->insertLiveTemplateNow(); });
+    QAction *surroundWithAction =
+      registerAction(refactorMenu, QStringLiteral("code.surroundWith"), tr("Surround With..."),
+                      appSettings, actions);
+    connect(surroundWithAction, &QAction::triggered, this,
+            [this]() { editorTabs_->surroundWithTemplateNow(); });
 
     // F2-10: Alt+Return. `EditorTabs` owns the bulb this shares its popup
     // with; this only wires the shortcut to asking for it right now.

@@ -62,7 +62,7 @@ pub fn resolve_path(raw_path: &str, project_root: &Path, path_map: Option<&PathM
         }
     }
     let host = process_exec::host::ExecHost::for_path(project_root);
-    if !host.is_remote() {
+    if !host.filesystem_is_remote() {
         let path = Path::new(raw_path);
         return if path.is_absolute() {
             path.to_path_buf()

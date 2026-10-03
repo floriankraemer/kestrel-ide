@@ -563,6 +563,8 @@ pub enum FileOpError {
     AlreadyExists(PathBuf),
     NotFound(PathBuf),
     Io(PathBuf, io::Error),
+    /// A name that cannot be one directory entry: the reason, in words.
+    InvalidName(String),
 }
 
 impl fmt::Display for FileOpError {
@@ -571,26 +573,64 @@ impl fmt::Display for FileOpError {
             FileOpError::AlreadyExists(p) => write!(f, "already exists: {}", p.display()),
             FileOpError::NotFound(p) => write!(f, "no such file or folder: {}", p.display()),
             FileOpError::Io(p, err) => write!(f, "{}: {err}", p.display()),
+            FileOpError::InvalidName(reason) => write!(f, "invalid name: {reason}"),
         }
     }
 }
 
 impl std::error::Error for FileOpError {}
 
+/// Whether `name` can be a single entry of a directory: not empty, not `.`
+/// or `..`, no path separator (it must not reach outside the directory it is
+/// created in) and no control character.
+pub fn validate_entry_name(name: &str) -> Result<(), FileOpError> {
+    let reason = if name.trim().is_empty() {
+        "the name is empty"
+    } else if name == "." || name == ".." {
+        "`.` and `..` are not names"
+    } else if name.contains(['/', '\\']) {
+        "a name cannot contain a path separator"
+    } else if name.chars().any(char::is_control) {
+        "a name cannot contain control characters"
+    } else {
+        return Ok(());
+    };
+    Err(FileOpError::InvalidName(reason.to_string()))
+}
+
 /// Create an empty file named `name` inside `parent_dir`. Errors if
 /// something with that name already exists there.
 pub fn create_file(parent_dir: &Path, name: &str) -> Result<PathBuf, FileOpError> {
+    create_file_with(parent_dir, name, "")
+}
+
+/// Create a file named `name` inside `parent_dir` holding `contents`. The
+/// existence check and the creation are one step, so a file that appears in
+/// between is never overwritten.
+pub fn create_file_with(
+    parent_dir: &Path,
+    name: &str,
+    contents: &str,
+) -> Result<PathBuf, FileOpError> {
+    validate_entry_name(name)?;
     let path = parent_dir.join(name);
-    if path.exists() {
-        return Err(FileOpError::AlreadyExists(path));
-    }
-    fs::File::create(&path).map_err(|e| FileOpError::Io(path.clone(), e))?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|e| match e.kind() {
+            io::ErrorKind::AlreadyExists => FileOpError::AlreadyExists(path.clone()),
+            _ => FileOpError::Io(path.clone(), e),
+        })?;
+    io::Write::write_all(&mut file, contents.as_bytes())
+        .map_err(|e| FileOpError::Io(path.clone(), e))?;
     Ok(path)
 }
 
 /// Create an empty folder named `name` inside `parent_dir`. Errors if
 /// something with that name already exists there.
 pub fn create_folder(parent_dir: &Path, name: &str) -> Result<PathBuf, FileOpError> {
+    validate_entry_name(name)?;
     let path = parent_dir.join(name);
     if path.exists() {
         return Err(FileOpError::AlreadyExists(path));
@@ -602,6 +642,7 @@ pub fn create_folder(parent_dir: &Path, name: &str) -> Result<PathBuf, FileOpErr
 /// Rename `path` (file or folder) to `new_name`, staying in the same parent
 /// directory. Errors if `path` doesn't exist or `new_name` is already taken.
 pub fn rename_path(path: &Path, new_name: &str) -> Result<PathBuf, FileOpError> {
+    validate_entry_name(new_name)?;
     if !path.exists() {
         return Err(FileOpError::NotFound(path.to_path_buf()));
     }
@@ -689,6 +730,24 @@ pub fn walk_all_entries(
     entries
 }
 
+/// How deep [`contains_extension`] looks: a project's source sits near its
+/// root, and a flat probe must not walk a monorepo on every New menu.
+const EXTENSION_PROBE_DEPTH: usize = 6;
+
+/// Whether `root` holds a file ending in `.extension` within
+/// [`EXTENSION_PROBE_DEPTH`] levels, honouring `.gitignore` (so `vendor/`
+/// and `node_modules/` do not count). Stops at the first hit.
+pub fn contains_extension(root: &Path, extension: &str) -> bool {
+    ignore::WalkBuilder::new(root)
+        .max_depth(Some(EXTENSION_PROBE_DEPTH))
+        .build()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry.path().extension().and_then(|e| e.to_str()) == Some(extension)
+                && entry.file_type().is_some_and(|t| t.is_file())
+        })
+}
+
 /// Persist `project_path` as the last-opened project: one plain-text line
 /// in `config_dir` (per plan §3 — deliberately not serde/toml/json).
 pub fn persist_last_project(config_dir: &Path, project_path: &Path) -> io::Result<()> {
@@ -715,11 +774,39 @@ pub fn read_last_project(config_dir: &Path) -> io::Result<Option<PathBuf>> {
     }
 }
 
-/// The platform config dir the real app persists into (`dirs::config_dir()`
-/// joined with `ide`). Tests should use their own temp dir instead of this,
-/// to avoid touching the developer's real `~/.config`.
+/// Environment variable that points the app at an isolated config dir
+/// (used verbatim, no `ide` suffix), so a manual walk or a second install
+/// never touches the real settings, recents and window state.
+pub const CONFIG_DIR_ENV: &str = "IDE_CONFIG_DIR";
+
+/// The config dir the real app persists into: `IDE_CONFIG_DIR` when set and
+/// non-empty, else the platform config dir (`dirs::config_dir()`) joined with
+/// `ide`. Tests should use their own temp dir instead of this, to avoid
+/// touching the developer's real `~/.config`.
 pub fn default_config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("ide"))
+    config_dir_from(std::env::var_os(CONFIG_DIR_ENV), dirs::config_dir())
+}
+
+fn config_dir_from(over: Option<std::ffi::OsString>, platform: Option<PathBuf>) -> Option<PathBuf> {
+    match over {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => platform.map(|d| d.join("ide")),
+    }
+}
+
+/// The cache dir the real app writes derived data into (the index fallback
+/// for projects that cannot hold one): `cache` under `IDE_CONFIG_DIR` when
+/// set, so an isolated config dir isolates the caches too, else the platform
+/// cache dir joined with `ide`.
+pub fn default_cache_dir() -> Option<PathBuf> {
+    cache_dir_from(std::env::var_os(CONFIG_DIR_ENV), dirs::cache_dir())
+}
+
+fn cache_dir_from(over: Option<std::ffi::OsString>, platform: Option<PathBuf>) -> Option<PathBuf> {
+    match over {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir).join("cache")),
+        _ => platform.map(|d| d.join("ide")),
+    }
 }
 
 /// Session-scoped holder for "the one open project", matching US-1: opening

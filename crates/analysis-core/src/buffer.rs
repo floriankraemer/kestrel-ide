@@ -28,6 +28,19 @@ pub enum BufferStrategy {
     SavedOnly,
 }
 
+impl BufferStrategy {
+    /// Parse a manifest's `buffer` value; absent means `SavedOnly`, the
+    /// only strategy that needs nothing from the tool. The manifest loader
+    /// already rejected unknown spellings, so `None` here means absent.
+    pub fn from_manifest(value: Option<&str>) -> Self {
+        match value {
+            Some("stdin") => Self::Stdin,
+            Some("temp-copy") => Self::TempCopy,
+            _ => Self::SavedOnly,
+        }
+    }
+}
+
 /// `OnType` needs the tool to read something other than the last save;
 /// `SavedOnly` cannot offer that, so the effective trigger silently
 /// becomes `OnSave` — silently to the process, not to the user: the
@@ -102,8 +115,14 @@ pub fn write_temp_copy(
         RUN_COUNTER.fetch_add(1, Ordering::SeqCst)
     );
     let dir = original.parent().unwrap_or_else(|| Path::new("."));
+    // The original's extension is kept at the end: a tool that selects files
+    // by extension (php-cs-fixer, Pint) would otherwise skip the copy.
+    let extension = original
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
     let path = dir.join(format!(
-        ".{}.ide-analysis-tmp-{suffix}",
+        ".{}.ide-analysis-tmp-{suffix}{extension}",
         file_name.to_string_lossy()
     ));
     fs::write(&path, contents)?;
@@ -183,6 +202,7 @@ mod tests {
                 .unwrap()
                 .to_string_lossy()
                 .starts_with(".Greeter.php.ide-analysis-tmp-"));
+            assert!(path.extension().is_some_and(|e| e == "php"));
             path
         };
         assert!(

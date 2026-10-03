@@ -1,4 +1,5 @@
 #include "problems_panel.h"
+#include "language_servers_page.h"
 
 #include "e2e_mark.h"
 #include "editor_tabs.h"
@@ -15,6 +16,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QShortcut>
+#include <QTimer>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -150,9 +152,21 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
     clearFilter->setContext(Qt::WidgetShortcut);
     connect(clearFilter, &QShortcut::activated, filterEdit_, &QLineEdit::clear);
 
-    connect(languageService_, &LanguageService::diagnosticsChanged, this, &ProblemsPanel::refresh);
-    connect(buildService_, &BuildService::diagnosticsChanged, this, &ProblemsPanel::refresh);
-    connect(analysisService, &AnalysisService::diagnosticsChanged, this, &ProblemsPanel::refresh);
+    // Coalesced: with thousands of rows a rebuild is not free, and a save
+    // makes every analyzer and server publish separately.
+    refreshTimer_ = new QTimer(this);
+    refreshTimer_->setSingleShot(true);
+    refreshTimer_->setInterval(50);
+    connect(refreshTimer_, &QTimer::timeout, this, &ProblemsPanel::refresh);
+    connect(languageService_, &LanguageService::diagnosticsChanged, this,
+            &ProblemsPanel::scheduleRefresh);
+    connect(buildService_, &BuildService::diagnosticsChanged, this,
+            &ProblemsPanel::scheduleRefresh);
+    connect(analysisService, &AnalysisService::diagnosticsChanged, this,
+            &ProblemsPanel::scheduleRefresh);
+    // The panel exists from app start, so it is also where the Language
+    // Servers page's session record begins.
+    trackLanguageServerStates(languageService_);
     connect(languageService_,
             &LanguageService::serverStateChanged,
             this,
@@ -174,7 +188,12 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
                                       .arg(retryMs / 1000.0, 0, 'f', 1);
                     break;
                 case FfiServerState::Failed:
+                case FfiServerState::NotFound:
                     serverStatus_ = tr("%1 is not running: %2").arg(name, detail);
+                    break;
+                case FfiServerState::Unavailable:
+                    // A server the platform rules out is not a fault in the
+                    // results shown; the Language Servers page says why.
                     break;
                 }
                 applyFilter();
@@ -194,7 +213,12 @@ void ProblemsPanel::setCurrentFile(const QString &path)
         return;
     }
     currentFile_ = path;
-    refresh();
+    scheduleRefresh();
+}
+
+void ProblemsPanel::scheduleRefresh()
+{
+    refreshTimer_->start();
 }
 
 void ProblemsPanel::focusTree()
@@ -214,6 +238,7 @@ void ProblemsPanel::refresh()
         rows.append(row);
     }
 
+    tree_->setUpdatesEnabled(false);
     tree_->clear();
     QTreeWidgetItem *currentFileGroup = nullptr;
     QTreeWidgetItem *group = nullptr;
@@ -269,6 +294,8 @@ void ProblemsPanel::refresh()
             currentFileGroup->setExpanded(true);
         }
     }
+
+    tree_->setUpdatesEnabled(true);
 
     if (!rows.empty() && !announced_) {
         announced_ = true;
@@ -341,28 +368,6 @@ void ProblemsPanel::applyFilter()
             if (visible) {
                 ++visibleChildren;
                 ++shown;
-                // This row's own on-screen rect, the same reason
-                // `changes_panel.cpp`'s `markChangesRow` reports one: an
-                // E2E flow that has to double-click a specific finding
-                // would otherwise compute its position from the tree's
-                // font metrics and row height. Reported from here, after
-                // visibility is settled and the dock has already been
-                // shown (`refresh()`'s `firstDiagnostic_` runs before this
-                // is reached) — not from `refresh()`'s own row-building
-                // loop, where the dock may still be hidden and the rect
-                // meaningless.
-                const QRect itemRect = tree_->visualItemRect(item);
-                const QPoint origin = itemRect.isEmpty()
-                  ? QPoint()
-                  : tree_->viewport()->mapToGlobal(itemRect.topLeft());
-                e2eMark(QStringLiteral("{\"ev\":\"problem_row\",\"path\":%1,\"source\":%2,"
-                                        "\"rect\":[%3,%4,%5,%6]}")
-                          .arg(e2eJson(item->data(0, kPathRole).toString()),
-                                e2eJson(item->text(3)))
-                          .arg(origin.x())
-                          .arg(origin.y())
-                          .arg(itemRect.width())
-                          .arg(itemRect.height()));
             }
         }
         // A group with nothing left in it is not a group.
@@ -377,6 +382,7 @@ void ProblemsPanel::applyFilter()
     infosButton_->setEnabled(infos > 0);
 
     updateStatus(shown, total);
+    markVisibleRows();
 
     // The only way anything outside the process can know the dock has caught
     // up with a build or a language server — an E2E flow asserting a
@@ -385,6 +391,39 @@ void ProblemsPanel::applyFilter()
     e2eMark(QStringLiteral("{\"ev\":\"problems_refreshed\",\"shown\":%1,\"total\":%2}")
               .arg(shown)
               .arg(total));
+}
+
+void ProblemsPanel::markVisibleRows()
+{
+    if (!e2eMarksEnabled()) {
+        return;
+    }
+    // Each row's own on-screen rect, the same reason `changes_panel.cpp`'s
+    // `markChangesRow` reports one: an E2E flow that has to double-click a
+    // specific finding would otherwise compute its position from the
+    // tree's font metrics and row height. Read only once every row's
+    // visibility is settled: `visualItemRect` lays the tree out again after
+    // any visibility change, so asking between `setHidden` calls costs a
+    // full layout per row — minutes for a few thousand rows.
+    for (int g = 0; g < tree_->topLevelItemCount(); ++g) {
+        QTreeWidgetItem *group = tree_->topLevelItem(g);
+        for (int i = 0; i < group->childCount(); ++i) {
+            QTreeWidgetItem *item = group->child(i);
+            if (item->isHidden() || group->isHidden()) {
+                continue;
+            }
+            const QRect itemRect = tree_->visualItemRect(item);
+            const QPoint origin =
+              itemRect.isEmpty() ? QPoint() : tree_->viewport()->mapToGlobal(itemRect.topLeft());
+            e2eMark(QStringLiteral("{\"ev\":\"problem_row\",\"path\":%1,\"source\":%2,"
+                                    "\"rect\":[%3,%4,%5,%6]}")
+                      .arg(e2eJson(item->data(0, kPathRole).toString()), e2eJson(item->text(3)))
+                      .arg(origin.x())
+                      .arg(origin.y())
+                      .arg(itemRect.width())
+                      .arg(itemRect.height()));
+        }
+    }
 }
 
 void ProblemsPanel::updateStatus(int shown, int total)

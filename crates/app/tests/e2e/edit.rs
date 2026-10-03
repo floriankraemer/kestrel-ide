@@ -314,3 +314,182 @@ fn undo_once_and_save(ide: &Ide, mcp: &Mcp, tab_id: u64) {
     });
     ide.sync(mcp);
 }
+
+/// A Composer project (PSR-4 `App\` -> `src/`) with a two-property class,
+/// a directory to create into, a scratch script and a template.
+fn php_editing_fixture() -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().expect("temp PHP project");
+    let write = |relative: &str, text: &str| {
+        let path = dir.path().join(relative);
+        std::fs::create_dir_all(path.parent().unwrap()).expect("directory");
+        std::fs::write(path, text).expect("fixture file");
+    };
+    write(
+        "composer.json",
+        r#"{"autoload": {"psr-4": {"App\\": "src/"}}}"#,
+    );
+    write(
+        "src/User.php",
+        "<?php\n\nnamespace App;\n\nclass User\n{\n    private string $name;\n    public readonly int $id;\n}\n",
+    );
+    write(
+        "src/Sub/Marker.php",
+        "<?php\n\nnamespace App\\Sub;\n\nclass Marker\n{\n}\n",
+    );
+    write("scratch.php", "<?php\n\n$xs = [1, 2];\necho 'hi';\n");
+    write("view.php", "<h1>Hello</h1>\n<?php echo 1; ?>\n");
+    dir
+}
+
+/// Click the entry of `menu_event` whose label starts with `prefix`.
+fn click_menu_entry(ide: &Ide, mark: Mark, menu_event: &str, prefix: &str) {
+    let entry = ide.wait_for_event(mark, &format!("a `{prefix}` entry in {menu_event}"), |e| {
+        e["ev"] == menu_event
+            && e["label"]
+                .as_str()
+                .is_some_and(|l| l.replace('&', "").starts_with(prefix))
+    });
+    let (x, y) = rect_centre(&entry["rect"]);
+    ide.click_at(x, y, 1);
+}
+
+/// PHP parity G (and Y): the editor-only gestures a PHP developer reaches for.
+///
+/// - Alt+Insert > Getters and Setters on a class with a readonly property
+///   (no setter for it).
+/// - File > New > PHP Class in `src/Sub` creates `App\Sub\Thing`.
+/// - Ctrl+Alt+T surrounds the selected line with `if`.
+/// - `$xs.foreach` + Tab expands the postfix template.
+/// - Ctrl+/ on an HTML line of a `.php` file writes an HTML comment.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_php_generate_templates_and_new_class() {
+    let name = "e2e_php_generate_templates_and_new_class";
+    let project = php_editing_fixture();
+    let mut ide = Ide::launch(name, APP, project.path());
+    drop(project);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    let mcp = ide.mcp();
+    wait_for_index(&mcp);
+
+    // Alt+Insert > Getters and Setters.
+    let tab = open_file(&ide, "User.php");
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+    ide.key("ctrl+Home");
+    for _ in 0..6 {
+        ide.key("Down"); // inside the class body
+    }
+    let mark = ide.mark();
+    ide.key("alt+Insert");
+    ide.wait_for_event(mark, "the Generate menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "generate_menu"
+    });
+    click_menu_entry(&ide, mark, "generate_menu_action", "Getters and Setters");
+    let shown = ide.wait_for_event(mark, "the member picker to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "generate_members"
+    });
+    assert_eq!(shown["items"].as_array().map(Vec::len), Some(2), "{shown}");
+    ide.focus_window(shown["window"].as_str().expect("the dialog's window"));
+    ide.key("Return");
+    ide.wait_for_event(mark, "the picker to accept", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "generate_members" && e["accepted"] == true
+    });
+    ide.focus_main();
+    save_and_sync(&ide, &mcp, tab_id);
+    let user = buffer(&mcp, tab_id);
+    assert!(user.contains("public function getName(): string"), "{user}");
+    assert!(
+        user.contains("public function setName(string $name): void"),
+        "{user}"
+    );
+    assert!(user.contains("public function getId(): int"), "{user}");
+    assert!(
+        !user.contains("setId"),
+        "a readonly property has no setter:\n{user}"
+    );
+
+    // File > New > PHP Class, created in the selected `src/Sub`.
+    let root = ide.project_root().to_path_buf();
+    crate::support::settle(&ide);
+    let latest_row = |suffix: &str| {
+        ide.events_since_of(Mark::start(), "project_tree_row")
+            .into_iter()
+            .rfind(|e| e["path"].as_str().is_some_and(|p| p.ends_with(suffix)))
+            .unwrap_or_else(|| panic!("no tree row for {suffix}"))
+    };
+    let (x, y) = rect_centre(&latest_row("/src")["rect"]);
+    let mark = ide.mark();
+    ide.double_click_at(x, y, 1);
+    ide.wait_for_event(mark, "the Sub row after expanding src", |e| {
+        e["ev"] == "project_tree_row" && e["path"].as_str().is_some_and(|p| p.ends_with("/src/Sub"))
+    });
+    let (x, y) = rect_centre(&latest_row("/src/Sub")["rect"]);
+    ide.click_at(x, y, 1);
+    ide.focus_main();
+    let mark = ide.mark();
+    ide.key("alt+f");
+    click_menu_entry(&ide, mark, "file_menu_action", "New");
+    click_menu_entry(&ide, mark, "new_menu_action", "PHP Class");
+    let prompt = ide.wait_for_event(mark, "the name prompt to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "input_dialog"
+    });
+    ide.focus_window(prompt["window"].as_str().expect("the prompt's window"));
+    ide.type_text("Thing");
+    ide.key("Return");
+    ide.wait_for_event(mark, "a tab for Thing.php", |e| {
+        e["ev"] == "tab_added" && e["title"] == "Thing.php"
+    });
+    // Creating a file is not an external change: no "modified outside the
+    // editor" prompt may follow it.
+    ide.focus_main();
+    let thing = std::fs::read_to_string(root.join("src/Sub/Thing.php")).expect("the new class");
+    assert!(thing.contains("namespace App\\Sub;"), "{thing}");
+    assert!(thing.contains("class Thing"), "{thing}");
+
+    // Ctrl+Alt+T: surround the selected line with `if`; `$xs.foreach` + Tab.
+    let tab = open_file(&ide, "scratch.php");
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+    ide.key("ctrl+Home");
+    ide.key("Down");
+    ide.key("Down");
+    ide.key("Down"); // `echo 'hi';`
+    ide.key("shift+End");
+    let mark = ide.mark();
+    ide.key("ctrl+alt+t");
+    ide.wait_for_event(mark, "the Surround With menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "live_templates_menu"
+    });
+    click_menu_entry(&ide, mark, "live_templates_menu_action", "if —");
+    ide.wait_for_event(mark, "the Surround With menu to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "live_templates_menu"
+    });
+    ide.focus_main();
+    // The template's snippet session owns Tab until it ends.
+    ide.key("Escape");
+    ide.key("ctrl+End");
+    // The `shift+End` above and the `$` below are two lone Shift presses: any
+    // gap under `IdeMainWindow`'s 300 ms double-Shift window opens Search
+    // Everywhere, which swallows the typing.
+    std::thread::sleep(std::time::Duration::from_millis(400));
+    ide.type_text("$xs.foreach");
+    ide.key("Tab");
+    save_and_sync(&ide, &mcp, tab_id);
+    let scratch = buffer(&mcp, tab_id);
+    assert!(scratch.contains("if ("), "{scratch}");
+    assert!(scratch.contains("echo 'hi';"), "{scratch}");
+    assert!(scratch.contains("foreach ($xs as"), "{scratch}");
+
+    // Ctrl+/ on the HTML line of a `.php` file.
+    let tab = open_file(&ide, "view.php");
+    let tab_id = tab["tab_id"].as_u64().expect("tab_id");
+    ide.key("ctrl+Home");
+    ide.key("ctrl+slash");
+    save_and_sync(&ide, &mcp, tab_id);
+    assert!(
+        buffer(&mcp, tab_id).starts_with("<!-- <h1>Hello</h1> -->"),
+        "{:?}",
+        buffer(&mcp, tab_id)
+    );
+
+    assert_eq!(ide.quit(), 0);
+}

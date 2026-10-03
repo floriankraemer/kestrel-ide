@@ -35,6 +35,11 @@ public:
     // the index speaks is derived by EditorTabs, which owns the buffer.
     void resolveAt(int documentPosition);
 
+    // Go to Type Declaration: the server's `typeDefinition` answer, with no
+    // index fallback (the verdict still arrives as definitionFound/Finished
+    // or definitionUnavailable).
+    void resolveTypeAt(int documentPosition);
+
     // ADR-0016's fallback: ADR-0011's name-based index answers whenever the
     // server did not. Never called from a condition evaluated here — it is
     // wired to definitionFallback, which is `lsp_core`'s verdict.

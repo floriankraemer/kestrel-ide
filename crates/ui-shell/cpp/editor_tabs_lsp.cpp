@@ -282,6 +282,19 @@ void EditorTabs::requestSignatureHelpFor(CodeEditor *editor, bool explicitReques
                                            explicitRequest, signatureTipVisible_);
 }
 
+// N5: whether `typed` triggers on-type formatting is the Rust side's call;
+// this only says what was typed and where the caret is now.
+void EditorTabs::requestOnTypeFormattingFor(CodeEditor *editor, const QString &typed)
+{
+    const QString path = editor->property("lspPath").toString();
+    if (path.isEmpty()) {
+        return;
+    }
+    const auto at = lspPosition(editor, editor->textCursor().position());
+    languageService_->requestOnTypeFormatting(path, documentRevision(), at.first, at.second,
+                                              typed);
+}
+
 void EditorTabs::requestSignatureHelpNow()
 {
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
@@ -390,6 +403,11 @@ void EditorTabs::requestCodeLensesFor(CodeEditor *editor)
 
 void EditorTabs::onIntentionsReady()
 {
+    if (generatePending_) {
+        generatePending_ = false;
+        showGenerateMenu(true);
+        return;
+    }
     const bool wasPending = intentionsPending_;
     intentionsPending_ = false;
     if (!intentionsEditor_) {
@@ -449,6 +467,7 @@ void EditorTabs::showIntentionsMenu(const QPoint *anchor)
                          : blankBulbIcon(16, menu.devicePixelRatioF()));
         const quint32 index = static_cast<quint32>(i);
         connect(entry, &QAction::triggered, this, [this, index]() {
+            syncLiveText();
             languageService_->applyIntention(index, documentRevision());
         });
     }
@@ -615,6 +634,11 @@ void EditorTabs::setDiagnosticsService(DiagnosticsService *diagnosticsService)
     diagnosticsService_ = diagnosticsService;
 }
 
+void EditorTabs::setAnalysisService(AnalysisService *analysisService)
+{
+    analysisService_ = analysisService;
+}
+
 void EditorTabs::goToDiagnostic(bool forward)
 {
     auto *editor = qobject_cast<CodeEditor *>(currentEditor());
@@ -663,6 +687,7 @@ DiagnosticsService *wireDiagnosticsService(QObject *parent, LanguageService *lan
     // have changed.
     auto *diagnosticsService = new DiagnosticsService(parent);
     editorTabs->setDiagnosticsService(diagnosticsService);
+    editorTabs->setAnalysisService(analysisService);
     QObject::connect(languageService, &LanguageService::diagnosticsChanged, editorTabs,
                       [editorTabs]() { editorTabs->applyDiagnostics(); });
     QObject::connect(buildService, &BuildService::diagnosticsChanged, editorTabs,
@@ -803,8 +828,7 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
             this,
             [this, editor](const QString &textBefore) {
                 QVector<CompletionEntry> entries;
-                for (const FfiCompletionItem &item :
-                     languageService_->completionItems(textBefore)) {
+                const auto append = [&entries](const FfiCompletionItem &item) {
                     QVector<int> matchPositions;
                     for (quint32 position : item.match_positions) {
                         matchPositions.append(static_cast<int>(position));
@@ -827,6 +851,16 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
                     entry.isSnippet = item.is_snippet;
                     entry.matchPositions = matchPositions;
                     entries.append(entry);
+                };
+                // ADR-0072: postfix templates after `expr.` come first — they
+                // are the specific answer there.
+                for (const FfiCompletionItem &item : editorOps_->templateCompletions(
+                       editor->property("tabId").toULongLong(), editor->toPlainText())) {
+                    append(item);
+                }
+                for (const FfiCompletionItem &item :
+                     languageService_->completionItems(textBefore)) {
+                    append(item);
                 }
                 editor->showCompletions(entries);
             });
@@ -905,6 +939,7 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
           editorOps_->typeText(tabId, editor->toPlainText(), typed);
         applyEditsTo(editor, edits);
         refreshCarets(editor);
+        requestOnTypeFormattingFor(editor, typed);
     });
     connect(editor, &CodeEditor::multiCaretBackspace, this, [this, editor, tabId]() {
         applyEditsTo(editor, editorOps_->backspace(tabId, editor->toPlainText()));
@@ -917,9 +952,17 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
     connect(editor, &CodeEditor::multiCaretNewline, this, [this, editor, tabId]() {
         applyEditsTo(editor, editorOps_->newline(tabId, editor->toPlainText()));
         refreshCarets(editor);
+        requestOnTypeFormattingFor(editor, QStringLiteral("\n"));
     });
     // R1: Tab/Shift+Tab.
     connect(editor, &CodeEditor::multiCaretIndent, this, [this, editor, tabId](bool outdent) {
+        // ADR-0072: Tab after a live-template abbreviation expands it; Rust says
+        // whether there was one, otherwise Tab indents as ever.
+        if (!outdent
+            && applyTemplateExpansion(editor,
+                                      editorOps_->expandTemplate(tabId, editor->toPlainText()))) {
+            return;
+        }
         applyEditsTo(editor, editorOps_->indentSelection(tabId, editor->toPlainText(), outdent));
         refreshCarets(editor);
     });
@@ -1046,6 +1089,9 @@ void EditorTabs::onTabOpened(quint64 tabId, const QString &title)
         const QString current = editor->property("lspPath").toString();
         if (!current.isEmpty()) {
             languageService_->documentChanged(current, editor->toPlainText());
+            if (analysisService_) {
+                analysisService_->fileChanged(current, editor->toPlainText());
+            }
         }
         // F2-11: a content change shifts every hint position on the lines
         // after it, so the visible set is asked for again on the same

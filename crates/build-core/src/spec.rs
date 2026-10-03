@@ -125,7 +125,7 @@ fn with_target(toolchain: ToolchainId, mut command: ToolCommand, target: &str) -
             command.args.push(format!(":{target}"));
             command.args.push("-am".into());
         }
-        ToolchainId::Npm | ToolchainId::Python | ToolchainId::Make => {}
+        ToolchainId::Npm | ToolchainId::Python | ToolchainId::Make | ToolchainId::Php => {}
     }
     command
 }

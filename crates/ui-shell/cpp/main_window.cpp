@@ -739,7 +739,7 @@ void buildMainWindow(AppSettings *appSettings,
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
     wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5
-    wireDebugService(debugService, editorTabs);         // D2-5
+    wireDebugService(debugService, editorTabs, testService); // D2-5, PHP parity T3
     // Breakpoints live under the project's `.ide/local/`, so they can only
     // be read once a project is open — the same lifecycle hook run
     // configuration detection uses.
@@ -805,9 +805,7 @@ void buildMainWindow(AppSettings *appSettings,
                     central.terminalPanel->selectShellAction());
 
     QMenu *fileMenu = window->menuBar()->addMenu(QObject::tr("&File"));
-    // Each entry's rect, the same convention `viewMenu` below uses — an E2E
-    // flow needs Preferences'/Project Settings' on-screen position to open
-    // the Settings dialog without guessing tab order.
+    // Each entry's rect (as `viewMenu` below): an E2E flow needs them on screen.
     e2eMarkMenuActions(fileMenu, "file_menu_action");
     QAction *openFolderAction = registerAction(fileMenu, QStringLiteral("file.openFolder"),
                                                 QObject::tr("Open Folder..."), appSettings, *actions);
@@ -827,6 +825,8 @@ void buildMainWindow(AppSettings *appSettings,
     fileMenu->addSeparator();
     QAction *exitAction = registerAction(fileMenu, QStringLiteral("file.exit"),
                                           QObject::tr("Exit"), appSettings, *actions);
+    wireNewMenu(fileMenu, window, central.projectTree, treeModel,
+                [tabs = central.editorTabs](const QString &path) { tabs->openFile(path); });
 
     QObject::connect(openFolderAction, &QAction::triggered, window,
                       [treeModel, window, recentProjectsMenu, appSettings]() {
@@ -1062,27 +1062,18 @@ void buildMainWindow(AppSettings *appSettings,
     });
     // Every entry point opens the same popup, just preselected on a
     // different tab — one search surface, several doors into it.
-    QAction *searchEverywhereAction =
-      registerAction(viewMenu, QStringLiteral("view.searchEverywhere"),
-                     QObject::tr("Search Everywhere..."), appSettings, *actions);
-    QObject::connect(searchEverywhereAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::All);
-    });
-    QAction *goToFileAction = registerAction(viewMenu, QStringLiteral("view.goToFile"),
-                                             QObject::tr("Go to File..."), appSettings, *actions);
-    QObject::connect(goToFileAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::Files);
-    });
-    QAction *findActionAction = registerAction(viewMenu, QStringLiteral("view.findAction"),
-                                               QObject::tr("Find Action..."), appSettings, *actions);
-    QObject::connect(findActionAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::Actions);
-    });
-    QAction *goToSymbolAction = registerAction(viewMenu, QStringLiteral("view.goToSymbol"),
-                                               QObject::tr("Go to Symbol..."), appSettings, *actions);
-    QObject::connect(goToSymbolAction, &QAction::triggered, window, [central]() {
-        central.searchEverywhereDialog->popup(SearchEverywhereDialog::Tier::Symbols);
-    });
+    using Tier = SearchEverywhereDialog::Tier;
+    const auto addSearchAction = [&](const char *id, const QString &label, Tier tier) {
+        QAction *action = registerAction(viewMenu, QString::fromLatin1(id), label, appSettings,
+                                         *actions);
+        QObject::connect(action, &QAction::triggered, window,
+                         [central, tier]() { central.searchEverywhereDialog->popup(tier); });
+    };
+    addSearchAction("view.searchEverywhere", QObject::tr("Search Everywhere..."), Tier::All);
+    addSearchAction("view.goToFile", QObject::tr("Go to File..."), Tier::Files);
+    addSearchAction("view.goToClass", QObject::tr("Go to Class..."), Tier::Classes);
+    addSearchAction("view.findAction", QObject::tr("Find Action..."), Tier::Actions);
+    addSearchAction("view.goToSymbol", QObject::tr("Go to Symbol..."), Tier::Symbols);
     QAction *goToLineAction = registerAction(viewMenu, QStringLiteral("view.goToLine"),
                                              QObject::tr("Go to Line..."), appSettings, *actions);
     QObject::connect(goToLineAction, &QAction::triggered, window, [editorTabs]() {
@@ -1093,7 +1084,7 @@ void buildMainWindow(AppSettings *appSettings,
     buildVcsMenu(window, vcsService, appSettings, *actions, editorTabs, central.docks,
                  central.fileHistoryPanel, viewMenu);
     buildRunMenu(window, runService, runConfigEditor, appSettings, *actions, central.docks,
-                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService, consoleService);
+                 central.runConsolePanel, treeModel, editorTabs, central.buildPanel, viewMenu, containerService, consoleService, debugService);
     buildBuildMenu(window, central.buildPanel, appSettings, *actions, central.docks, viewMenu,
                    buildToolsService);
     wireContributedToolWindowMenus(appSettings, *actions, central.docks, viewMenu); // G1

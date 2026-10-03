@@ -344,7 +344,7 @@ QToolBar {
     background-color: {surface};
     border: none;
     border-bottom: 1px solid {border};
-    padding: 0 {sp-2}px;
+    padding: 0;
     spacing: {sp-1}px;
     min-height: {toolbar-h}px;
     max-height: {toolbar-h}px;
@@ -551,24 +551,22 @@ QCheckBox, QRadioButton {
     spacing: 6px;
 }
 
-QCheckBox::indicator, QRadioButton::indicator {
+QCheckBox::indicator, QRadioButton::indicator, QAbstractItemView::indicator {
     width: 14px;
     height: 14px;
-    border: 1px solid {border};
+    border: 1px solid {textDim};
     background-color: {surface2};
 }
 
-QCheckBox::indicator { border-radius: 3px; }
+QCheckBox::indicator, QAbstractItemView::indicator { border-radius: 3px; }
 QRadioButton::indicator { border-radius: 8px; }
-QCheckBox::indicator:hover, QRadioButton::indicator:hover { border-color: {accent}; }
-QCheckBox::indicator:checked { background-color: {accent}; border-color: {accent}; }
-
-/* No check-glyph asset exists yet (only the chevron/close/search masks) — a
-   solid fill reads as "checked" without a new icon pipeline for one
-   control; the radio's ring-style fill keeps it visually distinct. */
+QCheckBox::indicator:hover, QRadioButton::indicator:hover, QAbstractItemView::indicator:hover { border-color: {accent}; }
+/* White tick on the accent fill, which both themes share. The item-view
+   indicator (checkable list and tree rows) wears the same box. */
+QCheckBox::indicator:checked, QAbstractItemView::indicator:checked { background-color: {accent}; border-color: {accent}; image: url(:/ui/icons/check.png); }
 QRadioButton::indicator:checked { background-color: {surface2}; border: 4px solid {accent}; }
-QCheckBox::indicator:disabled, QRadioButton::indicator:disabled { border-color: {textDim}; }
-QCheckBox::indicator:checked:disabled { background-color: {textDim}; border-color: {textDim}; }
+QCheckBox::indicator:disabled, QRadioButton::indicator:disabled, QAbstractItemView::indicator:disabled { border-color: {border}; }
+QCheckBox::indicator:checked:disabled, QAbstractItemView::indicator:checked:disabled { background-color: {textDim}; border-color: {textDim}; }
 
 QProgressBar {
     background-color: {surface2};

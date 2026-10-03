@@ -99,8 +99,9 @@ impl ffi::LanguageService {
             self.set_problem_fixes(token, index, list);
             return;
         }
+        let analyzer_fixes = self.analyzer_intentions(&row.path, line, column);
         if !has_server {
-            self.set_problem_fixes(token, index, Vec::new());
+            self.set_problem_fixes(token, index, analyzer_fixes);
             return;
         }
         let raw: Vec<_> = self.store.borrow().raw_for(&row).into_iter().collect();
@@ -115,6 +116,7 @@ impl ffi::LanguageService {
                 .intentions(&uri, (line, column), end, &raw)
                 .unwrap_or_default();
             list.extend(build_file_quick_fix);
+            list.extend(analyzer_fixes);
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
                 // The pointer moved on: this row belongs to a card that is gone.
                 if service.hover.borrow().accept(token) {

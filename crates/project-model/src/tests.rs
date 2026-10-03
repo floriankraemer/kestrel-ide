@@ -616,6 +616,49 @@ fn create_file_errors_when_name_taken() {
 }
 
 #[test]
+fn create_file_with_writes_the_contents_and_never_overwrites() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = create_file_with(dir.path(), "a.php", "<?php\n").unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "<?php\n");
+    assert!(matches!(
+        create_file_with(dir.path(), "a.php", "other"),
+        Err(FileOpError::AlreadyExists(_))
+    ));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.php")).unwrap(),
+        "<?php\n"
+    );
+}
+
+#[test]
+fn an_entry_name_must_be_one_plain_name() {
+    let dir = tempfile::tempdir().unwrap();
+    for bad in ["", "  ", ".", "..", "a/b", "a\\b", "../x", "a\nb", "a\0b"] {
+        assert!(
+            matches!(
+                create_file(dir.path(), bad),
+                Err(FileOpError::InvalidName(_))
+            ),
+            "{bad:?}"
+        );
+        assert!(
+            matches!(
+                create_folder(dir.path(), bad),
+                Err(FileOpError::InvalidName(_))
+            ),
+            "{bad:?}"
+        );
+    }
+    let file = create_file(dir.path(), "ok.txt").unwrap();
+    assert!(matches!(
+        rename_path(&file, "../escaped.txt"),
+        Err(FileOpError::InvalidName(_))
+    ));
+    assert!(file.exists());
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
 fn create_folder_appears_on_disk() {
     let dir = tempfile::tempdir().unwrap();
     let path = create_folder(dir.path(), "newdir").unwrap();
@@ -728,4 +771,58 @@ fn walk_all_entries_ignores_gitignore_but_honours_its_own_lists() {
     assert!(!paths
         .iter()
         .any(|p| p.starts_with(dir.path().join("excluded"))));
+}
+
+#[test]
+fn contains_extension_finds_a_source_file_but_not_an_ignored_one() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join(".git")).unwrap();
+    fs::write(dir.path().join(".gitignore"), "vendor/\n").unwrap();
+    fs::create_dir_all(dir.path().join("vendor/lib")).unwrap();
+    fs::write(dir.path().join("vendor/lib/a.php"), "").unwrap();
+    fs::write(dir.path().join("main.rs"), "").unwrap();
+    assert!(!contains_extension(dir.path(), "php"));
+    assert!(contains_extension(dir.path(), "rs"));
+    fs::create_dir_all(dir.path().join("src")).unwrap();
+    fs::write(dir.path().join("src/Foo.php"), "").unwrap();
+    assert!(contains_extension(dir.path(), "php"));
+}
+
+#[test]
+fn config_dir_override_is_used_verbatim() {
+    let dir = config_dir_from(
+        Some("/tmp/isolated".into()),
+        Some(PathBuf::from("/home/u/.config")),
+    );
+    assert_eq!(dir, Some(PathBuf::from("/tmp/isolated")));
+}
+
+#[test]
+fn config_dir_without_override_is_the_platform_dir_plus_ide() {
+    let platform = Some(PathBuf::from("/home/u/.config"));
+    assert_eq!(
+        config_dir_from(None, platform.clone()),
+        Some(PathBuf::from("/home/u/.config/ide"))
+    );
+    assert_eq!(
+        config_dir_from(Some("".into()), platform),
+        Some(PathBuf::from("/home/u/.config/ide"))
+    );
+}
+
+#[test]
+fn cache_dir_follows_the_config_dir_override() {
+    let platform = Some(PathBuf::from("/home/u/.cache"));
+    assert_eq!(
+        cache_dir_from(Some("/tmp/isolated".into()), platform.clone()),
+        Some(PathBuf::from("/tmp/isolated/cache"))
+    );
+    assert_eq!(
+        cache_dir_from(None, platform.clone()),
+        Some(PathBuf::from("/home/u/.cache/ide"))
+    );
+    assert_eq!(
+        cache_dir_from(Some("".into()), platform),
+        Some(PathBuf::from("/home/u/.cache/ide"))
+    );
 }

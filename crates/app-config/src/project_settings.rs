@@ -32,9 +32,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    load_toml, save_toml, update_toml, ConfigError, ContainerSettings, DebugAdapterSetting,
-    EditingSettings, FileAssociationSettings, LanguageServerSetting, Layout, RunConfigSetting,
-    TabPaddingSettings, TerminalSettings,
+    load_toml, save_toml, ConfigError, ContainerSettings, DebugAdapterSetting, EditingSettings,
+    FileAssociationSettings, LanguageServerSetting, Layout, RunConfigSetting, TabPaddingSettings,
+    TerminalSettings,
 };
 
 /// Directory holding a project's IDE files, inside the project root.
@@ -211,6 +211,14 @@ pub struct ProjectSettings {
     #[serde(default, rename = "analyzer", skip_serializing_if = "Option::is_none")]
     pub analysis: Option<Vec<crate::AnalyzerSetting>>,
 
+    /// The project's `[php]` override — interpreter, language level,
+    /// container target and the rest, replacing the global layer's section
+    /// wholesale like `[editing]`/`[terminal]` (PHP parity plan, P0-5).
+    ///
+    /// Sparse like the rest: `None` is "the project says nothing about PHP".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub php: Option<crate::php::PhpSettings>,
+
     /// The project's `[containers]` override — its own connections,
     /// registries and dock filters, replacing the global layer's wholesale
     /// (ADR-0055), same rule as `[editing]`/`[terminal]`.
@@ -284,6 +292,7 @@ impl ProjectSettings {
             && self.terminal.is_none()
             && self.layouts.is_none()
             && self.analysis.is_none()
+            && self.php.is_none()
             && self.tab_padding.is_none()
             && self.unknown.is_empty()
     }
@@ -503,23 +512,59 @@ pub fn save(project_root: &Path, settings: &ProjectSettings) -> Result<(), Confi
 /// Load, edit, save. Aborts on a load failure rather than writing defaults
 /// over a file it could not read. Invalidates [`crate::resolved_cache`] on
 /// success, same reason as [`save`].
+///
+/// Writes nothing when the edit changes nothing the file says: a settings
+/// dialog that commits every page on OK, or a detection pass, must not
+/// reformat, stamp or create a file that is committed to the user's
+/// repository. "Changes nothing" is judged after [`ProjectSettings::normalize`],
+/// so an override section holding only defaults counts as absent.
 pub fn update(
     project_root: &Path,
     edit: impl FnOnce(&mut ProjectSettings),
 ) -> Result<(), ConfigError> {
     let dir = project_dir(project_root)?;
+    let before: ProjectSettings = load_toml(&dir.join(PROJECT_SETTINGS_FILE))?;
+    let mut after = before.clone();
+    edit(&mut after);
+    after.normalize();
+    let mut baseline = before;
+    baseline.normalize();
+    if after == baseline {
+        return Ok(());
+    }
     fs::create_dir_all(&dir)?;
     ensure_gitignore(&dir)?;
-    update_toml(
+    after.version = Some(CURRENT_VERSION);
+    save_toml(
         &dir.join(PROJECT_SETTINGS_FILE),
         &dir.join(TEMP_PROJECT_SETTINGS_FILE),
-        |s: &mut ProjectSettings| {
-            edit(s);
-            s.version = Some(CURRENT_VERSION);
-        },
+        &after,
     )?;
     crate::resolved_cache::invalidate();
     Ok(())
+}
+
+impl ProjectSettings {
+    /// Drop override sections that say nothing, so "the project overrides
+    /// nothing" has one spelling. `run_configs` is left alone: there
+    /// `Some(vec![])` means "explicitly cleared", a different answer.
+    pub fn normalize(&mut self) {
+        fn drop_default<T: Default + PartialEq>(section: &mut Option<T>) {
+            if section.as_ref() == Some(&T::default()) {
+                *section = None;
+            }
+        }
+        if self.language_servers.as_ref().is_some_and(Vec::is_empty) {
+            self.language_servers = None;
+        }
+        if self.analysis.as_ref().is_some_and(Vec::is_empty) {
+            self.analysis = None;
+        }
+        drop_default(&mut self.editing);
+        drop_default(&mut self.terminal);
+        drop_default(&mut self.php);
+        drop_default(&mut self.file_associations);
+    }
 }
 
 /// Seed `.ide/.gitignore` if it is not already there.
@@ -997,6 +1042,54 @@ mod tests {
         assert!(!body.contains("use_spaces"), "{body}");
     }
 
+    fn settings_path(root: &Path) -> PathBuf {
+        root.join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)
+    }
+
+    #[test]
+    fn a_noop_update_leaves_a_minimal_file_byte_identical() {
+        let root = project();
+        let body = "[editing]\nuse_spaces = false\n";
+        write_settings(root.path(), body);
+        update(root.path(), |_| {}).unwrap();
+        assert_eq!(
+            fs::read_to_string(settings_path(root.path())).unwrap(),
+            body
+        );
+    }
+
+    #[test]
+    fn an_update_that_only_adds_empty_sections_writes_nothing() {
+        // What the Settings dialog's OK does in project scope: every page
+        // commits its draft, changed or not.
+        let root = project();
+        update(root.path(), |project| {
+            project.editing = Some(EditingSettings::default());
+            project.language_servers = Some(Vec::new());
+            project.analysis = Some(Vec::new());
+            project.php = Some(crate::php::PhpSettings::default());
+        })
+        .unwrap();
+        assert!(!settings_path(root.path()).exists());
+        assert!(!root.path().join(PROJECT_DIR).exists());
+    }
+
+    #[test]
+    fn a_real_edit_does_not_write_sentinel_fields_into_the_file() {
+        let root = project();
+        update(root.path(), |project| {
+            project.editing = Some(EditingSettings {
+                use_spaces: Some(false),
+                ..EditingSettings::default()
+            });
+        })
+        .unwrap();
+        let written = fs::read_to_string(settings_path(root.path())).unwrap();
+        assert!(!written.contains("tab_width"), "{written}");
+        assert!(!written.contains("default_encoding"), "{written}");
+        assert!(!written.contains("line_endings"), "{written}");
+    }
+
     #[test]
     fn save_stamps_the_current_version() {
         let root = project();
@@ -1069,6 +1162,26 @@ mod tests {
         let body =
             fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
         assert!(body.contains("[[analyzer]]"), "{body}");
+    }
+
+    #[test]
+    fn a_php_section_round_trips_through_the_project_file() {
+        let root = project();
+        update(root.path(), |s| {
+            s.php = Some(crate::php::PhpSettings {
+                interpreter: Some("/opt/php/bin/php".into()),
+                xdebug_port: Some(9100),
+                ..crate::php::PhpSettings::default()
+            });
+        })
+        .unwrap();
+
+        let php = load(root.path()).unwrap().php.expect("php section");
+        assert_eq!(php.interpreter.as_deref(), Some("/opt/php/bin/php"));
+        assert_eq!(php.xdebug_port, Some(9100));
+        let body =
+            fs::read_to_string(root.path().join(PROJECT_DIR).join(PROJECT_SETTINGS_FILE)).unwrap();
+        assert!(body.contains("[php]"), "{body}");
     }
 
     #[test]

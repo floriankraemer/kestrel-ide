@@ -29,8 +29,11 @@ pub mod detect;
 pub mod error;
 pub mod links;
 pub mod macros;
+/// PHP run kinds (I5): `php -S` and the PHP console.
+pub mod php_run;
 pub mod supervisor;
 pub mod toolchain;
+pub mod validate;
 
 pub use ansi::{AnsiResolver, AnsiStripper, StyledRun, StyledText, TextStyle};
 pub use batching::{BatchedOutput, OutputBatcher};

@@ -64,6 +64,22 @@ pub fn diagnostics_by_file(
     framework_name: &str,
     work_dir: &Path,
 ) -> HashMap<String, Vec<Diagnostic>> {
+    diagnostics_by_file_on(
+        &process_exec::host::ExecHost::for_path(work_dir),
+        tree,
+        framework_name,
+        work_dir,
+    )
+}
+
+/// [`diagnostics_by_file`] for a run that executed on `host`: a path the
+/// framework printed under a container's mount opens the local file.
+pub fn diagnostics_by_file_on(
+    host: &process_exec::host::ExecHost,
+    tree: &TestTree,
+    framework_name: &str,
+    work_dir: &Path,
+) -> HashMap<String, Vec<Diagnostic>> {
     let mut grouped: HashMap<String, Vec<Diagnostic>> = HashMap::new();
     for node in tree.failing_nodes() {
         let Some(failure) = &node.failure else {
@@ -72,8 +88,11 @@ pub fn diagnostics_by_file(
         let Some((path, line)) = locate(failure, &node.id, work_dir) else {
             continue;
         };
-        let uri = diagnostics_core::uri_from_path(&path);
+        // PHPUnit run under WSL or in a container prints that side's paths.
+        let local = host.path_from_tool(&path);
+        let uri = diagnostics_core::uri_from_path(&local.to_string_lossy());
         grouped.entry(uri).or_default().push(Diagnostic {
+            code: None,
             range: Range {
                 start: Position {
                     line: line.saturating_sub(1),
@@ -202,6 +221,35 @@ mod tests {
             grouped[&uri][0].message,
             "Failed asserting that 1 matches 2."
         );
+    }
+
+    #[test]
+    fn a_container_path_in_a_container_run_locates_the_local_file() {
+        let tree = failing_tree("/var/www/tests/GreeterTest.php:20");
+        let root = Path::new("/home/f/proj");
+        let host = process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+            program: "docker".into(),
+            prefix_args: vec![],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: process_exec::host::PathMap::new(root, "/var/www"),
+        });
+        let grouped = diagnostics_by_file_on(&host, &tree, "phpunit", root);
+        let uri = diagnostics_core::uri_from_path("/home/f/proj/tests/GreeterTest.php");
+        assert_eq!(grouped[&uri].len(), 1);
+    }
+
+    #[test]
+    fn a_linux_path_in_a_wsl_run_locates_the_unc_file() {
+        let tree = failing_tree("/home/f/proj/tests/GreeterTest.php:20");
+        let root = Path::new("//wsl.localhost/Ubuntu/home/f/proj");
+        let grouped = diagnostics_by_file(&tree, "phpunit", root);
+        let uri = diagnostics_core::uri_from_path(
+            "//wsl.localhost/Ubuntu/home/f/proj/tests/GreeterTest.php",
+        );
+        assert_eq!(grouped[&uri].len(), 1);
     }
 
     #[test]

@@ -73,7 +73,8 @@ impl Supervisor {
         // and `wsl.exe --cd` reports a missing one itself. Same reason
         // #255 stopped launching `wsl.exe` *from* the UNC path.
         if let Some(cwd) = &spec.cwd {
-            if !process_exec::host::ExecHost::for_path(cwd).is_remote() && !cwd.is_dir() {
+            if !process_exec::host::ExecHost::for_path(cwd).filesystem_is_remote() && !cwd.is_dir()
+            {
                 return Err(RunError::CwdNotFound(cwd.display().to_string()));
             }
         }
@@ -101,7 +102,7 @@ impl Supervisor {
         // `ExecHost::command`: the spawn needs the share to resolve, which
         // it does not when the distro is stopped.
         if let Some(cwd) = &spec.cwd {
-            if !host.is_remote() {
+            if !host.filesystem_is_remote() {
                 shell = shell.with_cwd(cwd.clone());
             }
         }

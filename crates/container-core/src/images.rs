@@ -438,6 +438,7 @@ mod tests {
         // `save` against a nonexistent program fails fast (NotFound), and
         // the temp path must not be left behind either way.
         let broken = Invocation {
+            compose_override: None,
             program: "definitely-not-a-real-engine-binary".to_string(),
             prefix_args: Vec::new(),
             env: Vec::new(),

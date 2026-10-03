@@ -1,0 +1,32 @@
+[package]
+name = "php-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde_json = "1"
+# `run_on`/`ExecHost`: the probe runs on whichever host the interpreter
+# lives on (local, WSL, and later a container).
+process-exec = { path = "../process-exec" }
+
+# `host::interpreter_host`: the `[php]` container target joined to the
+# `[containers.target]` rows (ADR-0067).
+app-config = { path = "../app-config" }
+container-core = { path = "../container-core" }
+
+# `ServerConfig`: the join of the `[php]` JSON into the resolved server
+# configs lives here, so the rule is testable without Qt (PS2).
+lsp-core = { path = "../lsp-core" }
+
+# `tests::markers`: the editor's test positions over tree-sitter-php, through
+# the one grammar registry (ADR-0018), as `container-core::compose_file`
+# does for YAML.
+syntax-core = { path = "../syntax-core" }
+tree-sitter = "0.26"
+
+# `filter::escape_regex`: the one PCRE-escaping rule behind both the tree's
+# reruns and the editor's test markers.
+test-core = { path = "../test-core" }
+
+[dev-dependencies]
+tempfile = "3"

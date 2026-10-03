@@ -99,6 +99,15 @@ void wireProjectTree(QTreeView *treeView,
                      ProjectTreeModel *treeModel,
                      const ProjectTreeActions &actions);
 
+// File > New: File, Directory and the file templates, created in the tree's
+// selected folder (the project root with no selection) and opened afterwards.
+// Inserted at the top of `fileMenu`.
+void wireNewMenu(QMenu *fileMenu,
+                 QMainWindow *window,
+                 QTreeView *treeView,
+                 ProjectTreeModel *treeModel,
+                 std::function<void(const QString &)> openFile);
+
 // Adds the `view.projectTree` action to `viewMenu` so the dock can be raised
 // again after its "x" is closed (#117) — same registerAction/DockRegistry
 // shape as every other dock's View-menu entry, split out here rather than

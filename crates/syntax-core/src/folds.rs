@@ -36,6 +36,7 @@ impl Highlighter {
             }
         }
         ranges.extend(comment_block_fold_ranges(tree.root_node()));
+        ranges.extend(directive_block_fold_ranges(tree.root_node(), &self.text));
         ranges.sort_by_key(|r| (r.start, r.end));
         ranges.dedup();
         ranges
@@ -111,6 +112,72 @@ fn comment_block_fold_ranges(node: tree_sitter::Node) -> Vec<FoldRange> {
         ranges.extend(comment_block_fold_ranges(child));
     }
     ranges
+}
+
+/// Twig's grammar is flat: `{% if %}` and `{% endif %}` are sibling
+/// `statement_directive` nodes, so no query can capture the block between
+/// them. This pairs each opening directive with its `end…` partner by name
+/// (a stack, so nesting works) and folds from the end of the opener to the
+/// end of the closer; the anchor is the opener's line. Other grammars have no
+/// `statement_directive` nodes and get nothing from this.
+fn directive_block_fold_ranges(root: tree_sitter::Node, text: &str) -> Vec<FoldRange> {
+    let mut ranges = Vec::new();
+    let mut open: Vec<(String, tree_sitter::Node)> = Vec::new();
+    let mut cursor = root.walk();
+    for node in root.children(&mut cursor) {
+        if node.kind() != "statement_directive" {
+            continue;
+        }
+        let Some(word) = directive_word(&text[node.byte_range()]) else {
+            continue;
+        };
+        if let Some(closed) = word.strip_prefix("end") {
+            let Some(depth) = open.iter().rposition(|(name, _)| name == closed) else {
+                continue;
+            };
+            let opener = open[depth].1;
+            open.truncate(depth);
+            // A directive node swallows the whitespace before its `{%`, so
+            // the rows compared are those of the closing `%}` of each.
+            if node.end_position().row > opener.end_position().row {
+                let opener_text = &text[opener.byte_range()];
+                ranges.push(FoldRange {
+                    start: opener.end_byte(),
+                    end: node.end_byte(),
+                    anchor: opener.start_byte() + opener_text.len()
+                        - opener_text.trim_start().len(),
+                });
+            }
+        } else if opens_a_block(&word, &text[node.byte_range()]) {
+            open.push((word, node));
+        }
+    }
+    ranges
+}
+
+/// The tag name of a `{% … %}` directive: `if` for `{%- if x -%}`.
+fn directive_word(directive: &str) -> Option<String> {
+    let inner = directive
+        .trim_start()
+        .trim_start_matches("{%")
+        .trim_start_matches(['-', '~'])
+        .trim_start();
+    let word: String = inner
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    (!word.is_empty()).then_some(word)
+}
+
+/// Tags that are closed by `end<tag>`. `set` only does when it captures a
+/// block (`{% set x %}…{% endset %}`) rather than assigning (`{% set x = 1 %}`).
+fn opens_a_block(word: &str, directive: &str) -> bool {
+    match word {
+        "if" | "for" | "block" | "macro" | "embed" | "with" | "apply" | "autoescape"
+        | "sandbox" | "verbatim" | "trans" | "cache" => true,
+        "set" => !directive.contains('='),
+        _ => false,
+    }
 }
 
 fn is_comment_node(node: &tree_sitter::Node) -> bool {
@@ -260,6 +327,80 @@ mod tests {
                     && r.end == JAVA_SNIPPET.rfind('}').unwrap() + 1),
             "expected the class body to be foldable: {ranges:?}"
         );
+    }
+
+    #[test]
+    fn php_arrays_matches_groups_heredocs_attributes_and_doc_comments_fold() {
+        let text = "<?php\nuse App\\Models\\{\n    User,\n    Post,\n};\n#[Route(\n    '/x',\n)]\nclass A {\n    /**\n     * Doc.\n     */\n    public function f(int $a) {\n        $x = [\n            1,\n        ];\n        $y = match ($a) {\n            1 => 'a',\n            default => 'b',\n        };\n        $h = <<<EOT\n        text\n        EOT;\n        switch ($a) {\n            case 1: break;\n        }\n    }\n}\nenum E {\n    case A;\n}\n";
+        let mut highlighter = Highlighter::new(php());
+        highlighter.set_text(text);
+        let folded: Vec<&str> = highlighter
+            .fold_ranges()
+            .iter()
+            .map(|r| &text[r.start..r.end])
+            .collect();
+        for opener in [
+            "{\n    User,",
+            "(\n    '/x',\n)",
+            "/**\n     * Doc.",
+            "[\n            1,",
+            "{\n            1 => 'a',",
+            "<<<EOT",
+            "{\n            case 1: break;",
+            "{\n    case A;",
+        ] {
+            assert!(
+                folded.iter().any(|f| f.starts_with(opener)),
+                "no fold starts with {opener:?}: {folded:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn twig_directive_pairs_fold_and_nest() {
+        let text = "{% block body %}\n{% for u in users %}\n<li>{{ u }}</li>\n{% endfor %}\n{% set x = 1 %}\n{% endblock %}\n";
+        let mut highlighter = Highlighter::new(lang("twig"));
+        highlighter.set_text(text);
+        let folded: Vec<&str> = highlighter
+            .fold_ranges()
+            .iter()
+            .map(|r| &text[r.anchor..r.end])
+            .collect();
+        assert_eq!(
+            folded,
+            [
+                text.trim_end(),
+                "{% for u in users %}\n<li>{{ u }}</li>\n{% endfor %}"
+            ]
+        );
+    }
+
+    #[test]
+    fn twig_does_not_pair_an_assignment_or_a_stray_end_tag() {
+        let text = "{% set x = 1 %}\n{% endif %}\n{% if a %}\nx\n{% endif %}\n";
+        let mut highlighter = Highlighter::new(lang("twig"));
+        highlighter.set_text(text);
+        let ranges = highlighter.fold_ranges();
+        assert_eq!(ranges.len(), 1, "{ranges:?}");
+        assert!(text[ranges[0].anchor..ranges[0].end].starts_with("{% if a %}"));
+    }
+
+    #[test]
+    fn blade_sections_loops_and_elements_fold() {
+        let text = "@section('c')\n@foreach ($us as $u)\n<ul>\n<li>{{ $u }}</li>\n</ul>\n@endforeach\n@endsection\n";
+        let mut highlighter = Highlighter::new(lang("blade"));
+        highlighter.set_text(text);
+        let folded: Vec<&str> = highlighter
+            .fold_ranges()
+            .iter()
+            .map(|r| &text[r.anchor..r.end])
+            .collect();
+        assert!(folded.contains(&text.trim_end()), "{folded:?}");
+        assert!(
+            folded.iter().any(|f| f.starts_with("@foreach")),
+            "{folded:?}"
+        );
+        assert!(folded.iter().any(|f| f.starts_with("<ul>")), "{folded:?}");
     }
 
     #[test]

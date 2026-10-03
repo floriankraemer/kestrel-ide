@@ -31,6 +31,7 @@
 //!   selection.
 //! - [`pairs`] — auto-close, type-over, smart backspace, surround.
 //! - [`brackets`] — a bracket's partner, and where the caret jumps to.
+//! - [`templates`] — live templates: abbreviation, surround and postfix.
 //!
 //! Qt-free, like every crate below the adapter.
 
@@ -43,5 +44,7 @@ pub mod selection_expand;
 /// escapes) parsed into inserted text plus tab-stop ranges.
 pub mod snippet;
 mod syntax;
+/// ADR-0072: live templates — abbreviation, surround and postfix expansion.
+pub mod templates;
 
 pub use syntax::{Syntax, Tokens};

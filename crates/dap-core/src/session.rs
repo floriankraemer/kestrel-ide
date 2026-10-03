@@ -78,7 +78,7 @@ pub struct DapSession {
 /// (a no-op unless `host` is remote): the adapter runs inside the distro on
 /// a WSL project root and only ever understands its own Linux paths.
 pub fn source_path(host: &process_exec::host::ExecHost, path: &Path) -> String {
-    if host.is_remote() {
+    if host.runs_remotely() {
         host.to_remote(path)
     } else {
         path.display().to_string()
@@ -89,7 +89,7 @@ pub fn source_path(host: &process_exec::host::ExecHost, path: &Path) -> String {
 /// (`StackFrame::path`, most commonly) translated to the Windows path the
 /// share actually serves.
 pub fn local_path(host: &process_exec::host::ExecHost, path: &str) -> String {
-    if host.is_remote() {
+    if host.runs_remotely() {
         host.to_local(path).to_string_lossy().into_owned()
     } else {
         path.to_string()

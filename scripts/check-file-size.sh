@@ -38,13 +38,13 @@ baseline() {
 	# helper rather than the old `excludes.rs` override-set builder, which
 	# is why the net is one line rather than the whole feature's size — the
 	# ADR-0064 tests themselves moved to tests/it/scope.rs. No split planned.
-	crates/index-core/src/lib.rs) echo 3996 ;;
+	crates/index-core/src/lib.rs) echo 3949 ;;
 	# Raised from 2572 by 10 lines for `Scope::from_id` (C9) — the inverse of
 	# `Scope::id`, needed to rebuild a `Scope` from the raw id a
 	# `FfiHighlightSpan` carries back across the seam when overlaying
 	# semantic-token spans onto tree-sitter ones (`ui-shell`'s
 	# `overlay_semantic_tokens`). No split planned otherwise.
-	crates/syntax-core/src/lib.rs) echo 2582 ;;
+	crates/syntax-core/src/lib.rs) echo 2436 ;;
 	crates/mcp-server/src/lib.rs) echo 1832 ;;         # no split planned; ratcheted so it cannot grow
 	# Raised from 1608 by 35 lines for ADR-0064: `expand_folder` gained the
 	# `excluded`/`ignored_names` parameters and now prunes its walk with
@@ -73,7 +73,7 @@ baseline() {
 	# module declaration (issue #233) already there; ColorThemeService and
 	# matches_query live in app-core/src/color_themes.rs and
 	# app-core/src/text_search.rs respectively, rather than in here.
-	crates/app-core/src/lib.rs) echo 1599 ;;           # no split planned; ratcheted so it cannot grow
+	crates/app-core/src/lib.rs) echo 1514 ;;           # no split planned; ratcheted so it cannot grow
 	# Raised from the 1500 ceiling by 6 lines for the `containers` module
 	# declaration/re-export and the `Settings::containers` field (ADR-0055,
 	# C1). `ContainerSettings` itself lives in app-config/src/containers.rs.
@@ -92,24 +92,18 @@ baseline() {
 	# Raised from 1538 by 5 lines for the [hover] section (H6): its module
 	# declaration, re-export and Settings field; the type and its tests live
 	# in hover.rs.
-	crates/app-config/src/lib.rs) echo 1543 ;;
+	crates/app-config/src/lib.rs) echo 1483 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)
 	# and call/type hierarchy (C11) each added a request method and a
 	# dispatch arm here. A split into per-feature request modules is a
 	# real follow-up (tracked separately), not attempted in this chain.
-	crates/lsp-core/src/manager.rs) echo 2052 ;;
 	# 1371 -> 1686: the bridge-side call sites for the same feature chain
 	# (C5 watched files, C7 completion resolve, C9-C11 FFI methods).
 	# Raised from 1686 by 7 lines for hover_at's `HoverSettings::scope` gate
 	# and the service's `hover_settings` field (H6); the settings plumbing lives in bridge/hover_settings.rs.
-	crates/ui-shell/src/bridge/language/mod.rs) echo 1693 ;;
-	# Raised from the 1500 ceiling by 5 lines for minimapOptions/
-	# saveMinimapOptions (issue #199) — the same load/mutate/save pair
-	# whitespaceOptions/saveWhitespaceOptions just above them already uses.
-	# No split planned.
-	crates/ui-shell/src/bridge/settings.rs) echo 1505 ;;
+	crates/ui-shell/src/bridge/language/mod.rs) echo 1531 ;;
 	# Raised from the 1200 ceiling by 11 lines for the PHP tooling plan's
 	# B9: constructing AnalysisEditor/AnalysisService alongside the other
 	# per-window settings-page editors and services, two new
@@ -201,7 +195,7 @@ baseline() {
 	# Raised from 1241 by 12 lines for the hover card's menu callbacks
 	# (persist "Show on Mouse Hover", open Settings on Editor) and the
 	# startup apply of the saved hover options (H6).
-	crates/ui-shell/cpp/main_window.cpp) echo 1253 ;;
+	crates/ui-shell/cpp/main_window.cpp) echo 1244 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

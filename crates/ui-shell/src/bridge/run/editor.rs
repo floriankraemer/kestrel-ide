@@ -40,12 +40,7 @@ fn generate_id() -> String {
 impl ffi::RunConfigEditor {
     pub fn begin_edit(&self) {
         let configs = current_project_root()
-            .map(|root| {
-                app_config::project_settings::load(&root)
-                    .unwrap_or_default()
-                    .run_configs
-                    .unwrap_or_default()
-            })
+            .map(|root| super::effective_run_configs(&root))
             .unwrap_or_default();
         *self.saved.borrow_mut() = configs.clone();
         *self.draft.borrow_mut() = configs;
@@ -94,6 +89,7 @@ impl ffi::RunConfigEditor {
         config.before_launch = super::tasks_from_string(&form.before_launch.to_string());
         container_form::apply_options(config, &form.kind.to_string(), &form.container);
         super::sql_script_form::apply_options(config, &form.kind.to_string(), &form.sql_script);
+        super::php_server_form::apply_options(config, &form.kind.to_string(), &form.php_server);
         let run_on = form.run_on.to_string();
         config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
         // Editing a temporary configuration is how IntelliJ's "Save
@@ -141,10 +137,20 @@ impl ffi::RunConfigEditor {
             ..run_core::RunConfig::default()
         };
         container_form::apply_options(&mut scratch, &form.kind.to_string(), &form.container);
+        super::php_server_form::apply_options(
+            &mut scratch,
+            &form.kind.to_string(),
+            &form.php_server,
+        );
 
         let root = current_project_root().unwrap_or_default();
         let context = run_core::MacroContext::for_project(&root)
-            .with_containers(effective_container_settings());
+            .with_containers(effective_container_settings())
+            .with_php_interpreter(super::effective_php_interpreter());
+        let scratch = run_core::php_run::inherit_container_target(
+            &scratch,
+            super::effective_php_container_target().as_deref(),
+        );
         let spec = {
             use run_core::RunConfigExt as _;
             scratch.to_launch_spec_in(&context)
@@ -371,12 +377,7 @@ impl ffi::RunConfigEditor {
                 .iter()
                 .find(|c| c.id == connection_id)
                 .map(|row| {
-                    let connection =
-                        container_core::connection::ConnectionConfig::from_setting(row);
-                    container_core::connection::Invocation {
-                        program: connection.compose_program(),
-                        ..connection.invocation()
-                    }
+                    container_core::connection::ConnectionConfig::from_setting(row).invocation()
                 })
                 .and_then(|invocation| {
                     container_core::run_config::compose_services(&invocation, &files, &root).ok()
@@ -390,44 +391,12 @@ impl ffi::RunConfigEditor {
         });
     }
 
-    /// The first problem that would stop the dialog closing: an empty
-    /// `program` for a plain process configuration
-    /// (`run_core::RunError::InvalidConfig`'s own rule, mirrored here rather
-    /// than calling into `run-core` since a single-field check this shallow
-    /// does not warrant a second entry point into that crate), or the
-    /// matching `container_core::run_config::validate_*` rule for a
-    /// container-kind one — `program` is unused and always empty there, so
-    /// the plain-process check would wrongly flag every one of them.
+    /// The first problem that would stop the dialog closing — the rule is
+    /// `run_core::validate::problem`'s, per kind.
     pub fn validate(&self) -> FfiResult {
         let containers = effective_container_settings();
         for config in self.draft.borrow().iter() {
-            let problem = match config.kind.as_deref() {
-                Some("container-image") => config
-                    .container_image
-                    .as_ref()
-                    .and_then(container_core::run_config::validate_image),
-                Some("containerfile") => config
-                    .containerfile
-                    .as_ref()
-                    .and_then(container_core::run_config::validate_containerfile),
-                Some("compose") => config
-                    .compose
-                    .as_ref()
-                    .and_then(container_core::run_config::validate_compose),
-                _ => config
-                    .program
-                    .trim()
-                    .is_empty()
-                    .then(|| "has no program to run".to_string())
-                    .or_else(|| {
-                        config.run_on.as_deref().and_then(|run_on| {
-                            let id = run_core::target_id(run_on)?;
-                            containers.targets.iter().all(|t| t.id != id).then(|| {
-                                format!("runs on a target (\"{id}\") that no longer exists")
-                            })
-                        })
-                    }),
-            };
+            let problem = run_core::validate::problem(config, &containers);
             if let Some(problem) = problem {
                 let label = if config.name.trim().is_empty() {
                     "one configuration".to_string()
@@ -455,6 +424,11 @@ impl ffi::RunConfigEditor {
             };
         };
         let draft = self.draft.borrow().clone();
+        // Untouched draft: the list shown includes detected configurations
+        // that are not in the file, and OK must not write them there.
+        if draft == *self.saved.borrow() {
+            return FfiResult::default();
+        }
         match app_config::project_settings::update(&root, |settings| {
             settings.run_configs = Some(draft.clone());
         }) {

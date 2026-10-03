@@ -95,6 +95,8 @@ use std::time::Duration;
 
 #[path = "stub_server/fixtures.rs"]
 mod fixtures;
+#[path = "stub_server/profile.rs"]
+mod profile;
 
 use fixtures::{
     canned_diagnostic, greet_problem, hierarchy_item, highlight, location, position_line, progress,
@@ -183,6 +185,9 @@ fn main() {
     // rather than only that `LspManager::did_change_watched_files` returned
     // `Ok`.
     let last_watched_files_change: Arc<Mutex<Value>> = Arc::new(Mutex::new(Value::Null));
+    // The last `workspace/didChangeConfiguration` params, so a test can
+    // assert the pushed settings payload.
+    let last_configuration_change: Arc<Mutex<Value>> = Arc::new(Mutex::new(Value::Null));
     let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
     let mut next_request_id = 9100i64;
     let mut input = BufReader::new(io::stdin());
@@ -199,6 +204,7 @@ fn main() {
     let code_lens_static = std::env::var(CODE_LENS_STATIC).is_ok_and(|v| v == "1");
     let call_hierarchy_static = std::env::var(CALL_HIERARCHY_STATIC).is_ok_and(|v| v == "1");
     let type_hierarchy_static = std::env::var(TYPE_HIERARCHY_STATIC).is_ok_and(|v| v == "1");
+    let profile_tag = profile::tag();
 
     while let Some(body) = read_message(&mut input).expect("read from stdin") {
         let message: Value = match serde_json::from_slice(&body) {
@@ -224,8 +230,17 @@ fn main() {
         let id = message.get("id").cloned();
         let params = message.get("params").cloned().unwrap_or(Value::Null);
 
+        // E1: with `STUB_LSP_TAG` set, the tagged profile answers first.
+        if let (Some(tag), Some(id)) = (&profile_tag, &id) {
+            if let Some(result) = profile::answer(tag, method, &params) {
+                send(&out, json!({"jsonrpc": "2.0", "id": id, "result": result}));
+                io::stdout().flush().ok();
+                continue;
+            }
+        }
         match (method, id) {
             ("initialize", Some(id)) => {
+                profile::remember_initialize(&params);
                 *client_capabilities.lock().expect("capabilities lock") =
                     params.get("capabilities").cloned().unwrap_or(Value::Null);
                 let mut completion_provider = json!({
@@ -264,6 +279,12 @@ fn main() {
                 if type_hierarchy_static {
                     capabilities["typeHierarchyProvider"] = json!(true);
                 }
+                if let Some(tag) = &profile_tag {
+                    capabilities
+                        .as_object_mut()
+                        .expect("object")
+                        .extend(profile::capabilities(tag));
+                }
                 send(
                     &out,
                     json!({"jsonrpc": "2.0", "id": id, "result": {
@@ -299,6 +320,18 @@ fn main() {
                     .clone();
                 send(&out, json!({"jsonrpc": "2.0", "id": id, "result": change}));
             }
+            ("workspace/didChangeConfiguration", _) => {
+                *last_configuration_change
+                    .lock()
+                    .expect("configuration lock") = params;
+            }
+            ("stub/lastConfigurationChange", Some(id)) => {
+                let change = last_configuration_change
+                    .lock()
+                    .expect("configuration lock")
+                    .clone();
+                send(&out, json!({"jsonrpc": "2.0", "id": id, "result": change}));
+            }
             ("shutdown", Some(id)) => {
                 send(&out, json!({"jsonrpc": "2.0", "id": id, "result": null}))
             }
@@ -310,17 +343,24 @@ fn main() {
                     .unwrap_or("")
                     .to_string();
                 let version = params.pointer("/textDocument/version").cloned();
+                let mut canned = canned_diagnostic();
+                // E2 (P2): a tagged profile reports under its own source, so
+                // Problems shows which server said it.
+                if let Some(tag) = &profile_tag {
+                    canned["source"] = json!(format!("stub_{tag}"));
+                }
+                let diagnostics = if greet_diagnostic {
+                    vec![canned, greet_problem()]
+                } else {
+                    vec![canned]
+                };
                 send(
                     &out,
                     json!({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
                            "params": {
                         "uri": uri,
                         "version": version,
-                        "diagnostics": if greet_diagnostic {
-                            vec![canned_diagnostic(), greet_problem()]
-                        } else {
-                            vec![canned_diagnostic()]
-                        },
+                        "diagnostics": diagnostics,
                     }}),
                 );
                 if die_on_didopen {
@@ -389,7 +429,15 @@ fn main() {
             }
             // L4: one target per requested character, so the single-Location,
             // Location-array and LocationLink-array replies are all reachable.
-            ("textDocument/definition", Some(id)) => {
+            // N1/N2: implementation, type definition and declaration answer
+            // the same, so one fixture covers the three parsers' shared shape.
+            (
+                "textDocument/definition"
+                | "textDocument/implementation"
+                | "textDocument/typeDefinition"
+                | "textDocument/declaration",
+                Some(id),
+            ) => {
                 let uri = params
                     .pointer("/textDocument/uri")
                     .and_then(Value::as_str)
@@ -1339,16 +1387,12 @@ fn main() {
                     ),
                 }
             }
-            // F1: range formatting is never implemented by the stub, so the
-            // client's fall back to whole-document formatting is exercised.
+            // F1: range formatting is not implemented by the stub — the
+            // client's fall back to whole-document formatting is exercised —
+            // except for tab size 3 (N4), which answers with one edit whose
+            // text names the range it was asked about.
             ("textDocument/rangeFormatting", Some(id)) => {
-                send(
-                    &out,
-                    json!({"jsonrpc": "2.0", "id": id, "error": {
-                        "code": -32601,
-                        "message": "textDocument/rangeFormatting is not implemented",
-                    }}),
-                );
+                send(&out, fixtures::range_formatting(id, &params));
             }
             // RF3: rename, again by line — 0 -> a versioned documentChanges
             // edit, 1 -> a legacy `changes` edit, 2 -> null (nothing to do),

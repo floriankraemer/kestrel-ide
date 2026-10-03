@@ -6,11 +6,13 @@ mod support;
 
 mod code_lens;
 mod completion;
+mod container_host;
 mod f2_surface;
 mod formatting;
 mod hierarchy;
 mod lifecycle;
 mod metadata;
+mod multi_server;
 mod navigation;
 mod progress;
 mod refactor;

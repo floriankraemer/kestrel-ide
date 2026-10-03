@@ -16,6 +16,15 @@ use lsp_types::DiagnosticSeverity;
 
 pub use diagnostics_core::{path_from_uri, uri_from_path};
 
+/// The `(source, uri)` store key (ADR-0046) for one server's rows.
+///
+/// Per server, not per language (ADR-0066): two servers of one language
+/// publishing for the same file each replace only their own rows, and the
+/// store merges the rest.
+pub fn source_key(server_id: &str) -> String {
+    format!("lsp:{server_id}")
+}
+
 /// LSP leaves `severity` optional; a server that omits it is reporting a
 /// problem, so the honest default is the one the user must look at.
 fn severity_from_lsp(severity: Option<DiagnosticSeverity>) -> Severity {
@@ -38,6 +47,7 @@ pub fn to_diagnostics(diagnostics: Vec<lsp_types::Diagnostic>) -> Vec<Diagnostic
 fn to_diagnostic(diagnostic: lsp_types::Diagnostic) -> Diagnostic {
     let raw = serde_json::to_value(&diagnostic).ok();
     Diagnostic {
+        code: None,
         range: Range {
             start: Position {
                 line: diagnostic.range.start.line,
@@ -136,5 +146,34 @@ mod tests {
         without_source.source = None;
         let rows = to_diagnostics(vec![without_source]);
         assert_eq!(rows[0].source, "");
+    }
+
+    #[test]
+    fn two_servers_publishing_for_one_file_both_show_and_each_clears_alone() {
+        use diagnostics_core::DiagnosticStore;
+        let mut store = DiagnosticStore::new();
+        let uri = "file:///a.php";
+        store.replace(
+            &source_key("intelephense"),
+            uri,
+            to_diagnostics(vec![diagnostic(0, 0, DiagnosticSeverity::ERROR, "from i")]),
+        );
+        store.replace(
+            &source_key("phpactor"),
+            uri,
+            to_diagnostics(vec![diagnostic(
+                1,
+                0,
+                DiagnosticSeverity::WARNING,
+                "from p",
+            )]),
+        );
+        assert_eq!(store.rows_for_uri(uri).len(), 2);
+
+        // Republishing from one server replaces only its own rows.
+        store.replace(&source_key("phpactor"), uri, vec![]);
+        let rows = store.rows_for_uri(uri);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].message, "from i");
     }
 }

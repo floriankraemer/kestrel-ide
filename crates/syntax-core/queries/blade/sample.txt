@@ -1,0 +1,7 @@
+{{-- Harness fixture (ADR-0071): a keyword, a string and a comment. --}}
+@extends('layouts.app')
+@section('content')
+  @foreach ($users as $user)
+    <li class="user">{{ $user->name }}</li>
+  @endforeach
+@endsection

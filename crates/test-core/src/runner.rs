@@ -16,6 +16,7 @@
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -45,6 +46,9 @@ pub trait TestSink {
 pub enum OutputFormat {
     TeamCity,
     JunitXml,
+    /// The JUnit document is the process's own stdout (PHPSpec's
+    /// `--format=junit`), parsed once after exit like [`Self::JunitXml`].
+    JunitXmlStdout,
 }
 
 /// An `output-format` string a manifest names that no runner in this build
@@ -67,6 +71,7 @@ pub fn parse_output_format(value: &str) -> Result<OutputFormat, UnknownOutputFor
     match value {
         "teamcity" => Ok(OutputFormat::TeamCity),
         "junit-xml" => Ok(OutputFormat::JunitXml),
+        "junit-xml-stdout" => Ok(OutputFormat::JunitXmlStdout),
         other => Err(UnknownOutputFormat(other.to_string())),
     }
 }
@@ -193,6 +198,15 @@ fn changed_since(
         .collect()
 }
 
+/// The cases in a stdout that is a JUnit document, tolerating banner lines
+/// before the XML; unparseable output yields no cases rather than failing.
+fn junit_cases_from_stdout(stdout: &str) -> Vec<JUnitTestCase> {
+    let start = stdout.find("<?xml").or_else(|| stdout.find("<testsuite"));
+    start
+        .and_then(|start| crate::junit::parse(&stdout[start..]).ok())
+        .unwrap_or_default()
+}
+
 /// Read and parse every new-or-changed `junit-xml` report under `work_dir`
 /// matching `report_glob`, in a stable (sorted-path) order so a caller's
 /// resulting tree is deterministic across runs. A file that fails to parse
@@ -217,11 +231,20 @@ fn collect_junit_cases(
 #[derive(Clone, Default)]
 pub struct TestRunHandle {
     spawned: Arc<Mutex<Option<process_exec::Spawned>>>,
+    /// Tree events and report cases the run delivered to its sink.
+    reported: Arc<AtomicUsize>,
 }
 
 impl TestRunHandle {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A run that exited cleanly but reported no test at all: a `--filter`
+    /// that matched nothing makes Pest and PHPUnit exit 0 with an empty
+    /// report, which must not read as a green run.
+    pub fn matched_nothing(&self, exit_code: Option<i32>) -> bool {
+        exit_code == Some(0) && self.reported.load(Ordering::Relaxed) == 0
     }
 
     /// Kill the running process, if any. Stopping a run that has already
@@ -266,6 +289,60 @@ pub fn run(
     report_glob: Option<&str>,
     sink: &mut dyn TestSink,
 ) -> Result<Option<i32>, RunFailure> {
+    run_on(
+        &process_exec::host::ExecHost::for_path(work_dir),
+        handle,
+        program,
+        args,
+        work_dir,
+        format,
+        report_glob,
+        sink,
+    )
+}
+
+/// [`run`] on an explicit `host` — the PHP interpreter's container, say,
+/// rather than the one `work_dir` implies. The JUnit report glob still
+/// reads under `work_dir`: a container mounts the project, so the report it
+/// writes there is the local file.
+#[allow(clippy::too_many_arguments)]
+pub fn run_on(
+    host: &process_exec::host::ExecHost,
+    handle: &TestRunHandle,
+    program: &str,
+    args: &[String],
+    work_dir: &Path,
+    format: OutputFormat,
+    report_glob: Option<&str>,
+    sink: &mut dyn TestSink,
+) -> Result<Option<i32>, RunFailure> {
+    run_on_env(
+        host,
+        handle,
+        program,
+        args,
+        &[],
+        work_dir,
+        format,
+        report_glob,
+        sink,
+    )
+}
+
+/// [`run_on`] with extra environment variables for the process — the
+/// Xdebug environment of a debugged test, `XDEBUG_MODE=coverage`.
+#[allow(clippy::too_many_arguments)]
+pub fn run_on_env(
+    host: &process_exec::host::ExecHost,
+    handle: &TestRunHandle,
+    program: &str,
+    args: &[String],
+    env: &[(String, String)],
+    work_dir: &Path,
+    format: OutputFormat,
+    report_glob: Option<&str>,
+    sink: &mut dyn TestSink,
+) -> Result<Option<i32>, RunFailure> {
     // Taken before the process is even spawned (finding 4): the clock-free
     // snapshot this run's own reports are diffed against, so a run that
     // writes nothing at all never gets mistaken for a run whose reports
@@ -275,15 +352,17 @@ pub fn run(
         _ => HashMap::new(),
     };
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let spawned = process_exec::spawn(program, &arg_refs, work_dir).map_err(|e| match e {
-        process_exec::Failure::NotFound => RunFailure::NotFound,
-        process_exec::Failure::Io(msg) => RunFailure::Io(msg),
-        // `spawn` never blocks waiting for exit, so it has no timeout to
-        // report; kept as an arm rather than matched away so a future
-        // change to `process_exec::Failure` is a compile error here, not a
-        // silent gap.
-        process_exec::Failure::TimedOut => RunFailure::Io("unexpected timeout".into()),
-    })?;
+    let env_refs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let spawned = process_exec::spawn_on(host, program, &arg_refs, work_dir, &env_refs, None)
+        .map_err(|e| match e {
+            process_exec::Failure::NotFound => RunFailure::NotFound,
+            process_exec::Failure::Io(msg) => RunFailure::Io(msg),
+            // `spawn` never blocks waiting for exit, so it has no timeout to
+            // report; kept as an arm rather than matched away so a future
+            // change to `process_exec::Failure` is a compile error here, not a
+            // silent gap.
+            process_exec::Failure::TimedOut => RunFailure::Io("unexpected timeout".into()),
+        })?;
     *handle
         .spawned
         .lock()
@@ -305,6 +384,7 @@ pub fn run(
     });
 
     let mut parser = TeamCityParser::new();
+    let mut collected = String::new();
     let mut buffer = [0u8; 8192];
     loop {
         let read = match stdout.read(&mut buffer) {
@@ -312,12 +392,18 @@ pub fn run(
             Ok(read) => read,
         };
         let chunk = String::from_utf8_lossy(&buffer[..read]).into_owned();
-        for event in parser.feed(&chunk) {
-            sink.event(event);
+        if format == OutputFormat::JunitXmlStdout {
+            collected.push_str(&chunk);
+        } else {
+            for event in parser.feed(&chunk) {
+                handle.reported.fetch_add(1, Ordering::Relaxed);
+                sink.event(event);
+            }
         }
         sink.output(&chunk);
     }
     for event in parser.finish() {
+        handle.reported.fetch_add(1, Ordering::Relaxed);
         sink.event(event);
     }
     let _ = stderr_reader.join();
@@ -330,7 +416,14 @@ pub fn run(
         .map_err(|_| RunFailure::Io("run handle lock poisoned".into()))? = None;
 
     if let (OutputFormat::JunitXml, Some(pattern)) = (format, report_glob) {
-        sink.junit(collect_junit_cases(work_dir, pattern, &pre_run_reports));
+        let cases = collect_junit_cases(work_dir, pattern, &pre_run_reports);
+        handle.reported.fetch_add(cases.len(), Ordering::Relaxed);
+        sink.junit(cases);
+    }
+    if format == OutputFormat::JunitXmlStdout {
+        let cases = junit_cases_from_stdout(&collected);
+        handle.reported.fetch_add(cases.len(), Ordering::Relaxed);
+        sink.junit(cases);
     }
 
     Ok(exit_code)
@@ -360,6 +453,45 @@ mod tests {
     }
 
     #[test]
+    fn a_clean_exit_with_no_reported_test_matched_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = TestRunHandle::new();
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), "echo 'Tests: 0 passed'".into()],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut Collected::default(),
+        )
+        .unwrap();
+        assert!(handle.matched_nothing(code));
+        assert!(
+            !handle.matched_nothing(Some(1)),
+            "a failing exit is not 'no match'"
+        );
+    }
+
+    #[test]
+    fn a_run_that_reports_a_test_matched_something() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = TestRunHandle::new();
+        let script = "echo \"##teamcity[testStarted name='t']\"";
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), script.into()],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut Collected::default(),
+        )
+        .unwrap();
+        assert!(!handle.matched_nothing(code));
+    }
+
+    #[test]
     fn events_arrive_as_the_process_writes_them() {
         let dir = tempfile::tempdir().unwrap();
         let handle = TestRunHandle::new();
@@ -379,6 +511,38 @@ mod tests {
         assert_eq!(code, Some(0));
         assert_eq!(collected.events.len(), 2);
         assert!(collected.output.contains("teamcity"));
+    }
+
+    #[test]
+    fn a_run_on_a_container_host_streams_what_the_engine_prints() {
+        let dir = tempfile::tempdir().unwrap();
+        // A `sh` stands in for the container engine: it answers the program
+        // probe with its last argument, and otherwise "runs" the tests.
+        let engine = r###"for a; do last=$a; done; case "$*" in *"test -x"*) echo "$last";; *) echo "##teamcity[testStarted name='t']"; echo "##teamcity[testFinished name='t' duration='1']";; esac"###;
+        let host = process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec!["-c".into(), engine.into(), "sh".into()],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: process_exec::host::PathMap::new(dir.path(), "/var/www"),
+        });
+        let handle = TestRunHandle::new();
+        let mut collected = Collected::default();
+        let code = run_on(
+            &host,
+            &handle,
+            "/usr/local/bin/phpunit",
+            &[],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut collected,
+        )
+        .unwrap();
+        assert_eq!(code, Some(0));
+        assert_eq!(collected.events.len(), 2);
     }
 
     #[test]
@@ -496,6 +660,50 @@ mod tests {
     fn parse_output_format_accepts_the_two_known_values() {
         assert_eq!(parse_output_format("teamcity"), Ok(OutputFormat::TeamCity));
         assert_eq!(parse_output_format("junit-xml"), Ok(OutputFormat::JunitXml));
+        assert_eq!(
+            parse_output_format("junit-xml-stdout"),
+            Ok(OutputFormat::JunitXmlStdout)
+        );
+    }
+
+    /// PHPSpec's `--format=junit` prints the document on stdout, possibly
+    /// after a banner line.
+    #[test]
+    fn a_junit_xml_stdout_run_parses_the_document_the_process_prints() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = format!(
+            "echo banner; cat <<'EOF'\n{}\nEOF\n",
+            junit_xml("spec\\Greeter")
+        );
+        let handle = TestRunHandle::new();
+        let mut collected = Collected::default();
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), script],
+            dir.path(),
+            OutputFormat::JunitXmlStdout,
+            None,
+            &mut collected,
+        )
+        .unwrap();
+        assert_eq!(code, Some(0));
+        assert!(collected.events.is_empty());
+        let names: Vec<&str> = collected
+            .junit_cases
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(
+            collected.junit_cases[1].status,
+            crate::tree::TestStatus::Failed
+        );
+    }
+
+    #[test]
+    fn unparseable_junit_stdout_yields_no_cases() {
+        assert!(junit_cases_from_stdout("PHP Fatal error: boom").is_empty());
     }
 
     #[test]

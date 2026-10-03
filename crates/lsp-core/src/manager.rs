@@ -6,7 +6,7 @@
 //! server that both reads that server's stdout and owns its restart loop.
 //! Everything the UI needs to see arrives on a single `Receiver<LspEvent>`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -29,10 +29,26 @@ use crate::configuration;
 use crate::framing::{read_message, write_message};
 use crate::progress::{ProgressTracker, ServerActivity};
 use crate::registration::{Registration, Registrations};
+use crate::routing;
 use crate::semantic_tokens::{self, SemanticTokensLegend};
 use crate::signature_help::{parse_signature_triggers, SignatureTriggers};
 use crate::watched_files::{FileChangeKind, WatchedFiles};
 use process_exec::host::ExecHost;
+
+mod capabilities;
+mod connect;
+#[cfg(test)]
+mod host_translation_tests;
+/// D0 (jvm-build-tools plan): build files (`pom.xml`, `build.gradle`, …)
+/// are registered as open documents with no server configured for their
+/// language, so `did_open`/`did_change`/`did_close` must tolerate that
+/// without panicking or corrupting the manager's document map — the
+/// bridge's `open_build_file_document` (`ui-shell/src/bridge/language/
+/// mod.rs`) relies on exactly this.
+#[cfg(test)]
+mod no_server_document_lifecycle_tests;
+mod routed;
+mod wire_uris;
 
 /// Windows path -> Linux path (if `host` is remote) -> `file://` URI.
 ///
@@ -41,7 +57,7 @@ use process_exec::host::ExecHost;
 /// `uri_from_path` stays exactly as it is (ADR-0046) — this only decides
 /// *which* path string reaches it.
 pub fn uri_for(host: &ExecHost, path: &str) -> String {
-    if host.is_remote() {
+    if host.runs_remotely() {
         crate::diagnostics::uri_from_path(&host.to_remote(Path::new(path)))
     } else {
         crate::diagnostics::uri_from_path(path)
@@ -55,7 +71,7 @@ pub fn uri_for(host: &ExecHost, path: &str) -> String {
 /// that this crate returns to its own caller as a path rather than a URI.
 pub fn path_for(host: &ExecHost, uri: &str) -> Option<String> {
     let raw = crate::diagnostics::path_from_uri(uri)?;
-    if host.is_remote() {
+    if host.runs_remotely() {
         Some(host.to_local(&raw).to_string_lossy().into_owned())
     } else {
         Some(raw)
@@ -152,6 +168,8 @@ pub enum LspEvent {
     /// `restarts` is 0 for the first launch and counts respawns after that.
     ServerReady {
         language_id: String,
+        /// The server that became ready (ADR-0066: a language may have several).
+        server_id: String,
         restarts: u32,
         /// The characters this server wants completion requested after, from
         /// its `initialize` result — `.` in most languages, `:` in Rust.
@@ -167,11 +185,14 @@ pub enum LspEvent {
         /// than sending it to every server and reading `MethodNotFound`
         /// back one keystroke at a time.
         completion_resolve_supported: bool,
+        /// N5: the characters this server wants `onTypeFormatting` after.
+        on_type_triggers: Vec<String>,
     },
     /// The server's stdout hit EOF or errored, i.e. it died. A respawn follows
     /// after `retry_in` unless the restart budget is used up.
     ServerExited {
         language_id: String,
+        server_id: String,
         restarts: u32,
         retry_in: Duration,
     },
@@ -179,6 +200,7 @@ pub enum LspEvent {
     /// restart budget. No further events will arrive for this language.
     ServerFailed {
         language_id: String,
+        server_id: String,
         message: String,
     },
     /// F0-16: what the server is working on, from its `$/progress`
@@ -191,11 +213,13 @@ pub enum LspEvent {
     /// onwards — nothing waits on it, the state is advisory.
     ServerBusy {
         language_id: String,
+        server_id: String,
         activity: Option<ServerActivity>,
     },
     /// `textDocument/publishDiagnostics`.
     Diagnostics {
         language_id: String,
+        server_id: String,
         uri: String,
         /// The document version the server diagnosed, when it reports one.
         version: Option<i32>,
@@ -210,6 +234,7 @@ pub enum LspEvent {
     /// where the set of open documents is known.
     ApplyEdit {
         language_id: String,
+        server_id: String,
         /// What the server calls this change, for the preview's title.
         label: Option<String>,
         edit: Value,
@@ -218,6 +243,7 @@ pub enum LspEvent {
     /// Any other server-to-client notification, unparsed.
     Notification {
         language_id: String,
+        server_id: String,
         method: String,
         params: Value,
     },
@@ -313,7 +339,19 @@ struct Conn {
 /// One language's server: its config, its connection, and the requests
 /// currently awaiting a response.
 struct Server {
+    /// The id this server runs under (`ServerConfig::id`).
+    id: String,
     language_id: String,
+    /// Answer order among the servers of one language; lower answers first.
+    priority: usize,
+    /// Where this server's process runs (ADR-0066): the project's host unless
+    /// the server's `exec` says otherwise.
+    host: ExecHost,
+    /// The project's own host, whose URI spelling every caller and every
+    /// result uses. When it differs from `host`, the wire is translated.
+    project_host: ExecHost,
+    /// Whether its `publishDiagnostics` are forwarded (`ServerConfig::diagnostics`).
+    diagnostics: bool,
     conn: Mutex<Option<Conn>>,
     pending: Mutex<HashMap<i64, Sender<Result<Value, LspError>>>>,
     next_id: AtomicI64,
@@ -366,11 +404,22 @@ struct Server {
     /// C11: the type-hierarchy twin of `call_hierarchy_supported`, for
     /// `typeHierarchyProvider`.
     type_hierarchy_supported: Mutex<bool>,
+    /// L3: the `capabilities` object of this server's `initialize` result,
+    /// whole, as the server wrote it. Routing reads it to decide which
+    /// servers a request may go to. Raw JSON rather than
+    /// `lsp_types::ServerCapabilities` so one field a server spells oddly
+    /// cannot cost the client every other capability.
+    capabilities: Mutex<Value>,
+    /// The document URIs this server has been sent `didOpen` for and not yet
+    /// `didClose`, as the project host spells them. A server started after a document was
+    /// opened gets its `didOpen` without the others getting a second one.
+    opened: Mutex<HashSet<String>>,
 }
 
 impl Server {
     fn send(&self, message: &Value) -> Result<(), LspError> {
-        let payload = serde_json::to_vec(message).map_err(io::Error::from)?;
+        let message = self.message_to_wire(message);
+        let payload = serde_json::to_vec(&message).map_err(io::Error::from)?;
         let mut guard = self.conn.lock().unwrap();
         let conn = guard
             .as_mut()
@@ -415,6 +464,14 @@ impl Server {
 
     /// Fail every in-flight request; called when the connection dies so no
     /// caller waits for a response that can never arrive.
+    /// Whether this server may be sent `method`, from the capabilities it
+    /// declared or registered ([`routing::is_capable`]).
+    fn can_answer(&self, method: &str) -> bool {
+        routing::is_capable(method, &self.capabilities.lock().unwrap(), |m| {
+            self.registrations.method_registered(m)
+        })
+    }
+
     fn drop_pending(&self) {
         self.pending.lock().unwrap().clear();
     }
@@ -443,6 +500,7 @@ pub struct LspManager {
     /// from `root_path` (ADR-0052). Never recomputed: a project's host does
     /// not change without a new `LspManager`.
     host: ExecHost,
+    /// Running servers by id.
     servers: Mutex<HashMap<String, Arc<Server>>>,
     supervisors: Mutex<HashMap<String, JoinHandle<()>>>,
     documents: Mutex<HashMap<String, DocState>>,
@@ -488,7 +546,7 @@ impl LspManager {
     /// ingest") back to the Windows path it encoded, then translate it
     /// through this manager's `host`. A no-op on `ExecHost::Local`.
     pub(crate) fn normalize_uri(&self, uri: &str) -> String {
-        if !self.host.is_remote() {
+        if !self.host.runs_remotely() {
             return uri.to_string();
         }
         match crate::diagnostics::path_from_uri(uri) {
@@ -503,11 +561,26 @@ impl LspManager {
     /// error rather than as a silent no-op later. Starting a language that is
     /// already running is a no-op.
     pub fn start(&self, cfg: &ServerConfig) -> Result<(), LspError> {
-        if self.servers.lock().unwrap().contains_key(&cfg.language_id) {
+        self.start_on(cfg, self.host.clone())
+    }
+
+    /// [`Self::start`], with the server's process on `host` rather than the
+    /// project's — the seam for a server with `exec = "interpreter"`.
+    ///
+    /// Every URI crossing the wire is translated between the project's host
+    /// and `host` (`wire_uris`), so callers and results keep speaking in
+    /// project paths while a container's server sees its own.
+    pub fn start_on(&self, cfg: &ServerConfig, host: ExecHost) -> Result<(), LspError> {
+        if self.servers.lock().unwrap().contains_key(&cfg.id) {
             return Ok(());
         }
         let server = Arc::new(Server {
+            id: cfg.id.clone(),
             language_id: cfg.language_id.clone(),
+            priority: cfg.priority,
+            host: host.clone(),
+            project_host: self.host.clone(),
+            diagnostics: cfg.diagnostics,
             conn: Mutex::new(None),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicI64::new(1),
@@ -521,15 +594,17 @@ impl LspManager {
             code_lens_supported: Mutex::new(false),
             call_hierarchy_supported: Mutex::new(false),
             type_hierarchy_supported: Mutex::new(false),
+            capabilities: Mutex::new(Value::Null),
+            opened: Mutex::new(HashSet::new()),
         });
 
         let (ready_tx, ready_rx) = channel();
         let handle = spawn_supervisor(
             Arc::clone(&server),
             cfg.clone(),
-            self.root_uri.clone(),
+            self.root_uri_on(&host),
             self.root_path.clone(),
-            self.host.clone(),
+            host,
             self.events.clone(),
             ready_tx,
         );
@@ -538,14 +613,11 @@ impl LspManager {
         // the first attempt's outcome comes back here.
         match ready_rx.recv() {
             Ok(Ok(())) => {
-                self.servers
-                    .lock()
-                    .unwrap()
-                    .insert(cfg.language_id.clone(), server);
+                self.servers.lock().unwrap().insert(cfg.id.clone(), server);
                 self.supervisors
                     .lock()
                     .unwrap()
-                    .insert(cfg.language_id.clone(), handle);
+                    .insert(cfg.id.clone(), handle);
                 Ok(())
             }
             Ok(Err(e)) => {
@@ -561,9 +633,15 @@ impl LspManager {
 
     /// Is a server currently connected for this language?
     pub fn is_running(&self, language_id: &str) -> bool {
-        self.server(language_id)
-            .map(|s| s.conn.lock().unwrap().is_some())
-            .unwrap_or(false)
+        self.servers_of(language_id)
+            .iter()
+            .any(|s| s.conn.lock().unwrap().is_some())
+    }
+
+    /// Is the server with this id currently connected?
+    pub fn is_server_running(&self, server_id: &str) -> bool {
+        self.server_by_id(server_id)
+            .is_some_and(|s| s.conn.lock().unwrap().is_some())
     }
 
     /// Send a request and wait for its response ([`DEFAULT_REQUEST_TIMEOUT`]).
@@ -577,7 +655,7 @@ impl LspManager {
     }
 
     /// Send a request, cancelling it with `$/cancelRequest` if `timeout`
-    /// elapses first.
+    /// elapses first. Which server answers is decided by [`crate::routing`].
     pub fn request_with_timeout(
         &self,
         language_id: &str,
@@ -585,18 +663,62 @@ impl LspManager {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, LspError> {
-        let server = self
-            .server(language_id)
-            .ok_or_else(|| LspError::NoServer(language_id.to_string()))?;
-        server.request(method, params, timeout)
+        let servers = self.servers_of(language_id);
+        match servers.as_slice() {
+            [] => Err(LspError::NoServer(language_id.to_string())),
+            // One server: nothing to route, and no capability filtering, so a
+            // single-server language behaves exactly as it always did.
+            [only] => only.request(method, params, timeout),
+            _ => self.route(&servers, method, params, timeout),
+        }
     }
 
-    /// Send a notification (fire and forget by protocol definition).
+    /// Send a notification to every server of the language (fire and forget
+    /// by protocol definition). It succeeds if any server took it.
     pub fn notify(&self, language_id: &str, method: &str, params: Value) -> Result<(), LspError> {
-        let server = self
-            .server(language_id)
-            .ok_or_else(|| LspError::NoServer(language_id.to_string()))?;
-        server.notify(method, params)
+        self.notify_servers(language_id, method, |_| params.clone())
+    }
+
+    fn notify_servers(
+        &self,
+        language_id: &str,
+        method: &str,
+        params_for: impl Fn(&Server) -> Value,
+    ) -> Result<(), LspError> {
+        self.notify_servers_where(language_id, method, |_| true, |_| {}, params_for)
+    }
+
+    /// [`Self::notify_servers`] to the servers `wanted` accepts. Having
+    /// nobody to tell because every server already knows is not an error.
+    /// `undo` runs for a server whose send failed, so whatever `wanted`
+    /// recorded about it (a `didOpen` mark) does not outlive the failure.
+    fn notify_servers_where(
+        &self,
+        language_id: &str,
+        method: &str,
+        wanted: impl Fn(&Server) -> bool,
+        undo: impl Fn(&Server),
+        params_for: impl Fn(&Server) -> Value,
+    ) -> Result<(), LspError> {
+        let servers = self.servers_of(language_id);
+        if servers.is_empty() {
+            return Err(LspError::NoServer(language_id.to_string()));
+        }
+        let mut first_error = None;
+        let mut delivered = false;
+        for server in servers.iter().filter(|s| wanted(s)) {
+            match server.notify(method, params_for(server)) {
+                Ok(()) => delivered = true,
+                Err(e) => {
+                    undo(server);
+                    first_error.get_or_insert(e);
+                }
+            }
+        }
+        match (delivered, first_error) {
+            (false, Some(e)) => Err(e),
+            _ => Ok(()),
+        }
     }
 
     /// Tell the server a document is open. The manager owns the version
@@ -607,19 +729,31 @@ impl LspManager {
     /// this manager's host before it ever reaches the wire, or a lookup key.
     pub fn did_open(&self, uri: &str, language_id: &str, text: &str) -> Result<(), LspError> {
         let uri = self.normalize_uri(uri);
-        self.documents.lock().unwrap().insert(
-            uri.clone(),
-            DocState {
+        // A document reopened for a restarted server keeps its version: the
+        // servers that stayed have already seen it, and it must not go back.
+        let version = self
+            .documents
+            .lock()
+            .unwrap()
+            .entry(uri.clone())
+            .or_insert_with(|| DocState {
                 language_id: language_id.to_string(),
                 version: 1,
-            },
-        );
-        self.notify(
+            })
+            .version;
+        self.notify_servers_where(
             language_id,
             "textDocument/didOpen",
-            json!({"textDocument": {
-                "uri": uri, "languageId": language_id, "version": 1, "text": text
-            }}),
+            |server| server.opened.lock().unwrap().insert(uri.clone()),
+            |server| {
+                server.opened.lock().unwrap().remove(&uri);
+            },
+            |_| {
+                json!({"textDocument": {
+                    "uri": uri,
+                    "languageId": language_id, "version": version, "text": text
+                }})
+            },
         )
     }
 
@@ -635,14 +769,12 @@ impl LspManager {
             doc.version += 1;
             (doc.language_id.clone(), doc.version)
         };
-        self.notify(
-            &language_id,
-            "textDocument/didChange",
+        self.notify_document(&language_id, "textDocument/didChange", &uri, |uri| {
             json!({
                 "textDocument": {"uri": uri, "version": version},
                 "contentChanges": [{"text": text}],
-            }),
-        )?;
+            })
+        })?;
         Ok(version)
     }
 
@@ -650,10 +782,11 @@ impl LspManager {
     pub fn did_save(&self, uri: &str) -> Result<(), LspError> {
         let uri = self.normalize_uri(uri);
         let language_id = self.language_of(&uri)?;
-        self.notify(
+        self.notify_document(
             &language_id,
             "textDocument/didSave",
-            json!({"textDocument": {"uri": uri}}),
+            &uri,
+            |uri| json!({"textDocument": {"uri": uri}}),
         )
     }
 
@@ -662,11 +795,36 @@ impl LspManager {
         let uri = self.normalize_uri(uri);
         let language_id = self.language_of(&uri)?;
         self.documents.lock().unwrap().remove(&uri);
-        self.notify(
+        for server in self.servers_of(&language_id) {
+            server.opened.lock().unwrap().remove(&uri);
+        }
+        self.notify_document(
             &language_id,
             "textDocument/didClose",
-            json!({"textDocument": {"uri": uri}}),
+            &uri,
+            |uri| json!({"textDocument": {"uri": uri}}),
         )
+    }
+
+    /// Send a document notification to every server of the language. The
+    /// URI is the project host's; each server's wire translates it.
+    fn notify_document(
+        &self,
+        language_id: &str,
+        method: &str,
+        uri: &str,
+        params: impl Fn(&str) -> Value,
+    ) -> Result<(), LspError> {
+        self.notify_servers(language_id, method, |_| params(uri))
+    }
+
+    /// The workspace root as `host` spells it.
+    fn root_uri_on(&self, host: &ExecHost) -> String {
+        if *host == self.host {
+            self.root_uri.clone()
+        } else {
+            uri_for(host, &self.root_path)
+        }
     }
 
     /// Tell a server about filesystem changes it asked to watch
@@ -684,9 +842,17 @@ impl LspManager {
         language_id: &str,
         changes: &[(PathBuf, FileChangeKind)],
     ) -> Result<(), LspError> {
-        let Some(server) = self.server(language_id) else {
-            return Ok(());
-        };
+        for server in self.servers_of(language_id) {
+            self.send_watched_changes(&server, changes)?;
+        }
+        Ok(())
+    }
+
+    fn send_watched_changes(
+        &self,
+        server: &Server,
+        changes: &[(PathBuf, FileChangeKind)],
+    ) -> Result<(), LspError> {
         // Registration is rare (once per server session, typically), so
         // recompiling on every call — rather than caching the compiled
         // `GlobSet` on `Server` and invalidating it on register/unregister
@@ -720,7 +886,7 @@ impl LspManager {
     /// (csharp-ls's suspected path, the same dual path C9 checks for
     /// semantic tokens). `false` for a server that is not running.
     pub fn code_lenses_supported(&self, language_id: &str) -> bool {
-        self.server(language_id).is_some_and(|server| {
+        self.servers_of(language_id).iter().any(|server| {
             *server.code_lens_supported.lock().unwrap()
                 || server
                     .registrations
@@ -734,7 +900,7 @@ impl LspManager {
     /// `textDocument/prepareCallHierarchy`. `false` for a server that is not
     /// running.
     pub fn call_hierarchy_supported(&self, language_id: &str) -> bool {
-        self.server(language_id).is_some_and(|server| {
+        self.servers_of(language_id).iter().any(|server| {
             *server.call_hierarchy_supported.lock().unwrap()
                 || server
                     .registrations
@@ -748,7 +914,7 @@ impl LspManager {
     /// `textDocument/prepareTypeHierarchy`. `false` for a server that is not
     /// running.
     pub fn type_hierarchy_supported(&self, language_id: &str) -> bool {
-        self.server(language_id).is_some_and(|server| {
+        self.servers_of(language_id).iter().any(|server| {
             *server.type_hierarchy_supported.lock().unwrap()
                 || server
                     .registrations
@@ -766,11 +932,17 @@ impl LspManager {
     /// to know which one a given server uses (C9's plan explicitly calls
     /// out that csharp-ls's path is unconfirmed, so both are handled).
     pub fn semantic_tokens_legend(&self, language_id: &str) -> Option<SemanticTokensLegend> {
-        self.server(language_id)?
-            .semantic_tokens_legend
-            .lock()
-            .unwrap()
-            .clone()
+        self.servers_of(language_id)
+            .iter()
+            .find_map(|s| s.semantic_tokens_legend.lock().unwrap().clone())
+    }
+
+    /// The `capabilities` the server `server_id` declared in `initialize`
+    /// (`Null` before it answered, or when it is not running).
+    pub fn capabilities(&self, server_id: &str) -> Value {
+        self.server_by_id(server_id)
+            .map(|s| s.capabilities.lock().unwrap().clone())
+            .unwrap_or(Value::Null)
     }
 
     /// The version last sent for a document, if it is open.
@@ -783,32 +955,45 @@ impl LspManager {
     /// `client/registerCapability`. `false` for a server that is not
     /// running at all, same as "it never registered anything".
     pub fn method_registered(&self, language_id: &str, method: &str) -> bool {
-        self.server(language_id)
-            .is_some_and(|server| server.registrations.method_registered(method))
+        self.servers_of(language_id)
+            .iter()
+            .any(|server| server.registrations.method_registered(method))
     }
 
     /// C6: update the settings a running server pulls via
     /// `workspace/configuration` and tell it to re-pull them.
     ///
-    /// The notification's `settings` is deliberately `null`, not `settings`
-    /// itself — that is what tells a client-supports-pull server (csharp-ls
-    /// included) to re-issue `workspace/configuration` rather than treat the
-    /// notification as the new value pushed inline.
-    pub fn update_settings(&self, language_id: &str, settings: Value) -> Result<(), LspError> {
+    /// The notification carries the settings too, as `{section: settings}`
+    /// (what Intelephense and Phpactor read), because not every server
+    /// re-pulls `workspace/configuration` after a bare notification. A
+    /// server with no `settings_section` gets `null`, which is the pull
+    /// trigger for one that does re-pull.
+    pub fn update_settings(&self, server_id: &str, settings: Value) -> Result<(), LspError> {
         let server = self
-            .server(language_id)
-            .ok_or_else(|| LspError::NoServer(language_id.to_string()))?;
+            .server_by_id(server_id)
+            .ok_or_else(|| LspError::NoServer(server_id.to_string()))?;
+        let pushed = match &server.settings_section {
+            Some(section) => json!({ section: settings.clone() }),
+            None => Value::Null,
+        };
         *server.settings.lock().unwrap() = settings;
         server.notify(
             "workspace/didChangeConfiguration",
-            json!({"settings": Value::Null}),
+            json!({"settings": pushed}),
         )
     }
 
-    /// Shut one server down: `shutdown`, `exit`, then kill if it lingers.
+    /// Shut every server of a language down.
     pub fn stop(&self, language_id: &str) {
-        let server = self.servers.lock().unwrap().remove(language_id);
-        let handle = self.supervisors.lock().unwrap().remove(language_id);
+        for server in self.servers_of(language_id) {
+            self.stop_server(&server.id);
+        }
+    }
+
+    /// Shut one server down: `shutdown`, `exit`, then kill if it lingers.
+    pub fn stop_server(&self, server_id: &str) {
+        let server = self.servers.lock().unwrap().remove(server_id);
+        let handle = self.supervisors.lock().unwrap().remove(server_id);
         let Some(server) = server else { return };
 
         server.stopping.store(true, Ordering::SeqCst);
@@ -834,14 +1019,28 @@ impl LspManager {
 
     /// Shut every running server down.
     pub fn stop_all(&self) {
-        let languages: Vec<String> = self.servers.lock().unwrap().keys().cloned().collect();
-        for language_id in languages {
-            self.stop(&language_id);
+        let ids: Vec<String> = self.servers.lock().unwrap().keys().cloned().collect();
+        for id in ids {
+            self.stop_server(&id);
         }
     }
 
-    fn server(&self, language_id: &str) -> Option<Arc<Server>> {
-        self.servers.lock().unwrap().get(language_id).cloned()
+    /// The running servers of a language, in answer order.
+    fn servers_of(&self, language_id: &str) -> Vec<Arc<Server>> {
+        let mut servers: Vec<Arc<Server>> = self
+            .servers
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.language_id == language_id)
+            .cloned()
+            .collect();
+        servers.sort_by(|a, b| (a.priority, &a.id).cmp(&(b.priority, &b.id)));
+        servers
+    }
+
+    fn server_by_id(&self, server_id: &str) -> Option<Arc<Server>> {
+        self.servers.lock().unwrap().get(server_id).cloned()
     }
 
     /// Mark a refactoring as in flight for as long as the returned guard
@@ -917,7 +1116,7 @@ fn spawn_supervisor(
         let mut backoff = RESTART_BACKOFF_INITIAL;
 
         loop {
-            match connect(&server, &cfg, &root_uri, &root_path, &host) {
+            match connect::connect(&server, &cfg, &root_uri, &root_path, &host) {
                 Ok((
                     stdout,
                     trigger_characters,
@@ -927,12 +1126,27 @@ fn spawn_supervisor(
                     if let Some(tx) = ready.take() {
                         let _ = tx.send(Ok(()));
                     }
+                    // A stop that began while this respawn was connecting
+                    // looked for a connection before there was one, so
+                    // nobody will kill this one: without this the read loop
+                    // below never ends and `stop_server` joins forever.
+                    if server.stopping.load(Ordering::SeqCst) {
+                        if let Some(mut conn) = server.conn.lock().unwrap().take() {
+                            let _ = conn.child.kill();
+                            let _ = conn.child.wait();
+                        }
+                        return;
+                    }
                     let _ = events.send(LspEvent::ServerReady {
                         language_id: cfg.language_id.clone(),
+                        server_id: cfg.id.clone(),
                         restarts,
                         trigger_characters,
                         signature_triggers,
                         completion_resolve_supported,
+                        on_type_triggers: crate::formatting::parse_on_type_triggers(
+                            &server.capabilities.lock().unwrap(),
+                        ),
                     });
                     let started = Instant::now();
                     read_loop(&server, &cfg.language_id, stdout, &events);
@@ -952,6 +1166,7 @@ fn spawn_supervisor(
                     }
                     let _ = events.send(LspEvent::ServerFailed {
                         language_id: cfg.language_id.clone(),
+                        server_id: cfg.id.clone(),
                         message,
                     });
                     return;
@@ -969,6 +1184,7 @@ fn spawn_supervisor(
             if server.progress.lock().unwrap().clear() {
                 let _ = events.send(LspEvent::ServerBusy {
                     language_id: cfg.language_id.clone(),
+                    server_id: cfg.id.clone(),
                     activity: None,
                 });
             }
@@ -980,147 +1196,24 @@ fn spawn_supervisor(
             if restarts > MAX_RESTARTS {
                 let _ = events.send(LspEvent::ServerFailed {
                     language_id: cfg.language_id.clone(),
+                    server_id: cfg.id.clone(),
                     message: format!("gave up after {MAX_RESTARTS} restarts"),
                 });
                 return;
             }
             let _ = events.send(LspEvent::ServerExited {
                 language_id: cfg.language_id.clone(),
+                server_id: cfg.id.clone(),
                 restarts,
                 retry_in: backoff,
             });
             thread::sleep(backoff);
+            if server.stopping.load(Ordering::SeqCst) {
+                return;
+            }
             backoff = (backoff * 2).min(RESTART_BACKOFF_MAX);
         }
     })
-}
-
-/// Spawn the child and run the `initialize`/`initialized` handshake, leaving
-/// the connection published and the reader positioned at the next message.
-fn connect(
-    server: &Server,
-    cfg: &ServerConfig,
-    root_uri: &str,
-    root_path: &str,
-    host: &ExecHost,
-) -> Result<
-    (
-        BufReader<std::process::ChildStdout>,
-        Vec<String>,
-        SignatureTriggers,
-        bool,
-    ),
-    LspError,
-> {
-    // W3-1/W3-3: `ExecHost::command` (ADR-0052) replaces a bare
-    // `Command::new`, which gains this crate `current_dir` and
-    // `CREATE_NO_WINDOW` it never had, and runs the server inside the
-    // distro for a WSL project root. `resolve_program` is what makes a
-    // missing server say so plainly instead of a generic spawn failure —
-    // `Local` never probes, so this is free on every project that isn't one.
-    let resolved_command =
-        process_exec::host::resolve_program(host, &cfg.command, Path::new(root_path)).ok_or_else(
-            || LspError::Spawn {
-                command: cfg.command.clone(),
-                source: io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("{} not found inside the WSL distro", cfg.command),
-                ),
-            },
-        )?;
-    let args: Vec<&str> = cfg.args.iter().map(String::as_str).collect();
-    let mut command = host.command(&resolved_command, &args, Path::new(root_path), &[]);
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        // Servers are chatty on stderr and nothing reads it; a full pipe
-        // would deadlock the child.
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|source| LspError::Spawn {
-            command: cfg.command.clone(),
-            source,
-        })?;
-
-    let mut stdin = child.stdin.take().expect("stdin was piped");
-    let mut stdout = BufReader::new(child.stdout.take().expect("stdout was piped"));
-
-    // The handshake is done inline, before the connection is published, so
-    // nothing else can be in flight and no dispatch table is needed yet.
-    let init = json!({
-        "jsonrpc": "2.0",
-        "id": 0,
-        "method": "initialize",
-        "params": {
-            "processId": std::process::id(),
-            "rootUri": root_uri,
-            "capabilities": client_capabilities(),
-            "workspaceFolders": Value::Null,
-        }
-    });
-    write_message(
-        &mut stdin,
-        &serde_json::to_vec(&init).map_err(io::Error::from)?,
-    )?;
-
-    let (trigger_characters, signature_triggers, completion_resolve_supported) = loop {
-        let Some(body) = read_message(&mut stdout)? else {
-            return Err(LspError::Disconnected {
-                method: "initialize".into(),
-            });
-        };
-        let message: Value = serde_json::from_slice(&body).map_err(io::Error::from)?;
-        if message.get("id").and_then(Value::as_i64) == Some(0) && message.get("method").is_none() {
-            if let Some(error) = message.get("error") {
-                return Err(response_error(error));
-            }
-            // What the server can do is read here, once, and published with
-            // `ServerReady` — nothing else ever sees the raw result.
-            let result = message.get("result").unwrap_or(&Value::Null);
-            // C9: read once, here, same as the other capabilities above —
-            // but stored on `server` rather than threaded through the
-            // return tuple, because a server may instead only tell us via a
-            // *later* `client/registerCapability` (`dispatch` sets the same
-            // field), and `semantic_tokens_legend` needs to answer
-            // correctly either way.
-            *server.semantic_tokens_legend.lock().unwrap() = semantic_tokens::parse_legend(result);
-            // C10: same read-once-here convention, for the same reason —
-            // csharp-ls may instead only register `textDocument/codeLens`
-            // dynamically, which `code_lenses_supported` also checks.
-            *server.code_lens_supported.lock().unwrap() = code_lens::is_offered(result);
-            // C11: same read-once-here convention — presence of either
-            // capability is the whole answer, same reasoning
-            // `code_lens::is_offered` gives for its own capability.
-            *server.call_hierarchy_supported.lock().unwrap() = result
-                .pointer("/capabilities/callHierarchyProvider")
-                .is_some();
-            *server.type_hierarchy_supported.lock().unwrap() = result
-                .pointer("/capabilities/typeHierarchyProvider")
-                .is_some();
-            break (
-                parse_trigger_characters(result),
-                parse_signature_triggers(result),
-                parse_resolve_provider(result),
-            );
-        }
-        // Anything else before the response (log messages, server requests)
-        // is dropped: the client isn't observable yet.
-    };
-
-    let initialized = json!({"jsonrpc": "2.0", "method": "initialized", "params": {}});
-    write_message(
-        &mut stdin,
-        &serde_json::to_vec(&initialized).map_err(io::Error::from)?,
-    )?;
-    stdin.flush()?;
-
-    *server.conn.lock().unwrap() = Some(Conn { stdin, child });
-    Ok((
-        stdout,
-        trigger_characters,
-        signature_triggers,
-        completion_resolve_supported,
-    ))
 }
 
 /// Read and dispatch until the server's stdout ends (i.e. it died).
@@ -1133,7 +1226,12 @@ fn read_loop(
     loop {
         match read_message(&mut stdout) {
             Ok(Some(body)) => match serde_json::from_slice::<Value>(&body) {
-                Ok(message) => dispatch(server, language_id, message, events),
+                Ok(message) => dispatch(
+                    server,
+                    language_id,
+                    server.message_from_wire(message),
+                    events,
+                ),
                 // A single unparsable message is not worth killing the
                 // session over; the framing is still in sync.
                 Err(_) => continue,
@@ -1182,6 +1280,7 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
             let (gate, rx) = ApplyEditGate::new();
             let _ = events.send(LspEvent::ApplyEdit {
                 language_id: language_id.to_string(),
+                server_id: server.id.clone(),
                 label: params
                     .get("label")
                     .and_then(Value::as_str)
@@ -1298,7 +1397,10 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
         (Some(method), None) => {
             let params = message.get("params").cloned().unwrap_or(Value::Null);
             let event = if method == "textDocument/publishDiagnostics" {
-                publish_diagnostics(language_id, &params)
+                if !server.diagnostics {
+                    return;
+                }
+                publish_diagnostics(language_id, &server.id, &params)
             } else if method == "$/progress" {
                 // Handled on the reader thread like any other notification:
                 // the tracker is a `Mutex` around a `Vec`, so this costs
@@ -1311,6 +1413,7 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
                 }
                 Some(LspEvent::ServerBusy {
                     language_id: language_id.to_string(),
+                    server_id: server.id.clone(),
                     activity: progress.current(),
                 })
             } else {
@@ -1318,6 +1421,7 @@ fn dispatch(server: &Arc<Server>, language_id: &str, message: Value, events: &Se
             };
             let _ = events.send(event.unwrap_or(LspEvent::Notification {
                 language_id: language_id.to_string(),
+                server_id: server.id.clone(),
                 method: method.to_string(),
                 params,
             }));
@@ -1337,13 +1441,14 @@ fn apply_edit_response(id: i64, applied: bool, reason: Option<&str>) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "result": result})
 }
 
-fn publish_diagnostics(language_id: &str, params: &Value) -> Option<LspEvent> {
+fn publish_diagnostics(language_id: &str, server_id: &str, params: &Value) -> Option<LspEvent> {
     let uri = params.get("uri")?.as_str()?.to_string();
     let diagnostics =
         serde_json::from_value::<Vec<lsp_types::Diagnostic>>(params.get("diagnostics")?.clone())
             .ok()?;
     Some(LspEvent::Diagnostics {
         language_id: language_id.to_string(),
+        server_id: server_id.to_string(),
         uri,
         version: params
             .get("version")
@@ -1370,344 +1475,5 @@ fn response_error(error: &Value) -> LspError {
             .and_then(Value::as_str)
             .unwrap_or("unknown error")
             .to_string(),
-    }
-}
-
-/// What this client can do. Kept deliberately small — capabilities are added
-/// by the feature tasks that implement them (L2-L5), not speculatively.
-fn client_capabilities() -> Value {
-    json!({
-        "textDocument": {
-            "synchronization": {"dynamicRegistration": false},
-            "publishDiagnostics": {"relatedInformation": true},
-            // L3/L4: advertised because they are implemented — `contentFormat`
-            // lists markdown first because that is what the tooltip renders,
-            // and `linkSupport` opts into the richer `LocationLink` reply.
-            "hover": {"contentFormat": ["markdown", "plaintext"]},
-            "definition": {"linkSupport": true},
-            // R2: `snippetSupport: true` — `edit_ops::snippet` parses the
-            // placeholder grammar into inserted text plus tab stops, and
-            // `EditorOps`'s snippet session (ui-shell) walks them with
-            // Tab/Shift+Tab, so a server offering `${1:name}`-style items is
-            // no longer asked to hold back.
-            "completion": {
-                "completionItem": {
-                    "snippetSupport": true,
-                    "documentationFormat": ["plaintext", "markdown"],
-                    // C7: which fields are worth a `completionItem/resolve`
-                    // round trip for — `additionalTextEdits` is the `using`
-                    // csharp-ls adds for an unimported type; `documentation`
-                    // and `detail` are the two fields most servers only
-                    // fill in on resolve, to keep the initial list cheap.
-                    "resolveSupport": {
-                        "properties": ["documentation", "detail", "additionalTextEdits"],
-                    },
-                },
-                "contextSupport": false,
-            },
-            // RF6: code actions as literals rather than bare commands, so an
-            // action can carry its own edit; `resolveSupport` names `edit`
-            // only, because that is the one field we ask a server to fill in
-            // later. The kind list is the families the UI offers — servers
-            // may answer with any kind, and `code_action::kind_matches`
-            // classifies what arrives, so this list narrows requests without
-            // limiting what can come back.
-            "codeAction": {
-                "codeActionLiteralSupport": {"codeActionKind": {"valueSet": [
-                    "", "quickfix", "refactor", "refactor.extract",
-                    "refactor.inline", "refactor.rewrite", "source",
-                    // F2: Organize Imports is offered in its own right and
-                    // as a quick fix for an unresolved symbol, so the kind
-                    // is named rather than left to the `source` family.
-                    "source.organizeImports",
-                ]}},
-                "resolveSupport": {"properties": ["edit"]},
-                "dataSupport": true,
-                "isPreferredSupport": true,
-                "disabledSupport": true,
-            },
-            "rename": {"prepareSupport": true},
-            // F1: advertised because reformat is implemented. `dynamicRegistration`
-            // is false throughout this client — a server that wants to register
-            // capabilities later has nowhere to send them.
-            "formatting": {"dynamicRegistration": false},
-            "rangeFormatting": {"dynamicRegistration": false},
-            // F2: parameter hints. `labelOffsetSupport` says we prefer the
-            // unambiguous `[start, end]` parameter label — a substring has
-            // to be searched for in the signature and can match the wrong
-            // occurrence — but both shapes are handled either way
-            // (`signature_help::parse_signature_help`).
-            // `activeParameterSupport` opts into the per-signature index,
-            // which is the only way an overload set can say that *this*
-            // overload takes fewer arguments.
-            "signatureHelp": {
-                "signatureInformation": {
-                    "documentationFormat": ["plaintext", "markdown"],
-                    "parameterInformation": {"labelOffsetSupport": true},
-                    "activeParameterSupport": true,
-                },
-                "contextSupport": false,
-            },
-            "documentHighlight": {"dynamicRegistration": false},
-            // No `resolveSupport`: hints are requested for a viewport and
-            // painted whole, so there is no second round trip to opt into.
-            // The `InlayHintLabelPart[]` label form needs no capability and
-            // is parsed regardless.
-            "inlayHint": {"dynamicRegistration": false},
-            // C9: `dynamicRegistration: true` — unlike every other entry in
-            // this block — because csharp-ls is believed to declare this
-            // one dynamically rather than statically (see
-            // `semantic_tokens` module docs); `formats: ["relative"]` is
-            // the only encoding LSP 3.17 defines, so it is the only value
-            // that could go here. `tokenTypes`/`tokenModifiers` are the
-            // full LSP standard vocabulary this client's mapping
-            // understands (`semantic_tokens::base_scope_name`); a server is
-            // free to define fewer, and any it defines that this list omits
-            // still decodes correctly; `requests.full: true` and no `range`
-            // entry is what makes only the whole-document request offered.
-            "semanticTokens": {
-                "dynamicRegistration": true,
-                "requests": {"full": true},
-                "tokenTypes": crate::semantic_tokens::STANDARD_TOKEN_TYPES,
-                "tokenModifiers": crate::semantic_tokens::STANDARD_TOKEN_MODIFIERS,
-                "formats": ["relative"],
-            },
-            // C10: dynamic, because csharp-ls is believed to register this
-            // one dynamically too, same reasoning as `semanticTokens` above.
-            // No `resolveSupport`-shaped field exists for code lens in the
-            // spec — a lens without a `command` always needs
-            // `codeLens/resolve`, decided per item
-            // (`code_lens::CodeLensItem::needs_resolve`), not by a
-            // capability this client would advertise.
-            "codeLens": {"dynamicRegistration": true},
-            // C11: dynamic, on the same suspicion as `semanticTokens` and
-            // `codeLens` above — csharp-ls is not confirmed to declare
-            // either hierarchy capability statically. Neither carries a
-            // resolve-style sub-capability worth advertising: an item's
-            // `data` always round-trips through `incomingCalls`/
-            // `outgoingCalls`/`supertypes`/`subtypes` verbatim, with no
-            // separate resolve request in the spec.
-            "callHierarchy": {"dynamicRegistration": true},
-            "typeHierarchy": {"dynamicRegistration": true},
-        },
-        "workspace": {
-            // RF5: we answer `workspace/applyEdit`, which is how the
-            // command-driven refactorings reach us at all.
-            "applyEdit": true,
-            "executeCommand": {"dynamicRegistration": false},
-            "workspaceEdit": {
-                // Versions let a stale edit be caught before it is applied.
-                "documentChanges": true,
-                // F2: create, rename and delete are performed by
-                // `app_core::AppSession::apply_file_ops` (F2). Without
-                // these advertised, rust-analyzer's "move to submodule" and
-                // every extract-to-new-file refactoring is refused whole —
-                // the user sees "unsupported" for a correct edit.
-                "resourceOperations": ["create", "rename", "delete"],
-                // We apply all of an edit or none of it.
-                "failureHandling": "abort",
-                "normalizesLineEndings": false,
-            },
-            // C4: the one capability this client dynamically registers for
-            // — csharp-ls and others declare their watched-file globs this
-            // way rather than up front. `relativePatternSupport: false`
-            // because `Registrations::watchers` hands `globPattern` on
-            // untouched to C5, which does not yet resolve a `RelativePattern`
-            // against a base URI.
-            "didChangeWatchedFiles": {
-                "dynamicRegistration": true,
-                "relativePatternSupport": false,
-            },
-            // C6: we answer `workspace/configuration`, which is how
-            // csharp-ls (and any server that pulls rather than takes pushed
-            // settings) gets its config at all.
-            "configuration": true,
-        },
-        // F0-16: without this a server has no permission to open a progress
-        // token, and rust-analyzer stays silent while it indexes — which is
-        // exactly the window in which it answers every request with nothing.
-        "window": {"workDoneProgress": true},
-        "general": {"positionEncodings": ["utf-16"]},
-    })
-}
-
-/// D0 (jvm-build-tools plan): build files (`pom.xml`, `build.gradle`, …)
-/// are registered as open documents with no server configured for their
-/// language, so `did_open`/`did_change`/`did_close` must tolerate that
-/// without panicking or corrupting the manager's document map — the
-/// bridge's `open_build_file_document` (`ui-shell/src/bridge/language/
-/// mod.rs`) relies on exactly this.
-#[cfg(test)]
-mod no_server_document_lifecycle_tests {
-    use super::*;
-
-    fn manager() -> LspManager {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/tmp/proj"));
-        manager
-    }
-
-    #[test]
-    fn did_open_with_no_server_records_the_document_and_returns_no_server() {
-        let manager = manager();
-        let uri = "file:///tmp/proj/pom.xml";
-        let err = manager.did_open(uri, "xml", "<project/>").unwrap_err();
-        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
-        // The document is still tracked, even though no server was
-        // notified — did_change below depends on this.
-        assert!(manager.documents.lock().unwrap().contains_key(uri));
-    }
-
-    #[test]
-    fn did_change_with_no_server_bumps_the_version_and_returns_no_server() {
-        let manager = manager();
-        let uri = "file:///tmp/proj/pom.xml";
-        manager.did_open(uri, "xml", "<project/>").unwrap_err();
-        let err = manager
-            .did_change(uri, "<project><x/></project>")
-            .unwrap_err();
-        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
-    }
-
-    #[test]
-    fn did_close_with_no_server_forgets_the_document_and_returns_no_server() {
-        let manager = manager();
-        let uri = "file:///tmp/proj/pom.xml";
-        manager.did_open(uri, "xml", "<project/>").unwrap_err();
-        let err = manager.did_close(uri).unwrap_err();
-        assert!(matches!(err, LspError::NoServer(lang) if lang == "xml"));
-        assert!(!manager.documents.lock().unwrap().contains_key(uri));
-    }
-}
-
-#[cfg(test)]
-mod host_translation_tests {
-    use super::*;
-
-    fn wsl_host() -> ExecHost {
-        ExecHost::for_path(Path::new(r"\\wsl.localhost\Ubuntu\home\f\proj"))
-    }
-
-    #[test]
-    fn uri_for_is_unchanged_on_a_local_host() {
-        assert_eq!(
-            uri_for(&ExecHost::Local, "/home/f/proj/src/main.rs"),
-            crate::diagnostics::uri_from_path("/home/f/proj/src/main.rs")
-        );
-    }
-
-    #[test]
-    fn uri_for_translates_a_windows_unc_path_to_a_linux_file_uri() {
-        let host = wsl_host();
-        assert_eq!(
-            uri_for(&host, r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs"),
-            "file:///home/f/proj/src/main.rs"
-        );
-    }
-
-    #[test]
-    fn path_for_translates_a_linux_file_uri_back_to_the_unc_path() {
-        let host = wsl_host();
-        assert_eq!(
-            path_for(&host, "file:///home/f/proj/src/main.rs"),
-            Some(r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs".to_string())
-        );
-    }
-
-    #[test]
-    fn uri_for_then_path_for_round_trips_to_identity() {
-        let host = wsl_host();
-        let original = r"\\wsl.localhost\Ubuntu\home\f\proj\src\main.rs";
-        let uri = uri_for(&host, original);
-        assert_eq!(path_for(&host, &uri).as_deref(), Some(original));
-    }
-
-    #[test]
-    fn new_translates_root_uri_for_a_wsl_root() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-            "//wsl.localhost/Ubuntu/home/f/proj",
-        ));
-        assert_eq!(manager.root_uri, "file:///home/f/proj");
-        assert!(manager.host.is_remote());
-    }
-
-    #[test]
-    fn new_leaves_root_uri_unchanged_for_a_local_root() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path("/home/f/proj"));
-        assert_eq!(manager.root_uri, "file:///home/f/proj");
-        assert!(!manager.host.is_remote());
-    }
-
-    /// normalize_uri applied twice must be a no-op — `format_range` falling
-    /// back to `self.format(uri, options)` and every other re-entrant call
-    /// in this crate depends on it.
-    #[test]
-    fn normalize_uri_is_idempotent() {
-        let (manager, _rx) = LspManager::new(crate::diagnostics::uri_from_path(
-            "//wsl.localhost/Ubuntu/home/f/proj",
-        ));
-        let naive =
-            crate::diagnostics::uri_from_path("//wsl.localhost/Ubuntu/home/f/proj/src/main.rs");
-        let once = manager.normalize_uri(&naive);
-        let twice = manager.normalize_uri(&once);
-        assert_eq!(once, "file:///home/f/proj/src/main.rs");
-        assert_eq!(once, twice);
-    }
-
-    /// W3-3: a server binary absent from the distro is reported plainly,
-    /// not as a generic spawn failure — proven with the same fake-`wsl.exe`
-    /// trick `process-exec`'s own tests use, since `command -v` (and
-    /// therefore `resolve_program`) genuinely finds nothing for it.
-    #[test]
-    fn starting_a_server_missing_from_the_distro_says_so() {
-        use std::sync::Mutex;
-        static PATH_LOCK: Mutex<()> = Mutex::new(());
-        let _guard = PATH_LOCK.lock().unwrap();
-
-        let bin_dir = tempfile::tempdir().unwrap();
-        let script_path = bin_dir.path().join("wsl.exe");
-        std::fs::write(&script_path, "#!/bin/sh\nexit 1\n").unwrap();
-        let mut perms = std::fs::metadata(&script_path).unwrap().permissions();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            perms.set_mode(0o755);
-        }
-        std::fs::set_permissions(&script_path, perms).unwrap();
-
-        // Not created on disk, and deliberately so: the WSL root is only
-        // ever parsed for its UNC spelling — nothing here touches the
-        // filesystem under it. Creating it would write `/wsl.localhost` at
-        // the filesystem root, which only succeeds when the test runs as
-        // root (see #251 for the same trap in analysis-core).
-        let root = PathBuf::from("//wsl.localhost/Ubuntu/tmp/lsp-core-e2e");
-
-        let original_path = std::env::var("PATH").unwrap_or_default();
-        // SAFETY: serialized by PATH_LOCK.
-        unsafe {
-            std::env::set_var(
-                "PATH",
-                format!("{}:{original_path}", bin_dir.path().display()),
-            );
-        }
-        let (manager, _rx) =
-            LspManager::new(crate::diagnostics::uri_from_path(&root.to_string_lossy()));
-        let result = manager.start(&ServerConfig {
-            language_id: "rust".to_string(),
-            name: "rust-analyzer".to_string(),
-            command: "rust-analyzer".to_string(),
-            args: Vec::new(),
-            enabled: true,
-            settings_section: None,
-            settings: Value::Null,
-            source: crate::catalog::ServerSource::Builtin,
-        });
-        unsafe {
-            std::env::set_var("PATH", original_path);
-        }
-
-        let err = result.unwrap_err();
-        assert!(
-            matches!(&err, LspError::Spawn { source, .. } if source.to_string().contains("not found inside the WSL distro")),
-            "expected a WSL-specific not-found message, got {err:?}"
-        );
     }
 }

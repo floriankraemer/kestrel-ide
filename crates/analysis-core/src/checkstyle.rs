@@ -16,6 +16,8 @@
 //! </checkstyle>
 //! ```
 
+use std::path::{Path, PathBuf};
+
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -43,6 +45,24 @@ pub struct CheckstyleFinding {
     /// on the finding rather than discarded, since re-parsing the same XML
     /// later to recover it would be wasted work.
     pub source: Option<String>,
+}
+
+impl CheckstyleFinding {
+    /// This finding's rule id: its `source` attribute, or — for a tool that
+    /// reports none and prefixes its messages with the rule (`Id: text`,
+    /// Psalm) — that prefix.
+    pub fn code(&self, analyzer: &AnalyzerDef) -> Option<String> {
+        if let Some(source) = self.source.as_deref().filter(|s| !s.is_empty()) {
+            return Some(source.to_string());
+        }
+        if !analyzer.code_in_message {
+            return None;
+        }
+        let (id, _) = self.message.split_once(": ")?;
+        let is_identifier =
+            !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        is_identifier.then(|| id.to_string())
+    }
 }
 
 /// Why a checkstyle-xml document could not be parsed.
@@ -133,6 +153,28 @@ fn attr(tag: &quick_xml::events::BytesStart<'_>, key: &str) -> Result<Option<Str
     Ok(None)
 }
 
+/// The local file a checkstyle `file=` names for a run rooted at `root`.
+///
+/// A tool run under WSL prints Linux paths, which this process cannot open
+/// until [`process_exec::host::ExecHost::path_from_tool`] translates them;
+/// a relative path (PHPStan reports relative to its working directory,
+/// which is always `root`) is resolved against `root` so the file's URI
+/// matches the one the editor opened.
+pub fn locate_file(root: &Path, file: &str) -> PathBuf {
+    locate_file_on(&process_exec::host::ExecHost::for_path(root), root, file)
+}
+
+/// [`locate_file`] for a tool that ran on `host`: a container's paths
+/// under the project mount map back to the local file.
+pub fn locate_file_on(host: &process_exec::host::ExecHost, root: &Path, file: &str) -> PathBuf {
+    let path = host.path_from_tool(file);
+    if path.is_relative() {
+        root.join(path)
+    } else {
+        path
+    }
+}
+
 /// Turn every finding for `path` into a [`Diagnostic`], resolving each
 /// one's severity through `analyzer`'s `severity-map` and naming the
 /// diagnostic's source after the analyzer (`phpstan`, `phpcs`, ...) rather
@@ -151,6 +193,7 @@ pub fn to_diagnostics(
         .iter()
         .filter(|f| f.file == path)
         .map(|f| Diagnostic {
+            code: f.code(analyzer),
             range: Range {
                 start: Position {
                     line: f.line.saturating_sub(1),
@@ -184,6 +227,19 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            languages: vec![],
+            file_args: vec![],
+            buffer: None,
+            composer_package: None,
+            requires_interpreter: None,
+            suppress_comment: None,
+            code_in_message: false,
+            fixer: None,
+            config_file_candidates: vec![],
+            ruleset_default: None,
+            project_paths_config: vec![],
+            required_config: vec![],
+            config_init: None,
         })
     }
 
@@ -194,6 +250,29 @@ mod tests {
                 .join(name),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_relative_finding_path_resolves_against_the_project_root() {
+        assert_eq!(
+            locate_file(Path::new("/p"), "src/a.php"),
+            PathBuf::from("/p/src/a.php")
+        );
+        assert_eq!(
+            locate_file(Path::new("/p"), "/p/src/a.php"),
+            PathBuf::from("/p/src/a.php")
+        );
+    }
+
+    #[test]
+    fn a_linux_finding_path_under_a_wsl_root_becomes_a_unc_path() {
+        assert_eq!(
+            locate_file(
+                Path::new("//wsl.localhost/Ubuntu/home/f/proj"),
+                "/home/f/proj/src/a.php"
+            ),
+            PathBuf::from("//wsl.localhost/Ubuntu/home/f/proj/src/a.php")
+        );
     }
 
     #[test]
@@ -250,5 +329,67 @@ mod tests {
         let findings = parse(&fixture("checkstyle_two_files.xml")).unwrap();
         let diagnostics = to_diagnostics(&findings, "/project/src/A.php", &phpstan());
         assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn a_file_a_container_tool_printed_maps_back_to_the_local_file() {
+        let root = Path::new("/home/f/proj");
+        let host = process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+            program: "docker".into(),
+            prefix_args: vec![],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: process_exec::host::PathMap::new(root, "/var/www"),
+        });
+        assert_eq!(
+            locate_file_on(&host, root, "/var/www/src/A.php"),
+            root.join("src/A.php")
+        );
+        // PHPStan prints paths relative to the working directory.
+        assert_eq!(
+            locate_file_on(&host, root, "src/A.php"),
+            root.join("src/A.php")
+        );
+    }
+
+    fn finding(source: Option<&str>, message: &str) -> CheckstyleFinding {
+        CheckstyleFinding {
+            file: "a.php".into(),
+            line: 1,
+            column: None,
+            severity: "error".into(),
+            message: message.into(),
+            source: source.map(String::from),
+        }
+    }
+
+    #[test]
+    fn the_code_is_the_source_attribute() {
+        let def = phpstan();
+        assert_eq!(
+            finding(Some("variable.undefined"), "x")
+                .code(&def)
+                .as_deref(),
+            Some("variable.undefined")
+        );
+        assert_eq!(finding(None, "Foo: bar").code(&def), None);
+    }
+
+    #[test]
+    fn a_code_in_message_tool_reads_the_message_prefix() {
+        let mut def = phpstan();
+        def.code_in_message = true;
+        let f = finding(None, "UndefinedVariable: Cannot find $x");
+        assert_eq!(f.code(&def).as_deref(), Some("UndefinedVariable"));
+        assert_eq!(finding(None, "no prefix here").code(&def), None);
+        assert_eq!(finding(None, "Has spaces: x").code(&def), None);
+    }
+
+    #[test]
+    fn diagnostics_carry_the_code() {
+        let diagnostics = to_diagnostics(&[finding(Some("a.b"), "m")], "a.php", &phpstan());
+        assert_eq!(diagnostics[0].code.as_deref(), Some("a.b"));
     }
 }

@@ -19,12 +19,14 @@ use plugin_api::TestFrameworkContribution;
 /// the process exits (C1, jvm-build-tools plan/ADR-0057) — both are
 /// "supported" in the sense this list gates, `select_framework` does not
 /// care which.
-pub const SUPPORTED_OUTPUT_FORMATS: &[&str] = &["teamcity", "junit-xml"];
+pub const SUPPORTED_OUTPUT_FORMATS: &[&str] = &["teamcity", "junit-xml", "junit-xml-stdout"];
 
 /// The first framework, in contribution order, that is runnable against
 /// this project: its `requires_toolchain` (if any) is among
 /// `detected_toolchains`, its `output_format` is one this build can stream,
-/// and `resolve_program` finds one of its `program_candidates`.
+/// and `resolve_program` finds one of its `program_candidates`. It is given
+/// the whole contribution because *where* to look (a PHP framework in the
+/// interpreter's container) depends on more than the candidate names.
 ///
 /// Returns the winning index (so a caller holding a parallel list of
 /// owning plugins, which this crate does not know about, can look one up)
@@ -33,7 +35,7 @@ pub fn select_framework<'a>(
     frameworks: &'a [TestFrameworkContribution],
     detected_toolchains: &[&str],
     supported_output_formats: &[&str],
-    mut resolve_program: impl FnMut(&[String]) -> Option<std::path::PathBuf>,
+    mut resolve_program: impl FnMut(&TestFrameworkContribution) -> Option<std::path::PathBuf>,
 ) -> Option<(usize, &'a TestFrameworkContribution, std::path::PathBuf)> {
     frameworks
         .iter()
@@ -47,8 +49,7 @@ pub fn select_framework<'a>(
             if !supported_output_formats.contains(&framework.output_format.as_str()) {
                 return None;
             }
-            resolve_program(&framework.program_candidates)
-                .map(|program| (index, framework, program))
+            resolve_program(framework).map(|program| (index, framework, program))
         })
 }
 
@@ -70,11 +71,14 @@ mod tests {
             requires_toolchain: None,
             report_glob: None,
             filter_dialect: None,
+            composer_package: None,
+            requires_interpreter: None,
+            coverage_args: vec![],
         }
     }
 
-    fn always_resolves(candidates: &[String]) -> Option<PathBuf> {
-        candidates.first().map(PathBuf::from)
+    fn always_resolves(framework: &TestFrameworkContribution) -> Option<PathBuf> {
+        framework.program_candidates.first().map(PathBuf::from)
     }
 
     #[test]
@@ -126,12 +130,9 @@ mod tests {
     #[test]
     fn a_framework_whose_program_does_not_resolve_is_skipped_and_the_next_one_tried() {
         let frameworks = vec![framework("missing"), framework("present")];
-        let result = select_framework(&frameworks, &[], &["teamcity"], |candidates| {
-            if candidates[0] == "missing" {
-                None
-            } else {
-                Some(PathBuf::from(&candidates[0]))
-            }
+        let result = select_framework(&frameworks, &[], &["teamcity"], |framework| {
+            let first = &framework.program_candidates[0];
+            (first != "missing").then(|| PathBuf::from(first))
         });
         assert_eq!(result.unwrap().0, 1);
     }

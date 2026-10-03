@@ -550,10 +550,20 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     assert_eq!(plugin.source(), PluginSource::Builtin);
 
     let analyzers: Vec<_> = registry.analyzers().collect();
-    assert_eq!(analyzers.len(), 2, "{analyzers:?}");
+    assert_eq!(analyzers.len(), 4, "{analyzers:?}");
     for (owner, _) in &analyzers {
         assert_eq!(owner.id(), "php-tools");
     }
+    let psalm = analyzers.iter().find(|(_, a)| a.id == "psalm").unwrap().1;
+    assert_eq!(psalm.composer_package.as_deref(), Some("vimeo/psalm"));
+    assert_eq!(psalm.buffer.as_deref(), Some("saved-only"));
+    let phpmd = analyzers.iter().find(|(_, a)| a.id == "phpmd").unwrap().1;
+    assert_eq!(phpmd.args[..3], ["{file}", "checkstyle", "{ruleset}"]);
+    assert_eq!(
+        phpmd.config_file_candidates,
+        vec!["phpmd.xml", "phpmd.xml.dist"]
+    );
+    assert_eq!(phpmd.languages, vec!["php"]);
 
     let phpstan = analyzers
         .iter()
@@ -586,6 +596,14 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
         vec!["vendor/bin/phpcs", "phpcs.phar", "phpcs"]
     );
     assert_eq!(phpcs.args, vec!["--report=checkstyle"]);
+    assert_eq!(phpcs.buffer.as_deref(), Some("stdin"));
+    assert_eq!(phpcs.languages, vec!["php"]);
+    assert_eq!(phpcs.requires_interpreter.as_deref(), Some("php"));
+    assert_eq!(
+        phpcs.composer_package.as_deref(),
+        Some("squizlabs/php_codesniffer")
+    );
+    assert_eq!(phpstan.composer_package.as_deref(), Some("phpstan/phpstan"));
     assert_eq!(phpcs.output_format, "checkstyle-xml");
     assert_eq!(
         phpcs.severity_map.get("warning").map(String::as_str),
@@ -593,8 +611,36 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     );
 
     let frameworks: Vec<_> = registry.test_frameworks().collect();
-    assert_eq!(frameworks.len(), 1, "{frameworks:?}");
-    let (owner, phpunit) = &frameworks[0];
+    let ids: Vec<&str> = frameworks.iter().map(|(_, f)| f.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["pest", "codeception", "behat", "phpspec", "phpunit"],
+        "selection order: PHPUnit-based runners first"
+    );
+    let (_, codeception) = &frameworks[1];
+    assert_eq!(codeception.output_format, "junit-xml");
+    assert_eq!(
+        codeception.report_glob.as_deref(),
+        Some("**/_output/report.xml")
+    );
+    let (_, phpspec) = &frameworks[3];
+    assert_eq!(phpspec.output_format, "junit-xml-stdout");
+    assert!(frameworks.iter().all(|(_, f)| f.composer_package.is_some()));
+    let dialects: Vec<_> = frameworks
+        .iter()
+        .map(|(_, f)| f.filter_dialect.as_deref())
+        .collect();
+    assert_eq!(
+        dialects,
+        [
+            Some("pest-regex"),
+            Some("codeception"),
+            Some("behat-name"),
+            Some("none"),
+            None
+        ]
+    );
+    let (owner, phpunit) = &frameworks[4];
     assert_eq!(owner.id(), "php-tools");
     assert_eq!(phpunit.id, "phpunit");
     assert_eq!(phpunit.name, "PHPUnit");
@@ -608,6 +654,71 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     assert_eq!(
         phpunit.config_file_candidates,
         vec!["phpunit.xml", "phpunit.xml.dist"]
+    );
+}
+
+#[test]
+fn the_php_tools_builtin_contributes_three_formatters() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+    let formatters: Vec<_> = registry.formatters().map(|(_, f)| f).collect();
+    let ids: Vec<_> = formatters.iter().map(|f| f.id.as_str()).collect();
+    assert_eq!(ids, ["php-cs-fixer", "pint", "phpcbf"]);
+    let phpcbf = formatters[2];
+    assert_eq!(phpcbf.buffer.as_deref(), Some("stdin"));
+    assert_eq!(phpcbf.success_exit_codes, vec![0, 1, 2]);
+    assert!(formatters.iter().all(|f| f.composer_package.is_some()));
+}
+
+#[test]
+fn the_php_tools_builtin_contributes_live_and_postfix_templates() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+    let templates: Vec<_> = registry.live_templates().map(|(_, t)| t).collect();
+    let plain = |abbr: &str| {
+        templates
+            .iter()
+            .any(|t| !t.postfix && t.abbreviation == abbr)
+    };
+    let post = |abbr: &str| {
+        templates
+            .iter()
+            .any(|t| t.postfix && t.abbreviation == abbr)
+    };
+    for abbr in [
+        "fore", "forek", "if", "ife", "try", "fn", "pubf", "prif", "prof", "pubsf", "const",
+        "ctor", "dd", "vd",
+    ] {
+        assert!(plain(abbr), "missing {abbr}");
+    }
+    for abbr in [
+        "if", "notnull", "null", "isset", "foreach", "return", "var", "throw", "par",
+    ] {
+        assert!(post(abbr), "missing postfix {abbr}");
+    }
+}
+
+#[test]
+fn the_php_tools_builtin_contributes_the_php_file_templates() {
+    let fixture = Fixture::new();
+    let registry = load(fixture.config_dir(), &[builtins::PHP_TOOLS], &[]);
+    assert!(registry.errors().is_empty(), "{:?}", registry.errors());
+    let ids: Vec<_> = registry
+        .file_templates()
+        .map(|(_, t)| t.id.as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "php-class",
+            "php-interface",
+            "php-trait",
+            "php-enum",
+            "php-test",
+            "php-file"
+        ]
     );
 }
 

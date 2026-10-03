@@ -22,6 +22,7 @@ pub mod inline_values;
 pub mod launch;
 pub mod protocol;
 pub mod session;
+pub mod xdebug;
 
 pub use breakpoints::{Breakpoint, BreakpointStore, SuspendPolicy};
 pub use catalog::Adapter;

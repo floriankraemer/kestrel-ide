@@ -420,7 +420,7 @@ pub fn spawn(command: &Command, work_dir: &Path) -> Result<Spawned, Failure> {
 /// still asks it, but a local one checks `PATH` here directly.
 pub fn tool_available(program: &str, work_dir: &Path) -> bool {
     let host = ExecHost::for_path(work_dir);
-    if host.is_remote() {
+    if host.filesystem_is_remote() {
         return resolve_program(&host, program, work_dir).is_some();
     }
     on_local_path(program)

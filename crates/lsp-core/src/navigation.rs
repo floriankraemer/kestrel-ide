@@ -119,6 +119,18 @@ pub fn definition_outcome(
     }
 }
 
+/// N1: the part of a server's answer a list of places can show — only
+/// `file:` targets (a `csharp:/metadata` URI has no row to jump to), and
+/// `None` when there is nothing to show, which sends the caller to its
+/// index fallback. A failed or empty answer is the same "ask the index".
+pub fn usable_targets(
+    response: Result<Vec<DefinitionTarget>, LspError>,
+) -> Option<Vec<DefinitionTarget>> {
+    let mut targets = response.ok()?;
+    targets.retain(|t| t.uri.starts_with("file://"));
+    (!targets.is_empty()).then_some(targets)
+}
+
 // C4-followup (#162): request-sending `LspManager` methods for this feature, moved out of
 // `manager.rs` once it crossed the file-size ceiling. This file already held the
 // parse/rule layer; this is the request-sending half `manager.rs`'s own module doc
@@ -133,11 +145,64 @@ impl crate::manager::LspManager {
         line: u32,
         character: u32,
     ) -> Result<Vec<DefinitionTarget>, LspError> {
+        self.locations("textDocument/definition", uri, line, character)
+    }
+
+    /// `textDocument/implementation`: the concrete types or overrides of the
+    /// symbol at a position (N1). Same answer shapes as [`Self::definition`].
+    pub fn implementation(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<DefinitionTarget>, LspError> {
+        self.locations("textDocument/implementation", uri, line, character)
+    }
+
+    /// `textDocument/typeDefinition`: where the *type* of the symbol at a
+    /// position is declared (N2).
+    pub fn type_definition(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<DefinitionTarget>, LspError> {
+        self.locations("textDocument/typeDefinition", uri, line, character)
+    }
+
+    /// Go to Declaration (N2): a server that offers `textDocument/declaration`
+    /// is asked that, and `textDocument/definition` answers whenever it is
+    /// not offered or has nothing to say.
+    pub fn go_to_declaration(
+        &self,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<DefinitionTarget>, LspError> {
+        let normalized = self.normalize_uri(uri);
+        let language_id = self.language_of(&normalized)?;
+        if self.supports(&language_id, "textDocument/declaration") {
+            if let Ok(targets) = self.locations("textDocument/declaration", uri, line, character) {
+                if !targets.is_empty() {
+                    return Ok(targets);
+                }
+            }
+        }
+        self.definition(uri, line, character)
+    }
+
+    fn locations(
+        &self,
+        method: &str,
+        uri: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<Vec<DefinitionTarget>, LspError> {
         let uri = &self.normalize_uri(uri);
         let language_id = self.language_of(uri)?;
         let result = self.request_with_timeout(
             &language_id,
-            "textDocument/definition",
+            method,
             position_params(uri, line, character),
             DEFINITION_TIMEOUT,
         )?;
@@ -289,6 +354,22 @@ mod tests {
                 method: "textDocument/definition".into()
             }))),
             DefinitionOutcome::Index
+        );
+    }
+
+    #[test]
+    fn only_file_targets_are_usable_and_nothing_means_ask_the_index() {
+        let mixed = parse_definition(&json!([
+            location("file:///a/main.rs", 0, 0),
+            location("csharp:/metadata/Console.cs", 0, 0),
+        ]));
+        let usable = usable_targets(Ok(mixed)).expect("one file target");
+        assert_eq!(usable.len(), 1);
+        assert_eq!(usable[0].path, "/a/main.rs");
+        assert_eq!(usable_targets(Ok(vec![])), None);
+        assert_eq!(
+            usable_targets(Err(LspError::NotRunning("php".into()))),
+            None
         );
     }
 

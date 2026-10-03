@@ -359,6 +359,104 @@ RUN cd /tmp/jvm-fixtures/gradle-single \
     && rm -rf /opt/jvm-cache/gradle/daemon /opt/jvm-cache/gradle/.tmp
 
 # ---------------------------------------------------------------------------
+# linux-php: linux-builder plus real PHP 8.3, Composer, Intelephense, Phpactor
+# and vscode-php-debug, for the nightly `php_real` E2E flows (php-parity plan
+# E3, ADR-0066).
+#
+# Deliberately NOT folded into linux-builder, same "extra weight for a suite
+# most PRs never touch" reasoning as linux-jvm above. `make test-php` builds
+# and runs this stage nightly/on demand, never through `make test`.
+#
+# Every version is PINNED, for the reason rust-analyzer/Gradle are above.
+# Two stages: `linux-php-tools` is everything but the Composer cache, so the
+# fixture's `composer.lock` can be (re)generated inside the image
+# (`docker run ide-linux-php-tools composer update` in the fixture) before the
+# final `linux-php` stage prewarms from it.
+# ---------------------------------------------------------------------------
+FROM linux-builder AS linux-php-tools
+
+# Debian bookworm ships PHP 8.2; 8.3 comes from sury.org (the PHP packagers'
+# own repo). Xdebug and pcov are installed but OFF by default: the IDE turns
+# them on per run, and a stray always-on Xdebug slows every Composer call.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg unzip xz-utils lsb-release \
+    && curl -fsSL -o /usr/share/keyrings/sury-php.gpg https://packages.sury.org/php/apt.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ bookworm main" \
+        > /etc/apt/sources.list.d/sury-php.list \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        php8.3-cli php8.3-xdebug php8.3-pcov php8.3-mbstring php8.3-xml \
+        php8.3-curl php8.3-zip php8.3-intl \
+        docker-ce-cli docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/* \
+    && printf 'xdebug.mode=off\npcov.enabled=0\n' > /etc/php/8.3/cli/conf.d/99-ide-off.ini \
+    && php --version
+
+# Composer, via the official installer verified against the published
+# checksum (https://composer.github.io/installer.sha384sum), pinned version.
+ARG COMPOSER_VERSION=2.10.3
+ARG COMPOSER_INSTALLER_SHA384=c8b085408188070d5f52bcfe4ecfbee5f727afa458b2573b8eaaf77b3419b0bf2768dc67c86944da1544f06fa544fd47
+RUN curl -fsSL -o /tmp/composer-setup.php https://getcomposer.org/installer \
+    && echo "${COMPOSER_INSTALLER_SHA384}  /tmp/composer-setup.php" | sha384sum -c - \
+    && php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer --version="${COMPOSER_VERSION}" \
+    && rm /tmp/composer-setup.php \
+    && composer --version
+
+# Node (Intelephense is an npm package), from the official tarball.
+ARG NODE_VERSION=24.21.0
+ARG NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+RUN curl -fsSL -o /tmp/node.tar.xz "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+    && echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c - \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm /tmp/node.tar.xz \
+    && node --version
+
+ARG INTELEPHENSE_VERSION=1.18.5
+RUN npm install -g "intelephense@${INTELEPHENSE_VERSION}" \
+    && npm cache clean --force \
+    && test -x /usr/local/bin/intelephense
+
+ARG PHPACTOR_VERSION=2026.06.23.0
+ARG PHPACTOR_SHA256=25645647d9aa2dc69536fb4f75c976e33ef1a7b5533534a8456736e5e6fd5079
+RUN curl -fsSL -o /usr/local/bin/phpactor "https://github.com/phpactor/phpactor/releases/download/${PHPACTOR_VERSION}/phpactor.phar" \
+    && echo "${PHPACTOR_SHA256}  /usr/local/bin/phpactor" | sha256sum -c - \
+    && chmod 0755 /usr/local/bin/phpactor \
+    && phpactor --version
+
+# vscode-php-debug from open-vsx, unzipped where the IDE's auto-locate looks
+# ($HOME/.vscode/extensions/xdebug.php-debug-<ver>/), world-readable because
+# `make test-php` runs under the developer's uid with HOME=/opt/vscode-home.
+ARG PHP_DEBUG_VERSION=1.40.2
+ARG PHP_DEBUG_SHA256=17631993fe800083a2fc89a6782c8bf58a79603ad201ddff60d9b59ba2345d5f
+RUN curl -fsSL -o /tmp/php-debug.vsix "https://open-vsx.org/api/xdebug/php-debug/${PHP_DEBUG_VERSION}/file/xdebug.php-debug-${PHP_DEBUG_VERSION}.vsix" \
+    && echo "${PHP_DEBUG_SHA256}  /tmp/php-debug.vsix" | sha256sum -c - \
+    && mkdir -p /tmp/vsix "/opt/vscode-home/.vscode/extensions/xdebug.php-debug-${PHP_DEBUG_VERSION}" \
+    && unzip -q /tmp/php-debug.vsix -d /tmp/vsix \
+    && cp -a /tmp/vsix/extension/. "/opt/vscode-home/.vscode/extensions/xdebug.php-debug-${PHP_DEBUG_VERSION}/" \
+    && rm -rf /tmp/vsix /tmp/php-debug.vsix \
+    && chmod -R a+rwX /opt/vscode-home \
+    && test -f "/opt/vscode-home/.vscode/extensions/xdebug.php-debug-${PHP_DEBUG_VERSION}/out/phpDebug.js"
+
+# Composer's cache lives at a fixed world-writable path, not $HOME, for the
+# reason GRADLE_USER_HOME does in linux-jvm: the prewarm below runs as root,
+# the tests as the developer's uid. HOME points at the extension tree.
+ENV COMPOSER_CACHE_DIR=/opt/php-cache/composer
+ENV COMPOSER_HOME=/opt/php-cache/composer-home
+ENV HOME=/opt/vscode-home
+RUN mkdir -p /opt/php-cache && chmod -R a+rwX /opt/php-cache
+
+FROM linux-php-tools AS linux-php
+
+# Prewarm: install exactly the committed lock once so every per-test
+# `composer install` (a fresh copy of the fixture) is a cache hit.
+COPY crates/app/tests/fixtures/php_app/composer.json crates/app/tests/fixtures/php_app/composer.lock /tmp/php_app/
+RUN cd /tmp/php_app && composer install --no-interaction --no-progress \
+    && rm -rf /tmp/php_app \
+    && chmod -R a+rwX /opt/php-cache
+
+# ---------------------------------------------------------------------------
 # linux-artifact-builder: linux-builder + baked-in source, for buildx
 # artifact-extraction builds. Kept separate from linux-builder (used as the
 # dev/test image via `docker run -v $(pwd):/workspace`) so that stage's

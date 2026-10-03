@@ -147,6 +147,75 @@ fn detect_package_json(project_root: &Path) -> Vec<RunConfig> {
         .collect()
 }
 
+/// `composer.json`'s `scripts`, run as `composer run-script <name>`.
+///
+/// Named `composer <script>` rather than the bare script name so a `test`
+/// script does not collide with an npm or Make `test` — `merge_detected`
+/// matches by name and would drop one of them.
+fn detect_composer(project_root: &Path) -> Vec<RunConfig> {
+    let Ok(text) = fs::read_to_string(project_root.join("composer.json")) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(scripts) = value.get("scripts").and_then(|s| s.as_object()) else {
+        return Vec::new();
+    };
+    let mut names: Vec<&String> = scripts.keys().collect();
+    names.sort();
+    names
+        .into_iter()
+        .map(|script| {
+            make_config(
+                ToolchainId::Php,
+                script.clone(),
+                format!("composer-{script}"),
+                format!("composer {script}"),
+                "composer",
+                vec!["run-script".into(), script.clone()],
+            )
+        })
+        .collect()
+}
+
+/// A PHP console for a Composer project, and a built-in server when the
+/// project has a front controller (`public/index.php`, else `index.php`).
+fn detect_php(project_root: &Path) -> Vec<RunConfig> {
+    use crate::php_run::{KIND_BUILTIN_SERVER, KIND_CONSOLE};
+    let mut configs = Vec::new();
+    let docroot = ["public", ""]
+        .into_iter()
+        .find(|dir| project_root.join(dir).join("index.php").is_file());
+    if let Some(dir) = docroot {
+        configs.push(RunConfig {
+            id: "php-server".into(),
+            name: "PHP built-in server".into(),
+            kind: Some(KIND_BUILTIN_SERVER.into()),
+            toolchain: Some(ToolchainId::Php.as_str().into()),
+            php_server: Some(app_config::php::PhpBuiltinServerRunSetting {
+                document_root: if dir.is_empty() {
+                    String::new()
+                } else {
+                    format!("$PROJECT_DIR$/{dir}")
+                },
+                ..Default::default()
+            }),
+            ..RunConfig::default()
+        });
+    }
+    if ToolchainId::Php.is_present(project_root) {
+        configs.push(RunConfig {
+            id: "php-console".into(),
+            name: "PHP console".into(),
+            kind: Some(KIND_CONSOLE.into()),
+            toolchain: Some(ToolchainId::Php.as_str().into()),
+            ..RunConfig::default()
+        });
+    }
+    configs
+}
+
 /// Phony targets in `Makefile`/`makefile`: names listed in a `.PHONY:` line
 /// are trusted outright; in its absence, a target line (`name:` not
 /// containing `%`, `$`, `/`, whitespace, or a leading `.`, and not a `:=`
@@ -420,6 +489,8 @@ pub fn detect(project_root: &Path) -> Vec<RunConfig> {
     configs.extend(detect_jvm(project_root));
     configs.extend(detect_package_json(project_root));
     configs.extend(detect_makefile(project_root));
+    configs.extend(detect_composer(project_root));
+    configs.extend(detect_php(project_root));
     configs.extend(detect_containerfile(project_root));
     configs.extend(detect_compose(project_root));
 
@@ -498,6 +569,41 @@ mod tests {
         assert_eq!(names, vec!["build", "start", "test"]);
         assert_eq!(configs[0].program, "npm");
         assert_eq!(configs[0].args, vec!["run", "build"]);
+    }
+
+    #[test]
+    fn composer_scripts_are_detected_in_sorted_order() {
+        let configs = detect_composer(&fixture("composer_project"));
+        let names: Vec<&str> = configs.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["composer ci", "composer test"]);
+        assert_eq!(configs[1].program, "composer");
+        assert_eq!(configs[1].args, vec!["run-script", "test"]);
+        assert_eq!(configs[1].toolchain.as_deref(), Some("php"));
+    }
+
+    #[test]
+    fn a_front_controller_and_composer_json_suggest_a_server_and_a_console() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("composer.json"), "{}").unwrap();
+        std::fs::create_dir(dir.path().join("public")).unwrap();
+        std::fs::write(dir.path().join("public/index.php"), "").unwrap();
+        let configs = detect_php(dir.path());
+        let kinds: Vec<_> = configs.iter().map(|c| c.kind.as_deref()).collect();
+        assert_eq!(kinds, [Some("php-builtin-server"), Some("php-console")]);
+        assert_eq!(
+            configs[0].php_server.as_ref().unwrap().document_root,
+            "$PROJECT_DIR$/public"
+        );
+    }
+
+    #[test]
+    fn a_bare_directory_suggests_no_php_configs() {
+        assert!(detect_php(&fixture("npm_project")).is_empty());
+    }
+
+    #[test]
+    fn a_composer_json_without_scripts_yields_nothing() {
+        assert!(detect_composer(&fixture("npm_project")).is_empty());
     }
 
     #[test]

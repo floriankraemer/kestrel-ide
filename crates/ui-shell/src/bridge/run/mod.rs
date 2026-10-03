@@ -48,6 +48,8 @@ use crate::bridge::ffi;
 mod container_form;
 mod editor;
 mod gutter;
+/// `FfiPhpServerOptions` <-> `RunConfig`'s `php_server` sub-table (I6).
+mod php_server_form;
 /// `RunConfig` <-> `FfiRunConfig`, split out under the file-size ratchet.
 mod run_config_form;
 mod sql_script; // `sql-script` configs (F3.6) — see that module's own doc comment.
@@ -244,6 +246,20 @@ fn tasks_from_string(text: &str) -> Vec<app_config::BeforeLaunchSetting> {
 /// it, previewing its command, and its Services picker.
 pub(super) fn effective_container_settings() -> app_config::ContainerSettings {
     crate::bridge::convert::load_resolved_settings().containers
+}
+
+/// The `[php]` interpreter, effective settings — what a PHP-toolchain
+/// configuration launches under.
+pub(super) fn effective_php_interpreter() -> String {
+    settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings()).interpreter
+}
+
+/// The `[containers.target]` the PHP interpreter runs in, if any — what a
+/// PHP configuration with no `run_on` of its own inherits (ADR-0067).
+pub(super) fn effective_php_container_target() -> Option<String> {
+    settings_model::php::resolve(&crate::bridge::convert::load_resolved_settings())
+        .container
+        .map(|container| container.target_id)
 }
 
 /// Trim `output` down to `max_bytes` from the front, on a UTF-8 char
@@ -716,6 +732,16 @@ fn mark_finished(
     }
 }
 
+/// The project's saved run configurations plus whatever detection finds
+/// that none of them already covers (`run_core::merge_detected`'s rule).
+fn effective_run_configs(root: &Path) -> Vec<run_core::RunConfig> {
+    let saved = app_config::project_settings::load(root)
+        .unwrap_or_default()
+        .run_configs
+        .unwrap_or_default();
+    run_core::merge_detected(&saved, run_core::detect(root))
+}
+
 impl ffi::RunService {
     /// The `Sender` jobs are pushed through, starting the worker thread on
     /// first use — there is no per-project reset to hang this on (see this
@@ -743,33 +769,17 @@ impl ffi::RunService {
         let Some(root) = current_project_root() else {
             return Vec::new();
         };
-        app_config::project_settings::load(&root)
-            .unwrap_or_default()
-            .run_configs
-            .unwrap_or_default()
+        effective_run_configs(&root)
             .iter()
             .map(to_ffi_run_config)
             .collect()
     }
 
+    /// Re-announce the configurations after a project open or a menu
+    /// refresh. Detected ones are merged in on read, never written: opening
+    /// a project must not touch the `.ide/settings.toml` the user commits.
     pub fn detect_configurations(mut self: Pin<&mut Self>) {
-        let Some(root) = current_project_root() else {
-            return;
-        };
-        let tx = self.as_mut().ensure_worker();
-        let qt_thread = self.as_mut().qt_thread();
-        let _ = tx.send(Box::new(move |_worker: &mut RunWorker| {
-            let result = app_config::project_settings::update(&root, |settings| {
-                let existing = settings.run_configs.clone().unwrap_or_default();
-                let detected = run_core::detect(&root);
-                settings.run_configs = Some(run_core::merge_detected(&existing, detected));
-            });
-            if result.is_ok() {
-                let _ = qt_thread.queue(|mut service: Pin<&mut ffi::RunService>| {
-                    service.as_mut().configurations_changed();
-                });
-            }
-        }));
+        self.as_mut().configurations_changed();
     }
 
     pub fn run(mut self: Pin<&mut Self>, config_id: &QString) -> ffi::FfiResult {
@@ -777,14 +787,37 @@ impl ffi::RunService {
         let Some(root) = current_project_root() else {
             return no_project();
         };
-        let configs = app_config::project_settings::load(&root)
-            .unwrap_or_default()
-            .run_configs
-            .unwrap_or_default();
+        let configs = effective_run_configs(&root);
         let Some(config) = configs.into_iter().find(|c| c.id == config_id) else {
             return unknown_run_config("unknown run configuration");
         };
 
+        let context = run_core::MacroContext::for_project(&root);
+        self.as_mut().launch(config, &root, &context)
+    }
+
+    pub fn run_with_env(
+        mut self: Pin<&mut Self>,
+        config_id: &QString,
+        env_json: &QString,
+    ) -> ffi::FfiResult {
+        let Ok(extra) = serde_json::from_str::<Vec<(String, String)>>(&env_json.to_string()) else {
+            return ffi::FfiResult {
+                code: errors::CODE_INVALID_ARGUMENT,
+                message: QString::from("the extra environment is not a list of pairs"),
+            };
+        };
+        let config_id = config_id.to_string();
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let configs = effective_run_configs(&root);
+        let Some(mut config) = configs.into_iter().find(|c| c.id == config_id) else {
+            return unknown_run_config("unknown run configuration");
+        };
+        // Added before `launch`: a container wrap turns the environment
+        // into `-e` arguments, so it cannot be appended afterwards.
+        config.env.extend(extra);
         let context = run_core::MacroContext::for_project(&root);
         self.as_mut().launch(config, &root, &context)
     }
@@ -884,6 +917,10 @@ impl ffi::RunService {
         root: &Path,
         context: &run_core::MacroContext,
     ) -> ffi::FfiResult {
+        let config = run_core::php_run::inherit_container_target(
+            &config,
+            effective_php_container_target().as_deref(),
+        );
         let config_id = config.id.clone();
         if config.kind.as_deref() == Some("sql-script") {
             return sql_script::launch(self, &config, root);
@@ -914,7 +951,10 @@ impl ffi::RunService {
                 message: QString::from(err.to_string().as_str()),
             };
         }
-        let context = context.clone().with_containers(containers.clone());
+        let context = context
+            .clone()
+            .with_containers(containers.clone())
+            .with_php_interpreter(effective_php_interpreter());
         let mut spec = config.to_launch_spec_in(&context);
         let cwd = spec.cwd.clone().unwrap_or_else(|| root.clone());
         // `to_launch_spec` leaves `cwd` as `None` for a configuration with
@@ -931,10 +971,7 @@ impl ffi::RunService {
         // anything runs: a cycle discovered halfway through would already
         // have started processes the user then has to kill one at a time
         // (B2-3).
-        let configs = app_config::project_settings::load(&root)
-            .unwrap_or_default()
-            .run_configs
-            .unwrap_or_default();
+        let configs = effective_run_configs(&root);
         if let Err(err) = run_core::before_launch::validate(&config_id, &configs) {
             return ffi::FfiResult {
                 code: errors::CODE_BEFORE_LAUNCH,
@@ -1054,10 +1091,7 @@ impl ffi::RunService {
     fn config_for_console(&self, console_id: u64) -> Option<run_core::RunConfig> {
         let config_id = self.consoles.borrow().get(&console_id)?.config_id.clone();
         let root = current_project_root()?;
-        app_config::project_settings::load(&root)
-            .ok()?
-            .run_configs
-            .unwrap_or_default()
+        effective_run_configs(&root)
             .into_iter()
             .find(|c| c.id == config_id)
     }
@@ -1345,10 +1379,7 @@ impl ffi::RunService {
         let Some(root) = current_project_root() else {
             return QString::default();
         };
-        let configs = app_config::project_settings::load(&root)
-            .unwrap_or_default()
-            .run_configs
-            .unwrap_or_default();
+        let configs = effective_run_configs(&root);
         let Some(run_on) = configs
             .iter()
             .find(|c| c.id == state)

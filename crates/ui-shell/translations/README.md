@@ -38,6 +38,16 @@ then fill in the new entries by hand. It is not wired into `build.rs`:
 running it is a manual step, left for whoever adds the next batch of
 strings.
 
+## Which context a string belongs to
+
+`lupdate` names the context after the enclosing class, but Qt resolves `tr()` at run time through the nearest class that has `Q_OBJECT`.
+Most classes here have no `Q_OBJECT`, so their `tr()` calls run in the context of the Qt base class (`QWidget`, `QDialog`, `QObject`).
+An entry under the class name then never matches.
+Author new entries under the run-time context: the class name only for a `Q_OBJECT` class, otherwise the Qt base class.
+A class that wants its own context without a moc target declares `Q_DECLARE_TR_FUNCTIONS(Class)` instead (`TestsPanel`, `CoveragePanel`, `RunToolbar`, `ProblemsPanel` and `EditorTabs` do).
+Adding it moves every unqualified `tr()` in the class to the class context, so copy that class's entries from the base-class context when adding it.
+The PHP parity strings follow this rule.
+
 ## Standing rule
 
 Every new user-visible string added to `crates/ui-shell/cpp/` must be

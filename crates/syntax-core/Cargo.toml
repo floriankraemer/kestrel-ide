@@ -62,5 +62,10 @@ toml = "0.8"
 libloading = "0.9"
 tree-sitter-language = "0.1"
 
+[build-dependencies]
+# Builds the vendored Twig/Blade grammars (build.rs). Already in the tree
+# through tree-sitter's own build script.
+cc = "1"
+
 [dev-dependencies]
 tempfile = "3"

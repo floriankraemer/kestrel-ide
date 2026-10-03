@@ -22,6 +22,7 @@ use crate::bridge::registry::{self, LspJob, SharedDiagnostics};
 /// intentions for a `.sql` file attached to a data source, injected the
 /// same way — a third non-LSP file kind alongside containers and build
 /// files.
+mod analyzer_fixes;
 mod build_files;
 mod containers;
 mod database;
@@ -35,7 +36,8 @@ mod lsp_surface;
 /// through — split out once this file crossed the file-size ceiling
 /// (#162), the same reason `lsp_surface` exists. `refactor_controller.cpp`
 /// is this module's one C++ consumer, mirroring the split there.
-mod refactor;
+pub(crate) mod refactor;
+mod server_lifecycle;
 
 /// Every `language-servers` contribution from the live plugin registry,
 /// translated into `lsp_core::PluginServer`.
@@ -82,15 +84,6 @@ pub(crate) fn plugin_servers() -> Vec<lsp_core::PluginServer> {
 /// absorb a `git checkout`'s event storm without making a server wait
 /// noticeably longer than a human notices.
 const WATCHED_FILES_DEBOUNCE: Duration = Duration::from_millis(200);
-
-/// The shared diagnostics store's key for one language server's rows
-/// (ADR-0046): distinct from a build tool's (`build::source_key`) so the
-/// two never clobber each other's rows for the same file, and distinct per
-/// language id so two servers publishing for the same uri (rare, but not
-/// impossible for a multi-language file) replace only their own.
-fn lsp_source_key(language_id: &str) -> String {
-    format!("lsp:{language_id}")
-}
 
 /// LSP's `FileChangeType` wire values, as sent over `watchedFileChanged`
 /// (the Qt signal can't carry `lsp_core::watched_files::FileChangeKind`
@@ -142,7 +135,7 @@ pub struct LanguageServiceRust {
     /// `DiagnosticsService` and `AiChat` — a second store would mean the
     /// editor underlining a different set of problems than the Problems
     /// panel shows. Every row this adapter publishes is keyed under
-    /// [`lsp_source_key`], so a server's diagnostics for a file never
+    /// `lsp_core::diagnostics::source_key`, so a server's diagnostics for a file never
     /// clobber (or get clobbered by) a build's for the same file.
     pub(crate) store: SharedDiagnostics,
     /// L3: which hover request is still the current one. The rule is
@@ -154,15 +147,11 @@ pub struct LanguageServiceRust {
     /// view re-reads that rather than being handed the list in the signal.
     completion: RefCell<lsp_core::CompletionTracker>,
     completions: RefCell<lsp_core::CompletionList>,
-    /// Trigger characters per language, as each server advertised them in
-    /// its `initialize` result (`LspEvent::ServerReady`).
-    triggers: RefCell<std::collections::HashMap<String, Vec<String>>>,
-    /// C7: whether each language's server offers `completionItem/resolve`,
-    /// from the same `initialize` result, stored the same way trigger
-    /// characters are — a per-language flag the accept path and the preview
-    /// path both gate on, rather than sending the request to a server that
-    /// never advertised it.
-    completion_resolve_supported: RefCell<std::collections::HashMap<String, bool>>,
+    /// What each language's servers advertised in their `initialize`
+    /// results (`LspEvent::ServerReady`), merged per language: completion
+    /// and signature-help trigger characters are the union, and resolve is
+    /// on when any server offers it (ADR-0066).
+    pub(crate) advertised: RefCell<std::collections::HashMap<String, lsp_core::Advertised>>,
     /// C7: the language of the last `completionAt`, so an accept or a
     /// preview resolution — neither of which is handed a path — knows which
     /// server to ask. Set alongside `completion`/`completions`.
@@ -191,12 +180,6 @@ pub struct LanguageServiceRust {
     pub(crate) intentions: RefCell<Vec<lsp_core::Intention>>,
     pub(crate) intentions_language: RefCell<String>,
     pub(crate) intentions_tracker: RefCell<lsp_core::RequestTracker>,
-    /// F2-9: whether, and on which characters, each language's server wants
-    /// signature help (re)requested — from that server's `initialize`
-    /// result, published on `ServerReady` the same way completion's trigger
-    /// characters are.
-    pub(crate) signature_triggers:
-        RefCell<std::collections::HashMap<String, lsp_core::SignatureTriggers>>,
     pub(crate) signature_help: RefCell<Option<lsp_core::SignatureHelp>>,
     pub(crate) signature_tracker: RefCell<lsp_core::RequestTracker>,
     /// D6 (review fix #10): guards `refresh_version_hints`'s
@@ -259,6 +242,8 @@ pub struct LanguageServiceRust {
     /// RF2's staleness rule. The comparison is `lsp_core`'s; only its state
     /// lives here.
     edits: RefCell<lsp_core::EditGate>,
+    /// N5's own gate and slot (see `refactor::OnTypeSlot`).
+    on_type: RefCell<refactor::OnTypeSlot>,
     /// F0-16: what each server is currently working on, as its own
     /// `$/progress` reported it (`lsp_core::ProgressTracker` decides that
     /// per server; this only collects the answers). A `BTreeMap` because
@@ -278,6 +263,7 @@ pub struct LanguageServiceRust {
 
 impl Default for LanguageServiceRust {
     fn default() -> Self {
+        crate::bridge::php::prime_licence_key();
         LanguageServiceRust {
             session: crate::bridge::registry::shared_session(),
             jobs: RefCell::default(),
@@ -291,8 +277,7 @@ impl Default for LanguageServiceRust {
             hover_fixes: RefCell::default(),
             completion: RefCell::default(),
             completions: RefCell::default(),
-            triggers: RefCell::default(),
-            completion_resolve_supported: RefCell::default(),
+            advertised: RefCell::default(),
             completion_language: RefCell::default(),
             hub: RefCell::default(),
             container_completion_span: RefCell::default(),
@@ -304,7 +289,6 @@ impl Default for LanguageServiceRust {
             intentions: RefCell::default(),
             intentions_language: RefCell::default(),
             intentions_tracker: RefCell::default(),
-            signature_triggers: RefCell::default(),
             signature_help: RefCell::default(),
             signature_tracker: RefCell::default(),
             version_hints_tracker: RefCell::default(),
@@ -327,6 +311,7 @@ impl Default for LanguageServiceRust {
             index: crate::bridge::registry::index_slot(),
             pending: RefCell::default(),
             edits: RefCell::default(),
+            on_type: RefCell::default(),
             busy: RefCell::default(),
             watched_changes: RefCell::default(),
             watch_flush_pending: Cell::default(),
@@ -530,7 +515,7 @@ impl ffi::LanguageService {
         registry::set_lsp_jobs(None);
         self.started.borrow_mut().clear();
         self.open_docs.borrow_mut().clear();
-        self.triggers.borrow_mut().clear();
+        self.advertised.borrow_mut().clear();
         self.store.borrow_mut().clear();
         // The previous project's servers are gone with their worker, so
         // whatever they were still working on is over.
@@ -542,18 +527,8 @@ impl ffi::LanguageService {
         // own language servers (ADR-0022). Deliberately synchronous, unlike
         // `SearchModel::open_index`'s matching read (ADR-0037 § Alternatives).
         let settings = crate::bridge::convert::load_resolved_settings();
-        let overrides: Vec<lsp_core::ServerOverride> = settings
-            .language_servers
-            .iter()
-            .map(|entry| lsp_core::ServerOverride {
-                language_id: entry.language_id.clone(),
-                name: entry.name.clone(),
-                command: entry.command.clone(),
-                args: entry.args.clone(),
-                enabled: entry.enabled,
-            })
-            .collect();
-        *self.configs.borrow_mut() = lsp_core::resolve_servers(&overrides, &plugin_servers());
+        *self.configs.borrow_mut() =
+            server_lifecycle::resolved_server_configs(&settings, Some(std::path::Path::new(&root)));
         *self.host.borrow_mut() = lsp_core::ExecHost::for_path(std::path::Path::new(&root));
 
         let (manager, events) = lsp_core::LspManager::new(lsp_core::uri_from_path(&root));
@@ -585,7 +560,8 @@ impl ffi::LanguageService {
 
     pub fn document_opened(mut self: Pin<&mut Self>, path: &QString, text: &QString) {
         let path_str = path.to_string();
-        let Some(config) = self.config_for_path(&path_str) else {
+        let configs = self.configs_for_path(&path_str);
+        let Some(config) = configs.first().cloned() else {
             self.as_mut().open_build_file_document(&path_str, text);
             // F3.7: a `.sql` file attached to a data source has no
             // server either — same "register it anyway, for this
@@ -601,7 +577,7 @@ impl ffi::LanguageService {
             .insert(path_str, language_id.clone());
 
         if self.started.borrow_mut().insert(language_id.clone()) {
-            self.as_mut().start_server(config);
+            self.as_mut().start_servers(configs);
         }
         let language = language_id.clone();
         self.as_mut().push_job(move |manager| {
@@ -703,9 +679,16 @@ impl ffi::LanguageService {
             return;
         };
         let uri = lsp_core::uri_from_path(&path);
-        self.store
-            .borrow_mut()
-            .remove(&lsp_source_key(&language_id), &uri);
+        for config in self
+            .configs
+            .borrow()
+            .iter()
+            .filter(|c| c.language_id == language_id)
+        {
+            self.store
+                .borrow_mut()
+                .remove(&lsp_core::diagnostics::source_key(&config.id), &uri);
+        }
         let closed = uri.clone();
         self.push_job(move |manager| {
             let _ = manager.did_close(&closed);
@@ -778,58 +761,6 @@ impl ffi::LanguageService {
         }
     }
 
-    pub fn apply_server_settings(self: Pin<&mut Self>) {
-        // The resolved layer, not the global file: a project may name its
-        // own language servers (ADR-0022), and a project that pins a
-        // toolchain-local server is the reason that field is project-scoped.
-        let settings = crate::bridge::convert::load_resolved_settings();
-        let overrides: Vec<lsp_core::ServerOverride> = settings
-            .language_servers
-            .iter()
-            .map(|entry| lsp_core::ServerOverride {
-                language_id: entry.language_id.clone(),
-                name: entry.name.clone(),
-                command: entry.command.clone(),
-                args: entry.args.clone(),
-                enabled: entry.enabled,
-            })
-            .collect();
-        let resolved = lsp_core::resolve_servers(&overrides, &plugin_servers());
-
-        // Which running servers the new settings no longer describe: the
-        // comparison is between two resolved configurations, so "changed" is
-        // `lsp_core`'s definition of the launch, not a field-by-field guess.
-        let previous = self.configs.borrow().clone();
-        let stale: Vec<String> = self
-            .started
-            .borrow()
-            .iter()
-            .filter(|language_id| {
-                let before = previous.iter().find(|c| &&c.language_id == language_id);
-                let after = lsp_core::enabled_server(&resolved, language_id);
-                match (before, after) {
-                    (Some(before), Some(after)) => before != after,
-                    _ => true,
-                }
-            })
-            .cloned()
-            .collect();
-        *self.configs.borrow_mut() = resolved;
-
-        for language_id in stale {
-            self.started.borrow_mut().remove(&language_id);
-            self.triggers.borrow_mut().remove(&language_id);
-            // Forgetting the documents is what lets `reopenDocument` start
-            // the replacement server and re-send `didOpen` to it.
-            self.open_docs
-                .borrow_mut()
-                .retain(|_, open_for| open_for != &language_id);
-            let stopping = language_id.clone();
-            self.as_ref()
-                .push_job(move |manager| manager.stop(&stopping));
-        }
-    }
-
     pub fn reopen_document(self: Pin<&mut Self>, path: &QString, text: &QString) {
         if self.open_docs.borrow().contains_key(&path.to_string()) {
             return;
@@ -837,33 +768,17 @@ impl ffi::LanguageService {
         self.document_opened(path, text);
     }
 
-    pub fn restart_server(mut self: Pin<&mut Self>, language_id: &QString) {
-        let language_id = language_id.to_string();
-        let config = self
-            .configs
-            .borrow()
-            .iter()
-            .find(|config| config.language_id == language_id)
-            .cloned();
-        let Some(config) = config else {
-            return;
-        };
-        let stopping = language_id.clone();
-        self.as_ref()
-            .push_job(move |manager| manager.stop(&stopping));
-        self.started.borrow_mut().insert(language_id);
-        self.as_mut().start_server(config);
-    }
-
     pub fn has_server_for_file(&self, path: &QString) -> bool {
         self.config_for_path(&path.to_string()).is_some()
     }
 
     pub fn server_name_for_file(&self, path: &QString) -> QString {
-        match self.config_for_path(&path.to_string()) {
-            Some(config) => QString::from(config.name.as_str()),
-            None => QString::default(),
-        }
+        let names: Vec<String> = self
+            .configs_for_path(&path.to_string())
+            .into_iter()
+            .map(|config| config.name)
+            .collect();
+        QString::from(names.join(", ").as_str())
     }
 
     /// R3: the LSP hover plus every diagnostic covering `(line, character)`,
@@ -1029,38 +944,6 @@ impl ffi::LanguageService {
         });
     }
 
-    /// Report a refactoring that produced nothing, answering anything that
-    /// was waiting on it.
-    pub(crate) fn finish_refactor(mut self: Pin<&mut Self>, outcome: Result<(), String>) {
-        if let Some(pending) = self.pending.borrow_mut().take() {
-            pending.settle(false, "the refactoring could not be applied");
-        }
-        if let Err(message) = outcome {
-            self.as_mut()
-                .refactor_failed(QString::from(message.as_str()));
-        }
-    }
-
-    /// Store the translated card labels: loading-fixes, more-actions,
-    /// source, error, warning, info, hint. A list of any other length is
-    /// ignored (the English defaults stay).
-    pub fn set_hover_labels(self: Pin<&mut Self>, labels: &cxx_qt_lib::QStringList) {
-        let words: Vec<String> = labels.iter().map(ToString::to_string).collect();
-        let [loading_fixes, more_actions, source, error, warning, info, hint] = words.as_slice()
-        else {
-            return;
-        };
-        update_hover_labels(|labels| {
-            labels.loading_fixes.clone_from(loading_fixes);
-            labels.more_actions.clone_from(more_actions);
-            labels.source.clone_from(source);
-            labels.error.clone_from(error);
-            labels.warning.clone_from(warning);
-            labels.info.clone_from(info);
-            labels.hint.clone_from(hint);
-        });
-    }
-
     pub fn cancel_hover(self: Pin<&mut Self>) {
         self.hover.borrow_mut().cancel();
     }
@@ -1116,11 +999,12 @@ impl ffi::LanguageService {
         };
         let text_before_cursor = text_before_cursor.to_string();
         let worth_asking = lsp_core::should_request(
-            self.triggers
+            self.advertised
                 .borrow()
                 .get(&language_id)
-                .map(Vec::as_slice)
-                .unwrap_or_default(),
+                .map(lsp_core::Advertised::trigger_characters)
+                .unwrap_or_default()
+                .as_slice(),
             &text_before_cursor,
             explicit_request,
             &self.completion.borrow(),
@@ -1287,11 +1171,10 @@ impl ffi::LanguageService {
 
         let language_id = self.completion_language.borrow().clone();
         let resolvable = language_id.as_deref().is_some_and(|lang| {
-            self.completion_resolve_supported
+            self.advertised
                 .borrow()
                 .get(lang)
-                .copied()
-                .unwrap_or(false)
+                .is_some_and(lsp_core::Advertised::completion_resolve_supported)
         });
         let raw: Option<serde_json::Value> = resolvable
             .then(|| serde_json::from_str(&item.resolve_data.to_string()).ok())
@@ -1348,11 +1231,10 @@ impl ffi::LanguageService {
     pub fn resolve_completion_preview(mut self: Pin<&mut Self>, resolve_data: &QString) {
         let language_id = self.completion_language.borrow().clone();
         let resolvable = language_id.as_deref().is_some_and(|lang| {
-            self.completion_resolve_supported
+            self.advertised
                 .borrow()
                 .get(lang)
-                .copied()
-                .unwrap_or(false)
+                .is_some_and(lsp_core::Advertised::completion_resolve_supported)
         });
         let raw: Option<serde_json::Value> = resolvable
             .then(|| serde_json::from_str(&resolve_data.to_string()).ok())
@@ -1400,12 +1282,17 @@ impl ffi::LanguageService {
     /// `lsp-core` answers only what the protocol calls it and what to launch
     /// (ADR-0018).
     fn config_for_path(&self, path: &str) -> Option<lsp_core::ServerConfig> {
+        self.configs_for_path(path).into_iter().next()
+    }
+
+    /// Every enabled server for this path's language, in answer order
+    /// (ADR-0066).
+    fn configs_for_path(&self, path: &str) -> Vec<lsp_core::ServerConfig> {
         let language_id = syntax_core::language_for_path(Path::new(path)).id();
-        lsp_core::enabled_server(
-            &self.configs.borrow(),
-            lsp_core::lsp_language_id(&language_id),
-        )
-        .cloned()
+        let language_id = lsp_core::lsp_language_id(&language_id);
+        lsp_core::enabled_servers(&self.configs.borrow(), language_id)
+            .cloned()
+            .collect()
     }
 
     /// Queue work for the worker thread. Returns false when there is no
@@ -1421,57 +1308,26 @@ impl ffi::LanguageService {
         }
     }
 
-    /// Queue the (blocking) launch of one server and report its outcome.
-    /// A launch that fails frees the language again, so opening another file
-    /// of it retries rather than staying silently dead for the session.
-    fn start_server(mut self: Pin<&mut Self>, config: lsp_core::ServerConfig) {
-        let language_id = config.language_id.clone();
-        let name = config.name.clone();
-        let qt_thread = self.as_mut().qt_thread();
-        self.as_mut().server_state_changed(
-            QString::from(language_id.as_str()),
-            QString::from(name.as_str()),
-            ffi::FfiServerState::Starting,
-            QString::default(),
-            0,
-        );
-        self.push_job(move |manager| {
-            if let Err(err) = manager.start(&config) {
-                let message = err.to_string();
-                let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
-                    service.started.borrow_mut().remove(&language_id);
-                    service.as_mut().server_state_changed(
-                        QString::from(language_id.as_str()),
-                        QString::from(name.as_str()),
-                        ffi::FfiServerState::Failed,
-                        QString::from(message.as_str()),
-                        0,
-                    );
-                });
-            }
-        });
-    }
-
     /// The listener thread's one hop onto the Qt thread: an `LspEvent` becomes
     /// either a store update or a status signal, and nothing else.
     fn apply_event(mut self: Pin<&mut Self>, event: lsp_core::LspEvent) {
-        let name_of = |language_id: &str| {
+        let name_of = |server_id: &str| {
             self.configs
                 .borrow()
                 .iter()
-                .find(|c| c.language_id == language_id)
+                .find(|c| c.id == server_id)
                 .map(|c| c.name.clone())
-                .unwrap_or_else(|| language_id.to_string())
+                .unwrap_or_else(|| server_id.to_string())
         };
         match event {
             lsp_core::LspEvent::Diagnostics {
-                language_id,
+                server_id,
                 uri,
                 diagnostics,
                 ..
             } => {
                 self.store.borrow_mut().replace(
-                    &lsp_source_key(&language_id),
+                    &lsp_core::diagnostics::source_key(&server_id),
                     &uri,
                     lsp_core::to_diagnostics(diagnostics),
                 );
@@ -1479,37 +1335,47 @@ impl ffi::LanguageService {
             }
             lsp_core::LspEvent::ServerReady {
                 language_id,
+                server_id,
+                restarts,
                 trigger_characters,
                 signature_triggers,
                 completion_resolve_supported,
+                on_type_triggers,
                 ..
             } => {
-                let name = name_of(&language_id);
-                self.triggers
+                let name = name_of(&server_id);
+                self.advertised
                     .borrow_mut()
-                    .insert(language_id.clone(), trigger_characters);
-                self.signature_triggers
-                    .borrow_mut()
-                    .insert(language_id.clone(), signature_triggers);
-                self.completion_resolve_supported
-                    .borrow_mut()
-                    .insert(language_id.clone(), completion_resolve_supported);
+                    .entry(language_id.clone())
+                    .or_default()
+                    .set(
+                        &server_id,
+                        lsp_core::ServerAdvert {
+                            trigger_characters,
+                            signature_triggers,
+                            completion_resolve: completion_resolve_supported,
+                            on_type_triggers,
+                        },
+                    );
                 self.as_mut().server_state_changed(
-                    QString::from(language_id.as_str()),
+                    QString::from(server_id.as_str()),
                     QString::from(name.as_str()),
                     ffi::FfiServerState::Ready,
                     QString::default(),
                     0,
                 );
+                if restarts > 0 {
+                    self.as_mut().reopen_documents_for(&language_id);
+                }
             }
             lsp_core::LspEvent::ServerExited {
-                language_id,
+                server_id,
                 retry_in,
                 ..
             } => {
-                let name = name_of(&language_id);
+                let name = name_of(&server_id);
                 self.as_mut().server_state_changed(
-                    QString::from(language_id.as_str()),
+                    QString::from(server_id.as_str()),
                     QString::from(name.as_str()),
                     ffi::FfiServerState::Exited,
                     QString::default(),
@@ -1517,12 +1383,11 @@ impl ffi::LanguageService {
                 );
             }
             lsp_core::LspEvent::ServerFailed {
-                language_id,
-                message,
+                server_id, message, ..
             } => {
-                let name = name_of(&language_id);
+                let name = name_of(&server_id);
                 self.as_mut().server_state_changed(
-                    QString::from(language_id.as_str()),
+                    QString::from(server_id.as_str()),
                     QString::from(name.as_str()),
                     ffi::FfiServerState::Failed,
                     QString::from(message.as_str()),
@@ -1578,15 +1443,16 @@ impl ffi::LanguageService {
             // server is doing is its own words; picking which busy server to
             // report is the map's ordering, and how to word it is the view's.
             lsp_core::LspEvent::ServerBusy {
-                language_id,
+                server_id,
                 activity,
+                ..
             } => {
-                let name = name_of(&language_id);
+                let name = name_of(&server_id);
                 {
                     let mut busy = self.busy.borrow_mut();
                     match activity {
-                        Some(activity) => busy.insert(language_id, (name, activity)),
-                        None => busy.remove(&language_id),
+                        Some(activity) => busy.insert(server_id, (name, activity)),
+                        None => busy.remove(&server_id),
                     };
                 }
                 let first = self
@@ -1620,7 +1486,7 @@ impl ffi::LanguageService {
 #[cfg(test)]
 mod hover_popup_tests {
     use super::build_hover_card;
-    use diagnostics_core::{Diagnostic, DiagnosticStore, Position, Range, Severity};
+    use diagnostics_core::{Diagnostic, DiagnosticStore, Range, Severity};
 
     #[test]
     fn card_combines_signature_docs_and_problems() {
@@ -1629,13 +1495,8 @@ mod hover_popup_tests {
             "lsp:rust",
             "file:///a.rs",
             vec![Diagnostic {
-                range: Range {
-                    start: Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    end: None,
-                },
+                code: None,
+                range: Range::default(),
                 severity: Severity::Error,
                 message: "mismatched types".into(),
                 source: "rustc".into(),

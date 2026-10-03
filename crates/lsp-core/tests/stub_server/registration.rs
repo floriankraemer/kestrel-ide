@@ -173,9 +173,9 @@ fn workspace_configuration_answers_the_configured_section_and_nulls_the_rest() {
     manager.stop(LANG);
 }
 /// C6: `update_settings` replaces the stored settings and sends
-/// `workspace/didChangeConfiguration` with `{"settings": null}` — telling a
-/// pull-based server to re-fetch rather than pushing the value inline — so a
-/// pull issued afterwards sees the new settings.
+/// `workspace/didChangeConfiguration` with them pushed under the server's
+/// section (a server that does not re-pull still sees them), so a pull
+/// issued afterwards sees the new settings too.
 #[test]
 fn update_settings_changes_what_the_next_pull_answers() {
     let (manager, _rx) = LspManager::new("file:///workspace");
@@ -192,6 +192,31 @@ fn update_settings_changes_what_the_next_pull_answers() {
         .expect("pull after the settings change");
     assert_eq!(answer[0], json!({"analyzersEnabled": false}));
 
+    let pushed = manager
+        .request(LANG, "stub/lastConfigurationChange", json!({}))
+        .expect("the stub reports what it was sent");
+    assert_eq!(
+        pushed,
+        json!({"settings": {"csharp": {"analyzersEnabled": false}}}),
+        "the notification carries the section's settings, not null"
+    );
+
+    manager.stop(LANG);
+}
+
+/// A server with no `settings_section` never opted into configuration: its
+/// notification keeps `null`, the re-pull trigger.
+#[test]
+fn update_settings_without_a_section_pushes_null() {
+    let (manager, _rx) = LspManager::new("file:///workspace");
+    manager.start(&stub_config()).expect("stub starts");
+
+    manager.update_settings(LANG, json!({"a": 1})).unwrap();
+
+    let pushed = manager
+        .request(LANG, "stub/lastConfigurationChange", json!({}))
+        .unwrap();
+    assert_eq!(pushed, json!({"settings": null}));
     manager.stop(LANG);
 }
 /// C6: a language with no running server is reported the same way every

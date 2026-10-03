@@ -17,34 +17,14 @@ use app_config::container_run::{
     BindMount, ComposeRunSetting, ContainerImageRunSetting, ContainerfileRunSetting,
 };
 use app_config::ContainerSettings;
-use container_core::connection::{ConnectionConfig, Engine, Invocation};
+use container_core::connection::Invocation;
 use container_core::run_config;
+use container_core::target::invocation_for;
 
 use crate::before_launch::BeforeLaunchTask;
 use crate::config::{ConsoleKind, LaunchSpec, RunConfig};
 use crate::macros::{self, MacroContext};
 use crate::toolchain::ToolCommand;
-
-/// The [`Invocation`] `connection_id` names, or a bare local `docker` when
-/// it is blank or matches no configured connection — never a hard failure:
-/// a container run configuration with no server picked yet should still
-/// preview and attempt a command rather than refuse to launch.
-fn invocation_for(containers: &ContainerSettings, connection_id: &str) -> Invocation {
-    let Some(row) = containers
-        .connections
-        .iter()
-        .find(|c| c.id == connection_id)
-    else {
-        return ConnectionConfig {
-            engine: Engine::Docker,
-            kind: container_core::connection::ConnectionKind::Auto,
-            executable: None,
-            compose_executable: None,
-        }
-        .invocation();
-    };
-    ConnectionConfig::from_setting(row).invocation()
-}
 
 fn e(value: &str, context: &MacroContext) -> String {
     macros::expand(value, context)
@@ -203,31 +183,11 @@ pub(crate) fn compose_launch_spec(
     Some(spec_from(&invocation, argv, context))
 }
 
-/// The compose-flavored [`Invocation`]: same connection resolution as
-/// [`invocation_for`], but its `program` is the connection's
-/// `compose_program()`, not the bare engine.
+/// The compose-flavored [`Invocation`]: [`invocation_for`] through
+/// [`Invocation::for_compose`], so a standalone `docker-compose` override
+/// runs as `docker-compose -f …`, not `docker-compose compose -f …`.
 fn compose_invocation(containers: &ContainerSettings, connection_id: &str) -> Invocation {
-    let Some(row) = containers
-        .connections
-        .iter()
-        .find(|c| c.id == connection_id)
-    else {
-        let config = ConnectionConfig {
-            engine: Engine::Docker,
-            kind: container_core::connection::ConnectionKind::Auto,
-            executable: None,
-            compose_executable: None,
-        };
-        return Invocation {
-            program: config.compose_program(),
-            ..config.invocation()
-        };
-    };
-    let config = ConnectionConfig::from_setting(row);
-    Invocation {
-        program: config.compose_program(),
-        ..config.invocation()
-    }
+    invocation_for(containers, connection_id).for_compose()
 }
 
 /// The auto before-launch build task a containerfile configuration gets
@@ -525,6 +485,24 @@ mod tests {
         let context = MacroContext::for_project("/project");
         let spec = compose_launch_spec(&cfg, &context, &containers).unwrap();
         assert_eq!(spec.program, "docker-compose");
+        // The standalone program takes no `compose` subcommand.
+        assert_eq!(spec.args, vec!["-f", "docker-compose.yml", "up", "-d"]);
+        for command in [
+            stop_command(&cfg, &containers).unwrap(),
+            down_command(&cfg, &containers).unwrap(),
+        ] {
+            assert_eq!(command.program, "docker-compose");
+            assert_eq!(command.args[..2], ["-f", "docker-compose.yml"]);
+        }
+        let dock = compose_project_up_spec(
+            &containers,
+            "conn",
+            &["a.yml".to_string()],
+            "p",
+            std::path::Path::new("/p"),
+        );
+        assert_eq!(dock.program, "docker-compose");
+        assert_eq!(dock.args[0], "-f");
     }
 
     #[test]

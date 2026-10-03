@@ -4,6 +4,7 @@
 
 #include <QColor>
 #include <QVector>
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -12,6 +13,7 @@
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -37,6 +39,10 @@ QColor severityColor(FfiSeverity severity);
 // double-click into a caret jump.
 class ProblemsPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QWidget`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ProblemsPanel)
+
 public:
     // `openAt(path, line, column)` jumps the editor to a diagnostic.
     using OpenAt = std::function<void(const QString &, int, int)>;
@@ -70,8 +76,13 @@ public:
     void focusTree();
 
 private:
+    // A burst of `diagnosticsChanged` (each analyzer and server publishes
+    // on its own) rebuilds the list once.
+    void scheduleRefresh();
     void refresh();
     void applyFilter();
+    // E2E only: each visible row's on-screen rect.
+    void markVisibleRows();
     void openRow(QTreeWidgetItem *item, int column);
     void copySelection();
     bool severityEnabled(FfiSeverity severity) const;
@@ -101,6 +112,7 @@ private:
     QPushButton *currentFileOnlyButton_ = nullptr;
     QTreeWidget *tree_ = nullptr;
     QLabel *statusLabel_ = nullptr;
+    QTimer *refreshTimer_ = nullptr;
 };
 
 // Builds the panel with its `showQuickFixesAt` wired from `editorTabs`

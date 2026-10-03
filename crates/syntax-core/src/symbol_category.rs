@@ -70,4 +70,39 @@ mod tests {
             SymbolCategory::NestedTypes
         );
     }
+
+    /// The Classes tier of Search Everywhere keeps `NestedTypes`: every PHP
+    /// declaration that names a type must land there, and members must not.
+    #[test]
+    fn php_type_declarations_map_to_the_classes_tier_and_members_do_not() {
+        let source = "<?php\n\
+            class C { const K = 1; public $p; function m() {} }\n\
+            interface I {}\n\
+            trait T {}\n\
+            enum E { case A; }\n\
+            function f() {}\n";
+        let php = crate::language_by_id("php").expect("php grammar");
+        let mut by_name = std::collections::HashMap::new();
+        fn walk(
+            nodes: &[crate::SymbolNode],
+            into: &mut std::collections::HashMap<String, SymbolCategory>,
+        ) {
+            for node in nodes {
+                into.insert(node.name.clone(), node.kind.category());
+                walk(&node.children, into);
+            }
+        }
+        walk(&crate::outline(php, source), &mut by_name);
+        for type_name in ["C", "I", "T", "E"] {
+            assert_eq!(
+                by_name.get(type_name),
+                Some(&SymbolCategory::NestedTypes),
+                "{type_name}"
+            );
+        }
+        for member in ["K", "$p", "m", "A", "f"] {
+            let category = by_name.get(member).unwrap_or_else(|| panic!("{member}"));
+            assert_ne!(*category, SymbolCategory::NestedTypes, "{member}");
+        }
+    }
 }

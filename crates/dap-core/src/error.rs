@@ -29,6 +29,9 @@ pub enum DapError {
     Unsupported(String),
     /// The wire carried something that is not a DAP message.
     Protocol(String),
+    /// A PHP debug run that cannot work: the message says why and how to
+    /// fix it.
+    XdebugUnavailable(String),
 }
 
 impl DapError {
@@ -39,6 +42,7 @@ impl DapError {
     pub const CODE_TIMEOUT: i32 = 304;
     pub const CODE_UNSUPPORTED: i32 = 305;
     pub const CODE_PROTOCOL: i32 = 306;
+    pub const CODE_XDEBUG_UNAVAILABLE: i32 = 307;
 
     /// The variant's stable numeric code. Append-only once this crosses an
     /// FFI seam (ADR-0003).
@@ -51,6 +55,7 @@ impl DapError {
             DapError::Timeout(_) => Self::CODE_TIMEOUT,
             DapError::Unsupported(_) => Self::CODE_UNSUPPORTED,
             DapError::Protocol(_) => Self::CODE_PROTOCOL,
+            DapError::XdebugUnavailable(_) => Self::CODE_XDEBUG_UNAVAILABLE,
         }
     }
 }
@@ -71,6 +76,7 @@ impl fmt::Display for DapError {
             DapError::Timeout(what) => write!(f, "the debug adapter did not answer {what} in time"),
             DapError::Unsupported(what) => write!(f, "this debug adapter does not support {what}"),
             DapError::Protocol(detail) => write!(f, "malformed debug adapter message: {detail}"),
+            DapError::XdebugUnavailable(advice) => f.write_str(advice),
         }
     }
 }
@@ -99,6 +105,7 @@ mod tests {
             DapError::Timeout(String::new()).code(),
             DapError::Unsupported(String::new()).code(),
             DapError::Protocol(String::new()).code(),
+            DapError::XdebugUnavailable(String::new()).code(),
         ];
         for code in codes {
             assert!(

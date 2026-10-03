@@ -7,3 +7,4 @@ mod index_build_bench;
 mod nested_repositories;
 mod perf_bench;
 mod scope;
+mod symbol_rank;

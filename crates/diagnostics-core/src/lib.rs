@@ -70,6 +70,11 @@ pub struct Diagnostic {
     /// exactly as they sent it. `None` for a source with no such payload
     /// (a build tool's diagnostics have none).
     pub raw: Option<Value>,
+    /// The rule id a source with no raw LSP payload reports (a checkstyle
+    /// `source` such as `PHPStan.undefinedVariable`), so the Problems dock
+    /// and suppress quick fixes can name the rule. `None` when the source
+    /// has none or keeps it in [`Self::raw`].
+    pub code: Option<String>,
 }
 
 /// One row of the Problems panel, addressed the way the editor jumps:
@@ -244,6 +249,25 @@ impl DiagnosticStore {
         rows
     }
 
+    /// [`Self::at`], plus every row with no end on `line` (0-based): a tool
+    /// that reports a line, not a span (PHPStan), means the whole line, so
+    /// its quick fixes must be reachable from any caret column on it.
+    pub fn at_or_line_anchored(&self, uri: &str, line: u32, character: u32) -> Vec<DiagnosticRow> {
+        let mut rows: Vec<DiagnosticRow> = self
+            .by_key
+            .iter()
+            .filter(|((_, key_uri), _)| key_uri == uri)
+            .flat_map(|(_, diags)| diags.iter())
+            .filter(|d| {
+                covers(&d.range, line, character)
+                    || (d.range.end.is_none() && d.range.start.line == line)
+            })
+            .map(|d| row(uri, d))
+            .collect();
+        rows.sort_by_key(|r| r.severity);
+        rows
+    }
+
     /// The first diagnostic in `uri` strictly after the 0-based
     /// `(line, character)`, wrapping to the file's first diagnostic when
     /// none follows — F2's answer (R4). `rows_for_uri`'s own order already
@@ -331,6 +355,9 @@ fn row(uri: &str, diagnostic: &Diagnostic) -> DiagnosticRow {
 }
 
 fn code_of(diagnostic: &Diagnostic) -> String {
+    if let Some(code) = &diagnostic.code {
+        return code.clone();
+    }
     match diagnostic.raw.as_ref().and_then(|raw| raw.get("code")) {
         Some(Value::String(code)) => code.clone(),
         Some(Value::Number(code)) => code.to_string(),
@@ -411,6 +438,7 @@ mod tests {
 
     fn point_diagnostic(line: u32, column: u32, severity: Severity, message: &str) -> Diagnostic {
         Diagnostic {
+            code: None,
             range: Range {
                 start: Position {
                     line,
@@ -669,6 +697,7 @@ mod tests {
             "build:cargo",
             "file:///p/a.rs",
             vec![Diagnostic {
+                code: None,
                 range: Range {
                     start: Position {
                         line: 3,
@@ -711,6 +740,7 @@ mod tests {
             "file:///p/a.rs",
             vec![
                 Diagnostic {
+                    code: None,
                     range: Range {
                         start: Position {
                             line: 2,
@@ -798,6 +828,27 @@ mod tests {
             rows[0].message, "mismatched types",
             "the worse severity sorts first"
         );
+    }
+
+    #[test]
+    fn a_row_without_an_end_is_reachable_from_anywhere_on_its_line() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "analyzer:phpstan",
+            "file:///p/a.php",
+            vec![Diagnostic {
+                range: Range {
+                    end: None,
+                    ..point_diagnostic(2, 0, Severity::Error, "line finding").range
+                },
+                ..point_diagnostic(2, 0, Severity::Error, "line finding")
+            }],
+        );
+        assert!(store.at("file:///p/a.php", 2, 9).is_empty());
+        assert_eq!(store.at_or_line_anchored("file:///p/a.php", 2, 9).len(), 1);
+        assert!(store
+            .at_or_line_anchored("file:///p/a.php", 3, 0)
+            .is_empty());
     }
 
     #[test]
@@ -895,6 +946,24 @@ mod tests {
             wrapped.message, "second",
             "wraps to the file's last diagnostic"
         );
+    }
+
+    #[test]
+    fn a_diagnostic_code_field_is_the_rows_code_without_a_raw_payload() {
+        let mut store = DiagnosticStore::new();
+        store.replace(
+            "analysis:phpstan",
+            "file:///a.php",
+            vec![Diagnostic {
+                code: Some("variable.undefined".into()),
+                range: Range::default(),
+                severity: Severity::Error,
+                message: "m".into(),
+                source: "PHPStan".into(),
+                raw: None,
+            }],
+        );
+        assert_eq!(store.rows()[0].code, "variable.undefined");
     }
 
     #[test]

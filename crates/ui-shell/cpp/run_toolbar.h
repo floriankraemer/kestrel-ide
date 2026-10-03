@@ -3,6 +3,7 @@
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <QHash>
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -26,8 +27,17 @@ namespace ui_shell {
 // Build, drawn at runtime — see run_toolbar.cpp's anonymous namespace).
 // Build arrived with `BuildService` (B1-7) and Debug with `DebugService`
 // (D3-8), so the cluster is now the whole one the mockup shows.
+// ADR-0069: turn the PHP debug listener on or off for the Run menu action
+// and the toolbar button alike; a failure (typically the adapter not being
+// installed) is shown with its install hint.
+void setPhpListening(DebugService *debugService, QWidget *parent, bool enabled);
+
 class RunToolbar : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QWidget`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(RunToolbar)
+
 public:
     RunToolbar(RunService *runService, BuildService *buildService, DebugService *debugService,
                QWidget *parent);
@@ -63,6 +73,7 @@ private:
     QToolButton *rerunButton_ = nullptr;
     QToolButton *buildButton_ = nullptr;
     QToolButton *debugButton_ = nullptr;
+    QToolButton *listenButton_ = nullptr;
 
     // ponytail: one running console tracked per configuration id, the
     // latest `run()` call for it. Running the same configuration a second

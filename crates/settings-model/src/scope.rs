@@ -103,11 +103,15 @@ pub enum ScopedField {
     /// through this field — see [`resolve_database_sources`], the same
     /// merge-by-id shape [`resolve_layouts`] uses for named layouts.
     Database,
+    /// The `[php]` section: interpreter, language level, container target,
+    /// Xdebug port, formatter and per-server toggles (PHP parity plan,
+    /// P0-5).
+    Php,
 }
 
 impl ScopedField {
     /// Every field a project may override, in settings-dialog order.
-    pub const ALL: [ScopedField; 11] = [
+    pub const ALL: [ScopedField; 12] = [
         ScopedField::Editing,
         ScopedField::LanguageServers,
         ScopedField::RunConfigs,
@@ -119,6 +123,7 @@ impl ScopedField {
         ScopedField::Containers,
         ScopedField::BuildTools,
         ScopedField::Database,
+        ScopedField::Php,
     ];
 
     /// The stable id the view names this field by — the same string the
@@ -137,6 +142,7 @@ impl ScopedField {
             ScopedField::Containers => "containers",
             ScopedField::BuildTools => "buildTools",
             ScopedField::Database => "database",
+            ScopedField::Php => "php",
         }
     }
 
@@ -179,6 +185,9 @@ pub fn resolve(global: &Settings, project: &ProjectSettings) -> Settings {
     }
     if let Some(analyzers) = &project.analysis {
         resolved.analysis.analyzers = analyzers.clone();
+    }
+    if let Some(php) = &project.php {
+        resolved.php = php.clone();
     }
     if let Some(tab_padding) = &project.tab_padding {
         resolved.tab_padding = *tab_padding;
@@ -236,6 +245,7 @@ pub fn origin(field: ScopedField, global: &Settings, project: &ProjectSettings) 
         ScopedField::Containers => project.containers.is_some(),
         ScopedField::BuildTools => project.build_tools.is_some(),
         ScopedField::Database => project.database.is_some(),
+        ScopedField::Php => project.php.is_some(),
     };
     if overridden {
         return Scope::Project;
@@ -328,6 +338,7 @@ fn set_globally(field: ScopedField, global: &Settings) -> bool {
         ScopedField::IgnoredNames => global.ignored_names != defaults.ignored_names,
         ScopedField::Terminal => global.terminal != defaults.terminal,
         ScopedField::Analysis => global.analysis != defaults.analysis,
+        ScopedField::Php => global.php != defaults.php,
         ScopedField::TabPadding => global.tab_padding != defaults.tab_padding,
         ScopedField::Containers => global.containers != defaults.containers,
         // Compares only the Gradle/Maven sub-tables, never `trusted_roots`:
@@ -614,13 +625,14 @@ mod tests {
         assert!(ScopedField::from_id("editorFontSize").is_none());
         assert_eq!(
             ScopedField::ALL.len(),
-            11,
+            12,
             "ADR-0022 names five areas (run configurations, editing, language \
              servers, terminal, and what ADR-0064 split index excludes into: \
              Excluded and IgnoredNames), plus Analysis (the PHP tooling plan's \
              B7), TabPadding (tab padding, per-side, project-overridable), \
              Containers (ADR-0055), BuildTools (jvm-build-tools plan, \
-             ADR-0057 §3) and Database (Database Tools plan, F1.4)"
+             ADR-0057 §3), Database (Database Tools plan, F1.4) and Php (PHP \
+             parity plan, P0-5)"
         );
     }
 
@@ -874,6 +886,40 @@ mod tests {
             resolve_layouts(&global, &project_layouts(&[])),
             resolve_layouts(&global, &ProjectSettings::default())
         );
+    }
+
+    #[test]
+    fn php_is_id_round_trips_and_a_project_section_replaces_the_global_one() {
+        use app_config::php::PhpSettings;
+
+        assert_eq!(ScopedField::Php.id(), "php");
+        assert_eq!(ScopedField::from_id("php"), Some(ScopedField::Php));
+
+        let global = Settings {
+            php: PhpSettings {
+                interpreter: Some("/usr/bin/php".into()),
+                ..PhpSettings::default()
+            },
+            ..Settings::default()
+        };
+        let silent = ProjectSettings::default();
+        assert_eq!(origin(ScopedField::Php, &global, &silent), Scope::Global);
+        assert_eq!(
+            origin(ScopedField::Php, &Settings::default(), &silent),
+            Scope::Default
+        );
+
+        let project = ProjectSettings {
+            php: Some(PhpSettings {
+                xdebug_port: Some(9100),
+                ..PhpSettings::default()
+            }),
+            ..ProjectSettings::default()
+        };
+        assert_eq!(origin(ScopedField::Php, &global, &project), Scope::Project);
+        let resolved = resolve(&global, &project);
+        assert_eq!(resolved.php.interpreter, None, "replaced wholesale");
+        assert_eq!(resolved.php.xdebug_port, Some(9100));
     }
 
     #[test]

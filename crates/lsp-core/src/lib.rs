@@ -26,13 +26,16 @@ pub mod hover_card;
 pub mod inlay_hint;
 pub mod intentions;
 pub mod manager;
+pub mod merge;
 pub mod navigation;
 pub mod progress;
 pub mod references;
 pub mod registration;
 pub mod rename;
+pub mod routing;
 pub mod semantic_tokens;
 pub mod signature_help;
+pub mod symbols;
 pub mod tracker;
 pub mod watched_files;
 pub mod workspace_edit;
@@ -41,8 +44,10 @@ pub use apply_edit::{
     ApplyEditGate, ApplyEditVerdict, RefactorSession, RefactorSessions, APPLY_EDIT_TIMEOUT,
 };
 pub use catalog::{
-    default_server, enabled_server, lsp_language_id, resolve_servers, PluginServer, ServerConfig,
-    ServerDef, ServerOverride, ServerSource, SERVERS,
+    classify_start_failure, default_server, enabled_server, enabled_servers, install_hint,
+    launch_plan, lsp_language_id, reload_kind, reload_plan, resolve_servers, LaunchPlan,
+    PluginServer, ReloadKind, ReloadPlan, ServerConfig, ServerDef, ServerOverride, ServerSource,
+    StartFailure, SERVERS,
 };
 pub use code_action::{
     filter_by_kind, kind_matches, needs_unfiltered_retry, parse_code_actions,
@@ -58,7 +63,7 @@ pub use completion::{
 };
 pub use configuration::resolve as resolve_configuration;
 pub use diagnostics::{path_from_uri, to_diagnostics, uri_from_path};
-pub use diff_preview::{file_diff, FileDiff};
+pub use diff_preview::{edits_between, file_diff, FileDiff};
 pub use document_highlight::{parse_document_highlights, DocumentHighlight, HighlightKind};
 pub use hierarchy::{
     parse_hierarchy_items, parse_incoming_calls, parse_outgoing_calls, type_hierarchy_outcome,
@@ -78,7 +83,8 @@ pub use manager::{
     SEMANTIC_TOKENS_TIMEOUT, SIGNATURE_HELP_TIMEOUT,
 };
 pub use navigation::{
-    definition_outcome, parse_definition, virtual_doc_key, DefinitionOutcome, DefinitionTarget,
+    definition_outcome, parse_definition, usable_targets, virtual_doc_key, DefinitionOutcome,
+    DefinitionTarget,
 };
 /// ADR-0052: where a project's tooling runs. Re-exported so an adapter
 /// (`ui-shell`) that already depends on `lsp-core` can hold one — e.g. to
@@ -93,6 +99,7 @@ pub use rename::{
     parse_prepare_rename, prepare_outcome, rename_outcome, PrepareOutcome, PrepareRename,
     RenameOutcome,
 };
+pub use routing::{Advertised, ServerAdvert};
 pub use semantic_tokens::{
     overlay as overlay_semantic_tokens, parse_full_response as parse_semantic_tokens_full,
     parse_legend as parse_semantic_tokens_legend, scope_for as semantic_token_scope,
@@ -105,6 +112,7 @@ pub use signature_help::{
     should_request as should_request_signature_help, CallSite, ParameterInfo, SignatureHelp,
     SignatureInfo, SignatureTriggers,
 };
+pub use symbols::{beyond_index, parse_workspace_symbols, WorkspaceSymbol};
 pub use tracker::RequestTracker;
 pub use workspace_edit::{
     apply_to_text, descending, parse_workspace_changes, parse_workspace_edit, plan as plan_edit,

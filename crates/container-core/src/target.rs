@@ -10,24 +10,25 @@
 //! wraps a launch to run inside a WSL distro (ADR-0052) rather than adding a
 //! third place that builds argv.
 //!
-//! No `process_exec::host::ExecHost::Container` variant: that enum is
-//! path-derived (`ExecHost::for_path`) and every seam that uses it classifies
-//! a filesystem path, which a container connection is not one of — the plan
-//! documents this as a seam fact. [`wrap_launch`] instead rewrites the
-//! launch spec itself, in `run-core`, before `Supervisor::launch` ever sees
-//! it.
+//! [`wrap_launch`] rewrites a *run configuration's* launch spec in
+//! `run-core`, before `Supervisor::launch` sees it. [`exec_host`] (ADR-0067,
+//! which supersedes ADR-0056's rejection of an `ExecHost::Container`
+//! variant) instead builds an `ExecHost::Container` for tools the IDE runs
+//! itself through `process_exec::run_on`/`spawn_on` — analyzers, test
+//! frameworks, language servers. Both share [`PathMap`].
 
 use std::path::{Path, PathBuf};
 
 use app_config::container_run::ContainerfileRunSetting;
-use app_config::ContainerTargetSetting;
+use app_config::{ContainerSettings, ContainerTargetSetting};
+use process_exec::host::{ContainerHost, ExecHost};
 
-use crate::connection::Invocation;
+use crate::connection::{ConnectionConfig, ConnectionKind, Engine, Invocation};
 use crate::run_config::{self, mount_arg, port_arg, split_shell_words};
 
 /// Where the project root mounts inside a target's container when the
 /// setting leaves [`ContainerTargetSetting::workdir`] empty.
-pub const DEFAULT_WORKDIR: &str = "/workspace";
+pub use process_exec::host::DEFAULT_WORKDIR;
 
 /// Why [`wrap_launch`] refused to wrap a launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,109 +51,9 @@ impl std::fmt::Display for TargetError {
 }
 
 /// The local project root <-> the container's mount root, both directions.
-///
-/// `local_root` is kept exactly as the IDE already knows the project root
-/// (a plain path, or a Windows UNC path for a WSL-hosted project — see
-/// [`wrap_launch`]'s own doc comment on the WSL case) — matching is an exact
-/// prefix match after normalising separators, never a filesystem lookup, so
-/// this stays a pure, cheaply-testable mapping the way
-/// `process_exec::host::ExecHost::to_remote`/`to_local` is.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PathMap {
-    pub local_root: PathBuf,
-    pub remote_root: String,
-}
-
-/// Normalise a path string for prefix comparison: backslashes to forward
-/// slashes, and (Windows-safe) a leading drive letter lower-cased — `C:\`
-/// and `c:/` must match the same root.
-fn normalize(path: &str) -> String {
-    let out = path.replace('\\', "/");
-    let mut chars = out.chars();
-    match (chars.next(), chars.next()) {
-        (Some(drive), Some(':')) if drive.is_ascii_alphabetic() => {
-            format!("{}:{}", drive.to_ascii_lowercase(), &out[2..])
-        }
-        _ => out,
-    }
-}
-
-impl PathMap {
-    /// `local_root` joined with `remote_root` defaulted to
-    /// [`DEFAULT_WORKDIR`] when `workdir` is empty.
-    pub fn new(local_root: impl Into<PathBuf>, workdir: &str) -> Self {
-        let remote_root = if workdir.is_empty() {
-            DEFAULT_WORKDIR.to_string()
-        } else {
-            workdir.to_string()
-        };
-        PathMap {
-            local_root: local_root.into(),
-            remote_root,
-        }
-    }
-
-    /// `path` under [`Self::local_root`] -> the same path under
-    /// [`Self::remote_root`]. `None` when `path` is not under the root at
-    /// all — the caller decides whether that is an error
-    /// ([`TargetError::CwdOutsideProject`]) or simply "leave it alone" (an
-    /// env value that happens not to be a project path).
-    pub fn to_remote(&self, path: &Path) -> Option<String> {
-        let root = normalize(&self.local_root.to_string_lossy());
-        let candidate = normalize(&path.to_string_lossy());
-        let tail = if candidate.eq_ignore_ascii_case(&root) {
-            ""
-        } else {
-            let prefix = if root.ends_with('/') {
-                root.clone()
-            } else {
-                format!("{root}/")
-            };
-            if candidate.len() >= prefix.len()
-                && candidate[..prefix.len()].eq_ignore_ascii_case(&prefix)
-            {
-                &candidate[prefix.len()..]
-            } else {
-                return None;
-            }
-        };
-        if tail.is_empty() {
-            Some(self.remote_root.clone())
-        } else {
-            Some(format!("{}/{tail}", self.remote_root.trim_end_matches('/')))
-        }
-    }
-
-    /// The inverse of [`Self::to_remote`]: `remote` under
-    /// [`Self::remote_root`] -> the same path under [`Self::local_root`],
-    /// played back with `local_root`'s own separator style — the same
-    /// "canonical to the root's own spelling" rule
-    /// `process_exec::host::ExecHost::to_local` documents. `None` when
-    /// `remote` is not under [`Self::remote_root`].
-    pub fn to_local(&self, remote: &str) -> Option<PathBuf> {
-        let root = self.remote_root.trim_end_matches('/');
-        let candidate = remote.trim_end_matches('/');
-        let tail = if candidate == root {
-            ""
-        } else {
-            let prefix = format!("{root}/");
-            candidate.strip_prefix(prefix.as_str())?
-        };
-        let local = self.local_root.to_string_lossy();
-        let sep = if local.contains('\\') { '\\' } else { '/' };
-        if tail.is_empty() {
-            Some(self.local_root.clone())
-        } else {
-            let tail = tail.replace('/', &sep.to_string());
-            let joined = if local.ends_with(sep) {
-                format!("{local}{tail}")
-            } else {
-                format!("{local}{sep}{tail}")
-            };
-            Some(PathBuf::from(joined))
-        }
-    }
-}
+/// Lives in `process-exec` (ADR-0067) so `ExecHost::Container` can use it
+/// without `process-exec` depending on this crate.
+pub use process_exec::host::PathMap;
 
 /// The minimal shape [`wrap_launch`] needs from a plain-process
 /// `run_core::LaunchSpec` — this crate does not depend on `run-core`
@@ -197,7 +98,7 @@ pub fn image_tag_for(target: &ContainerTargetSetting) -> String {
 /// then runs *inside* that distro, so the mount source must already be the
 /// distro's own Linux path, which `ExecHost::to_remote` gives.
 fn mount_source(invocation: &Invocation, project_root: &Path) -> String {
-    if invocation.host.is_remote() {
+    if invocation.host.runs_remotely() {
         invocation.host.to_remote(project_root)
     } else {
         project_root.to_string_lossy().replace('\\', "/")
@@ -245,20 +146,32 @@ pub fn wrap_launch(
     let env = rebased_env(spec.env, &path_map);
 
     let mut argv: Vec<String> = Vec::new();
+    let (mut program, mut prefix_args) =
+        (invocation.program.clone(), invocation.prefix_args.clone());
 
     if target.source == "compose-service" {
-        for file in &target.compose_files {
-            argv.push("-f".to_string());
-            argv.push(file.clone());
-        }
+        let (compose_program, compose_args, plugin) = invocation.compose_form();
+        (program, prefix_args) = (compose_program, compose_args);
+        argv.extend(compose_prefix(target, plugin));
         argv.push("run".to_string());
         argv.push("--rm".to_string());
-        argv.push("--service-ports".to_string());
+        // Compose refuses `--service-ports` together with `-p`
+        // ("--service-ports and --publish are incompatible"), so the compose
+        // file's own ports are published only when the target adds none.
+        if target.port_bindings.is_empty() {
+            argv.push("--service-ports".to_string());
+        }
         argv.push("-w".to_string());
         argv.push(remote_cwd);
         for (key, value) in &env {
             argv.push("-e".to_string());
             argv.push(format!("{key}={value}"));
+        }
+        // A binding the target adds (a PHP server's port) replaces the
+        // compose file's declared ports.
+        for binding in &target.port_bindings {
+            argv.push("-p".to_string());
+            argv.push(port_arg(binding));
         }
         if !target.run_options.is_empty() {
             argv.extend(split_shell_words(&target.run_options));
@@ -304,14 +217,153 @@ pub fn wrap_launch(
         argv.push(image_reference(target));
     }
 
-    argv.push(spec.program.to_string());
-    argv.extend(spec.args.iter().cloned());
+    // The program and its arguments are written with the IDE's paths (the
+    // file to run, the document root); the container sees them mounted.
+    argv.push(path_map.rebase_arg(spec.program));
+    argv.extend(spec.args.iter().map(|arg| path_map.rebase_arg(arg)));
 
     Ok(WrappedLaunch {
-        program: invocation.program.clone(),
-        args: invocation.argv(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
+        program,
+        args: prefix_args.into_iter().chain(argv).collect(),
         cwd: Some(project_root.to_path_buf()),
         env: invocation.env.clone(),
+        path_map,
+    })
+}
+
+/// `compose -f <file>...`: what precedes every compose verb for `target`;
+/// `plugin_subcommand` is false for a standalone `docker-compose` override.
+fn compose_prefix(target: &ContainerTargetSetting, plugin_subcommand: bool) -> Vec<String> {
+    let mut argv = Vec::new();
+    if plugin_subcommand {
+        argv.push("compose".to_string());
+    }
+    for file in &target.compose_files {
+        argv.push("-f".to_string());
+        argv.push(file.clone());
+    }
+    argv
+}
+
+/// The invocation for the connection `connection_id` names; the default
+/// local Docker one when it is blank or matches no configured connection —
+/// never a hard failure, so a target with no server picked yet still
+/// previews and attempts a command rather than refusing.
+pub fn invocation_for(containers: &ContainerSettings, connection_id: &str) -> Invocation {
+    match containers
+        .connections
+        .iter()
+        .find(|c| c.id == connection_id)
+    {
+        Some(row) => ConnectionConfig::from_setting(row).invocation(),
+        None => ConnectionConfig {
+            engine: Engine::Docker,
+            kind: ConnectionKind::Auto,
+            executable: None,
+            compose_executable: None,
+        }
+        .invocation(),
+    }
+}
+
+/// [`exec_host`] for the target with id `target_id` in `containers`, with
+/// its connection resolved; `None` when no such target exists.
+pub fn exec_host_for(
+    containers: &ContainerSettings,
+    target_id: &str,
+    project_root: &Path,
+    mode: Option<ExecMode>,
+) -> Option<ExecHost> {
+    let target = containers.targets.iter().find(|t| t.id == target_id)?;
+    Some(exec_host(
+        target,
+        &invocation_for(containers, &target.connection_id),
+        project_root,
+        mode,
+        containers.selinux_relabel,
+    ))
+}
+
+/// How a tool the IDE runs itself reaches its container (ADR-0067).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecMode {
+    /// `exec` into the running container or compose service.
+    Exec,
+    /// `run --rm -i` a fresh container.
+    Run,
+}
+
+/// The mode a target gets when the setting does not choose: a compose
+/// service is usually already up (`exec`); an image has nothing to `exec`
+/// into, so it is always `run` (an explicit `Exec` on one is ignored).
+fn effective_mode(target: &ContainerTargetSetting, requested: Option<ExecMode>) -> ExecMode {
+    match (target.source.as_str(), requested) {
+        ("compose-service", Some(mode)) => mode,
+        ("compose-service", None) => ExecMode::Exec,
+        _ => ExecMode::Run,
+    }
+}
+
+/// The host that runs a tool inside `target`'s container, for
+/// `process_exec::run_on`/`spawn_on` (ADR-0067): compose services `exec`
+/// (`docker compose exec -T <svc> ...`) unless `mode` says `Run`; images
+/// `run --rm -i` with the project bind-mounted at the target's workdir.
+///
+/// Shares [`PathMap`] with [`wrap_launch`], so a path the tool prints
+/// (`ExecHost::path_from_tool`) maps back to the local file. Image ports
+/// are not published: a one-shot analyzer run has nothing to listen on.
+pub fn exec_host(
+    target: &ContainerTargetSetting,
+    invocation: &Invocation,
+    project_root: &Path,
+    mode: Option<ExecMode>,
+    selinux_relabel: bool,
+) -> ExecHost {
+    let path_map = PathMap::new(project_root.to_path_buf(), &target.workdir);
+    let mode = effective_mode(target, mode);
+
+    let mut program = invocation.program.clone();
+    let mut prefix_args = invocation.prefix_args.clone();
+    let mut verb_args = Vec::new();
+    let reference = if target.source == "compose-service" {
+        let (compose_program, compose_args, plugin) = invocation.compose_form();
+        program = compose_program;
+        prefix_args = compose_args;
+        prefix_args.extend(compose_prefix(target, plugin));
+        let verb: &[&str] = match mode {
+            ExecMode::Exec => &["exec", "-T"],
+            ExecMode::Run => &["run", "--rm", "-T"],
+        };
+        verb_args.extend(verb.iter().map(|word| word.to_string()));
+        target.service.clone().unwrap_or_default()
+    } else {
+        verb_args.extend(["run", "--rm", "-i", "-v"].map(String::from));
+        verb_args.push(mount_arg(
+            &mount_source(invocation, project_root),
+            &path_map.remote_root,
+            false,
+            selinux_relabel,
+        ));
+        for mount in &target.extra_mounts {
+            verb_args.push("-v".to_string());
+            verb_args.push(mount_arg(
+                &mount.host_path,
+                &mount.container_path,
+                mount.read_only,
+                selinux_relabel,
+            ));
+        }
+        verb_args.extend(split_shell_words(&target.run_options));
+        image_reference(target)
+    };
+
+    ExecHost::Container(ContainerHost {
+        program,
+        prefix_args,
+        engine_env: invocation.env.clone(),
+        via_wsl: invocation.host.runs_remotely(),
+        verb_args,
+        target: vec![reference],
         path_map,
     })
 }
@@ -357,17 +409,11 @@ pub fn before_launch_for(
             ))
         }
         "compose-service" if target.needs_build => {
-            let mut argv = Vec::new();
-            for file in &target.compose_files {
-                argv.push("-f".to_string());
-                argv.push(file.clone());
-            }
+            let (program, mut argv, plugin) = invocation.compose_form();
+            argv.extend(compose_prefix(target, plugin));
             argv.push("build".to_string());
             argv.push(target.service.clone().unwrap_or_default());
-            Some((
-                invocation.program.clone(),
-                invocation.argv(&argv.iter().map(String::as_str).collect::<Vec<_>>()),
-            ))
+            Some((program, argv))
         }
         _ => None,
     }
@@ -378,7 +424,7 @@ mod tests {
     use super::*;
     use crate::connection::{ConnectionConfig, Engine};
     use app_config::container_run::{BindMount, PortBinding};
-    use process_exec::host::{ExecHost, WslHost};
+    use process_exec::host::WslHost;
 
     fn local_invocation() -> Invocation {
         ConnectionConfig {
@@ -664,6 +710,7 @@ mod tests {
         assert_eq!(
             wrapped.args,
             vec![
+                "compose",
                 "-f",
                 "docker-compose.yml",
                 "run",
@@ -678,6 +725,63 @@ mod tests {
     }
 
     // ------------------------------------------------------ before_launch ----
+
+    #[test]
+    fn project_paths_in_the_program_and_args_are_rebased_onto_the_mount() {
+        let project_root = Path::new("/home/f/proj");
+        let args = vec![
+            "/home/f/proj/public/index.php".to_string(),
+            "--config=/home/f/proj/app.ini".to_string(),
+            "--verbose".to_string(),
+        ];
+        let launch = SimpleLaunch {
+            program: "php",
+            args: &args,
+            cwd: Some(project_root),
+            env: &[],
+        };
+        let wrapped = wrap_launch(
+            &launch,
+            &image_target(),
+            &local_invocation(),
+            project_root,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            wrapped.args[wrapped.args.len() - 4..],
+            [
+                "php",
+                "/workspace/public/index.php",
+                "--config=/workspace/app.ini",
+                "--verbose"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compose_target_publishes_the_ports_it_was_given() {
+        let project_root = Path::new("/p");
+        let launch = spec(Some(project_root), &[]);
+        let target = ContainerTargetSetting {
+            port_bindings: vec![PortBinding {
+                host_port: "8000".to_string(),
+                container_port: "8000".to_string(),
+                ..Default::default()
+            }],
+            ..compose_target()
+        };
+        let wrapped =
+            wrap_launch(&launch, &target, &local_invocation(), project_root, false).unwrap();
+        let at = wrapped.args.iter().position(|a| a == "-p").unwrap();
+        assert_eq!(wrapped.args[at + 1], "8000:8000");
+        assert!(at < wrapped.args.iter().position(|a| a == "php").unwrap());
+        assert!(
+            !wrapped.args.iter().any(|a| a == "--service-ports"),
+            "compose rejects --service-ports with -p: {:?}",
+            wrapped.args
+        );
+    }
 
     #[test]
     fn an_image_target_has_no_before_launch_task() {
@@ -715,7 +819,10 @@ mod tests {
         target.needs_build = true;
         let (program, args) = before_launch_for(&target, &local_invocation()).unwrap();
         assert_eq!(program, "docker");
-        assert_eq!(args, vec!["-f", "docker-compose.yml", "build", "web"]);
+        assert_eq!(
+            args,
+            vec!["compose", "-f", "docker-compose.yml", "build", "web"]
+        );
     }
 
     // --------------------------------------------------------- WSL host --
@@ -723,6 +830,7 @@ mod tests {
     #[test]
     fn a_wsl_connection_mounts_the_distros_own_path() {
         let invocation = Invocation {
+            compose_override: None,
             program: "docker".to_string(),
             prefix_args: vec![
                 "-d".to_string(),
@@ -741,5 +849,304 @@ mod tests {
         let target = image_target();
         let wrapped = wrap_launch(&launch, &target, &invocation, project_root, false).unwrap();
         assert!(wrapped.args.iter().any(|a| a == "/home/f/proj:/workspace"));
+    }
+
+    // ------------------------------------------------------ exec_host ----
+
+    fn compose_target() -> ContainerTargetSetting {
+        ContainerTargetSetting {
+            source: "compose-service".to_string(),
+            compose_files: vec!["docker-compose.yml".to_string()],
+            service: Some("php".to_string()),
+            image: None,
+            workdir: "/var/www".to_string(),
+            ..image_target()
+        }
+    }
+
+    fn podman_invocation() -> Invocation {
+        ConnectionConfig {
+            engine: Engine::Podman,
+            kind: crate::connection::ConnectionKind::Auto,
+            executable: None,
+            compose_executable: None,
+        }
+        .invocation()
+    }
+
+    fn argv_of(host: &ExecHost, program: &str, args: &[&str], cwd: &Path) -> Vec<String> {
+        let (engine, mut argv) = host.argv(program, args, cwd);
+        argv.insert(0, engine);
+        argv
+    }
+
+    #[test]
+    fn a_compose_service_defaults_to_exec() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(&compose_target(), &local_invocation(), root, None, false);
+        assert_eq!(
+            argv_of(&host, "vendor/bin/phpstan", &["analyse"], &root.join("src")),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.yml",
+                "exec",
+                "-T",
+                "-w",
+                "/var/www/src",
+                "php",
+                "vendor/bin/phpstan",
+                "analyse"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compose_service_can_run_a_fresh_container_instead() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(
+            &compose_target(),
+            &local_invocation(),
+            root,
+            Some(ExecMode::Run),
+            false,
+        );
+        assert_eq!(
+            argv_of(&host, "php", &["-v"], root),
+            [
+                "docker",
+                "compose",
+                "-f",
+                "docker-compose.yml",
+                "run",
+                "--rm",
+                "-T",
+                "-w",
+                "/var/www",
+                "php",
+                "php",
+                "-v"
+            ]
+        );
+    }
+
+    #[test]
+    fn podman_uses_its_own_program() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(&compose_target(), &podman_invocation(), root, None, false);
+        assert_eq!(argv_of(&host, "php", &[], root)[..2], ["podman", "compose"]);
+    }
+
+    fn standalone_compose_invocation() -> Invocation {
+        ConnectionConfig {
+            compose_executable: Some("docker-compose".to_string()),
+            ..local_config()
+        }
+        .invocation()
+    }
+
+    fn local_config() -> ConnectionConfig {
+        ConnectionConfig {
+            engine: Engine::Docker,
+            kind: crate::connection::ConnectionKind::Auto,
+            executable: None,
+            compose_executable: None,
+        }
+    }
+
+    #[test]
+    fn a_compose_executable_override_replaces_the_engine_and_its_subcommand_for_exec() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(
+            &compose_target(),
+            &standalone_compose_invocation(),
+            root,
+            None,
+            false,
+        );
+        assert_eq!(
+            argv_of(&host, "php", &["-v"], root),
+            [
+                "docker-compose",
+                "-f",
+                "docker-compose.yml",
+                "exec",
+                "-T",
+                "-w",
+                "/var/www",
+                "php",
+                "php",
+                "-v"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_compose_executable_override_does_not_touch_image_targets() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(
+            &image_target(),
+            &standalone_compose_invocation(),
+            root,
+            None,
+            false,
+        );
+        assert_eq!(argv_of(&host, "php", &[], root)[0], "docker");
+    }
+
+    #[test]
+    fn a_compose_executable_override_is_honoured_by_wrap_launch_and_the_build_task() {
+        let project_root = Path::new("/p");
+        let target = ContainerTargetSetting {
+            needs_build: true,
+            ..compose_target()
+        };
+        let wrapped = wrap_launch(
+            &spec(Some(project_root), &[]),
+            &target,
+            &standalone_compose_invocation(),
+            project_root,
+            false,
+        )
+        .unwrap();
+        assert_eq!(wrapped.program, "docker-compose");
+        assert_eq!(
+            wrapped.args[..4],
+            ["-f", "docker-compose.yml", "run", "--rm"]
+        );
+
+        let (program, args) = before_launch_for(&target, &standalone_compose_invocation()).unwrap();
+        assert_eq!(program, "docker-compose");
+        assert_eq!(args, ["-f", "docker-compose.yml", "build", "php"]);
+    }
+
+    #[test]
+    fn a_compose_executable_override_replaces_the_engine_inside_a_wsl_wrap() {
+        let root = Path::new("/home/f/proj");
+        let invocation = ConnectionConfig {
+            kind: crate::connection::ConnectionKind::Wsl {
+                distro: "Ubuntu".to_string(),
+            },
+            compose_executable: Some("docker-compose".to_string()),
+            ..local_config()
+        }
+        .invocation();
+        let host = exec_host(&compose_target(), &invocation, root, None, false);
+        assert_eq!(
+            argv_of(&host, "php", &[], root)[..7],
+            [
+                "wsl.exe",
+                "-d",
+                "Ubuntu",
+                "--",
+                "docker-compose",
+                "-f",
+                "docker-compose.yml"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_image_always_runs_with_the_project_mounted() {
+        let root = Path::new("/home/f/proj");
+        // An explicit `exec` on an image has nothing to exec into.
+        let host = exec_host(
+            &image_target(),
+            &local_invocation(),
+            root,
+            Some(ExecMode::Exec),
+            false,
+        );
+        assert_eq!(
+            argv_of(&host, "php", &["-r", "1;"], &root.join("app")),
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-i",
+                "-v",
+                "/home/f/proj:/workspace",
+                "-w",
+                "/workspace/app",
+                "nginx:1.27",
+                "php",
+                "-r",
+                "1;"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_image_target_carries_extra_mounts_options_and_selinux_labels() {
+        let root = Path::new("/home/f/proj");
+        let mut target = image_target();
+        target.run_options = "--network host".to_string();
+        target.extra_mounts = vec![BindMount {
+            host_path: "/home/f/.composer".to_string(),
+            container_path: "/root/.composer".to_string(),
+            read_only: true,
+        }];
+        let host = exec_host(&target, &local_invocation(), root, None, true);
+        let argv = argv_of(&host, "php", &[], root);
+        assert!(
+            argv.contains(&"/home/f/proj:/workspace:z".to_string()),
+            "{argv:?}"
+        );
+        assert!(argv.contains(&"/home/f/.composer:/root/.composer:ro,z".to_string()));
+        assert!(argv.windows(2).any(|w| w == ["--network", "host"]));
+    }
+
+    #[test]
+    fn a_containerfile_target_runs_its_built_tag() {
+        let root = Path::new("/p");
+        let target = ContainerTargetSetting {
+            source: "containerfile".to_string(),
+            image_tag: Some("myapp:dev".to_string()),
+            ..image_target()
+        };
+        let host = exec_host(&target, &local_invocation(), root, None, false);
+        assert!(argv_of(&host, "php", &[], root).contains(&"myapp:dev".to_string()));
+    }
+
+    #[test]
+    fn a_wsl_connection_mounts_the_distros_path_and_marks_the_engine_as_wsl() {
+        let invocation = Invocation {
+            compose_override: None,
+            program: "wsl.exe".to_string(),
+            prefix_args: vec!["-d".into(), "Ubuntu".into(), "--".into(), "docker".into()],
+            env: Vec::new(),
+            host: ExecHost::Wsl(WslHost {
+                distro: "Ubuntu".to_string(),
+                unc_prefix: r"\\wsl.localhost\Ubuntu".to_string(),
+            }),
+        };
+        let root = Path::new(r"\\wsl.localhost\Ubuntu\home\f\proj");
+        let host = exec_host(&image_target(), &invocation, root, None, false);
+        let ExecHost::Container(container) = &host else {
+            panic!("expected a container host")
+        };
+        assert!(container.via_wsl);
+        assert_eq!(container.program, "wsl.exe");
+        assert!(container
+            .verb_args
+            .contains(&"/home/f/proj:/workspace".to_string()));
+        // A path the tool prints under the mount opens the UNC file.
+        assert_eq!(
+            host.path_from_tool("/workspace/src/A.php"),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\f\proj\src\A.php")
+        );
+    }
+
+    #[test]
+    fn exec_host_for_resolves_target_and_connection_from_settings() {
+        let containers = ContainerSettings {
+            targets: vec![compose_target()],
+            ..ContainerSettings::default()
+        };
+        let root = Path::new("/p");
+        let host = exec_host_for(&containers, &compose_target().id, root, None).unwrap();
+        assert_eq!(argv_of(&host, "php", &[], root)[0], "docker");
+        assert!(exec_host_for(&containers, "missing", root, None).is_none());
     }
 }

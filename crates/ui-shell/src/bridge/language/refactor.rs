@@ -15,7 +15,18 @@ use cxx_qt_lib::QString;
 
 use crate::bridge::convert::to_ffi_edits;
 use crate::bridge::ffi::{self};
+use crate::bridge::format_tool::ToolFormat;
 use crate::bridge::language::{to_ffi_resource_op, to_file_op, PendingRefactor};
+
+/// On-type formatting fires on every trigger keystroke, so it must not share
+/// `edits`/`pending` with Rename and code actions: a typed `;` would re-arm
+/// the Rename's gate against the moved buffer (applying its stale edits) or
+/// replace its pending plan.
+#[derive(Default)]
+pub(crate) struct OnTypeSlot {
+    gate: lsp_core::EditGate,
+    plan: Option<lsp_core::EditPlan>,
+}
 
 impl ffi::LanguageService {
     pub fn code_actions_at(
@@ -178,40 +189,215 @@ impl ffi::LanguageService {
             self.as_mut().refactor_fallback();
         }
     }
-    /// Reformat one open document (F1-14), through the same pending-edit
-    /// protocol a rename uses: `code.reformat` is confined to the file the
-    /// user is looking at, so `touches_other_files` is always false and
-    /// `RefactorController::onRefactorReady` applies it straight away —
-    /// one Ctrl+Z undoes a reformat exactly as it undoes a rename, with no
-    /// new C++ needed for it.
+    /// Reformat Code (F1-14, N4): the selection when there is one, the whole
+    /// document otherwise, through the same pending-edit protocol a rename
+    /// uses — `code.reformat` is confined to the file the user is looking
+    /// at, so `touches_other_files` is always false and
+    /// `RefactorController::onRefactorReady` applies it straight away: one
+    /// Ctrl+Z undoes a reformat exactly as it undoes a rename.
     ///
-    /// Whole-document only. `textDocument/rangeFormatting` over a selection
-    /// is a real `lsp_core::LspManager::format_range` capability, left for
-    /// whichever future task wires "Reformat Selection" to it — nothing
-    /// here calls it yet.
-    pub fn request_formatting(mut self: Pin<&mut Self>, path: &QString, buffer_revision: i64) {
+    /// A configured tool formatter (`format_tool.rs`) formats the whole
+    /// file when there is no selection; with a selection, or without a
+    /// usable tool, the language server answers.
+    pub fn request_formatting(
+        self: Pin<&mut Self>,
+        path: &QString,
+        buffer_revision: i64,
+        selection: ffi::FfiSelection,
+    ) {
+        let scope = lsp_core::formatting::selection_scope(
+            (selection.start_line, selection.start_character),
+            (selection.end_line, selection.end_character),
+        );
+        let path = path.to_string();
+        let tool = self
+            .open_docs
+            .borrow()
+            .get(&path)
+            .and_then(|language_id| ToolFormat::resolve(language_id, scope.is_some()));
+        if let Some(tool) = tool {
+            return self.format_with_tool(
+                tool,
+                path,
+                buffer_revision,
+                "Reformat Code".to_string(),
+                true,
+            );
+        }
+        let path = QString::from(path.as_str());
+        self.format_with(
+            &path,
+            buffer_revision,
+            "Reformat Code",
+            false,
+            move |m, uri, o| match scope {
+                Some((start, end)) => m.format_range(uri, start, end, o),
+                None => m.format(uri, o),
+            },
+        );
+    }
+
+    /// Rewrite the whole file `path` with `tool` and apply the difference as
+    /// one undo step. With `lsp_fallback` (Reformat Code) a tool that turns
+    /// out not to be installed falls back to the language server, silently:
+    /// the setting names a formatter the machine may not have.
+    pub(crate) fn format_with_tool(
+        mut self: Pin<&mut Self>,
+        tool: ToolFormat,
+        path: String,
+        buffer_revision: i64,
+        title: String,
+        lsp_fallback: bool,
+    ) {
+        let Some(text) = self.session.borrow().content_for_path(Path::new(&path)) else {
+            return;
+        };
+        self.edits.borrow_mut().begin(buffer_revision);
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let result = tool.run(
+                &text,
+                Path::new(&path),
+                crate::bridge::format_tool::FORMAT_TIMEOUT,
+            );
+            let _ = qt_thread.queue(move |service: Pin<&mut Self>| match result {
+                Err(analysis_core::FormatError::NotInstalled) if lsp_fallback => {
+                    service.format_whole_with_lsp(&path, buffer_revision)
+                }
+                Err(error) => {
+                    service.finish_refactor(Err(format!("{} failed: {error}", tool.name())))
+                }
+                Ok(formatted) => {
+                    let edits = lsp_core::edits_between(&text, &formatted);
+                    if edits.is_empty() {
+                        return service.finish_refactor(Ok(()));
+                    }
+                    let plan = lsp_core::EditPlan {
+                        buffers: vec![lsp_core::DocumentEdits {
+                            uri: lsp_core::uri_from_path(&path),
+                            path,
+                            version: None,
+                            edits,
+                        }],
+                        files: Vec::new(),
+                        ops: Vec::new(),
+                        touches_other_files: false,
+                    };
+                    service.publish_refactor(title, plan, None);
+                }
+            });
+        });
+    }
+
+    /// Reformat Code's language-server path for the whole file.
+    pub(crate) fn format_whole_with_lsp(self: Pin<&mut Self>, path: &str, buffer_revision: i64) {
+        self.format_with(
+            &QString::from(path),
+            buffer_revision,
+            "Reformat Code",
+            false,
+            |m, uri, o| m.format(uri, o),
+        );
+    }
+
+    /// Reformat Selection (N4): the selection only; with none, say so
+    /// rather than reformatting the whole file.
+    pub fn request_selection_formatting(
+        mut self: Pin<&mut Self>,
+        path: &QString,
+        buffer_revision: i64,
+        selection: ffi::FfiSelection,
+    ) {
+        let scope = lsp_core::formatting::selection_scope(
+            (selection.start_line, selection.start_character),
+            (selection.end_line, selection.end_character),
+        );
+        let Some((start, end)) = scope else {
+            self.edits.borrow_mut().begin(buffer_revision);
+            self.as_mut()
+                .finish_refactor(Err("Select the text to reformat first.".to_string()));
+            return;
+        };
+        self.format_with(
+            path,
+            buffer_revision,
+            "Reformat Selection",
+            false,
+            move |m, uri, o| m.format_range(uri, start, end, o),
+        );
+    }
+
+    /// N5: `typed` was just typed at `line`/`character` (the position after
+    /// it). When a running server named it as an on-type formatting trigger
+    /// the server's edits are applied like any reformat — silently: nothing
+    /// to do, no formatter and failures are not worth interrupting typing.
+    pub fn request_on_type_formatting(
+        self: Pin<&mut Self>,
+        path: &QString,
+        buffer_revision: i64,
+        line: u32,
+        character: u32,
+        typed: &QString,
+    ) {
+        let typed = typed.to_string();
+        let Some(language_id) = self.open_docs.borrow().get(&path.to_string()).cloned() else {
+            return;
+        };
+        let is_trigger = self
+            .advertised
+            .borrow()
+            .get(&language_id)
+            .is_some_and(|a| a.on_type_triggers().contains(&typed));
+        if !is_trigger {
+            return;
+        }
+        self.format_with(
+            path,
+            buffer_revision,
+            "Format on Typing",
+            true,
+            move |m, uri, o| m.format_on_type(uri, (line, character), &typed, o),
+        );
+    }
+
+    /// The shared tail of every reformat: options from the settings, one
+    /// request on the LSP worker, the answer published as a one-file edit
+    /// plan. `quiet` swallows "no formatter" and errors.
+    fn format_with(
+        mut self: Pin<&mut Self>,
+        path: &QString,
+        buffer_revision: i64,
+        title: &'static str,
+        quiet: bool,
+        ask: impl FnOnce(
+                &lsp_core::LspManager,
+                &str,
+                &lsp_core::formatting::FormattingOptions,
+            )
+                -> Result<lsp_core::formatting::FormattingOutcome, lsp_core::LspError>
+            + Send
+            + 'static,
+    ) {
+        use lsp_core::formatting::FormattingOutcome;
         let path = path.to_string();
         let Some(language_id) = self.open_docs.borrow().get(&path).cloned() else {
             return;
         };
-        let settings = crate::bridge::convert::load_resolved_settings();
-        let rules = settings_model::editing::resolve_for_language(&settings, &language_id);
-        let style = rules.indent_style();
-        let options = lsp_core::formatting::FormattingOptions {
-            tab_size: style.tab_width as u32,
-            insert_spaces: style.use_spaces,
-            trim_trailing_whitespace: Some(rules.trim_trailing_whitespace),
-            insert_final_newline: Some(rules.insert_final_newline),
-            trim_final_newlines: None,
-        };
+        let options = formatting_options(&language_id);
         let uri = lsp_core::uri_from_path(&path);
-        self.edits.borrow_mut().begin(buffer_revision);
+        // `quiet` is on-type formatting: its own gate and slot, so a trigger
+        // keystroke can never disturb a Rename or code action in flight.
+        if quiet {
+            self.on_type.borrow_mut().gate.begin(buffer_revision);
+        } else {
+            self.edits.borrow_mut().begin(buffer_revision);
+        }
         let qt_thread = self.as_mut().qt_thread();
         self.push_job(move |manager| {
-            let outcome = manager.format(&uri, &options);
+            let outcome = ask(manager, &uri, &options);
             let version = manager.document_version(&uri);
             let _ = qt_thread.queue(move |service: Pin<&mut Self>| match outcome {
-                Ok(lsp_core::formatting::FormattingOutcome::Edits(edits)) => {
+                Ok(FormattingOutcome::Edits(edits)) => {
                     let plan = lsp_core::EditPlan {
                         buffers: vec![lsp_core::DocumentEdits {
                             uri,
@@ -223,19 +409,41 @@ impl ffi::LanguageService {
                         ops: Vec::new(),
                         touches_other_files: false,
                     };
-                    service.publish_refactor("Reformat Code".to_string(), plan, None);
+                    if quiet {
+                        service.publish_on_type(plan);
+                    } else {
+                        service.publish_refactor(title.to_string(), plan, None);
+                    }
                 }
-                Ok(lsp_core::formatting::FormattingOutcome::AlreadyFormatted) => {
-                    service.finish_refactor(Ok(()));
+                Ok(FormattingOutcome::AlreadyFormatted) if !quiet => {
+                    service.finish_refactor(Ok(()))
                 }
-                Ok(lsp_core::formatting::FormattingOutcome::Unsupported) => {
-                    service.finish_refactor(Err(format!(
-                        "No formatter is available for {language_id}."
-                    )));
-                }
-                Err(error) => service.finish_refactor(Err(error.to_string())),
+                Ok(FormattingOutcome::Unsupported) if !quiet => service
+                    .finish_refactor(Err(format!("No formatter is available for {language_id}."))),
+                Err(error) if !quiet => service.finish_refactor(Err(error.to_string())),
+                // Quiet: nothing to apply, nothing to report, and the
+                // pending refactoring (someone else's) stays untouched.
+                Ok(_) | Err(_) => {}
             });
         });
+    }
+
+    /// Park N5's plan in its own slot and tell the view; never touches the
+    /// pending refactoring.
+    fn publish_on_type(mut self: Pin<&mut Self>, plan: lsp_core::EditPlan) {
+        self.on_type.borrow_mut().plan = Some(plan);
+        self.as_mut().on_type_format_ready();
+    }
+
+    /// The on-type edits, once, if the buffer is still at the revision they
+    /// were computed against (`lsp_core::EditGate`'s rule).
+    pub fn take_on_type_edits(&self, buffer_revision: i64) -> Vec<ffi::FfiTextEdit> {
+        let mut slot = self.on_type.borrow_mut();
+        let fresh = slot.gate.accept(buffer_revision);
+        match slot.plan.take() {
+            Some(plan) if fresh => to_ffi_edits(&plan, &[]),
+            _ => Vec::new(),
+        }
     }
     pub fn pending_edits(&self) -> Vec<ffi::FfiTextEdit> {
         match self.pending.borrow().as_ref() {
@@ -361,6 +569,17 @@ impl ffi::LanguageService {
             pending.settle(false, "the refactoring was cancelled");
         }
     }
+    /// Report a refactoring that produced nothing, answering anything that
+    /// was waiting on it.
+    pub(crate) fn finish_refactor(mut self: Pin<&mut Self>, outcome: Result<(), String>) {
+        if let Some(pending) = self.pending.borrow_mut().take() {
+            pending.settle(false, "the refactoring could not be applied");
+        }
+        if let Err(message) = outcome {
+            self.as_mut()
+                .refactor_failed(QString::from(message.as_str()));
+        }
+    }
     /// Publish a plan for the view to apply, replacing (and answering) any
     /// refactoring that was already waiting.
     pub(crate) fn publish_refactor(
@@ -409,5 +628,20 @@ impl ffi::LanguageService {
             .and_then(|edit| lsp_core::parse_workspace_edit(edit).ok())
             .and_then(|docs| docs.first().map(|doc| doc.path.clone()))
             .unwrap_or_default()
+    }
+}
+
+/// The options a formatting request for `language_id` carries, from the
+/// language's editing settings.
+pub(crate) fn formatting_options(language_id: &str) -> lsp_core::formatting::FormattingOptions {
+    let settings = crate::bridge::convert::load_resolved_settings();
+    let rules = settings_model::editing::resolve_for_language(&settings, language_id);
+    let style = rules.indent_style();
+    lsp_core::formatting::FormattingOptions {
+        tab_size: style.tab_width as u32,
+        insert_spaces: style.use_spaces,
+        trim_trailing_whitespace: Some(rules.trim_trailing_whitespace),
+        insert_final_newline: Some(rules.insert_final_newline),
+        trim_final_newlines: None,
     }
 }

@@ -287,6 +287,7 @@ fn publish_sync_error(store: &SharedDiagnostics, root: &Path, message: &str) {
     };
     let uri = diagnostics_core::uri_from_path(&diagnostic.path.display().to_string());
     let core_diagnostic = diagnostics_core::Diagnostic {
+        code: None,
         range: diagnostics_core::Range {
             start: diagnostics_core::Position {
                 line: diagnostic.line.saturating_sub(1),

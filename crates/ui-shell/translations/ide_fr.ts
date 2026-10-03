@@ -239,6 +239,88 @@
     </message>
 </context>
 <context>
+    <name>QDialog</name>
+    <message>
+        <source>Classes</source>
+        <translation>Classes</translation>
+    </message>
+</context>
+<context>
+    <name>QWidget</name>
+    <message>
+        <source>No tests matched.</source>
+        <translation>Aucun test ne correspond.</translation>
+    </message>
+    <message>
+        <source>%1% (%2/%3)</source>
+        <translation>%1% (%2/%3)</translation>
+    </message>
+    <message>
+        <source>All files</source>
+        <translation>Tous les fichiers</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Effacer</translation>
+    </message>
+    <message>
+        <source>Default (8000)</source>
+        <translation>Par défaut (8000)</translation>
+    </message>
+    <message>
+        <source>Document root:</source>
+        <translation>Racine des documents :</translation>
+    </message>
+    <message>
+        <source>Element</source>
+        <translation>Élément</translation>
+    </message>
+    <message>
+        <source>Host:</source>
+        <translation>Hôte :</translation>
+    </message>
+    <message>
+        <source>Lines covered</source>
+        <translation>Lignes couvertes</translation>
+    </message>
+    <message>
+        <source>Listen</source>
+        <translation>Écouter</translation>
+    </message>
+    <message>
+        <source>No coverage collected yet.</source>
+        <translation>Aucune couverture collectée pour l'instant.</translation>
+    </message>
+    <message>
+        <source>None (serve files directly)</source>
+        <translation>Aucun (servir les fichiers directement)</translation>
+    </message>
+    <message>
+        <source>Port:</source>
+        <translation>Port :</translation>
+    </message>
+    <message>
+        <source>Project root</source>
+        <translation>Racine du projet</translation>
+    </message>
+    <message>
+        <source>Router script:</source>
+        <translation>Script de routage :</translation>
+    </message>
+    <message>
+        <source>Run All with Coverage</source>
+        <translation>Tout exécuter avec la couverture</translation>
+    </message>
+    <message>
+        <source>Start Listening for PHP Debug Connections</source>
+        <translation>Écouter les connexions de débogage PHP</translation>
+    </message>
+    <message>
+        <source>localhost</source>
+        <translation>localhost</translation>
+    </message>
+</context>
+<context>
     <name>StructurePanel</name>
     <message>
         <source>A→Z</source>
@@ -516,6 +598,22 @@
 <context>
     <name>EditorTabs</name>
     <message>
+        <source>Formatting before saving...</source>
+        <translation>Mise en forme avant l'enregistrement...</translation>
+    </message>
+    <message>
+        <source>Saved without formatting: the file changed while it was being formatted</source>
+        <translation>Enregistré sans mise en forme : le fichier a changé pendant la mise en forme</translation>
+    </message>
+    <message>
+        <source>Saved without formatting</source>
+        <translation>Enregistré sans mise en forme</translation>
+    </message>
+    <message>
+        <source>Saved without formatting: %1 failed: %2</source>
+        <translation>Enregistré sans mise en forme : échec de %1 : %2</translation>
+    </message>
+    <message>
         <source>%1 — %2</source>
         <translation>%1 — %2</translation>
     </message>
@@ -610,6 +708,50 @@
     <message>
         <source>\"%1\" was modified outside the editor.</source>
         <translation>« %1 » a été modifié en dehors de l'éditeur.</translation>
+    </message>
+    <message>
+        <source>Debug '%1'</source>
+        <translation>Déboguer « %1 »</translation>
+    </message>
+    <message>
+        <source>Nothing to generate here.</source>
+        <translation>Rien à générer ici.</translation>
+    </message>
+    <message>
+        <source>Run '%1'</source>
+        <translation>Exécuter « %1 »</translation>
+    </message>
+    <message>
+        <source>Run '%1' with Coverage</source>
+        <translation>Exécuter « %1 » avec la couverture</translation>
+    </message>
+    <message>
+        <source>Show Diff</source>
+        <translation>Afficher le diff</translation>
+    </message>
+    <message>
+        <source>Select fields to generate a constructor</source>
+        <translation>Sélectionnez les champs pour générer le constructeur</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters</source>
+        <translation>Sélectionnez les champs pour générer les accesseurs</translation>
+    </message>
+    <message>
+        <source>Select fields to generate setters</source>
+        <translation>Sélectionnez les champs pour générer les mutateurs</translation>
+    </message>
+    <message>
+        <source>Select fields to generate getters and setters</source>
+        <translation>Sélectionnez les champs pour générer les accesseurs et mutateurs</translation>
+    </message>
+    <message>
+        <source>Select All</source>
+        <translation>Tout sélectionner</translation>
+    </message>
+    <message>
+        <source>Select None</source>
+        <translation>Tout désélectionner</translation>
     </message>
 </context>
 <context>
@@ -852,6 +994,10 @@
 <context>
     <name>QObject</name>
     <message>
+        <source>%1 (not installed)</source>
+        <translation>%1 (non installé)</translation>
+    </message>
+    <message>
         <source>%1 (pending)</source>
         <translation>%1 (en attente)</translation>
     </message>
@@ -1073,6 +1219,22 @@
     <message>
         <source>Analysis</source>
         <translation>Analyse</translation>
+    </message>
+    <message>
+        <source>Analysis: %1 detected, %2 without a config file</source>
+        <translation>Analyse : %1 détectés, %2 sans fichier de configuration</translation>
+    </message>
+    <message>
+        <source>Analysis: %1 detected, %2 not installed, %3 without a config file</source>
+        <translation>Analyse : %1 détectés, %2 non installés, %3 sans fichier de configuration</translation>
+    </message>
+    <message>
+        <source>%1 needs a %2</source>
+        <translation>%1 a besoin d'un %2</translation>
+    </message>
+    <message>
+        <source>%1 needs a %2 — run `%3`</source>
+        <translation>%1 a besoin d'un %2 — exécutez `%3`</translation>
     </message>
     <message>
         <source>Analysis: %1 detected</source>
@@ -2598,6 +2760,306 @@
         <source>No quick fix is available here.</source>
         <translation>Aucun correctif rapide n’est disponible ici.</translation>
     </message>
+    <message>
+        <source>&amp;New</source>
+        <translation>&amp;Nouveau</translation>
+    </message>
+    <message>
+        <source>A key is stored; type to replace it</source>
+        <translation>Une clé est enregistrée ; saisissez pour la remplacer</translation>
+    </message>
+    <message>
+        <source>Cannot create directory</source>
+        <translation>Impossible de créer le dossier</translation>
+    </message>
+    <message>
+        <source>Composer</source>
+        <translation>Composer</translation>
+    </message>
+    <message>
+        <source>Container mode:</source>
+        <translation>Mode du conteneur :</translation>
+    </message>
+    <message>
+        <source>Coverage</source>
+        <translation>Couverture</translation>
+    </message>
+    <message>
+        <source>Debug '%1'</source>
+        <translation>Déboguer « %1 »</translation>
+    </message>
+    <message>
+        <source>Detect</source>
+        <translation>Détecter</translation>
+    </message>
+    <message>
+        <source>Detecting…</source>
+        <translation>Détection…</translation>
+    </message>
+    <message>
+        <source>Dev packages</source>
+        <translation>Paquets de développement</translation>
+    </message>
+    <message>
+        <source>Directory</source>
+        <translation>Dossier</translation>
+    </message>
+    <message>
+        <source>Directory name:</source>
+        <translation>Nom du dossier :</translation>
+    </message>
+    <message>
+        <source>Dump Autoload</source>
+        <translation>Régénérer l'autoload</translation>
+    </message>
+    <message>
+        <source>Exec in a running container</source>
+        <translation>Exécuter (exec) dans un conteneur en cours d'exécution</translation>
+    </message>
+    <message>
+        <source>File</source>
+        <translation>Fichier</translation>
+    </message>
+    <message>
+        <source>Format with the formatter on save:</source>
+        <translation>Formater avec le formateur à l'enregistrement :</translation>
+    </message>
+    <message>
+        <source>Formatter:</source>
+        <translation>Formateur :</translation>
+    </message>
+    <message>
+        <source>From composer.json, else the interpreter</source>
+        <translation>Depuis composer.json, sinon l'interpréteur</translation>
+    </message>
+    <message>
+        <source>Generate...</source>
+        <translation>Générer...</translation>
+    </message>
+    <message>
+        <source>Go to Class...</source>
+        <translation>Aller à la classe...</translation>
+    </message>
+    <message>
+        <source>Go to Type Declaration</source>
+        <translation>Aller à la déclaration du type</translation>
+    </message>
+    <message>
+        <source>Include paths:</source>
+        <translation>Chemins d'inclusion :</translation>
+    </message>
+    <message>
+        <source>Insert Live Template...</source>
+        <translation>Insérer un modèle dynamique...</translation>
+    </message>
+    <message>
+        <source>Intelephense</source>
+        <translation>Intelephense</translation>
+    </message>
+    <message>
+        <source>Intelephense licence key:</source>
+        <translation>Clé de licence Intelephense :</translation>
+    </message>
+    <message>
+        <source>Interpreter:</source>
+        <translation>Interpréteur :</translation>
+    </message>
+    <message>
+        <source>Kept in the OS keychain, never in a settings file.</source>
+        <translation>Conservée dans le trousseau du système, jamais dans un fichier de paramètres.</translation>
+    </message>
+    <message>
+        <source>Language level:</source>
+        <translation>Niveau du langage :</translation>
+    </message>
+    <message>
+        <source>Language server</source>
+        <translation>Serveur de langage</translation>
+    </message>
+    <message>
+        <source>Language servers</source>
+        <translation>Serveurs de langage</translation>
+    </message>
+    <message>
+        <source>New</source>
+        <translation>Nouveau</translation>
+    </message>
+    <message>
+        <source>New %1</source>
+        <translation>Nouveau %1</translation>
+    </message>
+    <message>
+        <source>New Directory</source>
+        <translation>Nouveau dossier</translation>
+    </message>
+    <message>
+        <source>No composer.json in this project.</source>
+        <translation>Aucun composer.json dans ce projet.</translation>
+    </message>
+    <message>
+        <source>Nothing to generate here.</source>
+        <translation>Rien à générer ici.</translation>
+    </message>
+    <message>
+        <source>One path per line</source>
+        <translation>Un chemin par ligne</translation>
+    </message>
+    <message>
+        <source>Open a project first</source>
+        <translation>Ouvrez d'abord un projet</translation>
+    </message>
+    <message>
+        <source>Outdated</source>
+        <translation>Obsolètes</translation>
+    </message>
+    <message>
+        <source>PCOV</source>
+        <translation>PCOV</translation>
+    </message>
+    <message>
+        <source>PHP</source>
+        <translation>PHP</translation>
+    </message>
+    <message>
+        <source>PHP %1</source>
+        <translation>PHP %1</translation>
+    </message>
+    <message>
+        <source>PHP Built-in Server</source>
+        <translation>Serveur intégré de PHP</translation>
+    </message>
+    <message>
+        <source>PHP Console</source>
+        <translation>Console PHP</translation>
+    </message>
+    <message>
+        <source>PHP Debug</source>
+        <translation>Débogage PHP</translation>
+    </message>
+    <message>
+        <source>PHP settings</source>
+        <translation>Paramètres PHP</translation>
+    </message>
+    <message>
+        <source>Package (vendor/name, optionally :constraint):</source>
+        <translation>Paquet (vendor/name, éventuellement :contrainte) :</translation>
+    </message>
+    <message>
+        <source>Packages</source>
+        <translation>Paquets</translation>
+    </message>
+    <message>
+        <source>Paste the key to unlock premium features</source>
+        <translation>Collez la clé pour débloquer les fonctions premium</translation>
+    </message>
+    <message>
+        <source>Phpactor</source>
+        <translation>Phpactor</translation>
+    </message>
+    <message>
+        <source>Reformat Selection</source>
+        <translation>Reformater la sélection</translation>
+    </message>
+    <message>
+        <source>Refresh</source>
+        <translation>Actualiser</translation>
+    </message>
+    <message>
+        <source>Require Package</source>
+        <translation>Ajouter un paquet</translation>
+    </message>
+    <message>
+        <source>Require…</source>
+        <translation>Ajouter…</translation>
+    </message>
+    <message>
+        <source>Run '%1'</source>
+        <translation>Exécuter « %1 »</translation>
+    </message>
+    <message>
+        <source>Run '%1' with Coverage</source>
+        <translation>Exécuter « %1 » avec la couverture</translation>
+    </message>
+    <message>
+        <source>Run a new container</source>
+        <translation>Lancer un nouveau conteneur</translation>
+    </message>
+    <message>
+        <source>Run in container:</source>
+        <translation>Exécuter dans un conteneur :</translation>
+    </message>
+    <message>
+        <source>Saved without formatting: %1 failed: %2</source>
+        <translation>Enregistré sans mise en forme : échec de %1 : %2</translation>
+    </message>
+    <message>
+        <source>Scripts</source>
+        <translation>Scripts</translation>
+    </message>
+    <message>
+        <source>Server default; for example: redis, mongodb</source>
+        <translation>Valeur par défaut du serveur ; par exemple : redis, mongodb</translation>
+    </message>
+    <message>
+        <source>Show its diagnostics</source>
+        <translation>Afficher ses diagnostics</translation>
+    </message>
+    <message>
+        <source>Start Listening for PHP Debug Connections</source>
+        <translation>Écouter les connexions de débogage PHP</translation>
+    </message>
+    <message>
+        <source>Stubs:</source>
+        <translation>Stubs :</translation>
+    </message>
+    <message>
+        <source>Surround With...</source>
+        <translation>Entourer avec...</translation>
+    </message>
+    <message>
+        <source>Target default</source>
+        <translation>Valeur par défaut de la cible</translation>
+    </message>
+    <message>
+        <source>This machine</source>
+        <translation>Cette machine</translation>
+    </message>
+    <message>
+        <source>Unavailable</source>
+        <translation>Indisponible</translation>
+    </message>
+    <message>
+        <source>Update</source>
+        <translation>Mettre à jour</translation>
+    </message>
+    <message>
+        <source>Xdebug (%1)</source>
+        <translation>Xdebug (%1)</translation>
+    </message>
+    <message>
+        <source>Xdebug (off)</source>
+        <translation>Xdebug (désactivé)</translation>
+    </message>
+    <message>
+        <source>no Xdebug</source>
+        <translation>pas de Xdebug</translation>
+    </message>
+    <message>
+        <source>php (from PATH)</source>
+        <translation>php (depuis le PATH)</translation>
+    </message>
+    <message>
+        <source>Install</source>
+        <translation>Installer</translation>
+    </message>
+    <message>
+        <source>Name</source>
+        <translation>Nom</translation>
+    </message>
+    <message>
+        <source>More</source>
+        <translation>Plus</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>
@@ -2856,13 +3318,17 @@
         <source>Stop</source>
         <translation>Arrêter</translation>
     </message>
+    <message>
+        <source>Listen</source>
+        <translation>Écouter</translation>
+    </message>
+    <message>
+        <source>Start Listening for PHP Debug Connections</source>
+        <translation>Écouter les connexions de débogage PHP</translation>
+    </message>
 </context>
 <context>
     <name>SearchEverywhereDialog</name>
-    <message>
-        <source>%1    %2</source>
-        <translation>%1    %2</translation>
-    </message>
     <message>
         <source>Actions</source>
         <translation>Actions</translation>
@@ -2894,6 +3360,10 @@
     <message>
         <source>Text</source>
         <translation>Texte</translation>
+    </message>
+    <message>
+        <source>Classes</source>
+        <translation>Classes</translation>
     </message>
 </context>
 <context>
@@ -3080,6 +3550,49 @@
     <message>
         <source>Test</source>
         <translation>Test</translation>
+    </message>
+    <message>
+        <source>No tests matched.</source>
+        <translation>Aucun test ne correspond.</translation>
+    </message>
+    <message>
+        <source>Select a failed test to see why it failed.</source>
+        <translation>Sélectionnez un test en échec pour voir pourquoi il a échoué.</translation>
+    </message>
+</context>
+<context>
+    <name>CoveragePanel</name>
+    <message>
+        <source>%1% (%2/%3)</source>
+        <translation>%1% (%2/%3)</translation>
+    </message>
+    <message>
+        <source>All files</source>
+        <translation>Tous les fichiers</translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation>Effacer</translation>
+    </message>
+    <message>
+        <source>Element</source>
+        <translation>Élément</translation>
+    </message>
+    <message>
+        <source>Lines covered</source>
+        <translation>Lignes couvertes</translation>
+    </message>
+    <message>
+        <source>No coverage collected yet.</source>
+        <translation>Aucune couverture collectée pour l'instant.</translation>
+    </message>
+    <message>
+        <source>Run All with Coverage</source>
+        <translation>Tout exécuter avec la couverture</translation>
+    </message>
+    <message>
+        <source>No executable lines</source>
+        <translation>Aucune ligne exécutable</translation>
     </message>
 </context>
 </TS>

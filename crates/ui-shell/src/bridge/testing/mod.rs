@@ -31,6 +31,8 @@ use crate::bridge::errors;
 use crate::bridge::ffi;
 use crate::bridge::registry::SharedDiagnostics;
 
+mod gutter;
+
 /// This source's key in the shared store (ADR-0046): distinct from an
 /// analyzer's or a build's, so a test failure's rows for a file never
 /// clobber (or get clobbered by) either.
@@ -50,6 +52,17 @@ pub struct TestServiceRust {
     /// The framework last run, for the diagnostics `source` column and
     /// this store's key. Empty until the first run.
     framework_name: RefCell<String>,
+    /// Why the last run's framework cannot rerun from the tree (empty when
+    /// it can) — what the tree's Rerun action greys out on.
+    rerun_block: RefCell<String>,
+    /// Where the last run executed, so the paths its failures print map
+    /// back to local files (ADR-0067). `None` until the first run.
+    run_host: RefCell<Option<process_exec::host::ExecHost>>,
+    /// The filter a gutter Debug click chose, run once the PHP listener is
+    /// up (T3): Xdebug does not retry, so the run starts after it.
+    pending_debug: RefCell<Option<MarkerSelection>>,
+    /// The last coverage run's report, local paths (T5).
+    coverage: RefCell<Option<test_core::coverage::Coverage>>,
     store: SharedDiagnostics,
 }
 
@@ -82,10 +95,12 @@ fn contributed_frameworks() -> Vec<(
 /// candidate-search, the same reuse the manifest's own D7 note asks for.
 fn detect_framework(
     root: &Path,
+    settings: &app_config::Settings,
 ) -> Option<(
     plugin_host::LoadedPlugin,
     plugin_api::TestFrameworkContribution,
     PathBuf,
+    process_exec::host::ExecHost,
 )> {
     let owners = contributed_frameworks();
     let contributions: Vec<plugin_api::TestFrameworkContribution> = owners
@@ -102,10 +117,24 @@ fn detect_framework(
         &contributions,
         &detected_refs,
         test_core::SUPPORTED_OUTPUT_FORMATS,
-        |candidates| analysis_core::find_program(candidates, root),
+        |framework| {
+            let host = framework_host(framework, settings, root);
+            analysis_core::find_program_on(&framework.program_candidates, root, &host)
+        },
     )?;
     let (plugin, framework) = owners.into_iter().nth(index)?;
-    Some((plugin, framework, program))
+    let host = framework_host(&framework, settings, root);
+    Some((plugin, framework, program, host))
+}
+
+/// Where `framework` runs: the PHP interpreter's host when it requires one
+/// (ADR-0067), the project's own otherwise.
+fn framework_host(
+    framework: &plugin_api::TestFrameworkContribution,
+    settings: &app_config::Settings,
+    root: &Path,
+) -> process_exec::host::ExecHost {
+    crate::bridge::php::tool_host(framework.requires_interpreter.as_deref(), settings, root)
 }
 
 /// What `start` was asked to rerun, carried from `run_failed`/`run_node`
@@ -117,6 +146,19 @@ fn detect_framework(
 enum RerunSelection {
     Failed(Vec<test_core::TestId>),
     Node(test_core::TestId),
+    /// A test the editor named, from a gutter marker (T3).
+    Marker(MarkerSelection),
+}
+
+/// A gutter marker's test, kept until the framework's dialect is known.
+#[derive(Clone)]
+struct MarkerSelection {
+    /// The marker's PHPUnit-regex `--filter` pattern.
+    filter: String,
+    name: String,
+    is_class: bool,
+    /// The test file, absolute as the editor spells it.
+    file: String,
 }
 
 fn to_ffi_kind(kind: test_core::NodeKind) -> ffi::FfiTestNodeKind {
@@ -236,7 +278,7 @@ impl ffi::TestService {
     }
 
     pub fn run_all(self: Pin<&mut Self>) -> ffi::FfiResult {
-        self.start(None)
+        self.start(None, Vec::new(), false)
     }
 
     pub fn run_failed(self: Pin<&mut Self>) -> ffi::FfiResult {
@@ -244,22 +286,33 @@ impl ffi::TestService {
         if ids.is_empty() {
             return errors::failure(errors::CODE_REFUSED, "no failed tests to rerun");
         }
-        self.start(Some(RerunSelection::Failed(ids)))
+        self.start(Some(RerunSelection::Failed(ids)), Vec::new(), false)
+    }
+
+    /// Why a node cannot be rerun from the tree; empty when it can.
+    pub fn rerun_block(&self) -> QString {
+        QString::from(self.rerun_block.borrow().as_str())
     }
 
     pub fn run_node(self: Pin<&mut Self>, node_id: &QString) -> ffi::FfiResult {
         let id = test_core::TestId(node_id.to_string());
-        self.start(Some(RerunSelection::Node(id)))
+        self.start(Some(RerunSelection::Node(id)), Vec::new(), false)
     }
 
-    fn start(mut self: Pin<&mut Self>, selection: Option<RerunSelection>) -> ffi::FfiResult {
+    fn start(
+        mut self: Pin<&mut Self>,
+        selection: Option<RerunSelection>,
+        mut env: Vec<(String, String)>,
+        with_coverage: bool,
+    ) -> ffi::FfiResult {
         if !self.runs.borrow().is_empty() {
             return errors::failure(errors::CODE_REFUSED, "a test run is already in progress");
         }
         let Some(root) = current_project_root() else {
             return errors::failure(errors::CODE_NO_PROJECT, "no project is open");
         };
-        let Some((plugin, framework, program)) = detect_framework(&root) else {
+        let settings = crate::bridge::convert::load_resolved_settings();
+        let Some((plugin, framework, program, host)) = detect_framework(&root, &settings) else {
             return errors::failure(
                 errors::CODE_REFUSED,
                 "no installed test framework is contributed for this project",
@@ -287,6 +340,7 @@ impl ffi::TestService {
             self.tree.borrow_mut().reset();
         }
         *self.framework_name.borrow_mut() = framework.name.clone();
+        *self.run_host.borrow_mut() = Some(host.clone());
         // Diagnostics from the framework this run uses are recomputed as
         // events arrive (`republish`); a stale row from a source this
         // project no longer contributes would otherwise never be cleared.
@@ -300,6 +354,9 @@ impl ffi::TestService {
         // Surefire's `-Dtest=` and Gradle's `--tests` each need their own
         // pattern shape built from the node being rerun, not a PHPUnit-
         // shaped one that would compile fine and match nothing.
+        *self.rerun_block.borrow_mut() =
+            test_core::filter::tree_rerun_block(framework.filter_dialect.as_deref())
+                .unwrap_or_default();
         let Ok(dialect) =
             test_core::filter::parse_filter_dialect(framework.filter_dialect.as_deref())
         else {
@@ -308,8 +365,16 @@ impl ffi::TestService {
                 "this test framework's filter-dialect is not one this build understands",
             );
         };
+        let tree_rerun = matches!(
+            selection,
+            Some(RerunSelection::Failed(_) | RerunSelection::Node(_))
+        );
+        if let Some(reason) = test_core::filter::tree_rerun_refusal(dialect).filter(|_| tree_rerun)
+        {
+            return errors::failure(errors::CODE_REFUSED, reason);
+        }
         let patterns = match &selection {
-            None => Vec::new(),
+            None | Some(RerunSelection::Marker(_)) => Vec::new(),
             Some(RerunSelection::Failed(ids)) => test_core::filter::for_many(ids, dialect),
             Some(RerunSelection::Node(id)) => {
                 test_core::filter::for_node(&self.tree.borrow(), id, dialect)
@@ -317,12 +382,60 @@ impl ffi::TestService {
         };
 
         let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
-        args = test_core::filter::apply_filter(
-            &args,
-            framework.filter_flag.as_deref(),
-            framework.filter_template.as_deref(),
-            &patterns,
-        );
+        args = match &selection {
+            Some(RerunSelection::Marker(marker)) => {
+                // The file goes project-relative: the run's working directory
+                // is the project root on every host.
+                let relative = Path::new(&marker.file)
+                    .strip_prefix(&root)
+                    .ok()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"));
+                let run = test_core::filter::MarkerRun {
+                    filter: &marker.filter,
+                    name: &marker.name,
+                    is_class: marker.is_class,
+                    file: relative.as_deref(),
+                };
+                match test_core::filter::marker_args(
+                    &args,
+                    dialect,
+                    framework.filter_flag.as_deref(),
+                    framework.filter_template.as_deref(),
+                    &run,
+                ) {
+                    Ok(args) => args,
+                    Err(reason) => return errors::failure(errors::CODE_REFUSED, reason),
+                }
+            }
+            _ => test_core::filter::apply_filter(
+                &args,
+                framework.filter_flag.as_deref(),
+                framework.filter_template.as_deref(),
+                &patterns,
+            ),
+        };
+        if with_coverage {
+            if framework.coverage_args.is_empty() {
+                return errors::failure(
+                    errors::CODE_REFUSED,
+                    "this test framework cannot collect coverage",
+                );
+            }
+            args.extend(test_core::coverage::args(&framework.coverage_args));
+            env.extend(test_core::coverage::env());
+            // A report from an earlier run must never pass for this one's.
+            let _ = std::fs::remove_file(root.join(test_core::coverage::REPORT_PATH));
+        }
+        // A PHP framework runs under the configured interpreter, which is
+        // what makes it run inside that interpreter's container.
+        let (program, args) = match framework.requires_interpreter.as_deref() {
+            Some("php") => {
+                let interpreter = settings_model::php::resolve(&settings).interpreter;
+                let (program, prefix) = analysis_core::php_invocation(&program, Some(&interpreter));
+                (program, [prefix, args].concat())
+            }
+            _ => (program, args),
+        };
 
         let Ok(output_format) = test_core::parse_output_format(&framework.output_format) else {
             return errors::failure(
@@ -346,17 +459,37 @@ impl ffi::TestService {
                 ansi: run_core::AnsiStripper::default(),
             };
             let program_str = program.to_string_lossy().into_owned();
-            let result = test_core::run(
+            let result = test_core::run_on_env(
+                &host,
                 &handle,
                 &program_str,
                 &args,
+                &env,
                 &root,
                 output_format,
                 report_glob.as_deref(),
                 &mut sink,
             );
+            let coverage = with_coverage.then(|| {
+                let xml = std::fs::read_to_string(root.join(test_core::coverage::REPORT_PATH));
+                xml.ok()
+                    .and_then(|xml| test_core::coverage::parse_clover(&xml).ok())
+                    .map(|coverage| coverage.map_paths_from(&host))
+            });
+            let matched_nothing = result
+                .as_ref()
+                .is_ok_and(|code| handle.matched_nothing(*code));
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
+                if let Some(coverage) = coverage {
+                    if coverage.is_none() {
+                        service.as_mut().test_output_appended(QString::from(
+                            "\nNo coverage report was written. Is Xdebug (coverage mode) or PCOV installed?\n",
+                        ));
+                    }
+                    *service.coverage.borrow_mut() = coverage;
+                    service.as_mut().coverage_changed();
+                }
                 let (ok, message) = match result {
                     Ok(_) => (true, String::new()),
                     Err(test_core::RunFailure::NotFound) => {
@@ -364,9 +497,11 @@ impl ffi::TestService {
                     }
                     Err(test_core::RunFailure::Io(msg)) => (false, msg),
                 };
-                service
-                    .as_mut()
-                    .test_run_finished(ok, QString::from(message.as_str()));
+                service.as_mut().test_run_finished(
+                    ok,
+                    matched_nothing,
+                    QString::from(message.as_str()),
+                );
             });
         });
         ffi::FfiResult::default()
@@ -396,7 +531,13 @@ fn republish(service: &ffi::TestService) {
     let Some(work_dir) = current_project_root() else {
         return;
     };
-    let grouped = test_core::diagnostics_by_file(&service.tree.borrow(), &framework, &work_dir);
+    let host = service
+        .run_host
+        .borrow()
+        .clone()
+        .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&work_dir));
+    let grouped =
+        test_core::diagnostics_by_file_on(&host, &service.tree.borrow(), &framework, &work_dir);
     for (uri, diagnostics) in grouped {
         store.replace(&key, &uri, diagnostics);
     }

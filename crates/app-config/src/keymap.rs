@@ -234,6 +234,31 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Ctrl+Alt+L",
     },
     ActionDef {
+        // No default: Reformat Code already formats a selection.
+        id: "code.reformatSelection",
+        label: "Reformat Selection",
+        category: "Code",
+        default_shortcut: "",
+    },
+    ActionDef {
+        id: "code.generate",
+        label: "Generate...",
+        category: "Code",
+        default_shortcut: "Alt+Insert",
+    },
+    ActionDef {
+        id: "code.insertLiveTemplate",
+        label: "Insert Live Template...",
+        category: "Code",
+        default_shortcut: "Ctrl+J",
+    },
+    ActionDef {
+        id: "code.surroundWith",
+        label: "Surround With...",
+        category: "Code",
+        default_shortcut: "Ctrl+Alt+T",
+    },
+    ActionDef {
         id: "code.showIntentions",
         label: "Show Intention Actions",
         category: "Code",
@@ -313,7 +338,8 @@ pub const ACTIONS: &[ActionDef] = &[
         id: "view.projectTree",
         label: "Project",
         category: "View",
-        default_shortcut: "Ctrl+Alt+T",
+        // JetBrains' own slot for the Project window; Ctrl+Alt+T is Surround With.
+        default_shortcut: "Alt+1",
     },
     ActionDef {
         id: "view.terminal",
@@ -346,6 +372,12 @@ pub const ACTIONS: &[ActionDef] = &[
         label: "Search Everywhere...",
         category: "View",
         default_shortcut: "Ctrl+Shift+E",
+    },
+    ActionDef {
+        id: "view.goToClass",
+        label: "Go to Class...",
+        category: "View",
+        default_shortcut: "Ctrl+N",
     },
     ActionDef {
         id: "view.goToFile",
@@ -484,6 +516,12 @@ pub const ACTIONS: &[ActionDef] = &[
         label: "Find Usages",
         category: "Navigate",
         default_shortcut: "Alt+F7",
+    },
+    ActionDef {
+        id: "navigate.goToTypeDeclaration",
+        label: "Go to Type Declaration",
+        category: "Navigate",
+        default_shortcut: "Ctrl+Shift+B",
     },
     ActionDef {
         id: "navigate.goToImplementation",
@@ -801,6 +839,13 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "View",
         default_shortcut: "",
     },
+    // PHP parity plan I8: the Composer dock. Unbound like `view.build`.
+    ActionDef {
+        id: "view.composer",
+        label: "Composer",
+        category: "View",
+        default_shortcut: "",
+    },
     // database-tools-plan F2.5: the Database dock. Unbound like
     // `view.build`.
     ActionDef {
@@ -818,6 +863,13 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         id: "view.tests",
         label: "Tests",
+        category: "View",
+        default_shortcut: "",
+    },
+    // PHP parity plan T5: opens the Coverage dock. Unbound like `view.tests`.
+    ActionDef {
+        id: "view.coverage",
+        label: "Coverage",
         category: "View",
         default_shortcut: "",
     },
@@ -864,6 +916,12 @@ pub const ACTIONS: &[ActionDef] = &[
         label: "Select Run Configuration...",
         category: "Run",
         default_shortcut: "Alt+Shift+F10",
+    },
+    ActionDef {
+        id: "run.phpListen",
+        label: "Start Listening for PHP Debug Connections",
+        category: "Run",
+        default_shortcut: "",
     },
     ActionDef {
         id: "run.showRunningList",
@@ -938,7 +996,8 @@ pub const ACTIONS: &[ActionDef] = &[
         id: "database.addRow",
         label: "Add Row",
         category: "Database",
-        default_shortcut: "Alt+Insert",
+        // Alt+Insert is Generate in the editor.
+        default_shortcut: "Ctrl+Alt+Insert",
     },
     ActionDef {
         id: "database.deleteRow",
@@ -1060,12 +1119,16 @@ impl Keymap {
 
     /// The shortcut `id` currently responds to: the user's override if it has
     /// one, otherwise the shipped default. Empty means unbound — either
-    /// shipped that way or deliberately cleared.
+    /// shipped that way or deliberately cleared. A default that another
+    /// action's override holds is left unbound.
     pub fn shortcut_for(&self, id: &str) -> &str {
         if let Some(over) = self.overrides.get(id) {
             return over;
         }
-        action(id).map(|a| a.default_shortcut).unwrap_or("")
+        action(id)
+            .map(|a| a.default_shortcut)
+            .filter(|default| !self.overrides.values().any(|over| over == default))
+            .unwrap_or("")
     }
 
     /// Whether `id` still has its shipped default shortcut. An override that
@@ -1272,9 +1335,11 @@ mod tests {
             "gone.action".to_string(),
             "Ctrl+K".to_string(),
         )]));
-        map.assign("also.gone", "Ctrl+J");
+        map.assign("also.gone", "Ctrl+Alt+Shift+9");
         assert_eq!(map.shortcut_for("also.gone"), "");
-        assert!(map.conflicts("view.goToLine", "Ctrl+J").is_empty());
+        assert!(map
+            .conflicts("view.goToLine", "Ctrl+Alt+Shift+9")
+            .is_empty());
     }
 
     #[test]
@@ -1431,3 +1496,5 @@ mod tests {
         ids
     }
 }
+#[cfg(test)]
+mod override_precedence_tests;

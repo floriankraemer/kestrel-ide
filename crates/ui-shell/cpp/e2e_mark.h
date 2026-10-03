@@ -18,6 +18,10 @@
 void e2eMark(const char *json);
 void e2eMark(const QString &json);
 
+// Whether marks are being recorded (an E2E run): a view skips computing what
+// only a mark would carry, such as one rect per row of a large list.
+bool e2eMarksEnabled();
+
 // Call once, as early as possible in `run_app()`, so `e2eElapsedMs()` has a
 // process-entry origin to measure from. A no-op call before this (or when
 // `IDE_E2E_EVENTS` is unset) simply means `e2eElapsedMs()` answers 0 — never
@@ -30,7 +34,7 @@ void e2eMarkStartupBegin();
 // time-to-shown from the same origin (fast project open plan, PR1).
 qint64 e2eElapsedMs();
 
-// Reports every action in a menu — label, enabled state and screen rect —
+// Reports every action in a menu — label, enabled and checked state, and screen rect —
 // once the menu is actually laid out.
 //
 // A popup menu is the one widget an E2E flow cannot locate any other way:

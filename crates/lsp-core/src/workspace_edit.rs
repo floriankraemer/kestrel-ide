@@ -53,7 +53,7 @@ pub struct DocumentEdits {
 impl DocumentEdits {
     /// See [`ResourceOp::retranslate`] — same rule, one field.
     fn retranslate(&mut self, host: &process_exec::host::ExecHost) {
-        if host.is_remote() {
+        if host.runs_remotely() {
             if let Some(p) = crate::manager::path_for(host, &self.uri) {
                 self.path = p;
             }
@@ -205,7 +205,7 @@ impl ResourceOp {
     /// from `uri`/`old_uri`/`new_uri` through `host` instead. A no-op on
     /// `ExecHost::Local`.
     fn retranslate(&mut self, host: &process_exec::host::ExecHost) {
-        if !host.is_remote() {
+        if !host.runs_remotely() {
             return;
         }
         match self {
@@ -1121,6 +1121,24 @@ mod tests {
         gate.begin(4);
         gate.cancel();
         assert!(!gate.accept(4));
+    }
+
+    #[test]
+    fn a_rename_gate_is_not_rearmed_by_a_separate_on_type_gate() {
+        let (mut rename, mut on_type) = (EditGate::default(), EditGate::default());
+        rename.begin(10);
+        // The user types a trigger character: revision 11, on-type begins.
+        on_type.begin(11);
+
+        // The rename answer was computed at 10; the buffer is at 11.
+        assert!(!rename.accept(11), "the rename's edits are stale");
+        assert!(on_type.accept(11));
+
+        // Sharing one gate is the bug: the second `begin` hides the staleness.
+        let mut shared = EditGate::default();
+        shared.begin(10);
+        shared.begin(11);
+        assert!(shared.accept(11));
     }
 
     #[test]

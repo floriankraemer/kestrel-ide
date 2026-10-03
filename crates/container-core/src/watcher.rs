@@ -560,6 +560,7 @@ mod tests {
     fn events_child_runs_the_invocation_with_its_argv_and_env() {
         use std::io::Read;
         let invocation = Invocation {
+            compose_override: None,
             program: "sh".to_string(),
             prefix_args: vec![
                 "-c".to_string(),

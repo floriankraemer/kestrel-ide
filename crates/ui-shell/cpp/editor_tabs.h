@@ -11,6 +11,8 @@
 #include <QPair>
 #include <QPoint>
 #include <QPointer>
+#include <QSet>
+#include <QCoreApplication>
 #include <QString>
 #include <QStringList>
 #include <functional>
@@ -46,7 +48,11 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEdi
                     ContainerService *containerService);
 // D2-5/D3: gives EditorTabs the DebugService whose breakpoints its gutter
 // shows and toggles (editor_tabs_debug.cpp).
-void wireDebugService(DebugService *debugService, EditorTabs *editorTabs);
+void wireDebugService(DebugService *debugService, EditorTabs *editorTabs, TestService *testService);
+// PHP parity T3: gives EditorTabs the TestService whose per-test gutter
+// markers it shows, and joins a debugged test's listener to its run
+// (editor_tabs_run.cpp). Called from `wireDebugService`.
+void wireTestGutter(TestService *testService, DebugService *debugService, EditorTabs *editorTabs);
 // ADR-0046: builds the one DiagnosticsService, gives EditorTabs the copy its
 // squiggles read, and refreshes them whenever any source's rows in the
 // shared store changed (editor_tabs_lsp.cpp). `analysisService` is the PHP
@@ -87,6 +93,10 @@ constexpr int kTabKindImage = 3;
 // editor_tabs.cpp holds the rest — the tab surface itself.
 class EditorTabs : public QObject
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QObject`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(EditorTabs)
+
 public:
     // `containerService`/`databaseService` are C3's/F2.3's Inspect/Files-open
     // and Go to DDL virtual tabs (`virtualDocumentOpened`, wired just like
@@ -177,6 +187,11 @@ public:
     // when no tab is open, which no live buffer ever reports.
     int documentRevision() const;
 
+    // ADR-0003: keystrokes stay out of the rope, so a Rust reader of the
+    // current tab's text (Reformat Code through a tool, "Fix with phpcbf")
+    // would see the last saved or synced text. Forwards the live text first.
+    void syncLiveText();
+
     // The selection, or the caret twice when there is none, as the protocol
     // line/character pairs a code-action request is made about.
     QPair<QPair<quint32, quint32>, QPair<quint32, quint32>> selectionRange() const;
@@ -201,6 +216,10 @@ public:
     // Static because it touches nothing but the editor it is handed —
     // `FindBar` splices its replacements through it too (F0-18).
     static void applyEditsTo(QPlainTextEdit *editor, const ::rust::Vec<FfiTextEdit> &edits);
+    // ADR-0072: splice an expanded live template and select its first stop.
+    // False when `expansion` expanded nothing.
+    bool applyTemplateExpansion(CodeEditor *editor, const FfiTemplateExpansion &expansion);
+    QString pickTemplate(CodeEditor *editor, const ::rust::Vec<FfiTemplateItem> &items);
 
     // RF12: where the pointer last dwelled, so the index leg of hover can
     // be started from outside this class when the server declines.
@@ -292,6 +311,15 @@ public:
     // asked explicitly — and opens the grouped popup as soon as the answer
     // lands, whether or not the bulb ends up shown for it.
     void showIntentionsNow();
+    // ADR-0072: Ctrl+J and Ctrl+Alt+T. Each lists what Rust says fits (the
+    // caret's place / a selection), and expands the chosen live template.
+    void insertLiveTemplateNow();
+    // ADR-0072: Alt+Insert. Lists the generators for the PHP class at the
+    // caret (Rust's answer) and the language servers' source/refactor
+    // actions; with no server in play the local entries show after a short
+    // wait for one.
+    void showGenerateNow();
+    void surroundWithTemplateNow();
     // H3: `code.applyPreferredFix` (Alt+Shift+Return).
     void applyPreferredFixNow();
     // The user's bindings for the card's fix row, pushed by whoever owns the keymap.
@@ -617,10 +645,14 @@ public:
     // configuration..." opens the run-config dialog, which needs both.
     void setContainerRunContext(RunConfigEditor *runConfigEditor, ContainerService *containerService);
     void setDebugService(DebugService *debugService);
+    void setTestService(TestService *testService);
     // ADR-0046: only `applyDiagnostics` (fired off `wireDiagnosticsService`'s
     // signals, never from the constructor) reads this, so retrofitting it
     // post-construction is safe, unlike `ProblemsPanel`'s own copy.
     void setDiagnosticsService(DiagnosticsService *diagnosticsService);
+    // PHP parity P0-4: forwards the debounced buffer change and every save to
+    // the analyzers; which of them fire is Rust's call.
+    void setAnalysisService(AnalysisService *analysisService);
 
     // D2-5: push this file's breakpoints into its gutter, and turn a gutter
     // click into `DebugService::toggleBreakpoint`.
@@ -649,6 +681,8 @@ public:
     // launch this editor's file through `RunService::runContext`, or show
     // the Dockerfile/compose popup (C5/C6) scoped to that line.
     void requestRunFor(CodeEditor *editor, int line = 0);
+    // PHP parity T3: the Run/Debug popup of the test marker on `line`.
+    void showTestMarkerMenu(CodeEditor *editor, const QString &path, int line);
 
     // C6: `ContainerService::composeLenses` for a compose file, pushed into
     // the editor the same way `onCodeLensesReady` pushes a server's.
@@ -827,6 +861,16 @@ private:
     // the session — Rust owns that flag (ADR-0003).
     bool confirmCloseTab(QTabWidget *group, int index);
 
+    // Ctrl+S: starts a format-on-save on a worker when the file has a
+    // formatter (the write follows in `onSaveFormatted`), else saves now.
+    void beginSave(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdit *editor);
+    // `EditorOps::saveFormatted`: write the tab with what the formatter gave.
+    void onSaveFormatted(quint64 tabId);
+    // Splice `edits` into the buffer, say why formatting was skipped if it
+    // was, and write the file.
+    bool writeSave(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdit *editor,
+                   const FfiSaveEdits &edits);
+
     void requestCloseTab(QTabWidget *group, int index);
 
     // L3: line:col + language for whatever tab is current, or blank when
@@ -883,6 +927,11 @@ private:
     // positions it at the request's caret line and, for an explicit
     // request, opens the popup immediately.
     void onIntentionsReady();
+    void showGenerateMenu(bool withServerActions);
+    // Shows `message` in the main window's status bar; empty shows nothing.
+    void showStatusNotice(const QString &message);
+    static QString pickerHeading(FfiGenerateKind kind);
+    void runGenerator(CodeEditor *editor, FfiGenerateKind kind, const QString &title);
 
     // The grouped popup itself, shared by the bulb's click and Alt+Return.
     // `anchor` (global) places it there instead of at the bulb/pointer — the
@@ -899,6 +948,7 @@ private:
     // after it pauses. `showing` is `signatureTipVisible_`; `explicitRequest`
     // is Ctrl+P's, which asks again even without a trigger character.
     void requestSignatureHelpFor(CodeEditor *editor, bool explicitRequest = false);
+    void requestOnTypeFormattingFor(CodeEditor *editor, const QString &typed);
 
     void onSignatureHelpReady();
 
@@ -1025,6 +1075,7 @@ private:
     // ADR-0046: null until `wireDiagnosticsService` sets it — see that
     // setter's own comment for why this is safe.
     DiagnosticsService *diagnosticsService_ = nullptr;
+    AnalysisService *analysisService_ = nullptr;
     // F3-16: null for a project with no Git — set once, after construction,
     // the same retrofit shape setContextMenuCallback uses.
     VcsService *vcsService_ = nullptr;
@@ -1034,6 +1085,7 @@ private:
     RunConfigEditor *runConfigEditor_ = nullptr;
     ContainerService *containerService_ = nullptr;
     DebugService *debugService_ = nullptr;
+    TestService *testService_ = nullptr;
     // F3-18: vcs.annotate's state, applied to whichever editor is active.
     bool annotateEnabled_ = false;
     // R7: notified whenever `annotateEnabled_` changes, so the VCS menu's
@@ -1056,6 +1108,9 @@ private:
     // delete the page; nothing here re-derives from `diffPlaceholders_`'s
     // keys since that map answers "is tabId diffing", not "which widget".
     QHash<quint64, QPointer<DiffViewPage>> diffPages_;
+    // Tabs whose "modified outside the editor" prompt is open: a burst of
+    // watcher events for one write asks once, not once per event.
+    QSet<quint64> externalChangePrompts_;
     // Null in a window built without a Diff dock (see `setDiffPanel`).
     DiffPanel *diffPanel_ = nullptr;
     std::function<void()> revealDiffDock_;
@@ -1096,6 +1151,10 @@ private:
     CodeEditor *intentionsEditor_ = nullptr;
     int intentionsDocPos_ = 0;
     bool intentionsPending_ = false;
+    // Alt+Insert is waiting for the servers' answer; `generateToken_` retires
+    // the fallback timer of a request that has since been answered.
+    bool generatePending_ = false;
+    quint64 generateToken_ = 0;
     // H3: `code.applyPreferredFix` with no primary fix on a visible card
     // asked for the caret's intentions; apply their primary fix on arrival.
     bool applyPreferredPending_ = false;

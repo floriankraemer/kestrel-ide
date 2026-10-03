@@ -3,6 +3,7 @@ DOCKERFILE := docker/Dockerfile
 LINUX_IMAGE := ide-linux-builder
 LSP_IMAGE := ide-lsp-conformance
 JVM_IMAGE := ide-linux-jvm
+PHP_IMAGE := ide-linux-php
 # Named volumes, not bind mounts: the crate registry and the ccache object
 # store must outlive `--rm`, and neither belongs in the source tree. Without
 # them every container start re-downloads the registry and recompiles every
@@ -36,8 +37,14 @@ RUN_LINUX = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(LINUX_IM
 # build/.gradle/target directories never end up root-owned on the host.
 RUN_JVM = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(JVM_IMAGE)
 
+# Same again for the linux-php image. HOME is the image's vscode-php-debug
+# tree (`-e` after DOCKER_USER's own `HOME=/tmp` wins), so the debug adapter's
+# `$HOME/.vscode/extensions` auto-locate is what the flows exercise; Composer
+# and its cache live under the fixed /opt/php-cache the stage sets.
+RUN_PHP = $(DOCKER) run --rm --init $(DOCKER_USER) -e HOME=/opt/vscode-home $(DOCKER_MOUNTS)
+
 .PHONY: help all sweep test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
-	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci test-db db-ci
+	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci linux-php-image test-php php-ci test-php-container php-container-ci test-db db-ci
 
 .DEFAULT_GOAL := help
 
@@ -108,6 +115,50 @@ jvm-ci: ## Inner half of `test-jvm` — run inside the image
 	cargo nextest run -p test-core --features jvm-integration
 	cargo build -p app
 	IDE_E2E_JVM=1 $(E2E_XVFB) cargo test -p app --test e2e build_tools:: -- --ignored --test-threads=1 --nocapture
+
+# PHP parity plan E3 (ADR-0066): the nightly `php_real` flows against real
+# PHP 8.3, Composer, Intelephense, Phpactor, Xdebug and vscode-php-debug.
+# Gated `IDE_E2E_PHP=1` at runtime like `build_tools` above, so `e2e-ci`'s own
+# run of the whole binary skips them silently.
+linux-php-image: ## Build the linux-php image (linux-builder + PHP 8.3, Composer, Intelephense, Phpactor, vscode-php-debug)
+	$(DOCKER) build --target linux-php -t $(PHP_IMAGE) -f $(DOCKERFILE) .
+
+test-php: linux-php-image sweep ## Run the real-toolchain PHP E2E flows (a-c) in the linux-php image
+	$(RUN_PHP) $(PHP_IMAGE) $(MAKE) php-ci
+
+php-ci: ## Inner half of `test-php` — run inside the linux-php image
+	cargo build -p app
+	cargo build --bin stub_server -p lsp-core
+	cargo build --bin stub_analyzer -p analysis-core
+	cargo build --bin stub_engine -p container-core
+	cargo build --bin stub_adapter -p dap-core
+	IDE_E2E_PHP=1 $(E2E_XVFB) cargo test -p app --test e2e php_real:: -- --ignored --test-threads=1 --nocapture
+
+# Flow d (the container interpreter): the test container drives the host's
+# Docker through its socket, so the project must sit at the *same* path on the
+# host and in the test container (a bind mount the inner `docker compose exec`
+# resolves on the host). `PHP_E2E_DIR` is that path; docker/php-compose.yml
+# mounts it into the long-running `php` service the IDE `exec`s into.
+PHP_E2E_DIR ?= /tmp/ide-php-e2e
+test-php-container: linux-php-image sweep ## Run the container-interpreter PHP flow (needs the host Docker socket)
+	mkdir -p "$(PHP_E2E_DIR)" && chmod 0777 "$(PHP_E2E_DIR)"
+	IDE_PHP_E2E_DIR="$(PHP_E2E_DIR)" docker compose -f docker/php-compose.yml up -d --wait
+	$(RUN_PHP) --group-add $$(stat -c %g /var/run/docker.sock) \
+		-v /var/run/docker.sock:/var/run/docker.sock \
+		-v "$(PHP_E2E_DIR)":"$(PHP_E2E_DIR)" \
+		-e TMPDIR="$(PHP_E2E_DIR)" -e IDE_PHP_E2E_DIR="$(PHP_E2E_DIR)" -e IDE_E2E_PHP_CONTAINER=1 \
+		$(PHP_IMAGE) $(MAKE) php-container-ci; \
+		status=$$?; \
+		IDE_PHP_E2E_DIR="$(PHP_E2E_DIR)" docker compose -f docker/php-compose.yml down -v; \
+		exit $$status
+
+php-container-ci: ## Inner half of `test-php-container` — run inside the linux-php image
+	cargo build -p app
+	cargo build --bin stub_server -p lsp-core
+	cargo build --bin stub_analyzer -p analysis-core
+	cargo build --bin stub_engine -p container-core
+	cargo build --bin stub_adapter -p dap-core
+	IDE_E2E_PHP=1 $(E2E_XVFB) cargo test -p app --test e2e php_real::e2e_php_container -- --ignored --test-threads=1 --nocapture
 
 # Database Tools' real-server suite (docs/architecture/db-integration.md).
 # F1 lands PostgreSQL only, in `linux-builder` itself (no `linux-db` image
@@ -185,6 +236,7 @@ e2e-ci: ## Inner half of `e2e` — run inside the builder image
 	cargo build --bin stub_server -p lsp-core
 	cargo build --bin stub_analyzer -p analysis-core
 	cargo build --bin stub_engine -p container-core
+	cargo build --bin stub_adapter -p dap-core
 	$(E2E_XVFB) cargo test -p app --test e2e -- --ignored --test-threads=1 --nocapture
 
 # Burn-in: `make e2e-repeat TEST=core::e2e_open_project_edit_save N=20` (a
@@ -197,6 +249,7 @@ e2e-repeat: linux-image ## Repeat one E2E flow N times: make e2e-repeat TEST=<mo
 	$(RUN_LINUX) sh -c 'cargo build -p app && cargo build --bin stub_server -p lsp-core && \
 		cargo build --bin stub_analyzer -p analysis-core && \
 		cargo build --bin stub_engine -p container-core && \
+		cargo build --bin stub_adapter -p dap-core && \
 		for i in $$(seq 1 $(N)); do \
 		echo "--- run $$i/$(N) ---"; \
 		$(E2E_XVFB) cargo test -p app --test e2e -- --ignored --exact \

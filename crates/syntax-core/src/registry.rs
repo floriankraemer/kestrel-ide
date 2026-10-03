@@ -41,6 +41,18 @@ pub struct QuerySet<S = &'static str> {
     pub injections: Option<S>,
 }
 
+impl QuerySet {
+    /// No queries at all; a row names only the ones it ships.
+    pub const NONE: QuerySet = QuerySet {
+        highlights: None,
+        locals: None,
+        folds: None,
+        tags: None,
+        inherits: None,
+        injections: None,
+    };
+}
+
 fn borrow<S: AsRef<str>>(field: &Option<S>) -> Option<&str> {
     field.as_ref().map(AsRef::as_ref)
 }
@@ -71,7 +83,8 @@ pub struct LanguageDef {
     pub name: &'static str,
     /// Extensions without the leading dot, lowercase. Collisions between
     /// languages are legal and resolve first-match-wins in catalog order
-    /// — see [`LanguageRegistry::language_for_path`].
+    /// — see [`LanguageRegistry::language_for_path`]. An extension may be
+    /// compound (`blade.php`); it then outranks any shorter one.
     pub extensions: &'static [&'static str],
     /// Whole file names for extensionless languages (`Dockerfile`,
     /// `Makefile`). Matched before extensions, case-sensitively, and once
@@ -405,16 +418,18 @@ impl LanguageRegistry {
             .map(|index| Language(index as u16))
     }
 
-    /// Which language highlights `path`. Three steps, in this order, and
+    /// Which language highlights `path`. Four steps, in this order, and
     /// within each step the first match in catalog order wins:
     ///
     /// 1. the whole file name against `filenames`, case-sensitively;
-    /// 2. the extension against `extensions`, lowercased;
-    /// 3. the file name with its final `.suffix` removed, against
+    /// 2. the file name's tail against compound extensions (`blade.php`),
+    ///    lowercased — so `home.blade.php` is Blade, not PHP;
+    /// 3. the extension against `extensions`, lowercased;
+    /// 4. the file name with its final `.suffix` removed, against
     ///    `filenames` again — `Dockerfile.dev`, `Makefile.local`,
     ///    `.env.local`.
     ///
-    /// Step 3 is last on purpose: `Dockerfile.md` is Markdown, because a
+    /// Step 4 is last on purpose: `Dockerfile.md` is Markdown, because a
     /// real extension describes the file's contents and a stage suffix
     /// does not. It re-checks only `filenames`, never `extensions`, so it
     /// widens the extensionless languages and cannot make `Cargo.lock.bak`
@@ -449,7 +464,15 @@ impl LanguageRegistry {
                 .then(|| defs().find(|(_, d)| d.filenames().any(|n| n == name)))
                 .flatten()
         };
+        let lowercase_name = file_name.to_lowercase();
+        let compound = || {
+            defs().find(|(_, d)| {
+                d.extensions()
+                    .any(|e| e.contains('.') && lowercase_name.ends_with(&format!(".{e}")))
+            })
+        };
         let matched = by_name(&file_name)
+            .or_else(compound)
             .or_else(|| {
                 (!extension.is_empty())
                     .then(|| defs().find(|(_, d)| d.extensions().any(|e| e == extension)))

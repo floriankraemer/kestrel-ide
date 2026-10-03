@@ -95,6 +95,7 @@ impl Fixture {
 
 fn config() -> ServerConfig {
     ServerConfig {
+        id: LANG.into(),
         language_id: LANG.into(),
         name: "rust-analyzer".into(),
         command: "rust-analyzer".into(),
@@ -102,6 +103,11 @@ fn config() -> ServerConfig {
         enabled: true,
         settings_section: None,
         settings: serde_json::Value::Null,
+        initialization_options: serde_json::Value::Null,
+        diagnostics: true,
+        posix_only: false,
+        exec: lsp_core::catalog::ServerExec::Host,
+        priority: 0,
         source: lsp_core::catalog::ServerSource::Builtin,
     }
 }

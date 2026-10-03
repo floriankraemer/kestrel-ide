@@ -1,0 +1,5 @@
+// Harness fixture (ADR-0071): body-only PHP, no `<?php` tag.
+function greet(string $name): string
+{
+    return "hello, " . $name;
+}

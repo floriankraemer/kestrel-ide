@@ -19,6 +19,7 @@ mod lazy_tree;
 mod live_buffer;
 mod minimap;
 mod panes;
+mod php_real;
 mod preview;
 mod run;
 mod scope;

@@ -10,8 +10,7 @@
 //! anything starts.
 
 use app_config::ContainerSettings;
-use container_core::connection::{ConnectionConfig, Engine, Invocation};
-use container_core::target::{self, SimpleLaunch, TargetError, WrappedLaunch};
+use container_core::target::{self, invocation_for, SimpleLaunch, TargetError, WrappedLaunch};
 
 use crate::before_launch::BeforeLaunchTask;
 use crate::config::{LaunchSpec, RunConfig};
@@ -66,23 +65,6 @@ fn find_target<'a>(
     target_id: &str,
 ) -> Option<&'a app_config::ContainerTargetSetting> {
     containers.targets.iter().find(|t| t.id == target_id)
-}
-
-fn invocation_for(containers: &ContainerSettings, connection_id: &str) -> Invocation {
-    let Some(row) = containers
-        .connections
-        .iter()
-        .find(|c| c.id == connection_id)
-    else {
-        return ConnectionConfig {
-            engine: Engine::Docker,
-            kind: container_core::connection::ConnectionKind::Auto,
-            executable: None,
-            compose_executable: None,
-        }
-        .invocation();
-    };
-    ConnectionConfig::from_setting(row).invocation()
 }
 
 /// Check `config.run_on` ahead of launching, the same role
@@ -145,10 +127,16 @@ pub fn wrap_process_spec(
     target_id: &str,
     context: &MacroContext,
     containers: &ContainerSettings,
+    extra_ports: &[app_config::container_run::PortBinding],
 ) -> Result<Option<LaunchSpec>, TargetLaunchError> {
     let Some(target) = find_target(containers, target_id) else {
         return Ok(None);
     };
+    // Ports the launch itself needs published (a PHP server's), on top of
+    // the target's own.
+    let mut target = target.clone();
+    target.port_bindings.extend_from_slice(extra_ports);
+    let target = &target;
     let project_root = context
         .project_root
         .clone()
@@ -175,6 +163,42 @@ pub fn wrap_process_spec(
         console: spec.console,
         path_map: Some(wrapped.path_map),
     }))
+}
+
+/// Where `run_on` mounts the project inside its container, both
+/// directions; `None` when `run_on` is not a known container target.
+pub fn path_map(
+    run_on: &str,
+    containers: &ContainerSettings,
+    project_root: &std::path::Path,
+) -> Option<target::PathMap> {
+    let target = find_target(containers, target_id(run_on)?)?;
+    Some(target::PathMap::new(
+        project_root.to_path_buf(),
+        &target.workdir,
+    ))
+}
+
+/// The host a run with this `run_on` executes PHP on — what an Xdebug probe
+/// must ask, not the `[php]` interpreter's host. A target runs a fresh
+/// container (`wrap_launch`'s `run --rm`), so the probe does too; anything
+/// else is the project's own host.
+pub fn run_host(
+    run_on: Option<&str>,
+    containers: &ContainerSettings,
+    project_root: &std::path::Path,
+) -> process_exec::host::ExecHost {
+    run_on
+        .and_then(target_id)
+        .and_then(|id| {
+            target::exec_host_for(
+                containers,
+                id,
+                project_root,
+                Some(container_core::target::ExecMode::Run),
+            )
+        })
+        .unwrap_or_else(|| process_exec::host::ExecHost::for_path(project_root))
 }
 
 /// The before-launch build task a run target needs — the image (or compose
@@ -230,6 +254,38 @@ mod tests {
     }
 
     #[test]
+    fn the_probe_host_is_the_one_the_run_uses_not_the_php_interpreters() {
+        let containers = containers_with(image_target());
+        let root = std::path::Path::new("/p");
+        assert!(matches!(
+            run_host(Some("container:t1"), &containers, root),
+            process_exec::host::ExecHost::Container(_)
+        ));
+        // Local run, an unknown target and no `run_on` all probe locally.
+        for run_on in [None, Some("container:gone"), Some("")] {
+            assert!(
+                matches!(
+                    run_host(run_on, &containers, root),
+                    process_exec::host::ExecHost::Local
+                ),
+                "{run_on:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn path_map_mounts_the_project_at_the_targets_workdir() {
+        let mut target = image_target();
+        target.workdir = "/var/www".to_string();
+        let containers = containers_with(target);
+        let map = path_map("container:t1", &containers, std::path::Path::new("/p")).unwrap();
+        assert_eq!(map.remote_root, "/var/www");
+        assert_eq!(map.local_root, std::path::PathBuf::from("/p"));
+        assert!(path_map("container:gone", &containers, std::path::Path::new("/p")).is_none());
+        assert!(path_map("local", &containers, std::path::Path::new("/p")).is_none());
+    }
+
+    #[test]
     fn target_id_parses_the_container_prefix() {
         assert_eq!(target_id("container:t1"), Some("t1"));
         assert_eq!(target_id("local"), None);
@@ -280,7 +336,7 @@ mod tests {
             console: crate::config::ConsoleKind::Pty,
             path_map: None,
         };
-        let wrapped = wrap_process_spec(&spec, "t1", &context, &containers)
+        let wrapped = wrap_process_spec(&spec, "t1", &context, &containers, &[])
             .unwrap()
             .unwrap();
         assert_eq!(wrapped.program, "docker");
@@ -302,7 +358,7 @@ mod tests {
             path_map: None,
         };
         assert_eq!(
-            wrap_process_spec(&spec, "missing", &context, &containers),
+            wrap_process_spec(&spec, "missing", &context, &containers, &[]),
             Ok(None)
         );
     }

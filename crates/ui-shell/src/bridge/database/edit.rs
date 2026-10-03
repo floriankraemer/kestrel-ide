@@ -604,7 +604,7 @@ impl ffi::ResultProvider {
         FfiResult::default()
     }
 
-    /// Stages a new row (Alt+Insert), every column defaulted from its own
+    /// Stages a new row (Ctrl+Alt+Insert), every column defaulted from its own
     /// `ColumnMeta` (`NULL` when nullable, the type's zero value
     /// otherwise). The new row's grid index travels back in `message` —
     /// the same convention `applyClauses` (`console.rs`) already uses for

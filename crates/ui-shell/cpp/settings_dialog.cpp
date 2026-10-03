@@ -2,6 +2,8 @@
 
 #include "ai_providers_page.h"
 #include "analysis_settings_page.h"
+#include "php_settings_page.h"
+#include <QMessageBox>
 #include "build_tools_panel.h"
 #include "build_tools_settings_page.h"
 #include "appearance_page.h"
@@ -122,6 +124,7 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
     categoryList->addItem(QObject::tr("Terminal"));
     categoryList->addItem(QObject::tr("Tabs"));
     categoryList->addItem(QObject::tr("Analysis"));
+    categoryList->addItem(QObject::tr("PHP"));
     if (hasBuildToolsPage) {
         categoryList->addItem(QObject::tr("Build Tools"));
     }
@@ -354,6 +357,21 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
                              buildAnalysisSettingsPage(&dialog, analysisEditor, analysisService));
       });
 
+    // PHP is project-scoped like Analysis: which interpreter and language
+    // level a checkout runs under belongs to the checkout at least as often
+    // as to the person (ADR-0022). Must stay right after Analysis, in step
+    // with the category list above.
+    // Owned by the dialog itself, like `dataSourceEditor` below: nothing
+    // outside it needs this draft.
+    auto *phpEditorOwned = new PhpSettingsEditor(&dialog);
+    phpEditorOwned->beginEdit(appSettings->settingsScope());
+    const int phpIndex = deferPage(
+      [&dialog, phpEditor = phpEditorOwned, runConfigEditor = context.runConfigEditor,
+       scopedPage]() {
+          return scopedPage(QStringLiteral("php"),
+                            buildPhpSettingsPage(&dialog, phpEditor, runConfigEditor));
+      });
+
     // Build Tools is project-scoped for the same reason Analysis is: which
     // Gradle/Maven overrides a checkout wants is a property of the project
     // at least as often as of the person. `trusted_roots` alone stays
@@ -483,6 +501,11 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
 
     auto *searchEdit = new QLineEdit(&dialog);
     searchEdit->setPlaceholderText(QObject::tr("Search settings"));
+    // The column is as wide as its list, which is sized from "Language
+    // Servers"; a wider UI font elided the placeholder ("Search settin...")
+    // on Windows. Room for the leading icon, the clear button and the padding.
+    searchEdit->setMinimumWidth(
+      searchEdit->fontMetrics().horizontalAdvance(searchEdit->placeholderText()) + 72);
     searchEdit->setClearButtonEnabled(true);
     searchEdit->addAction(searchIcon(), QLineEdit::LeadingPosition);
     QObject::connect(searchEdit, &QLineEdit::textChanged, &dialog, applySettingsFilter);
@@ -636,7 +659,8 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
        languageServerEditor = context.languageServerEditor,
        languageService = context.languageService, terminalPage, terminalIndex,
        tabPaddingPage, tabPaddingIndex, analysisEditor = context.analysisEditor,
-       analysisService = context.analysisService, analysisIndex, containersPage,
+       analysisService = context.analysisService, analysisIndex,
+       phpEditor = phpEditorOwned, phpIndex, containersPage,
        containersIndex, &lazyBuilders, runConfigEditor = context.runConfigEditor,
        containerService = context.containerService,
        buildToolsEditor = context.buildToolsEditor, buildToolsIndex, hasBuildToolsPage,
@@ -713,6 +737,16 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
               staleAnalysis->deleteLater();
           }
 
+          phpEditor->beginEdit(scope);
+          if (!lazyBuilders.contains(phpIndex)) {
+              QWidget *stalePhp = pages->widget(phpIndex);
+              pages->insertWidget(
+                phpIndex, scopedPage(QStringLiteral("php"),
+                                     buildPhpSettingsPage(&dialog, phpEditor, runConfigEditor)));
+              pages->removeWidget(stalePhp);
+              stalePhp->deleteLater();
+          }
+
           if (hasBuildToolsPage) {
               buildToolsEditor->beginEdit(scope);
               if (!lazyBuilders.contains(buildToolsIndex)) {
@@ -744,17 +778,30 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
           // edits the value with the keyboard (select-all, type, Tab)
           // rather than clicking the up/down arrows at its right edge,
           // which is what would have needed the width.
-          QTimer::singleShot(0, &dialog, [pages, editingIndex]() {
+          //
+          // `ok_rect` rides along because the page that was just built can
+          // grow the dialog: the `ok_rect` of `dialog_shown` predates that
+          // and points above the button once the category list is long
+          // enough to need the room.
+          QTimer::singleShot(0, &dialog, [&dialog, pages, editingIndex]() {
               auto *tabWidthSpin = pages->widget(editingIndex)->findChild<QSpinBox *>(
                 QStringLiteral("editingTabWidth"));
-              if (!tabWidthSpin) {
+              auto *buttons = dialog.findChild<QDialogButtonBox *>();
+              if (!tabWidthSpin || !buttons) {
                   return;
               }
               const QPoint topLeft = tabWidthSpin->mapToGlobal(QPoint(0, 0));
+              QPushButton *ok = buttons->button(QDialogButtonBox::Ok);
+              const QPoint okTopLeft = ok->mapToGlobal(QPoint(0, 0));
               e2eMark(QStringLiteral("{\"ev\":\"settings_scope_switched\","
-                                      "\"tab_width_top_left\":[%1,%2]}")
+                                      "\"tab_width_top_left\":[%1,%2],"
+                                      "\"ok_rect\":[%3,%4,%5,%6]}")
                         .arg(topLeft.x())
-                        .arg(topLeft.y()));
+                        .arg(topLeft.y())
+                        .arg(okTopLeft.x())
+                        .arg(okTopLeft.y())
+                        .arg(ok->width())
+                        .arg(ok->height()));
           });
       });
 
@@ -887,12 +934,18 @@ void showSettingsDialog(QWidget *parent, const SettingsContext &context,
         context.aiChat->applyAiSettings();
         context.languageServerEditor->commit();
         context.analysisEditor->commit();
+        // Before `applyServerSettings` below: the servers are configured
+        // from what this just saved, including the licence key.
+        if (const FfiResult phpResult = phpEditorOwned->commit(); phpResult.code != 0) {
+            QMessageBox::warning(&dialog, QObject::tr("PHP settings"), QString(phpResult.message));
+        }
         // One save and at most one rescope for both Project Scope lists.
         context.projectTreeModel->commitScopeEdit();
         // Reconciling is the Rust side's decision: it stops what the new
         // settings no longer describe and leaves the rest running, and the
         // re-announcement below starts the replacements.
         context.languageService->applyServerSettings();
+        editorTabs->editorOps()->reloadSettings();
         editorTabs->reannounceDocuments();
     } else {
         context.aiProviderEditor->revert();

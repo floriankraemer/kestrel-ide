@@ -23,12 +23,14 @@ pub mod container_run; // Container-kind run configuration sub-tables (C5, ADR-0
 pub mod containers;
 pub mod database; // Data sources, no secrets (ADR-0061 §1).
 pub mod ignored_names; // `Settings::ignored_names`'s default list, `Default` impl and add/remove/reset rules (ADR-0064).
+pub mod language_server; // One `[[language_server]]` entry (ADR-0066).
+pub mod live_template; // One `[[live_template]]` row (ADR-0072).
+pub mod php; // The `[php]` section: interpreter, language level, container target (PHP parity plan).
 use ignored_names::default_ignored_names;
 pub use ignored_names::DEFAULT_IGNORED_NAMES;
 /// The `[editing]` section: indentation, wrapping, and save behaviour.
 pub mod editing;
-/// The `[file_associations]` section: which handler a file pattern opens
-/// with.
+/// The `[file_associations]` section: which handler a file pattern opens with.
 pub mod file_associations;
 pub mod hover; // The `[hover]` section: what the hover card shows, and its dwell delay.
 pub mod keymap;
@@ -62,6 +64,10 @@ pub mod launch_settings;
 /// outside this crate needs to know the module exists.
 pub mod window;
 
+// `update_toml`, kept out of this file for the size ratchet.
+mod update;
+pub(crate) use update::update_toml;
+
 /// The UI language accessor and locale list, split out like `window` above.
 /// `SUPPORTED_UI_LOCALES` is re-exported below.
 mod ui_locale;
@@ -82,7 +88,9 @@ pub use editing::EditingSettings;
 pub use file_associations::{FileAssociationRule, FileAssociationSettings};
 pub use hover::{HoverScope, HoverSettings};
 pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
+pub use language_server::LanguageServerSetting;
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
+pub use live_template::LiveTemplateSetting;
 pub use syntax_colors::{LanguageScopeStyles, ScopeStyle, ScopeStyles};
 pub use tab_padding::TabPaddingSettings;
 pub use terminal::TerminalSettings;
@@ -96,35 +104,8 @@ const SETTINGS_FILE: &str = "settings.toml";
 /// filesystem and is therefore atomic.
 const TEMP_SETTINGS_FILE: &str = "settings.toml.tmp";
 
-/// One `[[language_server]]` entry: what the user says about the language
-/// server for one language id.
-///
-/// Every field but `language_id` is optional, so `enabled = false` alone
-/// switches a shipped server off without wiping its command. This mirrors
-/// `lsp_core::ServerOverride` field for field but is declared here so the
-/// config crate keeps no dependency on the LSP client (ADR-0016) — `ui-shell`
-/// maps one to the other at the seam.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
-pub struct LanguageServerSetting {
-    /// LSP language id, e.g. `"rust"`. The key both the shipped catalog and
-    /// this table are keyed by.
-    #[serde(default)]
-    pub language_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub command: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub args: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub enabled: Option<bool>,
-}
-
 pub(crate) fn is_false(b: &bool) -> bool {
     !*b
-}
-fn is_default_build_tools(value: &BuildToolsSettings) -> bool {
-    value == &BuildToolsSettings::default()
 }
 
 /// The `[minimap]` section: whether the editor's right-hand code map shows
@@ -332,6 +313,8 @@ pub struct Settings {
     /// this crate only stores them.
     #[serde(default, rename = "language_server")]
     pub language_servers: Vec<LanguageServerSetting>,
+    #[serde(default, rename = "live_template")]
+    pub live_templates: Vec<LiveTemplateSetting>,
     /// AI chat providers, written as `[[ai_provider]]` blocks. Only entries
     /// that differ from the default catalog are written, so changing a
     /// shipped default still reaches a user who never touched it — the same
@@ -387,10 +370,12 @@ pub struct Settings {
     pub containers: ContainerSettings,
     /// The `[build_tools]` section (ADR-0057) — `trusted_roots` is global
     /// only, see [`build_tools`]'s doc comment.
-    #[serde(default, skip_serializing_if = "is_default_build_tools")]
+    #[serde(default, skip_serializing_if = "build_tools::is_default")]
     pub build_tools: BuildToolsSettings,
     #[serde(default, skip_serializing_if = "database::is_default")]
     pub database: database::DatabaseSettings,
+    #[serde(default, skip_serializing_if = "php::is_default")]
+    pub php: php::PhpSettings,
     /// Gitignore-syntax names the project scope skips at any depth
     /// (ADR-0064); see [`DEFAULT_IGNORED_NAMES`]. Global; the project's own
     /// excludes are [`project_settings::ProjectSettings::excluded`] instead.
@@ -640,14 +625,6 @@ impl From<io::Error> for ConfigError {
     }
 }
 
-/// The platform config dir the real app persists into (`dirs::config_dir()`
-/// joined with `ide`), same convention as `project-model::default_config_dir`.
-/// Tests should use their own temp dir instead of this, to avoid touching the
-/// developer's real `~/.config`.
-pub fn default_config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("ide"))
-}
-
 // ---------------------------------------------------------------------------
 // The path-keyed core. `Settings` (global) and `ProjectSettings` (per project)
 // are both persisted through these three functions, so the guarantees below
@@ -704,22 +681,6 @@ fn save_toml<T: Serialize>(path: &Path, temp_path: &Path, value: &T) -> Result<(
         return Err(ConfigError::Io(err));
     }
     Ok(())
-}
-
-/// Load, edit, save.
-///
-/// A load failure aborts the update instead of editing a `T::default()` and
-/// saving that: the file on disk holds everything the user configured, so
-/// writing defaults over it because it could not be read (or was momentarily
-/// unreadable) is data loss, not a fresh start.
-fn update_toml<T: DeserializeOwned + Serialize + Default>(
-    path: &Path,
-    temp_path: &Path,
-    edit: impl FnOnce(&mut T),
-) -> Result<(), ConfigError> {
-    let mut value: T = load_toml(path)?;
-    edit(&mut value);
-    save_toml(path, temp_path, &value)
 }
 
 /// Load settings from `<config_dir>/settings.toml`. A missing file is not an
@@ -993,6 +954,7 @@ mod tests {
             analysis: AnalysisSettings::default(),
             build_tools: BuildToolsSettings::default(),
             database: database::DatabaseSettings::default(),
+            php: php::PhpSettings::default(),
             window_maximized: true,
             window_state: "opaque-blob".to_string(),
             editor_layout: "{\"groups\":[]}".to_string(),
@@ -1031,6 +993,7 @@ mod tests {
                 command: Some("/opt/rust-analyzer".to_string()),
                 ..LanguageServerSetting::default()
             }],
+            live_templates: Vec::new(),
             disabled_languages: vec!["vala".to_string()],
             ai_providers: vec![AiProviderSetting {
                 id: "local".to_string(),
@@ -1412,37 +1375,6 @@ use_spaces = false
             loaded.syntax_colors_by_language["rust"]["macro"].fg(),
             Some("#bbb529")
         );
-    }
-
-    #[test]
-    fn language_server_overrides_round_trip_as_array_of_tables() {
-        let dir = tempfile::tempdir().unwrap();
-        let settings = Settings {
-            language_servers: vec![
-                LanguageServerSetting {
-                    language_id: "rust".into(),
-                    command: Some("/opt/ra".into()),
-                    args: Some(vec!["--log".into()]),
-                    ..LanguageServerSetting::default()
-                },
-                LanguageServerSetting {
-                    language_id: "go".into(),
-                    enabled: Some(false),
-                    ..LanguageServerSetting::default()
-                },
-            ],
-            ..Settings::default()
-        };
-
-        save(dir.path(), &settings).unwrap();
-        let toml = fs::read_to_string(dir.path().join(SETTINGS_FILE)).unwrap();
-        assert!(toml.contains("[[language_server]]"), "{toml}");
-
-        let loaded = load(dir.path()).unwrap();
-        assert_eq!(loaded.language_servers, settings.language_servers);
-        // Unset fields stay unset rather than being written as empty strings,
-        // so "only disable it" cannot silently wipe the shipped command.
-        assert!(loaded.language_servers[1].command.is_none());
     }
 
     #[test]

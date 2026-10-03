@@ -503,6 +503,209 @@ fn duplicate_language_server_ids_in_one_manifest_are_rejected() {
 }
 
 #[test]
+fn an_analyzer_contribution_reads_the_file_run_and_composer_fields() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "phpcs"
+            name = "PHPCS"
+            program-candidates = ["phpcs"]
+            output-format = "checkstyle-xml"
+            languages = ["php"]
+            file-args = ["--stdin-path={file}", "-"]
+            buffer = "stdin"
+            composer-package = "squizlabs/php_codesniffer"
+            requires-interpreter = "php"
+            "#,
+    ))
+    .expect("valid");
+    let a = &manifest.contributes.analyzers[0];
+    assert_eq!(a.languages, vec!["php"]);
+    assert_eq!(a.file_args, vec!["--stdin-path={file}", "-"]);
+    assert_eq!(a.buffer.as_deref(), Some("stdin"));
+    assert_eq!(
+        a.composer_package.as_deref(),
+        Some("squizlabs/php_codesniffer")
+    );
+    assert_eq!(a.requires_interpreter.as_deref(), Some("php"));
+}
+
+#[test]
+fn an_analyzer_reads_the_suppress_and_fixer_fields() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "psalm"
+            name = "Psalm"
+            program-candidates = ["psalm"]
+            output-format = "checkstyle-xml"
+            suppress-comment = "/** @psalm-suppress {code} */"
+            code-in-message = true
+            fixer = "phpcbf"
+            "#,
+    ))
+    .expect("valid");
+    let a = &manifest.contributes.analyzers[0];
+    assert_eq!(
+        a.suppress_comment.as_deref(),
+        Some("/** @psalm-suppress {code} */")
+    );
+    assert!(a.code_in_message);
+    assert_eq!(a.fixer.as_deref(), Some("phpcbf"));
+}
+
+#[test]
+fn a_suppress_comment_without_the_code_placeholder_is_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            output-format = "checkstyle-xml"
+            suppress-comment = "// ignore"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
+fn a_ruleset_placeholder_needs_a_default_and_reads_the_config_candidates() {
+    let toml = |extra: &str| {
+        with(&format!(
+            r#"
+            [[contributes.analyzers]]
+            id = "phpmd"
+            name = "PHPMD"
+            program-candidates = ["phpmd"]
+            output-format = "checkstyle-xml"
+            args = ["{{file}}", "checkstyle", "{{ruleset}}"]
+            config-file-candidates = ["phpmd.xml"]
+            {extra}
+            "#
+        ))
+    };
+    assert!(matches!(
+        PluginManifest::from_toml_str(&toml("")).unwrap_err(),
+        LoadErrorKind::MalformedManifest(_)
+    ));
+    let manifest = PluginManifest::from_toml_str(&toml(r#"ruleset-default = "design""#)).unwrap();
+    let a = &manifest.contributes.analyzers[0];
+    assert_eq!(a.config_file_candidates, vec!["phpmd.xml"]);
+    assert_eq!(a.ruleset_default.as_deref(), Some("design"));
+}
+
+#[test]
+fn an_analyzer_may_name_the_config_files_that_carry_its_project_paths() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+        [[contributes.analyzers]]
+        id = "phpstan"
+        name = "PHPStan"
+        program-candidates = ["phpstan"]
+        output-format = "checkstyle-xml"
+        project-paths-config = ["phpstan.neon", "phpstan.neon.dist"]
+        "#,
+    ))
+    .unwrap();
+    assert_eq!(
+        manifest.contributes.analyzers[0].project_paths_config,
+        vec!["phpstan.neon", "phpstan.neon.dist"]
+    );
+}
+
+#[test]
+fn an_unknown_analyzer_buffer_strategy_is_rejected() {
+    let err = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            output-format = "checkstyle-xml"
+            buffer = "carrier-pigeon"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
+fn an_unknown_interpreter_is_rejected_on_analyzers_and_test_frameworks() {
+    let analyzer = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.analyzers]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            output-format = "checkstyle-xml"
+            requires-interpreter = "ruby"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(analyzer, LoadErrorKind::MalformedManifest(_)));
+    let framework = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.test-frameworks]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            requires-interpreter = "ruby"
+            "#,
+    ))
+    .unwrap_err();
+    assert!(matches!(framework, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
+fn a_test_framework_reads_composer_package_and_interpreter() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            composer-package = "phpunit/phpunit"
+            requires-interpreter = "php"
+            "#,
+    ))
+    .expect("valid");
+    let f = &manifest.contributes.test_frameworks[0];
+    assert_eq!(f.composer_package.as_deref(), Some("phpunit/phpunit"));
+    assert_eq!(f.requires_interpreter.as_deref(), Some("php"));
+}
+
+#[test]
+fn coverage_args_must_name_the_report_path() {
+    let toml = |args: &str| {
+        with(&format!(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "phpunit"
+            name = "PHPUnit"
+            program-candidates = ["phpunit"]
+            filter-flag = "--filter"
+            output-format = "teamcity"
+            coverage-args = {args}
+            "#
+        ))
+    };
+    let ok = PluginManifest::from_toml_str(&toml(r#"["--coverage-clover", "$COVERAGE_FILE$"]"#))
+        .expect("valid");
+    assert_eq!(
+        ok.contributes.test_frameworks[0].coverage_args,
+        ["--coverage-clover", "$COVERAGE_FILE$"]
+    );
+    let err = PluginManifest::from_toml_str(&toml(r#"["--coverage-clover"]"#)).unwrap_err();
+    assert!(matches!(err, LoadErrorKind::MalformedManifest(_)));
+}
+
+#[test]
 fn an_analyzer_contribution_round_trips() {
     let manifest = PluginManifest::from_toml_str(&with(
         r#"
@@ -785,6 +988,30 @@ fn a_test_framework_may_declare_a_non_default_filter_dialect() {
     .expect("valid");
     let framework = &manifest.contributes.test_frameworks[0];
     assert_eq!(framework.filter_dialect.as_deref(), Some("surefire"));
+}
+
+#[test]
+fn the_php_filter_dialects_are_accepted() {
+    for dialect in ["pest-regex", "codeception", "behat-name", "none"] {
+        let manifest = PluginManifest::from_toml_str(&with(&format!(
+            r#"
+            [[contributes.test-frameworks]]
+            id = "x"
+            name = "X"
+            program-candidates = ["x"]
+            filter-flag = "--filter"
+            output-format = "junit-xml"
+            filter-dialect = "{dialect}"
+            "#
+        )))
+        .expect("valid");
+        assert_eq!(
+            manifest.contributes.test_frameworks[0]
+                .filter_dialect
+                .as_deref(),
+            Some(dialect)
+        );
+    }
 }
 
 #[test]

@@ -38,6 +38,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
+use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
 use crate::bridge::errors;
@@ -53,6 +54,9 @@ use edit_ops::selection_expand::SelectionHistory;
 use syntax_core::Language;
 
 use crate::bridge::ffi::{self, FfiResult};
+
+mod generate;
+mod templates;
 use crate::bridge::registry::shared_session;
 
 /// Which line operation `lineOp` was asked for. Mirrored as plain integers
@@ -131,13 +135,32 @@ fn snippet_stop(range: std::ops::Range<usize>, more: bool) -> ffi::FfiSnippetSto
 /// `settings` is a cached copy rather than a read per call: `toggleComment`
 /// and friends need the effective tab width, and re-reading `settings.toml`
 /// on every keystroke would put a file read on the typing path. The settings
-/// dialog calls `reloadSettings` when it commits.
+/// dialog calls `reloadSettings` when it commits, and the copy is re-read
+/// whenever the open project differs from the one it was resolved for (this
+/// object is built before any project is open, and its `[editing]` section
+/// is the project's to override).
 pub struct EditorOpsRust {
     tabs: RefCell<HashMap<u64, TabOps>>,
     settings: RefCell<app_config::Settings>,
+    /// The project root `settings` was resolved for.
+    settings_root: RefCell<Option<std::path::PathBuf>>,
     /// Only ever read, and only for one thing: which language a tab's file
     /// is, so the grammar-aware operations know which grammar.
     session: Rc<RefCell<app_core::AppSession>>,
+    /// Each tab's format-on-save waiting for its formatter (ADR-0070).
+    saves: RefCell<app_core::pending_save::PendingSaves>,
+}
+
+impl EditorOpsRust {
+    /// The cached resolved settings, re-read first if another project opened.
+    fn settings(&self) -> std::cell::Ref<'_, app_config::Settings> {
+        let root = crate::bridge::convert::current_project_root();
+        if *self.settings_root.borrow() != root {
+            *self.settings.borrow_mut() = crate::bridge::convert::load_resolved_settings();
+            *self.settings_root.borrow_mut() = root;
+        }
+        self.settings.borrow()
+    }
 }
 
 impl Default for EditorOpsRust {
@@ -145,7 +168,9 @@ impl Default for EditorOpsRust {
         Self {
             tabs: RefCell::new(HashMap::new()),
             settings: RefCell::new(crate::bridge::convert::load_resolved_settings()),
+            settings_root: RefCell::new(crate::bridge::convert::current_project_root()),
             session: shared_session(),
+            saves: RefCell::default(),
         }
     }
 }
@@ -239,7 +264,7 @@ impl EditorOpsRust {
     /// spaces-vs-tabs resolved through `settings-model`, which owns the
     /// question of what a language may override.
     fn indent_style(&self, language: Language) -> IndentStyle {
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         let rules = settings_model::editing::resolve_for_language(&settings, &language.id());
         rules.indent_style()
     }
@@ -252,7 +277,7 @@ impl EditorOpsRust {
     /// and line-ending policy (F1-11), through the same resolution the
     /// indent style already uses.
     fn save_rules(&self, language: Language) -> editor_core::save_rules::SaveRules {
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         let mut rules =
             settings_model::editing::resolve_for_language(&settings, &language.id()).save_rules();
         // W6 (line endings, ADR-0052): `on_save`'s `LineEnding::platform()`
@@ -264,7 +289,7 @@ impl EditorOpsRust {
         // LF, not the compiled-for platform's CRLF.
         if rules.line_endings.is_none() {
             let is_remote = crate::bridge::convert::current_project_root()
-                .map(|root| lsp_core::ExecHost::for_path(&root).is_remote())
+                .map(|root| lsp_core::ExecHost::for_path(&root).filesystem_is_remote())
                 .unwrap_or(false);
             if is_remote {
                 rules.line_endings = Some(editor_core::save_rules::LineEnding::Lf);
@@ -449,6 +474,9 @@ impl ffi::EditorOps {
     /// would grow for the life of the process.
     pub fn forget_tab(self: Pin<&mut Self>, tab_id: u64) {
         self.tabs.borrow_mut().remove(&tab_id);
+        self.saves
+            .borrow_mut()
+            .cancel(app_core::TabId::from_raw(tab_id));
     }
 
     /// Re-read the settings this object caches. Called when the settings
@@ -456,6 +484,7 @@ impl ffi::EditorOps {
     /// restart.
     pub fn reload_settings(self: Pin<&mut Self>) {
         *self.settings.borrow_mut() = crate::bridge::convert::load_resolved_settings();
+        *self.settings_root.borrow_mut() = crate::bridge::convert::current_project_root();
     }
 
     /// Alt+Click: one more caret at `position`.
@@ -930,27 +959,144 @@ impl ffi::EditorOps {
         }
     }
 
-    /// The edits a save would make before it writes the file (F1-11): trim
-    /// trailing whitespace, a final newline, line-ending normalisation —
-    /// whichever of them the file's language has turned on. The caller
+    /// The edits a save that does not wait makes before it writes the file
+    /// (F1-11): trim trailing whitespace, a final newline, line-ending
+    /// normalisation — whichever of them the file's language has turned on,
+    /// and never the formatter (closing, quitting, Save All). The caller
     /// splices these into the buffer *before* reading its text to save, the
     /// same `applyEditsTo` path every other operation here uses, so the
-    /// tidying is one undo entry and the caret the trim would otherwise
-    /// have jumped from lands wherever Qt's own cursor adjustment during
-    /// the splice puts it — never column 0.
+    /// tidying is one undo entry and the caret lands wherever Qt's own
+    /// cursor adjustment during the splice puts it — never column 0.
     ///
-    /// A pure computation: it touches no caret state and never emits
-    /// `caretsChanged`, because nothing about where the carets are changes
-    /// here — only what the text says.
-    pub fn save_rule_edits(&self, tab_id: u64, text: &QString) -> Vec<ffi::FfiTextEdit> {
+    /// A format-on-save still pending for the tab is dropped: this save
+    /// writes the buffer as it is.
+    pub fn save_rule_edits(&self, tab_id: u64, text: &QString) -> ffi::FfiSaveEdits {
         let text = text.to_string();
         let language = language_of(&self.session.borrow(), tab_id);
-        let rules = self.save_rules(language);
-        let transaction = editor_core::save_rules::on_save(&text, &rules);
+        self.saves
+            .borrow_mut()
+            .cancel(app_core::TabId::from_raw(tab_id));
+        let skipped = if self.format_wanted(tab_id, language).is_some() {
+            Some(app_core::pending_save::FormatSkipped::NotWaited)
+        } else {
+            None
+        };
+        let edits = self.tidy_edits(&text, &self.save_rules(language), None);
+        save_edits(edits, skipped)
+    }
+
+    /// Ctrl+S. Without a formatter for the file this is `save_rule_edits`;
+    /// with one, the formatter runs on a worker, `pending` comes back at
+    /// once, and `saveFormatted` follows when it has answered.
+    pub fn begin_save(
+        mut self: Pin<&mut Self>,
+        tab_id: u64,
+        revision: i64,
+        text: &QString,
+    ) -> ffi::FfiSaveEdits {
+        let language = language_of(&self.session.borrow(), tab_id);
+        let Some(path) = self.format_wanted(tab_id, language) else {
+            return self.save_rule_edits(tab_id, text);
+        };
+        let text = text.to_string();
+        let tab = app_core::TabId::from_raw(tab_id);
+        let begun = self.saves.borrow_mut().begin(tab, revision, &text);
+        let app_core::pending_save::Begin::Start(ticket) = begun else {
+            return pending_save_edits();
+        };
+        let job = Self::format_job(language, path, &text);
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let outcome = job.run(&text);
+            let _ = qt_thread.queue(move |mut ops: Pin<&mut Self>| {
+                if ops.saves.borrow_mut().formatted(tab, ticket, outcome) {
+                    ops.as_mut().save_formatted(tab_id);
+                }
+            });
+        });
+        pending_save_edits()
+    }
+
+    /// After `saveFormatted`: what to splice into the buffer as it is now
+    /// before writing it — the formatter's text plus the tidy rules when
+    /// the buffer is unchanged, the tidy rules alone otherwise
+    /// (`PendingSaves::take`'s rule). `pending` when there is nothing to
+    /// write.
+    pub fn finish_save(&self, tab_id: u64, revision: i64, text: &QString) -> ffi::FfiSaveEdits {
+        let text = text.to_string();
+        let taken =
+            self.saves
+                .borrow_mut()
+                .take(app_core::TabId::from_raw(tab_id), revision, &text);
+        let Some(write) = taken else {
+            return pending_save_edits();
+        };
+        let language = language_of(&self.session.borrow(), tab_id);
+        let edits = self.tidy_edits(&text, &self.save_rules(language), write.formatted);
+        save_edits(edits, write.skipped)
+    }
+
+    /// The edits that bring `text` to its saved shape: the formatter's
+    /// output when there is one, then the language's tidy rules.
+    fn tidy_edits(
+        &self,
+        text: &str,
+        rules: &editor_core::save_rules::SaveRules,
+        formatted: Option<String>,
+    ) -> Vec<ffi::FfiTextEdit> {
+        let text = text.to_string();
+        if let Some(formatted) = formatted {
+            // The tidy rules run on the formatted text, and the two are
+            // handed over as one diff against what the buffer holds now.
+            let tidied = editor_core::save_rules::on_save(&formatted, rules)
+                .apply(&formatted)
+                .unwrap_or(formatted);
+            return lsp_core::edits_between(&text, &tidied)
+                .into_iter()
+                .map(|edit| ffi::FfiTextEdit {
+                    path: QString::default(),
+                    in_buffer: true,
+                    start_line: edit.start_line,
+                    start_character: edit.start_character,
+                    end_line: edit.end_line,
+                    end_character: edit.end_character,
+                    new_text: QString::from(edit.new_text.as_str()),
+                })
+                .collect();
+        }
+        let transaction = editor_core::save_rules::on_save(&text, rules);
         if transaction.is_empty() {
             return Vec::new();
         }
         self.to_ffi_edits(&text, &transaction)
+    }
+
+    /// The file a save of this tab formats, when `format_on_save` is on
+    /// for its language.
+    fn format_wanted(&self, tab_id: u64, language: Language) -> Option<std::path::PathBuf> {
+        let path = self
+            .session
+            .borrow()
+            .tab_path(app_core::TabId::from_raw(tab_id))?;
+        let settings = self.settings();
+        settings_model::editing::resolve_for_language(&settings, &language.id())
+            .format_on_save
+            .then_some(path)
+    }
+
+    /// The formatter for a save of `path` holding `text`: the configured
+    /// tool formatter (ADR-0070), else the language server, whose request
+    /// is queued here. Probes nothing; a tool's program is looked up when
+    /// the job runs, on the worker.
+    fn format_job(language: Language, path: std::path::PathBuf, text: &str) -> FormatJob {
+        let language_id = language.id();
+        match crate::bridge::format_tool::ToolFormat::resolve(&language_id, false) {
+            Some(tool) => FormatJob::Tool {
+                tool: Box::new(tool),
+                path,
+            },
+            None => FormatJob::LanguageServer(queue_lsp_format(&language_id, &path, text)),
+        }
     }
 
     /// The tab width `text` in this tab renders at, resolved through
@@ -968,7 +1114,7 @@ impl ffi::EditorOps {
     /// tab's lifetime.
     pub fn wrap_column_for_tab(&self, tab_id: u64) -> u32 {
         let language = language_of(&self.session.borrow(), tab_id);
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         settings_model::editing::resolve_for_language(&settings, &language.id()).wrap_column
     }
 
@@ -976,14 +1122,14 @@ impl ffi::EditorOps {
     /// than only guided by it.
     pub fn soft_wrap_for_tab(&self, tab_id: u64) -> bool {
         let language = language_of(&self.session.borrow(), tab_id);
-        let settings = self.settings.borrow();
+        let settings = self.settings();
         settings_model::editing::resolve_for_language(&settings, &language.id()).soft_wrap
     }
 
     /// The cached global soft-wrap setting, for the View menu's toggle to
     /// show its current state when the menu is built.
     pub fn soft_wrap_enabled(&self) -> bool {
-        self.settings.borrow().editing.soft_wrap_or_default()
+        self.settings().editing.soft_wrap_or_default()
     }
 
     /// Flip the *global* soft-wrap setting and persist it — the View menu's
@@ -1091,4 +1237,113 @@ impl ffi::EditorOps {
             })
             .collect()
     }
+}
+
+/// A format-on-save's formatter, ready to run on a worker thread.
+enum FormatJob {
+    Tool {
+        tool: Box<crate::bridge::format_tool::ToolFormat>,
+        path: std::path::PathBuf,
+    },
+    /// `None` when no language server runs: nothing to format with.
+    LanguageServer(Option<std::sync::mpsc::Receiver<LspFormatAnswer>>),
+}
+
+impl FormatJob {
+    /// Format `text`, for at most `FORMAT_ON_SAVE_TIMEOUT`. A failing or
+    /// timed-out formatter does not keep the file from being saved: it is
+    /// reported as the reason the save went ahead unformatted.
+    fn run(&self, text: &str) -> app_core::pending_save::FormatOutcome {
+        let timeout = crate::bridge::format_tool::FORMAT_ON_SAVE_TIMEOUT;
+        let failed = |(tool, message): (String, String)| {
+            app_core::pending_save::FormatSkipped::Failed { tool, message }
+        };
+        match self {
+            Self::Tool { tool, path } => tool
+                .run(text, path, timeout)
+                .map(Some)
+                .map_err(|error| failed((tool.name().to_string(), error.to_string()))),
+            Self::LanguageServer(None) => Ok(None),
+            Self::LanguageServer(Some(answer)) => answer
+                .recv_timeout(timeout)
+                .unwrap_or_else(|_| Err((LANGUAGE_SERVER.to_string(), "timed out".to_string())))
+                .map_err(failed),
+        }
+    }
+}
+
+fn pending_save_edits() -> ffi::FfiSaveEdits {
+    ffi::FfiSaveEdits {
+        pending: true,
+        edits: Vec::new(),
+        skipped: ffi::FfiFormatSkipped::None,
+        failed_tool: QString::default(),
+        failure: QString::default(),
+    }
+}
+
+fn save_edits(
+    edits: Vec<ffi::FfiTextEdit>,
+    skipped: Option<app_core::pending_save::FormatSkipped>,
+) -> ffi::FfiSaveEdits {
+    use app_core::pending_save::FormatSkipped;
+    let (skipped, failed_tool, failure) = match skipped {
+        None => (ffi::FfiFormatSkipped::None, String::new(), String::new()),
+        Some(FormatSkipped::Failed { tool, message }) => {
+            (ffi::FfiFormatSkipped::Failed, tool, message)
+        }
+        Some(FormatSkipped::BufferChanged) => (
+            ffi::FfiFormatSkipped::BufferChanged,
+            String::new(),
+            String::new(),
+        ),
+        Some(FormatSkipped::NotWaited) => (
+            ffi::FfiFormatSkipped::NotWaited,
+            String::new(),
+            String::new(),
+        ),
+    };
+    ffi::FfiSaveEdits {
+        pending: false,
+        edits,
+        skipped,
+        failed_tool: QString::from(failed_tool.as_str()),
+        failure: QString::from(failure.as_str()),
+    }
+}
+
+/// What a language server's formatting request answers: the formatted
+/// text, `None` when no server formats the file, or `(who, why)` it failed.
+type LspFormatAnswer = Result<Option<String>, (String, String)>;
+
+const LANGUAGE_SERVER: &str = "language server";
+
+/// Ask the language server to format `text` (`textDocument/formatting`), for
+/// a save with no tool formatter. Must run on the Qt thread, where the LSP
+/// job channel lives; the answer is read on the format-on-save worker.
+/// `None` when no project's servers are running.
+fn queue_lsp_format(
+    language_id: &str,
+    path: &Path,
+    text: &str,
+) -> Option<std::sync::mpsc::Receiver<LspFormatAnswer>> {
+    let uri = lsp_core::uri_from_path(&path.to_string_lossy());
+    let options = crate::bridge::language::refactor::formatting_options(language_id);
+    let (reply, answer) = std::sync::mpsc::channel();
+    let sent_text = text.to_string();
+    let queued = crate::bridge::registry::push_lsp_job(Box::new(move |manager| {
+        // The server formats what the buffer holds now, not what it last saw.
+        let outcome = manager
+            .did_change(&uri, &sent_text)
+            .and_then(|_| manager.format(&uri, &options));
+        let answer = match outcome {
+            // Never opened: no server runs for this file, nothing to format with.
+            Err(lsp_core::LspError::Protocol(_)) => Ok(None),
+            Err(error) => Err((LANGUAGE_SERVER.to_string(), error.to_string())),
+            Ok(outcome) => lsp_core::formatting::formatted_text(&sent_text, outcome)
+                .map_err(|error| (LANGUAGE_SERVER.to_string(), error)),
+        };
+        let _ = reply.send(answer);
+    }));
+    queued.then_some(answer)
 }

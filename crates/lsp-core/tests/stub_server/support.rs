@@ -22,6 +22,7 @@ pub const LANG: &str = "stub";
 
 pub fn config(command: &str, args: &[&str]) -> ServerConfig {
     ServerConfig {
+        id: LANG.into(),
         language_id: LANG.into(),
         name: "stub".into(),
         command: command.into(),
@@ -29,6 +30,11 @@ pub fn config(command: &str, args: &[&str]) -> ServerConfig {
         enabled: true,
         settings_section: None,
         settings: serde_json::Value::Null,
+        initialization_options: serde_json::Value::Null,
+        diagnostics: true,
+        posix_only: false,
+        exec: lsp_core::catalog::ServerExec::Host,
+        priority: 0,
         source: lsp_core::catalog::ServerSource::Builtin,
     }
 }
@@ -108,4 +114,15 @@ pub fn stub_config_with_call_hierarchy_static() -> ServerConfig {
 /// C11: the type-hierarchy twin of `stub_config_with_call_hierarchy_static`.
 pub fn stub_config_with_type_hierarchy_static() -> ServerConfig {
     config("env", &["STUB_LSP_TYPE_HIERARCHY_STATIC=1", STUB])
+}
+
+/// E1/L3: a stub with the tagged profile (`src/bin/stub_server/profile.rs`),
+/// running as server `id` for [`LANG`] and advertising `caps`.
+pub fn tagged_config(id: &str, caps: &str) -> ServerConfig {
+    let tag = format!("STUB_LSP_TAG={id}");
+    let caps = format!("STUB_LSP_CAPS={caps}");
+    ServerConfig {
+        id: id.into(),
+        ..config("env", &[&tag, &caps, STUB])
+    }
 }

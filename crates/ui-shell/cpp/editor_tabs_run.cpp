@@ -17,6 +17,7 @@
 #include "e2e_mark.h"
 #include "run_config_dialog.h"
 
+#include <algorithm>
 #include <QAction>
 #include <QCursor>
 #include <QDesktopServices>
@@ -41,9 +42,25 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEdi
                       [editorTabs]() { editorTabs->refreshRunMarkers(); });
 }
 
+void wireTestGutter(TestService *testService, DebugService *debugService, EditorTabs *editorTabs)
+{
+    editorTabs->setTestService(testService);
+    // A coverage run (or clearing it) repaints every open editor's stripes.
+    QObject::connect(testService, &TestService::coverageChanged, editorTabs,
+                      [editorTabs]() { editorTabs->refreshRunMarkers(); });
+    // A debugged test starts once `DebugService` has the listener up.
+    QObject::connect(debugService, &DebugService::phpTestLaunchRequested, testService,
+                      [testService](const QString &envJson) { testService->runPendingWithEnv(envJson); });
+}
+
 void EditorTabs::setRunService(RunService *runService)
 {
     runService_ = runService;
+}
+
+void EditorTabs::setTestService(TestService *testService)
+{
+    testService_ = testService;
 }
 
 void EditorTabs::setContainerRunContext(RunConfigEditor *runConfigEditor,
@@ -116,11 +133,41 @@ void EditorTabs::refreshRunMarker(CodeEditor *editor)
     const QString path = docManager_->tabPath(tabId);
     QSet<int> lines;
     if (!path.isEmpty()) {
-        for (const quint32 line : runService_->runLines(path, editor->toPlainText())) {
+        const QString text = editor->toPlainText();
+        for (const quint32 line : runService_->runLines(path, text)) {
             lines.insert(static_cast<int>(line));
+        }
+        if (testService_ != nullptr) {
+            for (const quint32 line : testService_->markerLines(path, text)) {
+                lines.insert(static_cast<int>(line));
+            }
         }
     }
     editor->setRunLines(lines);
+    QSet<int> covered;
+    QSet<int> uncovered;
+    if (testService_ != nullptr && !path.isEmpty()) {
+        for (const quint32 line : testService_->coveredLines(path)) {
+            covered.insert(static_cast<int>(line));
+        }
+        for (const quint32 line : testService_->uncoveredLines(path)) {
+            uncovered.insert(static_cast<int>(line));
+        }
+    }
+    editor->setCoverageLines(covered, uncovered);
+    if (!covered.isEmpty() || !uncovered.isEmpty()) {
+        const auto joined = [](const QSet<int> &set) {
+            QList<int> sorted(set.begin(), set.end());
+            std::sort(sorted.begin(), sorted.end());
+            QStringList numbers;
+            for (const int line : sorted) {
+                numbers << QString::number(line);
+            }
+            return numbers.join(QLatin1Char(','));
+        };
+        e2eMark(QStringLiteral("{\"ev\":\"coverage_lines\",\"path\":%1,\"covered\":[%2],\"uncovered\":[%3]}")
+                  .arg(e2eJson(path), joined(covered), joined(uncovered)));
+    }
     QStringList lineNumbers;
     for (const int line : lines) {
         lineNumbers << QString::number(line);
@@ -144,6 +191,12 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
     const quint64 tabId = editor->property("tabId").toULongLong();
     const QString path = docManager_->tabPath(tabId);
     if (path.isEmpty()) {
+        return;
+    }
+
+    if (testService_ != nullptr
+        && !testService_->markerName(path, editor->toPlainText(), static_cast<quint32>(line)).isEmpty()) {
+        showTestMarkerMenu(editor, path, line);
         return;
     }
 
@@ -206,6 +259,36 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
     }
 
     runService_->runContext(path);
+}
+
+void EditorTabs::showTestMarkerMenu(CodeEditor *editor, const QString &path, int line)
+{
+    const QString text = editor->toPlainText();
+    const quint32 testLine = static_cast<quint32>(line);
+    const QString name = testService_->markerName(path, text, testLine);
+    QMenu menu(editor);
+    QAction *run = menu.addAction(tr("Run '%1'").arg(name));
+    QAction *debug = debugService_ != nullptr ? menu.addAction(tr("Debug '%1'").arg(name)) : nullptr;
+    QAction *coverage = menu.addAction(tr("Run '%1' with Coverage").arg(name));
+    e2eMarkMenuActions(&menu, "run_gutter_menu_action");
+    QAction *chosen = menu.exec(QCursor::pos());
+    FfiResult result;
+    if (chosen == run) {
+        result = testService_->runMarker(path, text, testLine);
+    } else if (chosen == coverage) {
+        result = testService_->runMarkerWithCoverage(path, text, testLine);
+    } else if (debug != nullptr && chosen == debug) {
+        result = testService_->prepareDebugMarker(path, text, testLine);
+        if (result.code == 0) {
+            result = debugService_->debugPhpTests();
+        }
+    } else {
+        return;
+    }
+    auto *mainWindow = qobject_cast<QMainWindow *>(window_);
+    if (result.code != 0 && mainWindow != nullptr) {
+        mainWindow->statusBar()->showMessage(QString(result.message), 6000);
+    }
 }
 
 } // namespace ui_shell

@@ -263,7 +263,6 @@ dependencies = [
 name = "app-config"
 version = "0.1.0"
 dependencies = [
- "dirs",
  "nucleo-matcher",
  "serde",
  "tempfile",
@@ -6191,6 +6190,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "php-core"
+version = "0.1.0"
+dependencies = [
+ "app-config",
+ "container-core",
+ "lsp-core",
+ "process-exec",
+ "serde_json",
+ "syntax-core",
+ "tempfile",
+ "test-core",
+ "tree-sitter",
+]
+
+[[package]]
 name = "pico-args"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8392,6 +8406,7 @@ dependencies = [
 name = "syntax-core"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "libloading 0.9.0",
  "serde",
  "streaming-iterator",
@@ -9606,6 +9621,7 @@ dependencies = [
  "lsp-core",
  "markdown-preview",
  "mcp-server",
+ "php-core",
  "plugin-api",
  "plugin-host",
  "process-exec",

@@ -1,0 +1,25 @@
+# The long-running PHP service `make test-php-container` points the IDE's
+# `[php] container_target` at (PHP parity plan E3, flow d). Nightly/on demand
+# only, never a per-PR gate.
+#
+# The project is bind-mounted at the *same* path inside and outside, so the
+# paths PHP prints (stack traces, PHPStan, Xdebug) are paths the IDE can open
+# without translation (ADR-0067 `PathMap`). IDE_PHP_E2E_DIR is set by the
+# Makefile; the pinned image carries php-cli with the extensions the fixture
+# needs.
+name: ide-php-e2e
+services:
+  php:
+    image: php:8.3-cli
+    command: ["sleep", "infinity"]
+    # The flow's own test asserts it ran under this name, which is how it
+    # tells the service from the (also PHP-equipped) test container.
+    hostname: php-e2e-container
+    working_dir: ${IDE_PHP_E2E_DIR:?set IDE_PHP_E2E_DIR}
+    volumes:
+      - ${IDE_PHP_E2E_DIR}:${IDE_PHP_E2E_DIR}
+    healthcheck:
+      test: ["CMD", "php", "-v"]
+      interval: 2s
+      timeout: 2s
+      retries: 30

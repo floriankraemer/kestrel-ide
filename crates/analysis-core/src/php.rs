@@ -37,23 +37,6 @@ pub const PHPCS_CONFIG_CANDIDATES: &[&str] = &[
 /// shadow a developer's own untracked override.
 pub const PHPUNIT_CONFIG_CANDIDATES: &[&str] = &["phpunit.xml", "phpunit.xml.dist"];
 
-/// The Composer package an analyzer id corresponds to, for
-/// [`crate::status`]'s `composer_packages` argument — the table B8 left as
-/// a stub (`analyzer_rows()` passed `&[]`, so a declared-but-uninstalled
-/// tool reported `NotDetected` rather than saying why).
-pub fn composer_package(analyzer_id: &str) -> Option<&'static str> {
-    match analyzer_id {
-        "phpstan" => Some("phpstan/phpstan"),
-        "phpcs" => Some("squizlabs/php_codesniffer"),
-        // Not just an analyzer id: `test-core`'s D7 caller looks this up
-        // for `phpunit` too, since it is the same "declared but not
-        // installed" question `AnalyzerStatus` already answers for a
-        // linter, applied to a test framework's own program candidates.
-        "phpunit" => Some("phpunit/phpunit"),
-        _ => None,
-    }
-}
-
 /// Does `program` need to be run through a PHP binary rather than executed
 /// directly?
 ///
@@ -84,19 +67,36 @@ fn is_executable(_program: &Path) -> bool {
     true
 }
 
-/// Resolve how to actually invoke `program`, given an optional configured
-/// PHP binary override.
+/// Is `program` a PHP script — a `#!…php` shebang or a `<?php` opener?
 ///
-/// Some setups cannot execute the resolved program directly — Windows
-/// without a registered `.phar` file association, or a filesystem where the
-/// `vendor/bin` shim was installed without its executable bit — and need
-/// `php vendor/bin/phpstan` rather than `vendor/bin/phpstan`. Returns the
-/// program to spawn and the argv prefix that must precede an analyzer's own
-/// arguments; the pair is `(program, [])` unchanged whenever no prefix is
-/// configured or none is needed.
+/// A Composer `vendor/bin` entry is one, and its shebang (`env php`) would
+/// pick whichever `php` is first on `PATH`, not the interpreter the user
+/// configured; a `.bat` shim or a native binary is not.
+fn is_php_script(program: &Path) -> bool {
+    use std::io::Read;
+    let mut head = [0u8; 128];
+    let Ok(read) = std::fs::File::open(program).and_then(|mut f| f.read(&mut head)) else {
+        return false;
+    };
+    let head = String::from_utf8_lossy(&head[..read]);
+    let first_line = head.lines().next().unwrap_or_default();
+    first_line.starts_with("<?php") || (first_line.starts_with("#!") && first_line.contains("php"))
+}
+
+/// Resolve how to actually invoke `program`, given an optional configured
+/// PHP binary.
+///
+/// Run `php <program>` rather than `<program>` when the program cannot run
+/// directly — a `.phar` without a registered file association, a
+/// `vendor/bin` shim installed without its executable bit — or is a PHP
+/// script, so the configured interpreter, not whatever `php` is on `PATH`,
+/// runs it. Returns the program to spawn and the argv prefix that must
+/// precede an analyzer's own arguments; the pair is `(program, [])`
+/// unchanged whenever no interpreter is given or the program is a native
+/// executable.
 pub fn invocation(program: &Path, php_binary: Option<&str>) -> (PathBuf, Vec<String>) {
     match php_binary {
-        Some(php) if needs_php_prefix(program) => (
+        Some(php) if needs_php_prefix(program) || is_php_script(program) => (
             PathBuf::from(php),
             vec![program.to_string_lossy().into_owned()],
         ),
@@ -107,26 +107,6 @@ pub fn invocation(program: &Path, php_binary: Option<&str>) -> (PathBuf, Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn phpstan_maps_to_its_composer_package() {
-        assert_eq!(composer_package("phpstan"), Some("phpstan/phpstan"));
-    }
-
-    #[test]
-    fn phpcs_maps_to_its_composer_package() {
-        assert_eq!(composer_package("phpcs"), Some("squizlabs/php_codesniffer"));
-    }
-
-    #[test]
-    fn phpunit_maps_to_its_composer_package() {
-        assert_eq!(composer_package("phpunit"), Some("phpunit/phpunit"));
-    }
-
-    #[test]
-    fn an_unknown_analyzer_id_has_no_composer_package() {
-        assert_eq!(composer_package("eslint"), None);
-    }
 
     #[test]
     fn a_phar_always_needs_the_php_prefix() {
@@ -167,6 +147,32 @@ mod tests {
         let (program, args) = invocation(Path::new("vendor/phpstan.phar"), Some("php"));
         assert_eq!(program, PathBuf::from("php"));
         assert_eq!(args, vec!["vendor/phpstan.phar".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_configured_php_binary_runs_an_executable_php_script() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("phpstan");
+        std::fs::write(&path, "#!/usr/bin/env php\n<?php\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let (program, args) = invocation(&path, Some("/opt/php83/bin/php"));
+        assert_eq!(program, PathBuf::from("/opt/php83/bin/php"));
+        assert_eq!(args, vec![path.to_string_lossy().into_owned()]);
+    }
+
+    #[test]
+    fn a_php_opener_without_a_shebang_is_a_php_script() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tool");
+        std::fs::write(&path, "<?php echo 1;").unwrap();
+        assert!(is_php_script(&path));
+    }
+
+    #[test]
+    fn a_missing_program_is_not_a_php_script() {
+        assert!(!is_php_script(Path::new("/definitely/not/here")));
     }
 
     #[cfg(unix)]

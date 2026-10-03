@@ -1,0 +1,4 @@
+{# Harness fixture (ADR-0071): a keyword, a string and a comment. #}
+{% if user %}
+  <p>{{ "hello"|upper }}</p>
+{% endif %}

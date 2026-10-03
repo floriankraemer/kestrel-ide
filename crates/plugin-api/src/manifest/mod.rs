@@ -14,6 +14,13 @@ use serde::Deserialize;
 use crate::error::LoadErrorKind;
 use crate::API_VERSION;
 
+mod formatter;
+pub use formatter::FormatterContribution;
+mod template;
+pub use template::{
+    FileTemplateContribution, LiveTemplateContribution, TemplateContext, EXPR_VAR, SELECTION_VAR,
+};
+
 /// File a plugin directory is recognised by.
 pub const MANIFEST_FILE: &str = "plugin.toml";
 
@@ -40,6 +47,9 @@ pub enum ContributionPoint {
     LanguageServers,
     Analyzers,
     TestFrameworks,
+    Formatters,
+    LiveTemplates,
+    FileTemplates,
     BuildTools,
     ToolWindows,
     SettingsPages,
@@ -58,6 +68,9 @@ impl ContributionPoint {
             Self::LanguageServers => "language-servers",
             Self::Analyzers => "analyzers",
             Self::TestFrameworks => "test-frameworks",
+            Self::Formatters => "formatters",
+            Self::LiveTemplates => "live-templates",
+            Self::FileTemplates => "file-templates",
             Self::BuildTools => "build-tools",
             Self::ToolWindows => "tool-windows",
             Self::SettingsPages => "settings-pages",
@@ -210,6 +223,97 @@ pub struct AnalyzerContribution {
     /// `analysis-core` parses the value side into its own `Severity`.
     #[serde(default, rename = "severity-map")]
     pub severity_map: BTreeMap<String, String>,
+    /// Language ids (`"php"`) whose files this analyzer checks on type or
+    /// save. Empty means project-wide runs only: no per-file trigger ever
+    /// selects it.
+    #[serde(default)]
+    pub languages: Vec<String>,
+    /// Arguments for a single-file run, placed after [`Self::args`]. A
+    /// `{file}` placeholder is replaced by the file's path; when no
+    /// argument contains it (and [`Self::buffer`] is not `"stdin"`) the
+    /// path is appended instead.
+    #[serde(default, rename = "file-args")]
+    pub file_args: Vec<String>,
+    /// How the tool sees an unsaved buffer: `"stdin"`, `"temp-copy"` or
+    /// `"saved-only"` (the default when absent). Unknown strings are
+    /// rejected at load time; `analysis-core::BufferStrategy` is the only
+    /// crate that interprets the value.
+    #[serde(default)]
+    pub buffer: Option<String>,
+    /// The Composer package that installs this tool, so detection can say
+    /// "declared but not installed" (`phpstan/phpstan`).
+    #[serde(default, rename = "composer-package")]
+    pub composer_package: Option<String>,
+    /// The interpreter the program needs to run under. Only `"php"` is
+    /// known; the host then runs the tool through the configured PHP
+    /// binary when the program is a `.phar` or not executable.
+    #[serde(default, rename = "requires-interpreter")]
+    pub requires_interpreter: Option<String>,
+    /// The comment that silences one finding, with `{code}` standing for the
+    /// finding's rule id (`// @phpstan-ignore {code}`). Absent means the
+    /// IDE offers no "suppress" quick fix for this analyzer. The comment is
+    /// inserted on its own line above the finding.
+    #[serde(default, rename = "suppress-comment")]
+    pub suppress_comment: Option<String>,
+    /// The tool prefixes each message with its rule id as `Id: text` and
+    /// reports no `source` attribute (Psalm's checkstyle report), so the
+    /// rule id is read from the message instead.
+    #[serde(default, rename = "code-in-message")]
+    pub code_in_message: bool,
+    /// The id of a `formatters` contribution that can fix this analyzer's
+    /// findings (PHPCS and phpcbf). That formatter's `fix-args` say how to
+    /// narrow it to one finding's rule.
+    #[serde(default)]
+    pub fixer: Option<String>,
+    /// Project-relative config files, in order, that the tool must be told
+    /// about explicitly (PHPMD's positional ruleset). The first that exists
+    /// at the project root replaces `{ruleset}` in `args`/`file-args`;
+    /// [`Self::ruleset_default`] is used when none does.
+    #[serde(default, rename = "config-file-candidates")]
+    pub config_file_candidates: Vec<String>,
+    /// What `{ruleset}` becomes when no config file exists. Required when
+    /// `args`/`file-args` use the placeholder.
+    #[serde(default, rename = "ruleset-default")]
+    pub ruleset_default: Option<String>,
+    /// Project-relative config files, in order, that name what a project run
+    /// analyses (PHPStan's `phpstan.neon`, PHPCS's `phpcs.xml`). When the
+    /// first that exists at the project root names paths, the project run is
+    /// started without a path argument: a path on the command line replaces
+    /// the config's paths, and the project root would pull in `vendor/`.
+    #[serde(default, rename = "project-paths-config")]
+    pub project_paths_config: Vec<String>,
+    /// Project-relative config files the tool cannot run without (Psalm's
+    /// `psalm.xml`). When none exists the analyzer is not run and its
+    /// status says which file it needs.
+    #[serde(default, rename = "required-config")]
+    pub required_config: Vec<String>,
+    /// The command that writes a starter config (`vendor/bin/psalm --init`),
+    /// named in that status.
+    #[serde(default, rename = "config-init")]
+    pub config_init: Option<String>,
+}
+
+/// Interpreters a contribution may name in `requires-interpreter`.
+const KNOWN_INTERPRETERS: &[&str] = &["php"];
+
+/// Shared load-time check for the two process-launch contributions'
+/// `composer-package` / `requires-interpreter` fields.
+fn check_tool_package_and_interpreter(
+    point: &'static str,
+    composer_package: Option<&str>,
+    requires_interpreter: Option<&str>,
+) -> Result<(), LoadErrorKind> {
+    if composer_package.is_some_and(|p| p.trim().is_empty()) {
+        return Err(LoadErrorKind::EmptyField("composer-package"));
+    }
+    if let Some(interpreter) = requires_interpreter {
+        if !KNOWN_INTERPRETERS.contains(&interpreter) {
+            return Err(LoadErrorKind::MalformedManifest(format!(
+                "{point}.requires-interpreter `{interpreter}` must be one of `php`"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// One test framework a plugin offers (the PHP tooling plan's D1).
@@ -283,9 +387,14 @@ pub struct TestFrameworkContribution {
     pub report_glob: Option<String>,
     /// Which target-selection syntax [`Self::filter_flag`]/
     /// [`Self::filter_template`] speaks: `"phpunit-regex"` (PHPUnit's own
-    /// PCRE `--filter`, the default when absent), `"surefire"` (Maven's
-    /// `-Dtest=Class#method`), or `"gradle"` (Gradle's dotted
-    /// `--tests pkg.Class.method`). `test-core::filter` is the only crate
+    /// PCRE `--filter`, the default when absent), `"pest-regex"` (the same
+    /// flag, but a leaf name is matched through Pest's prettified test names),
+    /// `"surefire"` (Maven's
+    /// `-Dtest=Class#method`), `"gradle"` (Gradle's dotted
+    /// `--tests pkg.Class.method`), `"codeception"` (`run file:^method$`,
+    /// editor-run tests only), `"behat-name"` (`--name /regex/`) or `"none"`
+    /// (the tool cannot select one test; the flag is only the manifest's
+    /// mandatory placeholder). `test-core::filter` is the only crate
     /// that interprets the value — this crate stays a leaf and just checks
     /// it is one of the three dialects a run could actually speak, the same
     /// "unknown string is a load error, not a silent PHPUnit-regex
@@ -294,6 +403,20 @@ pub struct TestFrameworkContribution {
     /// matches zero tests instead of the intended one).
     #[serde(default, rename = "filter-dialect")]
     pub filter_dialect: Option<String>,
+    /// The Composer package that installs this framework
+    /// (`phpunit/phpunit`); same meaning as
+    /// [`AnalyzerContribution::composer_package`].
+    #[serde(default, rename = "composer-package")]
+    pub composer_package: Option<String>,
+    /// Same meaning as [`AnalyzerContribution::requires_interpreter`].
+    #[serde(default, rename = "requires-interpreter")]
+    pub requires_interpreter: Option<String>,
+    /// Arguments that make a run write a Clover coverage report, where
+    /// `$COVERAGE_FILE$` stands for the report's path
+    /// (`["--coverage-clover", "$COVERAGE_FILE$"]`). Empty means the
+    /// framework offers no coverage run.
+    #[serde(default, rename = "coverage-args")]
+    pub coverage_args: Vec<String>,
 }
 
 /// One build tool a plugin offers (the jvm-build-tools plan's A1).
@@ -541,6 +664,12 @@ pub struct Contributes {
     pub analyzers: Vec<AnalyzerContribution>,
     #[serde(default, rename = "test-frameworks")]
     pub test_frameworks: Vec<TestFrameworkContribution>,
+    #[serde(default)]
+    pub formatters: Vec<FormatterContribution>,
+    #[serde(default, rename = "live-templates")]
+    pub live_templates: Vec<LiveTemplateContribution>,
+    #[serde(default, rename = "file-templates")]
+    pub file_templates: Vec<FileTemplateContribution>,
     #[serde(default, rename = "build-tools")]
     pub build_tools: Vec<BuildToolContribution>,
     #[serde(default, rename = "tool-windows")]
@@ -567,6 +696,9 @@ impl Contributes {
             && self.language_servers.is_empty()
             && self.analyzers.is_empty()
             && self.test_frameworks.is_empty()
+            && self.formatters.is_empty()
+            && self.live_templates.is_empty()
+            && self.file_templates.is_empty()
             && self.build_tools.is_empty()
             && self.tool_windows.is_empty()
             && self.settings_pages.is_empty()
@@ -742,6 +874,44 @@ impl PluginManifest {
                 "contributes.analyzers.output-format",
                 &analyzer.output_format,
             )?;
+            for language in &analyzer.languages {
+                non_empty("contributes.analyzers.languages", language)?;
+            }
+            if let Some(buffer) = &analyzer.buffer {
+                if !matches!(buffer.as_str(), "stdin" | "temp-copy" | "saved-only") {
+                    return Err(LoadErrorKind::MalformedManifest(format!(
+                        "contributes.analyzers.buffer `{buffer}` must be one of `stdin`, \
+                         `temp-copy`, `saved-only`"
+                    )));
+                }
+            }
+            if let Some(comment) = &analyzer.suppress_comment {
+                if !comment.contains("{code}") {
+                    return Err(LoadErrorKind::MalformedManifest(
+                        "contributes.analyzers.suppress-comment must contain `{code}`".to_string(),
+                    ));
+                }
+            }
+            if let Some(fixer) = &analyzer.fixer {
+                check_id("contributes.analyzers.fixer", fixer)?;
+            }
+            let uses_ruleset = analyzer
+                .args
+                .iter()
+                .chain(&analyzer.file_args)
+                .any(|a| a.contains("{ruleset}"));
+            if uses_ruleset && analyzer.ruleset_default.is_none() {
+                return Err(LoadErrorKind::MalformedManifest(
+                    "contributes.analyzers.args use `{ruleset}`, so \
+                     contributes.analyzers.ruleset-default is required"
+                        .to_string(),
+                ));
+            }
+            check_tool_package_and_interpreter(
+                "contributes.analyzers",
+                analyzer.composer_package.as_deref(),
+                analyzer.requires_interpreter.as_deref(),
+            )?;
         }
         check_unique(
             ContributionPoint::Analyzers,
@@ -786,12 +956,38 @@ impl PluginManifest {
                 "contributes.test-frameworks.output-format",
                 &framework.output_format,
             )?;
+            check_tool_package_and_interpreter(
+                "contributes.test-frameworks",
+                framework.composer_package.as_deref(),
+                framework.requires_interpreter.as_deref(),
+            )?;
+            if !framework.coverage_args.is_empty()
+                && !framework
+                    .coverage_args
+                    .iter()
+                    .any(|arg| arg.contains("$COVERAGE_FILE$"))
+            {
+                return Err(LoadErrorKind::MalformedManifest(
+                    "contributes.test-frameworks.coverage-args must contain `$COVERAGE_FILE$`"
+                        .to_string(),
+                ));
+            }
             if let Some(dialect) = &framework.filter_dialect {
                 non_empty("contributes.test-frameworks.filter-dialect", dialect)?;
-                if !matches!(dialect.as_str(), "phpunit-regex" | "surefire" | "gradle") {
+                if !matches!(
+                    dialect.as_str(),
+                    "phpunit-regex"
+                        | "pest-regex"
+                        | "surefire"
+                        | "gradle"
+                        | "codeception"
+                        | "behat-name"
+                        | "none"
+                ) {
                     return Err(LoadErrorKind::MalformedManifest(format!(
                         "contributes.test-frameworks.filter-dialect `{dialect}` must be one of \
-                         `phpunit-regex`, `surefire`, `gradle`"
+                         `phpunit-regex`, `pest-regex`, `surefire`, `gradle`, `codeception`, `behat-name`, \
+                         `none`"
                     )));
                 }
             }
@@ -806,6 +1002,39 @@ impl PluginManifest {
 
         // Same reasoning again: a test framework is a native process, not a
         // wasm guest.
+
+        for formatter in &self.contributes.formatters {
+            formatter.validate()?;
+        }
+        check_unique(
+            ContributionPoint::Formatters,
+            self.contributes.formatters.iter().map(|f| f.id.as_str()),
+        )?;
+
+        for template in &self.contributes.live_templates {
+            template.validate()?;
+        }
+        let template_keys: Vec<String> = self
+            .contributes
+            .live_templates
+            .iter()
+            .map(|t| t.key())
+            .collect();
+        check_unique(
+            ContributionPoint::LiveTemplates,
+            template_keys.iter().map(String::as_str),
+        )?;
+
+        for template in &self.contributes.file_templates {
+            template.validate()?;
+        }
+        check_unique(
+            ContributionPoint::FileTemplates,
+            self.contributes
+                .file_templates
+                .iter()
+                .map(|t| t.id.as_str()),
+        )?;
 
         for tool in &self.contributes.build_tools {
             check_id("contributes.build-tools.id", &tool.id)?;

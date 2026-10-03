@@ -41,9 +41,10 @@ QSet<int> blocksFromLines(const QString &newlineSeparated)
 }
 } // namespace
 
-void wireDebugService(DebugService *debugService, EditorTabs *editorTabs)
+void wireDebugService(DebugService *debugService, EditorTabs *editorTabs, TestService *testService)
 {
     editorTabs->setDebugService(debugService);
+    wireTestGutter(testService, debugService, editorTabs);
     QObject::connect(debugService, &DebugService::breakpointsChanged, editorTabs,
                       [editorTabs]() { editorTabs->refreshBreakpoints(); });
     QObject::connect(debugService, &DebugService::debugStopped, editorTabs,

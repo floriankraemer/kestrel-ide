@@ -11,7 +11,11 @@
 /// human-readable name the settings UI shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ServerDef {
-    /// LSP language id, e.g. `"rust"`. Unique across the table.
+    /// Stable server id, unique across the table. It is the language id for a
+    /// language with one server, so the id a diagnostics source key or a
+    /// user entry names does not change for the common case.
+    pub id: &'static str,
+    /// LSP language id, e.g. `"rust"`. Several rows may share one.
     pub language_id: &'static str,
     /// Display name, e.g. `"rust-analyzer"`.
     pub name: &'static str,
@@ -19,178 +23,308 @@ pub struct ServerDef {
     pub command: &'static str,
     /// Arguments passed on every launch.
     pub args: &'static [&'static str],
+    /// Whether this server's `publishDiagnostics` reach the Problems panel.
+    pub diagnostics: bool,
+    /// The server cannot run on native Windows (it still runs on WSL and in
+    /// a container).
+    pub posix_only: bool,
+    /// Which host the server's process runs on.
+    pub exec: ServerExec,
 }
 
-/// Default language servers, one per language id. Nothing here is installed
+/// Default language servers, in the order they answer a `First` request. Nothing here is installed
 /// by us — a missing executable simply means no server for that language.
 pub const SERVERS: &[ServerDef] = &[
     ServerDef {
+        id: "rust",
         language_id: "rust",
         name: "rust-analyzer",
         command: "rust-analyzer",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "python",
         language_id: "python",
         name: "Pyright",
         command: "pyright-langserver",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "go",
         language_id: "go",
         name: "gopls",
         command: "gopls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "c",
         language_id: "c",
         name: "clangd",
         command: "clangd",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "cpp",
         language_id: "cpp",
         name: "clangd",
         command: "clangd",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "typescript",
         language_id: "typescript",
         name: "TypeScript Language Server",
         command: "typescript-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "javascript",
         language_id: "javascript",
         name: "TypeScript Language Server",
         command: "typescript-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     // `typescriptreact` is a separate LSP language id, but the same server
     // handles it — it keys JSX parsing off the id it is told.
     ServerDef {
+        id: "typescriptreact",
         language_id: "typescriptreact",
         name: "TypeScript Language Server",
         command: "typescript-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "json",
         language_id: "json",
         name: "JSON Language Server",
         command: "vscode-json-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "yaml",
         language_id: "yaml",
         name: "YAML Language Server",
         command: "yaml-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "bash",
         language_id: "bash",
         name: "Bash Language Server",
         command: "bash-language-server",
         args: &["start"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "lua",
         language_id: "lua",
         name: "lua-language-server",
         command: "lua-language-server",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "intelephense",
         language_id: "php",
         name: "Intelephense",
         command: "intelephense",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
+    },
+    // Runs beside Intelephense (ADR-0066). Its diagnostics are off by default
+    // because Intelephense already reports them; Phpactor is the second
+    // opinion for navigation, completion and refactoring. It is a PHP
+    // program, so it runs where PHP does (ADR-0067): in the container the
+    // `[php]` settings name, else on the project's own host.
+    ServerDef {
+        id: "phpactor",
+        language_id: "php",
+        name: "Phpactor",
+        command: "phpactor",
+        args: &["language-server"],
+        diagnostics: false,
+        posix_only: true,
+        exec: ServerExec::Interpreter,
     },
     ServerDef {
+        id: "java",
         language_id: "java",
         name: "Eclipse JDT.LS",
         command: "jdtls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "kotlin",
         language_id: "kotlin",
         name: "kotlin-language-server",
         command: "kotlin-language-server",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "swift",
         language_id: "swift",
         name: "SourceKit-LSP",
         command: "sourcekit-lsp",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "scala",
         language_id: "scala",
         name: "Metals",
         command: "metals",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "haskell",
         language_id: "haskell",
         name: "Haskell Language Server",
         command: "haskell-language-server-wrapper",
         args: &["--lsp"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "fsharp",
         language_id: "fsharp",
         name: "FsAutoComplete",
         command: "fsautocomplete",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "zig",
         language_id: "zig",
         name: "ZLS",
         command: "zls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "ruby",
         language_id: "ruby",
         name: "Solargraph",
         command: "solargraph",
         args: &["stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "toml",
         language_id: "toml",
         name: "Taplo",
         command: "taplo",
         args: &["lsp", "stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "sql",
         language_id: "sql",
         name: "sqls",
         command: "sqls",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "html",
         language_id: "html",
         name: "HTML Language Server",
         command: "vscode-html-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "css",
         language_id: "css",
         name: "CSS Language Server",
         command: "vscode-css-language-server",
         args: &["--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "xml",
         language_id: "xml",
         name: "Lemminx",
         command: "lemminx",
         args: &[],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
     ServerDef {
+        id: "dockerfile",
         language_id: "dockerfile",
         name: "Docker Language Server",
         command: "docker-language-server",
         args: &["start", "--stdio"],
+        diagnostics: true,
+        posix_only: false,
+        exec: ServerExec::Host,
     },
 ];
 
-/// The shipped default for a language id, if we know one.
+/// The first shipped default for a language id, if we know one.
 pub fn default_server(language_id: &str) -> Option<&'static ServerDef> {
     SERVERS.iter().find(|s| s.language_id == language_id)
 }
@@ -210,6 +344,8 @@ pub enum ServerSource {
 /// top.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerConfig {
+    /// Stable server id; the key the manager runs the server under.
+    pub id: String,
     pub language_id: String,
     pub name: String,
     pub command: String,
@@ -222,12 +358,34 @@ pub struct ServerConfig {
     /// Default settings for `settings_section`, sent to the server as JSON.
     /// `Null` when the server takes no pulled configuration.
     pub settings: serde_json::Value,
+    /// Sent as `initialize.initializationOptions`; `Null` sends none.
+    pub initialization_options: serde_json::Value,
+    /// Whether this server's diagnostics are shown.
+    pub diagnostics: bool,
+    /// Skipped on native Windows with a local host.
+    pub posix_only: bool,
+    /// Which host the server's process runs on.
+    pub exec: ServerExec,
+    /// Answer order among the servers of one language; lower answers first.
+    /// `resolve_servers` numbers the resolved list.
+    pub priority: usize,
     pub source: ServerSource,
+}
+
+/// Where a server's process runs when the project has an interpreter target.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ServerExec {
+    /// The project's own host (`ExecHost::for_path`).
+    #[default]
+    Host,
+    /// The configured interpreter's host, e.g. a container (ADR-0067).
+    Interpreter,
 }
 
 impl From<&ServerDef> for ServerConfig {
     fn from(def: &ServerDef) -> Self {
         ServerConfig {
+            id: def.id.to_string(),
             language_id: def.language_id.to_string(),
             name: def.name.to_string(),
             command: def.command.to_string(),
@@ -235,6 +393,11 @@ impl From<&ServerDef> for ServerConfig {
             enabled: true,
             settings_section: None,
             settings: serde_json::Value::Null,
+            initialization_options: serde_json::Value::Null,
+            diagnostics: def.diagnostics,
+            posix_only: def.posix_only,
+            exec: def.exec,
+            priority: 0,
             source: ServerSource::Builtin,
         }
     }
@@ -264,6 +427,7 @@ pub struct PluginServer {
 impl From<&PluginServer> for ServerConfig {
     fn from(plugin: &PluginServer) -> Self {
         ServerConfig {
+            id: plugin.language_id.clone(),
             language_id: plugin.language_id.clone(),
             name: plugin.name.clone(),
             command: plugin.command.clone(),
@@ -271,6 +435,11 @@ impl From<&PluginServer> for ServerConfig {
             enabled: true,
             settings_section: plugin.settings_section.clone(),
             settings: plugin.settings.clone(),
+            initialization_options: serde_json::Value::Null,
+            diagnostics: true,
+            posix_only: false,
+            exec: ServerExec::Host,
+            priority: 0,
             source: ServerSource::Plugin {
                 plugin_id: plugin.plugin_id.clone(),
             },
@@ -278,29 +447,38 @@ impl From<&PluginServer> for ServerConfig {
     }
 }
 
-/// What a user may say about one language's server. Every field but the id is
+/// What a user may say about one server. Every field but the language id is
 /// optional: overriding only `enabled` must not wipe the shipped command.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServerOverride {
+    /// The server this entry is about. Absent addresses the first server of
+    /// `language_id`, which is how an entry written before a language had
+    /// several servers keeps working.
+    pub id: Option<String>,
     pub language_id: String,
     pub name: Option<String>,
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
     pub enabled: Option<bool>,
+    pub settings: Option<serde_json::Value>,
+    pub initialization_options: Option<serde_json::Value>,
+    pub diagnostics: Option<bool>,
+    pub exec: Option<ServerExec>,
 }
 
 /// Merge plugin contributions and user entries over the shipped catalog,
 /// low to high precedence: `SERVERS` -> `plugin_servers` -> `overrides`.
 ///
-/// A plugin entry for a language the const catalog already has REPLACES
-/// that row entirely — it is a full alternate definition, not a
-/// field-by-field patch like a [`ServerOverride`]. A plugin entry for a
-/// language with no catalog row is appended. Catalog order is preserved
-/// otherwise; user entries for unknown languages are appended in the order
-/// given and must carry a command (one without a command has nothing to
-/// launch and is dropped). Disabled entries are kept in the result so a
-/// settings page can show them — callers start only the ones with
-/// `enabled`.
+/// Servers are keyed by `id`; a language may have several, kept in catalog
+/// order. A plugin entry for a language the const catalog already has
+/// REPLACES every row of that language — it is a full alternate definition,
+/// not a field-by-field patch like a [`ServerOverride`]. A plugin entry for a
+/// language with no catalog row is appended. An override names its server by
+/// `id`, or by language alone for the first server of that language; one for
+/// an unknown server is appended in the order given and must carry a command
+/// (without one there is nothing to launch, so it is dropped). Disabled
+/// entries are kept so a settings page can show them — callers start only
+/// the ones with `enabled`.
 pub fn resolve_servers(
     overrides: &[ServerOverride],
     plugin_servers: &[PluginServer],
@@ -310,25 +488,30 @@ pub fn resolve_servers(
     for plugin in plugin_servers {
         let cfg = ServerConfig::from(plugin);
         match resolved
-            .iter_mut()
-            .find(|c| c.language_id == cfg.language_id)
+            .iter()
+            .position(|c| c.language_id == cfg.language_id)
         {
-            Some(existing) => *existing = cfg,
+            Some(first) => {
+                resolved.retain(|c| c.language_id != cfg.language_id);
+                resolved.insert(first.min(resolved.len()), cfg);
+            }
             None => resolved.push(cfg),
         }
     }
 
     for ov in overrides {
-        match resolved
-            .iter_mut()
-            .find(|c| c.language_id == ov.language_id)
-        {
+        let target = resolved.iter_mut().find(|c| match &ov.id {
+            Some(id) => &c.id == id,
+            None => c.language_id == ov.language_id,
+        });
+        match target {
             Some(cfg) => apply(cfg, ov),
             None => {
                 let Some(command) = ov.command.clone() else {
                     continue;
                 };
                 let mut cfg = ServerConfig {
+                    id: ov.id.clone().unwrap_or_else(|| ov.language_id.clone()),
                     language_id: ov.language_id.clone(),
                     name: ov.name.clone().unwrap_or_else(|| command.clone()),
                     command,
@@ -336,12 +519,20 @@ pub fn resolve_servers(
                     enabled: true,
                     settings_section: None,
                     settings: serde_json::Value::Null,
+                    initialization_options: serde_json::Value::Null,
+                    diagnostics: true,
+                    posix_only: false,
+                    exec: ServerExec::Host,
+                    priority: 0,
                     source: ServerSource::User,
                 };
                 apply(&mut cfg, ov);
                 resolved.push(cfg);
             }
         }
+    }
+    for (priority, cfg) in resolved.iter_mut().enumerate() {
+        cfg.priority = priority;
     }
     resolved
 }
@@ -359,20 +550,211 @@ fn apply(cfg: &mut ServerConfig, ov: &ServerOverride) {
     if let Some(enabled) = ov.enabled {
         cfg.enabled = enabled;
     }
+    if let Some(settings) = &ov.settings {
+        cfg.settings = settings.clone();
+    }
+    if let Some(options) = &ov.initialization_options {
+        cfg.initialization_options = options.clone();
+    }
+    if let Some(diagnostics) = ov.diagnostics {
+        cfg.diagnostics = diagnostics;
+    }
+    if let Some(exec) = ov.exec {
+        cfg.exec = exec;
+    }
 }
 
-/// Which of the resolved servers, if any, may serve `language_id`.
+/// Which of the resolved servers, if any, may serve `language_id` first.
 ///
 /// "May" is the rule: a disabled entry stays in `resolve_servers`' output so
 /// a settings page can list it, and this is the single place that decides
 /// callers must not launch it.
 pub fn enabled_server<'a>(
     resolved: &'a [ServerConfig],
-    language_id: &str,
+    language_id: &'a str,
 ) -> Option<&'a ServerConfig> {
+    enabled_servers(resolved, language_id).next()
+}
+
+/// Every enabled server for `language_id`, in answer order.
+pub fn enabled_servers<'a>(
+    resolved: &'a [ServerConfig],
+    language_id: &'a str,
+) -> impl Iterator<Item = &'a ServerConfig> {
     resolved
         .iter()
-        .find(|c| c.language_id == language_id && c.enabled)
+        .filter(move |c| c.language_id == language_id && c.enabled)
+}
+
+/// What a changed configuration means for a server that is already running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadKind {
+    /// Nothing that reaches the server changed.
+    Unchanged,
+    /// Only its settings changed: send `didChangeConfiguration`, keep running.
+    PushSettings,
+    /// Something fixed at launch changed — what to run, what `initialize`
+    /// carries, where it runs, whether its diagnostics show.
+    Restart,
+}
+
+/// How to install a server we ship a default for but never install, shown
+/// when it fails to start because it is missing. `None` for a server we
+/// know no single install command for.
+pub fn install_hint(server_id: &str) -> Option<&'static str> {
+    match server_id {
+        "intelephense" => Some("Install it with: npm i -g intelephense"),
+        "phpactor" => Some(
+            "Install it with: composer global require phpactor/phpactor, \
+             or download phpactor.phar and put it on PATH as phpactor",
+        ),
+        _ => None,
+    }
+}
+
+/// Shown for a missing command that has no server-specific install hint.
+const GENERIC_NOT_FOUND_HINT: &str = "Enter an absolute path, or install it and reopen this page.";
+
+/// Why a server that was asked to start is not running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartFailure {
+    /// The command does not exist, on the local host or inside a WSL
+    /// distro or container: a typo or a missing install, not a crash.
+    /// `hint` says what to do about it.
+    NotFound { hint: String },
+    /// The command exists but the start failed (timeout, protocol error,
+    /// died during the handshake).
+    Failed { message: String },
+}
+
+/// Classify the failure of starting `server_id` with `error`. Every host
+/// reports a missing program as a spawn error of kind `NotFound`, so the
+/// view never has to read the message to tell the two apart.
+pub fn classify_start_failure(server_id: &str, error: &crate::manager::LspError) -> StartFailure {
+    match error {
+        crate::manager::LspError::Spawn { source, .. }
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            let hint = install_hint(server_id).unwrap_or(GENERIC_NOT_FOUND_HINT);
+            StartFailure::NotFound { hint: hint.into() }
+        }
+        _ => StartFailure::Failed {
+            message: error.to_string(),
+        },
+    }
+}
+
+/// How a running server must react to going from `before` to `after`.
+pub fn reload_kind(before: &ServerConfig, after: &ServerConfig) -> ReloadKind {
+    let launch_differs = before.language_id != after.language_id
+        || before.command != after.command
+        || before.args != after.args
+        || before.initialization_options != after.initialization_options
+        || before.settings_section != after.settings_section
+        || before.exec != after.exec
+        || before.diagnostics != after.diagnostics;
+    if launch_differs {
+        ReloadKind::Restart
+    } else if before.settings != after.settings {
+        ReloadKind::PushSettings
+    } else {
+        ReloadKind::Unchanged
+    }
+}
+
+/// What to do to the running servers when settings change.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReloadPlan {
+    /// Server ids to stop: disabled, removed, or about to be restarted.
+    pub stop: Vec<String>,
+    /// Server ids to launch: newly enabled, or restarted.
+    pub start: Vec<String>,
+    /// Server id and the settings to push to it.
+    pub push: Vec<(String, serde_json::Value)>,
+}
+
+/// Compare two resolved configurations for the languages that have been
+/// started (`is_started`). Servers of a language nobody opened are left
+/// alone: they launch from the new configuration on first use.
+pub fn reload_plan(
+    before: &[ServerConfig],
+    after: &[ServerConfig],
+    is_started: impl Fn(&str) -> bool,
+) -> ReloadPlan {
+    let running = |cfgs: &'_ [ServerConfig]| -> Vec<ServerConfig> {
+        cfgs.iter()
+            .filter(|c| c.enabled && is_started(&c.language_id))
+            .cloned()
+            .collect()
+    };
+    let (before, after) = (running(before), running(after));
+    let mut plan = ReloadPlan::default();
+    for old in &before {
+        match after.iter().find(|c| c.id == old.id) {
+            None => plan.stop.push(old.id.clone()),
+            Some(new) => match reload_kind(old, new) {
+                ReloadKind::Restart => {
+                    plan.stop.push(old.id.clone());
+                    plan.start.push(old.id.clone());
+                }
+                ReloadKind::PushSettings => plan.push.push((new.id.clone(), new.settings.clone())),
+                ReloadKind::Unchanged => {}
+            },
+        }
+    }
+    for new in &after {
+        if !before.iter().any(|c| c.id == new.id) {
+            plan.start.push(new.id.clone());
+        }
+    }
+    plan
+}
+
+/// Which of a language's enabled servers to launch, and which to skip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaunchPlan {
+    pub start: Vec<ServerConfig>,
+    /// Servers left out, each with the reason to show the user.
+    pub skipped: Vec<(ServerConfig, String)>,
+}
+
+/// Split `servers` into those to launch and those the platform rules out.
+///
+/// A `posix_only` server (Phpactor) cannot run on native Windows, so it is
+/// skipped when `is_windows` and its process would run there: on a local
+/// host, not inside WSL and not in a container. Which host that is depends
+/// on the server's `exec`: the project's (`project_host`) or the PHP
+/// interpreter's (`interpreter_host`, ADR-0067). `is_windows` is a
+/// parameter so the rule is testable on any platform.
+pub fn launch_plan<'a>(
+    servers: impl IntoIterator<Item = &'a ServerConfig>,
+    project_host: &process_exec::host::ExecHost,
+    interpreter_host: &process_exec::host::ExecHost,
+    is_windows: bool,
+) -> LaunchPlan {
+    let mut plan = LaunchPlan {
+        start: Vec::new(),
+        skipped: Vec::new(),
+    };
+    for cfg in servers {
+        let host = match cfg.exec {
+            ServerExec::Host => project_host,
+            ServerExec::Interpreter => interpreter_host,
+        };
+        if cfg.posix_only && is_windows && !host.runs_remotely() {
+            plan.skipped.push((
+                cfg.clone(),
+                format!(
+                    "{} needs a POSIX system and does not run on native Windows. \
+                     Open the project in WSL or run the server in a container.",
+                    cfg.name
+                ),
+            ));
+        } else {
+            plan.start.push(cfg.clone());
+        }
+    }
+    plan
 }
 
 /// Catalog language id -> LSP language id, for the few languages whose
@@ -407,15 +789,82 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn language_ids_are_unique() {
+    fn server_ids_are_unique() {
         let mut seen = HashSet::new();
         for def in SERVERS {
-            assert!(
-                seen.insert(def.language_id),
-                "duplicate language id {:?}",
-                def.language_id
-            );
+            assert!(seen.insert(def.id), "duplicate server id {:?}", def.id);
         }
+    }
+
+    #[test]
+    fn a_single_server_language_uses_its_language_id_as_server_id() {
+        for def in SERVERS {
+            let siblings = SERVERS
+                .iter()
+                .filter(|d| d.language_id == def.language_id)
+                .count();
+            if siblings == 1 {
+                assert_eq!(def.id, def.language_id);
+            }
+        }
+    }
+
+    #[test]
+    fn php_runs_intelephense_then_phpactor_with_phpactor_quiet_and_posix_only() {
+        let resolved = resolve_servers(&[], &[]);
+        let php: Vec<_> = enabled_servers(&resolved, "php").collect();
+        assert_eq!(
+            php.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["intelephense", "phpactor"]
+        );
+        assert_eq!(php[1].command, "phpactor");
+        assert_eq!(php[1].args, ["language-server"]);
+        assert!(php[0].diagnostics && !php[0].posix_only);
+        assert!(!php[1].diagnostics && php[1].posix_only);
+    }
+
+    #[test]
+    fn an_override_with_an_id_hits_that_server_and_one_without_hits_the_first() {
+        let resolved = resolve_servers(
+            &[
+                ServerOverride {
+                    id: Some("phpactor".into()),
+                    language_id: "php".into(),
+                    diagnostics: Some(true),
+                    initialization_options: Some(serde_json::json!({"a": 1})),
+                    ..Default::default()
+                },
+                ServerOverride {
+                    language_id: "php".into(),
+                    enabled: Some(false),
+                    ..Default::default()
+                },
+            ],
+            &[],
+        );
+        let by_id = |id: &str| resolved.iter().find(|c| c.id == id).unwrap();
+        assert!(by_id("phpactor").diagnostics && by_id("phpactor").enabled);
+        assert_eq!(by_id("phpactor").initialization_options["a"], 1);
+        assert!(!by_id("intelephense").enabled);
+    }
+
+    #[test]
+    fn a_plugin_entry_replaces_all_rows_of_its_language_in_place() {
+        let plugin = PluginServer {
+            plugin_id: "php-alt".into(),
+            language_id: "php".into(),
+            name: "Alt".into(),
+            command: "alt".into(),
+            args: vec![],
+            settings_section: None,
+            settings: serde_json::Value::Null,
+        };
+        let resolved = resolve_servers(&[], std::slice::from_ref(&plugin));
+        assert_eq!(
+            resolved.iter().filter(|c| c.language_id == "php").count(),
+            1
+        );
+        assert_eq!(resolved.iter().filter(|c| c.id == "php").count(), 1);
     }
 
     #[test]
@@ -644,5 +1093,255 @@ mod tests {
                 plugin_id: "csharp".into()
             }
         );
+    }
+
+    fn php_servers() -> Vec<ServerConfig> {
+        enabled_servers(&resolve_servers(&[], &[]), "php")
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn on_native_windows_a_posix_only_server_is_skipped_with_a_reason() {
+        let servers = php_servers();
+        let plan = launch_plan(
+            &servers,
+            &process_exec::host::ExecHost::Local,
+            &process_exec::host::ExecHost::Local,
+            true,
+        );
+        assert_eq!(
+            plan.start.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["intelephense"]
+        );
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(plan.skipped[0].0.id, "phpactor");
+        assert!(
+            plan.skipped[0].1.contains("Phpactor"),
+            "{}",
+            plan.skipped[0].1
+        );
+        assert!(plan.skipped[0].1.contains("WSL"), "{}", plan.skipped[0].1);
+    }
+
+    #[test]
+    fn everything_starts_off_windows() {
+        let servers = php_servers();
+        let plan = launch_plan(
+            &servers,
+            &process_exec::host::ExecHost::Local,
+            &process_exec::host::ExecHost::Local,
+            false,
+        );
+        assert_eq!(plan.start.len(), 2);
+        assert!(plan.skipped.is_empty());
+    }
+
+    #[test]
+    fn a_posix_only_server_runs_in_wsl_and_on_an_interpreter_host() {
+        let wsl = process_exec::host::ExecHost::Wsl(process_exec::host::WslHost {
+            distro: "Ubuntu".into(),
+            unc_prefix: "//wsl.localhost/Ubuntu".into(),
+        });
+        let servers = php_servers();
+        assert!(launch_plan(&servers, &wsl, &wsl, true).skipped.is_empty());
+
+        let in_container: Vec<_> = servers
+            .iter()
+            .cloned()
+            .map(|c| ServerConfig {
+                exec: ServerExec::Interpreter,
+                ..c
+            })
+            .collect();
+        let local = process_exec::host::ExecHost::Local;
+        let container =
+            process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+                program: "docker".into(),
+                prefix_args: vec![],
+                engine_env: vec![],
+                via_wsl: false,
+                verb_args: vec![],
+                target: vec![],
+                path_map: process_exec::host::PathMap::new("/p", ""),
+            });
+        assert!(launch_plan(&in_container, &local, &container, true)
+            .skipped
+            .is_empty());
+        // An interpreter that is itself native Windows does not help.
+        assert_eq!(
+            launch_plan(&in_container, &wsl, &local, true).skipped.len(),
+            1
+        );
+    }
+
+    fn php_config(id: &str) -> ServerConfig {
+        resolve_servers(&[], &[])
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_settings_only_change_is_pushed_not_restarted() {
+        let before = php_config("intelephense");
+        let after = ServerConfig {
+            settings: serde_json::json!({"a": 1}),
+            ..before.clone()
+        };
+        assert_eq!(reload_kind(&before, &after), ReloadKind::PushSettings);
+        assert_eq!(reload_kind(&before, &before), ReloadKind::Unchanged);
+    }
+
+    #[test]
+    fn anything_fixed_at_launch_restarts_the_server() {
+        let before = php_config("intelephense");
+        for after in [
+            ServerConfig {
+                initialization_options: serde_json::json!({"k": 1}),
+                ..before.clone()
+            },
+            ServerConfig {
+                command: "/opt/i".into(),
+                ..before.clone()
+            },
+            ServerConfig {
+                args: vec![],
+                ..before.clone()
+            },
+            ServerConfig {
+                diagnostics: false,
+                ..before.clone()
+            },
+            ServerConfig {
+                exec: ServerExec::Interpreter,
+                ..before.clone()
+            },
+        ] {
+            assert_eq!(reload_kind(&before, &after), ReloadKind::Restart);
+        }
+        let renamed = ServerConfig {
+            name: "X".into(),
+            ..before.clone()
+        };
+        assert_eq!(reload_kind(&before, &renamed), ReloadKind::Unchanged);
+    }
+
+    #[test]
+    fn a_reload_touches_only_the_servers_that_changed() {
+        let all = resolve_servers(&[], &[]);
+        let mut after = all.clone();
+        for c in after.iter_mut() {
+            match c.id.as_str() {
+                "phpactor" => c.initialization_options = serde_json::json!({"k": 1}),
+                "intelephense" => c.settings = serde_json::json!({"s": 1}),
+                _ => {}
+            }
+        }
+        let plan = reload_plan(&all, &after, |lang| lang == "php");
+        assert_eq!(plan.stop, ["phpactor"]);
+        assert_eq!(plan.start, ["phpactor"]);
+        assert_eq!(
+            plan.push,
+            [("intelephense".to_string(), serde_json::json!({"s": 1}))]
+        );
+    }
+
+    #[test]
+    fn disabling_stops_enabling_starts_and_unstarted_languages_are_left_alone() {
+        let all = resolve_servers(&[], &[]);
+        let mut off = all.clone();
+        off.iter_mut().find(|c| c.id == "phpactor").unwrap().enabled = false;
+        off.iter_mut().find(|c| c.id == "rust").unwrap().command = "other".into();
+
+        let stopped = reload_plan(&all, &off, |lang| lang == "php");
+        assert_eq!(stopped.stop, ["phpactor"]);
+        assert!(stopped.start.is_empty() && stopped.push.is_empty());
+
+        let started = reload_plan(&off, &all, |lang| lang == "php");
+        assert_eq!(started.start, ["phpactor"]);
+        assert!(started.stop.is_empty());
+    }
+
+    #[test]
+    fn a_missing_command_is_not_found_with_the_servers_install_hint() {
+        use crate::manager::LspError;
+        let missing = LspError::Spawn {
+            command: "intelephense".into(),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
+        };
+        let StartFailure::NotFound { hint } = classify_start_failure("intelephense", &missing)
+        else {
+            panic!("expected NotFound");
+        };
+        assert!(hint.contains("npm i -g intelephense"), "{hint}");
+        let StartFailure::NotFound { hint } = classify_start_failure("phpactor", &missing) else {
+            panic!("expected NotFound");
+        };
+        assert!(hint.contains("composer global require"));
+        // No known install command: the generic advice.
+        assert_eq!(
+            classify_start_failure("gopls", &missing),
+            StartFailure::NotFound {
+                hint: GENERIC_NOT_FOUND_HINT.into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_spawn_failure_other_than_not_found_is_a_plain_failure() {
+        use crate::manager::LspError;
+        let denied = LspError::Spawn {
+            command: "gopls".into(),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+        };
+        assert_eq!(
+            classify_start_failure("gopls", &denied),
+            StartFailure::Failed {
+                message: denied.to_string()
+            }
+        );
+        let timeout = LspError::Timeout {
+            method: "initialize".into(),
+        };
+        assert_eq!(
+            classify_start_failure("intelephense", &timeout),
+            StartFailure::Failed {
+                message: "initialize timed out".into()
+            }
+        );
+    }
+
+    #[test]
+    fn phpactor_runs_where_php_does_and_only_a_local_native_windows_host_skips_it() {
+        let resolved = resolve_servers(&[], &[]);
+        let phpactor = resolved.iter().find(|c| c.id == "phpactor").unwrap();
+        assert_eq!(phpactor.exec, ServerExec::Interpreter);
+        assert_eq!(
+            resolved
+                .iter()
+                .find(|c| c.id == "intelephense")
+                .unwrap()
+                .exec,
+            ServerExec::Host
+        );
+        let local = process_exec::host::ExecHost::Local;
+        let container =
+            process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+                program: "docker".into(),
+                prefix_args: vec![],
+                engine_env: vec![],
+                via_wsl: false,
+                verb_args: vec![],
+                target: vec![],
+                path_map: process_exec::host::PathMap::new("/p", ""),
+            });
+        // Native Windows project, PHP in a container: runs, in the container.
+        let plan = launch_plan([phpactor], &local, &container, true);
+        assert!(plan.skipped.is_empty() && plan.start.len() == 1);
+        // Native Windows, PHP local: skipped, with the reason to show.
+        let plan = launch_plan([phpactor], &local, &local, true);
+        assert!(plan.start.is_empty());
+        assert!(plan.skipped[0].1.contains("native Windows"));
     }
 }

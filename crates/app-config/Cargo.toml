@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-dirs = "5"
 nucleo-matcher = "0.3.1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

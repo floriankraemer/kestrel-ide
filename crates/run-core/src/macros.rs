@@ -32,6 +32,9 @@ pub struct MacroContext {
     /// settings to `RunConfigExt::to_launch_spec_in` without a second
     /// method or a parameter added to every caller (see ADR-0056).
     pub containers: Option<app_config::ContainerSettings>,
+    /// The `[php]` interpreter a PHP-toolchain configuration launches with
+    /// instead of the bare `php` it is detected with. `None` keeps `php`.
+    pub php_interpreter: Option<String>,
 }
 
 impl MacroContext {
@@ -41,6 +44,7 @@ impl MacroContext {
             project_root: Some(project_root.into()),
             file: None,
             containers: None,
+            php_interpreter: None,
         }
     }
 
@@ -50,6 +54,7 @@ impl MacroContext {
             project_root: Some(project_root.into()),
             file: Some(file.into()),
             containers: None,
+            php_interpreter: None,
         }
     }
 
@@ -63,6 +68,14 @@ impl MacroContext {
     #[must_use]
     pub fn with_containers(mut self, containers: app_config::ContainerSettings) -> Self {
         self.containers = Some(containers);
+        self
+    }
+
+    /// Set the interpreter PHP-toolchain configurations run under (see
+    /// [`MacroContext::php_interpreter`]).
+    #[must_use]
+    pub fn with_php_interpreter(mut self, interpreter: impl Into<String>) -> Self {
+        self.php_interpreter = Some(interpreter.into());
         self
     }
 
@@ -80,7 +93,7 @@ impl MacroContext {
             .map(process_exec::host::ExecHost::for_path)
             .unwrap_or(process_exec::host::ExecHost::Local);
         let display = |path: &Path| {
-            if host.is_remote() {
+            if host.filesystem_is_remote() {
                 host.to_remote(path)
             } else {
                 path.display().to_string()

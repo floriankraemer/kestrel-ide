@@ -1012,7 +1012,8 @@ fn e2e_project_scope_settings_write_only_what_changed() {
     ide.type_text("2");
     ide.key("Tab");
 
-    let (ok_x, ok_y) = rect_centre(&shown["ok_rect"]);
+    // Not `shown`'s `ok_rect`: the rebuilt page can have grown the dialog.
+    let (ok_x, ok_y) = rect_centre(&switched["ok_rect"]);
     ide.click_at(ok_x, ok_y, 1);
     ide.wait_for_event(mark, "the dialog to accept", |e| {
         e["ev"] == "dialog_closed" && e["name"] == "settings_dialog" && e["accepted"] == true

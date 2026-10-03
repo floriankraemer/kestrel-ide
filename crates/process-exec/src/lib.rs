@@ -61,7 +61,8 @@ pub enum Failure {
     TimedOut,
     /// Spawning, writing stdin, draining a pipe, or waiting failed for a
     /// reason that isn't "not found" or "timed out" — the message is
-    /// `io::Error::to_string()`.
+    /// `io::Error::to_string()`, or, for a stopped/missing container, the
+    /// sentence from [`host::container_unavailable_reason`].
     Io(String),
 }
 
@@ -86,8 +87,54 @@ pub fn run(
     timeout: Duration,
     env: &[(&str, &str)],
 ) -> Result<Output, Failure> {
-    let host = ExecHost::for_path(work_dir);
-    let resolved_program = match host::resolve_program(&host, program, work_dir) {
+    run_on(
+        &ExecHost::for_path(work_dir),
+        program,
+        args,
+        work_dir,
+        stdin,
+        timeout,
+        env,
+    )
+}
+
+/// How many times a spawn is retried while the program is "text busy".
+const TEXT_BUSY_RETRIES: u32 = 50;
+
+/// `ETXTBSY` is 26 on Linux, macOS and the BSDs.
+fn is_text_busy(error: &io::Error) -> bool {
+    cfg!(unix) && error.raw_os_error() == Some(26)
+}
+
+/// Run `attempt` again for as long as it fails with `ETXTBSY`: exec of a
+/// file some process still has open for writing. A program that was just
+/// written (or installed) can hit this when another thread forks while the
+/// writer's descriptor is open, because the forked child holds a copy of it
+/// until its own exec closes it — a window of microseconds, so a short
+/// retry is the standard answer.
+pub(crate) fn retry_text_busy<T>(mut attempt: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    for _ in 0..TEXT_BUSY_RETRIES {
+        match attempt() {
+            Err(error) if is_text_busy(&error) => thread::sleep(Duration::from_millis(10)),
+            other => return other,
+        }
+    }
+    attempt()
+}
+
+/// [`run`] on an explicit `host` instead of the one `work_dir`'s path
+/// implies — for the callers that pick a host by configuration (a PHP
+/// interpreter target), not by where the project lives.
+pub fn run_on(
+    host: &ExecHost,
+    program: &str,
+    args: &[&str],
+    work_dir: &Path,
+    stdin: Option<&[u8]>,
+    timeout: Duration,
+    env: &[(&str, &str)],
+) -> Result<Output, Failure> {
+    let resolved_program = match host::resolve_program(host, program, work_dir) {
         Some(resolved) => resolved,
         // Not found in the distro: fall through with the bare name so the
         // spawn below still happens and fails the normal way (`wsl.exe`
@@ -109,7 +156,7 @@ pub fn run(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = match command.spawn() {
+    let mut child = match retry_text_busy(|| command.spawn()) {
         Ok(child) => child,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(Failure::NotFound),
         Err(e) => return Err(Failure::Io(e.to_string())),
@@ -168,8 +215,15 @@ pub fn run(
     // (exit 127, or `wsl.exe`'s own "no such distro" stderr) onto the same
     // `Failure::NotFound` a missing local binary already reports, so
     // `VcsError::GitNotInstalled` and friends keep working unmodified.
-    if host.is_remote() && host::is_missing_program(status.code(), &stderr) {
-        return Err(Failure::NotFound);
+    if host.runs_remotely() && host::is_missing_program(status.code(), &stderr) {
+        // A stopped/missing container says why on stderr; keep that rather
+        // than the bare "not found", which reads as a missing interpreter.
+        return Err(match host::container_unavailable_reason(&stderr) {
+            Some(reason) if matches!(host, ExecHost::Container(_)) => {
+                Failure::Io(reason.to_string())
+            }
+            _ => Failure::NotFound,
+        });
     }
 
     Ok(Output {
@@ -284,9 +338,37 @@ pub fn spawn_with_stdin(
     env: &[(&str, &str)],
     stdin_file: Option<&Path>,
 ) -> Result<Spawned, Failure> {
-    let host = ExecHost::for_path(work_dir);
-    let resolved_program =
-        host::resolve_program(&host, program, work_dir).unwrap_or_else(|| program.to_string());
+    spawn_on(
+        &ExecHost::for_path(work_dir),
+        program,
+        args,
+        work_dir,
+        env,
+        stdin_file,
+    )
+}
+
+/// [`spawn_with_stdin`] on an explicit `host`, the streaming counterpart
+/// of [`run_on`].
+pub fn spawn_on(
+    host: &ExecHost,
+    program: &str,
+    args: &[&str],
+    work_dir: &Path,
+    env: &[(&str, &str)],
+    stdin_file: Option<&Path>,
+) -> Result<Spawned, Failure> {
+    let resolved_program = match host::resolve_program_or_reason(host, program, work_dir) {
+        Ok(resolved) => resolved,
+        // A spawned child's exit is never inspected here, so a container
+        // that is down or lacks the tool would surface as a process that
+        // dies with engine text on a pipe. Say so up front instead — with
+        // the engine's own reason when it gave one.
+        Err(reason) if matches!(host, ExecHost::Container(_)) => {
+            return Err(reason.map_or(Failure::NotFound, |r| Failure::Io(r.to_string())))
+        }
+        Err(_) => program.to_string(),
+    };
 
     let stdin = match stdin_file {
         Some(path) => {
@@ -301,7 +383,7 @@ pub fn spawn_with_stdin(
         .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let child = command.spawn();
+    let child = retry_text_busy(|| command.spawn());
     match child {
         Ok(child) => Ok(Spawned {
             child: Arc::new(Mutex::new(child)),
@@ -314,6 +396,28 @@ pub fn spawn_with_stdin(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The race behind flaky fake-executable tests, made deterministic: the
+    /// writer's descriptor is still open when the first exec happens.
+    #[cfg(unix)]
+    #[test]
+    fn a_program_still_open_for_writing_is_retried_until_it_is_closed() {
+        use std::io::Write as _;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fake");
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(b"#!/bin/sh\necho ok\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let closer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(100));
+            drop(file);
+        });
+        let output = retry_text_busy(|| Command::new(&path).output()).unwrap();
+        closer.join().unwrap();
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "ok");
+    }
 
     #[test]
     fn captures_stdout_on_success() {
@@ -329,6 +433,97 @@ mod tests {
         .unwrap();
         assert!(out.status.success());
         assert_eq!(out.stdout, b"hello\n");
+    }
+
+    #[test]
+    fn run_on_an_explicit_local_host_runs_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = run_on(
+            &ExecHost::Local,
+            "echo",
+            &["hi"],
+            dir.path(),
+            None,
+            Duration::from_secs(5),
+            &[],
+        )
+        .unwrap();
+        assert_eq!(out.stdout, b"hi\n");
+    }
+
+    #[test]
+    fn spawn_on_a_container_without_the_tool_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        // `false` as the engine fails every probe, like a stopped container.
+        let host = ExecHost::Container(host::ContainerHost {
+            program: "false".into(),
+            prefix_args: vec![],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: host::PathMap::new(dir.path(), "/workspace"),
+        });
+        assert!(matches!(
+            spawn_on(&host, "phpunit", &[], dir.path(), &[], None),
+            Err(Failure::NotFound)
+        ));
+    }
+
+    fn stopped_container(dir: &Path) -> ExecHost {
+        ExecHost::Container(host::ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec![
+                "-c".into(),
+                "echo 'Error response from daemon: container web is not running' >&2; exit 1"
+                    .into(),
+                "sh".into(),
+            ],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: host::PathMap::new(dir, "/workspace"),
+        })
+    }
+
+    #[test]
+    fn a_stopped_container_reports_the_engines_reason_not_a_missing_tool() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = stopped_container(dir.path());
+        let expect = host::container_unavailable_reason(b"is not running").unwrap();
+
+        match spawn_on(&host, "php", &[], dir.path(), &[], None) {
+            Err(Failure::Io(reason)) => assert_eq!(reason, expect),
+            other => panic!("spawn_on: {other:?}"),
+        }
+        match run_on(
+            &host,
+            "php",
+            &[],
+            dir.path(),
+            None,
+            Duration::from_secs(5),
+            &[],
+        ) {
+            Err(Failure::Io(reason)) => assert_eq!(reason, expect),
+            other => panic!("run_on: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn spawn_on_an_explicit_local_host_streams() {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let child = spawn_on(&ExecHost::Local, "echo", &["yo"], dir.path(), &[], None).unwrap();
+        let mut out = String::new();
+        child
+            .take_stdout()
+            .unwrap()
+            .read_to_string(&mut out)
+            .unwrap();
+        child.wait().unwrap();
+        assert_eq!(out, "yo\n");
     }
 
     #[test]

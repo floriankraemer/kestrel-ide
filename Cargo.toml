@@ -37,6 +37,7 @@ members = [
     "crates/db-driver-odbc",
     "crates/db-driver-adbc",
     "crates/jvm-build-core",
+    "crates/php-core",
     "crates/app-core",
     "crates/ui-shell",
     "crates/app",

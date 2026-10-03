@@ -543,8 +543,14 @@ fn e2e_a_conflicted_file_shows_letter_c_with_no_checkbox() {
     drop(repo);
     ide.wait_for_ev(Mark::start(), "project_opened");
 
+    // The Changes dock is visible on a fresh profile and has already
+    // reported the conflict by the time the project is open, with the rect
+    // of its first layout. A new file is a status change, which makes it
+    // report every row again at its settled position (`alt+9` would toggle
+    // the dock away instead).
     let mark = ide.mark();
-    ide.key("alt+9");
+    std::fs::write(ide.project_root().join("zzz-settle.txt"), "settle\n")
+        .expect("writing a file to force a fresh Changes report");
     let row = ide.wait_for_event(mark, "shared.txt to show up conflicted", |e| {
         e["ev"] == "changes_row" && e["path"] == "shared.txt" && e["group"] == "conflicts"
     });

@@ -9,9 +9,12 @@
 //! severity string.
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use diagnostics_core::Severity;
 use plugin_api::AnalyzerContribution;
+
+use crate::buffer::BufferStrategy;
 
 /// When an analyzer runs.
 ///
@@ -43,6 +46,26 @@ pub struct AnalyzerDef {
     pub program_candidates: Vec<String>,
     pub args: Vec<String>,
     pub output_format: String,
+    /// Language ids this analyzer checks per file; empty = project runs only.
+    pub languages: Vec<String>,
+    /// Arguments (and `{file}` placeholder) for a single-file run.
+    pub file_args: Vec<String>,
+    pub buffer: BufferStrategy,
+    /// `Some("php")` when the program must run under the PHP interpreter.
+    pub requires_interpreter: Option<String>,
+    /// The comment template that silences one finding (`{code}` = rule id).
+    pub suppress_comment: Option<String>,
+    /// Rule ids are `Id: text` message prefixes, not `source` attributes.
+    pub code_in_message: bool,
+    /// Id of the `formatters` contribution that can fix a single finding.
+    pub fixer: Option<String>,
+    /// Config files the tool cannot run without, any one of them.
+    pub required_config: Vec<String>,
+    /// The command that writes a starter config.
+    pub config_init: Option<String>,
+    config_file_candidates: Vec<String>,
+    ruleset_default: Option<String>,
+    project_paths_config: Vec<String>,
     severities: HashMap<String, Severity>,
 }
 
@@ -61,8 +84,144 @@ impl AnalyzerDef {
             program_candidates: contribution.program_candidates.clone(),
             args: contribution.args.clone(),
             output_format: contribution.output_format.clone(),
+            languages: contribution.languages.clone(),
+            file_args: contribution.file_args.clone(),
+            buffer: BufferStrategy::from_manifest(contribution.buffer.as_deref()),
+            requires_interpreter: contribution.requires_interpreter.clone(),
+            suppress_comment: contribution.suppress_comment.clone(),
+            code_in_message: contribution.code_in_message,
+            fixer: contribution.fixer.clone(),
+            required_config: contribution.required_config.clone(),
+            config_init: contribution.config_init.clone(),
+            config_file_candidates: contribution.config_file_candidates.clone(),
+            ruleset_default: contribution.ruleset_default.clone(),
+            project_paths_config: contribution.project_paths_config.clone(),
             severities,
         }
+    }
+
+    /// This analyzer with `{ruleset}` resolved for the project at `root`:
+    /// the first `config-file-candidates` entry that exists there (kept
+    /// project-relative, so it means the same inside a container or WSL,
+    /// where the tool runs from the project root), else `ruleset-default`.
+    #[must_use]
+    pub fn with_ruleset_for(mut self, root: &Path) -> Self {
+        let ruleset = self
+            .config_file_candidates
+            .iter()
+            .find(|candidate| root.join(candidate).is_file())
+            .cloned()
+            .or_else(|| self.ruleset_default.clone());
+        if let Some(ruleset) = ruleset {
+            for arg in self.args.iter_mut().chain(self.file_args.iter_mut()) {
+                *arg = arg.replace("{ruleset}", &ruleset);
+            }
+        }
+        self
+    }
+
+    /// How to spawn `program` for this analyzer: under `php_binary` when the
+    /// manifest says `requires-interpreter = "php"` and the program needs
+    /// it (see [`crate::php_invocation`]), otherwise as is. The returned
+    /// prefix goes before [`Self::args`].
+    pub fn invocation(&self, program: &Path, php_binary: &str) -> (PathBuf, Vec<String>) {
+        match self.requires_interpreter.as_deref() {
+            Some("php") => crate::php::invocation(program, Some(php_binary)),
+            _ => (program.to_path_buf(), Vec::new()),
+        }
+    }
+
+    /// The full argv tail for a single-file run against `file` (the path the
+    /// tool should read: the real file, or a temp copy).
+    ///
+    /// `args`, then `file_args` with `{file}` replaced; when no `file_args`
+    /// entry names the file and the buffer goes over stdin, the path is
+    /// appended, because the tool has to be told which file to read.
+    pub fn file_run_args(&self, file: &Path) -> Vec<String> {
+        let file = file.to_string_lossy();
+        let names_file = self
+            .args
+            .iter()
+            .chain(&self.file_args)
+            .any(|a| a.contains("{file}"));
+        let mut argv: Vec<String> = self
+            .args
+            .iter()
+            .chain(&self.file_args)
+            .map(|a| a.replace("{file}", &file))
+            .collect();
+        if !names_file && self.buffer != BufferStrategy::Stdin {
+            argv.push(file.into_owned());
+        }
+        argv
+    }
+
+    /// The argv tail for a project-wide run over `root`: `args`, with a
+    /// `{file}` placeholder (a tool whose path is not the last argument,
+    /// like PHPMD's `<path> <format> <ruleset>`) replaced by the paths to
+    /// analyse, comma-separated, else the paths appended.
+    ///
+    /// No path at all when the tool's own config names them. Otherwise an
+    /// analyzer of PHP files gets `composer_paths` (the project's Composer
+    /// autoload paths, never `vendor/`) when there are any, since the root
+    /// would pull in `vendor/`: minutes of work and thousands of findings in
+    /// code the user does not own. Anything else gets the root.
+    pub fn project_run_args(&self, root: &Path, composer_paths: &[PathBuf]) -> Vec<String> {
+        if self.config_names_project_paths(root) {
+            return self.args.clone();
+        }
+        let paths: Vec<String> =
+            if self.languages.iter().any(|l| l == "php") && !composer_paths.is_empty() {
+                composer_paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect()
+            } else {
+                vec![root.to_string_lossy().into_owned()]
+            };
+        if self.args.iter().any(|a| a.contains("{file}")) {
+            let joined = paths.join(",");
+            self.args
+                .iter()
+                .map(|a| a.replace("{file}", &joined))
+                .collect()
+        } else {
+            [self.args.clone(), paths].concat()
+        }
+    }
+
+    /// Whether the project's own tool config (the first
+    /// `project-paths-config` file that exists) names paths: a `paths:` key
+    /// (PHPStan's NEON), a `<file>` element (PHPCS's ruleset) or a
+    /// `<projectFiles>` element (Psalm's psalm.xml).
+    ///
+    /// ponytail: a line scan, not a NEON or XML parser, so paths that only an
+    /// `includes:` file provides are not seen; the run then gets the root, as
+    /// before. Parse the config if that ever matters.
+    fn config_names_project_paths(&self, root: &Path) -> bool {
+        self.project_paths_config
+            .iter()
+            .find_map(|candidate| std::fs::read_to_string(root.join(candidate)).ok())
+            .is_some_and(|text| {
+                text.lines().any(|line| {
+                    line.trim_start().starts_with("paths:")
+                        || line.contains("<file>")
+                        || line.contains("<projectFiles")
+                })
+            })
+    }
+
+    /// The config file this analyzer cannot run without and the project at
+    /// `root` lacks (the first `required-config` candidate), or `None` when
+    /// it needs none or one exists. Such an analyzer is not run: it would
+    /// only print a usage error, and no finding.
+    pub fn missing_config(&self, root: &Path) -> Option<&str> {
+        let missing = !self.required_config.is_empty()
+            && !self
+                .required_config
+                .iter()
+                .any(|candidate| root.join(candidate).is_file());
+        missing.then(|| self.required_config[0].as_str())
     }
 
     /// The severity a tool's own word maps to, or [`Severity::Warning`]
@@ -99,6 +258,19 @@ mod tests {
             severity_map: [("error".to_string(), "error".to_string())]
                 .into_iter()
                 .collect(),
+            languages: vec![],
+            file_args: vec![],
+            buffer: None,
+            composer_package: None,
+            requires_interpreter: None,
+            suppress_comment: None,
+            code_in_message: false,
+            fixer: None,
+            config_file_candidates: vec![],
+            ruleset_default: None,
+            project_paths_config: vec![],
+            required_config: vec![],
+            config_init: None,
         }
     }
 
@@ -115,6 +287,224 @@ mod tests {
             def.severity_for("whatever-this-tool-calls-it"),
             Severity::Warning
         );
+    }
+
+    #[test]
+    fn file_run_fields_carry_over_with_the_buffer_parsed() {
+        let mut c = contribution();
+        c.languages = vec!["php".into()];
+        c.file_args = vec!["--stdin-path={file}".into(), "-".into()];
+        c.buffer = Some("stdin".into());
+        c.requires_interpreter = Some("php".into());
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(def.languages, vec!["php"]);
+        assert_eq!(def.file_args, vec!["--stdin-path={file}", "-"]);
+        assert_eq!(def.buffer, BufferStrategy::Stdin);
+        assert_eq!(def.requires_interpreter.as_deref(), Some("php"));
+    }
+
+    #[test]
+    fn only_an_analyzer_requiring_php_is_launched_under_the_interpreter() {
+        let dir = tempfile::tempdir().unwrap();
+        let phar = dir.path().join("tool.phar");
+        std::fs::write(&phar, "x").unwrap();
+        let plain = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(plain.invocation(&phar, "php8"), (phar.clone(), vec![]));
+        let mut c = contribution();
+        c.requires_interpreter = Some("php".into());
+        let php = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            php.invocation(&phar, "php8"),
+            (
+                PathBuf::from("php8"),
+                vec![phar.to_string_lossy().into_owned()]
+            )
+        );
+    }
+
+    #[test]
+    fn a_saved_only_file_run_appends_the_path() {
+        let def = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(
+            def.file_run_args(Path::new("/p/a.php")),
+            vec!["analyse", "/p/a.php"]
+        );
+    }
+
+    #[test]
+    fn a_stdin_file_run_substitutes_the_placeholder_and_appends_nothing() {
+        let mut c = contribution();
+        c.args = vec!["--report=checkstyle".into()];
+        c.file_args = vec!["--stdin-path={file}".into(), "-".into()];
+        c.buffer = Some("stdin".into());
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.file_run_args(Path::new("/p/a.php")),
+            vec!["--report=checkstyle", "--stdin-path=/p/a.php", "-"]
+        );
+    }
+
+    #[test]
+    fn a_placeholder_in_args_positions_the_path_for_file_and_project_runs() {
+        let mut c = contribution();
+        c.args = vec!["{file}".into(), "checkstyle".into(), "cleancode".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.file_run_args(Path::new("/p/a.php")),
+            vec!["/p/a.php", "checkstyle", "cleancode"]
+        );
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &[]),
+            vec!["/p", "checkstyle", "cleancode"]
+        );
+    }
+
+    #[test]
+    fn a_project_run_leaves_the_path_to_a_config_that_names_one() {
+        let mut c = contribution();
+        c.args = vec!["analyse".into(), "--no-progress".into()];
+        c.project_paths_config = vec!["phpstan.neon".into(), "phpstan.neon.dist".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+
+        let bare = tempfile::tempdir().unwrap();
+        let root = bare.path();
+        // No config: the root is the only thing to analyse.
+        assert_eq!(
+            def.project_run_args(root, &[]),
+            vec![
+                "analyse".to_string(),
+                "--no-progress".into(),
+                root.to_string_lossy().into_owned()
+            ]
+        );
+
+        // A config without `paths:` still needs the root.
+        std::fs::write(root.join("phpstan.neon"), "parameters:\n\tlevel: 5\n").unwrap();
+        assert_eq!(def.project_run_args(root, &[]).len(), 3);
+
+        // The first candidate that exists decides, and `paths:` removes the root.
+        std::fs::write(
+            root.join("phpstan.neon"),
+            "parameters:\n\tlevel: 5\n\tpaths:\n\t\t- app\n",
+        )
+        .unwrap();
+        assert_eq!(
+            def.project_run_args(root, &[]),
+            vec!["analyse", "--no-progress"]
+        );
+
+        // A PHPCS ruleset names its paths with `<file>` elements.
+        std::fs::remove_file(root.join("phpstan.neon")).unwrap();
+        std::fs::write(
+            root.join("phpstan.neon.dist"),
+            "<ruleset><file>src</file></ruleset>",
+        )
+        .unwrap();
+        assert_eq!(
+            def.project_run_args(root, &[]),
+            vec!["analyse", "--no-progress"]
+        );
+    }
+
+    #[test]
+    fn ruleset_is_the_projects_config_file_when_one_exists_else_the_default() {
+        let mut c = contribution();
+        c.args = vec!["{file}".into(), "checkstyle".into(), "{ruleset}".into()];
+        c.config_file_candidates = vec!["phpmd.xml".into(), "phpmd.xml.dist".into()];
+        c.ruleset_default = Some("cleancode,codesize".into());
+        let def = AnalyzerDef::from_contribution(&c);
+
+        let bare = tempfile::tempdir().unwrap();
+        assert_eq!(
+            def.clone().with_ruleset_for(bare.path()).args,
+            vec!["{file}", "checkstyle", "cleancode,codesize"]
+        );
+
+        let configured = tempfile::tempdir().unwrap();
+        std::fs::write(configured.path().join("phpmd.xml.dist"), "<ruleset/>").unwrap();
+        assert_eq!(
+            def.with_ruleset_for(configured.path()).args,
+            vec!["{file}", "checkstyle", "phpmd.xml.dist"]
+        );
+    }
+
+    #[test]
+    fn a_php_project_run_covers_the_composer_paths_instead_of_the_root() {
+        let mut c = contribution();
+        c.languages = vec!["php".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        let paths = [PathBuf::from("/p/app"), PathBuf::from("/p/tests")];
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &paths),
+            vec!["analyse", "/p/app", "/p/tests"]
+        );
+        // PHPMD's positional path takes them comma-separated.
+        c.args = vec!["{file}".into(), "checkstyle".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &paths),
+            vec!["/p/app,/p/tests", "checkstyle"]
+        );
+        // No Composer paths: the root, as before.
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &[]),
+            vec!["/p", "checkstyle"]
+        );
+        // Not a PHP analyzer: Composer's paths are not its business.
+        c.languages = vec!["javascript".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &paths),
+            vec!["/p", "checkstyle"]
+        );
+    }
+
+    #[test]
+    fn a_psalm_config_names_its_paths_with_project_files() {
+        let mut c = contribution();
+        c.languages = vec!["php".into()];
+        c.project_paths_config = vec!["psalm.xml".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("psalm.xml"),
+            "<psalm>\n  <projectFiles>\n    <directory name=\"src\" />\n  </projectFiles>\n</psalm>\n",
+        )
+        .unwrap();
+        assert_eq!(
+            def.project_run_args(dir.path(), &[dir.path().join("src")]),
+            vec!["analyse"]
+        );
+    }
+
+    #[test]
+    fn a_required_config_is_missing_until_any_candidate_exists() {
+        let mut c = contribution();
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            AnalyzerDef::from_contribution(&c).missing_config(dir.path()),
+            None
+        );
+        c.required_config = vec!["psalm.xml".into(), "psalm.xml.dist".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(def.missing_config(dir.path()), Some("psalm.xml"));
+        std::fs::write(dir.path().join("psalm.xml.dist"), "<psalm/>").unwrap();
+        assert_eq!(def.missing_config(dir.path()), None);
+    }
+
+    #[test]
+    fn a_project_run_without_a_placeholder_appends_the_root() {
+        let def = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &[]),
+            vec!["analyse", "/p"]
+        );
+    }
+
+    #[test]
+    fn an_absent_buffer_means_saved_only() {
+        let def = AnalyzerDef::from_contribution(&contribution());
+        assert_eq!(def.buffer, BufferStrategy::SavedOnly);
     }
 
     #[test]

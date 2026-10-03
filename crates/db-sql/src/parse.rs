@@ -27,6 +27,7 @@ pub fn parse(
     let grammar = sqlparser_dialect(dialect);
     Parser::parse_sql(&*grammar, sql).map_err(|error| {
         Box::new(Diagnostic {
+            code: None,
             range: Range { start, end: None },
             severity: Severity::Error,
             message: error.to_string(),

@@ -36,6 +36,8 @@ use serde_json::{json, Value};
 use crate::bridge::errors;
 use crate::bridge::ffi;
 
+mod php;
+
 /// What the Qt thread keeps about one running session.
 struct SessionState {
     session: Arc<DapSession>,
@@ -55,6 +57,20 @@ struct SessionState {
     /// there is no way to ask "what is in scope *here*" — which is exactly
     /// what inline values need (D3-7).
     scope_references: Vec<i64>,
+}
+
+impl SessionState {
+    fn new(session: Arc<DapSession>) -> Self {
+        SessionState {
+            session,
+            stopped_thread: 0,
+            current_frame: 0,
+            frames: Vec::new(),
+            scope_references: Vec::new(),
+            threads: Vec::new(),
+            variables: HashMap::new(),
+        }
+    }
 }
 
 /// What a session is attaching to (D4-1, D4-2).
@@ -114,6 +130,8 @@ pub struct DebugServiceRust {
     watch_references: RefCell<Vec<i64>>,
     /// Expressions the Evaluate box has run, most recent first (R5).
     evaluate_history: RefCell<EvaluateHistory>,
+    /// The PHP listen session's lifecycle (ADR-0069).
+    php_listen: RefCell<dap_core::xdebug::ListenSession<php::PhpRun>>,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -283,26 +301,10 @@ impl ffi::DebugService {
             };
         };
 
-        // Run targets (C8) are explicitly out of scope for debugging: the
-        // adapter would have to run *inside* the container, which this
-        // codebase has no mechanism for (ADR-0056's "Run targets" section
-        // records the gap). A container-*kind* configuration (`kind` set)
-        // is unaffected — it was never debuggable through this path either,
-        // caught by the adapter lookup below the same way it always was.
-        if config.kind.is_none()
-            && config
-                .run_on
-                .as_deref()
-                .is_some_and(|run_on| !run_on.trim().is_empty())
-        {
-            return ffi::FfiResult {
-                code: errors::CODE_RUN_TARGET,
-                message: QString::from(
-                    "Debugging inside a container target is not supported yet — run instead, \
-                     or use a remote-attach debug configuration",
-                ),
-            };
-        }
+        let config = run_core::php_run::inherit_container_target(
+            &config,
+            crate::bridge::run::effective_php_container_target().as_deref(),
+        );
 
         // Which adapter: the configuration's own toolchain if it has one,
         // otherwise whatever the project is built with. Both answers come
@@ -323,6 +325,33 @@ impl ffi::DebugService {
             return to_ffi_result(&DapError::NoAdapter(language));
         };
 
+        // PHP is the one exception: its adapter only listens, and the
+        // program starts in the container with Xdebug dialling back out.
+        if adapter.id == dap_core::catalog::PHP_DEBUG {
+            return self.debug_php(&config, &root);
+        }
+
+        // Run targets (C8) are out of scope for every other adapter: the
+        // adapter would have to run *inside* the container, which this
+        // codebase has no mechanism for (ADR-0056's "Run targets" section
+        // records the gap). A container-*kind* configuration (`kind` set)
+        // is unaffected — it was never debuggable through this path either,
+        // caught by the adapter lookup below the same way it always was.
+        if config.kind.is_none()
+            && config
+                .run_on
+                .as_deref()
+                .is_some_and(|run_on| !run_on.trim().is_empty())
+        {
+            return ffi::FfiResult {
+                code: errors::CODE_RUN_TARGET,
+                message: QString::from(
+                    "Debugging inside a container target is not supported yet — run instead, \
+                     or use a remote-attach debug configuration",
+                ),
+            };
+        }
+
         let mut spec = config.to_launch_spec(&root);
         spec.cwd = Some(spec.cwd.clone().unwrap_or_else(|| root.clone()));
 
@@ -339,18 +368,9 @@ impl ffi::DebugService {
             Err(err) => return to_ffi_result(&err),
         };
 
-        self.sessions.borrow_mut().insert(
-            session_id,
-            SessionState {
-                session: Arc::clone(&session),
-                stopped_thread: 0,
-                current_frame: 0,
-                frames: Vec::new(),
-                scope_references: Vec::new(),
-                threads: Vec::new(),
-                variables: HashMap::new(),
-            },
-        );
+        self.sessions
+            .borrow_mut()
+            .insert(session_id, SessionState::new(Arc::clone(&session)));
         self.as_mut()
             .debug_started(session_id, QString::from(config_id.as_str()));
 
@@ -359,7 +379,11 @@ impl ffi::DebugService {
         let adapter_id = adapter.id.clone();
         let breakpoints = self.breakpoints.borrow().clone();
         std::thread::spawn(move || {
-            let result = handshake(&session, &adapter_id, &spec, &breakpoints);
+            let result = handshake(
+                &session,
+                dap_core::launch::arguments(&adapter_id, &spec),
+                &breakpoints,
+            );
             if let Err(err) = result {
                 let failure = (err.code(), err.to_string());
                 let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::DebugService>| {
@@ -482,18 +506,9 @@ impl ffi::DebugService {
             Err(err) => return to_ffi_result(&err),
         };
 
-        self.sessions.borrow_mut().insert(
-            session_id,
-            SessionState {
-                session: Arc::clone(&session),
-                stopped_thread: 0,
-                current_frame: 0,
-                frames: Vec::new(),
-                scope_references: Vec::new(),
-                threads: Vec::new(),
-                variables: HashMap::new(),
-            },
-        );
+        self.sessions
+            .borrow_mut()
+            .insert(session_id, SessionState::new(Arc::clone(&session)));
         self.as_mut()
             .debug_started(session_id, QString::from(to.label().as_str()));
 
@@ -1369,6 +1384,7 @@ impl ffi::DebugService {
         if self.sessions.borrow_mut().remove(&session_id).is_none() {
             return;
         }
+        self.as_mut().forget_php_listener(session_id);
         self.as_mut().debug_terminated(session_id, exit_code);
     }
 }
@@ -1377,8 +1393,7 @@ impl ffi::DebugService {
 /// sent in between — which is what `configurationDone` exists to bracket.
 fn handshake(
     session: &Arc<DapSession>,
-    adapter_id: &str,
-    spec: &run_core::LaunchSpec,
+    launch_arguments: Value,
     breakpoints: &BreakpointStore,
 ) -> Result<(), DapError> {
     session.initialize()?;
@@ -1386,7 +1401,7 @@ fn handshake(
     // `initialized` event: an adapter may hold the launch response until
     // `configurationDone`, which a client blocked on launch can never send
     // (see `DapSession::launch`).
-    session.launch(dap_core::launch::arguments(adapter_id, spec))?;
+    session.launch(launch_arguments)?;
     session.wait_for_initialized(std::time::Duration::from_secs(10))?;
     send_configuration(session, breakpoints);
     session.configuration_done()

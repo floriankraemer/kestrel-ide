@@ -30,6 +30,12 @@ pub enum AnalyzerStatus {
     DeclaredNotInstalled { composer_package: String },
     /// No program candidate resolved and nothing declares this analyzer.
     NotDetected,
+    /// Installed, but the project lacks the config file the tool cannot
+    /// run without (Psalm's `psalm.xml`), so it is not run.
+    NeedsConfig {
+        config: String,
+        init_command: Option<String>,
+    },
 }
 
 impl AnalyzerStatus {
@@ -48,6 +54,27 @@ impl AnalyzerStatus {
                  run `composer install`)"
             ),
             Self::NotDetected => format!("{name}: not detected"),
+            Self::NeedsConfig {
+                config,
+                init_command: Some(command),
+            } => format!("{name} needs a {config} — run `{command}`"),
+            Self::NeedsConfig {
+                config,
+                init_command: None,
+            } => format!("{name} needs a {config}"),
+        }
+    }
+
+    /// This status once `analyzer`'s required config is checked at `root`:
+    /// a detected tool whose config is missing [`Self::NeedsConfig`].
+    #[must_use]
+    pub fn with_config_of(self, analyzer: &crate::AnalyzerDef, root: &Path) -> Self {
+        match (&self, analyzer.missing_config(root)) {
+            (Self::Detected { .. }, Some(config)) => Self::NeedsConfig {
+                config: config.to_string(),
+                init_command: analyzer.config_init.clone(),
+            },
+            _ => self,
         }
     }
 }
@@ -72,21 +99,34 @@ impl AnalyzerStatus {
 /// function defers to it entirely rather than trying to guess executability
 /// from the Windows side of the share.
 pub fn find_program(candidates: &[String], project_root: &Path) -> Option<PathBuf> {
-    let host = process_exec::host::ExecHost::for_path(project_root);
-    candidates
-        .iter()
-        .find_map(|candidate| resolve_one(candidate, project_root, &host))
+    find_program_on(
+        candidates,
+        project_root,
+        &process_exec::host::ExecHost::for_path(project_root),
+    )
 }
 
-fn resolve_one(
-    candidate: &str,
+/// [`find_program`] against an explicit `host` — the PHP interpreter's
+/// container, say, rather than the one the project root implies. A tool in
+/// a container is found *inside* it (`command -v`/`test -x`); a path it
+/// reports under the project mount comes back as the local file, any other
+/// as the container's own path.
+pub fn find_program_on(
+    candidates: &[String],
     project_root: &Path,
     host: &process_exec::host::ExecHost,
 ) -> Option<PathBuf> {
-    if host.is_remote() {
-        return process_exec::host::resolve_program(host, candidate, project_root)
+    if host.runs_remotely() {
+        // One probe for the whole list in a container (`resolve_first`).
+        return process_exec::host::resolve_first(host, candidates, project_root)
             .map(|remote_path| host.to_local(&remote_path));
     }
+    candidates
+        .iter()
+        .find_map(|candidate| resolve_local(candidate, project_root))
+}
+
+fn resolve_local(candidate: &str, project_root: &Path) -> Option<PathBuf> {
     if candidate.contains('/') || candidate.contains('\\') {
         let path = project_root.join(candidate);
         // On Windows a Composer shim is `vendor/bin/phpstan.bat`, not the
@@ -151,7 +191,37 @@ pub fn status(
     project_root: &Path,
     composer_packages: &[&str],
 ) -> AnalyzerStatus {
-    if let Some(program) = find_program(program_candidates, project_root) {
+    status_on(
+        &process_exec::host::ExecHost::for_path(project_root),
+        program_candidates,
+        project_root,
+        composer_packages,
+    )
+}
+
+/// [`status`] against an explicit `host` ([`find_program_on`]).
+pub fn status_on(
+    host: &process_exec::host::ExecHost,
+    program_candidates: &[String],
+    project_root: &Path,
+    composer_packages: &[&str],
+) -> AnalyzerStatus {
+    status_from(
+        find_program_on(program_candidates, project_root, host),
+        project_root,
+        composer_packages,
+    )
+}
+
+/// [`status_on`] for a program already looked up (a cached
+/// [`find_program_on`] answer), so the status pass and the runs share one
+/// lookup.
+pub fn status_from(
+    found: Option<PathBuf>,
+    project_root: &Path,
+    composer_packages: &[&str],
+) -> AnalyzerStatus {
+    if let Some(program) = found {
         return AnalyzerStatus::Detected { program };
     }
     if let Some(declared) = composer_require_dev(project_root) {
@@ -171,6 +241,38 @@ pub fn status(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_detected_tool_without_its_required_config_needs_one() {
+        let root = project();
+        let contribution: plugin_api::AnalyzerContribution =
+            serde_json::from_value(serde_json::json!({
+                "id": "psalm",
+                "name": "Psalm",
+                "program-candidates": ["vendor/bin/psalm"],
+                "args": [],
+                "output-format": "checkstyle-xml",
+                "required-config": ["psalm.xml"],
+                "config-init": "vendor/bin/psalm --init",
+            }))
+            .unwrap();
+        let def = crate::AnalyzerDef::from_contribution(&contribution);
+        let detected = AnalyzerStatus::Detected {
+            program: PathBuf::from("vendor/bin/psalm"),
+        };
+        let status = detected.clone().with_config_of(&def, root.path());
+        assert_eq!(
+            status.describe("Psalm"),
+            "Psalm needs a psalm.xml — run `vendor/bin/psalm --init`"
+        );
+        fs::write(root.path().join("psalm.xml"), "<psalm/>").unwrap();
+        assert_eq!(detected.clone().with_config_of(&def, root.path()), detected);
+        // Not installed stays not installed: the config is the next step.
+        assert_eq!(
+            AnalyzerStatus::NotDetected.with_config_of(&def, root.path()),
+            AnalyzerStatus::NotDetected
+        );
+    }
 
     fn project() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
@@ -344,5 +446,35 @@ mod tests {
                 "//wsl.localhost/Ubuntu/usr/bin/phpstan"
             ))
         );
+    }
+
+    fn container_that_finds_everything(root: &Path) -> process_exec::host::ExecHost {
+        // Answers the `command -v`/`test -x` probe with its last argument.
+        let engine = r#"for a; do last=$a; done; echo "$last""#;
+        process_exec::host::ExecHost::Container(process_exec::host::ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec!["-c".into(), engine.into(), "sh".into()],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec![],
+            target: vec![],
+            path_map: process_exec::host::PathMap::new(root, "/var/www"),
+        })
+    }
+
+    #[test]
+    fn a_tool_found_in_a_container_under_the_mount_is_the_local_file() {
+        let root = project();
+        let host = container_that_finds_everything(root.path());
+        let found = find_program_on(&["vendor/bin/phpstan".to_string()], root.path(), &host);
+        assert_eq!(found, Some(root.path().join("vendor/bin/phpstan")));
+    }
+
+    #[test]
+    fn a_global_tool_in_a_container_keeps_the_containers_own_path() {
+        let root = project();
+        let host = container_that_finds_everything(root.path());
+        let found = find_program_on(&["/usr/local/bin/phpcs".to_string()], root.path(), &host);
+        assert_eq!(found, Some(PathBuf::from("/usr/local/bin/phpcs")));
     }
 }

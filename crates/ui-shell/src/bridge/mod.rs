@@ -53,6 +53,7 @@ pub mod convert;
 pub mod database;
 pub mod debug;
 pub mod diagnostics;
+pub mod editing_row;
 pub mod editor;
 pub mod editor_ops;
 pub mod errors;
@@ -61,15 +62,18 @@ pub mod ffi;
 /// like `plugins`/`language` — no draft, no OK-shaped promise, every
 /// add/remove/edit writes through immediately.
 pub mod file_associations;
+pub mod format_tool;
 pub mod hover_settings;
 pub mod icons;
 pub mod language;
 pub mod layouts;
+pub mod php;
 pub mod plugins;
 pub mod preview;
 pub mod registry;
 pub mod run;
 pub mod search;
+pub mod search_lsp;
 pub mod settings;
 pub mod tab_padding;
 pub mod terminal;

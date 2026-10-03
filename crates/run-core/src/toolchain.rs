@@ -23,6 +23,7 @@ pub enum ToolchainId {
     Gradle,
     Npm,
     Make,
+    Php,
 }
 
 /// A tool invocation: the program to run and its arguments, with no console,
@@ -44,7 +45,7 @@ impl ToolCommand {
 
 impl ToolchainId {
     /// Every toolchain, in the order [`detect_toolchains`] reports them.
-    pub const ALL: [ToolchainId; 7] = [
+    pub const ALL: [ToolchainId; 8] = [
         ToolchainId::Cargo,
         ToolchainId::Cmake,
         ToolchainId::Python,
@@ -52,6 +53,7 @@ impl ToolchainId {
         ToolchainId::Gradle,
         ToolchainId::Npm,
         ToolchainId::Make,
+        ToolchainId::Php,
     ];
 
     /// The persisted identifier. Stable: it reaches `.ide/settings.toml`.
@@ -64,6 +66,7 @@ impl ToolchainId {
             ToolchainId::Gradle => "gradle",
             ToolchainId::Npm => "npm",
             ToolchainId::Make => "make",
+            ToolchainId::Php => "php",
         }
     }
 
@@ -90,6 +93,7 @@ impl ToolchainId {
             ],
             ToolchainId::Npm => &["package.json"],
             ToolchainId::Make => &["Makefile", "makefile"],
+            ToolchainId::Php => &["composer.json"],
         }
     }
 
@@ -113,7 +117,7 @@ impl ToolchainId {
                 program: package_manager(project_root).to_string(),
                 args: vec!["run".into(), "build".into()],
             }),
-            ToolchainId::Python | ToolchainId::Make => None,
+            ToolchainId::Python | ToolchainId::Make | ToolchainId::Php => None,
         }
     }
 
@@ -128,7 +132,7 @@ impl ToolchainId {
             )),
             ToolchainId::Maven => Some(ToolCommand::new(maven_program(project_root), &["clean"])),
             ToolchainId::Gradle => Some(ToolCommand::new(gradle_program(project_root), &["clean"])),
-            ToolchainId::Npm | ToolchainId::Python | ToolchainId::Make => None,
+            ToolchainId::Npm | ToolchainId::Python | ToolchainId::Make | ToolchainId::Php => None,
         }
     }
 
@@ -142,9 +146,11 @@ impl ToolchainId {
     pub fn builds_before_running(self) -> bool {
         match self {
             ToolchainId::Cargo | ToolchainId::Gradle | ToolchainId::Npm => true,
-            ToolchainId::Cmake | ToolchainId::Maven | ToolchainId::Python | ToolchainId::Make => {
-                false
-            }
+            ToolchainId::Cmake
+            | ToolchainId::Maven
+            | ToolchainId::Python
+            | ToolchainId::Make
+            | ToolchainId::Php => false,
         }
     }
 
@@ -156,6 +162,8 @@ impl ToolchainId {
             ToolchainId::Cargo | ToolchainId::Cmake => Some("codelldb"),
             ToolchainId::Python => Some("debugpy"),
             ToolchainId::Maven | ToolchainId::Gradle => Some("java-debug"),
+            // vscode-php-debug, driven in listen mode (ADR-0069).
+            ToolchainId::Php => Some("php-debug"),
             ToolchainId::Npm | ToolchainId::Make => None,
         }
     }
@@ -174,6 +182,11 @@ pub fn package_manager(project_root: &Path) -> &'static str {
     }
 }
 
+/// The program a PHP run configuration starts with when no interpreter is
+/// configured; `MacroContext::php_interpreter` (the `[php]` setting)
+/// replaces it at launch.
+pub const DEFAULT_PHP_PROGRAM: &str = "php";
+
 /// The interpreter a Python run configuration is launched with. Windows
 /// ships `python`; everywhere else `python` may be absent or Python 2, so
 /// `python3` is the only safe default.
@@ -183,7 +196,7 @@ pub fn package_manager(project_root: &Path) -> &'static str {
 /// this binary itself was compiled for, so it gets the Linux answer even
 /// when `cfg!(windows)` is true.
 pub fn python_program(project_root: &Path) -> &'static str {
-    let is_remote = process_exec::host::ExecHost::for_path(project_root).is_remote();
+    let is_remote = process_exec::host::ExecHost::for_path(project_root).filesystem_is_remote();
     if cfg!(windows) && !is_remote {
         "python"
     } else {
@@ -372,5 +385,6 @@ mod tests {
         assert_eq!(ToolchainId::Maven.debug_adapter(), Some("java-debug"));
         assert_eq!(ToolchainId::Gradle.debug_adapter(), Some("java-debug"));
         assert_eq!(ToolchainId::Make.debug_adapter(), None);
+        assert_eq!(ToolchainId::Php.debug_adapter(), Some("php-debug"));
     }
 }

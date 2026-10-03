@@ -6,7 +6,11 @@
 //! default for a project comes from `run_core::toolchain` — which adapter a
 //! toolchain implies is that table's answer (ADR-0039), not a second one.
 
+use std::path::{Path, PathBuf};
+
 use app_config::DebugAdapterSetting;
+
+use crate::error::DapError;
 use run_core::ToolchainId;
 
 /// One adapter: what to run, and what to say when it is missing.
@@ -50,7 +54,205 @@ pub fn shipped() -> Vec<Adapter> {
                 "Install the Java debug adapter (microsoft/java-debug) and put its launcher on PATH."
                     .into(),
         },
+        Adapter {
+            id: PHP_DEBUG.into(),
+            program: "node".into(),
+            args: vec![php_debug_script()],
+            install_hint: "Install the PHP Debug extension (xdebug.php-debug) in VS Code or a \
+                           compatible editor so its `phpDebug.js` can be found, or point a \
+                           `[[debug_adapter]]` with id \"php-debug\" at `node` and your copy."
+                .into(),
+        },
     ]
+}
+
+/// The catalog id of vscode-php-debug (ADR-0069).
+pub const PHP_DEBUG: &str = "php-debug";
+
+/// Editor extension folders under the home directory that may hold the
+/// `xdebug.php-debug` extension.
+const EXTENSION_HOMES: &[&str] = &[
+    ".vscode",
+    ".vscode-server",
+    ".vscode-insiders",
+    ".vscode-oss",
+    ".cursor",
+    ".windsurf",
+];
+
+const PHP_DEBUG_PREFIX: &str = "xdebug.php-debug-";
+
+/// The script argument when no `phpDebug.js` was found: a bare name nothing
+/// resolves, which [`not_located`] recognises.
+const PHP_DEBUG_UNLOCATED: &str = "phpDebug.js";
+
+/// `phpDebug.js` of the newest installed `xdebug.php-debug` extension under
+/// `home`, if any.
+pub fn locate_php_debug(home: &Path) -> Option<PathBuf> {
+    EXTENSION_HOMES
+        .iter()
+        .filter_map(|editor| std::fs::read_dir(home.join(editor).join("extensions")).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let version = extension_version(name.strip_prefix(PHP_DEBUG_PREFIX)?);
+            let script = entry.path().join("out").join("phpDebug.js");
+            script.is_file().then_some((version, script))
+        })
+        .max()
+        .map(|(_, script)| script)
+}
+
+/// The `sh` script that lists every `phpDebug.js` under the *distro's* home,
+/// one per line — [`locate_php_debug`] for a WSL project, whose adapter runs
+/// inside the distro and cannot read the IDE host's extensions.
+fn wsl_listing_script() -> String {
+    let globs: Vec<String> = EXTENSION_HOMES
+        .iter()
+        .map(|editor| format!("\"$HOME\"/{editor}/extensions/{PHP_DEBUG_PREFIX}*/out/phpDebug.js"))
+        .collect();
+    format!("ls -1 {} 2>/dev/null", globs.join(" "))
+}
+
+/// The newest `phpDebug.js` in [`wsl_listing_script`]'s output.
+fn newest_listed(stdout: &str) -> Option<String> {
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let extension = Path::new(line).parent()?.parent()?.file_name()?.to_str()?;
+            let version = extension_version(extension.strip_prefix(PHP_DEBUG_PREFIX)?);
+            Some((version, line.to_string()))
+        })
+        .max()
+        .map(|(_, script)| script)
+}
+
+/// Where phpDebug.js was found in each distro already: the probe is a
+/// blocking `wsl.exe` round trip, so it runs once per distro. Only a hit is
+/// kept — a distro without the extension is probed again, so installing it
+/// takes effect without a restart.
+static LOCATED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+/// The distro name of a WSL `host`; `None` for any other host.
+fn distro_of(host: &process_exec::host::ExecHost) -> Option<&str> {
+    match host {
+        process_exec::host::ExecHost::Wsl(wsl) => Some(&wsl.distro),
+        _ => None,
+    }
+}
+
+/// Whether [`resolve_on`] for `host` answers without a blocking probe: any
+/// host but WSL, or a distro already located. Callers that must not block
+/// (the Qt thread) call [`resolve_on`] on a worker when this is false.
+pub fn php_debug_is_located(host: &process_exec::host::ExecHost) -> bool {
+    distro_of(host).is_none_or(|distro| {
+        LOCATED
+            .lock()
+            .is_ok_and(|map| map.as_ref().is_some_and(|map| map.contains_key(distro)))
+    })
+}
+
+/// [`locate_php_debug`] inside the WSL distro `host` names; `None` on any
+/// other host, or when the distro has no copy. Cached per distro.
+fn locate_php_debug_on(host: &process_exec::host::ExecHost, cwd: &Path) -> Option<String> {
+    located_once(distro_of(host)?, || probe_distro(host, cwd))
+}
+
+/// `distro`'s cached location, probing with `probe` (and keeping a hit) when
+/// there is none.
+fn located_once(distro: &str, probe: impl FnOnce() -> Option<String>) -> Option<String> {
+    let cached = LOCATED
+        .lock()
+        .ok()
+        .and_then(|map| map.as_ref()?.get(distro).cloned());
+    if cached.is_some() {
+        return cached;
+    }
+    let found = probe()?;
+    if let Ok(mut map) = LOCATED.lock() {
+        map.get_or_insert_with(Default::default)
+            .insert(distro.to_string(), found.clone());
+    }
+    Some(found)
+}
+
+fn probe_distro(host: &process_exec::host::ExecHost, cwd: &Path) -> Option<String> {
+    let script = wsl_listing_script();
+    let out = process_exec::run_on(
+        host,
+        "sh",
+        &["-c", &script],
+        cwd,
+        None,
+        std::time::Duration::from_secs(10),
+        &[],
+    )
+    .ok()?;
+    newest_listed(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// `1.36.0` out of `1.36.0-linux-x64`, as comparable numbers.
+fn extension_version(suffix: &str) -> Vec<u64> {
+    suffix
+        .split('-')
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .map(|part| part.parse().unwrap_or(0))
+        .collect()
+}
+
+/// The script argument for the shipped `php-debug` row: the located file, or
+/// the bare name, which makes `node` fail and the install hint show.
+fn php_debug_script() -> String {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .and_then(|home| locate_php_debug(Path::new(&home)))
+        .map(|script| script.display().to_string())
+        .unwrap_or_else(|| PHP_DEBUG_UNLOCATED.to_string())
+}
+
+/// The error to report instead of starting `adapter` when it is the shipped
+/// vscode-php-debug row and no `phpDebug.js` was found.
+///
+/// Starting `node phpDebug.js` anyway spawns fine and then dies with
+/// `MODULE_NOT_FOUND`, which reaches the user as an opaque "the debug
+/// adapter disconnected" with none of the install hint
+/// ([`crate::session::DapSession::start`] only attaches it when the *spawn*
+/// fails). An override with its own program or arguments is never
+/// second-guessed (the E2E flows point the row at a stub adapter).
+pub fn not_located(adapter: &Adapter) -> Option<DapError> {
+    (adapter.id == PHP_DEBUG && adapter.program == "node" && adapter.args == [PHP_DEBUG_UNLOCATED])
+        .then(|| DapError::AdapterNotStarted {
+            adapter: adapter.id.clone(),
+            reason: format!("phpDebug.js was not found. {}", adapter.install_hint),
+        })
+}
+
+/// [`resolve`] for an adapter that runs on `host` (the project's). The PHP
+/// adapter of a WSL project is looked up in the distro's own home and run
+/// there with its Linux path, not the IDE host's `$HOME` copy.
+///
+/// The first call for a WSL distro blocks on `wsl.exe` (cached per distro
+/// after that): off the Qt thread unless [`php_debug_is_located`].
+pub fn resolve_on(
+    id: &str,
+    overrides: &[DebugAdapterSetting],
+    host: &process_exec::host::ExecHost,
+    cwd: &Path,
+) -> Option<Adapter> {
+    let mut adapter = resolve(id, overrides)?;
+    let overridden_args = overrides
+        .iter()
+        .any(|setting| setting.id == id && setting.args.is_some());
+    if id == PHP_DEBUG && !overridden_args && host.runs_remotely() {
+        adapter.args =
+            vec![locate_php_debug_on(host, cwd).unwrap_or_else(|| PHP_DEBUG_UNLOCATED.to_string())];
+    }
+    Some(adapter)
 }
 
 /// The adapter for `id`, with any project override applied.
@@ -104,6 +306,41 @@ pub const CLASS_RELOAD_REQUEST: &str = "redefineClasses";
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_distro_is_probed_once_and_a_miss_is_probed_again() {
+        use std::cell::Cell;
+        let calls = Cell::new(0);
+        let distro = "cache-test-distro";
+        let wsl = process_exec::host::ExecHost::Wsl(process_exec::host::WslHost {
+            distro: distro.into(),
+            unc_prefix: "//wsl.localhost/cache-test-distro".into(),
+        });
+        assert!(!php_debug_is_located(&wsl));
+        assert_eq!(
+            located_once(distro, || {
+                calls.set(calls.get() + 1);
+                None
+            }),
+            None
+        );
+        assert!(!php_debug_is_located(&wsl), "a miss is not kept");
+        let hit = || {
+            calls.set(calls.get() + 1);
+            Some("/home/u/phpDebug.js".to_string())
+        };
+        assert_eq!(
+            located_once(distro, hit).as_deref(),
+            Some("/home/u/phpDebug.js")
+        );
+        assert_eq!(
+            located_once(distro, hit),
+            Some("/home/u/phpDebug.js".to_string())
+        );
+        assert_eq!(calls.get(), 2, "the second hit came from the cache");
+        assert!(php_debug_is_located(&wsl));
+        assert!(php_debug_is_located(&process_exec::host::ExecHost::Local));
+    }
+
     use super::*;
 
     #[test]
@@ -119,6 +356,26 @@ mod tests {
     }
 
     #[test]
+    fn an_unlocated_php_adapter_is_reported_with_its_install_hint_not_started() {
+        let mut adapter = resolve(PHP_DEBUG, &[]).unwrap();
+        adapter.args = vec![PHP_DEBUG_UNLOCATED.to_string()];
+        let message = not_located(&adapter).expect("unlocated").to_string();
+        assert!(message.contains("phpDebug.js was not found"), "{message}");
+        assert!(message.contains("xdebug.php-debug"), "{message}");
+
+        adapter.args = vec!["/home/u/phpDebug.js".to_string()];
+        assert_eq!(not_located(&adapter), None, "a located script starts");
+        let other = resolve("debugpy", &[]).unwrap();
+        assert_eq!(not_located(&other), None);
+        let stub = DebugAdapterSetting {
+            id: PHP_DEBUG.into(),
+            command: Some("/stub_adapter".into()),
+            args: None,
+        };
+        assert_eq!(not_located(&resolve(PHP_DEBUG, &[stub]).unwrap()), None);
+    }
+
+    #[test]
     fn each_planned_toolchain_resolves_to_an_adapter() {
         for toolchain in [
             ToolchainId::Cargo,
@@ -126,6 +383,7 @@ mod tests {
             ToolchainId::Python,
             ToolchainId::Maven,
             ToolchainId::Gradle,
+            ToolchainId::Php,
         ] {
             assert!(
                 for_toolchain(toolchain, &[]).is_some(),
@@ -167,6 +425,93 @@ mod tests {
             args: None,
         }];
         assert!(resolve("delve", &overrides).is_none());
+    }
+
+    fn install(home: &Path, editor: &str, folder: &str, with_script: bool) -> PathBuf {
+        let out = home
+            .join(editor)
+            .join("extensions")
+            .join(folder)
+            .join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let script = out.join("phpDebug.js");
+        if with_script {
+            std::fs::write(&script, "").unwrap();
+        }
+        script
+    }
+
+    #[test]
+    fn php_debug_is_found_in_the_newest_extension_of_any_editor() {
+        let home = tempfile::tempdir().unwrap();
+        install(home.path(), ".vscode", "xdebug.php-debug-1.9.0", true);
+        let newest = install(
+            home.path(),
+            ".cursor",
+            "xdebug.php-debug-1.36.0-linux-x64",
+            true,
+        );
+        install(
+            home.path(),
+            ".vscode-server",
+            "xdebug.php-debug-1.40.0",
+            false,
+        );
+        install(home.path(), ".vscode", "ms-python.python-2025.1.0", true);
+        assert_eq!(locate_php_debug(home.path()), Some(newest));
+    }
+
+    #[test]
+    fn a_wsl_listing_picks_the_newest_extension_in_the_distro() {
+        let listing = "/home/f/.vscode-server/extensions/xdebug.php-debug-1.9.0/out/phpDebug.js\n\
+                       /home/f/.cursor/extensions/xdebug.php-debug-1.36.0-linux-x64/out/phpDebug.js\n";
+        assert_eq!(
+            newest_listed(listing).as_deref(),
+            Some("/home/f/.cursor/extensions/xdebug.php-debug-1.36.0-linux-x64/out/phpDebug.js")
+        );
+        assert_eq!(newest_listed(""), None);
+    }
+
+    #[test]
+    fn the_wsl_script_searches_the_distros_home_for_every_editor() {
+        let script = wsl_listing_script();
+        assert!(script
+            .contains("\"$HOME\"/.vscode-server/extensions/xdebug.php-debug-*/out/phpDebug.js"));
+        assert!(script.contains(".cursor"));
+    }
+
+    #[test]
+    fn a_local_host_keeps_the_host_home_lookup() {
+        let adapter = resolve_on(
+            PHP_DEBUG,
+            &[],
+            &process_exec::host::ExecHost::Local,
+            Path::new("/p"),
+        )
+        .unwrap();
+        assert_eq!(adapter, resolve(PHP_DEBUG, &[]).unwrap());
+    }
+
+    #[test]
+    fn php_debug_is_not_found_in_an_empty_home() {
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(locate_php_debug(home.path()), None);
+    }
+
+    #[test]
+    fn php_debug_runs_under_node_and_can_be_overridden() {
+        let adapter = resolve(PHP_DEBUG, &[]).unwrap();
+        assert_eq!(adapter.program, "node");
+        assert_eq!(adapter.args.len(), 1);
+        let overrides = vec![DebugAdapterSetting {
+            id: PHP_DEBUG.into(),
+            command: None,
+            args: Some(vec!["/opt/phpDebug.js".into()]),
+        }];
+        assert_eq!(
+            resolve(PHP_DEBUG, &overrides).unwrap().args,
+            vec!["/opt/phpDebug.js"]
+        );
     }
 
     #[test]

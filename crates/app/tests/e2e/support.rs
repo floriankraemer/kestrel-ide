@@ -169,6 +169,23 @@ pub(crate) fn stub_server_path() -> PathBuf {
     Path::new(APP).with_file_name("stub_server")
 }
 
+/// Where `stub_adapter` lands, beside `app`'s own binary — the scripted
+/// stand-in for vscode-php-debug (`dap-core`'s `[[bin]]`; `e2e-ci` builds it).
+pub(crate) fn stub_adapter_path() -> PathBuf {
+    let name = if cfg!(windows) {
+        "stub_adapter.exe"
+    } else {
+        "stub_adapter"
+    };
+    let path = Path::new(APP).with_file_name(name);
+    assert!(
+        path.is_file(),
+        "{} does not exist — run via `make e2e`, which builds it",
+        path.display()
+    );
+    path
+}
+
 /// Route the `rust` language id at `lsp-core`'s stub server rather than a
 /// real `rust-analyzer` — not installed in this image, and the point of
 /// these flows is the client's own behaviour, which the stub is built to
@@ -188,38 +205,81 @@ pub(crate) fn route_rust_at_stub_with(
     ide: &mut Ide,
     tweak: impl FnOnce(&mut app_config::Settings),
 ) {
+    reseed_settings(ide, |settings| {
+        tweak(settings);
+        settings
+            .language_servers
+            .push(app_config::LanguageServerSetting {
+                language_id: "rust".to_string(),
+                command: Some(stub_server_path().to_string_lossy().into_owned()),
+                ..Default::default()
+            });
+    });
+}
+
+/// One tagged stub language server for [`route_language_at_stubs`].
+pub(crate) struct StubServer<'a> {
+    /// The catalog id (`intelephense`, `phpactor`): which server's entry is
+    /// replaced, and the tag its answers and diagnostics carry.
+    pub id: &'a str,
+    /// `STUB_LSP_CAPS`: the `…Provider` capabilities the stub advertises.
+    pub caps: &'a str,
+}
+
+/// Route every server of `language_id` named in `servers` at the stub
+/// server's tagged profile (`STUB_LSP_TAG=<id>`), with diagnostics on, so a
+/// flow can tell which server a merged answer came from. Like
+/// [`route_rust_at_stub`] it relaunches, since the server table is resolved
+/// once on `openProject`.
+pub(crate) fn route_language_at_stubs(ide: &mut Ide, language_id: &str, servers: &[StubServer]) {
+    reseed_settings(ide, |settings| {
+        for server in servers {
+            settings
+                .language_servers
+                .push(app_config::LanguageServerSetting {
+                    id: Some(server.id.to_string()),
+                    language_id: language_id.to_string(),
+                    command: Some("env".to_string()),
+                    args: Some(vec![
+                        format!("STUB_LSP_TAG={}", server.id),
+                        format!("STUB_LSP_CAPS={}", server.caps),
+                        stub_server_path().to_string_lossy().into_owned(),
+                    ]),
+                    diagnostics: Some(true),
+                    ..Default::default()
+                });
+        }
+    });
+}
+
+/// Quit, let `change` edit the user settings on disk, and relaunch.
+fn reseed_settings(ide: &mut Ide, change: impl FnOnce(&mut app_config::Settings)) {
     assert_eq!(ide.quit(), 0);
     let mut settings = app_config::load(&ide.config_dir()).expect("settings just written");
-    tweak(&mut settings);
-    settings
-        .language_servers
-        .push(app_config::LanguageServerSetting {
-            language_id: "rust".to_string(),
-            command: Some(stub_server_path().to_string_lossy().into_owned()),
-            ..Default::default()
-        });
+    change(&mut settings);
     app_config::save(&ide.config_dir(), &settings).expect("seeding the stub server override");
     ide.relaunch();
     ide.wait_for_ev(Mark::start(), "project_opened");
 }
 
-/// Click the project tree's `.ide` row, so the window has a settled,
+/// Click a folder row of the project tree, so the window has a settled,
 /// on-screen row to act against — the tree's own rows are the one thing
-/// with a reported rect at this point, and clicking `.ide` only selects it
-/// (a file row would open a tab). The *latest* report of the row: the tree
-/// publishes its rows once before the main window is laid out (tiny, wrong
-/// rects) and again after, and `main_window_shown` has already been waited
-/// for here.
+/// with a reported rect at this point, and clicking a folder only selects it
+/// (a file row would open a tab). That is the project's `.ide` folder when
+/// it has one (a fixture seeding its settings), else its `src` folder;
+/// opening a project no longer creates `.ide` itself. The *latest* report
+/// of the row: the tree publishes its rows once before the main window is
+/// laid out (tiny, wrong rects) and again after, and `main_window_shown` has
+/// already been waited for here.
 pub(crate) fn settle(ide: &Ide) {
-    let row = ide
-        .events()
-        .into_iter()
-        .rev()
-        .find(|e| {
-            e["ev"] == "project_tree_row"
-                && e["path"].as_str().is_some_and(|p| p.ends_with("/.ide"))
+    let latest = |suffix: &str| {
+        ide.events().into_iter().rev().find(|e| {
+            e["ev"] == "project_tree_row" && e["path"].as_str().is_some_and(|p| p.ends_with(suffix))
         })
-        .expect("the project tree reported its .ide row");
+    };
+    let row = latest("/.ide")
+        .or_else(|| latest("/src"))
+        .expect("the project tree reported an .ide or src folder row");
     let (x, y) = rect_centre(&row["rect"]);
     ide.click_at(x, y, 1);
     ide.focus_main();

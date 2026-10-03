@@ -33,6 +33,7 @@ use crate::bridge::editor_ops::EditorOpsRust;
 use crate::bridge::file_associations::FileAssociationsEditorRust;
 use crate::bridge::icons::IconProviderRust;
 use crate::bridge::language::LanguageServiceRust;
+use crate::bridge::php::{ComposerServiceRust, PhpSettingsEditorRust};
 use crate::bridge::plugins::PluginCatalogRust;
 use crate::bridge::preview::PreviewProviderRust;
 use crate::bridge::run::{RunConfigEditorRust, RunServiceRust};
@@ -300,6 +301,7 @@ mod ffi {
     /// symbols — the work is skipped, not discarded.
     enum FfiTierFilter {
         All,
+        Classes,
         Files,
         Symbols,
         Text,
@@ -776,6 +778,88 @@ mod ffi {
         more: bool,
     }
 
+    /// Why a save went ahead without the formatter's text.
+    #[derive(Debug)]
+    enum FfiFormatSkipped {
+        /// Formatted, or no formatter was asked.
+        None,
+        /// The formatter failed or timed out: `failed_tool`, `failure`.
+        Failed,
+        /// The buffer changed while the formatter ran.
+        BufferChanged,
+        /// A save that does not wait for a formatter (closing, quitting).
+        NotWaited,
+    }
+
+    /// What a save changes before it writes the file, and what the user
+    /// must be told. `pending` means there is nothing to write yet: the
+    /// formatter runs on a worker and `saveFormatted` follows. The view
+    /// words the notice from `skipped` (ADR-0049).
+    struct FfiSaveEdits {
+        pending: bool,
+        edits: Vec<FfiTextEdit>,
+        skipped: FfiFormatSkipped,
+        failed_tool: QString,
+        failure: QString,
+    }
+
+    /// What Alt+Insert can generate for a PHP class (ADR-0072).
+    #[derive(Debug)]
+    enum FfiGenerateKind {
+        Constructor,
+        Getters,
+        Setters,
+        GettersAndSetters,
+    }
+
+    /// One Generate entry; a `reason`-carrying one is listed greyed.
+    struct FfiGenerateOption {
+        kind: FfiGenerateKind,
+        title: QString,
+        enabled: bool,
+        reason: QString,
+    }
+
+    /// One property in the Generate picker; `name` goes back to
+    /// `generateCode`.
+    struct FfiGenerateMember {
+        name: QString,
+        label: QString,
+    }
+
+    /// One new-file template in the New menu (ADR-0072).
+    struct FfiFileTemplate {
+        id: QString,
+        name: QString,
+    }
+
+    /// The outcome of creating a file from a template: the usual result,
+    /// plus the path of the new file (empty on failure) for the view to open.
+    #[derive(Default)]
+    struct FfiCreateResult {
+        result: FfiResult,
+        path: QString,
+    }
+
+    /// One live template in a picker (ADR-0072).
+    struct FfiTemplateItem {
+        abbreviation: QString,
+        description: QString,
+    }
+
+    /// What expanding a live template did: the edits to splice (descending,
+    /// like every `Vec<FfiTextEdit>`) and the stop to select afterwards, in
+    /// the post-edit document's UTF-16 positions. `stop` is the first tab
+    /// stop with `more` set while others remain, or the caret as an empty
+    /// range. `applied` false means there was nothing to expand and the key
+    /// keeps its ordinary meaning.
+    #[derive(Default)]
+    struct FfiTemplateExpansion {
+        applied: bool,
+        edits: Vec<FfiTextEdit>,
+        stop: FfiSnippetStop,
+    }
+
     /// One caret, as flat document positions in UTF-16 code units — the
     /// unit `QTextCursor::position()` counts in, so the view uses these
     /// directly rather than converting.
@@ -809,6 +893,16 @@ mod ffi {
         end_line: u32,
         end_character: u32,
         new_text: QString,
+    }
+
+    /// A selection as LSP line/character pairs; start and end are equal for a
+    /// bare caret (`lsp_core::formatting::selection_scope` decides what that
+    /// means).
+    struct FfiSelection {
+        start_line: u32,
+        start_character: u32,
+        end_line: u32,
+        end_character: u32,
     }
 
     /// What happened to a run of lines in a diff, 1:1 with
@@ -1436,6 +1530,9 @@ mod ffi {
         /// The `sql-script` kind's own sub-table (F3.6) — meaningless (and
         /// left at its default) unless `kind == "sql-script"`.
         sql_script: FfiSqlScriptOptions,
+        /// The `php-builtin-server` kind's own sub-table (PHP parity plan,
+        /// I6) — meaningless (and left at its default) for any other kind.
+        php_server: FfiPhpServerOptions,
         /// Run targets (C8): empty for "Local" (run on this machine, as
         /// always), else `"container:<target-id>"` — the "Run on" combo's
         /// selection. Meaningless for a container-kind configuration
@@ -1455,6 +1552,17 @@ mod ffi {
         /// `app_config::SqlScriptRunSetting::tx_mode`'s own doc comment.
         tx_mode: QString,
         stop_on_error: bool,
+    }
+
+    /// The `php-builtin-server` run configuration's own page (PHP parity
+    /// plan, I6): `app_config::php::PhpBuiltinServerRunSetting`'s exact
+    /// fields. Blank/zero mean "the default", which `run-core` decides.
+    #[derive(Default)]
+    struct FfiPhpServerOptions {
+        host: QString,
+        port: u32,
+        document_root: QString,
+        router: QString,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -1767,6 +1875,12 @@ mod ffi {
         Ready,
         Exited,
         Failed,
+        /// The command does not exist (locally, in the WSL distro or in the
+        /// container); `detail` carries the hint (`lsp_core::StartFailure`).
+        NotFound,
+        /// Never launched: the platform rules it out (`lsp_core::launch_plan`).
+        /// `detail` carries the reason.
+        Unavailable,
     }
 
     extern "Rust" {
@@ -2109,6 +2223,22 @@ mod ffi {
             parent_dir: &QString,
             name: &QString,
         ) -> FfiResult;
+
+        /// The new-file templates, for the New menu.
+        #[qinvokable]
+        #[cxx_name = "fileTemplates"]
+        fn file_templates(self: &ProjectTreeModel) -> Vec<FfiFileTemplate>;
+
+        /// Create a file from the template `template_id` named `name` in
+        /// `parent_dir`, refresh the tree, and report the new path.
+        #[qinvokable]
+        #[cxx_name = "createFromTemplate"]
+        fn create_from_template(
+            self: Pin<&mut ProjectTreeModel>,
+            parent_dir: &QString,
+            template_id: &QString,
+            name: &QString,
+        ) -> FfiCreateResult;
 
         /// Create an empty folder named `name` inside `parent_dir` and
         /// refresh the tree.
@@ -2851,6 +2981,7 @@ mod ffi {
     // thread's one cross-thread hop (M3), same `CxxQtThread::queue()`
     // pattern `ProjectTreeModel`'s watcher relay above already established.
     impl cxx_qt::Threading for DocumentManager {}
+    impl cxx_qt::Threading for EditorOps {}
 
     extern "RustQt" {
         /// Icons for a path (ADR-0027), for any view that has one — the
@@ -4197,7 +4328,7 @@ mod ffi {
             character: u32,
         );
 
-        /// One usage — or, from `findImplementations`/`findSupertypes`,
+        /// One usage — or, from `implementationsAt`/`findSupertypes`,
         /// one hierarchy row. `is_definition` distinguishes the defining
         /// occurrence from a reference.
         #[qsignal]
@@ -4263,21 +4394,25 @@ mod ffi {
         #[cxx_name = "declarationFailed"]
         fn declaration_failed(self: Pin<&mut SearchModel>, message: QString);
 
-        /// N3 — Go to Implementation: every type declaring `name` as a
-        /// base class, implemented interface, or (in Rust) an implemented
-        /// trait.
-        ///
-        /// Results arrive on the `usagesFound`/`usagesFinished`/
-        /// `usagesFailed` trio rather than a trio of their own: a list of
-        /// file:line locations is exactly what the Find Usages dock
-        /// already renders, and a second identical signal set would buy
-        /// nothing but a second set of connections to keep in sync.
+        /// N1: Go to Implementation from the caret. A running server's
+        /// `textDocument/implementation` answers first
+        /// (`lsp_core::usable_targets`); the name-based index answers when
+        /// it has nothing. Results arrive on the `usagesFound`/
+        /// `usagesFinished`/`usagesFailed` trio rather than one of their
+        /// own: a list of file:line locations is exactly what the Find
+        /// Usages dock already renders.
         #[qinvokable]
-        #[cxx_name = "findImplementations"]
-        fn find_implementations(self: Pin<&mut SearchModel>, name: &QString);
+        #[cxx_name = "implementationsAt"]
+        fn implementations_at(
+            self: Pin<&mut SearchModel>,
+            name: &QString,
+            path: &QString,
+            line: u32,
+            character: u32,
+        );
 
         /// N3 — Go to Interface: every supertype `name` declares. Same
-        /// signals as `findImplementations`.
+        /// signals as `implementationsAt`.
         #[qinvokable]
         #[cxx_name = "findSupertypes"]
         fn find_supertypes(self: Pin<&mut SearchModel>, name: &QString);
@@ -4860,13 +4995,122 @@ mod ffi {
         #[cxx_name = "endSnippet"]
         fn end_snippet(self: Pin<&mut EditorOps>, tab_id: u64);
 
-        /// The edits a save would make before it writes the file (F1-11):
-        /// trim, final newline, line-ending normalisation. Splice these
-        /// into the buffer first so the tidying is one undo entry, then
-        /// read the (now tidied) text to hand to `saveTab`.
+        /// Alt+Insert: the generators for the PHP class at the caret (ADR-0072).
+        #[qinvokable]
+        #[cxx_name = "generateOptions"]
+        fn generate_options(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+        ) -> Vec<FfiGenerateOption>;
+
+        #[qinvokable]
+        #[cxx_name = "generateMembers"]
+        fn generate_members(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            kind: FfiGenerateKind,
+        ) -> Vec<FfiGenerateMember>;
+
+        /// The edits generating `kind` for the properties in `selected` (only
+        /// their `name` is read).
+        #[qinvokable]
+        #[cxx_name = "generateCode"]
+        fn generate_code(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            kind: FfiGenerateKind,
+            selected: Vec<FfiGenerateMember>,
+        ) -> Vec<FfiTextEdit>;
+
+        /// Tab: expand the live template named at the caret (ADR-0072).
+        #[qinvokable]
+        #[cxx_name = "expandTemplate"]
+        fn expand_template(self: &EditorOps, tab_id: u64, text: &QString) -> FfiTemplateExpansion;
+
+        /// Ctrl+J: the templates that fit the caret's place.
+        #[qinvokable]
+        #[cxx_name = "insertableTemplates"]
+        fn insertable_templates(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+        ) -> Vec<FfiTemplateItem>;
+
+        #[qinvokable]
+        #[cxx_name = "insertTemplate"]
+        fn insert_template(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            abbreviation: &QString,
+        ) -> FfiTemplateExpansion;
+
+        /// Ctrl+Alt+T: the templates that can wrap a selection.
+        #[qinvokable]
+        #[cxx_name = "surroundTemplates"]
+        fn surround_templates(self: &EditorOps, tab_id: u64) -> Vec<FfiTemplateItem>;
+
+        #[qinvokable]
+        #[cxx_name = "surroundWith"]
+        fn surround_with(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+            abbreviation: &QString,
+        ) -> FfiTemplateExpansion;
+
+        /// Templates as completion items (postfix after `expr.`, or the plain
+        /// one named by the typed word).
+        #[qinvokable]
+        #[cxx_name = "templateCompletions"]
+        fn template_completions(
+            self: &EditorOps,
+            tab_id: u64,
+            text: &QString,
+        ) -> Vec<FfiCompletionItem>;
+
+        /// The edits a save that does not wait makes before it writes the
+        /// file (F1-11): trim, final newline, line-ending normalisation —
+        /// never the formatter, which can take seconds (closing, quitting,
+        /// Save All). Splice these into the buffer first so the tidying is
+        /// one undo entry, then read the text to hand to `saveTab`. Drops
+        /// any format-on-save still pending for the tab.
         #[qinvokable]
         #[cxx_name = "saveRuleEdits"]
-        fn save_rule_edits(self: &EditorOps, tab_id: u64, text: &QString) -> Vec<FfiTextEdit>;
+        fn save_rule_edits(self: &EditorOps, tab_id: u64, text: &QString) -> FfiSaveEdits;
+
+        /// Ctrl+S: the same edits as `saveRuleEdits` when no formatter
+        /// applies, else `pending` while the formatter runs on a worker
+        /// (ADR-0070) and `saveFormatted` follows.
+        #[qinvokable]
+        #[cxx_name = "beginSave"]
+        fn begin_save(
+            self: Pin<&mut EditorOps>,
+            tab_id: u64,
+            revision: i64,
+            text: &QString,
+        ) -> FfiSaveEdits;
+
+        /// After `saveFormatted`: the edits to apply to the buffer as it is
+        /// now (`revision`, `text`) before writing — the formatter's, only
+        /// when the buffer did not change meanwhile. `pending` when there is
+        /// nothing to write (the save was dropped or already written).
+        #[qinvokable]
+        #[cxx_name = "finishSave"]
+        fn finish_save(
+            self: &EditorOps,
+            tab_id: u64,
+            revision: i64,
+            text: &QString,
+        ) -> FfiSaveEdits;
+
+        /// A format-on-save's formatter answered; call `finishSave`.
+        #[qsignal]
+        #[cxx_name = "saveFormatted"]
+        fn save_formatted(self: Pin<&mut EditorOps>, tab_id: u64);
 
         /// The tab width this tab's language resolves to (show-whitespace-
         /// characters task): what `CodeEditor::setTabStopDistance` uses.
@@ -4969,7 +5213,7 @@ mod ffi {
         /// it takes effect immediately rather than on OK.
         #[qinvokable]
         #[cxx_name = "restartServer"]
-        fn restart_server(self: Pin<&mut LanguageService>, language_id: &QString);
+        fn restart_server(self: Pin<&mut LanguageService>, server_id: &QString);
 
         /// Whether a server is configured, enabled and started for this
         /// file's language — the difference between "no problems" and "no
@@ -5125,6 +5369,19 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "resolveDefinition"]
         fn resolve_definition(
+            self: Pin<&mut LanguageService>,
+            path: &QString,
+            line: u32,
+            character: u32,
+        );
+
+        /// N2 — Go to Type Declaration: `textDocument/typeDefinition` at a
+        /// position. Answers on `definitionFound`* + `definitionFinished`,
+        /// or `definitionUnavailable` when the server has nothing (there is
+        /// no index fallback for the type of an expression).
+        #[qinvokable]
+        #[cxx_name = "resolveTypeDefinition"]
+        fn resolve_type_definition(
             self: Pin<&mut LanguageService>,
             path: &QString,
             line: u32,
@@ -5333,17 +5590,60 @@ mod ffi {
         #[cxx_name = "codeActions"]
         fn code_actions(self: &LanguageService) -> Vec<FfiCodeAction>;
 
-        /// Reformat one open document, whole-file (F1-14). Answers through
-        /// the same `refactorReady`/`refactorFailed`/`pendingEdits`
-        /// protocol a rename uses — `touches_other_files` is always false,
-        /// so the view applies it straight away, and one Ctrl+Z undoes it.
+        /// Reformat Code (F1-14, N4): the selection when it is not empty,
+        /// the whole file otherwise. Answers through the same
+        /// `refactorReady`/`refactorFailed`/`pendingEdits` protocol a rename
+        /// uses — `touches_other_files` is always false, so the view applies
+        /// it straight away, and one Ctrl+Z undoes it.
         #[qinvokable]
         #[cxx_name = "requestFormatting"]
         fn request_formatting(
             self: Pin<&mut LanguageService>,
             path: &QString,
             buffer_revision: i64,
+            selection: FfiSelection,
         );
+
+        /// Reformat Selection (N4): like `requestFormatting`, but an empty
+        /// selection is reported through `refactorFailed` instead of
+        /// reformatting the file.
+        #[qinvokable]
+        #[cxx_name = "requestSelectionFormatting"]
+        fn request_selection_formatting(
+            self: Pin<&mut LanguageService>,
+            path: &QString,
+            buffer_revision: i64,
+            selection: FfiSelection,
+        );
+
+        /// N5: `typed` was just typed with the caret now at `line`/
+        /// `character`. Does nothing unless a running server named it an
+        /// on-type formatting trigger; then its edits are applied through
+        /// its own `onTypeFormatReady` / `takeOnTypeEdits` slot (never the
+        /// Rename/code-action pending slot), as one undo step, and never
+        /// reported as a failure.
+        #[qinvokable]
+        #[cxx_name = "requestOnTypeFormatting"]
+        fn request_on_type_formatting(
+            self: Pin<&mut LanguageService>,
+            path: &QString,
+            buffer_revision: i64,
+            line: u32,
+            character: u32,
+            typed: &QString,
+        );
+
+        /// An on-type formatting answer is parked; fetch it with
+        /// `takeOnTypeEdits(documentRevision())`.
+        #[qsignal]
+        #[cxx_name = "onTypeFormatReady"]
+        fn on_type_format_ready(self: Pin<&mut LanguageService>);
+
+        /// N5's edits, once, last-first, in-buffer; empty when the buffer
+        /// moved since `requestOnTypeFormatting` (`lsp_core::EditGate`).
+        #[qinvokable]
+        #[cxx_name = "takeOnTypeEdits"]
+        fn take_on_type_edits(self: &LanguageService, buffer_revision: i64) -> Vec<FfiTextEdit>;
 
         /// A `codeActionsAt` answered. Empty is a legitimate answer and is
         /// still signalled, so the view can say "nothing here" rather than
@@ -5864,7 +6164,7 @@ mod ffi {
         #[cxx_name = "serverStateChanged"]
         fn server_state_changed(
             self: Pin<&mut LanguageService>,
-            language_id: QString,
+            server_id: QString,
             name: QString,
             state: FfiServerState,
             detail: QString,
@@ -5942,6 +6242,9 @@ mod ffi {
         Detected,
         DeclaredNotInstalled,
         NotDetected,
+        /// Installed, but the project lacks the config file the tool needs
+        /// (`config_name`; `config_command` writes one): not run.
+        NeedsConfig,
     }
 
     /// One row of the Analysis settings page and the status bar's
@@ -5964,6 +6267,12 @@ mod ffi {
         /// declared-but-not-installed, or not detected.
         #[cxx_name = "statusText"]
         status_text: QString,
+        /// `NeedsConfig` only: the config file the analyzer needs.
+        #[cxx_name = "configName"]
+        config_name: QString,
+        /// `NeedsConfig` only: the command that writes it, or empty.
+        #[cxx_name = "configCommand"]
+        config_command: QString,
     }
 
     extern "RustQt" {
@@ -6002,6 +6311,19 @@ mod ffi {
         #[cxx_name = "inspectProject"]
         fn inspect_project(self: Pin<&mut AnalysisService>) -> FfiResult;
 
+        /// The buffer of `path` changed (the editor's debounced timer):
+        /// run the On Type analyzers on `text`. Findings arrive through
+        /// `diagnosticsChanged`; a file no analyzer covers is a no-op.
+        #[qinvokable]
+        #[cxx_name = "fileChanged"]
+        fn file_changed(self: Pin<&mut AnalysisService>, path: &QString, text: &QString);
+
+        /// `path` was saved with content `text`: run the On Type and On
+        /// Save analyzers.
+        #[qinvokable]
+        #[cxx_name = "fileSaved"]
+        fn file_saved(self: Pin<&mut AnalysisService>, path: &QString, text: &QString);
+
         /// A project-wide analysis run began.
         #[qsignal]
         #[cxx_name = "analysisStarted"]
@@ -6028,6 +6350,12 @@ mod ffi {
         #[qsignal]
         #[cxx_name = "analysisFinished"]
         fn analysis_finished(self: Pin<&mut AnalysisService>);
+
+        /// "Inspect Project" found no enabled, installed analyzer once its
+        /// off-thread lookups were done; `message` says so.
+        #[qsignal]
+        #[cxx_name = "inspectRefused"]
+        fn inspect_refused(self: Pin<&mut AnalysisService>, message: QString);
 
         /// This analyzer's rows in the shared store (ADR-0046) changed —
         /// the same "my part of the store changed" meaning `LanguageService`
@@ -6092,6 +6420,165 @@ mod ffi {
 
         #[qinvokable]
         fn commit(self: &AnalysisEditor);
+    }
+
+    /// Settings > PHP (PHP parity plan, I7), as the page shows it:
+    /// `settings_model::php::PhpForm`'s fields, text kept as text.
+    #[derive(Default)]
+    struct FfiPhpForm {
+        interpreter: QString,
+        language_level: QString,
+        /// One path per line.
+        include_paths: QString,
+        /// Comma- or whitespace-separated extension names.
+        stubs: QString,
+        container_target: QString,
+        /// `exec`, `run` or empty.
+        container_mode: QString,
+        /// A `formatters` contribution id, or empty for the language server.
+        formatter: QString,
+        intelephense_enabled: bool,
+        intelephense_diagnostics: bool,
+        phpactor_enabled: bool,
+        phpactor_diagnostics: bool,
+    }
+
+    /// One `formatters` contribution a language's formatter setting can name.
+    #[derive(Default)]
+    struct FfiFormatterChoice {
+        id: QString,
+        name: QString,
+        /// False for a configured id no plugin offers any more; the view
+        /// words that ("<name> (not installed)").
+        installed: bool,
+    }
+
+    /// What `php_core::probe` learned about an interpreter, or why it
+    /// learned nothing (`ok == false`, `error` set).
+    #[derive(Default)]
+    struct FfiPhpProbe {
+        ok: bool,
+        version: QString,
+        ini_file: QString,
+        xdebug: bool,
+        /// Xdebug's modes, comma-separated.
+        xdebug_modes: QString,
+        pcov: bool,
+        /// What is wrong for debugging (empty when nothing is), with the
+        /// container hint when the interpreter runs in one.
+        xdebug_advice: QString,
+        error: QString,
+    }
+
+    extern "RustQt" {
+        /// The Settings > PHP page's draft (I7), following
+        /// `AnalysisEditor`'s begin_edit(scope)/…/commit shape. The
+        /// Intelephense licence key is not a setting: it is held pending
+        /// here and written to the keychain on `commit`.
+        #[qobject]
+        type PhpSettingsEditor = super::PhpSettingsEditorRust;
+
+        #[qinvokable]
+        #[cxx_name = "beginEdit"]
+        fn begin_edit(self: &PhpSettingsEditor, scope: &QString);
+
+        #[qinvokable]
+        fn form(self: &PhpSettingsEditor) -> FfiPhpForm;
+
+        /// The formatters PHP can use, for the page's formatter choice, plus the
+        /// configured one when it is no longer installed.
+        #[qinvokable]
+        #[cxx_name = "formatterChoices"]
+        fn formatter_choices(self: &PhpSettingsEditor) -> Vec<FfiFormatterChoice>;
+
+        /// Apply `form` to the draft; a non-zero code means it was refused
+        /// (and the draft is unchanged).
+        #[qinvokable]
+        #[cxx_name = "setForm"]
+        fn set_form(self: &PhpSettingsEditor, form: &FfiPhpForm) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "hasLicenceKey"]
+        fn has_licence_key(self: &PhpSettingsEditor) -> bool;
+
+        #[qinvokable]
+        #[cxx_name = "setLicenceKey"]
+        fn set_licence_key(self: &PhpSettingsEditor, key: &QString);
+
+        #[qinvokable]
+        #[cxx_name = "removeLicenceKey"]
+        fn remove_licence_key(self: &PhpSettingsEditor);
+
+        /// Probe `interpreter` (blank is `php`) off the Qt thread; answers
+        /// via `probeFinished`.
+        #[qinvokable]
+        #[cxx_name = "probeInterpreter"]
+        fn probe_interpreter(self: Pin<&mut PhpSettingsEditor>, interpreter: &QString);
+
+        #[qsignal]
+        #[cxx_name = "probeFinished"]
+        fn probe_finished(self: Pin<&mut PhpSettingsEditor>, result: FfiPhpProbe);
+
+        /// Write the draft (and a pending licence key change). A non-zero
+        /// code means the keychain refused the key; the settings were
+        /// still saved.
+        #[qinvokable]
+        fn commit(self: &PhpSettingsEditor) -> FfiResult;
+    }
+
+    impl cxx_qt::Threading for PhpSettingsEditor {}
+
+    /// One row of the Composer tool window (I8): `kind` is `script`,
+    /// `package` or `dev-package`; `detail` is the script's commands or the
+    /// package's installed version (else its constraint).
+    struct FfiComposerRow {
+        kind: QString,
+        name: QString,
+        detail: QString,
+        /// Package rows: whether `composer.lock` pins a version.
+        installed: bool,
+    }
+
+    /// What `ComposerService::actionConfig` answers: a refusal (`result`)
+    /// or the run configuration to launch.
+    #[derive(Default)]
+    struct FfiComposerAction {
+        result: FfiResult,
+        config: FfiRunConfig,
+    }
+
+    extern "RustQt" {
+        /// The Composer tool window's model (I8): rows from `composer.json`
+        /// and `composer.lock`, and the run configuration of each action.
+        /// Every action runs in the Run console through
+        /// `RunService::runTemporary`.
+        #[qobject]
+        type ComposerService = super::ComposerServiceRust;
+
+        #[qinvokable]
+        #[cxx_name = "hasComposerJson"]
+        fn has_composer_json(self: &ComposerService) -> bool;
+
+        /// Whether a change to `path` can change `rows` (the manifest or the
+        /// lock file), so the dock re-reads when one changes under it.
+        #[qinvokable]
+        #[cxx_name = "affectsRows"]
+        fn affects_rows(self: &ComposerService, path: &QString) -> bool;
+
+        /// Re-read from disk on every call; the files are small.
+        #[qinvokable]
+        fn rows(self: &ComposerService) -> Vec<FfiComposerRow>;
+
+        /// `action` is one of `php_core::composer_view::ComposerAction::parse`'s
+        /// wire names; `argument` is a package or script name when the
+        /// action takes one.
+        #[qinvokable]
+        #[cxx_name = "actionConfig"]
+        fn action_config(
+            self: &ComposerService,
+            action: &QString,
+            argument: &QString,
+        ) -> FfiComposerAction;
     }
 
     /// A Build Tools dock row's kind (the jvm-build-tools plan's B1/B2) —
@@ -6507,6 +6994,24 @@ mod ffi {
         Skipped,
     }
 
+    /// One row of the Coverage dock (PHP parity plan T5): a file or a
+    /// directory with the executable lines beneath it.
+    struct FfiCoverageRow {
+        /// Relative to the project root, `/`-separated; empty for the root.
+        path: QString,
+        #[cxx_name = "absPath"]
+        abs_path: QString,
+        #[cxx_name = "isFile"]
+        is_file: bool,
+        covered: u32,
+        total: u32,
+        /// 0 to 100, from `test_core::coverage::CoverageRow::percent`.
+        percent: f64,
+        /// `CoverageRow::has_lines`: without it the percentage is not shown.
+        #[cxx_name = "hasLines"]
+        has_lines: bool,
+    }
+
     /// One row of the Tests dock's tree (D4/D5): a flattened
     /// `test_core::TestNode`, parent-qualified rather than nested, since a
     /// `QTreeWidget` builds its own hierarchy from `parentId` the same way
@@ -6589,11 +7094,95 @@ mod ffi {
         #[cxx_name = "runFailed"]
         fn run_failed(self: Pin<&mut TestService>) -> FfiResult;
 
+        /// Why the last run's framework cannot rerun a node from the tree
+        /// (Codeception, path-selected frameworks); empty when it can.
+        #[qinvokable]
+        #[cxx_name = "rerunBlock"]
+        fn rerun_block(self: &TestService) -> QString;
+
         /// Rerun one node — a single test, or every test under a suite —
         /// from the tree's context menu (D6).
         #[qinvokable]
         #[cxx_name = "runNode"]
         fn run_node(self: Pin<&mut TestService>, node_id: &QString) -> FfiResult;
+
+        /// The 0-based lines of `text` that carry a test Run/Debug marker
+        /// (PHP parity plan T3); empty for any file that is not a PHP test.
+        #[qinvokable]
+        #[cxx_name = "markerLines"]
+        fn marker_lines(self: &TestService, path: &QString, text: &QString) -> Vec<u32>;
+
+        /// What the marker on `line` is called, for its menu.
+        #[qinvokable]
+        #[cxx_name = "markerName"]
+        fn marker_name(self: &TestService, path: &QString, text: &QString, line: u32) -> QString;
+
+        /// Run the one test (or class) the marker on `line` names.
+        #[qinvokable]
+        #[cxx_name = "runMarker"]
+        fn run_marker(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
+        /// Remember the marker a Debug click chose; the run starts with
+        /// `runPendingWithEnv` once `DebugService`'s listener is up.
+        #[qinvokable]
+        #[cxx_name = "prepareDebugMarker"]
+        fn prepare_debug_marker(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
+        /// Start the remembered test with the Xdebug environment
+        /// (`[[key, value], ...]`).
+        #[qinvokable]
+        #[cxx_name = "runPendingWithEnv"]
+        fn run_pending_with_env(self: Pin<&mut TestService>, env_json: &QString) -> FfiResult;
+
+        /// Run the whole project's tests collecting coverage (T5).
+        #[qinvokable]
+        #[cxx_name = "runAllWithCoverage"]
+        fn run_all_with_coverage(self: Pin<&mut TestService>) -> FfiResult;
+
+        /// Run the marker's test collecting coverage (T5).
+        #[qinvokable]
+        #[cxx_name = "runMarkerWithCoverage"]
+        fn run_marker_with_coverage(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
+        /// 0-based lines of `path` the last coverage run executed.
+        #[qinvokable]
+        #[cxx_name = "coveredLines"]
+        fn covered_lines(self: &TestService, path: &QString) -> Vec<u32>;
+
+        /// 0-based executable lines of `path` the last coverage run missed.
+        #[qinvokable]
+        #[cxx_name = "uncoveredLines"]
+        fn uncovered_lines(self: &TestService, path: &QString) -> Vec<u32>;
+
+        /// The Coverage dock's rows, parents before children.
+        #[qinvokable]
+        #[cxx_name = "coverageRows"]
+        fn coverage_rows(self: &TestService) -> Vec<FfiCoverageRow>;
+
+        /// Forget the last coverage run.
+        #[qinvokable]
+        #[cxx_name = "clearCoverage"]
+        fn clear_coverage(self: Pin<&mut TestService>);
+
+        /// A coverage run delivered (or `clearCoverage` dropped) its report.
+        #[qsignal]
+        #[cxx_name = "coverageChanged"]
+        fn coverage_changed(self: Pin<&mut TestService>);
 
         /// Stop the run in progress, if any.
         #[qinvokable]
@@ -6620,10 +7209,16 @@ mod ffi {
         /// The run finished. `ok` is false for a run failure (not found,
         /// an I/O error) — a nonzero *test* exit code (failures found) is
         /// still `ok`, the same distinction `AnalysisService::
-        /// analyzerFinished` draws.
+        /// analyzerFinished` draws. `matched_nothing` is a clean exit that
+        /// reported no test (a `--filter` that matched nothing).
         #[qsignal]
         #[cxx_name = "testRunFinished"]
-        fn test_run_finished(self: Pin<&mut TestService>, ok: bool, message: QString);
+        fn test_run_finished(
+            self: Pin<&mut TestService>,
+            ok: bool,
+            matched_nothing: bool,
+            message: QString,
+        );
     }
 
     impl cxx_qt::Threading for TestService {}
@@ -7784,8 +8379,11 @@ mod ffi {
 
     /// One row of the Language Servers page (L6).
     struct FfiLanguageServerRow {
-        language_id: QString,
-        language_name: QString,
+        /// The server's id: the language id when the language has one
+        /// server. Every editor method below takes it.
+        id: QString,
+        /// What the Language column shows (`settings_model::ServerRow::label`).
+        label: QString,
         command: QString,
         /// One space-separated line, not a list (see `settings_model::ServerRow`).
         args: QString,
@@ -8089,6 +8687,8 @@ mod ffi {
         trim_trailing_whitespace: bool,
         has_insert_final_newline: bool,
         insert_final_newline: bool,
+        has_format_on_save: bool,
+        format_on_save: bool,
         has_wrap_column: bool,
         wrap_column: u32,
         has_soft_wrap: bool,
@@ -9454,6 +10054,17 @@ mod ffi {
         #[qinvokable]
         fn run(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
 
+        /// Run `config_id` with extra environment variables (`env_json` is
+        /// `[[key, value], ...]`) — how a PHP debug launch carries the Xdebug
+        /// settings, including into a container.
+        #[qinvokable]
+        #[cxx_name = "runWithEnv"]
+        fn run_with_env(
+            self: Pin<&mut RunService>,
+            config_id: &QString,
+            env_json: &QString,
+        ) -> FfiResult;
+
         /// Whether running `path` from the editor would launch anything —
         /// what decides if the gutter shows a Run icon on that file (R1-6).
         /// The rule is `run_core::context::config_for_file`'s, so the view
@@ -9869,6 +10480,46 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "attachRemote"]
         fn attach_remote(self: Pin<&mut DebugService>, host: &QString, port: u32) -> FfiResult;
+
+        /// The "Start Listening for PHP Debug Connections" toggle (ADR-0069):
+        /// while on, an Xdebug connection from anywhere appears as a thread of
+        /// one session. The result carries a missing adapter's install hint.
+        #[qinvokable]
+        #[cxx_name = "setPhpListening"]
+        fn set_php_listening(self: Pin<&mut DebugService>, enabled: bool) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "isPhpListening"]
+        fn is_php_listening(self: &DebugService) -> bool;
+
+        /// A PHP debug run is ready to start: the listener is up. The view
+        /// hands it to `RunService::runWithEnv`; `env_json` is the Xdebug
+        /// environment as `[[key, value], ...]`.
+        #[qsignal]
+        #[cxx_name = "phpLaunchRequested"]
+        fn php_launch_requested(
+            self: Pin<&mut DebugService>,
+            config_id: QString,
+            env_json: QString,
+        );
+
+        /// Listen for Xdebug, then have the pending gutter test started
+        /// (`phpTestLaunchRequested`) — the test counterpart of debugging
+        /// a PHP run configuration.
+        #[qinvokable]
+        #[cxx_name = "debugPhpTests"]
+        fn debug_php_tests(self: Pin<&mut DebugService>) -> FfiResult;
+
+        /// The listener is up for a debugged test: the view hands the
+        /// environment (`[[key, value], ...]`) to `TestService`.
+        #[qsignal]
+        #[cxx_name = "phpTestLaunchRequested"]
+        fn php_test_launch_requested(self: Pin<&mut DebugService>, env_json: QString);
+
+        /// The PHP listen session started or ended.
+        #[qsignal]
+        #[cxx_name = "phpListeningChanged"]
+        fn php_listening_changed(self: Pin<&mut DebugService>, listening: bool);
 
         /// `host:port` of the last remote target this project attached to,
         /// empty if it never has — what the dialog offers instead of an

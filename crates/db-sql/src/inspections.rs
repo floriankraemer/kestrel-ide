@@ -36,6 +36,7 @@ fn diagnostic(sql: &str, statement_offset: usize, finding: Finding) -> Diagnosti
     let start = statement_offset + finding.start;
     let end = statement_offset + finding.end;
     Diagnostic {
+        code: None,
         range: Range {
             start: position_at(sql, start),
             end: Some(position_at(sql, end)),

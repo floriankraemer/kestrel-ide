@@ -82,3 +82,33 @@ pub(crate) fn greet_problem() -> Value {
         "message": "greet is deprecated",
     })
 }
+
+/// The `textDocument/rangeFormatting` reply: one edit naming the range it was
+/// asked about for tab size 3, `MethodNotFound` otherwise.
+pub(crate) fn range_formatting(id: Value, params: &Value) -> Value {
+    let tab_size = params
+        .pointer("/options/tabSize")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if tab_size != 3 {
+        return json!({"jsonrpc": "2.0", "id": id, "error": {
+            "code": -32601,
+            "message": "textDocument/rangeFormatting is not implemented",
+        }});
+    }
+    let at = |end: &str| {
+        let get = |field: &str| {
+            params
+                .pointer(&format!("/range/{end}/{field}"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
+        };
+        (get("line"), get("character"))
+    };
+    let ((sl, sc), (el, ec)) = (at("start"), at("end"));
+    let range = json!({"start": {"line": sl, "character": sc},
+                       "end": {"line": el, "character": ec}});
+    json!({"jsonrpc": "2.0", "id": id, "result": [
+        {"range": range, "newText": format!("range {sl}:{sc}-{el}:{ec}")}
+    ]})
+}

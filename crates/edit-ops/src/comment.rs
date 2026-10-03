@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 use editor_core::offsets::{line_of, line_range, line_starts};
 use editor_core::selection::SelectionSet;
 use editor_core::transaction::{TextEdit, Transaction};
-use syntax_core::Language;
+use syntax_core::{Language, LanguageMap};
 
 use crate::syntax::Tokens;
 
@@ -33,7 +33,163 @@ use crate::syntax::Tokens;
 ///
 /// A language with no line comment (HTML, CSS, Markdown) falls back to
 /// [`toggle_block`], which is what `Ctrl+/` has to do there.
+///
+/// A line written in another language than the file's (the HTML of a `.php`
+/// file, the `<script>` in it, the text around Twig tags) is commented with
+/// *that* language's syntax, one line at a time.
 pub fn toggle_line(language: Language, text: &str, selection: &SelectionSet) -> Transaction {
+    let starts = line_starts(text);
+    let lines: Vec<usize> = covered_lines(text, &starts, selection)
+        .into_iter()
+        .filter(|line| !is_blank(text, &starts, *line))
+        .collect();
+    let map = LanguageMap::of(language, text);
+    let host_style = comment_syntax(language);
+    // A language that comments exactly as the file's own does is the file's
+    // own as far as this goes. It matters once a line is commented: the
+    // comment `<!-- … -->` of a Markdown file is itself parsed as injected
+    // HTML, and must not send the toggle back down the mixed path.
+    let written_in: Vec<Language> = lines
+        .iter()
+        .map(|line| map.at(starts[*line] + indent_len(text, &starts, *line)))
+        .map(|inner| {
+            if comment_syntax(inner) == host_style {
+                language
+            } else {
+                inner
+            }
+        })
+        .collect();
+    if written_in.iter().all(|l| *l == language) {
+        return toggle_host_lines(language, text, selection);
+    }
+    toggle_mixed_lines(text, &starts, &lines, &written_in)
+}
+
+fn comment_syntax(language: Language) -> (Option<String>, Option<(String, String)>) {
+    let tokens = Tokens::of(language);
+    (tokens.line_comment, tokens.block_comment)
+}
+
+/// How one line is commented out: a line token, or a block pair wrapped
+/// around its content.
+enum LineStyle {
+    Line(String),
+    Block(String, String),
+}
+
+impl LineStyle {
+    fn of(language: Language) -> Option<Self> {
+        let tokens = Tokens::of(language);
+        match (tokens.line_comment, tokens.block_comment) {
+            (Some(token), _) => Some(Self::Line(token)),
+            (None, Some((open, close))) => Some(Self::Block(open, close)),
+            (None, None) => None,
+        }
+    }
+
+    fn is_applied_to(&self, content: &str) -> bool {
+        let content = content.trim();
+        match self {
+            Self::Line(token) => content.starts_with(token),
+            Self::Block(open, close) => {
+                content.len() >= open.len() + close.len()
+                    && content.starts_with(open)
+                    && content.ends_with(close)
+            }
+        }
+    }
+}
+
+/// The toggle for a selection that spans languages: each line is judged and
+/// edited in its own language, under the same rule as [`toggle_host_lines`] —
+/// comment everything unless everything is already commented.
+fn toggle_mixed_lines(
+    text: &str,
+    starts: &[usize],
+    lines: &[usize],
+    written_in: &[Language],
+) -> Transaction {
+    let styled: Vec<(usize, LineStyle)> = lines
+        .iter()
+        .zip(written_in)
+        .filter_map(|(line, language)| Some((*line, LineStyle::of(*language)?)))
+        .collect();
+    if styled.is_empty() {
+        return Transaction::empty();
+    }
+    let all_commented = styled
+        .iter()
+        .all(|(line, style)| style.is_applied_to(&text[line_range(text, starts, *line)]));
+    if all_commented {
+        return Transaction::new(
+            styled
+                .iter()
+                .flat_map(|(line, style)| match style {
+                    LineStyle::Line(token) => vec![uncomment(text, starts, *line, token)],
+                    LineStyle::Block(open, close) => unwrap_line(text, starts, *line, open, close),
+                })
+                .collect(),
+        );
+    }
+    let line_style_column = styled
+        .iter()
+        .filter(|(_, style)| matches!(style, LineStyle::Line(_)))
+        .map(|(line, _)| indent_len(text, starts, *line))
+        .min()
+        .unwrap_or(0);
+    Transaction::new(
+        styled
+            .iter()
+            .flat_map(|(line, style)| match style {
+                LineStyle::Line(token) => {
+                    vec![TextEdit::insert(
+                        starts[*line] + line_style_column,
+                        format!("{token} "),
+                    )]
+                }
+                LineStyle::Block(open, close) => {
+                    let range = line_range(text, starts, *line);
+                    let start = range.start + indent_len(text, starts, *line);
+                    let end = range.start + text[range].trim_end().len();
+                    vec![
+                        TextEdit::insert(start, format!("{open} ")),
+                        TextEdit::insert(end, format!(" {close}")),
+                    ]
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Remove a line's block delimiters and the single space
+/// [`toggle_mixed_lines`] puts inside them.
+fn unwrap_line(
+    text: &str,
+    starts: &[usize],
+    line: usize,
+    open: &str,
+    close: &str,
+) -> Vec<TextEdit> {
+    let range = line_range(text, starts, line);
+    let start = range.start + indent_len(text, starts, line);
+    let end = range.start + text[range].trim_end().len();
+    let mut open_end = start + open.len();
+    if text[open_end..end].starts_with(' ') {
+        open_end += 1;
+    }
+    let mut close_start = end - close.len();
+    if close_start > open_end && text[..close_start].ends_with(' ') {
+        close_start -= 1;
+    }
+    vec![
+        TextEdit::delete(start..open_end),
+        TextEdit::delete(close_start..end),
+    ]
+}
+
+/// [`toggle_line`] for lines all written in the file's own language.
+fn toggle_host_lines(language: Language, text: &str, selection: &SelectionSet) -> Transaction {
     let tokens = Tokens::of(language);
     let Some(token) = tokens.line_comment.clone() else {
         return toggle_block_with(&tokens, text, selection);
@@ -82,8 +238,12 @@ pub fn toggle_line(language: Language, text: &str, selection: &SelectionSet) -> 
 /// makes `/* */` usable mid-expression — and a collapsed caret wraps its
 /// line's content. A language with no block comment falls back to
 /// [`toggle_line`].
+///
+/// The delimiters are those of the language the first caret is in, so a
+/// block comment in the markup of a `.php` file is `<!-- -->`, not `/* */`.
 pub fn toggle_block(language: Language, text: &str, selection: &SelectionSet) -> Transaction {
-    let tokens = Tokens::of(language);
+    let first = selection.carets().first().map_or(0, |caret| caret.start());
+    let tokens = Tokens::of(LanguageMap::of(language, text).at(first));
     if tokens.block_comment.is_none() {
         return toggle_line(language, text, selection);
     }
@@ -265,6 +425,75 @@ mod tests {
     fn a_language_without_a_line_comment_falls_back_to_block() {
         let text = "<p>hi</p>\n";
         assert_eq!(toggled("html", text, &at(0)), "<!--<p>hi</p>-->\n");
+    }
+
+    #[test]
+    fn the_html_of_a_php_file_is_commented_with_html_syntax() {
+        let text = "<p>hi</p>\n<?php\necho 1;\n?>\n";
+        let once = toggled("php", text, &at(0));
+        assert_eq!(once, "<!-- <p>hi</p> -->\n<?php\necho 1;\n?>\n");
+        assert_eq!(toggled("php", &once, &at(0)), text);
+    }
+
+    #[test]
+    fn the_php_of_a_php_file_keeps_its_line_comment() {
+        let text = "<p>hi</p>\n<?php\necho 1;\n?>\n";
+        let caret = text.find("echo").unwrap();
+        assert_eq!(
+            toggled("php", text, &at(caret)),
+            "<p>hi</p>\n<?php\n// echo 1;\n?>\n"
+        );
+    }
+
+    #[test]
+    fn a_selection_across_html_and_php_comments_each_line_in_its_own_language() {
+        let text = "<p>hi</p>\n<?php\necho 1;\n?>\n";
+        let echo = text.find("echo").unwrap();
+        let once = toggled("php", text, &set(&[(0, 0), (echo, echo)]));
+        assert_eq!(once, "<!-- <p>hi</p> -->\n<?php\n// echo 1;\n?>\n");
+        let echo = once.find("// echo").unwrap();
+        assert_eq!(toggled("php", &once, &set(&[(0, 0), (echo, echo)])), text);
+    }
+
+    #[test]
+    fn javascript_in_a_script_element_is_commented_as_javascript() {
+        let text = "<script>\nlet a = 1;\n</script>\n";
+        let caret = text.find("let").unwrap();
+        assert_eq!(
+            toggled("html", text, &at(caret)),
+            "<script>\n// let a = 1;\n</script>\n"
+        );
+    }
+
+    #[test]
+    fn twig_tags_use_twig_comments_and_the_markup_around_them_html() {
+        let text = "<p>x</p>\n{% if a %}\n";
+        assert_eq!(
+            toggled("twig", text, &at(0)),
+            "<!-- <p>x</p> -->\n{% if a %}\n"
+        );
+        let caret = text.find("{%").unwrap();
+        assert_eq!(
+            toggled("twig", text, &at(caret)),
+            "<p>x</p>\n{#{% if a %}#}\n"
+        );
+    }
+
+    #[test]
+    fn a_block_comment_in_php_markup_uses_html_delimiters() {
+        let text = "<p>hi</p>\n<?php\necho 1;\n?>\n";
+        assert_eq!(
+            toggle_block(lang("php"), text, &at(0))
+                .apply(text)
+                .expect("applies"),
+            "<!--<p>hi</p>-->\n<?php\necho 1;\n?>\n"
+        );
+    }
+
+    #[test]
+    fn blade_comments_use_the_blade_syntax() {
+        let text = "<p>x</p>\n";
+        assert_eq!(toggled("blade", text, &at(0)), "{{--<p>x</p>--}}\n");
     }
 
     #[test]

@@ -356,8 +356,28 @@ impl Ide {
         xdotool::run(&["type", "--clearmodifiers", "--delay", "0", text]);
     }
 
+    /// Move the pointer to a position a marker reported. Markers carry
+    /// device-independent coordinates (what `QWidget::mapToGlobal` answers),
+    /// X wants device pixels, so a run at `QT_SCALE_FACTOR=1.5` is scaled
+    /// here, once, for every click and drag.
     pub fn mouse_move(&self, x: i32, y: i32) {
-        xdotool::run(&["mousemove", "--sync", &x.to_string(), &y.to_string()]);
+        let scale = self.scale_factor();
+        xdotool::run(&[
+            "mousemove",
+            "--sync",
+            &to_device_pixels(x, scale).to_string(),
+            &to_device_pixels(y, scale).to_string(),
+        ]);
+    }
+
+    /// The `QT_SCALE_FACTOR` the app was launched with; 1 when it was not
+    /// given or does not parse.
+    fn scale_factor(&self) -> f64 {
+        self.extra_env
+            .iter()
+            .find(|(key, _)| key == "QT_SCALE_FACTOR")
+            .and_then(|(_, value)| value.parse().ok())
+            .unwrap_or(1.0)
     }
 
     pub fn click(&self, button: u8) {
@@ -543,9 +563,21 @@ fn copy_tree(from: &Path, to: &Path) {
     for entry in std::fs::read_dir(from).unwrap_or_else(|e| panic!("{}: {e}", from.display())) {
         let entry = entry.expect("readable fixture entry");
         let target = to.join(entry.file_name());
-        if entry.file_type().expect("file type").is_dir() {
+        let file_type = entry.file_type().expect("file type");
+        if file_type.is_dir() {
             std::fs::create_dir_all(&target).expect("fixture subdirectory");
             copy_tree(&entry.path(), &target);
+        } else if file_type.is_symlink() {
+            // Kept as a link, not followed: a Composer `vendor/bin/phpunit`
+            // finds its autoloader relative to its *real* location, so a
+            // copied-out file there cannot run.
+            #[cfg(unix)]
+            {
+                let link = std::fs::read_link(entry.path()).expect("readable symlink");
+                std::os::unix::fs::symlink(link, &target).expect("fixture symlink");
+            }
+            #[cfg(not(unix))]
+            std::fs::copy(entry.path(), &target).expect("fixture file");
         } else {
             std::fs::copy(entry.path(), &target).expect("fixture file");
         }
@@ -572,5 +604,23 @@ fn collect_files(root: &Path, dir: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
                 bytes,
             ));
         }
+    }
+}
+
+/// A device-independent coordinate in device pixels at `scale`.
+fn to_device_pixels(logical: i32, scale: f64) -> i32 {
+    (f64::from(logical) * scale).round() as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::to_device_pixels;
+
+    #[test]
+    fn coordinates_scale_with_the_qt_scale_factor() {
+        assert_eq!(to_device_pixels(100, 1.0), 100);
+        assert_eq!(to_device_pixels(100, 1.5), 150);
+        assert_eq!(to_device_pixels(7, 1.5), 11, "10.5 rounds away from zero");
+        assert_eq!(to_device_pixels(0, 2.0), 0);
     }
 }

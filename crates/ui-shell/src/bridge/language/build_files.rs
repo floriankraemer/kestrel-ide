@@ -644,6 +644,7 @@ fn to_diagnostics(hints: Vec<VersionHint>, text: &str) -> Vec<diagnostics_core::
         .map(|hint| {
             let range = byte_range_to_diagnostics_range(text, hint.range.clone());
             diagnostics_core::Diagnostic {
+                code: None,
                 range,
                 severity: diagnostics_core::Severity::Hint,
                 message: hint.message(),

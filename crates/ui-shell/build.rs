@@ -494,6 +494,8 @@ fn main() {
         .cpp_file("cpp/editor_tabs.cpp")
         .cpp_file("cpp/editor_tabs_panes.cpp")
         .cpp_file("cpp/editor_tabs_lsp.cpp")
+        .cpp_file("cpp/editor_tabs_templates.cpp")
+        .cpp_file("cpp/editor_tabs_generate.cpp")
         .cpp_file("cpp/editor_tabs_hover_card.cpp")
         // F3-16: the gutter's change markers and the hunk popup — a fourth
         // leg of EditorTabs, same reasoning as the other three.
@@ -503,6 +505,7 @@ fn main() {
         // The in-tab preview mode (view mode), a sixth leg for the same
         // reason as the five above.
         .cpp_file("cpp/editor_tabs_preview.cpp")
+        .cpp_file("cpp/editor_tabs_save.cpp")
         .cpp_file("cpp/build_panel.h")
         .cpp_file("cpp/build_panel.cpp")
         .cpp_file("cpp/build_menu.cpp")
@@ -551,6 +554,10 @@ fn main() {
         // menu action, Q_OBJECT-free like the pages/menus above.
         .cpp_file("cpp/analysis_settings_page.cpp")
         .cpp_file("cpp/analysis_menu.cpp")
+        // PHP parity plan I8: the Composer dock, Q_OBJECT-free as well.
+        .cpp_file("cpp/composer_panel.cpp")
+        // PHP parity plan I7: the Settings > PHP page, Q_OBJECT-free too.
+        .cpp_file("cpp/php_settings_page.cpp")
         // The jvm-build-tools plan's B5: the Build Tools settings page,
         // Q_OBJECT-free like the Analysis page above.
         .cpp_file("cpp/build_tools_settings_page.cpp")
@@ -583,6 +590,8 @@ fn main() {
         // `build_panel.cpp` (plain QWidget, lambdas and pointer-to-member
         // connects), so only the source is listed.
         .cpp_file("cpp/tests_panel.cpp")
+        // T5: the Coverage dock. No Q_OBJECT, so only the source is listed.
+        .cpp_file("cpp/coverage_panel.cpp")
         .cpp_file("cpp/tests_menu.cpp")
         // The jvm-build-tools plan's B1-B6: the Build Tools dock and the
         // reusable editor banner both declare Q_OBJECT (they connect to
@@ -666,6 +675,7 @@ fn main() {
         .cpp_file("cpp/diff_view_page.cpp")
         .cpp_file("cpp/unified_diff_view.h")
         .cpp_file("cpp/unified_diff_view.cpp")
+        .cpp_file("cpp/search_everywhere_dialog.h")
         .cpp_file("cpp/search_everywhere_dialog.cpp")
         .cpp_file("cpp/splash_screen.cpp")
         .cpp_file("cpp/theme.cpp")
@@ -772,6 +782,10 @@ fn main() {
         // own page, registered alongside the container-kind pages above.
         .cpp_file("cpp/run_config_sql_page.h")
         .cpp_file("cpp/run_config_sql_page.cpp")
+        // PHP parity plan I6: the `php-builtin-server` run configuration's
+        // own page.
+        .cpp_file("cpp/run_config_php_page.h")
+        .cpp_file("cpp/run_config_php_page.cpp")
         // database-tools-plan F5b: export/import/dump/copy-table/ER
         // diagram/schema-and-data-compare dialogs.
         .cpp_file("cpp/database_exchange_actions.cpp")

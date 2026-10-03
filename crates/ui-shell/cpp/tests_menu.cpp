@@ -16,6 +16,10 @@ void buildTestsMenu(QMainWindow *window, AppSettings *appSettings,
                                               QObject::tr("Tests"), appSettings, actions);
     QObject::connect(viewTestsAction, &QAction::triggered, window,
                       [docks]() { docks->show(QStringLiteral("tests")); });
+    QAction *viewCoverageAction = registerAction(viewMenu, QStringLiteral("view.coverage"),
+                                                 QObject::tr("Coverage"), appSettings, actions);
+    QObject::connect(viewCoverageAction, &QAction::triggered, window,
+                      [docks]() { docks->show(QStringLiteral("coverage")); });
 }
 
 } // namespace ui_shell

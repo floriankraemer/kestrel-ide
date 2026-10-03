@@ -6,9 +6,9 @@ class QWidget;
 
 namespace ui_shell {
 
-// Settings > Language Servers (task L6): one row per language, the command
-// and arguments behind it, and a Status column that is live while the page
-// is open.
+// Settings > Language Servers (task L6): one row per server (a language that
+// runs several has several), the command and arguments behind it, and a
+// Status column that is live while the page is open.
 //
 // Humble view (ADR-0002): which rows exist, in which order, what is worth
 // persisting and whether a row differs from what is saved are all
@@ -19,6 +19,11 @@ namespace ui_shell {
 //
 // A failing command never opens a dialog: `LspManager` retries on a backoff,
 // and a modal per retry would make the editor unusable.
+// Starts recording every server state the manager announces, from app start,
+// so a Language Servers page opened later shows the Status of servers that
+// were launched (or ruled out) before it existed.
+void trackLanguageServerStates(LanguageService *languageService);
+
 QWidget *buildLanguageServersPage(QWidget *parent,
                                   LanguageServerEditor *editor,
                                   LanguageService *languageService);

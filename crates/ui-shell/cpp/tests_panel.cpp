@@ -1,5 +1,6 @@
 #include "tests_panel.h"
 
+#include "coverage_panel.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "theme.h"
@@ -210,6 +211,8 @@ TestsPanel::TestsPanel(TestService *testService, OpenAt openAt, QWidget *parent)
     failureEdit->setActivateCallback(
       [this](int position) { onFailureLinkActivated(position); });
 
+    failureDetails_->setPlaceholderText(tr("Select a failed test to see why it failed."));
+
     output_ = new QPlainTextEdit(this);
     output_->setReadOnly(true);
     output_->setMaximumBlockCount(kMaxDisplayBlocks);
@@ -334,6 +337,23 @@ void TestsPanel::onTestTreeChanged()
     e2eMark(QStringLiteral("{\"ev\":\"test_tree_changed\",\"nodes\":%1}").arg(total));
 }
 
+void TestsPanel::markE2eRows() const
+{
+    QStringList rows;
+    for (auto it = itemsById_.constBegin(); it != itemsById_.constEnd(); ++it) {
+        const QRect rect = tree_->visualItemRect(it.value());
+        const QPoint origin = tree_->viewport()->mapToGlobal(rect.topLeft());
+        rows << QStringLiteral("{\"id\":%1,\"name\":%2,\"rect\":[%3,%4,%5,%6]}")
+                  .arg(e2eJson(it.key()), e2eJson(it.value()->text(0)))
+                  .arg(origin.x())
+                  .arg(origin.y())
+                  .arg(rect.width())
+                  .arg(rect.height());
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"test_tree_rects\",\"rows\":[%1]}")
+              .arg(rows.join(QLatin1Char(','))));
+}
+
 void TestsPanel::markE2eToolbar() const
 {
     struct ButtonEntry
@@ -370,12 +390,13 @@ void TestsPanel::onTestOutputAppended(const QString &text)
     output_->verticalScrollBar()->setValue(output_->verticalScrollBar()->maximum());
 }
 
-void TestsPanel::onTestRunFinished(bool ok, const QString &message)
+void TestsPanel::onTestRunFinished(bool ok, bool matchedNothing, const QString &message)
 {
     stopButton_->setEnabled(false);
-    statusLabel_->setText(ok ? tr("Run finished.") : message);
-    e2eMark(QStringLiteral("{\"ev\":\"test_run_finished\",\"ok\":%1,\"message\":%2}")
+    statusLabel_->setText(!ok ? message : matchedNothing ? tr("No tests matched.") : tr("Run finished."));
+    e2eMark(QStringLiteral("{\"ev\":\"test_run_finished\",\"ok\":%1,\"matched_nothing\":%2,\"message\":%3}")
               .arg(ok ? "true" : "false")
+              .arg(matchedNothing ? "true" : "false")
               .arg(e2eJson(message)));
 }
 
@@ -419,7 +440,14 @@ void TestsPanel::showContextMenu(const QPoint &pos)
       kind == FfiTestNodeKind::Suite ? tr("Rerun Suite") : tr("Rerun Test");
 
     QMenu menu(tree_);
+    menu.setToolTipsVisible(true);
     QAction *rerun = menu.addAction(label);
+    // The framework cannot narrow a rerun to a tree node (decided in Rust):
+    // show the action greyed out with the reason rather than refuse a click.
+    const QString block = testService_->rerunBlock();
+    rerun->setEnabled(block.isEmpty());
+    rerun->setToolTip(block);
+    e2eMarkMenuActions(&menu, "tests_menu_action");
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
     if (chosen == rerun) {
         report(testService_->runNode(id));
@@ -430,17 +458,21 @@ TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            ads::CDockAreaWidget *relativeTo, TestService *testService,
                            TestsPanel::OpenAt openAt)
 {
-    auto *panel = new TestsPanel(testService, std::move(openAt), dockManager);
+    auto *panel = new TestsPanel(testService, openAt, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Tests"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("tests"), dock, ads::CenterDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("tests"));
+    buildCoverageDock(dockManager, docks, relativeTo, testService, openAt);
     // E2E only: same reasoning as `containers_panel.cpp`'s identical
     // `visibilityChanged` connect on its own dock — the toolbar has no
     // real geometry until this dock is actually on screen and laid out.
     QObject::connect(dock, &ads::CDockWidget::visibilityChanged, panel, [panel](bool visible) {
         if (visible) {
-            QTimer::singleShot(0, panel, [panel]() { panel->markE2eToolbar(); });
+            QTimer::singleShot(0, panel, [panel]() {
+                panel->markE2eToolbar();
+                panel->markE2eRows();
+            });
         }
     });
     return panel;

@@ -20,6 +20,10 @@ use serde_json::{json, Value};
 use crate::manager::{LspError, FORMATTING_TIMEOUT, METHOD_NOT_FOUND};
 use crate::workspace_edit::TextEdit;
 
+/// On-type formatting rides on a keystroke, and an answer that arrives after
+/// the user typed on is discarded by the edit gate anyway.
+const ON_TYPE_FORMATTING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// What a formatting request produced.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormattingOutcome {
@@ -128,6 +132,52 @@ pub fn supports_range_formatting(capabilities: &Value) -> bool {
     capability_enabled(capabilities, "documentRangeFormattingProvider")
 }
 
+/// A text range as `(line, character)` start and end, in LSP positions.
+pub type Selection = ((u32, u32), (u32, u32));
+
+/// The range Reformat Code formats: the selection when there is one (given
+/// in either direction), `None` — the whole document — when the caret is
+/// just a caret.
+pub fn selection_scope(anchor: (u32, u32), caret: (u32, u32)) -> Option<Selection> {
+    match anchor.cmp(&caret) {
+        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Less => Some((anchor, caret)),
+        std::cmp::Ordering::Greater => Some((caret, anchor)),
+    }
+}
+
+/// The characters a server wants `textDocument/onTypeFormatting` after, from
+/// its `ServerCapabilities`: the first trigger plus any further ones.
+pub fn parse_on_type_triggers(capabilities: &Value) -> Vec<String> {
+    let Some(provider) = capabilities.get("documentOnTypeFormattingProvider") else {
+        return Vec::new();
+    };
+    let first = provider
+        .get("firstTriggerCharacter")
+        .and_then(Value::as_str);
+    let more = provider
+        .get("moreTriggerCharacter")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    first.into_iter().chain(more).map(str::to_string).collect()
+}
+
+/// What a save should write after the server answered a whole-document
+/// formatting request for `text`: `None` when nothing changes (already
+/// formatted, or no formatter), the formatted text otherwise. Errors say
+/// why the server's edits could not be applied, so the caller can save
+/// unformatted and tell the user.
+pub fn formatted_text(text: &str, outcome: FormattingOutcome) -> Result<Option<String>, String> {
+    match outcome {
+        FormattingOutcome::Edits(edits) => crate::workspace_edit::apply_to_text(text, &edits)
+            .map(Some)
+            .map_err(|err| err.to_string()),
+        FormattingOutcome::AlreadyFormatted | FormattingOutcome::Unsupported => Ok(None),
+    }
+}
+
 /// A capability is present when it is `true` or an options object. `false`,
 /// `null` and absent all mean no — the protocol allows all three and servers
 /// use all three.
@@ -197,6 +247,37 @@ impl crate::manager::LspManager {
             Err(err) => Err(err),
         }
     }
+    /// `textDocument/onTypeFormatting` after `ch` was typed at a position
+    /// (N5). A server answering `MethodNotFound` is "nothing to do", not a
+    /// failure: this fires on keystrokes, where an error would be noise.
+    pub fn format_on_type(
+        &self,
+        uri: &str,
+        position: (u32, u32),
+        ch: &str,
+        options: &FormattingOptions,
+    ) -> Result<FormattingOutcome, LspError> {
+        let uri = &self.normalize_uri(uri);
+        let language_id = self.language_of(uri)?;
+        let params = json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": position.0, "character": position.1},
+            "ch": ch,
+            "options": options.to_json(),
+        });
+        match self.request_with_timeout(
+            &language_id,
+            "textDocument/onTypeFormatting",
+            params,
+            ON_TYPE_FORMATTING_TIMEOUT,
+        ) {
+            Ok(result) => Ok(parse_formatting(&result)),
+            Err(LspError::Response { code, .. }) if code == METHOD_NOT_FOUND => {
+                Ok(FormattingOutcome::Unsupported)
+            }
+            Err(err) => Err(err),
+        }
+    }
     /// `textDocument/rangeFormatting` for a selection.
     ///
     /// Servers commonly implement one of the two and not the other, so this
@@ -252,6 +333,55 @@ mod tests {
             },
             "newText": text,
         })
+    }
+
+    #[test]
+    fn a_saved_text_is_the_server_edits_applied_or_untouched() {
+        let edits = vec![TextEdit {
+            start_line: 0,
+            start_character: 0,
+            end_line: 0,
+            end_character: 3,
+            new_text: "<?php".into(),
+        }];
+        assert_eq!(
+            formatted_text("php\n", FormattingOutcome::Edits(edits)),
+            Ok(Some("<?php\n".to_string()))
+        );
+        assert_eq!(
+            formatted_text("x", FormattingOutcome::AlreadyFormatted),
+            Ok(None)
+        );
+        assert_eq!(
+            formatted_text("x", FormattingOutcome::Unsupported),
+            Ok(None)
+        );
+        let outside = vec![TextEdit {
+            start_line: 9,
+            start_character: 0,
+            end_line: 9,
+            end_character: 1,
+            new_text: String::new(),
+        }];
+        assert!(formatted_text("x", FormattingOutcome::Edits(outside)).is_err());
+    }
+
+    #[test]
+    fn on_type_triggers_are_the_first_character_then_the_more_ones() {
+        let caps = json!({"documentOnTypeFormattingProvider": {
+            "firstTriggerCharacter": "}", "moreTriggerCharacter": [";", "\n"]}});
+        assert_eq!(parse_on_type_triggers(&caps), ["}", ";", "\n"]);
+        assert!(parse_on_type_triggers(&json!({})).is_empty());
+        let only_first =
+            json!({"documentOnTypeFormattingProvider": {"firstTriggerCharacter": "}"}});
+        assert_eq!(parse_on_type_triggers(&only_first), ["}"]);
+    }
+
+    #[test]
+    fn a_caret_formats_the_document_and_a_selection_its_own_range() {
+        assert_eq!(selection_scope((3, 4), (3, 4)), None);
+        assert_eq!(selection_scope((1, 0), (2, 5)), Some(((1, 0), (2, 5))));
+        assert_eq!(selection_scope((2, 5), (1, 0)), Some(((1, 0), (2, 5))));
     }
 
     #[test]

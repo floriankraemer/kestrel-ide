@@ -8,7 +8,7 @@
 
 use e2e::{Ide, Mark};
 
-use crate::support::{fixture, open_file, rect_centre, APP};
+use crate::support::{fixture, open_file, rect_centre, stub_adapter_path, APP};
 
 /// F4-15 (1/2): a real process, launched by `run.run`, delivers output
 /// across `RunService`'s per-console reader thread to the console dock's
@@ -390,4 +390,139 @@ fn e2e_debug_stops_at_a_breakpoint() {
     });
 
     assert_eq!(ide.quit(), 0);
+}
+
+/// A PHP project whose `php-debug` adapter is the scripted stub.
+fn php_listen_fixture() -> tempfile::TempDir {
+    let dir = tempfile::TempDir::new().expect("temp PHP project");
+    let script: String = ["<?php", ""]
+        .into_iter()
+        .map(String::from)
+        .chain((3..=10).map(|n| format!("$line{n} = {n};")))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(dir.path().join("index.php"), script).expect("index.php");
+    std::fs::create_dir_all(dir.path().join(".ide")).expect(".ide");
+    std::fs::write(
+        dir.path().join(".ide/settings.toml"),
+        format!(
+            "[[debug_adapter]]\nid = \"php-debug\"\ncommand = {:?}\n",
+            stub_adapter_path()
+        ),
+    )
+    .expect("project settings");
+    dir
+}
+
+/// Click the Run menu entry `label`; true when it was checked beforehand.
+pub(crate) fn click_run_menu_item(ide: &Ide, label: &str) -> bool {
+    let mark = ide.mark();
+    ide.key("alt+r");
+    ide.wait_for_event(mark, "the Run menu to open", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "run_menu"
+    });
+    let item = ide.wait_for_event(mark, &format!("the `{label}` entry"), |e| {
+        e["ev"] == "run_menu_action" && e["label"] == label
+    });
+    let (x, y) = rect_centre(&item["rect"]);
+    ide.click_at(x, y, 1);
+    ide.wait_for_event(mark, "the Run menu to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "run_menu"
+    });
+    ide.focus_main();
+    item["checked"] == true
+}
+
+/// PHP parity D: the listen toggle starts one session that sees every
+/// incoming connection as a thread. The stub plays vscode-php-debug: the
+/// first connection stops at the breakpoint, resuming it ends that
+/// connection and a second one arrives and stops too — on the same session,
+/// with no second `debug_started`. Toggling off ends the session.
+///
+/// The container-target half (listen on `0.0.0.0` with a `pathMappings`
+/// object) needs no UI and is asserted below E2E, in
+/// `dap-core`'s `listen` integration tests.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_php_listen_session_stops_for_two_connections() {
+    const LISTEN: &str = "Start Listening for PHP Debug Connections";
+    let name = "e2e_php_listen_session_stops_for_two_connections";
+    let project = php_listen_fixture();
+    let mut ide = Ide::launch(name, APP, project.path());
+    drop(project);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    open_file(&ide, "index.php");
+
+    // A breakpoint on line 7; the caret opens on line 1.
+    ide.key("ctrl+Home");
+    for _ in 0..6 {
+        ide.key("Down");
+    }
+    let mark = ide.mark();
+    ide.key("ctrl+F8"); // debug.toggleBreakpoint
+    ide.wait_for_event(mark, "the breakpoint to reach the gutter", |e| {
+        e["ev"] == "breakpoints_applied" && e["count"].as_u64().unwrap_or(0) == 1
+    });
+
+    // Listen: one session starts, the first connection stops at the breakpoint.
+    let mark = ide.mark();
+    assert!(
+        !click_run_menu_item(&ide, LISTEN),
+        "listening from the start"
+    );
+    let started = ide.wait_for_event(mark, "the listen session to start", |e| {
+        e["ev"] == "debug_started"
+    });
+    let session_id = started["session_id"].as_u64().expect("session_id");
+    ide.wait_for_event(mark, "the first connection's variables", |e| {
+        e["ev"] == "debug_variables" && e["count"].as_u64().unwrap_or(0) > 0
+    });
+
+    // Resume: the second connection stops on the same session.
+    let mark = ide.mark();
+    ide.key("F9"); // debug.resume
+    ide.wait_for_event(mark, "the second connection's variables", |e| {
+        e["ev"] == "debug_variables" && e["count"].as_u64().unwrap_or(0) > 0
+    });
+    assert!(
+        ide.events_since_of(mark, "debug_started").is_empty(),
+        "the second connection opened a second session"
+    );
+
+    // Resume it too, then switch listening off: the session ends.
+    ide.key("F9");
+    let mark = ide.mark();
+    assert!(
+        click_run_menu_item(&ide, LISTEN),
+        "the toggle shows it is on"
+    );
+    ide.wait_for_event(mark, "the listen session to end", |e| {
+        e["ev"] == "debug_terminated" && e["session_id"].as_u64() == Some(session_id)
+    });
+
+    assert_eq!(ide.quit(), 0);
+}
+
+/// Opening a project, detecting its run configurations and committing the
+/// Settings dialog must never rewrite the `.ide/settings.toml` a user
+/// committed: detected configurations are shown, not saved, and an unset
+/// field is not written back as `tab_width = 0`.
+#[test]
+#[ignore = "E2E: needs an X server; run via `make e2e`"]
+fn e2e_launch_leaves_the_project_settings_file_untouched() {
+    let name = "e2e_launch_leaves_the_project_settings_file_untouched";
+    let mut ide = Ide::launch(name, APP, fixture("php_untouched"));
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    ide.wait_for_event(
+        Mark::start(),
+        "the detected PHP configurations to reach the toolbar",
+        |e| e["ev"] == "run_configurations_changed" && e["count"].as_u64().unwrap_or(0) >= 2,
+    );
+    assert_eq!(ide.quit(), 0);
+    let written = std::fs::read(ide.project_root().join(".ide/settings.toml")).expect("settings");
+    assert_eq!(
+        String::from_utf8_lossy(&written),
+        crate::support::fixture_text("php_untouched", ".ide/settings.toml"),
+    );
 }

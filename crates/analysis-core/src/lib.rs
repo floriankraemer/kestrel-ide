@@ -16,20 +16,29 @@ mod buffer;
 mod checkstyle;
 mod def;
 mod detect;
+mod format;
+mod launch_cache;
 mod php;
 mod scheduler;
+pub mod suppress;
 
 pub use buffer::{
     degradation_reason, effective_trigger, write_temp_copy, BufferStrategy, TempCopyGuard,
     TEMP_COPY_GITIGNORE_PATTERN,
 };
 pub use checkstyle::{
-    parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding, ParseError,
+    locate_file, locate_file_on, parse as parse_checkstyle_xml, to_diagnostics, CheckstyleFinding,
+    ParseError,
 };
 pub use def::{AnalyzerDef, Trigger};
-pub use detect::{composer_require_dev, find_config_file, find_program, status, AnalyzerStatus};
+pub use detect::{
+    composer_require_dev, find_config_file, find_program, find_program_on, status, status_from,
+    status_on, AnalyzerStatus,
+};
+pub use format::{format, FormatError, FormatterDef};
+pub use launch_cache::LaunchCache;
 pub use php::{
-    composer_package, invocation as php_invocation, needs_php_prefix, PHPCS_CONFIG_CANDIDATES,
+    invocation as php_invocation, needs_php_prefix, PHPCS_CONFIG_CANDIDATES,
     PHPSTAN_CONFIG_CANDIDATES, PHPUNIT_CONFIG_CANDIDATES,
 };
 pub use scheduler::{RunFailure, RunOutput, RunResult, Scheduler};

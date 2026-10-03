@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use editor_core::{BinaryFile, Document, HexRow, ImageFile};
 use project_model::{Project, ProjectSession};
@@ -34,6 +34,7 @@ pub mod icons;
 /// Rasterising an SVG image tab's file, reusing `icon-theme`'s pipeline.
 pub mod image_render;
 mod live_text; // Rope catch-up with the widget before a reader looks (#361).
+pub mod pending_save; // Format-on-save off the Qt thread (ADR-0070).
 /// Where plugins and the Markdown/Mermaid renderer are joined (ADR-0033).
 pub mod preview;
 mod project_open; // Swap-in half of an off-thread project open/rebuild (ADR-0037).
@@ -41,6 +42,7 @@ mod project_open; // Swap-in half of an off-thread project open/rebuild (ADR-003
 pub mod text_search;
 mod tree_sort;
 mod virtual_doc; // Read-only virtual documents with no backing file (C12).
+mod watcher_policy; // Own write or external change (US-3).
 
 pub use error::AppError;
 pub use file_ops::{FileOp, ResourceOpError};
@@ -63,14 +65,6 @@ impl TabId {
         Self(raw)
     }
 }
-
-/// How long after this session writes a path to disk itself (`save_tab`) or
-/// repoints a tab onto a new path (a tree-driven rename) a matching
-/// filesystem-watcher event for that path is treated as an echo of our own
-/// change rather than a genuine external edit — see
-/// [`AppSession::check_external_change`]. Generous enough to absorb typical
-/// inotify/Qt-event-loop latency; not meant to be race-proof.
-const SELF_CHANGE_SUPPRESSION_WINDOW: Duration = Duration::from_millis(1500);
 
 /// What [`AppSession::open_file`] yielded: the tab (new or existing) now
 /// holding `path`, and whether it was newly opened — the adapter only emits
@@ -319,6 +313,10 @@ pub struct AppSession {
     /// `check_external_change` (the filesystem watcher would otherwise also
     /// see these as "external" changes).
     suppressed_changes: HashMap<PathBuf, Instant>,
+    /// A digest of what this session last wrote to each path: a file that
+    /// still holds exactly that is our own write however late its watcher
+    /// event is handled (the Qt thread may be busy past the window above).
+    own_writes: HashMap<PathBuf, u64>,
     config_dir: PathBuf,
     /// Last-reported (line, column) per tab, forwarded from the view's own
     /// cursor (M4's `get_cursor_position` MCP tool — nothing here computes
@@ -350,6 +348,7 @@ impl AppSession {
             next_tab_id: 1,
             active: None,
             suppressed_changes: HashMap::new(),
+            own_writes: HashMap::new(),
             navigation: NavigationHistory::default(),
             config_dir,
             cursor_positions: HashMap::new(),
@@ -505,7 +504,7 @@ impl AppSession {
         doc.replace_content(content);
         doc.save().map_err(AppError::Save)?;
         if let Some(path) = doc.path().map(|p| p.to_path_buf()) {
-            self.suppressed_changes.insert(path, Instant::now());
+            self.note_own_write(path, content);
         }
         Ok(())
     }
@@ -520,7 +519,7 @@ impl AppSession {
         doc.replace_content(content);
         doc.set_path(path.clone());
         doc.save().map_err(AppError::Save)?;
-        self.suppressed_changes.insert(path, Instant::now());
+        self.note_own_write(path, content);
         Ok(())
     }
 
@@ -547,7 +546,8 @@ impl AppSession {
         let doc = self.text_doc_mut(id)?;
         doc.save().map_err(AppError::Save)?;
         if let Some(path) = doc.path().map(|p| p.to_path_buf()) {
-            self.suppressed_changes.insert(path, Instant::now());
+            let content = doc.content();
+            self.note_own_write(path, &content);
         }
         Ok(())
     }
@@ -723,18 +723,6 @@ impl AppSession {
 
     // --- tree mutations ---------------------------------------------------
 
-    /// Create an empty file named `name` inside `parent_dir` (US-2b). The
-    /// tree itself is no longer re-snapshotted here: `ui-shell`'s
-    /// `ProjectTreeModel` refreshes the affected (Loaded) directory
-    /// incrementally, through the exact same `list_dir` → diff → ranged
-    /// model update path a watcher event uses — see the plan's "Step 3",
-    /// "OR" alternative. A full rebuild-and-reset would also throw away the
-    /// tree's expand state, which is the whole point of the lazy tree.
-    pub fn create_file(&mut self, parent_dir: &Path, name: &str) -> Result<(), AppError> {
-        project_model::create_file(parent_dir, name).map_err(AppError::FileOp)?;
-        Ok(())
-    }
-
     /// Create an empty folder named `name` inside `parent_dir` (US-2b); see
     /// [`Self::create_file`]'s doc comment for why the tree isn't
     /// re-snapshotted here any more.
@@ -785,35 +773,6 @@ impl AppSession {
             .mark_deleted();
         let title = self.tab_title(id).expect("tab found by path exists");
         Ok(Some(RetitledTab { id, title }))
-    }
-
-    // --- watcher policy ---------------------------------------------------
-
-    /// Decide whether a filesystem-watcher event for `path` is a genuine
-    /// external change the user must be prompted about (US-3), returning the
-    /// affected tab if so. `None` when `path` has no open tab, when the tab
-    /// was already flagged deleted by a tree-driven delete (nothing to
-    /// reload/keep), or when `path` was changed by this session itself
-    /// within the suppression window (`save_tab` or a tree-driven rename
-    /// onto `path`) rather than externally.
-    pub fn check_external_change(&mut self, path: &Path) -> Option<TabId> {
-        let id = self.find_tab_by_path(path)?;
-        if self
-            .entry(id)
-            .map(|e| e.content.is_deleted())
-            .unwrap_or(true)
-        {
-            return None;
-        }
-        let is_own_change = self
-            .suppressed_changes
-            .get(path)
-            .map(|at| at.elapsed() < SELF_CHANGE_SUPPRESSION_WINDOW)
-            .unwrap_or(false);
-        if is_own_change {
-            return None;
-        }
-        Some(id)
     }
 
     // --- internals --------------------------------------------------------
@@ -881,17 +840,6 @@ mod tests {
         let mut session = AppSession::with_config_dir(config_dir.path().to_path_buf());
         session.open_project(project_dir.path()).unwrap();
         (project_dir, config_dir, session)
-    }
-
-    /// Force a suppression entry to look older than the window without
-    /// actually sleeping through it.
-    fn expire_suppression(session: &mut AppSession, path: &Path) {
-        let expired = Instant::now()
-            .checked_sub(SELF_CHANGE_SUPPRESSION_WINDOW + Duration::from_secs(1))
-            .expect("process uptime exceeds the suppression window in tests");
-        session
-            .suppressed_changes
-            .insert(path.to_path_buf(), expired);
     }
 
     #[test]
@@ -1396,35 +1344,6 @@ mod tests {
             .delete_entry(&project_dir.path().join("a.txt"))
             .unwrap();
         assert!(retitled.is_none());
-    }
-
-    #[test]
-    fn external_change_is_reported_only_for_open_undeleted_unsuppressed_tabs() {
-        let (project_dir, _config, mut session) = session_with_project();
-        let open_path = project_dir.path().join("a.txt");
-        let closed_path = project_dir.path().join("b.txt");
-        let tab = session.open_file(&open_path).unwrap();
-
-        // A path with no open tab: nothing to prompt about.
-        assert_eq!(session.check_external_change(&closed_path), None);
-        // A genuinely external change to an open tab: prompt.
-        assert_eq!(session.check_external_change(&open_path), Some(tab.id));
-    }
-
-    #[test]
-    fn suppression_expires_after_the_window() {
-        let (project_dir, _config, mut session) = session_with_project();
-        let path = project_dir.path().join("a.txt");
-        let tab = session.open_file(&path).unwrap();
-        session.save_tab(tab.id, "our own write").unwrap();
-        assert_eq!(session.check_external_change(&path), None);
-
-        expire_suppression(&mut session, &path);
-        assert_eq!(
-            session.check_external_change(&path),
-            Some(tab.id),
-            "an old suppression entry must not mask a real external change"
-        );
     }
 
     // The tree itself is no longer re-snapshotted by `AppSession` (see

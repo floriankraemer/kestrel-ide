@@ -71,6 +71,11 @@ void e2eMark(const char *json)
     std::fflush(stream);
 }
 
+bool e2eMarksEnabled()
+{
+    return markStream() != nullptr;
+}
+
 void e2eMark(const QString &json)
 {
     if (markStream() == nullptr) {
@@ -129,14 +134,15 @@ void e2eMarkMenuActions(QMenu *menu, const char *event)
                 }
                 const QRect rect = menu->actionGeometry(action);
                 const QPoint origin = rect.isEmpty() ? QPoint() : menu->mapToGlobal(rect.topLeft());
-                e2eMark(QStringLiteral("{\"ev\":%1,\"label\":%2,\"enabled\":%3,"
+                e2eMark(QStringLiteral("{\"ev\":%1,\"label\":%2,\"enabled\":%3,\"checked\":%8,"
                                         "\"rect\":[%4,%5,%6,%7]}")
                           .arg(e2eJson(name), e2eJson(action->text()),
                                 action->isEnabled() ? "true" : "false")
                           .arg(origin.x())
                           .arg(origin.y())
                           .arg(rect.width())
-                          .arg(rect.height()));
+                          .arg(rect.height())
+                          .arg(action->isChecked() ? "true" : "false"));
             }
         });
     });

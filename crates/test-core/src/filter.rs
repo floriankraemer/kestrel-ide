@@ -26,12 +26,28 @@ pub enum FilterDialect {
     /// `Namespace\Class::method` name. The only dialect that existed before
     /// this field did, and every manifest's default.
     PhpUnitRegex,
+    /// Pest's `--filter`: PHPUnit's regex, but Pest reports a PHPUnit
+    /// class's `testGreetsByName` as `Greets by name` and its own `it(...)`
+    /// as `it greets by name`, so a leaf is matched by its words (see
+    /// [`pest_leaf_pattern`]) instead of by the reported name.
+    PestRegex,
     /// Maven Surefire's/Failsafe's `-Dtest=`: `Class#method`, comma-joined
     /// for several, or a bare `Class` to select a whole suite.
     Surefire,
     /// Gradle's `--tests`: a dotted `pkg.Class.method` pattern (only `*` is
     /// a wildcard), or a bare `pkg.Class` to select a whole suite.
     Gradle,
+    /// Codeception: tests are selected by file, `run tests/unit/FooTest.php:^method$`
+    /// (the part after the colon is a regex); there is no name filter, and
+    /// the JUnit report carries no file, so only a test the editor can name
+    /// by file (a gutter marker) can be narrowed.
+    Codeception,
+    /// Behat's `--name <regex>`: matched against the scenario (or feature)
+    /// title, which is the node's own name in the report.
+    BehatName,
+    /// The framework cannot select a test at all (PHPSpec selects by spec
+    /// path): a rerun of one node is refused rather than run wrongly.
+    None,
 }
 
 /// A manifest's `filter-dialect` string that no dialect below understands —
@@ -56,27 +72,58 @@ impl std::error::Error for UnknownFilterDialect {}
 pub fn parse_filter_dialect(value: Option<&str>) -> Result<FilterDialect, UnknownFilterDialect> {
     match value {
         None | Some("phpunit-regex") => Ok(FilterDialect::PhpUnitRegex),
+        Some("pest-regex") => Ok(FilterDialect::PestRegex),
         Some("surefire") => Ok(FilterDialect::Surefire),
         Some("gradle") => Ok(FilterDialect::Gradle),
+        Some("codeception") => Ok(FilterDialect::Codeception),
+        Some("behat-name") => Ok(FilterDialect::BehatName),
+        Some("none") => Ok(FilterDialect::None),
         Some(other) => Err(UnknownFilterDialect(other.to_string())),
     }
 }
 
 /// Escape a string for literal use inside a PCRE `--filter` pattern. A
 /// test's qualified name can itself carry regex metacharacters — a
-/// data-provider-suffixed name commonly has `(`, `)`, `#`, `"` — while the
-/// namespace separator `\` is left alone: a literal backslash has no
-/// special meaning to PCRE on its own, so escaping it would only double it
-/// uselessly and make the pattern harder to read in a log.
-fn escape_regex(value: &str) -> String {
+/// data-provider-suffixed name commonly has `(`, `)`, `#`, `"` — and the
+/// namespace separator `\` is one too: PCRE2 rejects `\T` and similar
+/// ("unrecognized character follows \"), so `App\Tests\Foo` must go out as
+/// `App\\Tests\\Foo`. The one helper behind both the tree's reruns and
+/// `php-core`'s editor test markers.
+pub fn escape_regex(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for c in value.chars() {
-        if ".+*?()[]{}^$|/#".contains(c) {
+        if r"\.+*?()[]{}^$|/#".contains(c) {
             escaped.push('\\');
         }
         escaped.push(c);
     }
     escaped
+}
+
+/// The PCRE for one leaf of a Pest run, `Suite::name`.
+///
+/// Pest prettifies a PHPUnit class's test names in its TeamCity output:
+/// `testGreetsByName`, `test_greets_by_name` and `greetsByName` all come out
+/// as `Greets by name`, which no `--filter` matches (a rerun then runs nothing
+/// and still exits 0). Pest's own tests (`it greets by name`, `` `Group` → it
+/// x ``) are the opposite: they only match under their reported name. So the
+/// pattern accepts either: the reported name as it is, or its words joined by
+/// an optional `_` behind the `test`/`__pest_evaluable_` prefix PHPUnit and
+/// Pest put on the real method name (PHPUnit's `/i` covers the case change).
+/// All three shapes were checked against real Pest 3. A name with a data set
+/// (`... with data set #0`) is the real, exact name and stays as it is.
+fn pest_leaf_pattern(id: &TestId) -> String {
+    let (suite, name) = split_suite_title(id);
+    if name.contains(" with data set ") {
+        return format!("^{}$", escape_regex(id.as_str()));
+    }
+    let words: Vec<String> = name.split_whitespace().map(escape_regex).collect();
+    format!(
+        "^{}::(?:{}|(?:test_?|__pest_evaluable_)?{})$",
+        escape_regex(suite),
+        escape_regex(name),
+        words.join("_?")
+    )
 }
 
 /// Split a JVM-shaped [`TestId`] — `"com.example.GreeterTest::deliberatelyFails"`
@@ -88,6 +135,105 @@ pub(crate) fn split_class_method(id: &TestId) -> (&str, Option<&str>) {
     match id.as_str().split_once("::") {
         Some((class, method)) => (class, Some(method)),
         None => (id.as_str(), None),
+    }
+}
+
+/// A report id `Suite::Title` as its last segment: Behat's scenario title.
+fn split_suite_title(id: &TestId) -> (&str, &str) {
+    id.as_str().rsplit_once("::").unwrap_or(("", id.as_str()))
+}
+
+/// A Behat `--name` value: a `/…/` regex (Behat treats anything else as a
+/// substring). `exact` anchors the end too, for a feature title; a scenario
+/// title is only anchored at the start, because an outline's examples are
+/// reported as `Title #1`, `Title #2`, ….
+fn behat_pattern(titles: &[&str], exact: bool) -> String {
+    let alternatives: Vec<String> = titles.iter().map(|t| escape_regex(t)).collect();
+    let end = if exact { "$" } else { "" };
+    match alternatives.as_slice() {
+        [only] => format!("/^{only}{end}/"),
+        many => format!("/^(?:{}){end}/", many.join("|")),
+    }
+}
+
+/// Why a tree rerun (a node or "Rerun Failed") cannot be narrowed in
+/// `dialect`, as a sentence for the user; `None` when it can.
+pub fn tree_rerun_refusal(dialect: FilterDialect) -> Option<&'static str> {
+    match dialect {
+        FilterDialect::Codeception => Some(
+            "Codeception selects tests by file, which its report does not name; \
+             run the test from the editor gutter or run the whole suite.",
+        ),
+        FilterDialect::None => {
+            Some("This test framework selects tests by path, not by name; run the whole suite.")
+        }
+        _ => None,
+    }
+}
+
+/// [`tree_rerun_refusal`] for a framework's declared `filter-dialect` word:
+/// what the Tests dock shows as the disabled Rerun's reason, so the action
+/// is greyed out up front instead of failing after the click. An unknown
+/// dialect cannot be narrowed either.
+pub fn tree_rerun_block(dialect: Option<&str>) -> Option<String> {
+    match parse_filter_dialect(dialect) {
+        Ok(dialect) => tree_rerun_refusal(dialect).map(str::to_string),
+        Err(_) => Some(
+            "this test framework's filter-dialect is not one this build understands".to_string(),
+        ),
+    }
+}
+
+/// A test the editor can name: what a gutter marker run is built from.
+#[derive(Debug, Clone, Copy)]
+pub struct MarkerRun<'a> {
+    /// The marker's PHPUnit-regex `--filter` pattern.
+    pub filter: &'a str,
+    /// The method (or class) name, for dialects that select by name.
+    pub name: &'a str,
+    /// A class marker selects the whole file's class, not one method.
+    pub is_class: bool,
+    /// The test file, relative to the run's working directory.
+    pub file: Option<&'a str>,
+}
+
+/// The full argv for running one gutter-marker test.
+///
+/// PHPUnit-style frameworks get `--filter <pattern>` and, when the file is
+/// known, the file as the path argument so PHPUnit does not scan the whole
+/// suite for a match. Codeception takes `file:^method$`. Every other dialect
+/// cannot run a single test from the editor, which is an `Err` sentence.
+pub fn marker_args(
+    base: &[String],
+    dialect: FilterDialect,
+    filter_flag: Option<&str>,
+    filter_template: Option<&str>,
+    marker: &MarkerRun<'_>,
+) -> Result<Vec<String>, &'static str> {
+    match dialect {
+        FilterDialect::PhpUnitRegex | FilterDialect::PestRegex => {
+            let mut args = apply_filter(
+                base,
+                filter_flag,
+                filter_template,
+                &[marker.filter.to_string()],
+            );
+            args.extend(marker.file.map(str::to_string));
+            Ok(args)
+        }
+        FilterDialect::Codeception => {
+            let file = marker
+                .file
+                .ok_or("Codeception needs the test's file to run a single test.")?;
+            let mut args = base.to_vec();
+            args.push(if marker.is_class {
+                file.to_string()
+            } else {
+                format!("{file}:^{}$", escape_regex(marker.name))
+            });
+            Ok(args)
+        }
+        _ => Err("This test framework cannot run a single test from the editor."),
     }
 }
 
@@ -113,6 +259,14 @@ fn gradle_pattern(id: &TestId) -> String {
 /// dialects always produce exactly one pattern.
 pub fn for_node(tree: &TestTree, id: &TestId, dialect: FilterDialect) -> Vec<String> {
     match dialect {
+        FilterDialect::Codeception | FilterDialect::None => Vec::new(),
+        FilterDialect::BehatName => {
+            let (_, title) = split_suite_title(id);
+            match tree.node(id).map(|node| node.kind) {
+                Some(NodeKind::Suite) => vec![behat_pattern(&[id.as_str()], true)],
+                _ => vec![behat_pattern(&[title], false)],
+            }
+        }
         FilterDialect::PhpUnitRegex => {
             let pattern = match tree.node(id).map(|node| node.kind) {
                 Some(NodeKind::Suite) => format!("^{}::", escape_regex(id.as_str())),
@@ -120,6 +274,10 @@ pub fn for_node(tree: &TestTree, id: &TestId, dialect: FilterDialect) -> Vec<Str
             };
             vec![pattern]
         }
+        FilterDialect::PestRegex => match tree.node(id).map(|node| node.kind) {
+            Some(NodeKind::Suite) => vec![format!("^{}::", escape_regex(id.as_str()))],
+            _ => vec![pest_leaf_pattern(id)],
+        },
         FilterDialect::Surefire => vec![surefire_pattern(id)],
         FilterDialect::Gradle => vec![gradle_pattern(id)],
     }
@@ -132,9 +290,26 @@ pub fn for_node(tree: &TestTree, id: &TestId, dialect: FilterDialect) -> Vec<Str
 /// `--tests` occurrence.
 pub fn for_many(ids: &[TestId], dialect: FilterDialect) -> Vec<String> {
     match dialect {
+        FilterDialect::Codeception | FilterDialect::None => Vec::new(),
+        FilterDialect::BehatName => {
+            let titles: Vec<&str> = ids.iter().map(|id| split_suite_title(id).1).collect();
+            vec![behat_pattern(&titles, false)]
+        }
         FilterDialect::PhpUnitRegex => {
             let alternatives: Vec<String> =
                 ids.iter().map(|id| escape_regex(id.as_str())).collect();
+            vec![format!("^(?:{})$", alternatives.join("|"))]
+        }
+        FilterDialect::PestRegex => {
+            let alternatives: Vec<String> = ids
+                .iter()
+                .map(|id| {
+                    let pattern = pest_leaf_pattern(id);
+                    // One alternation: drop each pattern's own anchors.
+                    let inner = pattern.strip_prefix('^').unwrap_or(&pattern);
+                    inner.strip_suffix('$').unwrap_or(inner).to_string()
+                })
+                .collect();
             vec![format!("^(?:{})$", alternatives.join("|"))]
         }
         FilterDialect::Surefire => {
@@ -225,6 +400,10 @@ mod tests {
     #[test]
     fn parse_filter_dialect_accepts_the_three_known_values() {
         assert_eq!(
+            parse_filter_dialect(Some("pest-regex")),
+            Ok(FilterDialect::PestRegex)
+        );
+        assert_eq!(
             parse_filter_dialect(Some("phpunit-regex")),
             Ok(FilterDialect::PhpUnitRegex)
         );
@@ -244,6 +423,94 @@ mod tests {
         assert_eq!(err, UnknownFilterDialect("checkstyle-xml".to_string()));
     }
 
+    // --- pest-regex dialect -----------------------------------------------
+
+    /// Pest names a PHPUnit class's `testGreetsByName` `Greets by name` and
+    /// its own `it('greets by name')` `it greets by name`; both patterns were
+    /// checked against real Pest 3 (a rerun on the reported name ran nothing).
+    #[test]
+    fn pest_leaf_is_matched_by_its_reported_name_or_its_words() {
+        let id = TestId("Tests\\GreeterTest::Greets by name".into());
+        let pattern = for_node(&TestTree::new(), &id, FilterDialect::PestRegex);
+        assert_eq!(
+            pattern,
+            vec![
+                "^Tests\\\\GreeterTest::(?:Greets by name|(?:test_?|__pest_evaluable_)?Greets_?by_?name)$"
+            ]
+        );
+        let native = TestId("Tests\\Feature\\GreeterPestTest::it greets by name".into());
+        assert_eq!(
+            for_node(&TestTree::new(), &native, FilterDialect::PestRegex),
+            vec![
+                "^Tests\\\\Feature\\\\GreeterPestTest::(?:it greets by name|(?:test_?|__pest_evaluable_)?it_?greets_?by_?name)$"
+            ]
+        );
+    }
+
+    #[test]
+    fn pest_suite_is_a_prefix_like_phpunits() {
+        let tree = tree_with_suite_and_test();
+        let pattern = for_node(
+            &tree,
+            &TestId("Tests\\GreeterTest".into()),
+            FilterDialect::PestRegex,
+        );
+        assert_eq!(pattern, vec!["^Tests\\\\GreeterTest::"]);
+    }
+
+    #[test]
+    fn pest_data_set_names_are_the_real_names_and_stay_exact() {
+        let id = TestId("Tests\\GreeterTest::testGreets with data set #0".into());
+        assert_eq!(
+            for_node(&TestTree::new(), &id, FilterDialect::PestRegex),
+            vec!["^Tests\\\\GreeterTest::testGreets with data set \\#0$"]
+        );
+    }
+
+    #[test]
+    fn pest_several_leaves_become_one_alternation() {
+        let pattern = for_many(
+            &[
+                TestId("A::Greets by name".into()),
+                TestId("B::it works".into()),
+            ],
+            FilterDialect::PestRegex,
+        );
+        assert_eq!(
+            pattern,
+            vec![
+                "^(?:A::(?:Greets by name|(?:test_?|__pest_evaluable_)?Greets_?by_?name)|B::(?:it works|(?:test_?|__pest_evaluable_)?it_?works))$"
+            ]
+        );
+    }
+
+    #[test]
+    fn pest_markers_are_filtered_like_phpunits() {
+        let marker = MarkerRun {
+            filter: "Tests\\\\GreeterTest::testGreets",
+            name: "testGreets",
+            is_class: false,
+            file: Some("tests/GreeterTest.php"),
+        };
+        let args = marker_args(
+            &["--teamcity".to_string()],
+            FilterDialect::PestRegex,
+            Some("--filter"),
+            None,
+            &marker,
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            [
+                "--teamcity",
+                "--filter",
+                marker.filter,
+                "tests/GreeterTest.php"
+            ]
+        );
+    }
+
     // --- phpunit-regex dialect --------------------------------------------
 
     #[test]
@@ -254,7 +521,7 @@ mod tests {
             &TestId("Tests\\GreeterTest::testGreets".into()),
             FilterDialect::PhpUnitRegex,
         );
-        assert_eq!(pattern, vec!["^Tests\\GreeterTest::testGreets$"]);
+        assert_eq!(pattern, vec!["^Tests\\\\GreeterTest::testGreets$"]);
     }
 
     #[test]
@@ -265,7 +532,7 @@ mod tests {
             &TestId("Tests\\GreeterTest".into()),
             FilterDialect::PhpUnitRegex,
         );
-        assert_eq!(pattern, vec!["^Tests\\GreeterTest::"]);
+        assert_eq!(pattern, vec!["^Tests\\\\GreeterTest::"]);
     }
 
     #[test]
@@ -420,5 +687,169 @@ mod tests {
     fn no_patterns_at_all_leaves_args_unchanged() {
         let args = apply_filter(&["test".into()], Some("--tests"), None, &[]);
         assert_eq!(args, vec!["test"]);
+    }
+
+    #[test]
+    fn a_namespace_separator_is_escaped_so_pcre_accepts_the_pattern() {
+        assert_eq!(escape_regex(r"App\Tests\Foo"), r"App\\Tests\\Foo");
+        assert_eq!(escape_regex("a.b(c)#1"), r"a\.b\(c\)\#1");
+    }
+
+    fn behat_tree() -> TestTree {
+        let mut tree = TestTree::new();
+        tree.apply(TeamCityEvent::SuiteStarted {
+            parent: None,
+            name: "User login".into(),
+        });
+        tree.apply(TeamCityEvent::TestStarted {
+            parent: Some(TestId("User login".into())),
+            name: "Valid (credentials)".into(),
+        });
+        tree
+    }
+
+    #[test]
+    fn the_new_dialect_names_parse() {
+        assert_eq!(
+            parse_filter_dialect(Some("codeception")),
+            Ok(FilterDialect::Codeception)
+        );
+        assert_eq!(
+            parse_filter_dialect(Some("behat-name")),
+            Ok(FilterDialect::BehatName)
+        );
+        assert_eq!(parse_filter_dialect(Some("none")), Ok(FilterDialect::None));
+    }
+
+    #[test]
+    fn behat_reruns_select_by_an_escaped_name_regex() {
+        let tree = behat_tree();
+        let leaf = TestId("User login::Valid (credentials)".into());
+        assert_eq!(
+            for_node(&tree, &leaf, FilterDialect::BehatName),
+            vec![r"/^Valid \(credentials\)/"]
+        );
+        assert_eq!(
+            for_node(
+                &tree,
+                &TestId("User login".into()),
+                FilterDialect::BehatName
+            ),
+            vec!["/^User login$/"]
+        );
+        assert_eq!(
+            for_many(
+                &[leaf, TestId("User login::Other".into())],
+                FilterDialect::BehatName
+            ),
+            vec![r"/^(?:Valid \(credentials\)|Other)/"]
+        );
+    }
+
+    #[test]
+    fn codeception_and_none_build_no_tree_pattern_and_say_why() {
+        let tree = behat_tree();
+        let id = TestId("User login::x".into());
+        for dialect in [FilterDialect::Codeception, FilterDialect::None] {
+            assert!(for_node(&tree, &id, dialect).is_empty());
+            assert!(for_many(std::slice::from_ref(&id), dialect).is_empty());
+            assert!(tree_rerun_refusal(dialect).is_some());
+        }
+        assert!(tree_rerun_refusal(FilterDialect::PhpUnitRegex).is_none());
+        assert!(tree_rerun_refusal(FilterDialect::BehatName).is_none());
+    }
+
+    #[test]
+    fn the_rerun_block_names_why_codeception_and_none_cannot_rerun_from_the_tree() {
+        for word in ["codeception", "none", "no-such-dialect"] {
+            assert!(tree_rerun_block(Some(word)).is_some(), "{word}");
+        }
+        for word in [
+            None,
+            Some("phpunit-regex"),
+            Some("behat-name"),
+            Some("surefire"),
+            Some("gradle"),
+        ] {
+            assert_eq!(tree_rerun_block(word), None, "{word:?}");
+        }
+    }
+
+    fn marker(file: Option<&str>) -> MarkerRun<'_> {
+        MarkerRun {
+            filter: r"^App\\FooTest::testBar( with data set .+)?$",
+            name: "testBar",
+            is_class: false,
+            file,
+        }
+    }
+
+    #[test]
+    fn a_phpunit_marker_run_also_passes_the_test_file() {
+        let base = vec!["--teamcity".to_string()];
+        let args = marker_args(
+            &base,
+            FilterDialect::PhpUnitRegex,
+            Some("--filter"),
+            None,
+            &marker(Some("tests/FooTest.php")),
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            vec![
+                "--teamcity",
+                "--filter",
+                r"^App\\FooTest::testBar( with data set .+)?$",
+                "tests/FooTest.php"
+            ]
+        );
+        let without_file = marker_args(
+            &base,
+            FilterDialect::PhpUnitRegex,
+            Some("--filter"),
+            None,
+            &marker(None),
+        )
+        .unwrap();
+        assert_eq!(without_file.len(), 3);
+    }
+
+    #[test]
+    fn a_codeception_marker_run_is_file_colon_method() {
+        let base = vec!["run".to_string(), "--xml".to_string()];
+        let args = marker_args(
+            &base,
+            FilterDialect::Codeception,
+            Some("--filter"),
+            None,
+            &marker(Some("tests/unit/FooTest.php")),
+        )
+        .unwrap();
+        assert_eq!(
+            args,
+            vec!["run", "--xml", "tests/unit/FooTest.php:^testBar$"]
+        );
+        let class = MarkerRun {
+            is_class: true,
+            ..marker(Some("tests/unit/FooTest.php"))
+        };
+        let args = marker_args(&base, FilterDialect::Codeception, None, None, &class).unwrap();
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("tests/unit/FooTest.php")
+        );
+        assert!(marker_args(&base, FilterDialect::Codeception, None, None, &marker(None)).is_err());
+    }
+
+    #[test]
+    fn dialects_without_a_per_test_selector_refuse_a_marker_run() {
+        for dialect in [
+            FilterDialect::None,
+            FilterDialect::BehatName,
+            FilterDialect::Gradle,
+        ] {
+            assert!(marker_args(&[], dialect, Some("--x"), None, &marker(Some("f"))).is_err());
+        }
     }
 }

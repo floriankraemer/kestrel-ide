@@ -27,7 +27,7 @@ constexpr int kOnColumn = 0;
 constexpr int kLanguageColumn = 1;
 constexpr int kCommandColumn = 2;
 constexpr int kStatusColumn = 3;
-constexpr int kLanguageIdRole = Qt::UserRole;
+constexpr int kServerIdRole = Qt::UserRole;
 
 // What the manager last said about one language's server. Held per row so a
 // state change repaints only that row, and so the status survives a rebuild
@@ -43,6 +43,17 @@ struct LiveState
 
 using LiveStates = QHash<QString, LiveState>;
 
+// What the manager has said so far this session. The settings dialog is
+// rebuilt on every open, and a server's state (Phpactor skipped on native
+// Windows, Intelephense not found) is announced when a file of its language
+// opens, long before the page does; each page therefore starts from this
+// record instead of an empty one.
+std::shared_ptr<LiveStates> sessionLiveStates()
+{
+    static const auto states = std::make_shared<LiveStates>();
+    return states;
+}
+
 QString liveStatusText(const LiveState &live)
 {
     switch (live.state) {
@@ -52,12 +63,12 @@ QString liveStatusText(const LiveState &live)
         return QObject::tr("Running");
     case FfiServerState::Exited:
         return QObject::tr("Crashed, retrying");
+    case FfiServerState::Unavailable:
+        return QObject::tr("Unavailable");
+    case FfiServerState::NotFound:
+        return QObject::tr("Command not found");
     case FfiServerState::Failed:
-        // The one distinction worth drawing: a command that was never there
-        // is a typo to fix, a command that died is a program to investigate.
-        return live.detail.contains(QObject::tr("No such file"), Qt::CaseInsensitive)
-                 ? QObject::tr("Command not found")
-                 : QObject::tr("Stopped");
+        return QObject::tr("Stopped");
     }
     return QString();
 }
@@ -71,8 +82,10 @@ QColor liveStatusColor(const LiveState &live)
     case FfiServerState::Ready:
         return colors.ok;
     case FfiServerState::Exited:
+    case FfiServerState::Unavailable:
         return colors.warning;
     case FfiServerState::Failed:
+    case FfiServerState::NotFound:
         return colors.error;
     }
     return QColor();
@@ -88,14 +101,13 @@ QString detailLines(const LiveState &live)
                            "the log.")
           .arg(name)
           .arg((live.retryMs + 999) / 1000);
+    case FfiServerState::NotFound:
+        return QObject::tr("%1: command not found.\n%2").arg(name, live.detail);
     case FfiServerState::Failed:
-        if (live.detail.contains(QObject::tr("No such file"), Qt::CaseInsensitive)) {
-            return QObject::tr("%1: no such file or directory.\nEnter an absolute path, or "
-                               "install it and reopen this page.")
-              .arg(name);
-        }
         return QObject::tr("%1 stopped: %2\nFix the command, then press Restart Server.")
           .arg(name, live.detail.isEmpty() ? QObject::tr("no further detail.") : live.detail);
+    case FfiServerState::Unavailable:
+        return live.detail;
     case FfiServerState::Starting:
     case FfiServerState::Ready:
         break;
@@ -117,10 +129,10 @@ QString staticStatusText(const FfiLanguageServerRow &row)
     return QString();
 }
 
-QString selectedLanguageId(const QTreeWidget *tree)
+QString selectedServerId(const QTreeWidget *tree)
 {
     const QTreeWidgetItem *item = tree->currentItem();
-    return item ? item->data(kLanguageColumn, kLanguageIdRole).toString() : QString();
+    return item ? item->data(kLanguageColumn, kServerIdRole).toString() : QString();
 }
 
 void paintStatus(QTreeWidgetItem *item, const FfiLanguageServerRow &row, const LiveStates &live,
@@ -130,7 +142,7 @@ void paintStatus(QTreeWidgetItem *item, const FfiLanguageServerRow &row, const L
     QString text = staticStatusText(row);
     QColor color = colors.muted;
 
-    const auto known = live.constFind(row.language_id);
+    const auto known = live.constFind(row.id);
     if (row.status != FfiServerRowStatus::NotConfigured && known != live.constEnd()
         && known->known) {
         text = liveStatusText(*known);
@@ -148,6 +160,16 @@ void paintStatus(QTreeWidgetItem *item, const FfiLanguageServerRow &row, const L
 }
 
 } // namespace
+
+void trackLanguageServerStates(LanguageService *languageService)
+{
+    QObject::connect(languageService, &LanguageService::serverStateChanged, languageService,
+                     [live = sessionLiveStates()](const QString &serverId, const QString &name,
+                                                  FfiServerState state, const QString &detail,
+                                                  quint32 retryMs) {
+                         (*live)[serverId] = LiveState{state, name, detail, retryMs, true};
+                     });
+}
 
 QWidget *buildLanguageServersPage(QWidget *parent,
                                   LanguageServerEditor *editor,
@@ -195,11 +217,11 @@ QWidget *buildLanguageServersPage(QWidget *parent,
     detailLabel->setVisible(false);
     layout->addWidget(detailLabel);
 
-    auto live = std::make_shared<LiveStates>();
+    auto live = sessionLiveStates();
 
-    auto rowFor = [editor](const QString &languageId) {
+    auto rowFor = [editor](const QString &serverId) {
         for (const FfiLanguageServerRow &row : editor->rows()) {
-            if (row.language_id == languageId) {
+            if (row.id == serverId) {
                 return row;
             }
         }
@@ -211,57 +233,61 @@ QWidget *buildLanguageServersPage(QWidget *parent,
         tree->clear();
         for (const FfiLanguageServerRow &row : editor->rows()) {
             auto *item = new QTreeWidgetItem(
-              tree, QStringList{QString(), row.language_name, row.command, QString()});
-            item->setData(kLanguageColumn, kLanguageIdRole, row.language_id);
+              tree, QStringList{QString(), row.label, row.command, QString()});
+            item->setData(kLanguageColumn, kServerIdRole, row.id);
             // A row with no command has no checkbox at all rather than an
             // unchecked one: there is nothing to switch on yet.
             if (row.status != FfiServerRowStatus::NotConfigured) {
                 item->setCheckState(kOnColumn, row.enabled ? Qt::Checked : Qt::Unchecked);
             }
-            paintStatus(item, row, *live, editor->isDirty(row.language_id));
-            if (row.language_id == keepId) {
+            paintStatus(item, row, *live, editor->isDirty(row.id));
+            if (row.id == keepId) {
                 tree->setCurrentItem(item);
             }
         }
     };
 
-    auto showDetail = [=](const QString &languageId) {
-        const auto known = live->constFind(languageId);
+    auto showDetail = [=](const QString &serverId) {
+        const auto known = live->constFind(serverId);
         const QString text =
           known == live->constEnd() || !known->known ? QString() : detailLines(*known);
         detailLabel->setText(text);
+        // A platform rule is information, not a fault; every other state
+        // this strip shows is one.
+        const bool isRule = known != live->constEnd() && known->state == FfiServerState::Unavailable;
+        const SemanticColors colors = semanticColors();
         detailLabel->setStyleSheet(
-          QStringLiteral("color: %1;").arg(semanticColors().error.name()));
+          QStringLiteral("color: %1;").arg((isRule ? colors.muted : colors.error).name()));
         detailLabel->setVisible(!text.isEmpty());
     };
 
     // Writing the form into the draft before anything else can read it is
     // what keeps navigating away from silently discarding typing.
-    auto commitForm = [=](const QString &languageId) {
-        if (languageId.isEmpty()) {
+    auto commitForm = [=](const QString &serverId) {
+        if (serverId.isEmpty()) {
             return;
         }
-        editor->setCommand(languageId, commandEdit->text());
-        editor->setArgs(languageId, argsEdit->text());
+        editor->setCommand(serverId, commandEdit->text());
+        editor->setArgs(serverId, argsEdit->text());
     };
 
-    auto loadForm = [=](const QString &languageId) {
-        const FfiLanguageServerRow row = rowFor(languageId);
+    auto loadForm = [=](const QString &serverId) {
+        const FfiLanguageServerRow row = rowFor(serverId);
         const QSignalBlocker commandBlocker(commandEdit);
         const QSignalBlocker argsBlocker(argsEdit);
         const QSignalBlocker enabledBlocker(enabledCheck);
         commandEdit->setText(row.command);
         argsEdit->setText(row.args);
         enabledCheck->setChecked(row.enabled);
-        const bool selected = !languageId.isEmpty();
+        const bool selected = !serverId.isEmpty();
         commandEdit->setEnabled(selected);
         argsEdit->setEnabled(selected);
         enabledCheck->setEnabled(selected && !row.command.isEmpty());
         // An action, not a setting: it restarts what is running, so it
         // refuses while the row holds an edit that has not been committed.
         restartButton->setEnabled(selected && !row.command.isEmpty()
-                                  && !editor->isDirty(languageId));
-        showDetail(languageId);
+                                  && !editor->isDirty(serverId));
+        showDetail(serverId);
     };
 
     // The selected row is the page's only state; `previous` is what the form
@@ -269,29 +295,29 @@ QWidget *buildLanguageServersPage(QWidget *parent,
     auto previous = std::make_shared<QString>();
 
     QObject::connect(tree, &QTreeWidget::currentItemChanged, page, [=]() {
-        const QString languageId = selectedLanguageId(tree);
-        if (*previous != languageId) {
+        const QString serverId = selectedServerId(tree);
+        if (*previous != serverId) {
             commitForm(*previous);
-            *previous = languageId;
+            *previous = serverId;
         }
-        loadForm(languageId);
+        loadForm(serverId);
     });
 
     QObject::connect(tree, &QTreeWidget::itemChanged, page, [=](QTreeWidgetItem *item) {
-        const QString languageId = item->data(kLanguageColumn, kLanguageIdRole).toString();
-        if (languageId.isEmpty()) {
+        const QString serverId = item->data(kLanguageColumn, kServerIdRole).toString();
+        if (serverId.isEmpty()) {
             return;
         }
-        editor->setEnabled(languageId, item->checkState(kOnColumn) == Qt::Checked);
-        repaint(selectedLanguageId(tree));
-        loadForm(selectedLanguageId(tree));
+        editor->setEnabled(serverId, item->checkState(kOnColumn) == Qt::Checked);
+        repaint(selectedServerId(tree));
+        loadForm(selectedServerId(tree));
     });
 
     auto applyForm = [=]() {
-        const QString languageId = selectedLanguageId(tree);
-        commitForm(languageId);
-        repaint(languageId);
-        loadForm(languageId);
+        const QString serverId = selectedServerId(tree);
+        commitForm(serverId);
+        repaint(serverId);
+        loadForm(serverId);
     };
     // Enter commits the field and hands focus back to the tree, the fast
     // path for configuring several servers in a row.
@@ -306,30 +332,30 @@ QWidget *buildLanguageServersPage(QWidget *parent,
     QObject::connect(commandEdit, &QLineEdit::editingFinished, page, applyForm);
     QObject::connect(argsEdit, &QLineEdit::editingFinished, page, applyForm);
     QObject::connect(enabledCheck, &QCheckBox::toggled, page, [=](bool checked) {
-        const QString languageId = selectedLanguageId(tree);
-        if (languageId.isEmpty()) {
+        const QString serverId = selectedServerId(tree);
+        if (serverId.isEmpty()) {
             return;
         }
-        editor->setEnabled(languageId, checked);
-        repaint(languageId);
+        editor->setEnabled(serverId, checked);
+        repaint(serverId);
     });
 
     QObject::connect(restartButton, &QPushButton::clicked, page, [=]() {
-        const QString languageId = selectedLanguageId(tree);
-        if (!languageId.isEmpty()) {
-            languageService->restartServer(languageId);
+        const QString serverId = selectedServerId(tree);
+        if (!serverId.isEmpty()) {
+            languageService->restartServer(serverId);
         }
     });
 
     // Status is live even while the draft is dirty, because it reports the
     // running world rather than the draft.
     QObject::connect(languageService, &LanguageService::serverStateChanged, page,
-                      [=](const QString &languageId, const QString &name, FfiServerState state,
+                      [=](const QString &serverId, const QString &name, FfiServerState state,
                           const QString &detail, quint32 retryMs) {
-                          (*live)[languageId] =
+                          (*live)[serverId] =
                             LiveState{state, name, detail, retryMs, true};
-                          repaint(selectedLanguageId(tree));
-                          showDetail(selectedLanguageId(tree));
+                          repaint(selectedServerId(tree));
+                          showDetail(selectedServerId(tree));
                       });
 
     repaint(QString());

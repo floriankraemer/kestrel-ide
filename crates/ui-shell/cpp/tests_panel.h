@@ -3,6 +3,7 @@
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <QHash>
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -35,6 +36,10 @@ class DockRegistry;
 // button into a call back into `TestService`.
 class TestsPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in `QWidget`'s
+    // context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(TestsPanel)
+
 public:
     // `openAt(path, line, column)` jumps the editor to a failure's location
     // — the same contract every other panel with a clickable location uses.
@@ -54,12 +59,13 @@ public:
     // calls this once per `visibilityChanged(true)`, since neither button
     // has a real screen geometry before the dock is actually shown.
     void markE2eToolbar() const;
+    void markE2eRows() const;
 
 private:
     void onTestRunStarted();
     void onTestTreeChanged();
     void onTestOutputAppended(const QString &text);
-    void onTestRunFinished(bool ok, const QString &message);
+    void onTestRunFinished(bool ok, bool matchedNothing, const QString &message);
     void onSelectionChanged();
     void onFailureLinkActivated(int textPosition);
     void showContextMenu(const QPoint &pos);

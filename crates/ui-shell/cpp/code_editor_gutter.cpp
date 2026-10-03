@@ -8,6 +8,7 @@
 // each pushed in from outside and none of them decided here.
 
 #include "code_editor.h"
+#include "e2e_mark.h"
 #include "intention_bulb.h"
 
 #include "theme.h"
@@ -62,6 +63,9 @@ QColor blameAgeColor(qint64 authorTimeSecs)
 // does not come and go: a gutter whose width depends on whether a file has
 // breakpoints would reflow the text every time one is set.
 constexpr int kBreakpointWidth = 14;
+// T5: the coverage stripe, drawn in the gutter's right-edge padding so it
+// adds no width.
+constexpr int kCoverageStripeWidth = 3;
 // F3-18: width of the blame column, right of the line-number digits — only
 // added to the gutter's width when blame is toggled on.
 constexpr int kBlameWidth = 220;
@@ -106,6 +110,16 @@ void CodeEditor::setRunLines(const QSet<int> &lines)
     // The column is only there when the file is runnable, so the gutter has
     // to be remeasured, not just repainted.
     updateLineNumberAreaWidth(0);
+    lineNumberArea_->update();
+}
+
+void CodeEditor::setCoverageLines(const QSet<int> &covered, const QSet<int> &uncovered)
+{
+    if (coveredLines_ == covered && uncoveredLines_ == uncovered) {
+        return;
+    }
+    coveredLines_ = covered;
+    uncoveredLines_ = uncovered;
     lineNumberArea_->update();
 }
 
@@ -256,6 +270,20 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
                 painter.setBrush(QColor(0x4c, 0xaf, 0x50));
                 painter.drawPolygon(play);
                 painter.setBrush(Qt::NoBrush);
+                // The icon's screen rect: the one place its position is known.
+                const QRect iconRect(lineNumberArea_->mapToGlobal(QPoint(0, top)),
+                                     QSize(kRunMarkerWidth, fontMetrics().height()));
+                if (reportedRunIcons_.value(blockNumber) != iconRect) {
+                    reportedRunIcons_.insert(blockNumber, iconRect);
+                    e2eMark(QStringLiteral("{\"ev\":\"run_icon\",\"tab_id\":%1,\"line\":%2,"
+                                           "\"rect\":[%3,%4,%5,%6]}")
+                              .arg(property("tabId").toULongLong())
+                              .arg(blockNumber)
+                              .arg(iconRect.x())
+                              .arg(iconRect.y())
+                              .arg(iconRect.width())
+                              .arg(iconRect.height()));
+                }
             }
 
             if (breakpointLines_.contains(blockNumber)) {
@@ -286,6 +314,13 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
                 painter.fillRect(runMarkerWidth() + kBreakpointWidth, top, kChangeMarkerWidth,
                                   fontMetrics().height(),
                                   changeMarkerColor(marker.kind, marker.state));
+            }
+
+            if (coveredLines_.contains(blockNumber) || uncoveredLines_.contains(blockNumber)) {
+                const SemanticColors colors = semanticColors();
+                painter.fillRect(lineNumberArea_->width() - kCoverageStripeWidth, top,
+                                  kCoverageStripeWidth, fontMetrics().height(),
+                                  coveredLines_.contains(blockNumber) ? colors.ok : colors.error);
             }
 
             const auto diagnosticIt = diagnosticMarks_.constFind(blockNumber);

@@ -27,10 +27,11 @@ class SearchResultsPanel;
 // activates whatever a row points at.
 class SearchEverywhereDialog : public QDialog
 {
+    Q_OBJECT
 public:
     // Which tier the popup opens filtered to. `All` shows every tier.
     // Declared in the same order as `FfiTierFilter`, which it maps onto.
-    enum class Tier { All, Files, Symbols, Text, Actions };
+    enum class Tier { All, Classes, Files, Symbols, Text, Actions };
 
     using OpenAt = std::function<void(const QString &, int, int)>;
 
@@ -60,7 +61,7 @@ private:
     void handoffToResultsPanel();
     FfiTierFilter tierFilter() const;
     bool tierIsVisible(FfiHitKind kind) const;
-    static QString sectionTitle(FfiHitKind kind);
+    QString sectionTitle(FfiHitKind kind) const;
 
     SearchModel *searchModel_;
     OpenAt openAt_;

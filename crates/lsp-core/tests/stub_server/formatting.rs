@@ -109,3 +109,71 @@ fn range_formatting_falls_back_to_whole_document() {
     }
     manager.stop_all();
 }
+
+// N4: a server that implements rangeFormatting is asked for exactly the
+// selection, not the whole document.
+#[test]
+fn range_formatting_sends_the_selection_when_the_server_supports_it() {
+    let (manager, rx) = LspManager::new("file:///workspace");
+    manager.start(&stub_config()).unwrap();
+    wait_for(&rx, "ServerReady", |e| match e {
+        LspEvent::ServerReady { .. } => Some(()),
+        _ => None,
+    });
+    manager
+        .did_open("file:///workspace/a.stub", LANG, "text")
+        .unwrap();
+
+    let outcome = manager
+        .format_range(
+            "file:///workspace/a.stub",
+            (1, 2),
+            (4, 0),
+            &formatting_options(3),
+        )
+        .unwrap();
+    match outcome {
+        lsp_core::formatting::FormattingOutcome::Edits(edits) => {
+            assert_eq!(edits[0].new_text, "range 1:2-4:0")
+        }
+        other => panic!("expected the range edit, got {other:?}"),
+    }
+    manager.stop_all();
+}
+
+// N5: the trigger characters ride in on `ServerReady`, and the request names
+// the character that was typed.
+#[test]
+fn on_type_formatting_triggers_come_from_the_server_and_the_request_carries_the_character() {
+    let (manager, rx) = LspManager::new("file:///workspace");
+    manager
+        .start(&tagged_config("a", "onTypeFormatting"))
+        .unwrap();
+    let triggers = wait_for(&rx, "ServerReady", |e| match e {
+        LspEvent::ServerReady {
+            on_type_triggers, ..
+        } => Some(on_type_triggers.clone()),
+        _ => None,
+    });
+    assert_eq!(triggers, ["}", ";"]);
+    manager
+        .did_open("file:///workspace/a.stub", LANG, "text")
+        .unwrap();
+
+    let outcome = manager
+        .format_on_type(
+            "file:///workspace/a.stub",
+            (2, 5),
+            "}",
+            &formatting_options(4),
+        )
+        .unwrap();
+    match outcome {
+        lsp_core::formatting::FormattingOutcome::Edits(edits) => {
+            assert_eq!(edits[0].new_text, "typed }");
+            assert_eq!((edits[0].end_line, edits[0].end_character), (2, 5));
+        }
+        other => panic!("expected the on-type edit, got {other:?}"),
+    }
+    manager.stop_all();
+}

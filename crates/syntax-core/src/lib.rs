@@ -6,9 +6,12 @@
 
 mod catalog;
 mod folds;
+mod injections;
+pub use injections::{language_at, LanguageMap};
 mod registry;
 pub mod runtime;
 pub mod theme;
+pub mod vendored;
 
 use std::ops::Range;
 use std::sync::Arc;
@@ -687,7 +690,10 @@ fn build_symbol_tree(mut raw: Vec<RawSymbol>, text: &str) -> Vec<SymbolNode> {
 ///
 /// `#set!` is a directive, not a predicate; it lands in the query's
 /// property *settings* and is simply ignored here.
-fn pattern_is_guarded_by_an_unevaluated_predicate(query: &Query, pattern: usize) -> bool {
+pub(crate) fn pattern_is_guarded_by_an_unevaluated_predicate(
+    query: &Query,
+    pattern: usize,
+) -> bool {
     !query.property_predicates(pattern).is_empty() || !query.general_predicates(pattern).is_empty()
 }
 
@@ -786,149 +792,6 @@ pub const MAX_HIGHLIGHT_BYTES: usize = 2 * 1024 * 1024;
 /// view. The value matches VS Code's `editor.maxTokenizationLineLength`.
 pub const MAX_HIGHLIGHT_LINE_BYTES: usize = 20_000;
 
-/// One injected region found by an `injections.scm` match: the language
-/// it is written in, and the byte ranges of its `@injection.content`
-/// captures. Several ranges in one match are parsed as *one* tree (that
-/// is what `Parser::set_included_ranges` is for), so a language split
-/// across several nodes still sees one continuous document.
-struct InjectionRegion {
-    language: String,
-    ranges: Vec<tree_sitter::Range>,
-}
-
-impl InjectionRegion {
-    /// True when the injected region *contains* `span` — the host span has
-    /// nothing left to say about those bytes, so it is dropped in favour of
-    /// the injected language's own spans.
-    ///
-    /// Containment rather than mere overlap, because a host span can
-    /// legitimately *enclose* an injected region: Markdown hands every run
-    /// of prose to the inline grammar, so a heading, a list item or a fenced
-    /// block always encloses an injection, and dropping on overlap left the
-    /// whole markup family unpaintable. An enclosing span is sorted before
-    /// the spans inside it (see [`spans_with_injections`]), so the injected
-    /// language still wins on the bytes it claims.
-    fn contains(&self, span: &HighlightSpan) -> bool {
-        self.ranges
-            .iter()
-            .any(|r| span.start >= r.start_byte && span.end <= r.end_byte)
-    }
-}
-
-/// Fence tags and language names people actually write, mapped onto the
-/// catalog ids they mean.
-///
-/// A Markdown fence is tagged by a human (` ```js `), not by a query
-/// author, and injection resolution matches a registry id exactly. The
-/// usual tree-sitter answer is one `((#eq? @lang "js") (#set!
-/// injection.language "javascript"))` pattern per alias per host language
-/// — a table that would have to be written out, and kept in step, in
-/// every `injections.scm` that can host a fence. So the normalisation
-/// lives here instead: one place, which every injected language name
-/// passes through.
-///
-/// Deliberately short: only aliases that are genuinely common in the
-/// wild, and only onto ids the catalog actually has. An unknown name
-/// still resolves to nothing and the region is left unhighlighted, which
-/// is the correct outcome for a language we do not ship.
-const INJECTION_LANGUAGE_ALIASES: &[(&str, &str)] = &[
-    ("c++", "cpp"),
-    ("c#", "csharp"),
-    ("cjs", "javascript"),
-    ("cs", "csharp"),
-    ("cts", "typescript"),
-    ("cxx", "cpp"),
-    ("golang", "go"),
-    ("htm", "html"),
-    ("js", "javascript"),
-    ("jsx", "javascript"),
-    ("md", "markdown"),
-    ("mjs", "javascript"),
-    ("mts", "typescript"),
-    ("py", "python"),
-    ("rs", "rust"),
-    ("sh", "bash"),
-    ("shell", "bash"),
-    ("ts", "typescript"),
-    ("yml", "yaml"),
-    ("zsh", "bash"),
-];
-
-/// [`INJECTION_LANGUAGE_ALIASES`] applied to an already-trimmed,
-/// already-lowercased injected language name. A name that is not an alias
-/// is returned unchanged — including one that is not a catalog id at all,
-/// which resolution then fails on as before.
-fn canonical_injection_language(name: &str) -> &str {
-    INJECTION_LANGUAGE_ALIASES
-        .iter()
-        .find(|(alias, _)| *alias == name)
-        .map_or(name, |(_, id)| *id)
-}
-
-/// The injected regions `query` finds in `tree`.
-///
-/// Both standard spellings of the language name are supported: an
-/// `@injection.language` capture (the node's text names the language) and
-/// a `(#set! injection.language "css")` pattern directive. The directive
-/// wins when a pattern somehow carries both, since it is the literal the
-/// query author wrote rather than text read out of the document.
-fn injection_regions(query: &Query, tree: &tree_sitter::Tree, text: &str) -> Vec<InjectionRegion> {
-    let capture_names = query.capture_names();
-    let mut regions = Vec::new();
-    let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(query, tree.root_node(), text.as_bytes());
-    while let Some(m) = matches.next() {
-        // Same rule as `spans_from_tree`: a guard tree-sitter cannot
-        // evaluate takes its pattern down rather than shipping unguarded.
-        // Here the cost of getting that wrong is parsing an arbitrary
-        // region as the wrong language, not just a wrong colour.
-        if pattern_is_guarded_by_an_unevaluated_predicate(query, m.pattern_index) {
-            continue;
-        }
-        let mut language = query
-            .property_settings(m.pattern_index)
-            .iter()
-            .find(|p| &*p.key == "injection.language")
-            .and_then(|p| p.value.as_deref())
-            .map(str::to_string);
-        let mut ranges = Vec::new();
-        for capture in m.captures {
-            match capture_names[capture.index as usize] {
-                "injection.content" => {
-                    let range = capture.node.range();
-                    if range.end_byte > range.start_byte {
-                        ranges.push(range);
-                    }
-                }
-                "injection.language" if language.is_none() => {
-                    language = capture
-                        .node
-                        .utf8_text(text.as_bytes())
-                        .ok()
-                        .map(|name| name.trim().trim_matches(['"', '\'', '`']).to_lowercase());
-                }
-                _ => {}
-            }
-        }
-        let Some(language) = language
-            .map(|l| canonical_injection_language(l.trim()).to_string())
-            .filter(|l| !l.is_empty())
-        else {
-            continue;
-        };
-        if ranges.is_empty() {
-            continue;
-        }
-        // `set_included_ranges` rejects ranges that are not ascending and
-        // disjoint, and query captures arrive in match order, not
-        // document order.
-        ranges.sort_by_key(|r| r.start_byte);
-        ranges.dedup_by_key(|r| r.start_byte);
-        regions.push(InjectionRegion { language, ranges });
-    }
-    regions
-}
-
 /// Highlight spans for `tree` plus every language injected into it, as one
 /// stream sorted by `(start, end)`.
 ///
@@ -961,7 +824,7 @@ fn spans_with_injections(
         spans_from_tree(query, &compiled.highlight_scopes, tree, text)
     });
     let regions = match compiled.injections.as_ref() {
-        Some(query) if depth < MAX_INJECTION_DEPTH => injection_regions(query, tree, text),
+        Some(query) if depth < MAX_INJECTION_DEPTH => injections::regions(query, tree, text),
         _ => Vec::new(),
     };
     if regions.is_empty() {

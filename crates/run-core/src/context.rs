@@ -31,7 +31,9 @@ pub const TEMPORARY_CAP: usize = 5;
 /// entry instead of growing the list.
 pub fn config_for_file(project_root: &Path, file: &Path) -> Option<RunConfig> {
     let relative = file.strip_prefix(project_root).ok()?;
-    cargo_config(project_root, relative).or_else(|| python_config(project_root, file, relative))
+    cargo_config(project_root, relative)
+        .or_else(|| python_config(project_root, file, relative))
+        .or_else(|| php_config(file, relative))
 }
 
 fn cargo_config(project_root: &Path, relative: &Path) -> Option<RunConfig> {
@@ -95,6 +97,25 @@ fn python_config(project_root: &Path, file: &Path, relative: &Path) -> Option<Ru
         format!("python-{shown}"),
         shown.clone(),
         toolchain::python_program(project_root),
+        vec![shown],
+    ))
+}
+
+/// A `.php` file runs as `php <file>` from the project root. Unlike Cargo
+/// and Python it needs no marker file: a loose script is a normal PHP
+/// project. The program is the default `php`; the `[php]` interpreter
+/// replaces it at launch.
+fn php_config(file: &Path, relative: &Path) -> Option<RunConfig> {
+    if file.extension().and_then(|e| e.to_str()) != Some("php") {
+        return None;
+    }
+    let shown = relative.display().to_string();
+    Some(temporary(
+        ToolchainId::Php,
+        shown.clone(),
+        format!("php-{shown}"),
+        shown.clone(),
+        toolchain::DEFAULT_PHP_PROGRAM,
         vec![shown],
     ))
 }
@@ -403,6 +424,16 @@ mod tests {
         let config = config_for(dir.path(), "scripts/etl.py").unwrap();
         assert_eq!(config.program, toolchain::python_program(dir.path()));
         assert_eq!(config.args, vec!["scripts/etl.py"]);
+    }
+
+    #[test]
+    fn a_php_file_runs_without_any_marker_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path(), "bin/job.php").unwrap();
+        assert_eq!(config.program, "php");
+        assert_eq!(config.args, vec!["bin/job.php"]);
+        assert_eq!(config.toolchain.as_deref(), Some("php"));
+        assert!(config_for(dir.path(), "README.md").is_none());
     }
 
     #[test]

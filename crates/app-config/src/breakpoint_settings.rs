@@ -9,7 +9,6 @@
 //! The shape is dumb and stringly, like every other table in this crate: it
 //! stores what `dap-core` hands it and interprets none of it.
 
-use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -72,13 +71,12 @@ pub fn load(project_root: &Path) -> Result<BreakpointSettings, ConfigError> {
     load_toml(&dir.join(BREAKPOINTS_FILE))
 }
 
-/// Load, edit and save the file, creating `.ide/local` if needed.
+/// Load, edit and save the file, creating `.ide/local` if an edit needs it.
 pub fn update(
     project_root: &Path,
     edit: impl FnOnce(&mut BreakpointSettings),
 ) -> Result<(), ConfigError> {
     let dir = local_dir(project_root)?;
-    fs::create_dir_all(&dir)?;
     update_toml(
         &dir.join(BREAKPOINTS_FILE),
         &dir.join(TEMP_BREAKPOINTS_FILE),
@@ -88,6 +86,8 @@ pub fn update(
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use super::*;
 
     fn project() -> tempfile::TempDir {

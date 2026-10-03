@@ -45,6 +45,10 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <QDir>
+#include <QVector>
+
+#include <algorithm>
 #include <memory>
 
 namespace ui_shell {
@@ -58,6 +62,110 @@ namespace {
 int treeRole(ProjectTreeModel::Roles role)
 {
     return Qt::UserRole + static_cast<int>(role);
+}
+
+// One entry of the New menu and what choosing it does. The context menu runs
+// the chosen one after `exec()` returns (a modal dialog must not open while
+// the popup still holds the grab); the File menu connects `triggered`.
+struct NewEntry
+{
+    QAction *action;
+    std::function<void()> run;
+};
+
+// The directory a new entry is created in when the user picked nothing
+// specific: the selected folder, a selected file's folder, else the root.
+QString selectedTargetDir(QTreeView *treeView, ProjectTreeModel *treeModel)
+{
+    const QModelIndex index = treeView->currentIndex();
+    if (!index.isValid()) {
+        return treeModel->rootPath();
+    }
+    QAbstractItemModel *model = treeView->model();
+    const QString path = model->data(index, treeRole(ProjectTreeModel::Roles::Path)).toString();
+    return model->data(index, treeRole(ProjectTreeModel::Roles::IsDir)).toBool()
+      ? path
+      : QFileInfo(path).absolutePath();
+}
+
+// A text prompt, marked like every other dialog: `window` is the X window id,
+// because under bare Xvfb nothing hands a new toplevel the input focus and a
+// flow has to focus it before typing. Empty when cancelled.
+QString askText(QMainWindow *window, const QString &title, const QString &label)
+{
+    QInputDialog dialog(window);
+    dialog.setWindowTitle(title);
+    dialog.setLabelText(label);
+    QTimer::singleShot(0, &dialog, [&dialog, title]() {
+        e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"input_dialog\","
+                                "\"title\":%1,\"window\":\"%2\"}")
+                  .arg(e2eJson(title))
+                  .arg(dialog.winId()));
+    });
+    const bool accepted = dialog.exec() == QDialog::Accepted;
+    e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"input_dialog\","
+                            "\"accepted\":%1}")
+              .arg(accepted ? QLatin1String("true") : QLatin1String("false")));
+    return accepted ? dialog.textValue() : QString();
+}
+
+// File, Directory, then one entry per file template. Which templates exist,
+// what the name must look like and what ends up in the file are Rust's
+// answers; this asks for a name and shows a refusal.
+QVector<NewEntry> buildNewMenu(QMenu *menu,
+                               ProjectTreeModel *treeModel,
+                               QMainWindow *window,
+                               const QString &targetDir,
+                               const std::function<void(const QString &)> &openFile)
+{
+    QVector<NewEntry> entries;
+    entries.append({ menu->addAction(QObject::tr("File")), [=]() {
+        const QString name = askText(window, QObject::tr("New File"), QObject::tr("File name:"));
+        if (name.isEmpty()) {
+            return;
+        }
+        const auto result = treeModel->createFile(targetDir, name);
+        if (result.code != 0) {
+            QMessageBox::critical(window, QObject::tr("Cannot create file"), result.message);
+            return;
+        }
+        openFile(QDir(targetDir).filePath(name));
+    } });
+    entries.append({ menu->addAction(QObject::tr("Directory")), [=]() {
+        const QString name =
+              askText(window, QObject::tr("New Directory"), QObject::tr("Directory name:"));
+        if (name.isEmpty()) {
+            return;
+        }
+        const auto result = treeModel->createFolder(targetDir, name);
+        if (result.code != 0) {
+            QMessageBox::critical(window, QObject::tr("Cannot create directory"),
+                                  result.message);
+        }
+    } });
+    const auto templates = treeModel->fileTemplates();
+    if (!templates.empty()) {
+        menu->addSeparator();
+    }
+    for (const FfiFileTemplate &entry : templates) {
+        const QString id = entry.id;
+        const QString label = entry.name;
+        entries.append({ menu->addAction(label), [=]() {
+            const QString name =
+              askText(window, QObject::tr("New %1").arg(label), QObject::tr("Name:"));
+            if (name.isEmpty()) {
+                return;
+            }
+            const auto created = treeModel->createFromTemplate(targetDir, id, name);
+            if (created.result.code != 0) {
+                QMessageBox::critical(window, QObject::tr("Cannot create file"),
+                                      created.result.message);
+                return;
+            }
+            openFile(created.path);
+        } });
+    }
+    return entries;
 }
 
 // Turns the tree viewport's resize into the same coalesced row report every
@@ -167,13 +275,33 @@ void wireRowMarkers(QTreeView *treeView)
     treeView->viewport()->installEventFilter(new ViewportResizeRelay(coalesce));
 }
 
+// An arrow drawn directly, tinted like `locateIcon`: `QStyle::SP_ArrowUp`
+// is the platform's own glyph, a black triangle on Windows and a green disc
+// under other styles, so it matched neither the theme nor the other OS.
+QIcon sortIcon(const QColor &tint, bool descending)
+{
+    constexpr int kSide = 16;
+    QPixmap pixmap(kSide, kSide);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(tint, 1.4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    const qreal tip = descending ? 13.0 : 3.0;
+    const qreal tail = descending ? 3.0 : 13.0;
+    const qreal wing = descending ? -3.5 : 3.5;
+    constexpr qreal kMiddle = kSide / 2.0;
+    painter.drawLine(QPointF(kMiddle, tail), QPointF(kMiddle, tip));
+    painter.drawLine(QPointF(kMiddle - 3.5, tip + wing), QPointF(kMiddle, tip));
+    painter.drawLine(QPointF(kMiddle + 3.5, tip + wing), QPointF(kMiddle, tip));
+    return QIcon(pixmap);
+}
+
 // Icon + tooltip for the title-bar sort toggle reflect its current state —
 // the title-bar button is icon-only (DockAreaTitleBar wraps it with no
 // text), so the direction has to read from the arrow, JetBrains-style.
 void updateSortAction(QAction *action, QWidget *iconSource, bool descending)
 {
-    const auto standardIcon = descending ? QStyle::SP_ArrowDown : QStyle::SP_ArrowUp;
-    action->setIcon(iconSource->style()->standardIcon(standardIcon));
+    action->setIcon(sortIcon(iconSource->palette().color(QPalette::WindowText), descending));
     action->setToolTip(descending ? QObject::tr("Sort Z to A") : QObject::tr("Sort A to Z"));
 }
 
@@ -491,8 +619,8 @@ void wireProjectTree(QTreeView *treeView,
           }
 
           QMenu menu(treeView);
-          QAction *newFileAction = menu.addAction(QObject::tr("New File"));
-          QAction *newFolderAction = menu.addAction(QObject::tr("New Folder"));
+          const QVector<NewEntry> newEntries = buildNewMenu(
+            menu.addMenu(QObject::tr("New")), treeModel, window, targetDir, actions.openFile);
           QAction *renameAction = nullptr;
           QAction *deleteAction = nullptr;
           QAction *compareAction = nullptr;
@@ -543,27 +671,10 @@ void wireProjectTree(QTreeView *treeView,
               return;
           }
 
-          if (chosen == newFileAction) {
-              const QString name = QInputDialog::getText(window, QObject::tr("New File"),
-                                                           QObject::tr("File name:"));
-              if (name.isEmpty()) {
-                  return;
-              }
-              const auto result = treeModel->createFile(targetDir, name);
-              if (result.code != 0) {
-                  QMessageBox::critical(window, QObject::tr("Cannot create file"), result.message);
-              }
-          } else if (chosen == newFolderAction) {
-              const QString name = QInputDialog::getText(window, QObject::tr("New Folder"),
-                                                           QObject::tr("Folder name:"));
-              if (name.isEmpty()) {
-                  return;
-              }
-              const auto result = treeModel->createFolder(targetDir, name);
-              if (result.code != 0) {
-                  QMessageBox::critical(window, QObject::tr("Cannot create folder"),
-                                         result.message);
-              }
+          const auto entry = std::find_if(newEntries.begin(), newEntries.end(),
+                                          [chosen](const NewEntry &e) { return e.action == chosen; });
+          if (entry != newEntries.end()) {
+              entry->run();
           } else if (chosen == renameAction) {
               const QString currentName = QFileInfo(itemPath).fileName();
               const QString newName = QInputDialog::getText(window, QObject::tr("Rename"),
@@ -630,6 +741,33 @@ void wireProjectTree(QTreeView *treeView,
               actions.aiChatPanel->attachAndFocus();
           }
       });
+}
+
+void wireNewMenu(QMenu *fileMenu,
+                 QMainWindow *window,
+                 QTreeView *treeView,
+                 ProjectTreeModel *treeModel,
+                 std::function<void(const QString &)> openFile)
+{
+    QMenu *newMenu = new QMenu(QObject::tr("&New"), fileMenu);
+    e2eMarkMenuActions(newMenu, "new_menu_action");
+    QAction *first = fileMenu->actions().value(0);
+    fileMenu->insertMenu(first, newMenu);
+    fileMenu->insertSeparator(first);
+    // Rebuilt on every opening: the target follows the tree's selection, and
+    // the templates follow the plugins.
+    QObject::connect(newMenu, &QMenu::aboutToShow, newMenu,
+                     [=]() {
+        newMenu->clear();
+        if (treeModel->rootPath().isEmpty()) {
+            newMenu->addAction(QObject::tr("Open a project first"))->setEnabled(false);
+            return;
+        }
+        const QString targetDir = selectedTargetDir(treeView, treeModel);
+        for (const NewEntry &entry : buildNewMenu(newMenu, treeModel, window, targetDir, openFile)) {
+            QObject::connect(entry.action, &QAction::triggered, newMenu, entry.run);
+        }
+    });
 }
 
 void wireProjectTreeViewAction(QMenu *viewMenu,

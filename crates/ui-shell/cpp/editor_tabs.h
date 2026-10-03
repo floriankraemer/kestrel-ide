@@ -11,6 +11,7 @@
 #include <QPair>
 #include <QPoint>
 #include <QPointer>
+#include <QSet>
 #include <QCoreApplication>
 #include <QString>
 #include <QStringList>
@@ -1097,6 +1098,9 @@ private:
     // delete the page; nothing here re-derives from `diffPlaceholders_`'s
     // keys since that map answers "is tabId diffing", not "which widget".
     QHash<quint64, QPointer<DiffViewPage>> diffPages_;
+    // Tabs whose "modified outside the editor" prompt is open: a burst of
+    // watcher events for one write asks once, not once per event.
+    QSet<quint64> externalChangePrompts_;
     // Null in a window built without a Diff dock (see `setDiffPanel`).
     DiffPanel *diffPanel_ = nullptr;
     std::function<void()> revealDiffDock_;

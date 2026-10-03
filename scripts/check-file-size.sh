@@ -73,7 +73,7 @@ baseline() {
 	# module declaration (issue #233) already there; ColorThemeService and
 	# matches_query live in app-core/src/color_themes.rs and
 	# app-core/src/text_search.rs respectively, rather than in here.
-	crates/app-core/src/lib.rs) echo 1599 ;;           # no split planned; ratcheted so it cannot grow
+	crates/app-core/src/lib.rs) echo 1514 ;;           # no split planned; ratcheted so it cannot grow
 	# Raised from the 1500 ceiling by 6 lines for the `containers` module
 	# declaration/re-export and the `Settings::containers` field (ADR-0055,
 	# C1). `ContainerSettings` itself lives in app-config/src/containers.rs.

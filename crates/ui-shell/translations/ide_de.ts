@@ -1221,12 +1221,12 @@
         <translation>Analyse</translation>
     </message>
     <message>
-        <source>Analysis: %1 detected, %2 need a config file</source>
-        <translation>Analyse: %1 erkannt, %2 brauchen eine Konfigurationsdatei</translation>
+        <source>Analysis: %1 detected, %2 without a config file</source>
+        <translation>Analyse: %1 erkannt, %2 ohne Konfigurationsdatei</translation>
     </message>
     <message>
-        <source>Analysis: %1 detected, %2 not installed, %3 need a config file</source>
-        <translation>Analyse: %1 erkannt, %2 nicht installiert, %3 brauchen eine Konfigurationsdatei</translation>
+        <source>Analysis: %1 detected, %2 not installed, %3 without a config file</source>
+        <translation>Analyse: %1 erkannt, %2 nicht installiert, %3 ohne Konfigurationsdatei</translation>
     </message>
     <message>
         <source>%1 needs a %2</source>

@@ -264,7 +264,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                                        : QString());
         QString text = QObject::tr("Analysis: %1 detected").arg(detected);
         if (notInstalled > 0 && needsConfig > 0) {
-            text = QObject::tr("Analysis: %1 detected, %2 not installed, %3 need a config file")
+            text = QObject::tr("Analysis: %1 detected, %2 not installed, %3 without a config file")
                      .arg(detected)
                      .arg(notInstalled)
                      .arg(needsConfig);
@@ -273,7 +273,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                      .arg(detected)
                      .arg(notInstalled);
         } else if (needsConfig > 0) {
-            text = QObject::tr("Analysis: %1 detected, %2 need a config file")
+            text = QObject::tr("Analysis: %1 detected, %2 without a config file")
                      .arg(detected)
                      .arg(needsConfig);
         }

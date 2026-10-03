@@ -241,7 +241,7 @@ bool EditorTabs::confirmCloseTab(QTabWidget *group, int index)
     const auto choice = QMessageBox::question(
       window_,
       tr("Unsaved changes"),
-      tr("\"%1\" has unsaved changes. Save before closing?").arg(group->tabText(index)),
+      tr("\"%1\" has unsaved changes. Save before closing?").arg(docManager_->tabTitle(tabIdAt(group, index))),
       QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
       QMessageBox::Save);
 

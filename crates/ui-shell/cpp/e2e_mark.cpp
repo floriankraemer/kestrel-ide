@@ -71,6 +71,11 @@ void e2eMark(const char *json)
     std::fflush(stream);
 }
 
+bool e2eMarksEnabled()
+{
+    return markStream() != nullptr;
+}
+
 void e2eMark(const QString &json)
 {
     if (markStream() == nullptr) {

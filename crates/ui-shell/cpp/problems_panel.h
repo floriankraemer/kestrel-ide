@@ -13,6 +13,7 @@
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -75,8 +76,13 @@ public:
     void focusTree();
 
 private:
+    // A burst of `diagnosticsChanged` (each analyzer and server publishes
+    // on its own) rebuilds the list once.
+    void scheduleRefresh();
     void refresh();
     void applyFilter();
+    // E2E only: each visible row's on-screen rect.
+    void markVisibleRows();
     void openRow(QTreeWidgetItem *item, int column);
     void copySelection();
     bool severityEnabled(FfiSeverity severity) const;
@@ -106,6 +112,7 @@ private:
     QPushButton *currentFileOnlyButton_ = nullptr;
     QTreeWidget *tree_ = nullptr;
     QLabel *statusLabel_ = nullptr;
+    QTimer *refreshTimer_ = nullptr;
 };
 
 // Builds the panel with its `showQuickFixesAt` wired from `editorTabs`

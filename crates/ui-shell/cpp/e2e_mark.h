@@ -18,6 +18,10 @@
 void e2eMark(const char *json);
 void e2eMark(const QString &json);
 
+// Whether marks are being recorded (an E2E run): a view skips computing what
+// only a mark would carry, such as one rect per row of a large list.
+bool e2eMarksEnabled();
+
 // Call once, as early as possible in `run_app()`, so `e2eElapsedMs()` has a
 // process-entry origin to measure from. A no-op call before this (or when
 // `IDE_E2E_EVENTS` is unset) simply means `e2eElapsedMs()` answers 0 — never

@@ -526,9 +526,9 @@ Every number is wall time from the key press, read from the app's marker stream 
 | On-type, second refresh | 6.26 to 6.28 s | 1.40 to 1.43 s | none |
 
 - The second refresh is the slower of the sources that answer after PHPCS; the marker does not say which, so it is not attributed. In the local case the image loads Xdebug into PHP, which PHPStan restarts without.
-- Format-on-save blocks the UI thread: the UI answers a request only when the formatter has finished. In `exec` mode that is 1.5 s, above the 500 ms line, and 8.3 s in `run` mode. It is recorded for an issue and was not reworked.
-- In `run` mode every program lookup and every tool run starts a container (about 23 in the first 30 s). The lookups happen on the Qt thread (`resolve_launch`), which is where the 8 s come from.
-- After the 8 s save in `run` mode a modal "modified outside the editor" prompt appeared (seen once), and the keystrokes that followed went to it, so no on-type result could be measured in that mode. In `exec` mode the prompt did not appear.
+- Format-on-save blocks the UI thread: the UI answers a request only when the formatter has finished. In `exec` mode that is 1.5 s, above the 500 ms line, and 8.3 s in `run` mode. It was recorded for an issue, then fixed (`0789a70`, numbers below).
+- In `run` mode every program lookup and every tool run starts a container (about 23 in the first 30 s). The lookups happened on the Qt thread (`resolve_launch`), which is where most of the 8 s came from (fixed in `5d96286`).
+- After the 8 s save in `run` mode a modal "modified outside the editor" prompt appeared (seen once), and the keystrokes that followed went to it, so no on-type result could be measured in that mode. In `exec` mode the prompt did not appear (fixed in `401a94e`).
 
 **Row 6, Xdebug in a container.**
 The service is built `FROM php:8.3-cli` with `pecl install xdebug` and `extra_hosts: ["host.docker.internal:host-gateway"]`, and mounts the project at `/app`, so the path mapping is not the identity (`/app/<dir>` to the local checkout).
@@ -567,13 +567,35 @@ Defects found and fixed, one commit each:
 - Inspect Project appended the project root to `phpstan analyse` and to `phpcs`, which replaces the config's `paths` and `<file>` elements, so PHPStan analysed `vendor/`: 2500+ findings, the app at 100% CPU for minutes with the search popup not opening, and "Analysis: running..." that never ended. An analyzer may now list `project-paths-config` files, and a project run passes no path when the first that exists names paths.
 - The status bar's "Analysis: N detected" was computed once at project open and said 2 after `composer require` of two more analyzers; it is refreshed when a project run ends.
 
+**Fixed after the walk (2026-10-03), one commit each:**
+- `401a94e` The modal "modified outside the editor" prompt after a slow save in `run` mode was the watcher's echo of our own write, handled 6.3 s after it: the Qt thread was busy with program lookups and the 1.5 s suppression window had expired.
+  The session now also remembers a digest of what it wrote, so a file that still holds exactly that never raises the prompt, however late its event arrives; a burst of events for one tab asks once.
+- `5d96286` Program lookups run off the Qt thread, once per (analyzer, host) until the launch cache invalidates them, and a container answers a whole candidate list in one probe (`resolve_first`).
+- `0789a70` Format-on-save runs on a worker (`app_core::pending_save`); the answer is applied as one undo step only to the text it was computed from, otherwise the buffer is saved as it is with "Saved without formatting: the file changed while it was being formatted".
+  Close, quit and Save All do not wait for a formatter.
+- `27b2f88` The Problems dock read one row rect per visible row between visibility changes, a full tree layout each: 92.3 s for 4999 rows.
+  Rects are read once visibility is settled and only for E2E marks; refreshes are coalesced.
+- `fa0a06e` A PHP analyzer's project run with no config that names paths covers the Composer autoload paths (PSR-4, PSR-0, classmap; never `vendor/`) instead of the root.
+- `ce038ab` Psalm without a `psalm.xml` is not run and says "Psalm needs a psalm.xml — run `vendor/bin/psalm --init`" in Settings > Analysis and the status bar's tooltip.
+- `4d2643b` Wording seen on screen: "1 without a config file", and the unsaved-changes prompt names the file without the tab's modified dot.
+
+| Measurement, after the fixes | local | exec | run |
+|---|---|---|---|
+| Ctrl+S with format-on-save: time until the UI answers | — | 1 ms (was 1.49 s) | 2 ms (was 8.2 to 8.7 s) |
+| Ctrl+S to the formatted file on disk | — | 0.54 s | 2.0 to 2.1 s |
+| On-type, first squiggle refresh after the keystroke (3 samples) | — | 0.59 to 0.63 s | 1.36 to 1.42 s (was none) |
+| On-type, second refresh | — | 1.40 to 1.43 s | 1.40 to 1.43 s (was none) |
+| Containers started in the first 30 s (`docker events`) | — | — | 13 (was 22 in 20 s, then the prompt) |
+| "Modified outside the editor" prompt | — | none | none (was every `run` walk) |
+
+- The 13 containers are one combined lookup each for PHPStan, PHPCS, Psalm, PHPMD, `php`, Phpactor and php-cs-fixer, then one per tool run; later saves and keystrokes start only the tool runs.
+- A synthetic publish of 4999 findings for one file (the stub analyzer): rows in the dock 1.0 s after the save (was 96 s), worst UI answer 0.43 s (was 95.7 s).
+- `make test-php` (6 flows) and `make test-php-container` (1 flow) pass after the fixes.
+- Laravel (row 16) again: four analyzers detected after `composer require`, Psalm reported as needing a `psalm.xml`, Inspect Project gives the same 10 problems (PHPStan, PHPCS, PHPMD), Pint and phpcbf as before.
+
 **Not fixed, for issues:**
-- Format-on-save runs on the UI thread: 1.5 s in `exec` mode and 8.3 s in `run` mode (see row 5).
-- `resolve_launch` looks programs up on the Qt thread, which in `run` mode starts a container per candidate; on-type analysis in `run` mode could not be measured because of the next point.
-- In `run` mode a modal "modified outside the editor" prompt followed a slow format-on-save and swallowed typing (seen once).
-- The Problems panel with thousands of rows (what a project run over `vendor/` produced) keeps the UI thread at 100% CPU; the volume itself came from the path fix above, but a legitimate large result set will hit the same wall.
-- A project run of PHPCS or PHPStan with no config that names paths still analyses everything under the root, `vendor/` included.
-- Psalm without a `psalm.xml` fails silently.
+- Typing in a 5000-line file takes about 0.23 s per keystroke in the debug build before the UI answers again, and about 0.45 s with 5000 squiggles in it (the synthetic publish above); not profiled further.
+- Starting a test run still looks the framework's program up on the Qt thread (`TestService::start`); with the combined probe and its memo that is one container on the first run only.
 - The Windows half of row 2 and the WSL half of row 6 are not checked (see above).
 
 Batch 3 settings fixes: opening a project or confirming the Settings dialog no longer rewrites `.ide/settings.toml`.

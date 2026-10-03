@@ -64,6 +64,10 @@ pub struct ComposerJson {
     /// The `require.php` constraint, verbatim (`^8.1`, `>=8.0 <8.4`).
     pub require_php: Option<String>,
     pub psr4: Vec<Psr4Root>,
+    /// Every directory or file `autoload` and `autoload-dev` load code from
+    /// (PSR-4, PSR-0 and classmap), project-relative, in file order, without
+    /// duplicates. Never the project root itself and never under `vendor/`.
+    pub autoload_paths: Vec<String>,
     pub scripts: Vec<ComposerScript>,
     /// Packages only: `php` and `ext-*` platform entries are excluded.
     pub require: Vec<Requirement>,
@@ -88,6 +92,26 @@ impl ComposerJson {
                         dir,
                         dev,
                     });
+                }
+            }
+        }
+        let mut autoload_paths: Vec<String> = Vec::new();
+        for section in ["autoload", "autoload-dev"].map(|key| root.get(key)) {
+            let Some(section) = section else { continue };
+            let mapped = ["psr-4", "psr-0"]
+                .iter()
+                .filter_map(|kind| section.get(kind).and_then(Value::as_object))
+                .flat_map(|map| map.values().flat_map(strings));
+            let classmap = section.get("classmap").map(strings).unwrap_or_default();
+            for path in mapped.chain(classmap) {
+                let path = path
+                    .trim_start_matches("./")
+                    .trim_end_matches('/')
+                    .to_string();
+                let in_vendor = path == "vendor" || path.starts_with("vendor/");
+                if !path.is_empty() && path != "." && !in_vendor && !autoload_paths.contains(&path)
+                {
+                    autoload_paths.push(path);
                 }
             }
         }
@@ -126,9 +150,26 @@ impl ComposerJson {
                 .and_then(Value::as_str)
                 .map(str::to_string),
             psr4,
+            autoload_paths,
             scripts,
             require,
         })
+    }
+
+    /// The paths a project-wide analyzer run covers when the tool's own
+    /// config names none: the autoload paths that exist under `project`, as
+    /// absolute paths. Empty when there is no readable composer.json or it
+    /// names none, which leaves the run to its previous default.
+    pub fn analysis_paths(project: &Path) -> Vec<std::path::PathBuf> {
+        let Ok(Some(composer)) = Self::read(project) else {
+            return Vec::new();
+        };
+        composer
+            .autoload_paths
+            .iter()
+            .map(|path| project.join(path))
+            .filter(|path| path.exists())
+            .collect()
     }
 
     /// Read `<project>/composer.json`; `Ok(None)` when there is none.
@@ -271,6 +312,44 @@ mod tests {
                 ("vendor-lib/", false),
                 ("tests/", true)
             ]
+        );
+    }
+
+    #[test]
+    fn autoload_paths_cover_psr4_psr0_and_classmap_but_never_vendor_or_the_root() {
+        let c = ComposerJson::parse(
+            r#"{
+            "autoload": {
+                "psr-4": {"App\\": "app/", "Root\\": "", "Lib\\": ["lib/", "./app/"]},
+                "psr-0": {"Legacy_": "legacy"},
+                "classmap": ["database/seeds", "vendor/acme/x", "vendor"]
+            },
+            "autoload-dev": {"psr-4": {"Tests\\": "tests/"}, "classmap": ["."]}
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            c.autoload_paths,
+            ["app", "lib", "legacy", "database/seeds", "tests"]
+        );
+    }
+
+    #[test]
+    fn analysis_paths_are_the_existing_autoload_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(
+            ComposerJson::analysis_paths(dir.path()).is_empty(),
+            "no composer.json"
+        );
+        std::fs::write(
+            dir.path().join("composer.json"),
+            r#"{"autoload": {"psr-4": {"App\\": "src/", "Gone\\": "gone/"}}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        assert_eq!(
+            ComposerJson::analysis_paths(dir.path()),
+            [dir.path().join("src")]
         );
     }
 

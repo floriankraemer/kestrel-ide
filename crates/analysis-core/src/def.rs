@@ -152,28 +152,42 @@ impl AnalyzerDef {
 
     /// The argv tail for a project-wide run over `root`: `args`, with a
     /// `{file}` placeholder (a tool whose path is not the last argument,
-    /// like PHPMD's `<path> <format> <ruleset>`) replaced by the root, else
-    /// the root appended.
-    pub fn project_run_args(&self, root: &Path) -> Vec<String> {
+    /// like PHPMD's `<path> <format> <ruleset>`) replaced by the paths to
+    /// analyse, comma-separated, else the paths appended.
+    ///
+    /// No path at all when the tool's own config names them. Otherwise an
+    /// analyzer of PHP files gets `composer_paths` (the project's Composer
+    /// autoload paths, never `vendor/`) when there are any, since the root
+    /// would pull in `vendor/`: minutes of work and thousands of findings in
+    /// code the user does not own. Anything else gets the root.
+    pub fn project_run_args(&self, root: &Path, composer_paths: &[PathBuf]) -> Vec<String> {
         if self.config_names_project_paths(root) {
             return self.args.clone();
         }
-        let root = root.to_string_lossy();
+        let paths: Vec<String> =
+            if self.languages.iter().any(|l| l == "php") && !composer_paths.is_empty() {
+                composer_paths
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect()
+            } else {
+                vec![root.to_string_lossy().into_owned()]
+            };
         if self.args.iter().any(|a| a.contains("{file}")) {
+            let joined = paths.join(",");
             self.args
                 .iter()
-                .map(|a| a.replace("{file}", &root))
+                .map(|a| a.replace("{file}", &joined))
                 .collect()
         } else {
-            let mut argv = self.args.clone();
-            argv.push(root.into_owned());
-            argv
+            [self.args.clone(), paths].concat()
         }
     }
 
     /// Whether the project's own tool config (the first
     /// `project-paths-config` file that exists) names paths: a `paths:` key
-    /// (PHPStan's NEON) or a `<file>` element (PHPCS's ruleset).
+    /// (PHPStan's NEON), a `<file>` element (PHPCS's ruleset) or a
+    /// `<projectFiles>` element (Psalm's psalm.xml).
     ///
     /// ponytail: a line scan, not a NEON or XML parser, so paths that only an
     /// `includes:` file provides are not seen; the run then gets the root, as
@@ -183,8 +197,11 @@ impl AnalyzerDef {
             .iter()
             .find_map(|candidate| std::fs::read_to_string(root.join(candidate)).ok())
             .is_some_and(|text| {
-                text.lines()
-                    .any(|line| line.trim_start().starts_with("paths:") || line.contains("<file>"))
+                text.lines().any(|line| {
+                    line.trim_start().starts_with("paths:")
+                        || line.contains("<file>")
+                        || line.contains("<projectFiles")
+                })
             })
     }
 
@@ -316,7 +333,7 @@ mod tests {
             vec!["/p/a.php", "checkstyle", "cleancode"]
         );
         assert_eq!(
-            def.project_run_args(Path::new("/p")),
+            def.project_run_args(Path::new("/p"), &[]),
             vec!["/p", "checkstyle", "cleancode"]
         );
     }
@@ -332,7 +349,7 @@ mod tests {
         let root = bare.path();
         // No config: the root is the only thing to analyse.
         assert_eq!(
-            def.project_run_args(root),
+            def.project_run_args(root, &[]),
             vec![
                 "analyse".to_string(),
                 "--no-progress".into(),
@@ -342,7 +359,7 @@ mod tests {
 
         // A config without `paths:` still needs the root.
         std::fs::write(root.join("phpstan.neon"), "parameters:\n\tlevel: 5\n").unwrap();
-        assert_eq!(def.project_run_args(root).len(), 3);
+        assert_eq!(def.project_run_args(root, &[]).len(), 3);
 
         // The first candidate that exists decides, and `paths:` removes the root.
         std::fs::write(
@@ -350,7 +367,10 @@ mod tests {
             "parameters:\n\tlevel: 5\n\tpaths:\n\t\t- app\n",
         )
         .unwrap();
-        assert_eq!(def.project_run_args(root), vec!["analyse", "--no-progress"]);
+        assert_eq!(
+            def.project_run_args(root, &[]),
+            vec!["analyse", "--no-progress"]
+        );
 
         // A PHPCS ruleset names its paths with `<file>` elements.
         std::fs::remove_file(root.join("phpstan.neon")).unwrap();
@@ -359,7 +379,10 @@ mod tests {
             "<ruleset><file>src</file></ruleset>",
         )
         .unwrap();
-        assert_eq!(def.project_run_args(root), vec!["analyse", "--no-progress"]);
+        assert_eq!(
+            def.project_run_args(root, &[]),
+            vec!["analyse", "--no-progress"]
+        );
     }
 
     #[test]
@@ -385,9 +408,61 @@ mod tests {
     }
 
     #[test]
+    fn a_php_project_run_covers_the_composer_paths_instead_of_the_root() {
+        let mut c = contribution();
+        c.languages = vec!["php".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        let paths = [PathBuf::from("/p/app"), PathBuf::from("/p/tests")];
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &paths),
+            vec!["analyse", "/p/app", "/p/tests"]
+        );
+        // PHPMD's positional path takes them comma-separated.
+        c.args = vec!["{file}".into(), "checkstyle".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &paths),
+            vec!["/p/app,/p/tests", "checkstyle"]
+        );
+        // No Composer paths: the root, as before.
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &[]),
+            vec!["/p", "checkstyle"]
+        );
+        // Not a PHP analyzer: Composer's paths are not its business.
+        c.languages = vec!["javascript".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &paths),
+            vec!["/p", "checkstyle"]
+        );
+    }
+
+    #[test]
+    fn a_psalm_config_names_its_paths_with_project_files() {
+        let mut c = contribution();
+        c.languages = vec!["php".into()];
+        c.project_paths_config = vec!["psalm.xml".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("psalm.xml"),
+            "<psalm>\n  <projectFiles>\n    <directory name=\"src\" />\n  </projectFiles>\n</psalm>\n",
+        )
+        .unwrap();
+        assert_eq!(
+            def.project_run_args(dir.path(), &[dir.path().join("src")]),
+            vec!["analyse"]
+        );
+    }
+
+    #[test]
     fn a_project_run_without_a_placeholder_appends_the_root() {
         let def = AnalyzerDef::from_contribution(&contribution());
-        assert_eq!(def.project_run_args(Path::new("/p")), vec!["analyse", "/p"]);
+        assert_eq!(
+            def.project_run_args(Path::new("/p"), &[]),
+            vec!["analyse", "/p"]
+        );
     }
 
     #[test]

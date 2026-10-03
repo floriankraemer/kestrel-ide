@@ -527,7 +527,8 @@ impl ffi::AnalysisService {
             self.as_mut().analysis_finished();
             return;
         };
-        let args = [prefix, analyzer.project_run_args(&root)].concat();
+        let composer_paths = php_core::composer::ComposerJson::analysis_paths(&root);
+        let args = [prefix, analyzer.project_run_args(&root, &composer_paths)].concat();
 
         let qt_thread = self.as_mut().qt_thread();
         let id = analyzer.id.clone();

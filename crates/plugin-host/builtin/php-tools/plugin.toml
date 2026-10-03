@@ -99,6 +99,8 @@ requires-interpreter = "php"
 languages = ["php"]
 # Psalm analyses files on disk (it needs a psalm.xml in the project).
 buffer = "saved-only"
+# psalm.xml's `<projectFiles>` decides what a project run covers.
+project-paths-config = ["psalm.xml", "psalm.xml.dist"]
 # Psalm's checkstyle report has no `source`; the issue type leads the
 # message (`UndefinedVariable: ...`).
 code-in-message = true

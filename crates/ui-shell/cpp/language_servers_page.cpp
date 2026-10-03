@@ -252,8 +252,12 @@ QWidget *buildLanguageServersPage(QWidget *parent,
         const QString text =
           known == live->constEnd() || !known->known ? QString() : detailLines(*known);
         detailLabel->setText(text);
+        // A platform rule is information, not a fault; every other state
+        // this strip shows is one.
+        const bool isRule = known != live->constEnd() && known->state == FfiServerState::Unavailable;
+        const SemanticColors colors = semanticColors();
         detailLabel->setStyleSheet(
-          QStringLiteral("color: %1;").arg(semanticColors().error.name()));
+          QStringLiteral("color: %1;").arg((isRule ? colors.muted : colors.error).name()));
         detailLabel->setVisible(!text.isEmpty());
     };
 

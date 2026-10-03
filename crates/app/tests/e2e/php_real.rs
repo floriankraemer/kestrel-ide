@@ -210,6 +210,62 @@ fn e2e_php_real_servers_analysis_navigate_format() {
     assert_eq!(ide.quit(), 0);
 }
 
+/// "Fix with phpcbf" runs the fixer over the buffer's text. Keystrokes stay
+/// out of the Rust rope (ADR-0003), so the view must forward the live text
+/// first, or the fixer sees the last saved text and finds nothing to change.
+#[test]
+#[ignore = "E2E: needs an X server and the linux-php image; run via `make test-php`"]
+fn e2e_php_real_phpcbf_fix_applies_to_an_unsaved_buffer() {
+    if !require_php_e2e() {
+        return;
+    }
+    let name = "e2e_php_real_phpcbf_fix_applies_to_an_unsaved_buffer";
+    let project = php_project();
+    let ide = launch_php(name, project.path());
+    drop(project);
+    ide.wait_for_ev(Mark::start(), "project_opened");
+    let mcp = ide.mcp();
+
+    let mark = ide.mark();
+    let tab_id = open_file(&ide, "Greeter.php")["tab_id"]
+        .as_u64()
+        .expect("tab_id");
+    wait_for_problem(&ide, mark, "PHP_CodeSniffer", "src/Greeter.php");
+    let squiggles = |mark: Mark| {
+        ide.events_since_of(mark, "diagnostics_applied")
+            .last()
+            .and_then(|e| e["count"].as_u64())
+    };
+    let baseline = squiggles(mark).unwrap_or(0);
+
+    // An unsaved line with a fixable finding of its own.
+    ide.focus_main();
+    ide.key("ctrl+End");
+    let mark = ide.mark();
+    ide.key("Return");
+    ide.type_text("$walk=1;");
+    e2e::wait_for("PHPCS to report the unsaved line", || {
+        (squiggles(mark)? > baseline).then_some(())
+    });
+
+    let mark = ide.mark();
+    ide.key("alt+Return");
+    let fix = ide.wait_for_event(mark, "the Fix with phpcbf entry", |e| {
+        e["ev"] == "intentions_menu_action"
+            && e["label"]
+                .as_str()
+                .is_some_and(|l| l.starts_with("Fix with phpcbf (PSR12.Operators.OperatorSpacing"))
+    });
+    let (x, y) = rect_centre(&fix["rect"]);
+    ide.click_at(x, y, 1);
+    e2e::wait_for("phpcbf to fix the unsaved line", || {
+        ide.sync(&mcp);
+        buffer(&mcp, tab_id).contains("$walk = 1;").then_some(())
+    });
+    // The buffer is still unsaved: the fix is an edit, not a write.
+    assert!(!ide.read_project_file("src/Greeter.php").contains("$walk"));
+}
+
 /// Put a breakpoint on 1-based `line` of the open file's tab and wait until
 /// it reaches the gutter.
 fn toggle_breakpoint_at(ide: &Ide, line: usize) {

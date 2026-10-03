@@ -33,6 +33,13 @@ constexpr int kServerWaitMs = 300;
 
 } // namespace
 
+void EditorTabs::syncLiveText()
+{
+    if (auto *editor = currentEditor()) {
+        docManager_->syncTabText(currentTabId(), editor->toPlainText());
+    }
+}
+
 void EditorTabs::showStatusNotice(const QString &message)
 {
     if (message.isEmpty()) {
@@ -134,6 +141,7 @@ void EditorTabs::showGenerateMenu(bool withServerActions)
     if (generators.contains(chosen)) {
         runGenerator(editor, generators.value(chosen), titles.value(chosen));
     } else if (serverActions.contains(chosen)) {
+        syncLiveText();
         languageService_->applyIntention(serverActions.value(chosen), documentRevision());
     }
 }

@@ -186,6 +186,11 @@ public:
     // when no tab is open, which no live buffer ever reports.
     int documentRevision() const;
 
+    // ADR-0003: keystrokes stay out of the rope, so a Rust reader of the
+    // current tab's text (Reformat Code through a tool, "Fix with phpcbf")
+    // would see the last saved or synced text. Forwards the live text first.
+    void syncLiveText();
+
     // The selection, or the caret twice when there is none, as the protocol
     // line/character pairs a code-action request is made about.
     QPair<QPair<quint32, quint32>, QPair<quint32, quint32>> selectionRange() const;

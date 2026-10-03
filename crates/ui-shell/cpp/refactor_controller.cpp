@@ -418,6 +418,7 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
             languageService_->requestSelectionFormatting(path, editorTabs_->documentRevision(),
                                                          selection);
         } else {
+            editorTabs_->syncLiveText();
             languageService_->requestFormatting(path, editorTabs_->documentRevision(), selection);
         }
     };

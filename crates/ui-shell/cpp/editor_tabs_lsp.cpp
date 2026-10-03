@@ -467,6 +467,7 @@ void EditorTabs::showIntentionsMenu(const QPoint *anchor)
                          : blankBulbIcon(16, menu.devicePixelRatioF()));
         const quint32 index = static_cast<quint32>(i);
         connect(entry, &QAction::triggered, this, [this, index]() {
+            syncLiveText();
             languageService_->applyIntention(index, documentRevision());
         });
     }

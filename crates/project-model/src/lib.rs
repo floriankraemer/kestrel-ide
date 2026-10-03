@@ -794,6 +794,21 @@ fn config_dir_from(over: Option<std::ffi::OsString>, platform: Option<PathBuf>) 
     }
 }
 
+/// The cache dir the real app writes derived data into (the index fallback
+/// for projects that cannot hold one): `cache` under `IDE_CONFIG_DIR` when
+/// set, so an isolated config dir isolates the caches too, else the platform
+/// cache dir joined with `ide`.
+pub fn default_cache_dir() -> Option<PathBuf> {
+    cache_dir_from(std::env::var_os(CONFIG_DIR_ENV), dirs::cache_dir())
+}
+
+fn cache_dir_from(over: Option<std::ffi::OsString>, platform: Option<PathBuf>) -> Option<PathBuf> {
+    match over {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir).join("cache")),
+        _ => platform.map(|d| d.join("ide")),
+    }
+}
+
 /// Session-scoped holder for "the one open project", matching US-1: opening
 /// a new folder replaces the previous project and its tree; opening an
 /// invalid folder leaves the current project untouched.

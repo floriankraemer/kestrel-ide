@@ -221,7 +221,7 @@ fn supports_file_locks(dir: &Path) -> bool {
     locked
 }
 
-/// `<cache_dir>/ide/index/<sanitised-project-path>`, the home for an index
+/// `<app cache dir>/index/<sanitised-project-path>`, the home for an index
 /// whose project directory cannot hold one.
 fn fallback_index_dir(project_root: &Path) -> Option<PathBuf> {
     let key: String = project_root
@@ -229,7 +229,7 @@ fn fallback_index_dir(project_root: &Path) -> Option<PathBuf> {
         .chars()
         .map(|ch| if ch.is_alphanumeric() { ch } else { '_' })
         .collect();
-    Some(dirs::cache_dir()?.join("ide").join("index").join(key))
+    Some(project_model::default_cache_dir()?.join("index").join(key))
 }
 
 /// Acquire the index directory's single writer lock, retrying briefly (see

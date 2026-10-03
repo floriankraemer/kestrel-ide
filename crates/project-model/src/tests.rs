@@ -809,3 +809,20 @@ fn config_dir_without_override_is_the_platform_dir_plus_ide() {
         Some(PathBuf::from("/home/u/.config/ide"))
     );
 }
+
+#[test]
+fn cache_dir_follows_the_config_dir_override() {
+    let platform = Some(PathBuf::from("/home/u/.cache"));
+    assert_eq!(
+        cache_dir_from(Some("/tmp/isolated".into()), platform.clone()),
+        Some(PathBuf::from("/tmp/isolated/cache"))
+    );
+    assert_eq!(
+        cache_dir_from(None, platform.clone()),
+        Some(PathBuf::from("/home/u/.cache/ide"))
+    );
+    assert_eq!(
+        cache_dir_from(Some("".into()), platform),
+        Some(PathBuf::from("/home/u/.cache/ide"))
+    );
+}

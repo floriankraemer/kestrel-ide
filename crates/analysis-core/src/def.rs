@@ -59,6 +59,10 @@ pub struct AnalyzerDef {
     pub code_in_message: bool,
     /// Id of the `formatters` contribution that can fix a single finding.
     pub fixer: Option<String>,
+    /// Config files the tool cannot run without, any one of them.
+    pub required_config: Vec<String>,
+    /// The command that writes a starter config.
+    pub config_init: Option<String>,
     config_file_candidates: Vec<String>,
     ruleset_default: Option<String>,
     project_paths_config: Vec<String>,
@@ -87,6 +91,8 @@ impl AnalyzerDef {
             suppress_comment: contribution.suppress_comment.clone(),
             code_in_message: contribution.code_in_message,
             fixer: contribution.fixer.clone(),
+            required_config: contribution.required_config.clone(),
+            config_init: contribution.config_init.clone(),
             config_file_candidates: contribution.config_file_candidates.clone(),
             ruleset_default: contribution.ruleset_default.clone(),
             project_paths_config: contribution.project_paths_config.clone(),
@@ -205,6 +211,19 @@ impl AnalyzerDef {
             })
     }
 
+    /// The config file this analyzer cannot run without and the project at
+    /// `root` lacks (the first `required-config` candidate), or `None` when
+    /// it needs none or one exists. Such an analyzer is not run: it would
+    /// only print a usage error, and no finding.
+    pub fn missing_config(&self, root: &Path) -> Option<&str> {
+        let missing = !self.required_config.is_empty()
+            && !self
+                .required_config
+                .iter()
+                .any(|candidate| root.join(candidate).is_file());
+        missing.then(|| self.required_config[0].as_str())
+    }
+
     /// The severity a tool's own word maps to, or [`Severity::Warning`]
     /// when the manifest's `severity-map` says nothing about it.
     pub fn severity_for(&self, tool_word: &str) -> Severity {
@@ -250,6 +269,8 @@ mod tests {
             config_file_candidates: vec![],
             ruleset_default: None,
             project_paths_config: vec![],
+            required_config: vec![],
+            config_init: None,
         }
     }
 
@@ -454,6 +475,21 @@ mod tests {
             def.project_run_args(dir.path(), &[dir.path().join("src")]),
             vec!["analyse"]
         );
+    }
+
+    #[test]
+    fn a_required_config_is_missing_until_any_candidate_exists() {
+        let mut c = contribution();
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            AnalyzerDef::from_contribution(&c).missing_config(dir.path()),
+            None
+        );
+        c.required_config = vec!["psalm.xml".into(), "psalm.xml.dist".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+        assert_eq!(def.missing_config(dir.path()), Some("psalm.xml"));
+        std::fs::write(dir.path().join("psalm.xml.dist"), "<psalm/>").unwrap();
+        assert_eq!(def.missing_config(dir.path()), None);
     }
 
     #[test]

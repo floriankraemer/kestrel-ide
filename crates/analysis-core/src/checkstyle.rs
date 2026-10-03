@@ -238,6 +238,8 @@ mod tests {
             config_file_candidates: vec![],
             ruleset_default: None,
             project_paths_config: vec![],
+            required_config: vec![],
+            config_init: None,
         })
     }
 

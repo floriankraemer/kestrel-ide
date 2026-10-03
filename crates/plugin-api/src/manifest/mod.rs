@@ -282,6 +282,15 @@ pub struct AnalyzerContribution {
     /// the config's paths, and the project root would pull in `vendor/`.
     #[serde(default, rename = "project-paths-config")]
     pub project_paths_config: Vec<String>,
+    /// Project-relative config files the tool cannot run without (Psalm's
+    /// `psalm.xml`). When none exists the analyzer is not run and its
+    /// status says which file it needs.
+    #[serde(default, rename = "required-config")]
+    pub required_config: Vec<String>,
+    /// The command that writes a starter config (`vendor/bin/psalm --init`),
+    /// named in that status.
+    #[serde(default, rename = "config-init")]
+    pub config_init: Option<String>,
 }
 
 /// Interpreters a contribution may name in `requires-interpreter`.

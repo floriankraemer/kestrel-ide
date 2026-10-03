@@ -24,6 +24,17 @@ constexpr int kAnalyzerIdRole = Qt::UserRole;
 
 } // namespace
 
+QString analyzerStatusText(const FfiAnalyzerRow &row)
+{
+    if (row.statusKind != FfiAnalyzerStatusKind::NeedsConfig) {
+        return row.statusText;
+    }
+    return QString(row.configCommand).isEmpty()
+             ? QObject::tr("%1 needs a %2").arg(QString(row.name), QString(row.configName))
+             : QObject::tr("%1 needs a %2 — run `%3`")
+                 .arg(QString(row.name), QString(row.configName), QString(row.configCommand));
+}
+
 QWidget *buildAnalysisSettingsPage(QWidget *parent, AnalysisEditor *editor,
                                    AnalysisService *analysisService)
 {
@@ -51,7 +62,7 @@ QWidget *buildAnalysisSettingsPage(QWidget *parent, AnalysisEditor *editor,
     // header's note on why this page never re-detects anything itself.
     QHash<QString, QString> statusById;
     for (const FfiAnalyzerRow &row : analysisService->analyzerRows()) {
-        statusById.insert(row.id, row.statusText);
+        statusById.insert(row.id, analyzerStatusText(row));
     }
 
     int triggerWidth = 0;

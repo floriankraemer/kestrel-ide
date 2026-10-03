@@ -30,6 +30,8 @@ fn contribution(id: &str, args: &[&str], file_args: &[&str], buffer: &str) -> An
         config_file_candidates: vec![],
         ruleset_default: None,
         project_paths_config: vec![],
+        required_config: vec![],
+        config_init: None,
     }
 }
 

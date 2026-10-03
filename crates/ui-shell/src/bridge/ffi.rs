@@ -6242,6 +6242,9 @@ mod ffi {
         Detected,
         DeclaredNotInstalled,
         NotDetected,
+        /// Installed, but the project lacks the config file the tool needs
+        /// (`config_name`; `config_command` writes one): not run.
+        NeedsConfig,
     }
 
     /// One row of the Analysis settings page and the status bar's
@@ -6264,6 +6267,12 @@ mod ffi {
         /// declared-but-not-installed, or not detected.
         #[cxx_name = "statusText"]
         status_text: QString,
+        /// `NeedsConfig` only: the config file the analyzer needs.
+        #[cxx_name = "configName"]
+        config_name: QString,
+        /// `NeedsConfig` only: the command that writes it, or empty.
+        #[cxx_name = "configCommand"]
+        config_command: QString,
     }
 
     extern "RustQt" {

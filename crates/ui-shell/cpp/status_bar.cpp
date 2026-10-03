@@ -1,5 +1,7 @@
 #include "status_bar.h"
 
+#include "analysis_settings_page.h"
+
 #include "dock_layout.h"
 #include "e2e_mark.h"
 #include "editor_tabs.h"
@@ -14,6 +16,7 @@
 #include <QMenuBar>
 #include <QProgressBar>
 #include <QStatusBar>
+#include <QStringList>
 #include <QToolButton>
 #include <QTreeView>
 
@@ -236,6 +239,8 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
         }
         int detected = 0;
         int notInstalled = 0;
+        int needsConfig = 0;
+        QStringList hints;
         for (const FfiAnalyzerRow &row : rows) {
             switch (row.statusKind) {
             case FfiAnalyzerStatusKind::Detected:
@@ -243,19 +248,38 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                 break;
             case FfiAnalyzerStatusKind::DeclaredNotInstalled:
                 ++notInstalled;
+                hints.append(analyzerStatusText(row));
+                break;
+            case FfiAnalyzerStatusKind::NeedsConfig:
+                ++needsConfig;
+                hints.append(analyzerStatusText(row));
                 break;
             case FfiAnalyzerStatusKind::NotDetected:
                 break;
             }
         }
         const SemanticColors colors = semanticColors();
-        analysisLabel->setStyleSheet(
-          notInstalled > 0 ? QStringLiteral("color: %1;").arg(colors.warning.name()) : QString());
-        analysisLabel->setText(notInstalled > 0
-                                 ? QObject::tr("Analysis: %1 detected, %2 not installed")
-                                     .arg(detected)
-                                     .arg(notInstalled)
-                                 : QObject::tr("Analysis: %1 detected").arg(detected));
+        analysisLabel->setStyleSheet(notInstalled + needsConfig > 0
+                                       ? QStringLiteral("color: %1;").arg(colors.warning.name())
+                                       : QString());
+        QString text = QObject::tr("Analysis: %1 detected").arg(detected);
+        if (notInstalled > 0 && needsConfig > 0) {
+            text = QObject::tr("Analysis: %1 detected, %2 not installed, %3 need a config file")
+                     .arg(detected)
+                     .arg(notInstalled)
+                     .arg(needsConfig);
+        } else if (notInstalled > 0) {
+            text = QObject::tr("Analysis: %1 detected, %2 not installed")
+                     .arg(detected)
+                     .arg(notInstalled);
+        } else if (needsConfig > 0) {
+            text = QObject::tr("Analysis: %1 detected, %2 need a config file")
+                     .arg(detected)
+                     .arg(needsConfig);
+        }
+        analysisLabel->setText(text);
+        // What to do about each one, on hover.
+        analysisLabel->setToolTip(hints.join(QLatin1Char('\n')));
         analysisLabel->setVisible(true);
     };
     updateAnalysisLabel();

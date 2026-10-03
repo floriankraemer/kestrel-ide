@@ -30,6 +30,12 @@ pub enum AnalyzerStatus {
     DeclaredNotInstalled { composer_package: String },
     /// No program candidate resolved and nothing declares this analyzer.
     NotDetected,
+    /// Installed, but the project lacks the config file the tool cannot
+    /// run without (Psalm's `psalm.xml`), so it is not run.
+    NeedsConfig {
+        config: String,
+        init_command: Option<String>,
+    },
 }
 
 impl AnalyzerStatus {
@@ -48,6 +54,27 @@ impl AnalyzerStatus {
                  run `composer install`)"
             ),
             Self::NotDetected => format!("{name}: not detected"),
+            Self::NeedsConfig {
+                config,
+                init_command: Some(command),
+            } => format!("{name} needs a {config} — run `{command}`"),
+            Self::NeedsConfig {
+                config,
+                init_command: None,
+            } => format!("{name} needs a {config}"),
+        }
+    }
+
+    /// This status once `analyzer`'s required config is checked at `root`:
+    /// a detected tool whose config is missing [`Self::NeedsConfig`].
+    #[must_use]
+    pub fn with_config_of(self, analyzer: &crate::AnalyzerDef, root: &Path) -> Self {
+        match (&self, analyzer.missing_config(root)) {
+            (Self::Detected { .. }, Some(config)) => Self::NeedsConfig {
+                config: config.to_string(),
+                init_command: analyzer.config_init.clone(),
+            },
+            _ => self,
         }
     }
 }
@@ -214,6 +241,38 @@ pub fn status_from(
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn a_detected_tool_without_its_required_config_needs_one() {
+        let root = project();
+        let contribution: plugin_api::AnalyzerContribution =
+            serde_json::from_value(serde_json::json!({
+                "id": "psalm",
+                "name": "Psalm",
+                "program-candidates": ["vendor/bin/psalm"],
+                "args": [],
+                "output-format": "checkstyle-xml",
+                "required-config": ["psalm.xml"],
+                "config-init": "vendor/bin/psalm --init",
+            }))
+            .unwrap();
+        let def = crate::AnalyzerDef::from_contribution(&contribution);
+        let detected = AnalyzerStatus::Detected {
+            program: PathBuf::from("vendor/bin/psalm"),
+        };
+        let status = detected.clone().with_config_of(&def, root.path());
+        assert_eq!(
+            status.describe("Psalm"),
+            "Psalm needs a psalm.xml — run `vendor/bin/psalm --init`"
+        );
+        fs::write(root.path().join("psalm.xml"), "<psalm/>").unwrap();
+        assert_eq!(detected.clone().with_config_of(&def, root.path()), detected);
+        // Not installed stays not installed: the config is the next step.
+        assert_eq!(
+            AnalyzerStatus::NotDetected.with_config_of(&def, root.path()),
+            AnalyzerStatus::NotDetected
+        );
+    }
 
     fn project() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()

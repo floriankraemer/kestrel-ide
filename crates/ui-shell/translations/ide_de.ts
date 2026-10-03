@@ -1221,6 +1221,22 @@
         <translation>Analyse</translation>
     </message>
     <message>
+        <source>Analysis: %1 detected, %2 need a config file</source>
+        <translation>Analyse: %1 erkannt, %2 brauchen eine Konfigurationsdatei</translation>
+    </message>
+    <message>
+        <source>Analysis: %1 detected, %2 not installed, %3 need a config file</source>
+        <translation>Analyse: %1 erkannt, %2 nicht installiert, %3 brauchen eine Konfigurationsdatei</translation>
+    </message>
+    <message>
+        <source>%1 needs a %2</source>
+        <translation>%1 braucht eine %2</translation>
+    </message>
+    <message>
+        <source>%1 needs a %2 — run `%3`</source>
+        <translation>%1 braucht eine %2 — führen Sie `%3` aus</translation>
+    </message>
+    <message>
         <source>Analysis: %1 detected</source>
         <translation>Analyse: %1 erkannt</translation>
     </message>

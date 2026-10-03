@@ -101,6 +101,10 @@ languages = ["php"]
 buffer = "saved-only"
 # psalm.xml's `<projectFiles>` decides what a project run covers.
 project-paths-config = ["psalm.xml", "psalm.xml.dist"]
+# Without a psalm.xml Psalm prints a usage error and no finding: it is not
+# run, and its status names the file and the command that writes one.
+required-config = ["psalm.xml", "psalm.xml.dist"]
+config-init = "vendor/bin/psalm --init"
 # Psalm's checkstyle report has no `source`; the issue type leads the
 # message (`UndefinedVariable: ...`).
 code-in-message = true

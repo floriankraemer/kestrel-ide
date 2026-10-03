@@ -24,6 +24,9 @@ PHPMD's argv is positional (`<path> <format> <ruleset>`), so an analyzer's `args
 PHPMD's ruleset is the `{ruleset}` placeholder: the project's `phpmd.xml` or `phpmd.xml.dist` (an analyzer's `config-file-candidates`) when one exists at the project root, else the built-in rule sets (`ruleset-default`).
 It excludes `vendor` and `node_modules`.
 PHPStan's and PHPCS's project runs are started without a path when the first of their `project-paths-config` files (`phpstan.neon`, `phpcs.xml` and their `.dist` forms) that exists names paths (a `paths:` key, a `<file>` element), because a path on the command line replaces the config's `paths` and the project root would pull in `vendor/` (found running Inspect Project on a Laravel project).
+Psalm's `psalm.xml` counts the same way (a `<projectFiles>` element).
+When the config names no paths, a PHP analyzer's project run covers the Composer autoload paths (PSR-4, PSR-0 and classmap of `autoload` and `autoload-dev`, never `vendor/`, read by `php_core::composer`) instead of the root; with no composer.json or no autoload paths it gets the root.
+An analyzer may declare `required-config` files it cannot run without and a `config-init` command that writes one (Psalm: `psalm.xml`, `vendor/bin/psalm --init`): without one it is not run, and its status, in the settings page and the status bar's tooltip, says "Psalm needs a psalm.xml — run `vendor/bin/psalm --init`" instead of failing silently.
 
 **A `formatters` contribution point (`api_version` stays 1).**
 Fields: `id`, `name`, `languages`, `program-candidates`, `args`, `buffer`, `success-exit-codes`, `config-file-candidates`, `composer-package`, `requires-interpreter`, `fix-args`.

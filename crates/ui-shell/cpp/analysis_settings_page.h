@@ -2,6 +2,8 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QString>
+
 class QWidget;
 
 namespace ui_shell {
@@ -15,6 +17,11 @@ namespace ui_shell {
 // from `AnalysisService::analyzerRows` taken when the page is built — it
 // is detection state, not a setting, and nothing here re-detects or starts
 // anything.
+// The sentence for an analyzer whose status is `NeedsConfig` ("Psalm needs
+// a psalm.xml — run `vendor/bin/psalm --init`"); the row's own
+// `statusText` for every other status. Shared with the status bar.
+QString analyzerStatusText(const FfiAnalyzerRow &row);
+
 QWidget *buildAnalysisSettingsPage(QWidget *parent, AnalysisEditor *editor,
                                    AnalysisService *analysisService);
 

@@ -212,7 +212,18 @@ fn build_analyzer_rows(
                 root,
             );
             let found = find(&row.id, &candidates, &host);
-            let status = analysis_core::status_from(found, root, &packages);
+            let mut status = analysis_core::status_from(found, root, &packages);
+            if let Some(contribution) = contribution {
+                let def = analysis_core::AnalyzerDef::from_contribution(contribution);
+                status = status.with_config_of(&def, root);
+            }
+            let (config_name, config_command) = match &status {
+                analysis_core::AnalyzerStatus::NeedsConfig {
+                    config,
+                    init_command,
+                } => (config.clone(), init_command.clone().unwrap_or_default()),
+                _ => Default::default(),
+            };
             let status_kind = match status {
                 analysis_core::AnalyzerStatus::Detected { .. } => {
                     ffi::FfiAnalyzerStatusKind::Detected
@@ -223,6 +234,9 @@ fn build_analyzer_rows(
                 analysis_core::AnalyzerStatus::NotDetected => {
                     ffi::FfiAnalyzerStatusKind::NotDetected
                 }
+                analysis_core::AnalyzerStatus::NeedsConfig { .. } => {
+                    ffi::FfiAnalyzerStatusKind::NeedsConfig
+                }
             };
             ffi::FfiAnalyzerRow {
                 id: QString::from(row.id.as_str()),
@@ -232,6 +246,8 @@ fn build_analyzer_rows(
                 trigger_label: QString::from(row.trigger.label()),
                 status_kind,
                 status_text: QString::from(status.describe(&row.name).as_str()),
+                config_name: QString::from(config_name.as_str()),
+                config_command: QString::from(config_command.as_str()),
             }
         })
         .collect()
@@ -335,7 +351,7 @@ impl ffi::AnalysisService {
             contributed_analyzers()
                 .iter()
                 .filter(|c| draft.row(&c.id).is_some_and(|row| row.enabled))
-                .map(|c| {
+                .filter_map(|c| {
                     let host = crate::bridge::php::tool_host(
                         c.requires_interpreter.as_deref(),
                         &settings,
@@ -343,7 +359,9 @@ impl ffi::AnalysisService {
                     );
                     let def =
                         analysis_core::AnalyzerDef::from_contribution(c).with_ruleset_for(&root);
-                    (def, host)
+                    // Without its required config the tool prints a usage error
+                    // and no finding; its status says what is missing.
+                    def.missing_config(&root).is_none().then_some((def, host))
                 })
                 .collect();
 
@@ -435,7 +453,7 @@ impl ffi::AnalysisService {
             settings_model::analysis::file_jobs(event, &language_id, &draft, &contributions)
                 .into_iter()
                 .filter_map(|job| contributions.iter().find(|c| c.id == job.analyzer_id))
-                .map(|c| {
+                .filter_map(|c| {
                     let host = crate::bridge::php::tool_host(
                         c.requires_interpreter.as_deref(),
                         &settings,
@@ -443,7 +461,9 @@ impl ffi::AnalysisService {
                     );
                     let def =
                         analysis_core::AnalyzerDef::from_contribution(c).with_ruleset_for(&root);
-                    (def, host)
+                    // Without its required config the tool prints a usage error
+                    // and no finding; its status says what is missing.
+                    def.missing_config(&root).is_none().then_some((def, host))
                 })
                 .collect();
         if planned.is_empty() {

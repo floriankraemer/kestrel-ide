@@ -276,6 +276,10 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                       updateAnalysisLabel);
     QObject::connect(analysisService, &AnalysisService::analysisFinished, statusBar,
                       updateAnalysisLabel);
+    // An analyzer installed mid-session (`composer require --dev`) shows up
+    // the next time a project run ends, not only on the next project open.
+    QObject::connect(analysisService, &AnalysisService::analysisFinished, statusBar,
+                      [analysisService]() { analysisService->refreshAnalyzerStatusAsync(); });
 
     // The jvm-build-tools plan's B6: "Gradle: syncing..."/"Maven:
     // syncing..."/a failure, mirroring the analysis label above exactly.

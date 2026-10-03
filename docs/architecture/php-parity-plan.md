@@ -256,7 +256,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 | E1 — `stub_server` capability-profile flag (`STUB_LSP_TAG`/`STUB_LSP_CAPS`, done with L3) | done | b6c7a10 |
 | E2 — per-PR E2E: `e2e_php_two_servers_and_on_save_analysis`, `e2e_php_listen_session_stops_for_two_connections`, `e2e_php_generate_templates_and_new_class` | done | 40db0bb |
 | E3 — nightly E2E behind `IDE_E2E_PHP=1`: real PHP, Xdebug breakpoint, gutter test, container interpreter | done | 6e0bd8e |
-| E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | done | — |
+| E4 — manual matrix (old E3 plus licence key, Phpactor/WSL, container, Xdebug, coverage, Twig/Blade, templates), recorded here | done | 8736974 |
 | Z1 — `overview.md`, `layering.md`, README index, keymap defaults | done | d442627 |
 
 ## Acceptance per phase (as the user sees it)
@@ -614,3 +614,26 @@ Fixes made while walking: the listed `fix(...)` commits after `d442627`, one per
 - `crates/run-core/src/{toolchain.rs,detect.rs,context.rs}`
 - `crates/syntax-core/src/catalog.rs`, `crates/edit-ops/src/comment.rs`
 - new `crates/php-core/`
+
+## Follow-up issues
+
+Findings from this plan that were not fixed here are tracked as issues.
+- #382 — `tr()` contexts in classes without `Q_OBJECT` (repo-wide translation audit).
+- #383 — cancelling an analyzer run never kills the in-flight process.
+- #384 — multi-server merge refinements (slowest-server wait, dedupe key, error classification).
+- #385 — Ctrl+/ on a `<?php` or `?>` line.
+- #386 — PHP variable highlighting.
+- #387 — remaining container interpreter gaps.
+- #388 — before-launch `runWithEnv` failure missing from the debug console.
+- #389 — coverage across edits and runs.
+- #390 — `make sweep` leaves `target/debug/incremental` untrimmed.
+- #391 — rerun parity for Codeception, Behat and Pest-run PHPUnit tests.
+- #392 — live-template editor and richer templates.
+- #393 — Surround With snippet session outlives the caret.
+- #394 — Alt+1 should toggle the Project tool window.
+- #395 — Reformat Selection style with a tool formatter configured.
+- #396 — parse PHPStan/PHPCS configs instead of line-scanning for paths.
+- #397 — analyzer count lags after `composer require`.
+- #398 — typing latency in a 5000-line file.
+- #399 — E2E harness hazards.
+- #400 — remaining manual checks from E4.

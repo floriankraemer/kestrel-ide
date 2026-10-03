@@ -29,6 +29,7 @@ fn contribution(id: &str, args: &[&str], file_args: &[&str], buffer: &str) -> An
         fixer: None,
         config_file_candidates: vec![],
         ruleset_default: None,
+        project_paths_config: vec![],
     }
 }
 

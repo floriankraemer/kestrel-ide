@@ -597,6 +597,25 @@ fn a_ruleset_placeholder_needs_a_default_and_reads_the_config_candidates() {
 }
 
 #[test]
+fn an_analyzer_may_name_the_config_files_that_carry_its_project_paths() {
+    let manifest = PluginManifest::from_toml_str(&with(
+        r#"
+        [[contributes.analyzers]]
+        id = "phpstan"
+        name = "PHPStan"
+        program-candidates = ["phpstan"]
+        output-format = "checkstyle-xml"
+        project-paths-config = ["phpstan.neon", "phpstan.neon.dist"]
+        "#,
+    ))
+    .unwrap();
+    assert_eq!(
+        manifest.contributes.analyzers[0].project_paths_config,
+        vec!["phpstan.neon", "phpstan.neon.dist"]
+    );
+}
+
+#[test]
 fn an_unknown_analyzer_buffer_strategy_is_rejected() {
     let err = PluginManifest::from_toml_str(&with(
         r#"

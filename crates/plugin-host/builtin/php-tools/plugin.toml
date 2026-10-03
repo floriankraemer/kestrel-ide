@@ -36,6 +36,9 @@ name = "PHPStan"
 # candidate with a `.bat` suffix.
 program-candidates = ["vendor/bin/phpstan", "phpstan.phar", "phpstan"]
 args = ["analyse", "--error-format=checkstyle", "--no-progress"]
+# A path on the command line replaces the config's `paths`, and the project
+# root would pull in `vendor/`: with a `paths:` key the run gets no path.
+project-paths-config = ["phpstan.neon", "phpstan.neon.dist", "phpstan.dist.neon"]
 output-format = "checkstyle-xml"
 composer-package = "phpstan/phpstan"
 requires-interpreter = "php"
@@ -71,6 +74,9 @@ languages = ["php"]
 # ruleset matching and reports it under its real path.
 buffer = "stdin"
 file-args = ["--stdin-path={file}", "-"]
+# Same trap as PHPStan's `paths`: a path on the command line replaces the
+# ruleset's `<file>` elements, and the root would pull in `vendor/`.
+project-paths-config = ["phpcs.xml", ".phpcs.xml", "phpcs.xml.dist", ".phpcs.xml.dist"]
 suppress-comment = "// phpcs:ignore {code}"
 # `phpcbf --sniffs=<sniff>` fixes one finding's rule.
 fixer = "phpcbf"

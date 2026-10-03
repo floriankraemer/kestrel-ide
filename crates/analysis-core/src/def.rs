@@ -61,6 +61,7 @@ pub struct AnalyzerDef {
     pub fixer: Option<String>,
     config_file_candidates: Vec<String>,
     ruleset_default: Option<String>,
+    project_paths_config: Vec<String>,
     severities: HashMap<String, Severity>,
 }
 
@@ -88,6 +89,7 @@ impl AnalyzerDef {
             fixer: contribution.fixer.clone(),
             config_file_candidates: contribution.config_file_candidates.clone(),
             ruleset_default: contribution.ruleset_default.clone(),
+            project_paths_config: contribution.project_paths_config.clone(),
             severities,
         }
     }
@@ -153,6 +155,9 @@ impl AnalyzerDef {
     /// like PHPMD's `<path> <format> <ruleset>`) replaced by the root, else
     /// the root appended.
     pub fn project_run_args(&self, root: &Path) -> Vec<String> {
+        if self.config_names_project_paths(root) {
+            return self.args.clone();
+        }
         let root = root.to_string_lossy();
         if self.args.iter().any(|a| a.contains("{file}")) {
             self.args
@@ -164,6 +169,23 @@ impl AnalyzerDef {
             argv.push(root.into_owned());
             argv
         }
+    }
+
+    /// Whether the project's own tool config (the first
+    /// `project-paths-config` file that exists) names paths: a `paths:` key
+    /// (PHPStan's NEON) or a `<file>` element (PHPCS's ruleset).
+    ///
+    /// ponytail: a line scan, not a NEON or XML parser, so paths that only an
+    /// `includes:` file provides are not seen; the run then gets the root, as
+    /// before. Parse the config if that ever matters.
+    fn config_names_project_paths(&self, root: &Path) -> bool {
+        self.project_paths_config
+            .iter()
+            .find_map(|candidate| std::fs::read_to_string(root.join(candidate)).ok())
+            .is_some_and(|text| {
+                text.lines()
+                    .any(|line| line.trim_start().starts_with("paths:") || line.contains("<file>"))
+            })
     }
 
     /// The severity a tool's own word maps to, or [`Severity::Warning`]
@@ -210,6 +232,7 @@ mod tests {
             fixer: None,
             config_file_candidates: vec![],
             ruleset_default: None,
+            project_paths_config: vec![],
         }
     }
 
@@ -296,6 +319,47 @@ mod tests {
             def.project_run_args(Path::new("/p")),
             vec!["/p", "checkstyle", "cleancode"]
         );
+    }
+
+    #[test]
+    fn a_project_run_leaves_the_path_to_a_config_that_names_one() {
+        let mut c = contribution();
+        c.args = vec!["analyse".into(), "--no-progress".into()];
+        c.project_paths_config = vec!["phpstan.neon".into(), "phpstan.neon.dist".into()];
+        let def = AnalyzerDef::from_contribution(&c);
+
+        let bare = tempfile::tempdir().unwrap();
+        let root = bare.path();
+        // No config: the root is the only thing to analyse.
+        assert_eq!(
+            def.project_run_args(root),
+            vec![
+                "analyse".to_string(),
+                "--no-progress".into(),
+                root.to_string_lossy().into_owned()
+            ]
+        );
+
+        // A config without `paths:` still needs the root.
+        std::fs::write(root.join("phpstan.neon"), "parameters:\n\tlevel: 5\n").unwrap();
+        assert_eq!(def.project_run_args(root).len(), 3);
+
+        // The first candidate that exists decides, and `paths:` removes the root.
+        std::fs::write(
+            root.join("phpstan.neon"),
+            "parameters:\n\tlevel: 5\n\tpaths:\n\t\t- app\n",
+        )
+        .unwrap();
+        assert_eq!(def.project_run_args(root), vec!["analyse", "--no-progress"]);
+
+        // A PHPCS ruleset names its paths with `<file>` elements.
+        std::fs::remove_file(root.join("phpstan.neon")).unwrap();
+        std::fs::write(
+            root.join("phpstan.neon.dist"),
+            "<ruleset><file>src</file></ruleset>",
+        )
+        .unwrap();
+        assert_eq!(def.project_run_args(root), vec!["analyse", "--no-progress"]);
     }
 
     #[test]

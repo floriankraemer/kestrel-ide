@@ -275,6 +275,13 @@ pub struct AnalyzerContribution {
     /// `args`/`file-args` use the placeholder.
     #[serde(default, rename = "ruleset-default")]
     pub ruleset_default: Option<String>,
+    /// Project-relative config files, in order, that name what a project run
+    /// analyses (PHPStan's `phpstan.neon`, PHPCS's `phpcs.xml`). When the
+    /// first that exists at the project root names paths, the project run is
+    /// started without a path argument: a path on the command line replaces
+    /// the config's paths, and the project root would pull in `vendor/`.
+    #[serde(default, rename = "project-paths-config")]
+    pub project_paths_config: Vec<String>,
 }
 
 /// Interpreters a contribution may name in `requires-interpreter`.

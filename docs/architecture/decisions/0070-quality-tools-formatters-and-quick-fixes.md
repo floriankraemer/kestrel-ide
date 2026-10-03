@@ -23,6 +23,7 @@ Psalm and PHPMD are `analyzers` rows of the `php-tools` plugin.
 PHPMD's argv is positional (`<path> <format> <ruleset>`), so an analyzer's `args` may now place the target with `{file}`; for a project run the placeholder is the project root, and without it the root is still appended.
 PHPMD's ruleset is the `{ruleset}` placeholder: the project's `phpmd.xml` or `phpmd.xml.dist` (an analyzer's `config-file-candidates`) when one exists at the project root, else the built-in rule sets (`ruleset-default`).
 It excludes `vendor` and `node_modules`.
+PHPStan's and PHPCS's project runs are started without a path when the first of their `project-paths-config` files (`phpstan.neon`, `phpcs.xml` and their `.dist` forms) that exists names paths (a `paths:` key, a `<file>` element), because a path on the command line replaces the config's `paths` and the project root would pull in `vendor/` (found running Inspect Project on a Laravel project).
 
 **A `formatters` contribution point (`api_version` stays 1).**
 Fields: `id`, `name`, `languages`, `program-candidates`, `args`, `buffer`, `success-exit-codes`, `config-file-candidates`, `composer-package`, `requires-interpreter`, `fix-args`.

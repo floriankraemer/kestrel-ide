@@ -178,6 +178,7 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
                                       .arg(retryMs / 1000.0, 0, 'f', 1);
                     break;
                 case FfiServerState::Failed:
+                case FfiServerState::NotFound:
                     serverStatus_ = tr("%1 is not running: %2").arg(name, detail);
                     break;
                 case FfiServerState::Unavailable:

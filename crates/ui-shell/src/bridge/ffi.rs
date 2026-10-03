@@ -1860,6 +1860,9 @@ mod ffi {
         Ready,
         Exited,
         Failed,
+        /// The command does not exist (locally, in the WSL distro or in the
+        /// container); `detail` carries the hint (`lsp_core::StartFailure`).
+        NotFound,
         /// Never launched: the platform rules it out (`lsp_core::launch_plan`).
         /// `detail` carries the reason.
         Unavailable,

@@ -612,13 +612,35 @@ pub fn install_hint(server_id: &str) -> Option<&'static str> {
     }
 }
 
-/// The text shown when `server_id` failed to start with `error`: the
-/// error, plus the install hint when the program could not be spawned (a
-/// timeout or a protocol failure is not a missing install).
-pub fn start_failure_text(server_id: &str, error: &crate::manager::LspError) -> String {
-    match (error, install_hint(server_id)) {
-        (crate::manager::LspError::Spawn { .. }, Some(hint)) => format!("{error}. {hint}"),
-        _ => error.to_string(),
+/// Shown for a missing command that has no server-specific install hint.
+const GENERIC_NOT_FOUND_HINT: &str = "Enter an absolute path, or install it and reopen this page.";
+
+/// Why a server that was asked to start is not running.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StartFailure {
+    /// The command does not exist, on the local host or inside a WSL
+    /// distro or container: a typo or a missing install, not a crash.
+    /// `hint` says what to do about it.
+    NotFound { hint: String },
+    /// The command exists but the start failed (timeout, protocol error,
+    /// died during the handshake).
+    Failed { message: String },
+}
+
+/// Classify the failure of starting `server_id` with `error`. Every host
+/// reports a missing program as a spawn error of kind `NotFound`, so the
+/// view never has to read the message to tell the two apart.
+pub fn classify_start_failure(server_id: &str, error: &crate::manager::LspError) -> StartFailure {
+    match error {
+        crate::manager::LspError::Spawn { source, .. }
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            let hint = install_hint(server_id).unwrap_or(GENERIC_NOT_FOUND_HINT);
+            StartFailure::NotFound { hint: hint.into() }
+        }
+        _ => StartFailure::Failed {
+            message: error.to_string(),
+        },
     }
 }
 
@@ -1242,27 +1264,52 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_php_server_says_how_to_install_it() {
+    fn a_missing_command_is_not_found_with_the_servers_install_hint() {
         use crate::manager::LspError;
         let missing = LspError::Spawn {
             command: "intelephense".into(),
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "not found"),
         };
-        let text = start_failure_text("intelephense", &missing);
-        assert!(text.contains("npm i -g intelephense"), "{text}");
-        assert!(start_failure_text("phpactor", &missing).contains("composer global require"));
-        // Only a spawn failure is a missing install; others and unknown
-        // servers get the plain error.
+        let StartFailure::NotFound { hint } = classify_start_failure("intelephense", &missing)
+        else {
+            panic!("expected NotFound");
+        };
+        assert!(hint.contains("npm i -g intelephense"), "{hint}");
+        let StartFailure::NotFound { hint } = classify_start_failure("phpactor", &missing) else {
+            panic!("expected NotFound");
+        };
+        assert!(hint.contains("composer global require"));
+        // No known install command: the generic advice.
         assert_eq!(
-            start_failure_text(
-                "intelephense",
-                &LspError::Timeout {
-                    method: "initialize".into()
-                }
-            ),
-            "initialize timed out"
+            classify_start_failure("gopls", &missing),
+            StartFailure::NotFound {
+                hint: GENERIC_NOT_FOUND_HINT.into()
+            }
         );
-        assert_eq!(start_failure_text("gopls", &missing), missing.to_string());
+    }
+
+    #[test]
+    fn a_spawn_failure_other_than_not_found_is_a_plain_failure() {
+        use crate::manager::LspError;
+        let denied = LspError::Spawn {
+            command: "gopls".into(),
+            source: std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+        };
+        assert_eq!(
+            classify_start_failure("gopls", &denied),
+            StartFailure::Failed {
+                message: denied.to_string()
+            }
+        );
+        let timeout = LspError::Timeout {
+            method: "initialize".into(),
+        };
+        assert_eq!(
+            classify_start_failure("intelephense", &timeout),
+            StartFailure::Failed {
+                message: "initialize timed out".into()
+            }
+        );
     }
 
     #[test]

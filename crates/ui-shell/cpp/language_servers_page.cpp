@@ -65,12 +65,10 @@ QString liveStatusText(const LiveState &live)
         return QObject::tr("Crashed, retrying");
     case FfiServerState::Unavailable:
         return QObject::tr("Unavailable");
+    case FfiServerState::NotFound:
+        return QObject::tr("Command not found");
     case FfiServerState::Failed:
-        // The one distinction worth drawing: a command that was never there
-        // is a typo to fix, a command that died is a program to investigate.
-        return live.detail.contains(QObject::tr("No such file"), Qt::CaseInsensitive)
-                 ? QObject::tr("Command not found")
-                 : QObject::tr("Stopped");
+        return QObject::tr("Stopped");
     }
     return QString();
 }
@@ -87,6 +85,7 @@ QColor liveStatusColor(const LiveState &live)
     case FfiServerState::Unavailable:
         return colors.warning;
     case FfiServerState::Failed:
+    case FfiServerState::NotFound:
         return colors.error;
     }
     return QColor();
@@ -102,12 +101,9 @@ QString detailLines(const LiveState &live)
                            "the log.")
           .arg(name)
           .arg((live.retryMs + 999) / 1000);
+    case FfiServerState::NotFound:
+        return QObject::tr("%1: command not found.\n%2").arg(name, live.detail);
     case FfiServerState::Failed:
-        if (live.detail.contains(QObject::tr("No such file"), Qt::CaseInsensitive)) {
-            return QObject::tr("%1: no such file or directory.\nEnter an absolute path, or "
-                               "install it and reopen this page.")
-              .arg(name);
-        }
         return QObject::tr("%1 stopped: %2\nFix the command, then press Restart Server.")
           .arg(name, live.detail.isEmpty() ? QObject::tr("no further detail.") : live.detail);
     case FfiServerState::Unavailable:

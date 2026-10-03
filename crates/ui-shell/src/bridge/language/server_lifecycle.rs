@@ -234,7 +234,7 @@ impl ffi::LanguageService {
                     failures.push((
                         config.id.clone(),
                         config.name.clone(),
-                        lsp_core::start_failure_text(&config.id, &err),
+                        lsp_core::classify_start_failure(&config.id, &err),
                     ));
                 }
             }
@@ -246,12 +246,20 @@ impl ffi::LanguageService {
                 if all_failed {
                     service.started.borrow_mut().remove(&language_id);
                 }
-                for (id, name, message) in failures {
+                for (id, name, failure) in failures {
+                    let (state, detail) = match &failure {
+                        lsp_core::StartFailure::NotFound { hint } => {
+                            (ffi::FfiServerState::NotFound, hint)
+                        }
+                        lsp_core::StartFailure::Failed { message } => {
+                            (ffi::FfiServerState::Failed, message)
+                        }
+                    };
                     service.as_mut().server_state_changed(
                         QString::from(id.as_str()),
                         QString::from(name.as_str()),
-                        ffi::FfiServerState::Failed,
-                        QString::from(message.as_str()),
+                        state,
+                        QString::from(detail.as_str()),
                         0,
                     );
                 }

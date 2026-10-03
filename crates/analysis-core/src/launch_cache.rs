@@ -8,7 +8,7 @@
 //! cannot reach the host at all (a stopped container).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::scheduler::RunFailure;
@@ -21,6 +21,8 @@ type Stamp = Option<(SystemTime, u64)>;
 #[derive(Debug)]
 pub struct LaunchCache<L> {
     entries: HashMap<String, Option<L>>,
+    /// The project the entries belong to, and its Composer files' stamps.
+    root: PathBuf,
     stamps: Vec<Stamp>,
 }
 
@@ -28,6 +30,7 @@ impl<L> Default for LaunchCache<L> {
     fn default() -> Self {
         Self {
             entries: HashMap::new(),
+            root: PathBuf::new(),
             stamps: Vec::new(),
         }
     }
@@ -36,7 +39,8 @@ impl<L> Default for LaunchCache<L> {
 impl<L: Clone> LaunchCache<L> {
     /// The cached launch for `analyzer_id` under `variant` (interpreter and
     /// host), resolving with `resolve` on a miss. Drops everything first
-    /// when the project's Composer files changed since the last call.
+    /// when another project is asked about, or this one's Composer files
+    /// changed since the last call.
     pub fn get_or_resolve(
         &mut self,
         root: &Path,
@@ -45,9 +49,10 @@ impl<L: Clone> LaunchCache<L> {
         resolve: impl FnOnce() -> Option<L>,
     ) -> Option<L> {
         let stamps = WATCHED.iter().map(|name| stamp(&root.join(name))).collect();
-        if stamps != self.stamps {
+        if stamps != self.stamps || root != self.root {
             self.entries.clear();
             self.stamps = stamps;
+            self.root = root.to_path_buf();
         }
         self.entries
             .entry(key(analyzer_id, variant))
@@ -161,6 +166,19 @@ mod tests {
             lookup(&mut cache, dir.path(), "phpcs", Some("b"), &calls);
             assert_eq!(calls.get(), 3, "{failure:?}: only phpstan resolved again");
         }
+    }
+
+    #[test]
+    fn another_project_starts_from_nothing() {
+        let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+        let (mut cache, calls) = (LaunchCache::default(), Cell::new(0));
+        lookup(&mut cache, a.path(), "phpstan", Some("a"), &calls);
+        assert_eq!(lookup(&mut cache, b.path(), "phpstan", None, &calls), None);
+        assert_eq!(
+            calls.get(),
+            2,
+            "no Composer files in either, still asked again"
+        );
     }
 
     #[test]

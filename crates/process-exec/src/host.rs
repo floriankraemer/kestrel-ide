@@ -652,6 +652,62 @@ fn resolve_in_container(
     Ok(resolved)
 }
 
+/// The first of `candidates` that [`resolve_program`] would find on `host`,
+/// in order. A container answers the whole list in one probe: with a
+/// `compose run` target each probe starts a container (about a second
+/// each), so three candidates per analyzer would mean three containers.
+/// A hit is memoised per list, a miss is not (the container may be down).
+pub fn resolve_first(host: &ExecHost, candidates: &[String], cwd: &Path) -> Option<String> {
+    let ExecHost::Container(container) = host else {
+        return candidates
+            .iter()
+            .find_map(|candidate| resolve_program(host, candidate, cwd));
+    };
+    let key = (
+        format!(
+            "container-first:{} {:?} {:?}",
+            container.program, container.prefix_args, container.target
+        ),
+        candidates.join("\0"),
+    );
+    if let Some(Some(hit)) = resolve_cache().lock().unwrap().get(&key) {
+        return Some(hit.clone());
+    }
+    // A path candidate is tested by its remote path, a bare name looked up
+    // on the container's PATH; a remote path always has a `/`, a bare name
+    // never does, so the script tells them apart the same way.
+    let remote: Vec<String> = candidates
+        .iter()
+        .map(|candidate| {
+            if candidate.contains('/') || candidate.contains('\\') {
+                host.to_remote(&cwd.join(candidate))
+            } else {
+                candidate.clone()
+            }
+        })
+        .collect();
+    let script = r#"for c in "$@"; do case "$c" in */*) [ -f "$c" ] && [ -x "$c" ] && { echo "$c"; exit 0; } ;; *) command -v "$c" && exit 0 ;; esac; done; exit 0"#;
+    let mut argv = vec!["-c", script, "sh"];
+    argv.extend(remote.iter().map(String::as_str));
+    let mut command = host.command("sh", &argv, cwd, &[]);
+    suppress_console_window(&mut command);
+    let output = crate::retry_text_busy(|| command.output()).ok()?;
+    let resolved = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if !output.status.success() || resolved.is_empty() {
+        return None;
+    }
+    resolve_cache()
+        .lock()
+        .unwrap()
+        .insert(key, Some(resolved.clone()));
+    Some(resolved)
+}
+
 fn probe_executable(distro: &str, remote_path: &str) -> bool {
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "-e", "test", "-x", remote_path]);
@@ -1324,6 +1380,64 @@ mod tests {
                 .as_deref()
                 .is_some_and(|r| r.ends_with("sh /workspace/vendor/bin/phpstan")),
             "{resolved:?}"
+        );
+    }
+
+    /// An "engine" that drops `exec -i -w <cwd> web` and runs the rest
+    /// locally, counting its starts; the project maps onto itself.
+    fn counting_container(root: &Path, count: &Path) -> ExecHost {
+        let script = format!("echo x >> {}; shift 5; exec \"$@\"", count.display());
+        ExecHost::Container(ContainerHost {
+            program: "sh".into(),
+            prefix_args: vec!["-c".into(), script, "sh".into()],
+            engine_env: vec![],
+            via_wsl: false,
+            verb_args: vec!["exec".into(), "-i".into()],
+            target: vec!["web".into()],
+            path_map: PathMap::new(root, &root.to_string_lossy()),
+        })
+    }
+
+    #[test]
+    fn a_container_resolves_the_whole_candidate_list_in_one_probe() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = dir.path().join("starts");
+        let host = counting_container(dir.path(), &count);
+        let candidates: Vec<String> = ["vendor/bin/nope", "nope-x.phar", "sh"]
+            .map(String::from)
+            .to_vec();
+        let found = resolve_first(&host, &candidates, dir.path());
+        assert!(
+            found.as_deref().is_some_and(|p| p.ends_with("/sh")),
+            "{found:?}"
+        );
+        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
+        // Memoised: a second lookup starts nothing.
+        assert_eq!(resolve_first(&host, &candidates, dir.path()), found);
+        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
+    }
+
+    #[test]
+    fn a_container_list_with_no_hit_is_none_and_is_asked_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = dir.path().join("starts");
+        let host = counting_container(dir.path(), &count);
+        let candidates = vec!["vendor/bin/nope".to_string(), "nope-y".to_string()];
+        assert_eq!(resolve_first(&host, &candidates, dir.path()), None);
+        assert_eq!(resolve_first(&host, &candidates, dir.path()), None);
+        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 2);
+    }
+
+    #[test]
+    fn a_path_candidate_wins_over_a_later_bare_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = dir.path().join("starts");
+        let host = counting_container(dir.path(), &count);
+        // `/bin/sh` is a path candidate outside the project: kept as is.
+        let candidates = vec!["/bin/sh".to_string(), "sh".to_string()];
+        assert_eq!(
+            resolve_first(&host, &candidates, dir.path()).as_deref(),
+            Some("/bin/sh")
         );
     }
 

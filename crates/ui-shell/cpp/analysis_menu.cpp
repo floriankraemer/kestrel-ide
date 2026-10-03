@@ -49,6 +49,12 @@ void buildAnalysisMenu(QMainWindow *window, AnalysisService *analysisService,
     // "already running" instead), but greying the action out is the
     // difference between that being a rule the user reads about and one
     // the menu shows them.
+    // The batch's program lookups run off the Qt thread, so "nothing to
+    // run" arrives after the click, not as its return value.
+    QObject::connect(analysisService, &AnalysisService::inspectRefused, window,
+                      [window](const QString &message) {
+                          QMessageBox::warning(window, QObject::tr("Inspect Project"), message);
+                      });
     QObject::connect(analysisService, &AnalysisService::analysisStarted, inspectAction,
                       [inspectAction]() { inspectAction->setEnabled(false); });
     QObject::connect(analysisService, &AnalysisService::analysisFinished, inspectAction,

@@ -32,8 +32,8 @@ pub use checkstyle::{
 };
 pub use def::{AnalyzerDef, Trigger};
 pub use detect::{
-    composer_require_dev, find_config_file, find_program, find_program_on, status, status_on,
-    AnalyzerStatus,
+    composer_require_dev, find_config_file, find_program, find_program_on, status, status_from,
+    status_on, AnalyzerStatus,
 };
 pub use format::{format, FormatError, FormatterDef};
 pub use launch_cache::LaunchCache;

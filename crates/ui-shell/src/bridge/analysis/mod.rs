@@ -23,10 +23,11 @@
 //! cross the seam as `FfiResult`'s typed code + message (ADR-0003) — never
 //! a bare `QString` sentinel.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cxx_qt::Threading;
@@ -51,6 +52,79 @@ const FILE_RUN_TIMEOUT: Duration = Duration::from_secs(60);
 /// configured interpreter.
 type Launch = (PathBuf, Vec<String>);
 
+/// Each analyzer's program as found on its host, a miss included.
+///
+/// Locked only on worker threads, never on the Qt thread: a lookup holds
+/// the lock while it probes (a `compose run` container per probe can take
+/// a second), which is also what keeps two triggers from probing the same
+/// analyzer twice.
+type SharedLaunchCache = Arc<Mutex<analysis_core::LaunchCache<PathBuf>>>;
+
+/// One analyzer of an "Inspect Project" batch, its program already found.
+struct QueuedRun {
+    analyzer: analysis_core::AnalyzerDef,
+    host: process_exec::host::ExecHost,
+    launch: Launch,
+}
+
+/// One per-file run, ready for the scheduler: the program found, the argv
+/// built, and the buffer handed over the way the manifest reads it.
+struct FileRun {
+    analyzer: analysis_core::AnalyzerDef,
+    host: process_exec::host::ExecHost,
+    program: PathBuf,
+    args: Vec<String>,
+    stdin: Option<Vec<u8>>,
+    /// The temp copy a `temp-copy` tool reads, deleted when the run ends.
+    guard: Option<analysis_core::TempCopyGuard>,
+}
+
+impl FileRun {
+    fn prepare(
+        analyzer: analysis_core::AnalyzerDef,
+        host: process_exec::host::ExecHost,
+        program: &Path,
+        interpreter: &str,
+        root: &Path,
+        path: &Path,
+        text: &str,
+    ) -> Option<Self> {
+        let (program, prefix) = analyzer.invocation(program, interpreter);
+        let (target, guard, stdin) = match analyzer.buffer {
+            analysis_core::BufferStrategy::Stdin => {
+                (path.to_path_buf(), None, Some(text.as_bytes().to_vec()))
+            }
+            analysis_core::BufferStrategy::SavedOnly => (path.to_path_buf(), None, None),
+            analysis_core::BufferStrategy::TempCopy => {
+                let guard = analysis_core::write_temp_copy(root, path, text.as_bytes()).ok()?;
+                (guard.path().to_path_buf(), Some(guard), None)
+            }
+        };
+        let args = [prefix, analyzer.file_run_args(&target)].concat();
+        Some(Self {
+            analyzer,
+            host,
+            program,
+            args,
+            stdin,
+            guard,
+        })
+    }
+}
+
+/// `analyzer`'s program on `host`, from `cache` or looked up once.
+fn cached_program(
+    cache: &mut analysis_core::LaunchCache<PathBuf>,
+    root: &Path,
+    analyzer_id: &str,
+    candidates: &[String],
+    host: &process_exec::host::ExecHost,
+) -> Option<PathBuf> {
+    cache.get_or_resolve(root, analyzer_id, &format!("{host:?}"), || {
+        analysis_core::find_program_on(candidates, root, host)
+    })
+}
+
 /// Rust side of the `AnalysisService` QObject.
 #[derive(Default)]
 pub struct AnalysisServiceRust {
@@ -58,15 +132,18 @@ pub struct AnalysisServiceRust {
     /// Analyzers still to run in the current "Inspect Project" batch —
     /// popped one at a time so `Scheduler::run_manual`'s "serialized, never
     /// concurrent" rule holds across analyzers too, not only within one.
-    queue: RefCell<VecDeque<analysis_core::AnalyzerDef>>,
+    queue: RefCell<VecDeque<QueuedRun>>,
+    /// An "Inspect Project" batch is still looking its programs up.
+    resolving: Cell<bool>,
     store: SharedDiagnostics,
-    /// Resolved launch (program plus interpreter argv prefix) per analyzer id
-    /// and interpreter (a miss is cached too): per-file
-    /// runs fire on every debounced edit, and `find_program` spawns
-    /// `wsl.exe` on a WSL root. Invalidation is `LaunchCache`'s rule, plus
-    /// a clear whenever detection is redone (`refresh_analyzer_status_async`,
-    /// `inspect_project`).
-    program_cache: RefCell<analysis_core::LaunchCache<Launch>>,
+    /// Each analyzer's program per host (a miss is cached too): per-file
+    /// runs fire on every debounced edit, and finding a program spawns
+    /// `wsl.exe` on a WSL root or a container in a `run`-mode interpreter.
+    /// Shared by the status pass, the per-file runs and the project runs,
+    /// so a lookup happens once per (analyzer, host) until `LaunchCache`
+    /// invalidates it (Composer files changed, a run reports the program
+    /// gone or the host unreachable, another project).
+    program_cache: SharedLaunchCache,
 }
 
 fn current_project_root() -> Option<PathBuf> {
@@ -113,6 +190,7 @@ fn build_analyzer_rows(
     settings: &app_config::Settings,
     draft: &settings_model::analysis::AnalysisDraft,
     contributions: &[plugin_api::AnalyzerContribution],
+    mut find: impl FnMut(&str, &[String], &process_exec::host::ExecHost) -> Option<PathBuf>,
 ) -> Vec<ffi::FfiAnalyzerRow> {
     draft
         .rows()
@@ -133,7 +211,8 @@ fn build_analyzer_rows(
                 settings,
                 root,
             );
-            let status = analysis_core::status_on(&host, &candidates, root, &packages);
+            let found = find(&row.id, &candidates, &host);
+            let status = analysis_core::status_from(found, root, &packages);
             let status_kind = match status {
                 analysis_core::AnalyzerStatus::Detected { .. } => {
                     ffi::FfiAnalyzerStatusKind::Detected
@@ -174,7 +253,13 @@ impl ffi::AnalysisService {
         let draft = analysis_draft();
         let contributions = contributed_analyzers();
         let settings = crate::bridge::convert::load_resolved_settings();
-        build_analyzer_rows(&root, &settings, &draft, &contributions)
+        build_analyzer_rows(
+            &root,
+            &settings,
+            &draft,
+            &contributions,
+            |_, candidates, host| analysis_core::find_program_on(candidates, &root, host),
+        )
     }
 
     /// `analyzer_rows`'s answer, computed off the Qt thread and delivered
@@ -194,7 +279,7 @@ impl ffi::AnalysisService {
             return;
         };
         let contributions = contributed_analyzers();
-        self.program_cache.borrow_mut().clear();
+        let cache = self.program_cache.clone();
         let qt_thread = self.as_mut().qt_thread();
         std::thread::spawn(move || {
             // The explicit-root, cache-backed reader (ADR-0037's
@@ -203,7 +288,12 @@ impl ffi::AnalysisService {
             // Qt thread.
             let settings = crate::bridge::convert::load_resolved_settings_for(&root);
             let draft = settings_model::analysis::AnalysisDraft::new(&settings, &contributions);
-            let rows = build_analyzer_rows(&root, &settings, &draft, &contributions);
+            let rows = {
+                let mut cache = cache.lock().expect("launch cache");
+                build_analyzer_rows(&root, &settings, &draft, &contributions, |id, c, host| {
+                    cached_program(&mut cache, &root, id, c, host)
+                })
+            };
             let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
                 if current_project_root().as_deref() != Some(root.as_path()) {
                     return;
@@ -217,7 +307,9 @@ impl ffi::AnalysisService {
     /// Project" action's enablement (B9), rather than the view tracking it
     /// from signals alone.
     pub fn is_inspecting(&self) -> bool {
-        !self.queue.borrow().is_empty() || self.scheduler.is_manual_run_in_progress()
+        self.resolving.get()
+            || !self.queue.borrow().is_empty()
+            || self.scheduler.is_manual_run_in_progress()
     }
 
     /// Run every enabled, detected analyzer against the whole open project
@@ -225,45 +317,78 @@ impl ffi::AnalysisService {
     /// analyzer's previous rows in the shared store as each one finishes,
     /// so the Problems dock and the editor's squiggles fill in
     /// analyzer-by-analyzer rather than waiting for the slowest one.
-    pub fn inspect_project(self: Pin<&mut Self>) -> ffi::FfiResult {
+    pub fn inspect_project(mut self: Pin<&mut Self>) -> ffi::FfiResult {
         let Some(root) = current_project_root() else {
             return errors::failure(errors::CODE_NO_PROJECT, "no project is open");
         };
-        if self.scheduler.is_manual_run_in_progress() || !self.queue.borrow().is_empty() {
+        if self.is_inspecting() {
             return errors::failure(
                 errors::CODE_REFUSED,
                 "a project-wide analysis is already running",
             );
         }
 
-        self.program_cache.borrow_mut().clear();
         let draft = analysis_draft();
         let settings = crate::bridge::convert::load_resolved_settings();
-        let defs: VecDeque<analysis_core::AnalyzerDef> = contributed_analyzers()
-            .iter()
-            .filter(|c| draft.row(&c.id).is_some_and(|row| row.enabled))
-            .filter(|c| {
-                let host = crate::bridge::php::tool_host(
-                    c.requires_interpreter.as_deref(),
-                    &settings,
-                    &root,
-                );
-                analysis_core::find_program_on(&c.program_candidates, &root, &host).is_some()
-            })
-            .map(|c| analysis_core::AnalyzerDef::from_contribution(c).with_ruleset_for(&root))
-            .collect();
+        let interpreter = settings_model::php::resolve(&settings).interpreter;
+        let planned: Vec<(analysis_core::AnalyzerDef, process_exec::host::ExecHost)> =
+            contributed_analyzers()
+                .iter()
+                .filter(|c| draft.row(&c.id).is_some_and(|row| row.enabled))
+                .map(|c| {
+                    let host = crate::bridge::php::tool_host(
+                        c.requires_interpreter.as_deref(),
+                        &settings,
+                        &root,
+                    );
+                    let def =
+                        analysis_core::AnalyzerDef::from_contribution(c).with_ruleset_for(&root);
+                    (def, host)
+                })
+                .collect();
 
-        if defs.is_empty() {
-            return errors::failure(
-                errors::CODE_REFUSED,
-                "no enabled, installed analyzer is available for this project",
-            );
-        }
-
-        *self.queue.borrow_mut() = defs;
-        let mut this = self;
-        this.as_mut().analysis_started();
-        this.run_next(root);
+        // Which of them are installed is a program lookup per analyzer —
+        // a container start each in a `run`-mode interpreter — so it runs
+        // off the Qt thread, and the batch starts when it is done.
+        self.resolving.set(true);
+        self.as_mut().analysis_started();
+        let cache = self.program_cache.clone();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let runs: VecDeque<QueuedRun> = {
+                let mut cache = cache.lock().expect("launch cache");
+                planned
+                    .into_iter()
+                    .filter_map(|(analyzer, host)| {
+                        let program = cached_program(
+                            &mut cache,
+                            &root,
+                            &analyzer.id,
+                            &analyzer.program_candidates,
+                            &host,
+                        )?;
+                        let launch = analyzer.invocation(&program, &interpreter);
+                        Some(QueuedRun {
+                            analyzer,
+                            host,
+                            launch,
+                        })
+                    })
+                    .collect()
+            };
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+                service.resolving.set(false);
+                if runs.is_empty() {
+                    service.as_mut().analysis_finished();
+                    service.as_mut().inspect_refused(QString::from(
+                        "no enabled, installed analyzer is available for this project",
+                    ));
+                    return;
+                }
+                *service.queue.borrow_mut() = runs;
+                service.run_next(root);
+            });
+        });
         ffi::FfiResult::default()
     }
 
@@ -282,6 +407,12 @@ impl ffi::AnalysisService {
     /// Which analyzers fire is `settings_model::analysis::file_jobs`'s rule;
     /// this only resolves each one's program, hands it the buffer the way
     /// its manifest says it can read one, and publishes what comes back.
+    ///
+    /// Finding a program can mean a container start, so the lookups (and
+    /// the temp copies) happen on a worker that holds the launch cache for
+    /// the whole trigger and queues the runs back before letting go: two
+    /// triggers never probe the same analyzer twice, and their runs reach
+    /// the scheduler in trigger order.
     fn schedule_file_analysis(
         mut self: Pin<&mut Self>,
         event: FileEvent,
@@ -297,105 +428,104 @@ impl ffi::AnalysisService {
         }
         let language_id = syntax_core::language_for_path(&path).id();
         let contributions = contributed_analyzers();
-        let draft = settings_model::analysis::AnalysisDraft::new(
-            &crate::bridge::convert::load_resolved_settings(),
-            &contributions,
-        );
-        let jobs = settings_model::analysis::file_jobs(event, &language_id, &draft, &contributions);
-        let text = text.to_string();
-        for job in jobs {
-            let Some(contribution) = contributions.iter().find(|c| c.id == job.analyzer_id) else {
-                continue;
-            };
-            let analyzer =
-                analysis_core::AnalyzerDef::from_contribution(contribution).with_ruleset_for(&root);
-            let Some((host, (program, prefix))) = self.resolve_launch(&analyzer, &root) else {
-                continue;
-            };
-            let (target, guard, stdin) = match analyzer.buffer {
-                analysis_core::BufferStrategy::Stdin => {
-                    (path.clone(), None, Some(text.clone().into_bytes()))
-                }
-                analysis_core::BufferStrategy::SavedOnly => (path.clone(), None, None),
-                analysis_core::BufferStrategy::TempCopy => {
-                    match analysis_core::write_temp_copy(&root, &path, text.as_bytes()) {
-                        Ok(guard) => (guard.path().to_path_buf(), Some(guard), None),
-                        Err(_) => continue,
-                    }
-                }
-            };
-            let args = [prefix, analyzer.file_run_args(&target)].concat();
-            let qt_thread = self.as_mut().qt_thread();
-            let file = path.clone();
-            self.scheduler.schedule_file_run(
-                &analyzer.id.clone(),
-                host,
-                program,
-                args,
-                &root,
-                &path,
-                stdin,
-                Duration::ZERO,
-                FILE_RUN_TIMEOUT,
-                move |result| {
-                    drop(guard); // the run is over; delete the temp copy
-                    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
-                        if let Err(failure) = &result {
-                            service
-                                .program_cache
-                                .borrow_mut()
-                                .note_failure(&analyzer.id, failure);
-                        }
-                        publish_file_result(&service, &analyzer, &result, &file);
-                        service.as_mut().diagnostics_changed();
-                    });
-                },
-            );
-        }
-    }
-
-    /// The analyzer's program and the argv prefix that runs it under the
-    /// configured PHP interpreter when its manifest requires one (P0-6).
-    ///
-    /// Also the host it runs on: the PHP interpreter's (a container, when
-    /// the `[php]` settings name one) for an analyzer that requires it, the
-    /// project's own otherwise (ADR-0067).
-    fn resolve_launch(
-        &self,
-        analyzer: &analysis_core::AnalyzerDef,
-        root: &Path,
-    ) -> Option<(process_exec::host::ExecHost, Launch)> {
         let settings = crate::bridge::convert::load_resolved_settings();
         let interpreter = settings_model::php::resolve(&settings).interpreter;
-        let host = crate::bridge::php::tool_host(
-            analyzer.requires_interpreter.as_deref(),
-            &settings,
+        let draft = settings_model::analysis::AnalysisDraft::new(&settings, &contributions);
+        let planned: Vec<(analysis_core::AnalyzerDef, process_exec::host::ExecHost)> =
+            settings_model::analysis::file_jobs(event, &language_id, &draft, &contributions)
+                .into_iter()
+                .filter_map(|job| contributions.iter().find(|c| c.id == job.analyzer_id))
+                .map(|c| {
+                    let host = crate::bridge::php::tool_host(
+                        c.requires_interpreter.as_deref(),
+                        &settings,
+                        &root,
+                    );
+                    let def =
+                        analysis_core::AnalyzerDef::from_contribution(c).with_ruleset_for(&root);
+                    (def, host)
+                })
+                .collect();
+        if planned.is_empty() {
+            return;
+        }
+        let text = text.to_string();
+        let cache = self.program_cache.clone();
+        let qt_thread = self.as_mut().qt_thread();
+        std::thread::spawn(move || {
+            let mut locked = cache.lock().expect("launch cache");
+            let runs: Vec<FileRun> = planned
+                .into_iter()
+                .filter_map(|(analyzer, host)| {
+                    let program = cached_program(
+                        &mut locked,
+                        &root,
+                        &analyzer.id,
+                        &analyzer.program_candidates,
+                        &host,
+                    )?;
+                    FileRun::prepare(analyzer, host, &program, &interpreter, &root, &path, &text)
+                })
+                .collect();
+            let _ = qt_thread.queue(move |mut service: Pin<&mut Self>| {
+                for run in runs {
+                    service.as_mut().start_file_run(run, &root, &path);
+                }
+            });
+            drop(locked);
+        });
+    }
+
+    /// Hand one prepared per-file run to the scheduler.
+    fn start_file_run(mut self: Pin<&mut Self>, run: FileRun, root: &Path, path: &Path) {
+        let FileRun {
+            analyzer,
+            host,
+            program,
+            args,
+            stdin,
+            guard,
+        } = run;
+        let qt_thread = self.as_mut().qt_thread();
+        let cache = self.program_cache.clone();
+        let file = path.to_path_buf();
+        self.scheduler.schedule_file_run(
+            &analyzer.id.clone(),
+            host,
+            program,
+            args,
             root,
-        );
-        let launch = self.program_cache.borrow_mut().get_or_resolve(
-            root,
-            &analyzer.id,
-            &format!("{interpreter}\0{host:?}"),
-            || {
-                analysis_core::find_program_on(&analyzer.program_candidates, root, &host)
-                    .map(|program| analyzer.invocation(&program, &interpreter))
+            path,
+            stdin,
+            Duration::ZERO,
+            FILE_RUN_TIMEOUT,
+            move |result| {
+                drop(guard); // the run is over; delete the temp copy
+                if let Err(failure) = &result {
+                    cache
+                        .lock()
+                        .expect("launch cache")
+                        .note_failure(&analyzer.id, failure);
+                }
+                let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
+                    publish_file_result(&service, &analyzer, &result, &file);
+                    service.as_mut().diagnostics_changed();
+                });
             },
-        )?;
-        Some((host, launch))
+        );
     }
 
     /// Pop and run the next queued analyzer, or announce the batch is
     /// finished when the queue is empty.
     fn run_next(mut self: Pin<&mut Self>, root: PathBuf) {
-        let Some(analyzer) = self.queue.borrow_mut().pop_front() else {
+        let Some(QueuedRun {
+            analyzer,
+            host,
+            launch: (program, prefix),
+        }) = self.queue.borrow_mut().pop_front()
+        else {
             self.as_mut().analysis_finished();
             return;
-        };
-        let Some((host, (program, prefix))) = self.resolve_launch(&analyzer, &root) else {
-            // Detected when the batch was built, gone by the time its turn
-            // came (uninstalled mid-run) — skip it rather than fail the
-            // whole batch over one analyzer.
-            return self.run_next(root);
         };
         let args = [prefix, analyzer.project_run_args(&root)].concat();
 
@@ -405,6 +535,7 @@ impl ffi::AnalysisService {
         let root_for_next = root.clone();
         let root_for_publish = root.clone();
         let host_for_publish = host.clone();
+        let cache = self.program_cache.clone();
         let started = self.scheduler.run_manual(
             host,
             program,
@@ -412,13 +543,13 @@ impl ffi::AnalysisService {
             &root,
             MANUAL_RUN_TIMEOUT,
             move |result| {
+                if let Err(failure) = &result {
+                    cache
+                        .lock()
+                        .expect("launch cache")
+                        .note_failure(&analyzer.id, failure);
+                }
                 let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::AnalysisService>| {
-                    if let Err(failure) = &result {
-                        service
-                            .program_cache
-                            .borrow_mut()
-                            .note_failure(&analyzer.id, failure);
-                    }
                     publish_result(
                         &service,
                         &analyzer,

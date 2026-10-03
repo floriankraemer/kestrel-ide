@@ -89,20 +89,17 @@ pub fn find_program_on(
     project_root: &Path,
     host: &process_exec::host::ExecHost,
 ) -> Option<PathBuf> {
-    candidates
-        .iter()
-        .find_map(|candidate| resolve_one(candidate, project_root, host))
-}
-
-fn resolve_one(
-    candidate: &str,
-    project_root: &Path,
-    host: &process_exec::host::ExecHost,
-) -> Option<PathBuf> {
     if host.runs_remotely() {
-        return process_exec::host::resolve_program(host, candidate, project_root)
+        // One probe for the whole list in a container (`resolve_first`).
+        return process_exec::host::resolve_first(host, candidates, project_root)
             .map(|remote_path| host.to_local(&remote_path));
     }
+    candidates
+        .iter()
+        .find_map(|candidate| resolve_local(candidate, project_root))
+}
+
+fn resolve_local(candidate: &str, project_root: &Path) -> Option<PathBuf> {
     if candidate.contains('/') || candidate.contains('\\') {
         let path = project_root.join(candidate);
         // On Windows a Composer shim is `vendor/bin/phpstan.bat`, not the
@@ -182,7 +179,22 @@ pub fn status_on(
     project_root: &Path,
     composer_packages: &[&str],
 ) -> AnalyzerStatus {
-    if let Some(program) = find_program_on(program_candidates, project_root, host) {
+    status_from(
+        find_program_on(program_candidates, project_root, host),
+        project_root,
+        composer_packages,
+    )
+}
+
+/// [`status_on`] for a program already looked up (a cached
+/// [`find_program_on`] answer), so the status pass and the runs share one
+/// lookup.
+pub fn status_from(
+    found: Option<PathBuf>,
+    project_root: &Path,
+    composer_packages: &[&str],
+) -> AnalyzerStatus {
+    if let Some(program) = found {
         return AnalyzerStatus::Detected { program };
     }
     if let Some(declared) = composer_require_dev(project_root) {

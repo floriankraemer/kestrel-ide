@@ -6296,6 +6296,12 @@ mod ffi {
         #[cxx_name = "analysisFinished"]
         fn analysis_finished(self: Pin<&mut AnalysisService>);
 
+        /// "Inspect Project" found no enabled, installed analyzer once its
+        /// off-thread lookups were done; `message` says so.
+        #[qsignal]
+        #[cxx_name = "inspectRefused"]
+        fn inspect_refused(self: Pin<&mut AnalysisService>, message: QString);
+
         /// This analyzer's rows in the shared store (ADR-0046) changed —
         /// the same "my part of the store changed" meaning `LanguageService`
         /// and `BuildService` already give their own `diagnosticsChanged`.

@@ -34,6 +34,7 @@ pub mod icons;
 /// Rasterising an SVG image tab's file, reusing `icon-theme`'s pipeline.
 pub mod image_render;
 mod live_text; // Rope catch-up with the widget before a reader looks (#361).
+pub mod pending_save; // Format-on-save off the Qt thread (ADR-0070).
 /// Where plugins and the Markdown/Mermaid renderer are joined (ADR-0033).
 pub mod preview;
 mod project_open; // Swap-in half of an off-thread project open/rebuild (ADR-0037).
@@ -312,10 +313,9 @@ pub struct AppSession {
     /// `check_external_change` (the filesystem watcher would otherwise also
     /// see these as "external" changes).
     suppressed_changes: HashMap<PathBuf, Instant>,
-    /// A digest of what this session last wrote to each path. A watcher
-    /// event is handled on the Qt thread, which may be busy for longer than
-    /// the window above; a file that still holds exactly what we wrote is
-    /// our own write whenever its event arrives.
+    /// A digest of what this session last wrote to each path: a file that
+    /// still holds exactly that is our own write however late its watcher
+    /// event is handled (the Qt thread may be busy past the window above).
     own_writes: HashMap<PathBuf, u64>,
     config_dir: PathBuf,
     /// Last-reported (line, column) per tab, forwarded from the view's own

@@ -12,8 +12,8 @@ use std::time::Duration;
 /// A Reformat Code run that has not finished within this is abandoned.
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Format-on-save blocks the Qt thread (the save has to wait for the text),
-/// so it gets a much shorter leash.
+/// Format-on-save runs on a worker while the file waits to be written, so
+/// it gets a much shorter leash than a Reformat Code the user asked for.
 pub(crate) const FORMAT_ON_SAVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Everything needed to run the configured formatter on a worker thread.

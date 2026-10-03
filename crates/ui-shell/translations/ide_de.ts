@@ -598,6 +598,18 @@
 <context>
     <name>EditorTabs</name>
     <message>
+        <source>Formatting before saving...</source>
+        <translation>Vor dem Speichern wird formatiert...</translation>
+    </message>
+    <message>
+        <source>Saved without formatting: the file changed while it was being formatted</source>
+        <translation>Ohne Formatierung gespeichert: Die Datei wurde während der Formatierung geändert</translation>
+    </message>
+    <message>
+        <source>Saved without formatting</source>
+        <translation>Ohne Formatierung gespeichert</translation>
+    </message>
+    <message>
         <source>Saved without formatting: %1 failed: %2</source>
         <translation>Ohne Formatierung gespeichert: %1 ist fehlgeschlagen: %2</translation>
     </message>

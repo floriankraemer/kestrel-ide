@@ -45,13 +45,54 @@ void EditorTabs::saveCurrentTab()
         if (page && (page == focused || page->isAncestorOf(focused))) {
             auto *editor = qobject_cast<CodeEditor *>(page->diffView()->rightPane());
             if (editor) {
-                saveEditor(it.key(), editor, editor);
+                beginSave(it.key(), editor, editor);
             }
             return;
         }
     }
-    if (activeGroup_) {
-        saveTab(activeGroup_, activeGroup_->currentIndex());
+    if (!activeGroup_) {
+        return;
+    }
+    const int index = activeGroup_->currentIndex();
+    auto *editor = qobject_cast<QPlainTextEdit *>(activeGroup_->widget(index));
+    if (editor) {
+        beginSave(tabIdAt(activeGroup_, index), qobject_cast<CodeEditor *>(editor), editor);
+    }
+}
+
+void EditorTabs::beginSave(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdit *editor)
+{
+    if (!codeEditor || editor->isReadOnly()) {
+        saveEditor(tabId, codeEditor, editor);
+        return;
+    }
+    // A formatter can take seconds (a container `run`), so it runs on a
+    // worker and the file is written when `saveFormatted` comes back.
+    const FfiSaveEdits start = editorOps_->beginSave(
+      tabId, static_cast<qint64>(editor->document()->revision()), editor->toPlainText());
+    if (start.pending) {
+        showStatusNotice(tr("Formatting before saving..."));
+        return;
+    }
+    writeSave(tabId, codeEditor, editor, start);
+}
+
+void EditorTabs::onSaveFormatted(quint64 tabId)
+{
+    QPlainTextEdit *editor = nullptr;
+    if (DiffViewPage *page = diffPages_.value(tabId)) {
+        editor = qobject_cast<QPlainTextEdit *>(page->diffView()->rightPane());
+    }
+    if (!editor) {
+        editor = editorForTab(tabId);
+    }
+    if (!editor) {
+        return;
+    }
+    const FfiSaveEdits done = editorOps_->finishSave(
+      tabId, static_cast<qint64>(editor->document()->revision()), editor->toPlainText());
+    if (!done.pending) {
+        writeSave(tabId, qobject_cast<CodeEditor *>(editor), editor, done);
     }
 }
 
@@ -120,20 +161,39 @@ bool EditorTabs::saveEditor(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdi
     if (editor->isReadOnly()) {
         return true;
     }
-    // F1-11: trim, final newline and line-ending normalisation, applied
-    // *before* the file is read for writing — one undo entry apart from the
-    // user's last edit, the caret where the splice's own cursor adjustment
-    // puts it rather than column 0. Real editors only (a hex tab has no
+    // A save that cannot wait (closing, quitting, Save All): the tidy rules
+    // only, never the formatter. Real editors only (a hex tab has no
     // language and nothing to tidy).
+    FfiSaveEdits tidy{};
     if (codeEditor) {
-        const FfiSaveEdits tidy = editorOps_->saveRuleEdits(tabId, editor->toPlainText());
-        if (!tidy.edits.empty()) {
-            applyEditsTo(editor, tidy.edits);
-        }
-        if (!tidy.failed_tool.isEmpty()) { // a formatter failed: saved anyway, user told
-            showStatusNotice(tr("Saved without formatting: %1 failed: %2")
-                               .arg(QString(tidy.failed_tool), QString(tidy.failure)));
-        }
+        tidy = editorOps_->saveRuleEdits(tabId, editor->toPlainText());
+    }
+    return writeSave(tabId, codeEditor, editor, tidy);
+}
+
+bool EditorTabs::writeSave(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdit *editor,
+                           const FfiSaveEdits &tidy)
+{
+    // F1-11: the formatter's text, trim, final newline and line-ending
+    // normalisation, applied *before* the file is read for writing — one
+    // undo entry apart from the user's last edit, the caret where the
+    // splice's own cursor adjustment puts it rather than column 0.
+    if (!tidy.edits.empty()) {
+        applyEditsTo(editor, tidy.edits);
+    }
+    switch (tidy.skipped) {
+    case FfiFormatSkipped::Failed:
+        showStatusNotice(tr("Saved without formatting: %1 failed: %2")
+                           .arg(QString(tidy.failed_tool), QString(tidy.failure)));
+        break;
+    case FfiFormatSkipped::BufferChanged:
+        showStatusNotice(tr("Saved without formatting: the file changed while it was being formatted"));
+        break;
+    case FfiFormatSkipped::NotWaited:
+        showStatusNotice(tr("Saved without formatting"));
+        break;
+    case FfiFormatSkipped::None:
+        break;
     }
     const auto result = docManager_->saveTab(tabId, editor->toPlainText());
     if (result.code != 0) {

@@ -145,6 +145,7 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
     // the same way any other file opens — no virtual-document tab needed.
     if (databaseService != nullptr) connect(databaseService, &DatabaseService::consoleFileReady, this, [this](const QString &path, const QString &) { openFile(path); });
     connect(docManager_, &DocumentManager::tabClosed, this, &EditorTabs::onTabClosed);
+    connect(editorOps_, &EditorOps::saveFormatted, this, &EditorTabs::onSaveFormatted);
     connect(docManager_, &DocumentManager::tabModifiedChanged, this, &EditorTabs::onTabModifiedChanged);
     // Direct: a reader (MCP read_buffer) waits for the answer, which is a syncTabText call.
     connect(docManager_, &DocumentManager::liveTextRequested, this, &EditorTabs::onLiveTextRequested, Qt::DirectConnection);

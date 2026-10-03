@@ -778,12 +778,27 @@ mod ffi {
         more: bool,
     }
 
+    /// Why a save went ahead without the formatter's text.
+    #[derive(Debug)]
+    enum FfiFormatSkipped {
+        /// Formatted, or no formatter was asked.
+        None,
+        /// The formatter failed or timed out: `failed_tool`, `failure`.
+        Failed,
+        /// The buffer changed while the formatter ran.
+        BufferChanged,
+        /// A save that does not wait for a formatter (closing, quitting).
+        NotWaited,
+    }
+
     /// What a save changes before it writes the file, and what the user
-    /// must be told: `failed_tool` is non-empty when a formatter failed and
-    /// the file is saved unformatted; `failure` is the tool's own message.
-    /// The view words the notice (ADR-0049).
+    /// must be told. `pending` means there is nothing to write yet: the
+    /// formatter runs on a worker and `saveFormatted` follows. The view
+    /// words the notice from `skipped` (ADR-0049).
     struct FfiSaveEdits {
+        pending: bool,
         edits: Vec<FfiTextEdit>,
+        skipped: FfiFormatSkipped,
         failed_tool: QString,
         failure: QString,
     }
@@ -2966,6 +2981,7 @@ mod ffi {
     // thread's one cross-thread hop (M3), same `CxxQtThread::queue()`
     // pattern `ProjectTreeModel`'s watcher relay above already established.
     impl cxx_qt::Threading for DocumentManager {}
+    impl cxx_qt::Threading for EditorOps {}
 
     extern "RustQt" {
         /// Icons for a path (ADR-0027), for any view that has one — the
@@ -5056,15 +5072,45 @@ mod ffi {
             text: &QString,
         ) -> Vec<FfiCompletionItem>;
 
-        /// The edits a save would make before it writes the file (F1-11):
-        /// the language's formatter when format-on-save is on (ADR-0070),
-        /// then trim, final newline, line-ending normalisation. Splice these
-        /// into the buffer first so the tidying is one undo entry, then
-        /// read the (now tidied) text to hand to `saveTab`. A formatter that
-        /// failed does not stop the save; its failure is the `notice`.
+        /// The edits a save that does not wait makes before it writes the
+        /// file (F1-11): trim, final newline, line-ending normalisation —
+        /// never the formatter, which can take seconds (closing, quitting,
+        /// Save All). Splice these into the buffer first so the tidying is
+        /// one undo entry, then read the text to hand to `saveTab`. Drops
+        /// any format-on-save still pending for the tab.
         #[qinvokable]
         #[cxx_name = "saveRuleEdits"]
         fn save_rule_edits(self: &EditorOps, tab_id: u64, text: &QString) -> FfiSaveEdits;
+
+        /// Ctrl+S: the same edits as `saveRuleEdits` when no formatter
+        /// applies, else `pending` while the formatter runs on a worker
+        /// (ADR-0070) and `saveFormatted` follows.
+        #[qinvokable]
+        #[cxx_name = "beginSave"]
+        fn begin_save(
+            self: Pin<&mut EditorOps>,
+            tab_id: u64,
+            revision: i64,
+            text: &QString,
+        ) -> FfiSaveEdits;
+
+        /// After `saveFormatted`: the edits to apply to the buffer as it is
+        /// now (`revision`, `text`) before writing — the formatter's, only
+        /// when the buffer did not change meanwhile. `pending` when there is
+        /// nothing to write (the save was dropped or already written).
+        #[qinvokable]
+        #[cxx_name = "finishSave"]
+        fn finish_save(
+            self: &EditorOps,
+            tab_id: u64,
+            revision: i64,
+            text: &QString,
+        ) -> FfiSaveEdits;
+
+        /// A format-on-save's formatter answered; call `finishSave`.
+        #[qsignal]
+        #[cxx_name = "saveFormatted"]
+        fn save_formatted(self: Pin<&mut EditorOps>, tab_id: u64);
 
         /// The tab width this tab's language resolves to (show-whitespace-
         /// characters task): what `CodeEditor::setTabStopDistance` uses.

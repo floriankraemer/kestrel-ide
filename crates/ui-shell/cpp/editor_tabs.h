@@ -861,6 +861,16 @@ private:
     // the session — Rust owns that flag (ADR-0003).
     bool confirmCloseTab(QTabWidget *group, int index);
 
+    // Ctrl+S: starts a format-on-save on a worker when the file has a
+    // formatter (the write follows in `onSaveFormatted`), else saves now.
+    void beginSave(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdit *editor);
+    // `EditorOps::saveFormatted`: write the tab with what the formatter gave.
+    void onSaveFormatted(quint64 tabId);
+    // Splice `edits` into the buffer, say why formatting was skipped if it
+    // was, and write the file.
+    bool writeSave(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdit *editor,
+                   const FfiSaveEdits &edits);
+
     void requestCloseTab(QTabWidget *group, int index);
 
     // L3: line:col + language for whatever tab is current, or blank when

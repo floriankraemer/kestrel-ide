@@ -155,15 +155,20 @@ pub fn wrap_launch(
         argv.extend(compose_prefix(target, plugin));
         argv.push("run".to_string());
         argv.push("--rm".to_string());
-        argv.push("--service-ports".to_string());
+        // Compose refuses `--service-ports` together with `-p`
+        // ("--service-ports and --publish are incompatible"), so the compose
+        // file's own ports are published only when the target adds none.
+        if target.port_bindings.is_empty() {
+            argv.push("--service-ports".to_string());
+        }
         argv.push("-w".to_string());
         argv.push(remote_cwd);
         for (key, value) in &env {
             argv.push("-e".to_string());
             argv.push(format!("{key}={value}"));
         }
-        // `--service-ports` publishes what the compose file declares; a
-        // binding the target adds (a PHP server's port) goes on top.
+        // A binding the target adds (a PHP server's port) replaces the
+        // compose file's declared ports.
         for binding in &target.port_bindings {
             argv.push("-p".to_string());
             argv.push(port_arg(binding));
@@ -771,6 +776,11 @@ mod tests {
         let at = wrapped.args.iter().position(|a| a == "-p").unwrap();
         assert_eq!(wrapped.args[at + 1], "8000:8000");
         assert!(at < wrapped.args.iter().position(|a| a == "php").unwrap());
+        assert!(
+            !wrapped.args.iter().any(|a| a == "--service-ports"),
+            "compose rejects --service-ports with -p: {:?}",
+            wrapped.args
+        );
     }
 
     #[test]

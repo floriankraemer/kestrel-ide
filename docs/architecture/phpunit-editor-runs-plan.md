@@ -74,7 +74,7 @@ A row's status and commit hash are updated in the commit that finishes it.
 
 | Task | Status | Commit |
 |---|---|---|
-| E1 — caret-aware Run / Debug File for tests | done | this PR |
+| E1 — caret-aware Run / Debug File for tests | done | 1b1bc46 |
 | E2 — test node locations | open | |
 | E3 — gutter test status | open | |
 | E4 — PHPUnit run configuration kind | open | |

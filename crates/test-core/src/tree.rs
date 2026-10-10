@@ -13,7 +13,11 @@
 //! while a run is in flight is worse than one that doesn't.
 
 use std::collections::HashMap;
+use std::path::Path;
 
+use process_exec::host::ExecHost;
+
+use crate::location::TestLocation;
 use crate::teamcity::TeamCityEvent;
 
 /// A node's identity, qualified by its ancestor suite names joined with
@@ -71,6 +75,8 @@ pub struct TestNode {
     pub status: TestStatus,
     pub duration_ms: Option<u64>,
     pub failure: Option<TestFailure>,
+    /// Where the node lives in source, when the framework said so.
+    pub location: Option<TestLocation>,
     pub parent: Option<TestId>,
     pub children: Vec<TestId>,
 }
@@ -110,6 +116,29 @@ impl TestTree {
 
     pub fn node(&self, id: &TestId) -> Option<&TestNode> {
         self.nodes.get(id)
+    }
+
+    /// Every node whose source is `file` on this machine, in tree order —
+    /// what the editor gutter reads to paint a test file's last result.
+    /// `host` and `work_dir` are the run's, to map the paths the framework
+    /// printed (see [`TestLocation::local_path`]).
+    pub fn nodes_in_file(&self, host: &ExecHost, work_dir: &Path, file: &Path) -> Vec<&TestNode> {
+        let mut found = Vec::new();
+        let mut pending: Vec<&TestId> = self.roots.iter().rev().collect();
+        while let Some(id) = pending.pop() {
+            let Some(node) = self.nodes.get(id) else {
+                continue;
+            };
+            pending.extend(node.children.iter().rev());
+            if node
+                .location
+                .as_ref()
+                .is_some_and(|l| l.local_path(host, work_dir) == file)
+            {
+                found.push(node);
+            }
+        }
+        found
     }
 
     pub fn roots(&self) -> &[TestId] {
@@ -195,10 +224,17 @@ impl TestTree {
                 status: TestStatus::Pending,
                 duration_ms: None,
                 failure: None,
+                location: None,
                 parent,
                 children: Vec::new(),
             },
         );
+    }
+
+    fn set_location(&mut self, id: &TestId, location: Option<TestLocation>) {
+        if let Some(node) = self.nodes.get_mut(id) {
+            node.location = location.or(node.location.take());
+        }
     }
 
     fn set_status(&mut self, id: &TestId, status: TestStatus) {
@@ -239,9 +275,14 @@ impl TestTree {
     /// as a run reports.
     pub fn apply(&mut self, event: TeamCityEvent) {
         match event {
-            TeamCityEvent::SuiteStarted { parent, name } => {
+            TeamCityEvent::SuiteStarted {
+                parent,
+                name,
+                location,
+            } => {
                 let id = TestId::child(parent.as_ref(), &name);
                 self.insert(id.clone(), name, NodeKind::Suite, parent);
+                self.set_location(&id, location);
                 self.set_status(&id, TestStatus::Running);
             }
             TeamCityEvent::SuiteFinished { parent, name } => {
@@ -252,9 +293,14 @@ impl TestTree {
                 // does yet.
                 let _ = TestId::child(parent.as_ref(), &name);
             }
-            TeamCityEvent::TestStarted { parent, name } => {
+            TeamCityEvent::TestStarted {
+                parent,
+                name,
+                location,
+            } => {
                 let id = TestId::child(parent.as_ref(), &name);
                 self.insert(id.clone(), name, NodeKind::Test, parent);
+                self.set_location(&id, location);
                 self.set_status(&id, TestStatus::Running);
             }
             TeamCityEvent::TestFinished {
@@ -345,6 +391,7 @@ mod tests {
         tree.apply(TeamCityEvent::TestStarted {
             parent: None,
             name: "testOne".into(),
+            location: None,
         });
         assert_eq!(
             tree.node(&id("testOne")).unwrap().status,
@@ -366,6 +413,7 @@ mod tests {
         tree.apply(TeamCityEvent::TestStarted {
             parent: None,
             name: "testTwo".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFailed {
             parent: None,
@@ -390,11 +438,13 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: suite.into(),
+            location: None,
         });
         let parent = Some(id(suite));
         tree.apply(TeamCityEvent::TestStarted {
             parent: parent.clone(),
             name: "testA".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFinished {
             parent: parent.clone(),
@@ -406,6 +456,7 @@ mod tests {
         tree.apply(TeamCityEvent::TestStarted {
             parent: parent.clone(),
             name: "testB".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFailed {
             parent: parent.clone(),
@@ -422,16 +473,19 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "Outer".into(),
+            location: None,
         });
         let outer = Some(id("Outer"));
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: outer.clone(),
             name: "Inner".into(),
+            location: None,
         });
         let inner = Some(id("Outer::Inner"));
         tree.apply(TeamCityEvent::TestStarted {
             parent: inner,
             name: "testDeep".into(),
+            location: None,
         });
         assert!(tree.node(&id("Outer::Inner::testDeep")).is_some());
         assert_eq!(tree.roots(), &[id("Outer")]);
@@ -443,11 +497,13 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "S".into(),
+            location: None,
         });
         let parent = Some(id("S"));
         tree.apply(TeamCityEvent::TestStarted {
             parent: parent.clone(),
             name: "ok".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFinished {
             parent: parent.clone(),
@@ -457,6 +513,7 @@ mod tests {
         tree.apply(TeamCityEvent::TestStarted {
             parent: parent.clone(),
             name: "bad".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFailed {
             parent,
@@ -487,11 +544,13 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "S".into(),
+            location: None,
         });
         let parent = Some(id("S"));
         tree.apply(TeamCityEvent::TestStarted {
             parent: parent.clone(),
             name: "a".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFinished {
             parent,
@@ -509,9 +568,34 @@ mod tests {
         tree.apply(TeamCityEvent::TestStarted {
             parent: None,
             name: "a".into(),
+            location: None,
         });
         tree.reset();
         assert!(tree.is_empty());
         assert!(tree.roots().is_empty());
+    }
+    #[test]
+    fn nodes_in_file_lists_the_located_nodes_in_tree_order() {
+        use crate::teamcity::TeamCityParser;
+        let mut parser = TeamCityParser::new();
+        let events = parser.feed(
+            "##teamcity[testSuiteStarted name='T' locationHint='php_qn:///p/T.php::\\T']\n\
+             ##teamcity[testStarted name='testA' locationHint='php_qn:///p/T.php::\\T::testA']\n\
+             ##teamcity[testFinished name='testA' duration='1']\n\
+             ##teamcity[testSuiteStarted name='U' locationHint='php_qn:///p/U.php::\\U']\n\
+             ##teamcity[testStarted name='testB']\n",
+        );
+        let mut tree = TestTree::new();
+        events.into_iter().for_each(|e| tree.apply(e));
+        let found = tree.nodes_in_file(&ExecHost::Local, Path::new("/p"), Path::new("/p/T.php"));
+        let ids: Vec<(&str, TestStatus)> =
+            found.iter().map(|n| (n.id.as_str(), n.status)).collect();
+        assert_eq!(
+            ids,
+            [("T", TestStatus::Running), ("T::testA", TestStatus::Passed)]
+        );
+        assert!(tree
+            .nodes_in_file(&ExecHost::Local, Path::new("/p"), Path::new("/p/none.php"))
+            .is_empty());
     }
 }

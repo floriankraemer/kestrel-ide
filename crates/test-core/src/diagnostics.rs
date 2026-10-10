@@ -199,6 +199,7 @@ mod tests {
         tree.apply(TeamCityEvent::TestStarted {
             parent: None,
             name: "testAdds".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFailed {
             parent: None,
@@ -280,6 +281,7 @@ mod tests {
         tree.apply(TeamCityEvent::TestStarted {
             parent: None,
             name: "testOk".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFinished {
             parent: None,
@@ -311,10 +313,12 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "com.example.GreeterTest".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestStarted {
             parent: Some(TestId("com.example.GreeterTest".into())),
             name: "deliberatelyFails".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestFailed {
             parent: Some(TestId("com.example.GreeterTest".into())),

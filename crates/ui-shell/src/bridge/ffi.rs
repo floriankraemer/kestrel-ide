@@ -7074,6 +7074,13 @@ mod ffi {
             byte_offset: u32,
         ) -> FfiResolvedLink;
 
+        /// The source position of this node's class, method or test file
+        /// (`found == false` when the framework gave it no location), for
+        /// the tree's double-click / Jump to Source. `line` is 1-based.
+        #[qinvokable]
+        #[cxx_name = "nodeSource"]
+        fn node_source(self: &TestService, node_id: &QString) -> FfiResolvedLink;
+
         /// Whether a run is currently in flight — the toolbar's run/stop
         /// enablement.
         #[qinvokable]

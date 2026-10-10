@@ -7,6 +7,7 @@
 //! The parse goes through `syntax-core`'s registry — the grammar the editor
 //! already highlights with.
 
+use test_core::TestSymbol;
 use tree_sitter::Node;
 
 /// What a marker runs.
@@ -57,6 +58,35 @@ pub fn marker_at(text: &str, caret_line: u32) -> Option<TestMarker> {
         filter: String::new(),
         span: (0, u32::MAX),
     }))
+}
+
+/// The 0-based line `symbol` is declared on in `text`: the class or method
+/// name, or the Pest call whose description matches. `None` when the file no
+/// longer holds it (edited since the run).
+pub fn symbol_line(text: &str, symbol: &TestSymbol) -> Option<u32> {
+    let all = markers(text);
+    let line_of = |scope: MarkerScope, filter: &dyn Fn(&TestMarker) -> bool| {
+        all.iter()
+            .find(|m| m.scope == scope && filter(m))
+            .map(|m| m.line)
+    };
+    match symbol {
+        TestSymbol::Class(class) => {
+            let filter = format!("^{}::", test_core::filter::escape_regex(class));
+            line_of(MarkerScope::Group, &|m| m.filter == filter)
+        }
+        TestSymbol::Method { class, method } => {
+            let prefix = format!(
+                "^{}::{}(",
+                test_core::filter::escape_regex(class),
+                test_core::filter::escape_regex(method)
+            );
+            line_of(MarkerScope::Test, &|m| m.filter.starts_with(&prefix))
+        }
+        TestSymbol::Description(description) => line_of(MarkerScope::Test, &|m| {
+            description == &m.name || *description == format!("it {}", m.name)
+        }),
+    }
 }
 
 fn span_of(node: Node<'_>) -> (u32, u32) {
@@ -540,5 +570,28 @@ class OtherTest extends TestCase
         let text = "<?php\nabstract class BaseTest extends TestCase\n{\n    public function testA() {}\n}\n";
         assert!(markers(text).is_empty());
         assert!(marker_at(text, 3).is_none());
+    }
+
+    #[test]
+    fn symbol_line_finds_class_method_data_set_method_and_pest_calls() {
+        let text = "<?php\nnamespace App;\n\nfinal class GreeterTest extends TestCase\n{\n    public function testGreets(): void {}\n\n    public function testAdds(): void {}\n}\n";
+        let class = TestSymbol::Class("App\\GreeterTest".into());
+        let method = |m: &str| TestSymbol::Method {
+            class: "App\\GreeterTest".into(),
+            method: m.into(),
+        };
+        assert_eq!(symbol_line(text, &class), Some(3));
+        assert_eq!(symbol_line(text, &method("testAdds")), Some(7));
+        assert_eq!(symbol_line(text, &method("testGone")), None);
+        // `testGreets` must not match a longer name sharing its prefix.
+        let longer = text.replace("testAdds", "testGreetsLoudly");
+        assert_eq!(symbol_line(&longer, &method("testGreets")), Some(5));
+
+        let pest =
+            "<?php\n\nit('greets by name', function () {});\ntest('whispers', function () {});\n";
+        let described = |d: &str| TestSymbol::Description(d.into());
+        assert_eq!(symbol_line(pest, &described("it greets by name")), Some(2));
+        assert_eq!(symbol_line(pest, &described("whispers")), Some(3));
+        assert_eq!(symbol_line(pest, &described("missing")), None);
     }
 }

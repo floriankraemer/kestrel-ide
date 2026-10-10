@@ -399,10 +399,12 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "Tests\\GreeterTest".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestStarted {
             parent: Some(TestId("Tests\\GreeterTest".into())),
             name: "testGreets".into(),
+            location: None,
         });
         tree
     }
@@ -412,10 +414,12 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "com.example.GreeterTest".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestStarted {
             parent: Some(TestId("com.example.GreeterTest".into())),
             name: "deliberatelyFails".into(),
+            location: None,
         });
         tree
     }
@@ -728,10 +732,12 @@ mod tests {
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "User login".into(),
+            location: None,
         });
         tree.apply(TeamCityEvent::TestStarted {
             parent: Some(TestId("User login".into())),
             name: "Valid (credentials)".into(),
+            location: None,
         });
         tree
     }

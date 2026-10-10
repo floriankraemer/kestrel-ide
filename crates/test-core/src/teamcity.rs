@@ -18,6 +18,7 @@
 
 use std::collections::HashMap;
 
+use crate::location::{parse_location_hint, TestLocation};
 use crate::tree::TestId;
 
 /// One recognised service message, already resolved against the parser's
@@ -28,6 +29,7 @@ pub enum TeamCityEvent {
     SuiteStarted {
         parent: Option<TestId>,
         name: String,
+        location: Option<TestLocation>,
     },
     SuiteFinished {
         parent: Option<TestId>,
@@ -36,6 +38,7 @@ pub enum TeamCityEvent {
     TestStarted {
         parent: Option<TestId>,
         name: String,
+        location: Option<TestLocation>,
     },
     TestFinished {
         parent: Option<TestId>,
@@ -142,7 +145,12 @@ impl TeamCityParser {
                 let id = TestId::child(parent.as_ref(), &name);
                 let hidden = config || wrapper;
                 stack.push(Frame { id, hidden, config });
-                (!hidden).then_some(TeamCityEvent::SuiteStarted { parent, name })
+                let location = message.get("locationHint").and_then(parse_location_hint);
+                (!hidden).then_some(TeamCityEvent::SuiteStarted {
+                    parent,
+                    name,
+                    location,
+                })
             }
             "testSuiteFinished" => {
                 let name = message.get("name")?.to_string();
@@ -153,6 +161,7 @@ impl TeamCityParser {
             "testStarted" => Some(TeamCityEvent::TestStarted {
                 parent,
                 name: message.get("name")?.to_string(),
+                location: message.get("locationHint").and_then(parse_location_hint),
             }),
             "testFinished" => Some(TeamCityEvent::TestFinished {
                 parent,
@@ -258,6 +267,7 @@ fn read_quoted_value(rest: &str) -> (String, &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::location::TestSymbol;
 
     fn events(text: &str) -> Vec<TeamCityEvent> {
         let mut parser = TeamCityParser::new();
@@ -277,7 +287,8 @@ mod tests {
             vec![
                 TeamCityEvent::TestStarted {
                     parent: None,
-                    name: "testGreets".into()
+                    name: "testGreets".into(),
+                    location: None,
                 },
                 TeamCityEvent::TestFinished {
                     parent: None,
@@ -362,7 +373,8 @@ mod tests {
             events,
             vec![TeamCityEvent::TestStarted {
                 parent: None,
-                name: "testX".into()
+                name: "testX".into(),
+                location: None,
             }]
         );
     }
@@ -377,7 +389,8 @@ mod tests {
             parser.finish(),
             vec![TeamCityEvent::TestStarted {
                 parent: None,
-                name: "testX".into()
+                name: "testX".into(),
+                location: None,
             }]
         );
     }
@@ -446,7 +459,7 @@ mod tests {
              ##teamcity[testSuiteFinished name='Inner']\n\
              ##teamcity[testStarted name='shallow']\n",
         );
-        let TeamCityEvent::TestStarted { parent, name } = &out[5] else {
+        let TeamCityEvent::TestStarted { parent, name, .. } = &out[5] else {
             panic!("expected TestStarted, got {:?}", out[5]);
         };
         assert_eq!(name, "shallow");
@@ -485,5 +498,79 @@ mod tests {
             "one chain per class, got {:?}",
             tree.roots()
         );
+    }
+    const PHPUNIT_RUN: &str = concat!(
+        "##teamcity[testSuiteStarted name='App\\Tests\\GreeterTest' locationHint='php_qn:///proj/tests/GreeterTest.php::\\App\\Tests\\GreeterTest' flowId='1']\n",
+        "##teamcity[testStarted name='testGreets' locationHint='php_qn:///proj/tests/GreeterTest.php::\\App\\Tests\\GreeterTest::testGreets' flowId='1']\n",
+        "##teamcity[testFinished name='testGreets' duration='1' flowId='1']\n",
+        "##teamcity[testStarted name='testAdds with data set #0' locationHint='php_qn:///proj/tests/GreeterTest.php::\\App\\Tests\\GreeterTest::testAdds with data set #0' flowId='1']\n",
+        "##teamcity[testFailed name='testAdds with data set #0' message='it|'s |[bad|] ||' details='|n' flowId='1']\n",
+        "##teamcity[testSuiteFinished name='App\\Tests\\GreeterTest' flowId='1']\n",
+    );
+
+    #[test]
+    fn started_messages_carry_their_location_hint() {
+        let out = events(PHPUNIT_RUN);
+        let TeamCityEvent::SuiteStarted { location, .. } = &out[0] else {
+            panic!("expected SuiteStarted, got {:?}", out[0]);
+        };
+        assert_eq!(
+            location.as_ref().and_then(|l| l.symbol.clone()),
+            Some(TestSymbol::Class("App\\Tests\\GreeterTest".into()))
+        );
+        let TeamCityEvent::TestStarted { location, .. } = &out[3] else {
+            panic!("expected TestStarted, got {:?}", out[3]);
+        };
+        assert_eq!(
+            location.as_ref().and_then(|l| l.symbol.clone()),
+            Some(TestSymbol::Method {
+                class: "App\\Tests\\GreeterTest".into(),
+                method: "testAdds".into()
+            })
+        );
+    }
+
+    #[test]
+    fn escapes_do_not_disturb_the_messages_around_a_hint() {
+        let out = events(PHPUNIT_RUN);
+        let TeamCityEvent::TestFailed {
+            message, details, ..
+        } = &out[4]
+        else {
+            panic!("expected TestFailed, got {:?}", out[4]);
+        };
+        assert_eq!((message.as_str(), details.as_str()), ("it's [bad] |", "\n"));
+    }
+
+    #[test]
+    fn a_hint_with_escaped_quote_and_pipe_in_a_pest_description_is_decoded() {
+        let out = events(
+            "##teamcity[testStarted name='it |'s a||b' locationHint='pest_qn://tests/A.php::it |'s a||b']\n",
+        );
+        let TeamCityEvent::TestStarted { location, .. } = &out[0] else {
+            panic!("expected TestStarted");
+        };
+        assert_eq!(
+            location.as_ref().and_then(|l| l.symbol.clone()),
+            Some(TestSymbol::Description("it 's a|b".into()))
+        );
+    }
+
+    #[test]
+    fn the_pest_fixture_locates_file_suites_and_tests() {
+        let tree = tree_after(&[PEST_FULL_RUN]);
+        let file = |id: &str| {
+            tree.node(&TestId(id.into()))
+                .and_then(|n| n.location.as_ref())
+                .map(|l| l.file.clone())
+        };
+        let want = Some("tests/Feature/GreeterPestTest.php".to_string());
+        assert_eq!(file("Tests\\Feature\\GreeterPestTest"), want);
+        assert_eq!(
+            file("Tests\\Feature\\GreeterPestTest::it greets by name"),
+            want
+        );
+        // `pest_qn://Greeter (Tests\Greeter)` names no file.
+        assert_eq!(file("Tests\\GreeterTest"), None);
     }
 }

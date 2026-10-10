@@ -90,7 +90,7 @@ fn python_config(project_root: &Path, file: &Path, relative: &Path) -> Option<Ru
     if file.extension().and_then(|e| e.to_str()) != Some("py") {
         return None;
     }
-    let shown = relative.display().to_string();
+    let shown = slashed(relative);
     Some(temporary(
         ToolchainId::Python,
         shown.clone(),
@@ -109,7 +109,7 @@ fn php_config(file: &Path, relative: &Path) -> Option<RunConfig> {
     if file.extension().and_then(|e| e.to_str()) != Some("php") {
         return None;
     }
-    let shown = relative.display().to_string();
+    let shown = slashed(relative);
     Some(temporary(
         ToolchainId::Php,
         shown.clone(),
@@ -118,6 +118,17 @@ fn php_config(file: &Path, relative: &Path) -> Option<RunConfig> {
         toolchain::DEFAULT_PHP_PROGRAM,
         vec![shown],
     ))
+}
+
+/// `relative` joined with `/`, whatever the host's separator: the path is
+/// handed to a process that may run in a WSL distro, where `lib\a.php`
+/// names no file, and every Windows tool accepts `/` as well.
+fn slashed(relative: &Path) -> String {
+    relative
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn temporary(
@@ -167,7 +178,7 @@ pub fn containerfile_config(project_root: &Path, file: &Path) -> Option<RunConfi
     let context_dir = relative
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| p.display().to_string())
+        .map(slashed)
         .unwrap_or_else(|| ".".to_string());
     let dockerfile_name = relative.file_name()?.to_string_lossy().into_owned();
     let tag = project_root
@@ -204,7 +215,7 @@ pub fn compose_config(
     service: Option<&str>,
 ) -> Option<RunConfig> {
     let relative = file.strip_prefix(project_root).ok()?;
-    let file_name = relative.display().to_string();
+    let file_name = slashed(relative);
     let (id, name) = match service {
         Some(service) => (
             format!("{}-{service}", id_for_path("compose", project_root, file)),

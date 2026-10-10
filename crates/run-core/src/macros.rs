@@ -79,11 +79,12 @@ impl MacroContext {
         self
     }
 
-    fn value_of(&self, token: Token) -> Option<String> {
+    fn value_of(&self, token: Token, target: PathSpelling) -> Option<String> {
         // W4-3: a launched process runs inside the distro on a WSL project
         // root (W4-1), so a macro expanding to a path must already be the
         // Linux path — `host.argv` passes an argument string through
-        // untouched, unlike `cwd`, which it does translate for `--cd`.
+        // untouched, unlike `cwd`, which it does translate for `--cd`, and
+        // so must keep the host spelling ([`expand_cwd`]).
         // `ExecHost::for_path` on the project root, not `path` itself:
         // `$FILE_PATH$` names a file *under* the root, and only the root's
         // own spelling is guaranteed to carry the UNC prefix.
@@ -93,7 +94,7 @@ impl MacroContext {
             .map(process_exec::host::ExecHost::for_path)
             .unwrap_or(process_exec::host::ExecHost::Local);
         let display = |path: &Path| {
-            if host.filesystem_is_remote() {
+            if target == PathSpelling::Process && host.filesystem_is_remote() {
                 host.to_remote(path)
             } else {
                 path.display().to_string()
@@ -123,6 +124,15 @@ impl MacroContext {
             Token::UserHome => home_dir().as_deref().map(display),
         }
     }
+}
+
+/// Whose spelling a path macro expands to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathSpelling {
+    /// The launched process's: the Linux path on a WSL project.
+    Process,
+    /// The IDE's own: the path as the project root spells it.
+    Host,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,12 +172,27 @@ fn home_dir() -> Option<PathBuf> {
 /// in the console's command line; substituting an empty string would produce
 /// a command that looks right and runs on the wrong path.
 pub fn expand(value: &str, context: &MacroContext) -> String {
+    expand_as(value, context, PathSpelling::Process)
+}
+
+/// Expand a working directory: paths keep the IDE-side spelling.
+///
+/// Unlike an argument, a `cwd` is classified by `ExecHost::for_path` at
+/// spawn time and translated for `wsl.exe --cd` there. Handing it the
+/// Linux path [`expand`] produces on a WSL project would classify as local
+/// and spawn a Windows process in a directory that only exists in the
+/// distro.
+pub fn expand_cwd(value: &str, context: &MacroContext) -> String {
+    expand_as(value, context, PathSpelling::Host)
+}
+
+fn expand_as(value: &str, context: &MacroContext, spelling: PathSpelling) -> String {
     if !value.contains('$') {
         return value.to_string();
     }
     let mut out = value.to_string();
     for (name, token) in TOKENS {
-        let Some(replacement) = context.value_of(*token) else {
+        let Some(replacement) = context.value_of(*token, spelling) else {
             continue;
         };
         // The `$`-terminated spelling first: replacing the bare one first
@@ -213,6 +238,15 @@ mod tests {
     fn project_dir_expands_to_the_linux_path_on_a_wsl_root() {
         let ctx = MacroContext::for_project("//wsl.localhost/Ubuntu/home/f/proj");
         assert_eq!(expand("$PROJECT_DIR$", &ctx), "/home/f/proj");
+    }
+
+    #[test]
+    fn a_cwd_keeps_the_unc_spelling_on_a_wsl_root() {
+        let ctx = MacroContext::for_project("//wsl.localhost/Ubuntu/home/f/proj");
+        assert_eq!(
+            expand_cwd("$PROJECT_DIR$/sub", &ctx),
+            "//wsl.localhost/Ubuntu/home/f/proj/sub"
+        );
     }
 
     #[test]

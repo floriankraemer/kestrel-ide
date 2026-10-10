@@ -97,7 +97,7 @@ pub fn validate_run_on(
     let cwd = config
         .cwd
         .as_deref()
-        .map(|cwd| std::path::PathBuf::from(macros::expand(cwd, &context)));
+        .map(|cwd| std::path::PathBuf::from(macros::expand_cwd(cwd, &context)));
     let invocation = invocation_for(containers, &target.connection_id);
     let simple = SimpleLaunch {
         program: &config.program,

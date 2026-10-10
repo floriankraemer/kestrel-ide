@@ -7117,6 +7117,31 @@ mod ffi {
         #[cxx_name = "markerName"]
         fn marker_name(self: &TestService, path: &QString, text: &QString, line: u32) -> QString;
 
+        /// Whether `path` is a PHP test file, for the caret-aware Run File.
+        #[qinvokable]
+        #[cxx_name = "hasContextRun"]
+        fn has_context_run(self: &TestService, path: &QString, text: &QString) -> bool;
+
+        /// Run the method, else class, else file the caret on `line` is in.
+        #[qinvokable]
+        #[cxx_name = "runContext"]
+        fn run_context(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
+        /// `prepareDebugMarker` for what the caret on `line` is in.
+        #[qinvokable]
+        #[cxx_name = "prepareDebugContext"]
+        fn prepare_debug_context(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiResult;
+
         /// Run the one test (or class) the marker on `line` names.
         #[qinvokable]
         #[cxx_name = "runMarker"]

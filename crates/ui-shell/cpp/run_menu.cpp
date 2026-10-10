@@ -90,7 +90,12 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
     QAction *runContextAction = registerAction(runMenu, QStringLiteral("run.runContext"),
                                                 QObject::tr("Run File"), appSettings, actions);
     QObject::connect(runContextAction, &QAction::triggered, editorTabs, [editorTabs]() {
-        editorTabs->requestRunFor(qobject_cast<CodeEditor *>(editorTabs->currentEditor()));
+        editorTabs->runContextAtCaret(qobject_cast<CodeEditor *>(editorTabs->currentEditor()), false);
+    });
+    QAction *debugContextAction = registerAction(runMenu, QStringLiteral("run.debugContext"),
+                                                  QObject::tr("Debug File"), appSettings, actions);
+    QObject::connect(debugContextAction, &QAction::triggered, editorTabs, [editorTabs]() {
+        editorTabs->runContextAtCaret(qobject_cast<CodeEditor *>(editorTabs->currentEditor()), true);
     });
 
     QAction *stopAction = registerAction(runMenu, QStringLiteral("run.stop"), QObject::tr("Stop"),

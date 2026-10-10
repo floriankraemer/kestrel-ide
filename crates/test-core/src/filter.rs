@@ -187,7 +187,8 @@ pub fn tree_rerun_block(dialect: Option<&str>) -> Option<String> {
 /// A test the editor can name: what a gutter marker run is built from.
 #[derive(Debug, Clone, Copy)]
 pub struct MarkerRun<'a> {
-    /// The marker's PHPUnit-regex `--filter` pattern.
+    /// The marker's PHPUnit-regex `--filter` pattern; empty runs the whole
+    /// file.
     pub filter: &'a str,
     /// The method (or class) name, for dialects that select by name.
     pub name: &'a str,
@@ -212,12 +213,16 @@ pub fn marker_args(
 ) -> Result<Vec<String>, &'static str> {
     match dialect {
         FilterDialect::PhpUnitRegex | FilterDialect::PestRegex => {
-            let mut args = apply_filter(
-                base,
-                filter_flag,
-                filter_template,
-                &[marker.filter.to_string()],
-            );
+            let mut args = if marker.filter.is_empty() {
+                base.to_vec()
+            } else {
+                apply_filter(
+                    base,
+                    filter_flag,
+                    filter_template,
+                    &[marker.filter.to_string()],
+                )
+            };
             args.extend(marker.file.map(str::to_string));
             Ok(args)
         }
@@ -813,6 +818,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(without_file.len(), 3);
+    }
+
+    #[test]
+    fn a_file_marker_run_is_the_file_without_a_filter() {
+        let base = vec!["--teamcity".to_string()];
+        let file = MarkerRun {
+            filter: "",
+            name: "",
+            is_class: true,
+            file: Some("tests/FooTest.php"),
+        };
+        for dialect in [FilterDialect::PhpUnitRegex, FilterDialect::PestRegex] {
+            let args = marker_args(&base, dialect, Some("--filter"), None, &file).unwrap();
+            assert_eq!(args, vec!["--teamcity", "tests/FooTest.php"]);
+        }
     }
 
     #[test]

@@ -18,6 +18,15 @@ fn is_php_file(path: &str) -> bool {
     syntax_core::language_for_path(std::path::Path::new(path)).id() == "php"
 }
 
+fn selection(path: String, marker: php_core::tests::TestMarker) -> MarkerSelection {
+    MarkerSelection {
+        is_class: marker.scope != php_core::tests::MarkerScope::Test,
+        filter: marker.filter,
+        name: marker.name,
+        file: path,
+    }
+}
+
 fn marker_at(path: &QString, text: &QString, line: u32) -> Option<MarkerSelection> {
     let path = path.to_string();
     if !is_php_file(&path) {
@@ -26,12 +35,16 @@ fn marker_at(path: &QString, text: &QString, line: u32) -> Option<MarkerSelectio
     php_core::tests::markers(&text.to_string())
         .into_iter()
         .find(|marker| marker.line == line)
-        .map(|marker| MarkerSelection {
-            is_class: marker.scope == php_core::tests::MarkerScope::Group,
-            filter: marker.filter,
-            name: marker.name,
-            file: path,
-        })
+        .map(|marker| selection(path, marker))
+}
+
+/// What the caret on `line` runs; `None` outside a PHP test file.
+fn context_at(path: &QString, text: &QString, line: u32) -> Option<MarkerSelection> {
+    let path = path.to_string();
+    if !is_php_file(&path) {
+        return None;
+    }
+    php_core::tests::marker_at(&text.to_string(), line).map(|marker| selection(path, marker))
 }
 
 fn no_marker() -> ffi::FfiResult {
@@ -56,6 +69,42 @@ impl ffi::TestService {
         marker_at(path, text, line)
             .map(|marker| QString::from(marker.name.as_str()))
             .unwrap_or_default()
+    }
+
+    /// Whether `path` is a PHP test file, so a caret run goes through the
+    /// Tests dock rather than `php <file>`.
+    pub fn has_context_run(&self, path: &QString, text: &QString) -> bool {
+        context_at(path, text, 0).is_some()
+    }
+
+    /// Run what the caret on `line` is in: the method, else the class,
+    /// else the file.
+    pub fn run_context(
+        self: Pin<&mut Self>,
+        path: &QString,
+        text: &QString,
+        line: u32,
+    ) -> ffi::FfiResult {
+        match context_at(path, text, line) {
+            Some(marker) => self.start(Some(RerunSelection::Marker(marker)), Vec::new(), false),
+            None => no_marker(),
+        }
+    }
+
+    /// [`Self::prepare_debug_marker`] for what the caret is in.
+    pub fn prepare_debug_context(
+        self: Pin<&mut Self>,
+        path: &QString,
+        text: &QString,
+        line: u32,
+    ) -> ffi::FfiResult {
+        match context_at(path, text, line) {
+            Some(marker) => {
+                *self.pending_debug.borrow_mut() = Some(marker);
+                ffi::FfiResult::default()
+            }
+            None => no_marker(),
+        }
     }
 
     /// Run the test the marker on `line` names.

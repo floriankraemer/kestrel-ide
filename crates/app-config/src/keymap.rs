@@ -893,6 +893,13 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Run",
         default_shortcut: "Ctrl+Shift+F10",
     },
+    // PhpStorm binds Debug File to Ctrl+Shift+F9, which `build.rebuild` owns.
+    ActionDef {
+        id: "run.debugContext",
+        label: "Debug File",
+        category: "Run",
+        default_shortcut: "",
+    },
     ActionDef {
         id: "run.stop",
         label: "Stop",

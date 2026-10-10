@@ -261,6 +261,38 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
     runService_->runContext(path);
 }
 
+void EditorTabs::runContextAtCaret(CodeEditor *editor, bool debug)
+{
+    if (!editor) {
+        return;
+    }
+    const QString path = docManager_->tabPath(editor->property("tabId").toULongLong());
+    const QString text = editor->toPlainText();
+    const bool isTestFile = testService_ != nullptr && !path.isEmpty() && testService_->hasContextRun(path, text);
+    if (!isTestFile) {
+        if (!debug) {
+            requestRunFor(editor);
+        } else if (auto *mainWindow = qobject_cast<QMainWindow *>(window_)) {
+            mainWindow->statusBar()->showMessage(tr("There is no test in this file to debug."), 6000);
+        }
+        return;
+    }
+    const quint32 line = static_cast<quint32>(editor->textCursor().blockNumber());
+    FfiResult result;
+    if (!debug) {
+        result = testService_->runContext(path, text, line);
+    } else if (debugService_ != nullptr) {
+        result = testService_->prepareDebugContext(path, text, line);
+        if (result.code == 0) {
+            result = debugService_->debugPhpTests();
+        }
+    }
+    auto *mainWindow = qobject_cast<QMainWindow *>(window_);
+    if (result.code != 0 && mainWindow != nullptr) {
+        mainWindow->statusBar()->showMessage(QString(result.message), 6000);
+    }
+}
+
 void EditorTabs::showTestMarkerMenu(CodeEditor *editor, const QString &path, int line)
 {
     const QString text = editor->toPlainText();

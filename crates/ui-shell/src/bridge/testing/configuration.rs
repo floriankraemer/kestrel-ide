@@ -88,70 +88,76 @@ pub(super) fn remember(config: &run_core::RunConfig, root: &Path) -> bool {
     .is_ok()
 }
 
-/// Discards a run's results: a before-launch test run only needs its exit.
-struct Discard;
-
-impl test_core::TestSink for Discard {
-    fn output(&mut self, _text: &str) {}
-    fn event(&mut self, _event: test_core::TeamCityEvent) {}
-    fn junit(&mut self, _cases: Vec<test_core::JUnitTestCase>) {}
-}
-
-/// Run `config` to completion on the calling thread, for a before-launch
-/// task: `Ok` only when the framework exits 0. The scope, interpreter and
-/// host are the ordinary run's.
-pub(crate) fn run_blocking(config: &run_core::RunConfig, root: &Path) -> Result<(), String> {
-    let run = resolve(config, root)?;
+/// The settings a run uses: the effective ones, with a configuration's own
+/// interpreter in place of `[php]`'s.
+pub(super) fn settings_for(run: Option<&ConfigRun>) -> app_config::Settings {
     let mut settings = crate::bridge::convert::load_resolved_settings();
-    if let Some(interpreter) = run.plan.interpreter.clone() {
+    if let Some(interpreter) = run.and_then(|run| run.plan.interpreter.clone()) {
         settings.php.interpreter = Some(interpreter);
     }
-    let (plugin, framework, program, host) = super::detect_framework(root, &settings)
-        .ok_or("no installed test framework is contributed for this project")?;
-    let asset_dir = plugin
-        .asset_dir(&app_core::resolve_config_dir())
-        .map_err(|_| "could not materialise this test framework's plugin assets")?;
-    let dialect = test_core::filter::parse_filter_dialect(framework.filter_dialect.as_deref())
-        .map_err(|error| error.to_string())?;
-    let args = test_core::scope::scope_args(
-        &plugin_host::expand_asset_dir(&framework.args, &asset_dir),
-        dialect,
-        framework.filter_flag.as_deref(),
-        framework.filter_template.as_deref(),
-        &run.plan.scope,
-        &run.plan.options,
-    )
-    .map_err(|error| error.to_string())?;
-    let (program, args) = match framework.requires_interpreter.as_deref() {
-        Some("php") => {
-            let interpreter = settings_model::php::resolve(&settings).interpreter;
-            let (program, prefix) = analysis_core::php_invocation(&program, Some(&interpreter));
-            (program, [prefix, args].concat())
-        }
-        _ => (program, args),
-    };
-    let format = test_core::parse_output_format(&framework.output_format)
-        .map_err(|_| "this test framework's output-format is not one this build understands")?;
-    let code = test_core::run_on_env(
-        &host,
-        &test_core::TestRunHandle::new(),
-        &program.to_string_lossy(),
-        &args,
-        &run.env,
-        root,
-        format,
-        framework.report_glob.as_deref(),
-        &mut Discard,
-    )
-    .map_err(|failure| match failure {
-        test_core::RunFailure::NotFound => "test framework program not found".to_string(),
-        test_core::RunFailure::Io(message) => message,
-    })?;
-    match code {
-        Some(0) => Ok(()),
-        Some(code) => Err(format!("exit {code}")),
-        None => Err("the run was stopped".to_string()),
+    settings
+}
+
+/// The command line `config` runs, as the Run Configurations dialog
+/// previews it: the selected framework's program, its dialect's scope
+/// arguments and the interpreter prefix, or why it cannot run. The program
+/// is looked for on this machine only, never inside WSL or a container.
+pub(crate) fn preview(config: &run_core::RunConfig, root: &Path) -> String {
+    let argv = resolve(config, root).and_then(|run| {
+        let settings = settings_for(Some(&run));
+        let framework = super::Framework::detect(root, &settings, true)?;
+        let (program, args) = framework.command(&settings, framework.scoped(&run)?);
+        Ok([program.display().to_string()]
+            .into_iter()
+            .chain(args)
+            .collect::<Vec<_>>())
+    });
+    match argv {
+        Ok(argv) => container_core::run_config::preview(&argv),
+        Err(reason) => reason,
     }
+}
+
+/// Run `config` for a before-launch task on the Tests dock's `TestService`
+/// and wait for it, from a thread that is not the Qt thread (#416): the
+/// results fill the Tests dock and its Stop cancels the run. `Ok` only when
+/// the framework exits 0.
+pub(crate) fn run_for_before_launch(config: run_core::RunConfig) -> Result<(), String> {
+    let unavailable = || "the Tests dock is not available".to_string();
+    let thread = crate::bridge::registry::test_service().ok_or_else(unavailable)?;
+    let (waiter, finished) = std::sync::mpsc::channel();
+    thread
+        .queue(move |service: Pin<&mut ffi::TestService>| {
+            let refused = waiter.clone();
+            let result = service.start_with(
+                Some(RerunSelection::Configuration(Box::new(config))),
+                Vec::new(),
+                false,
+                Some(waiter),
+            );
+            if result.code != errors::CODE_OK {
+                let _ = refused.send(Err(result.message.to_string()));
+            }
+        })
+        .map_err(|_| unavailable())?;
+    // Every sender is gone when the run ends without a word (the app quit).
+    finished
+        .recv()
+        .unwrap_or_else(|_| Err("the test run ended without a result".to_string()))
+}
+
+/// The project's stored configuration with `config`'s id, if any: an editor
+/// run reuses the temporary configuration the dialog may have edited.
+fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
+    app_config::project_settings::load(root)
+        .ok()
+        .and_then(|settings| settings.run_configs)
+        .and_then(|configs| {
+            configs
+                .into_iter()
+                .find(|stored| stored.id == config.id && is_phpunit(stored))
+        })
+        .unwrap_or(config)
 }
 
 fn saved_config(id: &str) -> Result<run_core::RunConfig, ffi::FfiResult> {
@@ -186,14 +192,16 @@ impl ffi::TestService {
     ) -> Result<Option<RerunSelection>, String> {
         Ok(match selection {
             Some(RerunSelection::Marker(marker)) => Some(RerunSelection::Configuration(Box::new(
-                marker_config(&marker, root)?,
+                stored_or(marker_config(&marker, root)?, root),
             ))),
             Some(RerunSelection::DataSet(id)) => {
                 let file = self
                     .located(&QString::from(id.as_str()))
                     .map(|(location, host, root)| location.local_path(&host, &root));
                 match data_set_config(id.as_str(), file.as_deref(), root) {
-                    Some(config) => Some(RerunSelection::Configuration(Box::new(config))),
+                    Some(config) => Some(RerunSelection::Configuration(Box::new(stored_or(
+                        config, root,
+                    )))),
                     None => Some(RerunSelection::Node(id)),
                 }
             }
@@ -201,20 +209,27 @@ impl ffi::TestService {
         })
     }
 
-    /// Run the saved `phpunit` configuration `config_id`.
+    /// Run the saved `phpunit` configuration `config_id`. Unless it allows
+    /// parallel runs, a run in progress is stopped and this one starts when
+    /// it has finished; the Tests dock shows one run, so a configuration that
+    /// allows them is refused while another runs.
     pub fn run_configuration(
         self: Pin<&mut Self>,
         config_id: &QString,
         with_coverage: bool,
     ) -> ffi::FfiResult {
-        match saved_config(&config_id.to_string()) {
-            Ok(config) => self.start(
-                Some(RerunSelection::Configuration(Box::new(config))),
-                Vec::new(),
-                with_coverage,
-            ),
-            Err(refusal) => refusal,
+        let config = match saved_config(&config_id.to_string()) {
+            Ok(config) => config,
+            Err(refusal) => return refusal,
+        };
+        let restart = !config.allow_parallel && !self.runs.borrow().is_empty();
+        let selection = RerunSelection::Configuration(Box::new(config));
+        if restart {
+            *self.queued.borrow_mut() = Some((selection, with_coverage));
+            self.stop();
+            return ffi::FfiResult::default();
         }
+        self.start(Some(selection), Vec::new(), with_coverage)
     }
 
     /// Stage `config_id` for debugging, like `prepare_debug_marker`.

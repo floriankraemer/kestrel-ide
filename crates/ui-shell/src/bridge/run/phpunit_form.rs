@@ -2,7 +2,10 @@
 //! `phpunit` kind's own sub-table (PHPUnit editor runs plan, E4), the same
 //! shape as `php_server_form`.
 
+use std::collections::HashMap;
+use std::path::Path;
 use std::pin::Pin;
+use std::time::SystemTime;
 
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;
@@ -10,6 +13,7 @@ use cxx_qt_lib::QString;
 use app_config::php::{PhpUnitRunSetting, PHPUNIT_KIND};
 use php_core::phpunit_run::setting_of;
 
+use crate::bridge::errors;
 use crate::bridge::ffi;
 
 fn join(words: &[String]) -> QString {
@@ -78,71 +82,137 @@ pub(super) fn problem(config: &run_core::RunConfig) -> Option<String> {
     php_core::phpunit_run::problem(&setting_of(config)?, &root.to_string_lossy(), cfg!(windows))
 }
 
-/// The command line the Run Configurations dialog previews: the PHPUnit
-/// dialect's argv, or the validation problem. `None` for any other kind.
+/// The command line the Run Configurations dialog previews for a `phpunit`
+/// configuration (`TestService`'s rule); `None` for any other kind.
 pub(super) fn preview(config: &run_core::RunConfig) -> Option<String> {
-    let setting = setting_of(config)?;
+    setting_of(config)?;
     let root = super::current_project_root().unwrap_or_default();
-    let context = run_core::MacroContext::for_project(&root);
-    let line = php_core::phpunit_run::plan(
-        &setting,
-        |text| run_core::macros::expand(text, &context),
-        &root.to_string_lossy(),
-        cfg!(windows),
-    )
-    .map_err(|error| error.to_string())
-    .and_then(|plan| {
-        test_core::scope::scope_args(
-            &["--teamcity".to_string()],
-            test_core::filter::FilterDialect::PhpUnitRegex,
-            Some("--filter"),
-            None,
-            &plan.scope,
-            &plan.options,
-        )
-        .map_err(|error| error.to_string())
-    });
-    Some(match line {
-        Ok(args) => {
-            let mut argv = vec!["vendor/bin/phpunit".to_string()];
-            argv.extend(args);
-            container_core::run_config::preview(&argv)
-        }
-        Err(message) => message,
-    })
+    Some(crate::bridge::testing::configuration_preview(config, &root))
 }
 
-/// Read the PHPUnit configuration `configuration` names (blank: the
-/// project's own) and scan its suites for groups on a worker thread,
-/// answering through `phpUnitModelReady`. The scan walks the filesystem, so
-/// it never runs on the Qt thread.
-pub(super) fn request_model(editor: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
+/// The `phpunit` page's fields `scope` reads.
+pub(super) fn scope_fields(scope: &QString) -> ffi::FfiPhpUnitScopeFields {
+    let fields = php_core::phpunit_run::fields_of(&scope.to_string());
+    ffi::FfiPhpUnitScopeFields {
+        path: fields.path,
+        class_name: fields.class,
+        method: fields.method,
+        data_set: fields.data_set,
+        filter: fields.filter,
+        testsuite: fields.testsuite,
+    }
+}
+
+/// When the configuration a request names last changed, so a cached answer
+/// is reused only while the file is unchanged. `None` when there is none.
+type Stamp = Option<(std::path::PathBuf, Option<SystemTime>)>;
+
+/// The editor's `phpunit.xml` answers: one cached answer per configuration
+/// field text while its file is unchanged, and one scan in flight at a time
+/// (the page asks on every show, load and typing pause). Cleared when the
+/// dialog opens, so a group added to a test file since shows up.
+#[derive(Default)]
+pub(super) struct ModelRequests {
+    in_flight: bool,
+    /// The newest request made while a scan ran.
+    waiting: Option<String>,
+    cache: HashMap<String, (Stamp, ffi::FfiPhpUnitModel)>,
+}
+
+impl ModelRequests {
+    pub(super) fn clear(&mut self) {
+        self.cache.clear();
+    }
+}
+
+fn stamp(root: &Path, explicit: &str) -> Stamp {
+    let file = php_core::phpunit_xml::discover(root, explicit)?;
+    let modified = std::fs::metadata(&file)
+        .and_then(|meta| meta.modified())
+        .ok();
+    Some((file, modified))
+}
+
+fn to_ffi_model(
+    configuration: &str,
+    model: php_core::phpunit_xml::PhpUnitModel,
+) -> ffi::FfiPhpUnitModel {
+    use php_core::phpunit_xml::ModelProblem;
+    let lines = |list: &[String]| QString::from(list.join("\n").as_str());
+    let problem = match &model.problem {
+        None => ffi::FfiResult::default(),
+        Some(problem @ ModelProblem::NotFound(_)) => {
+            errors::failure(errors::CODE_PHPUNIT_CONFIG_NOT_FOUND, problem.to_string())
+        }
+        Some(problem) => {
+            errors::failure(errors::CODE_PHPUNIT_CONFIG_UNREADABLE, problem.to_string())
+        }
+    };
+    ffi::FfiPhpUnitModel {
+        configuration: QString::from(configuration),
+        file: QString::from(model.file.unwrap_or_default().as_str()),
+        suites: lines(&model.suites),
+        groups: lines(&model.groups),
+        problem,
+    }
+}
+
+/// Answer with the PHPUnit configuration `configuration` names (blank: the
+/// project's own) and its suites' groups through `phpUnitModelReady`. A scan
+/// walks the filesystem, so it runs on a worker thread, never on the Qt
+/// thread.
+pub(super) fn request_model(mut editor: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
     let configuration = configuration.to_string();
-    let root = super::current_project_root();
+    let Some(root) = super::current_project_root() else {
+        let answer = to_ffi_model(
+            &configuration,
+            php_core::phpunit_xml::PhpUnitModel::default(),
+        );
+        editor.as_mut().php_unit_model_ready(answer);
+        return;
+    };
+    let context = run_core::MacroContext::for_project(&root);
+    let explicit = run_core::macros::expand(&configuration, &context);
+    let stamp = stamp(&root, &explicit);
+    let cached = {
+        let mut requests = editor.phpunit_model.borrow_mut();
+        let cached = requests
+            .cache
+            .get(&configuration)
+            .filter(|(cached_stamp, _)| *cached_stamp == stamp)
+            .map(|(_, answer)| answer.clone());
+        if cached.is_none() && requests.in_flight {
+            requests.waiting = Some(configuration);
+            return;
+        }
+        requests.in_flight |= cached.is_none();
+        cached
+    };
+    if let Some(answer) = cached {
+        editor.as_mut().php_unit_model_ready(answer);
+        return;
+    }
     let qt_thread = editor.qt_thread();
     std::thread::spawn(move || {
-        let model = root.map(|root| {
-            let context = run_core::MacroContext::for_project(&root);
-            let explicit = run_core::macros::expand(&configuration, &context);
-            php_core::phpunit_xml::model(&root, &explicit)
-        });
-        let model = model.unwrap_or_default();
-        let lines = |list: &[String]| QString::from(list.join("\n").as_str());
-        let answer = ffi::FfiPhpUnitModel {
-            configuration: QString::from(configuration.as_str()),
-            file: QString::from(model.file.unwrap_or_default().as_str()),
-            suites: lines(&model.suites),
-            groups: lines(&model.groups),
-            problem: QString::from(
-                model
-                    .problem
-                    .map(|problem| problem.to_string())
-                    .unwrap_or_default()
-                    .as_str(),
-            ),
-        };
+        let answer = to_ffi_model(
+            &configuration,
+            php_core::phpunit_xml::model(&root, &explicit),
+        );
         let _ = qt_thread.queue(move |mut editor: Pin<&mut ffi::RunConfigEditor>| {
-            editor.as_mut().php_unit_model_ready(answer);
+            let next = {
+                let mut requests = editor.phpunit_model.borrow_mut();
+                requests.in_flight = false;
+                requests
+                    .cache
+                    .insert(configuration.clone(), (stamp, answer.clone()));
+                requests.waiting.take()
+            };
+            match next {
+                Some(next) if next != configuration => {
+                    request_model(editor, &QString::from(next.as_str()));
+                }
+                _ => editor.as_mut().php_unit_model_ready(answer),
+            }
         });
     });
 }

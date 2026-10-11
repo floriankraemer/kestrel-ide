@@ -132,6 +132,7 @@ void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConso
                                DebugService *debugService, TestService *testService,
                                QWidget *window)
 {
+    testService->registerBeforeLaunchRunner();
     const auto report = [window](const QString &title, const FfiResult &result) {
         if (result.code != 0) {
             QMessageBox::warning(window, title, result.message);

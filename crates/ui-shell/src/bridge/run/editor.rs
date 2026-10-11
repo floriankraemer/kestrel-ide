@@ -23,6 +23,8 @@ pub struct RunConfigEditorRust {
     draft: RefCell<Vec<run_core::RunConfig>>,
     /// What was last loaded or committed, for `revert()`.
     saved: RefCell<Vec<run_core::RunConfig>>,
+    /// The `phpunit` page's configuration-file answers.
+    pub(super) phpunit_model: RefCell<super::phpunit_form::ModelRequests>,
 }
 
 /// An id for a freshly added configuration, unique enough within one
@@ -44,6 +46,7 @@ impl ffi::RunConfigEditor {
             .unwrap_or_default();
         *self.saved.borrow_mut() = configs.clone();
         *self.draft.borrow_mut() = configs;
+        self.phpunit_model.borrow_mut().clear();
     }
 
     pub fn configurations(&self) -> Vec<ffi::FfiRunConfig> {
@@ -176,6 +179,10 @@ impl ffi::RunConfigEditor {
 
     pub fn request_php_unit_model(self: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
         super::phpunit_form::request_model(self, configuration);
+    }
+
+    pub fn php_unit_scope_fields(&self, scope: &QString) -> ffi::FfiPhpUnitScopeFields {
+        super::phpunit_form::scope_fields(scope)
     }
 
     pub fn project_relative_path(&self, path: &QString) -> QString {

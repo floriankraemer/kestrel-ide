@@ -3,9 +3,11 @@
 #include <QComboBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -102,18 +104,30 @@ GroupPicker::GroupPicker(QWidget *parent)
     list_ = new QListWidget(this);
     list_->setFixedHeight(list_->fontMetrics().lineSpacing() * kGroupListRows + 12);
     layout->addWidget(list_);
-    auto *addEdit = new QLineEdit(this);
-    addEdit->setPlaceholderText(tr("Add a group and press Enter"));
-    layout->addWidget(addEdit);
-    connect(addEdit, &QLineEdit::returnPressed, this, [this, addEdit]() {
-        const QString name = addEdit->text().trimmed();
-        if (!name.isEmpty()) {
-            addChecked(name, true);
-            emit changed();
-        }
-        addEdit->clear();
-    });
+    addEdit_ = new QLineEdit(this);
+    addEdit_->setPlaceholderText(tr("Add a group and press Enter"));
+    layout->addWidget(addEdit_);
+    // Enter adds the group here; left to propagate, it would also press the
+    // dialog's default button and save and close the dialog.
+    addEdit_->installEventFilter(this);
     connect(list_, &QListWidget::itemChanged, this, &GroupPicker::changed);
+}
+
+bool GroupPicker::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == addEdit_ && event->type() == QEvent::KeyPress) {
+        const int key = static_cast<QKeyEvent *>(event)->key();
+        if (key == Qt::Key_Return || key == Qt::Key_Enter) {
+            const QString name = addEdit_->text().trimmed();
+            if (!name.isEmpty()) {
+                addChecked(name, true);
+                emit changed();
+            }
+            addEdit_->clear();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void GroupPicker::addChecked(const QString &name, bool checked)
@@ -262,9 +276,9 @@ void PhpUnitOptionsPage::applyModel(const FfiPhpUnitModel &model)
     excludeGroupsPicker_->setChoices(groups);
     const QString file = QString(model.file);
     configurationEdit_->setPlaceholderText(file.isEmpty() ? tr("phpunit.xml") : file);
-    const QString problem = QString(model.problem);
-    configurationProblem_->setText(problem);
-    configurationProblem_->setVisible(!problem.isEmpty());
+    const bool hasProblem = model.problem.code != 0;
+    configurationProblem_->setText(hasProblem ? QString(model.problem.message) : QString());
+    configurationProblem_->setVisible(hasProblem);
 }
 
 void PhpUnitOptionsPage::addRow(const QString &label, QWidget *field)
@@ -312,25 +326,26 @@ void PhpUnitOptionsPage::browse(QLineEdit *edit, bool directory)
         return;
     }
     const QString relative = editor_->projectRelativePath(picked);
-    // Outside the project there is nothing portable to store.
-    edit->setText(relative.isEmpty() ? picked : relative);
+    // Outside the project there is nothing the run could pass: its working
+    // directory is the project root on every host.
+    if (relative.isEmpty()) {
+        QMessageBox::warning(this, tr("Outside the Project"),
+                             tr("Choose a file or directory inside the project."));
+        return;
+    }
+    edit->setText(relative);
 }
 
 void PhpUnitOptionsPage::showFieldsForScope()
 {
-    const QString scope = scopeCombo_->currentData().toString();
-    const bool path = scope == QLatin1String("directory") || scope == QLatin1String("file") ||
-                      scope == QLatin1String("class") || scope == QLatin1String("method") ||
-                      scope == QLatin1String("data_set");
-    const bool cls = scope == QLatin1String("class") || scope == QLatin1String("method") ||
-                     scope == QLatin1String("data_set");
-    const bool method = scope == QLatin1String("method") || scope == QLatin1String("data_set");
-    rows_.value(pathEdit_)->setVisible(path);
-    rows_.value(classEdit_)->setVisible(cls);
-    rows_.value(methodEdit_)->setVisible(method);
-    rows_.value(dataSetEdit_)->setVisible(scope == QLatin1String("data_set"));
-    rows_.value(filterEdit_)->setVisible(scope == QLatin1String("file"));
-    rows_.value(testsuiteCombo_)->setVisible(scope == QLatin1String("config"));
+    const FfiPhpUnitScopeFields fields =
+      editor_->phpUnitScopeFields(scopeCombo_->currentData().toString());
+    rows_.value(pathEdit_)->setVisible(fields.path);
+    rows_.value(classEdit_)->setVisible(fields.class_name);
+    rows_.value(methodEdit_)->setVisible(fields.method);
+    rows_.value(dataSetEdit_)->setVisible(fields.data_set);
+    rows_.value(filterEdit_)->setVisible(fields.filter);
+    rows_.value(testsuiteCombo_)->setVisible(fields.testsuite);
 }
 
 void PhpUnitOptionsPage::setOptions(const FfiPhpUnitOptions &options)

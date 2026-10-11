@@ -667,18 +667,16 @@ impl ffi::RunService {
             return no_project();
         };
         let id = config_id.to_string();
-        let is_test = effective_run_configs(&root)
-            .iter()
-            .any(|c| c.id == id && c.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND));
-        if !is_test {
+        let Some(config) = effective_run_configs(&root)
+            .into_iter()
+            .find(|c| c.id == id && c.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND))
+        else {
             return ffi::FfiResult {
                 code: errors::CODE_REFUSED,
                 message: QString::from("only a test configuration can run with coverage"),
             };
-        }
-        self.as_mut()
-            .test_configuration_requested(config_id.clone(), true);
-        ffi::FfiResult::default()
+        };
+        self.as_mut().launch_tests(&config, &root, true)
     }
 
     pub fn run_with_env(
@@ -802,12 +800,8 @@ impl ffi::RunService {
         root: &Path,
         context: &run_core::MacroContext,
     ) -> ffi::FfiResult {
-        // A PHPUnit configuration fills the Tests dock, so `TestService`
-        // runs it, not the PTY supervisor (ADR-0073).
         if config.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND) {
-            self.as_mut()
-                .test_configuration_requested(QString::from(config.id.as_str()), false);
-            return ffi::FfiResult::default();
+            return self.launch_tests(&config, root, false);
         }
         let config = run_core::php_run::inherit_container_target(
             &config,
@@ -859,39 +853,55 @@ impl ffi::RunService {
         // to start from.
         spec.cwd = Some(cwd.clone());
 
-        // Before-launch tasks are validated here, on the Qt thread, before
-        // anything runs: a cycle discovered halfway through would already
-        // have started processes the user then has to kill one at a time
-        // (B2-3).
-        let configs = effective_run_configs(&root);
-        if let Err(err) = run_core::before_launch::validate(&config_id, &configs) {
-            return ffi::FfiResult {
-                code: errors::CODE_BEFORE_LAUNCH,
-                message: QString::from(err.to_string().as_str()),
-            };
-        }
-        let tasks = run_core::before_launch::tasks_of_with_containers(&config, &containers);
-
+        let (tasks, configs) = match before_launch::plan(&config, &root, &containers) {
+            Ok(plan) => plan,
+            Err(refusal) => return refusal,
+        };
         let tx = self.as_mut().ensure_worker();
         let qt_thread = self.qt_thread();
+        let worker_thread = qt_thread.clone();
         let launch_config_id = config_id.clone();
-        let task_root = root.clone();
-        let _ = tx.send(Box::new(move |worker: &mut RunWorker| {
-            // Sequential and fail-fast, on the worker thread: a run whose
-            // build failed must not start, and the user finds out in the
-            // Build dock rather than by reading a program's output for
-            // errors that are not its own (B2-2).
-            if !before_launch::run_before_launch(
-                &tasks,
-                &launch_config_id,
-                &task_root,
-                &configs,
-                &qt_thread,
-            ) {
-                return;
-            }
-            spawn_console_on_worker(worker, launch_config_id, spec, &qt_thread);
-        }));
+        before_launch::run_then(tasks, configs, config_id, root, qt_thread, move || {
+            let _ = tx.send(Box::new(move |worker: &mut RunWorker| {
+                spawn_console_on_worker(worker, launch_config_id, spec, &worker_thread);
+            }));
+        });
+        ffi::FfiResult::default()
+    }
+
+    /// Launch a `phpunit` configuration: its before-launch tasks run as
+    /// for any kind, then `TestService` runs it, never the PTY supervisor,
+    /// because its results fill the Tests dock (ADR-0073). The parallel-run
+    /// policy is `TestService::run_configuration`'s.
+    fn launch_tests(
+        self: Pin<&mut Self>,
+        config: &run_core::RunConfig,
+        root: &Path,
+        with_coverage: bool,
+    ) -> ffi::FfiResult {
+        let (tasks, configs) =
+            match before_launch::plan(config, root, &effective_container_settings()) {
+                Ok(plan) => plan,
+                Err(refusal) => return refusal,
+            };
+        let qt_thread = self.qt_thread();
+        let requester = qt_thread.clone();
+        let config_id = config.id.clone();
+        before_launch::run_then(
+            tasks,
+            configs,
+            config.id.clone(),
+            root.to_path_buf(),
+            qt_thread,
+            move || {
+                let _ = requester.queue(move |mut service: Pin<&mut ffi::RunService>| {
+                    service.as_mut().test_configuration_requested(
+                        QString::from(config_id.as_str()),
+                        with_coverage,
+                    );
+                });
+            },
+        );
         ffi::FfiResult::default()
     }
 

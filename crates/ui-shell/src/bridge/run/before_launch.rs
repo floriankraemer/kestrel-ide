@@ -35,6 +35,49 @@ fn announce_before_launch(qt_thread: &CxxQtThread<ffi::RunService>, config_id: &
     });
 }
 
+/// What a launch needs to run its before-launch tasks: the tasks and every
+/// configuration they may name. Validated here, on the Qt thread, before
+/// anything runs: a cycle discovered halfway through would already have
+/// started processes the user then has to kill one at a time (B2-3).
+pub(super) fn plan(
+    config: &run_core::RunConfig,
+    root: &Path,
+    containers: &app_config::ContainerSettings,
+) -> Result<(Vec<run_core::BeforeLaunchTask>, Vec<run_core::RunConfig>), ffi::FfiResult> {
+    let configs = super::effective_run_configs(root);
+    if let Err(err) = run_core::before_launch::validate(&config.id, &configs) {
+        return Err(errors::failure(errors::CODE_BEFORE_LAUNCH, err.to_string()));
+    }
+    let tasks = run_core::before_launch::tasks_of_with_containers(config, containers);
+    Ok((tasks, configs))
+}
+
+/// Run `tasks` (sequential and fail-fast) on a thread of their own, then
+/// `launch` — straight away when there are none. Never on the worker thread
+/// that owns the `Supervisor`: a long build or test suite there would freeze
+/// every other console's output and queue their Stop behind it.
+pub(super) fn run_then(
+    tasks: Vec<run_core::BeforeLaunchTask>,
+    configs: Vec<run_core::RunConfig>,
+    config_id: String,
+    root: std::path::PathBuf,
+    qt_thread: CxxQtThread<ffi::RunService>,
+    launch: impl FnOnce() + Send + 'static,
+) {
+    if tasks.is_empty() {
+        launch();
+        return;
+    }
+    std::thread::spawn(move || {
+        // A run whose build failed must not start, and the user finds out
+        // in the Build dock rather than by reading a program's output for
+        // errors that are not its own (B2-2).
+        if run_before_launch(&tasks, &config_id, &root, &configs, &qt_thread) {
+            launch();
+        }
+    });
+}
+
 /// Run one configuration's before-launch tasks, in order, stopping at the
 /// first failure. Returns whether the launch may proceed.
 ///
@@ -42,7 +85,7 @@ fn announce_before_launch(qt_thread: &CxxQtThread<ffi::RunService>, config_id: &
 /// `build_core::runner` does — including a Build task, whose steps come from
 /// the same `BuildSpec` the Build dock uses. There is no second way to run a
 /// build in this codebase (ADR-0040).
-pub(super) fn run_before_launch(
+fn run_before_launch(
     tasks: &[run_core::BeforeLaunchTask],
     config_id: &str,
     root: &Path,
@@ -50,12 +93,11 @@ pub(super) fn run_before_launch(
     qt_thread: &CxxQtThread<ffi::RunService>,
 ) -> bool {
     for task in tasks {
-        // A PHPUnit configuration runs through `test-core`, not a build
-        // step: the same scope and argv as its own run, minus the Tests dock
-        // (`TestService` lives on the Qt thread this task cannot wait on).
+        // A PHPUnit configuration runs on `TestService`, not as a build
+        // step: its results fill the Tests dock and its Stop cancels it.
         if let Some(config) = phpunit_task(task, configs) {
             announce_before_launch(qt_thread, config_id, &config.name);
-            if let Err(reason) = crate::bridge::testing::run_blocking(config, root) {
+            if let Err(reason) = crate::bridge::testing::run_for_before_launch(config.clone()) {
                 fail_before_launch(
                     qt_thread,
                     config_id,

@@ -79,6 +79,13 @@ pub const CODE_UNKNOWN_RESULT: i32 = 1013;
 /// branches on it to run the file the ordinary way.
 pub const CODE_NOT_A_TEST: i32 = 1014;
 
+/// The PHPUnit configuration file the run configuration names does not exist.
+pub const CODE_PHPUNIT_CONFIG_NOT_FOUND: i32 = 1015;
+
+/// The PHPUnit configuration file exists but cannot be read or is not
+/// well-formed XML.
+pub const CODE_PHPUNIT_CONFIG_UNREADABLE: i32 = 1016;
+
 /// A failure with an adapter code and a finished sentence.
 pub fn failure(code: i32, message: impl AsRef<str>) -> FfiResult {
     debug_assert!(
@@ -113,6 +120,8 @@ mod tests {
             CODE_UNKNOWN_DB_CONSOLE,
             CODE_UNKNOWN_RESULT,
             CODE_NOT_A_TEST,
+            CODE_PHPUNIT_CONFIG_NOT_FOUND,
+            CODE_PHPUNIT_CONFIG_UNREADABLE,
         ];
         for code in codes {
             assert!(

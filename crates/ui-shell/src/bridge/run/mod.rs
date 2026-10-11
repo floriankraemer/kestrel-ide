@@ -82,6 +82,24 @@ enum TestLaunch {
     Debug,
 }
 
+/// A `phpunit` configuration's place in `tests_starting`, given up when
+/// its before-launch tasks end, whether the launch goes ahead or not.
+struct StartingTests {
+    config_id: String,
+    qt_thread: CxxQtThread<ffi::RunService>,
+}
+
+impl Drop for StartingTests {
+    fn drop(&mut self) {
+        let config_id = std::mem::take(&mut self.config_id);
+        let _ = self
+            .qt_thread
+            .queue(move |service: Pin<&mut ffi::RunService>| {
+                service.tests_starting.borrow_mut().remove(&config_id);
+            });
+    }
+}
+
 /// What the worker thread owns.
 struct RunWorker {
     supervisor: run_core::Supervisor,
@@ -136,6 +154,10 @@ struct ConsoleState {
 pub struct RunServiceRust {
     jobs: RefCell<Option<Sender<RunJob>>>,
     consoles: RefCell<std::collections::HashMap<u64, ConsoleState>>,
+    /// `phpunit` configurations whose before-launch tasks are running: a
+    /// second Run or Debug of one is refused until they finish, rather than
+    /// building twice and starting two sessions.
+    tests_starting: RefCell<std::collections::HashSet<String>>,
 }
 
 /// The project root `AppSession` currently has open, or `None` with no
@@ -909,6 +931,16 @@ impl ffi::RunService {
         root: &Path,
         mode: TestLaunch,
     ) -> ffi::FfiResult {
+        if !self.tests_starting.borrow_mut().insert(config.id.clone()) {
+            return errors::failure(
+                errors::CODE_REFUSED,
+                format!("\"{}\" is already starting", config.name),
+            );
+        }
+        let starting = StartingTests {
+            config_id: config.id.clone(),
+            qt_thread: self.qt_thread(),
+        };
         let (tasks, configs) =
             match before_launch::plan(config, root, &effective_container_settings()) {
                 Ok(plan) => plan,
@@ -925,12 +957,16 @@ impl ffi::RunService {
             qt_thread,
             move || {
                 let _ = requester.queue(move |mut service: Pin<&mut ffi::RunService>| {
-                    service.as_mut().test_configuration_requested(
-                        QString::from(config_id.as_str()),
-                        mode == TestLaunch::Coverage,
-                        mode == TestLaunch::Debug,
-                    );
+                    let id = QString::from(config_id.as_str());
+                    match mode {
+                        TestLaunch::Run => service.as_mut().test_configuration_requested(id, false),
+                        TestLaunch::Coverage => {
+                            service.as_mut().test_configuration_requested(id, true)
+                        }
+                        TestLaunch::Debug => service.as_mut().test_configuration_debug_ready(id),
+                    }
                 });
+                drop(starting);
             },
         );
         ffi::FfiResult::default()

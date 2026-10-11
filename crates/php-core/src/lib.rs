@@ -20,6 +20,7 @@ pub mod psr4;
 pub mod test_navigation;
 pub mod test_status;
 pub mod tests;
+pub mod tree_run;
 
 /// The `secret-store` service name for PHP secrets, distinct from the
 /// other features' so no two share one keychain namespace.

@@ -7069,6 +7069,31 @@ mod ffi {
         message: QString,
     }
 
+    /// What the project tree's test entries call their run (E6):
+    /// `php_core::tree_run::TreeRunLabel`, worded and translated by the view.
+    enum FfiTreeRunKind {
+        /// The project's whole suite.
+        AllTests,
+        /// The tests in the directory `subject`.
+        Directory,
+        /// A test class or Pest file named `subject`.
+        Named,
+    }
+
+    /// A project tree row's test run; nothing to offer unless `runnable`.
+    struct FfiTreeRun {
+        runnable: bool,
+        kind: FfiTreeRunKind,
+        subject: QString,
+    }
+
+    /// `FfiResult` plus the run configuration a call stored; `config_id` is
+    /// empty unless `result.code` is 0.
+    struct FfiConfigIdResult {
+        result: FfiResult,
+        config_id: QString,
+    }
+
     /// One data set a gutter menu offers.
     struct FfiDataSet {
         id: QString,
@@ -7346,18 +7371,34 @@ mod ffi {
             config_id: &QString,
         ) -> FfiResult;
 
-        /// What the project tree's Run entries call `path`, empty when it
-        /// holds nothing runnable (E6).
+        /// What the project tree's Run entries for `path` (a directory when
+        /// `is_dir`) run and call it (E6); `open_text` is the file's unsaved
+        /// editor text when `has_open_text`. The run is kept for the click.
         #[qinvokable]
-        #[cxx_name = "treeRunName"]
-        fn tree_run_name(self: &TestService, path: &QString, is_dir: bool) -> QString;
+        #[cxx_name = "treeRun"]
+        fn tree_run(
+            self: &TestService,
+            path: &QString,
+            is_dir: bool,
+            open_text: &QString,
+            has_open_text: bool,
+        ) -> FfiTreeRun;
 
-        /// Store the temporary configuration `path` stands for and return
-        /// its id (empty when none); the view then runs it as any
+        /// Store the temporary configuration the tree menu offered for
+        /// `path` and return its id; the view then runs it as any
         /// configuration.
         #[qinvokable]
         #[cxx_name = "rememberTreeRun"]
-        fn remember_tree_run(self: Pin<&mut TestService>, path: &QString, is_dir: bool) -> QString;
+        fn remember_tree_run(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            is_dir: bool,
+        ) -> FfiConfigIdResult;
+
+        /// A watched project file changed (the tree's watcher relay).
+        #[qinvokable]
+        #[cxx_name = "projectFileChanged"]
+        fn project_file_changed(self: &TestService, path: &QString);
 
         /// A run created (or refreshed) a temporary `phpunit` configuration
         /// `config_id`: the configuration list is stale, and the toolbar
@@ -10288,17 +10329,23 @@ mod ffi {
         #[cxx_name = "runWithCoverage"]
         fn run_with_coverage(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
 
-        /// A `phpunit` configuration was asked to run: it never gets a
-        /// console, `TestService` runs it (ADR-0073), so the view hands it
-        /// over.
+        /// A `phpunit` configuration was asked to run, its before-launch
+        /// tasks done: it never gets a console, `TestService` runs it
+        /// (ADR-0073), so the view hands it over.
         #[qsignal]
         #[cxx_name = "testConfigurationRequested"]
         fn test_configuration_requested(
             self: Pin<&mut RunService>,
             config_id: QString,
             with_coverage: bool,
-            debug: bool,
         );
+
+        /// A `phpunit` configuration was asked to debug and its
+        /// before-launch tasks are done: the view stages it in `TestService`
+        /// and starts the debug session (#420).
+        #[qsignal]
+        #[cxx_name = "testConfigurationDebugReady"]
+        fn test_configuration_debug_ready(self: Pin<&mut RunService>, config_id: QString);
 
         /// Debug the `phpunit` configuration `config_id` once its
         /// before-launch tasks have run, as Run does (#420).

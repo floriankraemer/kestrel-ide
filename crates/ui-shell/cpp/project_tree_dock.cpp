@@ -574,6 +574,13 @@ void wireProjectTree(QTreeView *treeView,
 
     wireRowMarkers(treeView);
 
+    // E6: a composer.json or phpunit.xml change can change which rows offer
+    // test runs; which files matter is `TestService`'s rule.
+    if (TestService *tests = actions.testService) {
+        QObject::connect(treeModel, &ProjectTreeModel::watchedFileChanged, tests,
+                         [tests](const QString &path, qint32) { tests->projectFileChanged(path); });
+    }
+
     // Indexes from the view belong to the proxy, so every data() lookup goes
     // through the view's own model rather than the source directly.
     QAbstractItemModel *model = treeView->model();

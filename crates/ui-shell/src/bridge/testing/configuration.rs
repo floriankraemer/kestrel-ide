@@ -77,15 +77,22 @@ pub(super) fn data_set_config(
 }
 
 /// Persist `config` as a temporary configuration (the cap evicts older
-/// ones); a saved or already-known id is left untouched.
-pub(super) fn remember(config: &run_core::RunConfig, root: &Path) -> bool {
+/// ones); a saved or already-known id is left untouched, except that a
+/// temporary one still named as an earlier version named it is renamed.
+/// The error is why the project settings could not be written.
+pub(super) fn remember(config: &run_core::RunConfig, root: &Path) -> Result<(), String> {
     let config = config.clone();
     app_config::project_settings::update(root, move |settings| {
         let mut configs = settings.run_configs.clone().unwrap_or_default();
         run_core::remember_temporary(&mut configs, config.clone());
+        if let Some(stored) = configs.iter_mut().find(|stored| stored.id == config.id) {
+            if let Some(name) = php_core::phpunit_run::refreshed_name(stored) {
+                stored.name = name;
+            }
+        }
         settings.run_configs = Some(configs);
     })
-    .is_ok()
+    .map_err(|error| error.to_string())
 }
 
 /// The settings a run uses: the effective ones, with a configuration's own
@@ -148,7 +155,7 @@ pub(crate) fn run_for_before_launch(config: run_core::RunConfig) -> Result<(), S
 
 /// The project's stored configuration with `config`'s id, if any: an editor
 /// run reuses the temporary configuration the dialog may have edited.
-pub(super) fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
+fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
     app_config::project_settings::load(root)
         .ok()
         .and_then(|settings| settings.run_configs)

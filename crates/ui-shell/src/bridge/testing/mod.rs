@@ -80,6 +80,10 @@ pub struct TestServiceRust {
     /// A configuration run that does not allow parallel runs, started once
     /// the run it stopped has finished, with whether it collects coverage.
     queued: RefCell<Option<(RerunSelection, bool)>>,
+    /// The test packages of right-clicked project tree rows (E6).
+    tree_packages: RefCell<tree::PackageCache>,
+    /// The run the open project tree menu offers, for its click (E6).
+    tree_offer: RefCell<Option<tree::TreeOffer>>,
     store: SharedDiagnostics,
 }
 
@@ -627,7 +631,7 @@ impl ffi::TestService {
 
         let remembered = match &selection {
             Some(RerunSelection::Configuration(config))
-                if config.temporary && configuration::remember(config, &root) =>
+                if config.temporary && configuration::remember(config, &root).is_ok() =>
             {
                 Some(config.id.clone())
             }

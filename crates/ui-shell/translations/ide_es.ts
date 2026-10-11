@@ -3026,6 +3026,14 @@
         <translation>Ejecutar '%1' con cobertura</translation>
     </message>
     <message>
+        <source>All tests</source>
+        <translation>Todas las pruebas</translation>
+    </message>
+    <message>
+        <source>Tests in '%1'</source>
+        <translation>Pruebas en '%1'</translation>
+    </message>
+    <message>
         <source>Run a new container</source>
         <translation>Ejecutar un contenedor nuevo</translation>
     </message>

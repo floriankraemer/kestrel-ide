@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QString>
 #include <functional>
+#include <optional>
 
 class AiChat;
 class ProjectTreeModel;
@@ -74,6 +75,10 @@ struct ProjectTreeActions
     RunService *runService;
     DebugService *debugService;
     TestService *testService;
+    // A file's unsaved editor text, when it is open, so a test not yet
+    // saved gets its entries as the gutter does. Same callback reason as
+    // `openFile`.
+    std::function<std::optional<QString>(const QString &)> openText;
 };
 
 // The tree view plus the toolbar's locate action, which the active-tab-

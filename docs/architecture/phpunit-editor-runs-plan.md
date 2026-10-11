@@ -84,4 +84,4 @@ The hashes are the squash commits on `main`, with their pull requests.
 | E6 — project tree test entries | done | 776e43e (#421) |
 | E7 — Go to Test / Test Subject | done | 6c305f1 (#422) |
 | Follow-ups — review fixes, monorepo packages, acceptance gaps G2–G11 | done | 1e5d2c6 (#425), e05a6c3 (#427), c626dc7 (#434), 0ebaabb (#435) |
-| E8 — acceptance (Linux + Windows/WSL) | done | 3e3d12c (#439), f07b8a5 (#452), 9a627de (#464), c531ce7 (#454), this PR |
+| E8 — acceptance (Linux + Windows/WSL) | done | 3e3d12c (#439), f07b8a5 (#452), 9a627de (#464), c531ce7 (#454), this PR (#465) |

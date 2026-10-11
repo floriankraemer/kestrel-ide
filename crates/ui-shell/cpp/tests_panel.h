@@ -79,6 +79,9 @@ private:
     void onTestRunRefused(const FfiResult &result);
     void onSelectionChanged();
     void onFailureLinkActivated(int textPosition);
+    // The link at `textPosition` of the details pane, past the comparison
+    // lead the pane shows before the framework's own details.
+    FfiResolvedLink failureLinkAt(int textPosition) const;
     void jumpToSource(const QString &nodeId);
     void showContextMenu(const QPoint &pos);
     void report(const FfiResult &result);
@@ -102,6 +105,8 @@ private:
     QTreeWidget *tree_ = nullptr;
     QLabel *failureHeader_ = nullptr;
     QPlainTextEdit *failureDetails_ = nullptr;
+    // Characters of the details pane before the framework's details.
+    int detailsOffset_ = 0;
     QPlainTextEdit *output_ = nullptr;
 
     // Rebuilt wholesale on every `testTreeChanged`, the same brute-force

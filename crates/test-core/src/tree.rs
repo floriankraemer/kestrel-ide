@@ -45,6 +45,9 @@ impl TestId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TestStatus {
     Failed,
+    /// The run ended (Stop, a fatal error, `exit()`) before the test
+    /// reported a result: IntelliJ's "terminated", not a failure.
+    Terminated,
     Running,
     Pending,
     Passed,
@@ -67,6 +70,16 @@ pub enum NodeKind {
 pub struct TestFailure {
     pub message: String,
     pub details: String,
+    /// What an equality assertion expected and got, when the framework
+    /// said (TeamCity's `expected`/`actual`): the diff viewer's input.
+    pub comparison: Option<Comparison>,
+}
+
+/// An equality assertion's two sides, as the framework printed them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Comparison {
+    pub expected: String,
+    pub actual: String,
 }
 
 /// One node of the tree: a suite/class or a single test method.
@@ -93,6 +106,7 @@ pub struct TestNode {
 pub struct TestCounts {
     pub passed: usize,
     pub failed: usize,
+    pub terminated: usize,
     pub skipped: usize,
     pub running: usize,
     pub pending: usize,
@@ -106,6 +120,8 @@ pub struct TestCounts {
 pub struct RunPlace {
     pub host: ExecHost,
     pub work_dir: PathBuf,
+    /// The framework that ran it: the `source` its failures are listed under.
+    pub framework: String,
 }
 
 /// A test run's live tree. Starts empty; [`Self::apply`]/[`Self::apply_junit`]
@@ -162,6 +178,22 @@ impl TestTree {
     /// applied outside any [`Self::begin_run`].
     pub fn place_of(&self, node: &TestNode) -> Option<&RunPlace> {
         self.places.get(&node.run)
+    }
+
+    /// The framework of the run that last reported `node`, else `framework`.
+    pub fn framework_of<'a>(&'a self, node: &TestNode, framework: &'a str) -> &'a str {
+        self.place_of(node)
+            .map(|place| place.framework.as_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(framework)
+    }
+
+    /// Every framework a run still in the tree ran with.
+    pub fn frameworks(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.places.values().map(|p| p.framework.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// `node`'s run's host and working directory, else the given ones.
@@ -260,16 +292,17 @@ impl TestTree {
         self.nodes.is_empty()
     }
 
-    /// Every leaf test currently `Failed`, in tree order — what "Rerun
-    /// Failed" (D6) selects.
+    /// Every leaf test currently `Failed` or `Terminated`, in tree order —
+    /// what "Rerun Failed" (D6) selects, as IntelliJ's reruns a terminated
+    /// test too.
     pub fn failed_leaf_ids(&self) -> Vec<TestId> {
         self.roots
             .iter()
             .flat_map(|id| self.leaves_under(id))
             .filter(|id| {
-                self.nodes
-                    .get(id)
-                    .is_some_and(|n| n.status == TestStatus::Failed)
+                self.nodes.get(id).is_some_and(|n| {
+                    matches!(n.status, TestStatus::Failed | TestStatus::Terminated)
+                })
             })
             .collect()
     }
@@ -307,6 +340,7 @@ impl TestTree {
             match node.status {
                 TestStatus::Passed => counts.passed += 1,
                 TestStatus::Failed => counts.failed += 1,
+                TestStatus::Terminated => counts.terminated += 1,
                 TestStatus::Skipped => counts.skipped += 1,
                 TestStatus::Running => counts.running += 1,
                 TestStatus::Pending => counts.pending += 1,
@@ -386,9 +420,9 @@ impl TestTree {
     }
 
     /// The run has ended: whatever is still `Running` never reported a
-    /// result (Stop, a fatal error, a killed container). A leaf becomes a
-    /// failure, so no aggregate keeps claiming progress; a suite that never
-    /// got a child goes back to `Pending`.
+    /// result (Stop, a fatal error, a killed container). A leaf becomes
+    /// `Terminated`, so no aggregate keeps claiming progress; a suite that
+    /// never got a child goes back to `Pending`.
     pub fn finish_run(&mut self) {
         let unfinished: Vec<TestId> = self
             .nodes
@@ -401,9 +435,10 @@ impl TestTree {
                 node.failure = Some(TestFailure {
                     message: UNFINISHED_MESSAGE.to_string(),
                     details: String::new(),
+                    comparison: None,
                 });
             }
-            self.set_status(&id, TestStatus::Failed);
+            self.set_status(&id, TestStatus::Terminated);
         }
         for node in self.nodes.values_mut() {
             if node.kind == NodeKind::Suite && node.status == TestStatus::Running {
@@ -467,11 +502,16 @@ impl TestTree {
                 name,
                 message,
                 details,
+                comparison,
             } => {
                 let id = TestId::child(parent.as_ref(), &name);
                 self.insert(id.clone(), name, NodeKind::Test, parent);
                 if let Some(node) = self.nodes.get_mut(&id) {
-                    node.failure = Some(TestFailure { message, details });
+                    node.failure = Some(TestFailure {
+                        message,
+                        details,
+                        comparison,
+                    });
                 }
                 self.set_status(&id, TestStatus::Failed);
             }
@@ -487,6 +527,7 @@ impl TestTree {
                         node.failure = Some(TestFailure {
                             message,
                             details: String::new(),
+                            comparison: None,
                         });
                     }
                 }
@@ -561,6 +602,7 @@ mod tests {
             name: "testTwo".into(),
             message: "expected 1, got 2".into(),
             details: "at FooTest.php:10".into(),
+            comparison: None,
         });
         tree.apply(TeamCityEvent::TestFinished {
             parent: None,
@@ -604,6 +646,7 @@ mod tests {
             name: "testB".into(),
             message: "boom".into(),
             details: String::new(),
+            comparison: None,
         });
         assert_eq!(tree.node(&id(suite)).unwrap().status, TestStatus::Failed);
     }
@@ -661,6 +704,7 @@ mod tests {
             name: "bad".into(),
             message: "no".into(),
             details: String::new(),
+            comparison: None,
         });
         assert_eq!(tree.failed_leaf_ids(), vec![id("S::bad")]);
     }
@@ -735,7 +779,7 @@ mod tests {
         assert!(tree.roots().is_empty());
     }
     #[test]
-    fn finishing_a_run_fails_the_tests_that_never_reported() {
+    fn finishing_a_run_terminates_the_tests_that_never_reported() {
         let mut tree = TestTree::new();
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
@@ -765,18 +809,21 @@ mod tests {
         });
         tree.finish_run();
         let dies = tree.node(&id("S::dies")).unwrap();
-        assert_eq!(dies.status, TestStatus::Failed);
+        assert_eq!(dies.status, TestStatus::Terminated);
         assert_eq!(dies.failure.as_ref().unwrap().message, UNFINISHED_MESSAGE);
         assert_eq!(tree.node(&id("S::ok")).unwrap().status, TestStatus::Passed);
-        assert_eq!(tree.node(&id("S")).unwrap().status, TestStatus::Failed);
+        assert_eq!(tree.node(&id("S")).unwrap().status, TestStatus::Terminated);
         assert_eq!(tree.node(&id("Empty")).unwrap().status, TestStatus::Pending);
-        assert_eq!(tree.counts().running, 0);
+        assert_eq!((tree.counts().running, tree.counts().terminated), (0, 1));
+        // Run Failed reruns a terminated test as IntelliJ's does.
+        assert_eq!(tree.failed_leaf_ids(), [id("S::dies")]);
     }
 
     fn local_place(dir: &str) -> RunPlace {
         RunPlace {
             host: ExecHost::Local,
             work_dir: PathBuf::from(dir),
+            framework: "PHPUnit".into(),
         }
     }
 

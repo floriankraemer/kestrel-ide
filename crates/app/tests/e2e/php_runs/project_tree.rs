@@ -188,6 +188,38 @@ fn e2e_phpunit_project_tree_and_monorepo_packages() {
         );
     }
 
+    // AC8.6: the package's configuration page shows its working directory,
+    // and its pickers read the package's phpunit.xml.
+    let opened = open_config_dialog(&ide);
+    match find_config_row(&ide, opened, 30, |f| {
+        f["kind"] == "phpunit" && f["name"] == "Tests in 'tests'"
+    }) {
+        Some(form) => {
+            findings.check(
+                form["phpunit"]["working_directory"] == "packages/billing",
+                format!(
+                    "AC8.6: the package page's working directory: {}",
+                    form["phpunit"]
+                ),
+            );
+            let read = answer(&ide, opened, |e| {
+                e["ev"] == "phpunit_page_model"
+                    && e["suites"]
+                        .as_array()
+                        .is_some_and(|s| s.iter().any(|n| n == "billing"))
+            });
+            findings.check(
+                read.is_some(),
+                format!(
+                    "AC8.6: the package page's pickers did not read its phpunit.xml: {:?}",
+                    ide.events_since_of(opened, "phpunit_page_model").last()
+                ),
+            );
+        }
+        None => findings.check(false, "AC8.6: the dialog lists no package configuration"),
+    }
+    close_config_dialog(&ide, opened);
+
     // AC8.7: Run Failed keeps the package's directory and configuration.
     let mark = ide.mark();
     let (finished, tests) = press_dock_button(&ide, "run_failed");

@@ -65,10 +65,17 @@ pub fn resolve_program_or_reason(
         return cached.clone().ok_or(None);
     }
 
-    let resolved = if is_path(program) {
-        probe_executable(&wsl.distro, &candidate).then_some(candidate)
+    let probe = if is_path(program) {
+        probe_executable(&wsl.distro, &candidate)
     } else {
         probe_command_v(&wsl.distro, program)
+    };
+    let resolved = match probe {
+        Probe::Found(path) => Some(path),
+        // A distro that did not answer (still booting, `wsl.exe` hung)
+        // says nothing about the tool: asked again next time.
+        Probe::Unanswered => return Err(None),
+        Probe::Missing => None,
     };
 
     // A missing `vendor/bin/phpunit` appears with `composer install`, so a
@@ -211,26 +218,40 @@ fn probe_candidate(host: &ExecHost, program: &str, cwd: &Path) -> String {
     }
 }
 
-fn probe_executable(distro: &str, remote_path: &str) -> bool {
+/// What one probe in a distro answered.
+#[derive(Debug, PartialEq, Eq)]
+enum Probe {
+    Found(String),
+    Missing,
+    /// The probe timed out or could not start: no answer to memoise.
+    Unanswered,
+}
+
+fn probe_executable(distro: &str, remote_path: &str) -> Probe {
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "-e", "test", "-x", remote_path]);
     suppress_console_window(&mut command);
-    crate::output_within(&mut command, crate::PROBE_TIMEOUT)
-        .map(|out| out.status.success())
-        .unwrap_or(false)
+    match crate::output_within(&mut command, crate::PROBE_TIMEOUT) {
+        Ok(out) if out.status.success() => Probe::Found(remote_path.to_string()),
+        Ok(_) => Probe::Missing,
+        Err(_) => Probe::Unanswered,
+    }
 }
 
-fn probe_command_v(distro: &str, program: &str) -> Option<String> {
+fn probe_command_v(distro: &str, program: &str) -> Probe {
     let script = format!("command -v {program}");
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "-e", "/bin/sh", "-lc", &script]);
     suppress_console_window(&mut command);
-    let output = crate::output_within(&mut command, crate::PROBE_TIMEOUT).ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    let Ok(output) = crate::output_within(&mut command, crate::PROBE_TIMEOUT) else {
+        return Probe::Unanswered;
+    };
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!path.is_empty()).then_some(path)
+    if output.status.success() && !path.is_empty() {
+        Probe::Found(path)
+    } else {
+        Probe::Missing
+    }
 }
 
 #[cfg(test)]
@@ -254,8 +275,8 @@ mod tests {
         let missing = probe_executable("Ubuntu", "/opt/absent-tool");
         restore_path(original_path);
 
-        assert!(found);
-        assert!(!missing);
+        assert_eq!(found, Probe::Found("/opt/present-tool".into()));
+        assert_eq!(missing, Probe::Missing);
     }
 
     #[test]
@@ -272,7 +293,7 @@ mod tests {
         let resolved = probe_command_v("Ubuntu", "rust-analyzer");
         restore_path(original_path);
 
-        assert_eq!(resolved, Some("/usr/bin/rust-analyzer".to_string()));
+        assert_eq!(resolved, Probe::Found("/usr/bin/rust-analyzer".to_string()));
     }
 
     #[test]
@@ -285,7 +306,35 @@ mod tests {
         let resolved = probe_command_v("Ubuntu", "does-not-exist");
         restore_path(original_path);
 
-        assert_eq!(resolved, None);
+        assert_eq!(resolved, Probe::Missing);
+    }
+
+    #[test]
+    fn a_bare_name_probe_that_got_no_answer_is_asked_again() {
+        let _guard = PATH_LOCK.lock().unwrap();
+        let host = ExecHost::Wsl(WslHost {
+            distro: "UnansweredTest".into(),
+            unc_prefix: "//wsl.localhost/UnansweredTest".into(),
+        });
+        let root = Path::new("//wsl.localhost/UnansweredTest/proj");
+        // A `wsl.exe` that cannot be executed: the probe cannot start, like
+        // one that hung. Prepended rather than replacing PATH, because tests
+        // that only spawn `echo`/`sh` do not take `PATH_LOCK` and would find
+        // nothing on an emptied PATH.
+        let unstartable = tempfile::tempdir().unwrap();
+        std::fs::write(unstartable.path().join("wsl.exe"), "").unwrap();
+        let original_path = prepend_to_path(unstartable.path());
+        let before = resolve_program(&host, "phpactor", root);
+        restore_path(original_path);
+
+        let bin_dir = tempfile::tempdir().unwrap();
+        write_executable_script(bin_dir.path(), "wsl.exe", "echo /usr/bin/phpactor\n");
+        let original_path = prepend_to_path(bin_dir.path());
+        let after = resolve_program(&host, "phpactor", root);
+        restore_path(original_path);
+
+        assert_eq!(before, None);
+        assert_eq!(after.as_deref(), Some("/usr/bin/phpactor"));
     }
 
     #[test]

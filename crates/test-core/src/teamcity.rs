@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use crate::location::{parse_location_hint, TestLocation};
-use crate::tree::TestId;
+use crate::tree::{Comparison, TestId};
 
 /// One recognised service message, already resolved against the parser's
 /// open-suite stack so `parent` is the enclosing suite's [`TestId`], if
@@ -50,6 +50,8 @@ pub enum TeamCityEvent {
         name: String,
         message: String,
         details: String,
+        /// PHPUnit's `type='comparisonFailure'` `expected`/`actual` pair.
+        comparison: Option<Comparison>,
     },
     TestIgnored {
         parent: Option<TestId>,
@@ -77,9 +79,12 @@ pub struct TeamCityParser {
 
 /// One open suite. PHPUnit-based runners (Pest above all) wrap a whole run in
 /// a suite named after the config file's absolute path and, inside it, the
-/// `<testsuite>` (`default`). A run narrowed to one file omits both, so
-/// keeping them would give the same class two different ids across runs and
-/// two chains in the tree. They are tracked for nesting but never reported.
+/// `<testsuite>` (`default`); a run given a directory or file argument wraps
+/// it in PHPUnit's `CLI Arguments` suite instead. A run narrowed to one file
+/// omits them, so keeping them would give the same class two different ids
+/// across runs and two chains in the tree, and a rerun's `--filter` built
+/// from the id would match nothing. They are tracked for nesting but never
+/// reported.
 #[derive(Debug)]
 struct Frame {
     id: TestId,
@@ -97,6 +102,9 @@ impl Frame {
 fn is_config_suite(name: &str) -> bool {
     (name.ends_with(".xml") || name.ends_with(".xml.dist")) && name.contains(['/', '\\'])
 }
+
+/// The suite PHPUnit wraps the tests of its directory or file arguments in.
+const CLI_ARGUMENTS_SUITE: &str = "CLI Arguments";
 
 impl TeamCityParser {
     pub fn new() -> Self {
@@ -143,7 +151,7 @@ impl TeamCityParser {
                 let config = is_config_suite(&name);
                 let wrapper = stack.last().is_some_and(|f| f.config);
                 let id = TestId::child(parent.as_ref(), &name);
-                let hidden = config || wrapper;
+                let hidden = config || wrapper || name == CLI_ARGUMENTS_SUITE;
                 stack.push(Frame { id, hidden, config });
                 let location = message.get("locationHint").and_then(parse_location_hint);
                 (!hidden).then_some(TeamCityEvent::SuiteStarted {
@@ -173,6 +181,7 @@ impl TeamCityParser {
                 name: message.get("name")?.to_string(),
                 message: message.get("message").unwrap_or_default().to_string(),
                 details: message.get("details").unwrap_or_default().to_string(),
+                comparison: comparison_of(&message),
             }),
             "testIgnored" => Some(TeamCityEvent::TestIgnored {
                 parent,
@@ -185,6 +194,17 @@ impl TeamCityParser {
 }
 
 /// One `##teamcity[name key='value' ...]` line, decoded.
+/// A `testFailed`'s comparison: PHPUnit sends `type='comparisonFailure'`
+/// with both sides; either side alone still names one.
+fn comparison_of(message: &ServiceMessage) -> Option<Comparison> {
+    let (expected, actual) = (message.get("expected"), message.get("actual"));
+    let typed = message.get("type") == Some("comparisonFailure");
+    (typed || expected.is_some() || actual.is_some()).then(|| Comparison {
+        expected: expected.unwrap_or_default().to_string(),
+        actual: actual.unwrap_or_default().to_string(),
+    })
+}
+
 struct ServiceMessage {
     name: String,
     attrs: HashMap<String, String>,
@@ -314,6 +334,31 @@ mod tests {
     }
 
     #[test]
+    fn a_comparison_failure_carries_expected_and_actual() {
+        let out = TeamCityParser::new().feed(
+            "##teamcity[testFailed name='testFails' message='Failed asserting that two strings are identical.' details='at T.php:18' type='comparisonFailure' actual='|'actual text|'' expected='|'expected text|'']\n\
+             ##teamcity[testFailed name='plain' message='no' details='']\n",
+        );
+        let comparisons: Vec<Option<Comparison>> = out
+            .into_iter()
+            .map(|event| match event {
+                TeamCityEvent::TestFailed { comparison, .. } => comparison,
+                other => panic!("expected TestFailed, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            comparisons,
+            [
+                Some(Comparison {
+                    expected: "'expected text'".into(),
+                    actual: "'actual text'".into(),
+                }),
+                None
+            ]
+        );
+    }
+
+    #[test]
     fn a_failed_test_carries_message_and_details() {
         let out = events(
             "##teamcity[testStarted name='testAdds']\n\
@@ -326,6 +371,7 @@ mod tests {
                 name: "testAdds".into(),
                 message: "Failed asserting that 1 matches 2.".into(),
                 details: "at FooTest.php:12".into(),
+                comparison: None,
             }
         );
     }
@@ -487,6 +533,26 @@ mod tests {
         );
         let leaf = TestId("Tests\\GreeterTest::Greets by name".into());
         assert!(tree.node(&leaf).is_some());
+    }
+
+    #[test]
+    fn phpunits_cli_arguments_suite_is_not_a_tree_node() {
+        // `phpunit packages/billing/tests` (PHPUnit 11) wraps the run in a
+        // `CLI Arguments` suite; a rerun's filter is built from the ids.
+        let run = concat!(
+            "##teamcity[testSuiteStarted name='CLI Arguments' flowId='1']\n",
+            "##teamcity[testSuiteStarted name='Billing\\InvoiceTest' locationHint='php_qn:///p/tests/InvoiceTest.php::\\Billing\\InvoiceTest' flowId='1']\n",
+            "##teamcity[testStarted name='testFails' locationHint='php_qn:///p/tests/InvoiceTest.php::\\Billing\\InvoiceTest::testFails' flowId='1']\n",
+            "##teamcity[testFinished name='testFails' duration='1' flowId='1']\n",
+            "##teamcity[testSuiteFinished name='Billing\\InvoiceTest' flowId='1']\n",
+            "##teamcity[testSuiteFinished name='CLI Arguments' flowId='1']\n",
+        );
+        let tree = tree_after(&[run]);
+        let roots: Vec<&str> = tree.roots().iter().map(TestId::as_str).collect();
+        assert_eq!(roots, ["Billing\\InvoiceTest"]);
+        assert!(tree
+            .node(&TestId("Billing\\InvoiceTest::testFails".into()))
+            .is_some());
     }
 
     #[test]

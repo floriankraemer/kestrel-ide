@@ -1,10 +1,10 @@
 #include "declaration_navigator.h"
 
+#include "editor_popup.h"
 #include "editor_tabs.h"
 #include "symbol_kind_label.h"
 
 #include <QAction>
-#include <QCursor>
 #include <QFileInfo>
 #include <QMainWindow>
 #include <QMenu>
@@ -144,7 +144,7 @@ void DeclarationNavigator::chooseAmong(const QList<Candidate> &candidates, const
         connect(action, &QAction::triggered, this,
                 [this, candidate]() { jumpTo(candidate); });
     }
-    menu.exec(QCursor::pos());
+    menu.exec(caretPopupPosition(editorTabs_->currentEditor()));
 }
 
 void DeclarationNavigator::report(const QString &message)

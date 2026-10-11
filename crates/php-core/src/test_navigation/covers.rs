@@ -225,6 +225,8 @@ struct CacheState {
     waiters: usize,
     /// The worker is building the index from scratch, not refreshing it.
     rebuilding: bool,
+    /// Every monorepo package's PSR-4 roots, found once per project.
+    packages: Option<Vec<Psr4Root>>,
 }
 
 impl CoversCache {
@@ -255,6 +257,30 @@ impl CoversCache {
             state.pending.clear();
             state.stale = true;
         }
+    }
+
+    /// The monorepo packages' roots of `project`, `discover`ed the first
+    /// time they are asked for and kept until another project opens. Never
+    /// call it on the GUI thread: the discovery walks the project.
+    pub fn package_roots(
+        &self,
+        project: &Path,
+        discover: impl FnOnce() -> Vec<Psr4Root>,
+    ) -> Vec<Psr4Root> {
+        {
+            let state = self.lock();
+            if state.project == project {
+                if let Some(packages) = &state.packages {
+                    return packages.clone();
+                }
+            }
+        }
+        let packages = discover();
+        let mut state = self.lock();
+        if state.project == project {
+            state.packages = Some(packages.clone());
+        }
+        packages
     }
 
     /// The index for `project` with the PSR-4 `roots` its `composer.json`

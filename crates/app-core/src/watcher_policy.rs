@@ -5,7 +5,19 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::{AppSession, TabId};
+use crate::{AppSession, RetitledTab, TabId};
+
+/// What an open tab becomes when its file was deleted outside the IDE.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExternalDeletion {
+    /// No unsaved edits: the tab closes, as PhpStorm closes the editor of
+    /// a file deleted on disk.
+    Close(TabId),
+    /// Unsaved edits: the tab stays with them, flagged deleted as a project
+    /// tree delete flags it (US-2b), so nothing is lost and nothing saves
+    /// silently.
+    Keep(RetitledTab),
+}
 
 /// How long after this session writes a path to disk itself (`save_tab`) or
 /// repoints a tab onto a new path (a tree-driven rename) a matching
@@ -14,6 +26,12 @@ use crate::{AppSession, TabId};
 /// [`AppSession::check_external_change`]. Generous enough to absorb typical
 /// inotify/Qt-event-loop latency; not meant to be race-proof.
 const SELF_CHANGE_SUPPRESSION_WINDOW: Duration = Duration::from_millis(1500);
+
+/// Whether nothing is at `path` any more (a dangling symlink counts as
+/// there: its target may come back).
+fn is_gone(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
 
 /// A digest of file bytes, to tell "still what we wrote" from "changed".
 fn digest(bytes: &[u8]) -> u64 {
@@ -39,6 +57,7 @@ impl AppSession {
             .entry(id)
             .map(|e| e.content.is_deleted())
             .unwrap_or(true)
+            || is_gone(path)
         {
             return None;
         }
@@ -51,6 +70,24 @@ impl AppSession {
             return None;
         }
         Some(id)
+    }
+
+    /// Decide what becomes of the open tab of `path` when a watcher event
+    /// says the file is gone: `None` when it still exists, has no open tab,
+    /// or the tab is already flagged deleted. A deleted file is no "modified
+    /// outside the editor" question: Reload has nothing to read.
+    pub fn check_external_deletion(&mut self, path: &Path) -> Option<ExternalDeletion> {
+        let id = self.find_tab_by_path(path)?;
+        let entry = self.entry_mut(id)?;
+        if entry.content.is_deleted() || !is_gone(path) {
+            return None;
+        }
+        if self.tab_is_dirty(id) != Some(true) {
+            return Some(ExternalDeletion::Close(id));
+        }
+        self.entry_mut(id)?.content.mark_deleted();
+        let title = self.tab_title(id)?;
+        Some(ExternalDeletion::Keep(RetitledTab { id, title }))
     }
 
     /// Remember that this session just wrote `content` to `path`.
@@ -105,6 +142,37 @@ mod tests {
         assert_eq!(session.check_external_change(&closed_path), None);
         // A genuinely external change to an open tab: prompt.
         assert_eq!(session.check_external_change(&open_path), Some(tab.id));
+    }
+
+    #[test]
+    fn a_file_deleted_outside_closes_its_clean_tab_and_keeps_a_dirty_one() {
+        let (project_dir, _config, mut session) = session_with_project();
+        let clean = project_dir.path().join("a.txt");
+        let dirty = project_dir.path().join("b.txt");
+        let clean_tab = session.open_file(&clean).unwrap();
+        let dirty_tab = session.open_file(&dirty).unwrap();
+        session.edit_tab(dirty_tab.id, "beta, edited").unwrap();
+        // Still there: no deletion, whatever else changed.
+        assert_eq!(session.check_external_deletion(&clean), None);
+
+        fs::remove_file(&clean).unwrap();
+        fs::remove_file(&dirty).unwrap();
+        // Not a "modified outside the editor" question: nothing to reload.
+        assert_eq!(session.check_external_change(&clean), None);
+        assert_eq!(
+            session.check_external_deletion(&clean),
+            Some(ExternalDeletion::Close(clean_tab.id))
+        );
+        assert_eq!(
+            session.check_external_deletion(&dirty),
+            Some(ExternalDeletion::Keep(RetitledTab {
+                id: dirty_tab.id,
+                title: "b.txt (deleted)".into()
+            }))
+        );
+        // The kept tab is flagged once: a later event asks nothing.
+        assert_eq!(session.check_external_deletion(&dirty), None);
+        assert_eq!(session.check_external_change(&dirty), None);
     }
 
     #[test]

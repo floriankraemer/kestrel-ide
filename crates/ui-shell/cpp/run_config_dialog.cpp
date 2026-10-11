@@ -182,18 +182,13 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
 
     auto *form = new QVBoxLayout();
     const auto addRow = [form, &dialog](const QString &label, QWidget *field) {
-        auto *row = new QHBoxLayout();
-        auto *labelWidget = new QLabel(label, &dialog);
-        labelWidget->setMinimumWidth(90);
-        row->addWidget(labelWidget);
-        row->addWidget(field, 1);
-        form->addLayout(row);
+        return addFormRow(form, &dialog, label, field);
     };
     addRow(QObject::tr("Name:"), nameEdit);
-    addRow(QObject::tr("Program:"), programEdit);
-    addRow(QObject::tr("Arguments:"), argsEdit);
-    addRow(QObject::tr("Working dir:"), cwdEdit);
-    addRow(QObject::tr("Run on:"), runOnCombo);
+    QWidget *programRow = addRow(QObject::tr("Program:"), programEdit);
+    QWidget *argsRow = addRow(QObject::tr("Arguments:"), argsEdit);
+    QWidget *cwdRow = addRow(QObject::tr("Working dir:"), cwdEdit);
+    QWidget *runOnRow = addRow(QObject::tr("Run on:"), runOnCombo);
     form->addWidget(new QLabel(QObject::tr("Before launch:"), &dialog));
     form->addWidget(beforeLaunchEdit);
     form->addWidget(parallelCheck);
@@ -266,7 +261,9 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
                   .arg(e2eJson(*currentKind), e2eJson(preview), e2eJson(nameEdit->text())));
     };
 
-    const auto loadForm = [=](int index) {
+    alignFormLabels(&dialog);
+
+    const auto loadForm = [=, &dialog](int index) {
         const bool has = index >= 0;
         nameEdit->setEnabled(has);
         cwdEdit->setEnabled(has);
@@ -291,10 +288,16 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         programEdit->setEnabled(has && !isSpecialKind);
         argsEdit->setEnabled(has && !isSpecialKind);
         cwdEdit->setEnabled(has && !isSpecialKind);
+        // A `phpunit` configuration builds its argv from its page, which has
+        // its own working directory: these rows do not apply (#448).
+        const bool isPhpUnit = config.kind == QLatin1String("phpunit");
+        programRow->setVisible(!isPhpUnit);
+        argsRow->setVisible(!isPhpUnit);
+        cwdRow->setVisible(!isPhpUnit);
         // "Run on" only means something for a plain-process configuration —
         // a container- or sql-script-kind one's launch is not a "Run on
         // this machine vs. a container" choice at all.
-        runOnCombo->setVisible(!isSpecialKind);
+        runOnRow->setVisible(!isSpecialKind);
         refreshRunOnCombo(config.run_on);
         containerPage->setKind(config.kind);
         containerPage->setOptions(config.container);
@@ -302,9 +305,21 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         sqlPage->setOptions(config.sql_script);
         phpServerPage->setVisible(config.kind == QLatin1String("php-builtin-server"));
         phpServerPage->setOptions(config.php_server);
-        phpUnitPage->setVisible(config.kind == QLatin1String("phpunit"));
+        phpUnitPage->setVisible(isPhpUnit);
         phpUnitPage->setOptions(config.phpunit);
         refreshPreview();
+        // E2E only: where the form's rows and the PHPUnit page's fields
+        // landed once laid out, for the alignment check and for typing.
+        if (e2eMarksEnabled()) {
+            QTimer::singleShot(0, &dialog, [=, &dialog]() {
+                e2eMark(QStringLiteral("{\"ev\":\"run_config_form\",\"kind\":%1,\"name\":%2,"
+                                       "\"rows\":%3,\"phpunit\":%4}")
+                          .arg(e2eJson(*currentKind), e2eJson(nameEdit->text()),
+                               formRowsJson(&dialog),
+                               phpUnitPage->isVisible() ? phpUnitPage->e2eFieldsJson()
+                                                        : QStringLiteral("null")));
+            });
+        }
     };
 
     // "New target..." opens the wizard right away rather than staying

@@ -60,6 +60,6 @@ pub use selection::{select_framework, SUPPORTED_OUTPUT_FORMATS};
 pub use source::{source_target, SourceTarget};
 pub use teamcity::{TeamCityEvent, TeamCityParser};
 pub use tree::{
-    NodeKind, RunPlace, TestCounts, TestFailure, TestId, TestNode, TestStatus, TestTree,
-    UNFINISHED_MESSAGE,
+    Comparison, NodeKind, RunPlace, TestCounts, TestFailure, TestId, TestNode, TestStatus,
+    TestTree, UNFINISHED_MESSAGE,
 };

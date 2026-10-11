@@ -203,22 +203,8 @@ fn run_selected(ide: &Ide, entry: &str) -> (Value, BTreeMap<String, String>) {
 /// The Edit Configurations dialog's command preview of each configuration,
 /// by name: the list walked top to bottom with Down.
 fn previews(ide: &Ide, count: usize) -> BTreeMap<String, String> {
-    let mark = ide.mark();
-    click_run_menu_item(ide, "Edit Configurations...");
-    let shown = ide.wait_for_event(mark, "the run configuration dialog", |e| {
-        e["ev"] == "dialog_shown" && e["name"] == "run_config_dialog"
-    });
-    // No window manager hands a new toplevel the focus.
-    let dialog = e2e::wait_for("the dialog's window", || {
-        e2e::xdotool::visible_windows("^Run Configurations$")
-            .into_iter()
-            .next()
-    });
-    ide.focus_window(&dialog);
-    let list = &shown["list_rect"];
-    let (x, _) = rect_centre(list);
-    // The first row; its page asks for the pickers' model before we move on.
-    ide.click_at(x, list[1].as_i64().unwrap() as i32 + 8, 1);
+    let mark = open_config_dialog(ide);
+    // The first row's page asks for the pickers' model before we move on.
     answer(ide, mark, |e| e["ev"] == "phpunit_page_model");
     for _ in 0..count {
         let moved = ide.mark();
@@ -235,12 +221,91 @@ fn previews(ide: &Ide, count: usize) -> BTreeMap<String, String> {
             e["preview"].as_str().unwrap_or_default().to_string(),
         );
     }
-    ide.key("Escape");
-    ide.wait_for_event(mark, "the dialog to close", |e| {
-        e["ev"] == "dialog_closed" && e["name"] == "run_config_dialog"
-    });
-    ide.focus_main();
+    close_config_dialog(ide, mark);
     out
+}
+
+/// AC4.14: on every PHPUnit page the dialog showed, the fields start at one
+/// x and the rows that do not apply to the kind are gone (#448).
+fn check_page_layout(ide: &Ide, opened: Mark, findings: &mut Findings) {
+    let forms: Vec<Value> = ide
+        .events_since_of(opened, "run_config_form")
+        .into_iter()
+        .filter(|e| e["kind"] == "phpunit")
+        .collect();
+    findings.check(!forms.is_empty(), "AC4.14: no PHPUnit page was laid out");
+    for form in forms {
+        let rows = form["rows"].as_array().cloned().unwrap_or_default();
+        let xs: std::collections::BTreeSet<i64> =
+            rows.iter().filter_map(|r| r["field_x"].as_i64()).collect();
+        let labels: Vec<&str> = rows.iter().filter_map(|r| r["label"].as_str()).collect();
+        findings.check(
+            xs.len() == 1,
+            format!("AC4.14: {:?} has field columns at {xs:?}", form["name"]),
+        );
+        findings.check(
+            !labels
+                .iter()
+                .any(|l| ["Program:", "Arguments:", "Working dir:", "Run on:"].contains(l)),
+            format!(
+                "AC4.14: {:?} shows rows of another kind: {labels:?}",
+                form["name"]
+            ),
+        );
+    }
+}
+
+/// AC4.11 (Enter in the group picker adds a group, the dialog stays) and
+/// AC4.6 (an alternative configuration file reloads the pickers).
+fn check_page_pickers(ide: &Ide, findings: &mut Findings) {
+    let opened = open_config_dialog(ide);
+    let Some(form) = find_config_row(ide, opened, 20, |f| f["kind"] == "phpunit") else {
+        findings.check(
+            false,
+            "AC4.6/AC4.11: the dialog lists no PHPUnit configuration",
+        );
+        close_config_dialog(ide, opened);
+        return;
+    };
+    let page = &form["phpunit"];
+    let (x, y) = rect_centre(&page["group_add_rect"]);
+    ide.click_at(x, y, 1);
+    let typed = ide.mark();
+    ide.type_text("extra");
+    ide.key("Return");
+    let preview = answer(ide, typed, |e| {
+        e["ev"] == "run_config_preview"
+            && e["preview"]
+                .as_str()
+                .is_some_and(|p| p.contains("--group extra"))
+    });
+    findings.check(
+        preview.is_some(),
+        "AC4.11: Enter in the group picker added no group to the preview",
+    );
+    findings.check(
+        ide.events_since(typed)
+            .iter()
+            .all(|e| !(e["ev"] == "dialog_closed" && e["name"] == "run_config_dialog")),
+        "AC4.11: Enter in the group picker closed the dialog",
+    );
+
+    let (x, y) = rect_centre(&page["configuration_rect"]);
+    ide.click_at(x, y, 1);
+    ide.key("ctrl+a");
+    let typed = ide.mark();
+    ide.type_text("packages/billing/phpunit.xml");
+    let model = answer(ide, typed, |e| {
+        e["ev"] == "phpunit_page_model"
+            && e["suites"]
+                .as_array()
+                .is_some_and(|s| s.iter().any(|n| n == "billing"))
+    });
+    findings.check(
+        model.is_some(),
+        "AC4.6: the alternative configuration file did not reload the pickers",
+    );
+    close_config_dialog(ide, opened);
 }
 
 /// J4 (scopes and options of saved PHPUnit configurations), AC5.4–AC5.7
@@ -260,6 +325,8 @@ fn e2e_phpunit_saved_configurations() {
     // AC4.2: the argv preview of each scope follows ADR-0073's table.
     let opened = ide.mark();
     let shown = previews(&ide, 18);
+    check_page_layout(&ide, opened, &mut findings);
+    check_page_pickers(&ide, &mut findings);
     // AC4.4/AC4.5: the pickers offer what phpunit.xml declares.
     let model = answer(&ide, opened, |e| e["ev"] == "phpunit_page_model");
     let listed = |key: &str| -> Vec<String> {

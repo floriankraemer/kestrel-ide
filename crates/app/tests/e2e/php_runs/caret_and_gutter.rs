@@ -310,18 +310,19 @@ fn e2e_phpunit_gutter_status_data_sets_and_coverage() {
     assert_eq!(tests.len(), 4, "AC2.10: the outer describe ran {tests:?}");
     wait_for_marker(&ide, mark, pest, PEST_IT_ADDS, "passed");
     wait_for_marker(&ide, mark, pest, 4, "passed");
+    // Pest's `--filter` cannot select one dataset row (#451), so the menu
+    // must not offer a row it cannot run; the call itself runs every row.
     let squares = gutter_menu_labels(&ide, pest, 15);
-    let three = squares
-        .iter()
-        .find(|l| l.starts_with("Run") && l.contains("three"))
-        .unwrap_or_else(|| panic!("AC2.10: no data set entry in {squares:?}"))
-        .clone();
+    findings.check(
+        !squares.iter().any(|l| l.contains("with data set")),
+        format!("AC2.10: a Pest dataset row is offered although it cannot run alone: {squares:?}"),
+    );
     let mark = ide.mark();
-    gutter(&ide, pest, 15, &three);
+    gutter(&ide, pest, 15, "Run '");
     let (finished, tests) = run_and_collect(&ide, mark);
     findings.check(
-        tests.len() == 1 && tests.keys().all(|n| n.contains("three")),
-        format!("AC2.10: the Pest dataset row `three` ran {tests:?}: {finished}"),
+        tests.len() == 2 && tests.keys().any(|n| n.contains("three")),
+        format!("AC2.10: the Pest dataset call ran {tests:?}: {finished}"),
     );
 
     // AC2.5: a running test shows the running state.

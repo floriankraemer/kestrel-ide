@@ -52,6 +52,8 @@ RunMarkerGlyph toGlyph(FfiMarkerState state)
         return RunMarkerGlyph::Failed;
     case FfiMarkerState::Ignored:
         return RunMarkerGlyph::Ignored;
+    case FfiMarkerState::Terminated:
+        return RunMarkerGlyph::Terminated;
     case FfiMarkerState::NeverRun:
         break;
     }
@@ -65,11 +67,21 @@ QString statusTooltip(const FfiMarkerStatus &status)
     switch (status.state) {
     case FfiMarkerState::Running:
         return QObject::tr("Running…");
-    case FfiMarkerState::Failed:
-        return !message.isEmpty()
-                 ? message
-                 : QObject::tr("%1 of %n tests failed", nullptr, static_cast<int>(status.total))
-                     .arg(status.failed);
+    case FfiMarkerState::Failed: {
+        if (message.isEmpty()) {
+            return QObject::tr("%1 of %n tests failed", nullptr, static_cast<int>(status.total))
+              .arg(status.failed);
+        }
+        const QString expected(status.expected);
+        const QString actual(status.actual);
+        if (expected.isEmpty() && actual.isEmpty()) {
+            return message;
+        }
+        // PhpStorm's tooltip: the assertion, then what it compared.
+        return QObject::tr("%1\nExpected: %2\nActual:   %3").arg(message, expected, actual);
+    }
+    case FfiMarkerState::Terminated:
+        return QObject::tr("Not finished");
     case FfiMarkerState::Ignored:
         return message.isEmpty() ? QObject::tr("Ignored") : QObject::tr("Ignored: %1").arg(message);
     case FfiMarkerState::Passed:
@@ -106,8 +118,11 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEdi
 void wireTestGutter(TestService *testService, DebugService *debugService, EditorTabs *editorTabs)
 {
     editorTabs->setTestService(testService);
-    // A coverage run (or clearing it) repaints every open editor's stripes.
+    // A coverage run (or clearing it) repaints every open editor's stripes,
+    // and the recorded results arriving every open editor's icons (#437).
     QObject::connect(testService, &TestService::coverageChanged, editorTabs,
+                      [editorTabs]() { editorTabs->refreshRunMarkers(); });
+    QObject::connect(testService, &TestService::testHistoryLoaded, editorTabs,
                       [editorTabs]() { editorTabs->refreshRunMarkers(); });
     // E3: the tree changes with every streamed message; coalesce into one
     // icon repaint per interval.
@@ -347,7 +362,27 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
         showTestMarkerMenu(editor, path, line);
         return;
     }
+    // A test file's own Run icon (its `<?php` line) runs its tests, as Run
+    // File does there (#440); anything else is not a test file.
+    if (testService_ != nullptr) {
+        const FfiResult result = testService_->runCaretContext(
+          path, editor->toPlainText(), static_cast<quint32>(line), false, debugService_ != nullptr);
+        if (result.code != kNotATestCode) {
+            auto *mainWindow = qobject_cast<QMainWindow *>(window_);
+            if (result.code != 0 && mainWindow != nullptr) {
+                mainWindow->statusBar()->showMessage(QString(result.message), 6000);
+            }
+            return;
+        }
+    }
+    runPlainFile(editor, path, line);
+}
 
+void EditorTabs::runPlainFile(CodeEditor *editor, const QString &path, int line)
+{
+    if (!runService_) {
+        return;
+    }
     // A Dockerfile/Containerfile or compose file's gutter offers a choice
     // (C5, ADR-0056) instead of running outright — the same distinction
     // JetBrains' own gutter icon makes for these two file types, since
@@ -427,7 +462,7 @@ void EditorTabs::runContextAtCaret(CodeEditor *editor, bool debug)
     FfiResult result = testService_->runCaretContext(path, editor->toPlainText(), line, debug,
                                                      debugService_ != nullptr);
     if (result.code == kNotATestCode) {
-        requestRunFor(editor);
+        runPlainFile(editor, path, 0);
         return;
     }
     if (result.code == 0 && debug) {

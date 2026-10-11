@@ -2585,6 +2585,12 @@ mod ffi {
         #[cxx_name = "externalChangeDetected"]
         fn external_change_detected(self: Pin<&mut DocumentManager>, tab_id: u64, path: QString);
 
+        /// A tab's title changed outside an edit: its file was deleted on
+        /// disk while it held unsaved edits, so it reads "(deleted)".
+        #[qsignal]
+        #[cxx_name = "tabTitleChanged"]
+        fn tab_title_changed(self: Pin<&mut DocumentManager>, tab_id: u64, title: QString);
+
         /// Emitted after MCP's `edit_buffer` tool (M5) changes a tab's
         /// content — the tab strip replaces the widget's text so the edit
         /// is visible, the same "session decides, view displays" split
@@ -7048,6 +7054,8 @@ mod ffi {
         Pending,
         Passed,
         Skipped,
+        /// The run ended before the test reported (IntelliJ's terminated).
+        Terminated,
     }
 
     /// The icon a gutter test marker wears (PHPUnit editor runs plan, E3);
@@ -7058,6 +7066,7 @@ mod ffi {
         Passed,
         Failed,
         Ignored,
+        Terminated,
     }
 
     /// One gutter marker's last-run result, as numbers and a message the
@@ -7071,6 +7080,18 @@ mod ffi {
         duration_ms: u64,
         /// The one failure's, or the ignore reason; empty when there is none.
         message: QString,
+        /// That failure's expected/actual; both empty when it compared none.
+        expected: QString,
+        actual: QString,
+    }
+
+    /// A failed test's expected/actual (#441): the details pane's
+    /// comparison, and the diff viewer's input once there is one (#430).
+    #[derive(Default)]
+    struct FfiTestComparison {
+        found: bool,
+        expected: QString,
+        actual: QString,
     }
 
     /// How a Go to Test request ended (E7).
@@ -7212,6 +7233,11 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "failureDetails"]
         fn failure_details(self: &TestService, node_id: &QString) -> QString;
+
+        /// The failing node's expected/actual, when its assertion compared.
+        #[qinvokable]
+        #[cxx_name = "failureComparison"]
+        fn failure_comparison(self: &TestService, node_id: &QString) -> FfiTestComparison;
 
         /// Resolve a `file:line` at `byte_offset` into this node's failure
         /// details — the failure pane's click-to-open, same contract as
@@ -7485,6 +7511,11 @@ mod ffi {
         fn clear_coverage(self: Pin<&mut TestService>);
 
         /// A coverage run delivered (or `clearCoverage` dropped) its report.
+        /// The project's recorded results arrived: every gutter repaints.
+        #[qsignal]
+        #[cxx_name = "testHistoryLoaded"]
+        fn test_history_loaded(self: Pin<&mut TestService>);
+
         #[qsignal]
         #[cxx_name = "coverageChanged"]
         fn coverage_changed(self: Pin<&mut TestService>);

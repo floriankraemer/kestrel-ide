@@ -62,6 +62,23 @@ void DockRegistry::show(const QString &id)
     found->dock->raise();
 }
 
+void DockRegistry::showBehind(const QString &id)
+{
+    ads::CDockWidget *shown = dock(id);
+    if (shown == nullptr) {
+        return;
+    }
+    // ADS makes a re-shown dock its area's current tab; the tab that was
+    // current is made current again.
+    ads::CDockAreaWidget *area = shown->dockAreaWidget();
+    ads::CDockWidget *current = area != nullptr ? area->currentDockWidget() : nullptr;
+    shown->toggleView(true);
+    if (current != nullptr && current != shown && !current->isClosed()
+        && shown->dockAreaWidget() == area) {
+        area->setCurrentDockWidget(current);
+    }
+}
+
 void DockRegistry::restoreState(const QString &base64State)
 {
     if (base64State.isEmpty()) {

@@ -34,6 +34,7 @@
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTextBlock>
+#include <QTimer>
 #include <QTextCursor>
 #include <QVariant>
 #include <QVector>
@@ -147,6 +148,8 @@ EditorTabs::EditorTabs(DocumentManager *docManager, LanguageService *languageSer
     connect(docManager_, &DocumentManager::tabClosed, this, &EditorTabs::onTabClosed);
     connect(editorOps_, &EditorOps::saveFormatted, this, &EditorTabs::onSaveFormatted);
     connect(docManager_, &DocumentManager::tabModifiedChanged, this, &EditorTabs::onTabModifiedChanged);
+    // A file deleted on disk while its tab held unsaved edits reads "(deleted)".
+    connect(docManager_, &DocumentManager::tabTitleChanged, this, &EditorTabs::onTabTitleChanged);
     // Direct: a reader (MCP read_buffer) waits for the answer, which is a syncTabText call.
     connect(docManager_, &DocumentManager::liveTextRequested, this, &EditorTabs::onLiveTextRequested, Qt::DirectConnection);
 
@@ -785,7 +788,14 @@ void EditorTabs::handleExternalChange(quint64 tabId, const QString &path)
     QPushButton *reloadButton = box.addButton(tr("Reload"), QMessageBox::AcceptRole);
     box.addButton(tr("Keep My Version"), QMessageBox::RejectRole);
     box.setDefaultButton(reloadButton);
+    // Marked from inside `exec()`'s loop, once the box is up, as every
+    // modal dialog is (`run_config_dialog.cpp`).
+    QTimer::singleShot(0, &box, [path]() {
+        e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"external_change\",\"path\":%1}")
+                  .arg(e2eJson(path)));
+    });
     box.exec();
+    e2eMark(QStringLiteral("{\"ev\":\"dialog_closed\",\"name\":\"external_change\"}"));
     externalChangePrompts_.remove(tabId);
     if (!editor) {
         return;

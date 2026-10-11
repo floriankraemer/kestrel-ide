@@ -50,7 +50,7 @@ Visual defects are fixed or filed.
 - AC2.7 Data-provider marker menu lists each set (`"a/b"`, `"x@y"`, `#0` …, cap 15); choosing `"x@y"` runs only that set.
 - AC2.8 Debug a data set → Xdebug stops in the method for that set.
 - AC2.9 Run with Coverage from the marker → subject shows covered/uncovered lines.
-- AC2.10 Pest `it()`, `describe()` and dataset rows behave as AC2.1–2.7.
+- AC2.10 Pest `it()` and `describe()` markers behave as AC2.1–2.7; a dataset call runs all its rows, and no single-row entry is offered because Pest's `--filter` cannot select one row (#451).
 - AC2.11 Pixel: glyphs legible in dark and light themes, same size/baseline as the run triangle (theme-aware colours, gap G8).
 - AC2.12 (W) Full symfony-aop run (641 tests): typing never freezes > 100 ms; markers correct at the end.
 
@@ -178,6 +178,9 @@ Pest lives in its own package, `packages/pest`, so the root project runs real PH
 | `e2e_phpunit_project_tree_and_monorepo_packages` | J7, J8 |
 | `e2e_phpunit_go_to_test_and_subject` | J9, G11 |
 
+The configurations flow also types into the PHPUnit page (AC4.6, AC4.11) and checks its label column (AC4.14) through the dialog's `run_config_form` marker; the tree flow reads a package configuration's page (AC8.6).
+AC4.8 stays manual: its pickers open the platform's file dialog.
+A Pest dataset row cannot run on its own (#451): AC2.10 checks that no single-row entry is offered and that the call runs every row.
 A flow records each failed AC and keeps going, so one defect does not hide the ACs after it; it fails at its end, listing every failed AC.
 Screenshots for the pixel ACs go to `target/shots` (or `$IDE_SHOT_DIR`) as a diagnostic, never an assertion (ADR-0024).
 

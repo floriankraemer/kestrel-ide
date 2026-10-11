@@ -10,7 +10,7 @@
 use crate::filter::{apply_filter, escape_regex, FilterDialect};
 
 /// The infix PHPUnit and Pest put between a test name and its data set.
-const DATA_SET_INFIX: &str = " with data set ";
+pub const DATA_SET_INFIX: &str = " with data set ";
 
 /// What a run covers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,13 +125,12 @@ fn data_set_filter(class: &str, method: &str, data_set: &str) -> String {
     )
 }
 
-/// Split `Class::method with data set "x"` into its three parts; `None` for
-/// anything that is not a data-set row of a method.
-pub fn split_data_set_id(id: &str) -> Option<(&str, &str, &str)> {
-    let (class, rest) = id.split_once("::")?;
-    let (method, data_set) = rest.split_once(DATA_SET_INFIX)?;
-    let named = data_set.starts_with('"') || data_set.starts_with('#');
-    (!class.is_empty() && !method.is_empty() && named).then_some((class, method, data_set))
+/// The data set a reported test name ends in (`"x"` or `#0`, the text
+/// after `with data set `); `None` for a name that is not a data-set row.
+pub fn data_set_of(name: &str) -> Option<&str> {
+    name.match_indices(DATA_SET_INFIX)
+        .map(|(at, _)| &name[at + DATA_SET_INFIX.len()..])
+        .find(|set| set.starts_with(['"', '#']))
 }
 
 /// The full argv: `base`, the scope's selection, the options, then the
@@ -581,17 +580,15 @@ mod tests {
     }
 
     #[test]
-    fn a_data_set_row_id_splits_into_class_method_and_set() {
+    fn a_data_set_is_the_named_or_numbered_text_after_the_infix() {
+        assert_eq!(data_set_of("testA with data set \"x y\""), Some("\"x y\""));
+        assert_eq!(data_set_of("testA::testA with data set #1"), Some("#1"));
+        assert_eq!(data_set_of("testA"), None);
+        assert_eq!(data_set_of("testA with data set x"), None);
         assert_eq!(
-            split_data_set_id("App\\T::testA with data set \"x y\""),
-            Some(("App\\T", "testA", "\"x y\""))
+            data_set_of("has with data set in name with data set \"(1)\""),
+            Some("\"(1)\"")
         );
-        assert_eq!(
-            split_data_set_id("App\\T::testA with data set #1"),
-            Some(("App\\T", "testA", "#1"))
-        );
-        assert_eq!(split_data_set_id("App\\T::testA"), None);
-        assert_eq!(split_data_set_id("App\\T::testA with data set x"), None);
     }
 
     #[test]

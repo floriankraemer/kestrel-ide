@@ -239,8 +239,15 @@ pub fn run_on(
 /// its caller (a test run being prepared) forever.
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// How long a probe's output pipes may stay open once the probe exited: a
+/// grandchild it left running (a daemon `sh -lc` started) can hold them
+/// open for good, and the probe's own answer is already written.
+const PIPE_GRACE: Duration = Duration::from_secs(2);
+
 /// `command`'s collected output, like [`Command::output`], or
-/// `io::ErrorKind::TimedOut` once it outlives `timeout`, the child killed.
+/// `io::ErrorKind::TimedOut` once it outlives `timeout`, its process tree
+/// killed. Output still unread [`PIPE_GRACE`] after the process exited is
+/// given up on rather than waited for.
 pub(crate) fn output_within(
     command: &mut Command,
     timeout: Duration,
@@ -250,34 +257,63 @@ pub(crate) fn output_within(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = retry_text_busy(|| command.spawn())?;
-    let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
-    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
-    let stdout_reader = thread::spawn(move || {
-        let mut buffer = Vec::new();
-        io::Read::read_to_end(&mut stdout_pipe, &mut buffer).map(|_| buffer)
-    });
-    let stderr_reader = thread::spawn(move || {
-        let mut buffer = Vec::new();
-        io::Read::read_to_end(&mut stderr_pipe, &mut buffer).map(|_| buffer)
-    });
+    let stdout = drain(child.stdout.take().expect("stdout was piped"));
+    let stderr = drain(child.stderr.take().expect("stderr was piped"));
     let Some(status) = wait_with_timeout(&mut child, timeout)? else {
-        let _ = child.kill();
+        kill_tree(&mut child);
         let _ = child.wait();
         return Err(io::Error::new(
             io::ErrorKind::TimedOut,
             "the probe did not answer in time",
         ));
     };
-    let join = |reader: thread::JoinHandle<io::Result<Vec<u8>>>| {
-        reader
-            .join()
-            .unwrap_or_else(|_| Err(io::Error::other("reading the probe's output failed")))
+    let collect = |pipe: std::sync::mpsc::Receiver<io::Result<Vec<u8>>>| {
+        pipe.recv_timeout(PIPE_GRACE).unwrap_or_else(|_| {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the probe's output stayed open after it exited",
+            ))
+        })
     };
     Ok(std::process::Output {
         status,
-        stdout: join(stdout_reader)?,
-        stderr: join(stderr_reader)?,
+        stdout: collect(stdout)?,
+        stderr: collect(stderr)?,
     })
+}
+
+/// Read `pipe` to its end on a thread of its own; the answer arrives on the
+/// returned channel. A pipe a grandchild keeps open leaves the thread
+/// blocked, detached, until that grandchild exits.
+fn drain(
+    mut pipe: impl io::Read + Send + 'static,
+) -> std::sync::mpsc::Receiver<io::Result<Vec<u8>>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let _ = sender.send(pipe.read_to_end(&mut buffer).map(|_| buffer));
+    });
+    receiver
+}
+
+/// Kill `child` and, on Windows, every process it started: `wsl.exe` and the
+/// Docker CLI run their work in children of their own, which a plain kill of
+/// the direct child leaves running.
+// ponytail: a process inside the WSL distro or the container is that side's
+// to end once its `wsl.exe` / CLI is gone; a `compose run` container needs
+// `--rm` plus an engine-side stop to go away for sure.
+fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    {
+        let mut taskkill = Command::new("taskkill");
+        taskkill
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        suppress_console_window(&mut taskkill);
+        let _ = taskkill.status();
+    }
+    let _ = child.kill();
 }
 
 /// Wait for `child` for at most `timeout`, returning `None` if it outlives
@@ -459,6 +495,19 @@ mod tests {
         let output = output_within(&mut quick, Duration::from_secs(10)).unwrap();
         assert_eq!(output.stdout, b"out\n");
         assert_eq!(output.stderr, b"err\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_whose_grandchild_keeps_its_pipes_open_still_answers() {
+        let started = Instant::now();
+        let mut probe = Command::new("sh");
+        probe.args(["-c", "sleep 30 & echo answered"]);
+        let error = output_within(&mut probe, Duration::from_secs(20)).unwrap_err();
+        // The probe exited at once; its pipes stay open, so the wait for
+        // them ends after the grace, not with the grandchild.
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < PIPE_GRACE + Duration::from_secs(5));
     }
 
     /// The race behind flaky fake-executable tests, made deterministic: the

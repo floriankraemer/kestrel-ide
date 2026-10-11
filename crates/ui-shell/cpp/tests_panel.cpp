@@ -61,6 +61,8 @@ QString statusText(FfiTestStatusKind status)
         return QObject::tr("Passed");
     case FfiTestStatusKind::Skipped:
         return QObject::tr("Skipped");
+    case FfiTestStatusKind::Terminated:
+        return QObject::tr("Not finished");
     }
     return QString();
 }
@@ -82,6 +84,8 @@ const char *statusName(FfiTestStatusKind status)
         return "passed";
     case FfiTestStatusKind::Skipped:
         return "skipped";
+    case FfiTestStatusKind::Terminated:
+        return "terminated";
     }
     return "";
 }
@@ -103,6 +107,8 @@ QColor statusColor(FfiTestStatusKind status)
         return colors.ok;
     case FfiTestStatusKind::Skipped:
         return colors.muted;
+    case FfiTestStatusKind::Terminated:
+        return colors.warning;
     }
     return QColor();
 }
@@ -216,8 +222,7 @@ TestsPanel::TestsPanel(TestService *testService, AppSettings *appSettings, OpenA
     failureDetails_ = failureEdit;
     failureEdit->setHoverCallback([this, failureEdit](int position, bool ctrlHeld) {
         const bool linked = ctrlHeld && selectedNodeId_ != QString()
-          && testService_->resolveFailureLink(selectedNodeId_, static_cast<quint32>(position))
-               .found;
+          && failureLinkAt(position).found;
         failureEdit->viewport()->setCursor(linked ? Qt::PointingHandCursor : Qt::IBeamCursor);
     });
     failureEdit->setActivateCallback(
@@ -474,12 +479,20 @@ void TestsPanel::onSelectionChanged()
     if (selectedNodeId_.isEmpty()) {
         failureHeader_->clear();
         failureDetails_->clear();
+        detailsOffset_ = 0;
         return;
     }
     const QString message = testService_->failureMessage(selectedNodeId_);
     const QString details = testService_->failureDetails(selectedNodeId_);
     failureHeader_->setText(message);
-    failureDetails_->setPlainText(details);
+    // An equality assertion's two sides lead, as PhpStorm's Expected/Actual
+    // do; the trace's links are resolved past them (`detailsOffset_`).
+    const FfiTestComparison comparison = testService_->failureComparison(selectedNodeId_);
+    const QString lead = comparison.found
+      ? tr("Expected: %1\nActual:   %2\n\n").arg(QString(comparison.expected), QString(comparison.actual))
+      : QString();
+    detailsOffset_ = static_cast<int>(lead.size());
+    failureDetails_->setPlainText(lead + details);
     if (e2eMarksEnabled()) {
         markE2eFailureLink();
         // A keyboard move scrolls the tree: report where the rows are now.
@@ -495,7 +508,7 @@ void TestsPanel::markE2eFailureLink() const
     for (QTextBlock block = failureDetails_->document()->begin(); block.isValid();
          block = block.next()) {
         const int position = block.position() + block.length() / 2;
-        if (testService_->resolveFailureLink(selectedNodeId_, static_cast<quint32>(position)).found) {
+        if (failureLinkAt(position).found) {
             QTextCursor cursor(failureDetails_->document());
             cursor.setPosition(position);
             const QRect local = failureDetails_->cursorRect(cursor);
@@ -519,12 +532,20 @@ void TestsPanel::onFailureLinkActivated(int textPosition)
     if (selectedNodeId_.isEmpty()) {
         return;
     }
-    const FfiResolvedLink link =
-      testService_->resolveFailureLink(selectedNodeId_, static_cast<quint32>(textPosition));
+    const FfiResolvedLink link = failureLinkAt(textPosition);
     if (link.found && openAt_) {
         openAt_(link.path, static_cast<int>(link.line),
                 link.has_column ? static_cast<int>(link.column) : 0);
     }
+}
+
+FfiResolvedLink TestsPanel::failureLinkAt(int textPosition) const
+{
+    if (textPosition < detailsOffset_) {
+        return FfiResolvedLink{};
+    }
+    return testService_->resolveFailureLink(selectedNodeId_,
+                                            static_cast<quint32>(textPosition - detailsOffset_));
 }
 
 QKeySequence TestsPanel::jumpToSourceKey() const
@@ -618,6 +639,10 @@ TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("tests"), dock, ads::CenterDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("tests"));
+    // Every test run shows its dock, as PhpStorm's Run window comes forward
+    // for a run started from the editor, the tree or a configuration (#446).
+    QObject::connect(testService, &TestService::testRunPreparing, panel,
+                     [docks]() { docks->show(QStringLiteral("tests")); });
     // Every refusal of a test run, whichever service found it, shows the
     // same way: in the Tests dock, raised, and on the status bar.
     QObject::connect(testService, &TestService::testRunRefused, panel,

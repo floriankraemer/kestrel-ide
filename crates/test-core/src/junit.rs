@@ -100,6 +100,7 @@ pub fn parse(xml: &str) -> Result<Vec<JUnitTestCase>, ParseError> {
                         case.failure = Some(TestFailure {
                             message: attr(&tag, "message")?.unwrap_or_default(),
                             details: String::new(),
+                            comparison: None,
                         });
                     }
                 }
@@ -140,6 +141,7 @@ pub fn parse(xml: &str) -> Result<Vec<JUnitTestCase>, ParseError> {
                             case.failure = Some(TestFailure {
                                 message: message.lines().next().unwrap_or("").to_string(),
                                 details: message,
+                                comparison: None,
                             });
                         }
                     }

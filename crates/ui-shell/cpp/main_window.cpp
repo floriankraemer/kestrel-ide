@@ -205,7 +205,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     // than inside the Run Console dock, where they were only visible once
     // that dock was opened. The Run Console panel still forwards the global
     // `run.*` shortcuts to it.
-    auto *runToolbar = new RunToolbar(runService, buildService, debugService, window);
+    auto *runToolbar = new RunToolbar(runService, buildService, debugService, testService, window);
     QToolBar *toolBar = window->addToolBar(QObject::tr("Run"));
     toolBar->setObjectName(QStringLiteral("runToolBar"));
     toolBar->setMovable(false);
@@ -368,12 +368,11 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                         bottomArea);
     // Hidden until there is something to show (or the View menu asks): it
     // opens itself once per session, the first time a diagnostic arrives.
-    // A plain toggleView rather than docks->show() — this auto-open must not
-    // raise the tab over whatever the user is already looking at.
+    // This auto-open must not raise the tab over whatever the user is
+    // already looking at (the Tests dock of a failing run, #446).
     docks->hide(QStringLiteral("problems"));
-    problemsPanel->setFirstDiagnosticCallback([docks]() {
-        docks->dock(QStringLiteral("problems"))->toggleView(true);
-    });
+    problemsPanel->setFirstDiagnosticCallback(
+      [docks]() { docks->showBehind(QStringLiteral("problems")); });
 
     auto *terminalPanel =
       new TerminalSessionsPanel(terminalSupervisor, appSettings, openAt, dockManager);

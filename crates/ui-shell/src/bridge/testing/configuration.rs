@@ -64,11 +64,16 @@ fn marker_config(selection: &MarkerSelection, root: &Path) -> Result<run_core::R
     .map_err(|error| format!("This test cannot be run on its own: it {error}."))
 }
 
-/// The temporary configuration that reruns the data-set row `id` of `file`;
-/// `None` when `id` is not a data-set row.
-fn data_set_config(id: &str, file: Option<&Path>, root: &Path) -> Option<run_core::RunConfig> {
+/// The temporary configuration that reruns the data-set row `node` of
+/// `file`; `None` when `node` is not a data-set row.
+fn data_set_config(
+    node: &test_core::TestNode,
+    file: Option<&Path>,
+    root: &Path,
+) -> Option<run_core::RunConfig> {
+    let symbol = node.location.as_ref()?.symbol.as_ref()?;
     let relative = file.and_then(|file| relative(&file.to_string_lossy(), root));
-    php_core::phpunit_run::data_set_config(id, relative.as_deref())
+    php_core::phpunit_run::data_set_config(symbol, &node.name, relative.as_deref())
 }
 
 /// Persist `config` as a temporary configuration (the cap evicts older
@@ -209,7 +214,12 @@ impl ffi::TestService {
                 let file = self
                     .located(&QString::from(id.as_str()))
                     .map(|(location, host, work_dir)| location.local_path(&host, &work_dir));
-                match (data_set_config(id.as_str(), file.as_deref(), root), file) {
+                let config = self
+                    .tree
+                    .borrow()
+                    .node(&id)
+                    .and_then(|node| data_set_config(node, file.as_deref(), root));
+                match (config, file) {
                     (Some(config), Some(file)) => in_package(config, &file),
                     (Some(config), None) => RunRequest::Editor {
                         config: Box::new(config),

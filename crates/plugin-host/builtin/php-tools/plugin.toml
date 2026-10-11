@@ -158,7 +158,7 @@ filter-flag = "--filter"
 # rerun cannot filter on the reported name as it is.
 filter-dialect = "pest-regex"
 output-format = "teamcity"
-config-file-candidates = ["phpunit.xml", "phpunit.xml.dist", "pest.php"]
+config-file-candidates = ["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist", "pest.php"]
 # A coverage run writes Clover XML to a project-relative path, so it lands
 # in the project mount whether PHP runs here, in WSL or in a container.
 coverage-args = ["--coverage-clover", "$COVERAGE_FILE$"]
@@ -238,7 +238,7 @@ args = ["--teamcity"]
 # (`test_core::filter`).
 filter-flag = "--filter"
 output-format = "teamcity"
-config-file-candidates = ["phpunit.xml", "phpunit.xml.dist"]
+config-file-candidates = ["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"]
 # A coverage run writes Clover XML to a project-relative path, so it lands
 # in the project mount whether PHP runs here, in WSL or in a container.
 coverage-args = ["--coverage-clover", "$COVERAGE_FILE$"]

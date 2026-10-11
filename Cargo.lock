@@ -6193,9 +6193,9 @@ dependencies = [
 name = "php-core"
 version = "0.1.0"
 dependencies = [
- "analysis-core",
  "app-config",
  "container-core",
+ "globset",
  "lsp-core",
  "process-exec",
  "quick-xml",

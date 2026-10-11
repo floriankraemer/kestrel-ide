@@ -88,6 +88,14 @@ pub struct PhpBuiltinServerRunSetting {
 /// The `kind` of a PHPUnit run configuration (ADR-0073).
 pub const PHPUNIT_KIND: &str = "phpunit";
 
+/// PHPUnit's own automatic config-file discovery order (no `-c` given,
+/// PHPUnit's `Configuration::locateConfigurationFile`): the bare filename
+/// before its `.dist` counterparts, since a tracked default should not
+/// shadow a developer's own untracked override. `phpunit.dist.xml` is the
+/// PHPUnit 10+ spelling of `phpunit.xml.dist`.
+pub const PHPUNIT_CONFIG_CANDIDATES: &[&str] =
+    &["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"];
+
 /// The `phpunit` run configuration's own sub-table (PHPUnit editor runs plan,
 /// E4): what to run and how. The scope is a string for the reason
 /// `RunConfigSetting::kind` is one (ADR-0039): persistence stays dumb, and

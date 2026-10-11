@@ -834,7 +834,7 @@ fn a_test_framework_contribution_round_trips() {
             args = ["--teamcity"]
             filter-flag = "--filter"
             output-format = "teamcity"
-            config-file-candidates = ["phpunit.xml", "phpunit.xml.dist"]
+            config-file-candidates = ["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"]
             "#,
     ))
     .expect("valid");
@@ -855,7 +855,7 @@ fn a_test_framework_contribution_round_trips() {
     assert_eq!(frameworks[0].output_format, "teamcity");
     assert_eq!(
         frameworks[0].config_file_candidates,
-        vec!["phpunit.xml", "phpunit.xml.dist"]
+        vec!["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"]
     );
     assert!(!manifest.contributes.is_empty());
     assert_eq!(ContributionPoint::TestFrameworks.key(), "test-frameworks");

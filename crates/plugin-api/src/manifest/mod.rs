@@ -368,7 +368,7 @@ pub struct TestFrameworkContribution {
     #[serde(rename = "output-format")]
     pub output_format: String,
     /// Filenames to look for in the project root, in preference order
-    /// (`["phpunit.xml", "phpunit.xml.dist"]`), so the settings page can
+    /// (`["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"]`), so the settings page can
     /// report which one a run would actually use. Empty is valid — some
     /// test frameworks have no project-level config file at all.
     #[serde(default, rename = "config-file-candidates")]

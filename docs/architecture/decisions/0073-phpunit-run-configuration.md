@@ -61,9 +61,10 @@ Its results do not reach the Tests dock, because `TestService` lives on the Qt t
 
 **The configuration editor offers what `phpunit.xml` declares (E5).**
 `php_core::phpunit_xml::parse` reads the test suites (`<directory suffix>`, `<file>`, `<exclude>`), `<groups>` include/exclude and `bootstrap` of a PHPUnit 9 to 12 configuration over `quick-xml`.
-`discover` finds the file the way PHPUnit does (`phpunit.xml`, `phpunit.dist.xml`, `phpunit.xml.dist` from `analysis-core`'s single list, or the configuration field's path) and `model` joins it with a bounded scan (2000 files, 512 KiB each) of the suites' test files for `#[Group('x')]` attributes and `@group x` tags.
+`discover` finds the file the way PHPUnit does (`phpunit.xml`, `phpunit.dist.xml`, `phpunit.xml.dist` from `app-config::php`'s single list, or the configuration field's path) and `model` joins it with a bounded scan of the suites' test files for the groups PHPUnit knows: `#[Group]`, `#[Ticket]` and the `#[Small]`/`#[Medium]`/`#[Large]` sizes, and below PHPUnit 12 (by `composer.lock`) their `@group`, `@ticket`, `@author` and size annotations.
+The scan shares one budget across suites (2000 test files, 20000 directory entries, 512 KiB a file), walks breadth first in name order, never enters `vendor`, `node_modules` or `.git` below a suite's own directory, does not follow symlinked directories, and reads a file two suites share once.
 `RunConfigEditor::requestPhpUnitModel` runs that on a worker thread and answers through `phpUnitModelReady`; the page shows the test suite as an editable combo and the groups as checkable lists, and asks again when the configuration file field changes.
-A glob in a suite path is not expanded.
+A glob in a suite's `<directory>` or `<file>` is expanded as PHPUnit does (`*` and `?` within a segment, `**` across segments).
 The "defined in the configuration file" scope with a suite is `--testsuite <name>`, unit-tested end to end through `plan` and `scope_args`.
 
 **An editor run selects its temporary configuration (#415).**

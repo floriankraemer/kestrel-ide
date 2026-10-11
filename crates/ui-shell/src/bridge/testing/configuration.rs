@@ -29,14 +29,12 @@ pub(super) fn is_phpunit(config: &run_core::RunConfig) -> bool {
 
 /// Validate and resolve `config`; the error is a sentence for the user.
 pub(super) fn resolve(config: &run_core::RunConfig, root: &Path) -> Result<ConfigRun, String> {
-    let setting = config
-        .phpunit
-        .as_ref()
-        .filter(|_| is_phpunit(config))
+    // A `phpunit` kind with no table runs the configuration file's scope.
+    let setting = php_core::phpunit_run::setting_of(config)
         .ok_or_else(|| format!("\"{}\" is not a PHPUnit configuration", config.name))?;
     let context = run_core::MacroContext::for_project(root);
     let plan = php_core::phpunit_run::plan(
-        setting,
+        &setting,
         |text| run_core::macros::expand(text, &context),
         &root.to_string_lossy(),
         cfg!(windows),

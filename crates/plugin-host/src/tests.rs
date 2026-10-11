@@ -653,7 +653,7 @@ fn the_php_tools_builtin_loads_through_the_real_path() {
     assert_eq!(phpunit.output_format, "teamcity");
     assert_eq!(
         phpunit.config_file_candidates,
-        vec!["phpunit.xml", "phpunit.xml.dist"]
+        vec!["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"]
     );
 }
 

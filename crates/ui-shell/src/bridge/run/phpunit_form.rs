@@ -8,6 +8,7 @@ use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
 use app_config::php::{PhpUnitRunSetting, PHPUNIT_KIND};
+use php_core::phpunit_run::setting_of;
 
 use crate::bridge::ffi;
 
@@ -70,17 +71,11 @@ pub(super) fn apply_options(
     });
 }
 
-/// The configuration's table, if it is a `phpunit` one.
-fn setting_of(config: &run_core::RunConfig) -> Option<&PhpUnitRunSetting> {
-    (config.kind.as_deref() == Some(PHPUNIT_KIND))
-        .then_some(config.phpunit.as_ref())
-        .flatten()
-}
-
 /// The editor's refusal to save a `phpunit` configuration, worded to follow
 /// its quoted name.
 pub(super) fn problem(config: &run_core::RunConfig) -> Option<String> {
-    php_core::phpunit_run::problem(setting_of(config)?)
+    let root = super::current_project_root().unwrap_or_default();
+    php_core::phpunit_run::problem(&setting_of(config)?, &root.to_string_lossy(), cfg!(windows))
 }
 
 /// The command line the Run Configurations dialog previews: the PHPUnit
@@ -90,7 +85,7 @@ pub(super) fn preview(config: &run_core::RunConfig) -> Option<String> {
     let root = super::current_project_root().unwrap_or_default();
     let context = run_core::MacroContext::for_project(&root);
     let line = php_core::phpunit_run::plan(
-        setting,
+        &setting,
         |text| run_core::macros::expand(text, &context),
         &root.to_string_lossy(),
         cfg!(windows),
@@ -138,7 +133,13 @@ pub(super) fn request_model(editor: Pin<&mut ffi::RunConfigEditor>, configuratio
             file: QString::from(model.file.unwrap_or_default().as_str()),
             suites: lines(&model.suites),
             groups: lines(&model.groups),
-            problem: QString::from(model.problem.unwrap_or_default().as_str()),
+            problem: QString::from(
+                model
+                    .problem
+                    .map(|problem| problem.to_string())
+                    .unwrap_or_default()
+                    .as_str(),
+            ),
         };
         let _ = qt_thread.queue(move |mut editor: Pin<&mut ffi::RunConfigEditor>| {
             editor.as_mut().php_unit_model_ready(answer);

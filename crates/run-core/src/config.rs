@@ -171,7 +171,7 @@ fn process_launch_spec(config: &RunConfig, context: &MacroContext) -> LaunchSpec
         cwd: config
             .cwd
             .as_deref()
-            .map(|cwd| PathBuf::from(macros::expand(cwd, context))),
+            .map(|cwd| PathBuf::from(macros::expand_cwd(cwd, context))),
         env: config
             .env
             .iter()
@@ -217,6 +217,24 @@ mod tests {
         };
         assert_eq!(custom.to_launch_spec_in(&context).program, "/x/php");
         assert_eq!(config().to_launch_spec_in(&context).program, "cargo");
+    }
+
+    // A WSL project's cwd must stay a UNC path so the supervisor classifies
+    // it as remote and launches through `wsl.exe`; its arguments are already
+    // the Linux paths the distro's process reads.
+    #[test]
+    fn a_wsl_root_keeps_a_unc_cwd_and_linux_arguments() {
+        let cfg = RunConfig {
+            args: vec!["$PROJECT_DIR$/bin/job.php".into()],
+            cwd: Some("$PROJECT_DIR".into()),
+            ..config()
+        };
+        let spec = cfg.to_launch_spec(Path::new("//wsl.localhost/Ubuntu/home/f/proj"));
+        assert_eq!(
+            spec.cwd,
+            Some(PathBuf::from("//wsl.localhost/Ubuntu/home/f/proj"))
+        );
+        assert_eq!(spec.args, vec!["/home/f/proj/bin/job.php"]);
     }
 
     #[test]

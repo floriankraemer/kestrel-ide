@@ -13,6 +13,7 @@ use std::env;
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize as NativePtySize};
 
@@ -157,10 +158,15 @@ impl ShellSpec {
     }
 }
 
+type SharedMaster = Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>;
+type SharedChild = Arc<Mutex<Box<dyn Child + Send + Sync>>>;
+
 /// A running shell attached to a pseudo-terminal.
 pub struct PtySession {
-    master: Box<dyn MasterPty + Send>,
-    child: Box<dyn Child + Send + Sync>,
+    /// `None` once [`close_console_on_exit`] has closed it after the child
+    /// exited (Windows only).
+    master: SharedMaster,
+    child: SharedChild,
     reader: Option<Box<dyn Read + Send>>,
     writer: Box<dyn Write + Send>,
 }
@@ -212,8 +218,13 @@ impl PtySession {
             .take_writer()
             .map_err(|e| PtyError::Spawn(e.to_string()))?;
 
+        let master = Arc::new(Mutex::new(Some(pair.master)));
+        let child = Arc::new(Mutex::new(child));
+        #[cfg(windows)]
+        close_console_on_exit(Arc::clone(&child), Arc::clone(&master));
+
         Ok(Self {
-            master: pair.master,
+            master,
             child,
             reader: Some(reader),
             writer,
@@ -255,19 +266,26 @@ impl PtySession {
 
     /// Resize the PTY (e.g. on dock-widget resize).
     pub fn resize(&self, size: PtySize) -> Result<(), PtyError> {
-        self.master
-            .resize(size.into())
-            .map_err(|e| PtyError::Resize(e.to_string()))
+        match self.master.lock().as_deref() {
+            Ok(Some(master)) => master
+                .resize(size.into())
+                .map_err(|e| PtyError::Resize(e.to_string())),
+            // Closed after the child exited: nothing left to resize.
+            Ok(None) => Ok(()),
+            Err(_) => Err(PtyError::Resize("pty lock poisoned".to_string())),
+        }
     }
 
     /// Forcibly terminate the child process.
     pub fn kill(&mut self) -> Result<(), PtyError> {
-        self.child.kill().map_err(|e| PtyError::Wait(e.to_string()))
+        self.child()
+            .kill()
+            .map_err(|e| PtyError::Wait(e.to_string()))
     }
 
     /// The child's process id, while it is running.
     pub fn process_id(&self) -> Option<u32> {
-        self.child.process_id()
+        self.child().process_id()
     }
 
     /// Kill the child **and everything it started**.
@@ -318,7 +336,7 @@ impl PtySession {
         let outcome = platform::signal_tree(pid, platform::Signal::Kill)?;
         // Always signal the direct child too, so a failure to reach the
         // group still stops the thing we actually started.
-        let _ = self.child.kill();
+        let _ = self.child().kill();
         Ok(outcome)
     }
 
@@ -348,7 +366,7 @@ impl PtySession {
     /// Non-blocking check: `Some(exit_code)` if the child has already
     /// exited, `None` if it's still running.
     pub fn try_wait(&mut self) -> Result<Option<u32>, PtyError> {
-        self.child
+        self.child()
             .try_wait()
             .map_err(|e| PtyError::Wait(e.to_string()))
             .map(|status| status.map(|s| s.exit_code()))
@@ -356,11 +374,45 @@ impl PtySession {
 
     /// Block until the child exits, returning its exit code.
     pub fn wait(&mut self) -> Result<u32, PtyError> {
-        self.child
+        self.child()
             .wait()
             .map_err(|e| PtyError::Wait(e.to_string()))
             .map(|status| status.exit_code())
     }
+}
+
+impl PtySession {
+    fn child(&self) -> std::sync::MutexGuard<'_, Box<dyn Child + Send + Sync>> {
+        // A panic while holding the lock leaves the child itself intact.
+        self.child
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// ConPTY keeps its output pipe open after the child exits, until the
+/// pseudoconsole itself is closed, so a reader waiting for EOF would wait
+/// forever: a run console never reports "finished", a terminal tab never
+/// learns its shell exited. Once the child is gone, drop the master — the
+/// last owner of the pseudoconsole, the slave having been dropped at spawn —
+/// which closes it and lets the reader drain the rest and see EOF.
+#[cfg(windows)]
+fn close_console_on_exit(child: SharedChild, master: SharedMaster) {
+    std::thread::spawn(move || loop {
+        // ponytail: 50 ms poll through portable-pty's own child handle;
+        // WaitForSingleObject on the process handle (a windows-sys
+        // dependency) if this ever shows up in a profile.
+        let exited = child
+            .lock()
+            .map_or(true, |mut child| !matches!(child.try_wait(), Ok(None)));
+        if exited {
+            if let Ok(mut master) = master.lock() {
+                master.take();
+            }
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    });
 }
 
 /// What [`PtySession::kill_tree`] managed to reach.

@@ -543,13 +543,15 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         QPushButton *saveButton = buttons->button(QDialogButtonBox::Save);
         const QRect saveRect(saveButton->mapToGlobal(QPoint(0, 0)), saveButton->size());
         const QRect listRect(list->mapToGlobal(QPoint(0, 0)), list->size());
+        const QRect removeRect(removeButton->mapToGlobal(QPoint(0, 0)), removeButton->size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"run_config_dialog\","
                                 "\"add_rect\":%1,\"program_rect\":%2,\"save_rect\":%3,"
-                                "\"list_rect\":%4}")
+                                "\"list_rect\":%4,\"remove_rect\":%5}")
                   .arg(rectJson(addRect))
                   .arg(rectJson(programRect))
                   .arg(rectJson(saveRect))
-                  .arg(rectJson(listRect)));
+                  .arg(rectJson(listRect))
+                  .arg(rectJson(removeRect)));
     });
     dialog.exec();
 }

@@ -150,6 +150,24 @@ class = 'Tests\Unit\OutcomesTest'
 method = "testPasses"
 
 [[run_config]]
+id = "e8-file-macro"
+name = "E8 file macro"
+kind = "phpunit"
+[run_config.phpunit]
+scope = "file"
+path = "tests/Unit/MailerTest.php"
+runner_options = "--log-junit $FILE_DIR$/e8-junit.xml"
+
+[[run_config]]
+id = "e8-cannot-start"
+name = "E8 cannot start"
+kind = "phpunit"
+[run_config.phpunit]
+scope = "file"
+path = "tests/Unit/MailerTest.php"
+interpreter_options = """-r "fwrite(STDERR, 'e8 cannot start'); exit(3);""""
+
+[[run_config]]
 id = "e8-script-after-tests"
 name = "E8 script after failing tests"
 program = "php"
@@ -308,6 +326,55 @@ fn check_page_pickers(ide: &Ide, findings: &mut Findings) {
     close_config_dialog(ide, opened);
 }
 
+/// #457: a configuration edited and saved in the dialog reaches the toolbar
+/// combo at once. The flow's last step: it removes "E8 broken", which the
+/// dialog would refuse to save.
+fn check_save_refreshes_combo(ide: &Ide, findings: &mut Findings) {
+    let opened = open_config_dialog(ide);
+    let shown = ide.wait_for_event(opened, "the run configuration dialog", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "run_config_dialog"
+    });
+    if find_config_row(ide, opened, 30, |f| f["name"] == "E8 broken").is_none() {
+        findings.check(false, "#457: the dialog does not list \"E8 broken\"");
+        close_config_dialog(ide, opened);
+        return;
+    }
+    let (x, y) = rect_centre(&shown["remove_rect"]);
+    ide.click_at(x, y, 1);
+    // Back to the list's first row, so the keyboard walks the list again.
+    let removed = ide.mark();
+    let list = &shown["list_rect"];
+    let (x, _) = rect_centre(list);
+    ide.click_at(x, list[1].as_i64().unwrap() as i32 + 8, 1);
+    let Some(form) = find_config_row(ide, removed, 30, |f| f["name"] == "E8 file macro") else {
+        findings.check(false, "#457: the dialog does not list \"E8 file macro\"");
+        close_config_dialog(ide, opened);
+        return;
+    };
+    let (x, y) = rect_centre(&form["phpunit"]["group_add_rect"]);
+    ide.click_at(x, y, 1);
+    let typed = ide.mark();
+    ide.type_text("extra");
+    ide.key("Return");
+    answer(ide, typed, |e| {
+        e["ev"] == "run_config_preview"
+            && e["preview"]
+                .as_str()
+                .is_some_and(|p| p.contains("--group extra"))
+    });
+    let saving = ide.mark();
+    let (x, y) = rect_centre(&shown["save_rect"]);
+    ide.click_at(x, y, 1);
+    ide.wait_for_event(saving, "the dialog to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "run_config_dialog"
+    });
+    ide.focus_main();
+    findings.check(
+        answer(ide, saving, |e| e["ev"] == "run_configurations_changed").is_some(),
+        "#457: saving the dialog did not refresh the toolbar's configurations",
+    );
+}
+
 /// J4 (scopes and options of saved PHPUnit configurations), AC5.4–AC5.7
 /// (edited temporaries, parallel runs, Stop) and J6 (before-launch tasks).
 #[test]
@@ -324,7 +391,7 @@ fn e2e_phpunit_saved_configurations() {
 
     // AC4.2: the argv preview of each scope follows ADR-0073's table.
     let opened = ide.mark();
-    let shown = previews(&ide, 18);
+    let shown = previews(&ide, 24);
     check_page_layout(&ide, opened, &mut findings);
     check_page_pickers(&ide, &mut findings);
     // AC4.4/AC4.5: the pickers offer what phpunit.xml declares.
@@ -377,6 +444,8 @@ fn e2e_phpunit_saved_configurations() {
             vec!["--testsuite", "feature", "--exclude-group", "slow"],
         ),
         ("E8 stop on failure", vec!["--stop-on-failure"]),
+        // AC4.13 (#458): a file macro stands for the scope's file.
+        ("E8 file macro", vec!["tests/Unit/e8-junit.xml"]),
     ] {
         let text = preview(name);
         findings.check(
@@ -443,6 +512,39 @@ fn e2e_phpunit_saved_configurations() {
     findings.check(
         tests.get("testAppEnv").map(String::as_str) == Some("passed"),
         format!("AC4.7 APP_ENV=test: {tests:?}"),
+    );
+
+    // AC4.13 (#458): the file macro expands in the run too; PHPUnit writes
+    // no directory called `$FILE_DIR$`.
+    let junit = ide.project_root().join("tests/Unit/e8-junit.xml");
+    select_config(&ide, "E8 file macro");
+    let (finished, _) = run_selected(&ide, "Run");
+    findings.check(
+        junit.exists() && !ide.project_root().join("$FILE_DIR$").exists(),
+        format!("AC4.13: --log-junit $FILE_DIR$/e8-junit.xml did not expand: {finished}"),
+    );
+    std::fs::remove_file(&junit).ok();
+
+    // #456: a run whose runner never starts ends as a failure with its exit
+    // code, and what php wrote to stderr is in the Tests dock's output.
+    select_config(&ide, "E8 cannot start");
+    let mark = ide.mark();
+    click_run_menu_item(&ide, "Run");
+    let finished = wait_for_test_run(&ide, mark);
+    findings.check(
+        finished["ok"] == false
+            && finished["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("exit code 3")),
+        format!("#456: a run that never started finished as {finished}"),
+    );
+    findings.check(
+        ide.events_since_of(mark, "test_output").iter().any(|e| {
+            e["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("e8 cannot start"))
+        }),
+        "#456: php's stderr is not in the Tests dock's output",
     );
 
     // AC4.10: Debug and Run with Coverage on a saved configuration.
@@ -712,6 +814,9 @@ fn e2e_phpunit_saved_configurations() {
         }
         None => findings.check(false, format!("AC5.4: no class temporary in {stored}")),
     }
+
+    // #457: Save in the Run Configurations dialog refreshes the combo.
+    check_save_refreshes_combo(&ide, &mut findings);
 
     ide.focus_main();
     assert_eq!(ide.quit(), 0);

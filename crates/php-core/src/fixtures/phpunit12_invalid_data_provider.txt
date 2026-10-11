@@ -1,0 +1,36 @@
+PHPUnit 12.5.38 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.3.35
+Configuration: /w/phpunit.xml
+
+##teamcity[testCount count='2' flowId='96']
+##teamcity[testSuiteStarted name='/w/phpunit.xml' flowId='96']
+##teamcity[testSuiteStarted name='t' flowId='96']
+##teamcity[testSuiteStarted name='App\Tests\ProviderTest' locationHint='php_qn:///w/tests/ProviderTest.php::\App\Tests\ProviderTest' flowId='96']
+##teamcity[testSuiteStarted name='testGood' locationHint='php_qn:///w/tests/ProviderTest.php::\App\Tests\ProviderTest::testGood' flowId='96']
+##teamcity[testStarted name='testGood with data set "named"' locationHint='php_qn:///w/tests/ProviderTest.php::\App\Tests\ProviderTest::testGood with data set "named"' flowId='96']
+##teamcity[testFinished name='testGood with data set "named"' duration='0' flowId='96']
+##teamcity[testSuiteFinished name='testGood' flowId='96']
+##teamcity[testStarted name='testPlain' locationHint='php_qn:///w/tests/ProviderTest.php::\App\Tests\ProviderTest::testPlain' flowId='96']
+##teamcity[testFinished name='testPlain' duration='0' flowId='96']
+##teamcity[testSuiteFinished name='App\Tests\ProviderTest' flowId='96']
+##teamcity[testSuiteFinished name='t' flowId='96']
+##teamcity[testSuiteFinished name='/w/phpunit.xml' flowId='96']
+Time: 00:00.001, Memory: 14.00 MB
+
+There were 2 PHPUnit errors:
+
+1) App\Tests\ProviderTest::testBad
+The data provider App\Tests\ProviderTest::missing specified for App\Tests\ProviderTest::testBad is invalid
+Method App\Tests\ProviderTest::missing() does not exist
+
+/w/tests/ProviderTest.php:8
+
+2) App\Tests\ProviderTest::testBad2
+The data provider App\Tests\ProviderTest::notIterable specified for App\Tests\ProviderTest::testBad2 is invalid
+Data Provider method App\Tests\ProviderTest::notIterable() does not return an iterable
+
+/w/tests/ProviderTest.php:9
+
+ERRORS!
+Tests: 2, Assertions: 2, Errors: 2.

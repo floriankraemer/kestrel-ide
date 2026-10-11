@@ -819,6 +819,7 @@ impl ffi::TestService {
                 ansi: run_core::AnsiStripper::default(),
                 pending: Default::default(),
                 locator: php_core::tests::EventLocator::for_run(&root, &work_dir, host.clone()),
+                invalid_providers: Default::default(),
             };
             let program_str = program.to_string_lossy().into_owned();
             let result = test_core::run_on_env(
@@ -1104,11 +1105,16 @@ struct QtSink {
     /// Anchors each node's file to this run's work dir, and finds the file
     /// of a Pest class-based test, which names only its class.
     locator: php_core::tests::EventLocator,
+    /// PHPUnit 12 reports an invalid data provider only in its text summary.
+    invalid_providers: php_core::invalid_provider::InvalidProviderScanner,
 }
 
 impl test_core::TestSink for QtSink {
     fn output(&mut self, text: &str) {
         let text = self.ansi.feed(text);
+        for event in self.invalid_providers.feed(&text, &self.locator) {
+            self.event(event);
+        }
         let _ = self
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {
@@ -1119,6 +1125,7 @@ impl test_core::TestSink for QtSink {
     }
 
     fn event(&mut self, event: test_core::TeamCityEvent) {
+        self.invalid_providers.observe(&event);
         let event = self.locator.locate_event(event);
         // Coalesced (#462): events pile up here while the Qt thread is busy,
         // and the one flush queued for the first of them applies them all,

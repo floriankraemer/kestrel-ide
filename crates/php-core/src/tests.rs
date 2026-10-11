@@ -233,11 +233,7 @@ impl EventLocator {
                 let found = [class.to_string(), format!("{class}Test")]
                     .into_iter()
                     .find_map(|candidate| {
-                        self.class_roots.iter().find_map(|(dir, roots)| {
-                            crate::psr4::class_file(roots, dir, &candidate).map(|file| {
-                                (self.host.to_remote(&dir.join(file)), candidate.clone())
-                            })
-                        })
+                        self.class_file(&candidate).map(|file| (file, candidate))
                     });
                 match found {
                     Some((file, declared)) => location.with_file(file, &declared),
@@ -247,6 +243,15 @@ impl EventLocator {
             None => location,
         };
         location.anchored(&self.host, &self.work_dir)
+    }
+
+    /// The file declaring `class` under the PSR-4 roots, as the run's host
+    /// spells it.
+    pub fn class_file(&self, class: &str) -> Option<String> {
+        self.class_roots.iter().find_map(|(dir, roots)| {
+            crate::psr4::class_file(roots, dir, class)
+                .map(|file| self.host.to_remote(&dir.join(file)))
+        })
     }
 }
 

@@ -760,6 +760,10 @@
             <numerusform>… (%n de plus)</numerusform>
         </translation>
     </message>
+    <message>
+        <source>There is no test in this file to debug.</source>
+        <translation>Ce fichier ne contient aucun test à déboguer.</translation>
+    </message>
 </context>
 <context>
     <name>FileHistoryPanel</name>
@@ -1029,12 +1033,22 @@ Réel : %3</translation>
         <translation>%1 erreurs, %2 avertissements</translation>
     </message>
     <message>
-        <source>%1 exited and will be restarted in %2 seconds.\nIts output is in the log.</source>
-        <translation>%1 s'est arrêté et redémarrera dans %2 secondes.\nSa sortie se trouve dans le journal.</translation>
+        <source>%1 exited and will be restarted in %2 seconds.
+Its output is in the log.</source>
+        <translation>%1 s'est arrêté et redémarrera dans %2 secondes.
+Sa sortie se trouve dans le journal.</translation>
     </message>
     <message>
-        <source>%1 is already assigned to:\n\n%2\n\nAssign it here and leave those unbound?</source>
-        <translation>%1 est déjà assigné à :\n\n%2\n\nL'assigner ici et l'enlever de là-bas ?</translation>
+        <source>%1 is already assigned to:
+
+%2
+
+Assign it here and leave those unbound?</source>
+        <translation>%1 est déjà assigné à :
+
+%2
+
+L'assigner ici et l'enlever de là-bas ?</translation>
     </message>
     <message>
         <source>%1 is not a colour. Enter #rrggbb.</source>
@@ -1056,8 +1070,10 @@ Réel : %3</translation>
         <translation>%1 s</translation>
     </message>
     <message>
-        <source>%1 stopped: %2\nFix the command, then press Restart Server.</source>
-        <translation>%1 arrêté : %2\nCorrigez la commande, puis cliquez sur Redémarrer le serveur.</translation>
+        <source>%1 stopped: %2
+Fix the command, then press Restart Server.</source>
+        <translation>%1 arrêté : %2
+Corrigez la commande, puis cliquez sur Redémarrer le serveur.</translation>
     </message>
     <message>
         <source>%1 tokens</source>
@@ -1076,8 +1092,10 @@ Réel : %3</translation>
         <translation>%1 : %2…</translation>
     </message>
     <message>
-        <source>%1: no such file or directory.\nEnter an absolute path, or install it and reopen this page.</source>
-        <translation>%1 : fichier ou dossier introuvable.\nSaisissez un chemin absolu, ou installez-le puis rouvrez cette page.</translation>
+        <source>%1: no such file or directory.
+Enter an absolute path, or install it and reopen this page.</source>
+        <translation>%1 : fichier ou dossier introuvable.
+Saisissez un chemin absolu, ou installez-le puis rouvrez cette page.</translation>
     </message>
     <message>
         <source>%L1 bytes</source>
@@ -1471,7 +1489,7 @@ Réel : %3</translation>
     </message>
     <message>
         <source>Run with Coverage</source>
-        <translation>Exécuter avec couverture</translation>
+        <translation>Exécuter avec la couverture</translation>
     </message>
     <message>
         <source>Running…</source>
@@ -3165,6 +3183,22 @@ Réel : %3</translation>
         <source>Go To</source>
         <translation>Aller à</translation>
     </message>
+    <message>
+        <source>Debug File</source>
+        <translation>Déboguer le fichier</translation>
+    </message>
+    <message>
+        <source>Command preview:</source>
+        <translation>Aperçu de la commande :</translation>
+    </message>
+    <message>
+        <source>Run on:</source>
+        <translation>Exécuter sur :</translation>
+    </message>
+    <message>
+        <source>Working Tree</source>
+        <translation>Arbre de travail</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>
@@ -3173,8 +3207,12 @@ Réel : %3</translation>
         <translation>%1 — %2</translation>
     </message>
     <message>
-        <source>%1\n\nSave all files and rename now?</source>
-        <translation>%1\n\nEnregistrer tous les fichiers et renommer maintenant ?</translation>
+        <source>%1
+
+Save all files and rename now?</source>
+        <translation>%1
+
+Enregistrer tous les fichiers et renommer maintenant ?</translation>
     </message>
     <message numerus="yes">
         <source>%n change(s) across %1 file(s), including %2 file creation/rename/deletion. Changes to files that are not open are written to disk and cannot be undone.</source>
@@ -3381,20 +3419,30 @@ Réel : %3</translation>
         <translation>Verrouillage du défilement</translation>
     </message>
     <message>
-        <source>Some child processes could not be terminated.\n</source>
-        <translation>Certains processus enfants n'ont pas pu être arrêtés.\n</translation>
+        <source>Some child processes could not be terminated.
+</source>
+        <translation>Certains processus enfants n'ont pas pu être arrêtés.
+</translation>
     </message>
     <message>
         <source>Stop following the end of the output</source>
         <translation>Arrêter de suivre la fin de la sortie</translation>
     </message>
     <message>
-        <source>\nProcess finished with exit code %1\n</source>
-        <translation>\nLe processus s'est terminé avec le code de sortie %1\n</translation>
+        <source>
+Process finished with exit code %1
+</source>
+        <translation>
+Le processus s'est terminé avec le code de sortie %1
+</translation>
     </message>
     <message>
-        <source>\nProcess stopped\n</source>
-        <translation>\nProcessus arrêté\n</translation>
+        <source>
+Process stopped
+</source>
+        <translation>
+Processus arrêté
+</translation>
     </message>
 </context>
 <context>
@@ -3421,7 +3469,7 @@ Réel : %3</translation>
     </message>
     <message>
         <source>Run with Coverage</source>
-        <translation>Exécuter avec couverture</translation>
+        <translation>Exécuter avec la couverture</translation>
     </message>
     <message>
         <source>Stop</source>
@@ -3921,6 +3969,81 @@ Réel : %2
     <message>
         <source>localhost</source>
         <translation>localhost</translation>
+    </message>
+</context>
+<context>
+    <name>QPlatformTheme</name>
+    <message>
+        <source>OK</source>
+        <translation>OK</translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>Enregistrer</translation>
+    </message>
+    <message>
+        <source>Save All</source>
+        <translation>Tout enregistrer</translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation>Ouvrir</translation>
+    </message>
+    <message>
+        <source>&amp;Yes</source>
+        <translation>&amp;Oui</translation>
+    </message>
+    <message>
+        <source>Yes to &amp;All</source>
+        <translation>Oui à &amp;tout</translation>
+    </message>
+    <message>
+        <source>&amp;No</source>
+        <translation>&amp;Non</translation>
+    </message>
+    <message>
+        <source>N&amp;o to All</source>
+        <translation>Non à to&amp;ut</translation>
+    </message>
+    <message>
+        <source>Abort</source>
+        <translation>Abandonner</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Réessayer</translation>
+    </message>
+    <message>
+        <source>Ignore</source>
+        <translation>Ignorer</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Fermer</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Annuler</translation>
+    </message>
+    <message>
+        <source>Discard</source>
+        <translation>Ne pas enregistrer</translation>
+    </message>
+    <message>
+        <source>Help</source>
+        <translation>Aide</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Appliquer</translation>
+    </message>
+    <message>
+        <source>Reset</source>
+        <translation>Réinitialiser</translation>
+    </message>
+    <message>
+        <source>Restore Defaults</source>
+        <translation>Restaurer les valeurs par défaut</translation>
     </message>
 </context>
 </TS>

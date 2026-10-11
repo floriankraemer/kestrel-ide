@@ -760,6 +760,10 @@
             <numerusform>… (%n más)</numerusform>
         </translation>
     </message>
+    <message>
+        <source>There is no test in this file to debug.</source>
+        <translation>No hay ninguna prueba que depurar en este archivo.</translation>
+    </message>
 </context>
 <context>
     <name>FileHistoryPanel</name>
@@ -1029,12 +1033,22 @@ Real: %3</translation>
         <translation>%1 errores, %2 advertencias</translation>
     </message>
     <message>
-        <source>%1 exited and will be restarted in %2 seconds.\nIts output is in the log.</source>
-        <translation>%1 finalizó y se reiniciará en %2 segundos.\nSu salida está en el registro.</translation>
+        <source>%1 exited and will be restarted in %2 seconds.
+Its output is in the log.</source>
+        <translation>%1 finalizó y se reiniciará en %2 segundos.
+Su salida está en el registro.</translation>
     </message>
     <message>
-        <source>%1 is already assigned to:\n\n%2\n\nAssign it here and leave those unbound?</source>
-        <translation>%1 ya está asignado a:\n\n%2\n\n¿Asignarlo aquí y quitarlo de ahí?</translation>
+        <source>%1 is already assigned to:
+
+%2
+
+Assign it here and leave those unbound?</source>
+        <translation>%1 ya está asignado a:
+
+%2
+
+¿Asignarlo aquí y quitarlo de ahí?</translation>
     </message>
     <message>
         <source>%1 is not a colour. Enter #rrggbb.</source>
@@ -1056,8 +1070,10 @@ Real: %3</translation>
         <translation>%1 s</translation>
     </message>
     <message>
-        <source>%1 stopped: %2\nFix the command, then press Restart Server.</source>
-        <translation>%1 detenido: %2\nCorrija el comando y pulse Reiniciar servidor.</translation>
+        <source>%1 stopped: %2
+Fix the command, then press Restart Server.</source>
+        <translation>%1 detenido: %2
+Corrija el comando y pulse Reiniciar servidor.</translation>
     </message>
     <message>
         <source>%1 tokens</source>
@@ -1076,8 +1092,10 @@ Real: %3</translation>
         <translation>%1: %2…</translation>
     </message>
     <message>
-        <source>%1: no such file or directory.\nEnter an absolute path, or install it and reopen this page.</source>
-        <translation>%1: no existe el archivo o directorio.\nIntroduzca una ruta absoluta, o instálelo y vuelva a abrir esta página.</translation>
+        <source>%1: no such file or directory.
+Enter an absolute path, or install it and reopen this page.</source>
+        <translation>%1: no existe el archivo o directorio.
+Introduzca una ruta absoluta, o instálelo y vuelva a abrir esta página.</translation>
     </message>
     <message>
         <source>%L1 bytes</source>
@@ -3165,6 +3183,22 @@ Real: %3</translation>
         <source>Go To</source>
         <translation>Ir a</translation>
     </message>
+    <message>
+        <source>Debug File</source>
+        <translation>Depurar archivo</translation>
+    </message>
+    <message>
+        <source>Command preview:</source>
+        <translation>Vista previa del comando:</translation>
+    </message>
+    <message>
+        <source>Run on:</source>
+        <translation>Ejecutar en:</translation>
+    </message>
+    <message>
+        <source>Working Tree</source>
+        <translation>Árbol de trabajo</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>
@@ -3173,8 +3207,12 @@ Real: %3</translation>
         <translation>%1 — %2</translation>
     </message>
     <message>
-        <source>%1\n\nSave all files and rename now?</source>
-        <translation>%1\n\n¿Guardar todos los archivos y renombrar ahora?</translation>
+        <source>%1
+
+Save all files and rename now?</source>
+        <translation>%1
+
+¿Guardar todos los archivos y renombrar ahora?</translation>
     </message>
     <message numerus="yes">
         <source>%n change(s) across %1 file(s), including %2 file creation/rename/deletion. Changes to files that are not open are written to disk and cannot be undone.</source>
@@ -3381,20 +3419,30 @@ Real: %3</translation>
         <translation>Bloqueo de desplazamiento</translation>
     </message>
     <message>
-        <source>Some child processes could not be terminated.\n</source>
-        <translation>Algunos procesos hijos no se pudieron terminar.\n</translation>
+        <source>Some child processes could not be terminated.
+</source>
+        <translation>Algunos procesos hijos no se pudieron terminar.
+</translation>
     </message>
     <message>
         <source>Stop following the end of the output</source>
         <translation>Dejar de seguir el final de la salida</translation>
     </message>
     <message>
-        <source>\nProcess finished with exit code %1\n</source>
-        <translation>\nEl proceso finalizó con código de salida %1\n</translation>
+        <source>
+Process finished with exit code %1
+</source>
+        <translation>
+El proceso finalizó con código de salida %1
+</translation>
     </message>
     <message>
-        <source>\nProcess stopped\n</source>
-        <translation>\nProceso detenido\n</translation>
+        <source>
+Process stopped
+</source>
+        <translation>
+Proceso detenido
+</translation>
     </message>
 </context>
 <context>
@@ -3921,6 +3969,81 @@ Real: %2
     <message>
         <source>localhost</source>
         <translation>localhost</translation>
+    </message>
+</context>
+<context>
+    <name>QPlatformTheme</name>
+    <message>
+        <source>OK</source>
+        <translation>Aceptar</translation>
+    </message>
+    <message>
+        <source>Save</source>
+        <translation>Guardar</translation>
+    </message>
+    <message>
+        <source>Save All</source>
+        <translation>Guardar todo</translation>
+    </message>
+    <message>
+        <source>Open</source>
+        <translation>Abrir</translation>
+    </message>
+    <message>
+        <source>&amp;Yes</source>
+        <translation>&amp;Sí</translation>
+    </message>
+    <message>
+        <source>Yes to &amp;All</source>
+        <translation>Sí a &amp;todo</translation>
+    </message>
+    <message>
+        <source>&amp;No</source>
+        <translation>&amp;No</translation>
+    </message>
+    <message>
+        <source>N&amp;o to All</source>
+        <translation>N&amp;o a todo</translation>
+    </message>
+    <message>
+        <source>Abort</source>
+        <translation>Interrumpir</translation>
+    </message>
+    <message>
+        <source>Retry</source>
+        <translation>Reintentar</translation>
+    </message>
+    <message>
+        <source>Ignore</source>
+        <translation>Ignorar</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Cerrar</translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation>Cancelar</translation>
+    </message>
+    <message>
+        <source>Discard</source>
+        <translation>Descartar</translation>
+    </message>
+    <message>
+        <source>Help</source>
+        <translation>Ayuda</translation>
+    </message>
+    <message>
+        <source>Apply</source>
+        <translation>Aplicar</translation>
+    </message>
+    <message>
+        <source>Reset</source>
+        <translation>Restablecer</translation>
+    </message>
+    <message>
+        <source>Restore Defaults</source>
+        <translation>Restaurar valores predeterminados</translation>
     </message>
 </context>
 </TS>

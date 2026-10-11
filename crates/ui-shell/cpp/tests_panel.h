@@ -73,6 +73,7 @@ private:
     void onTestTreeChanged();
     void onTestOutputAppended(const QString &text);
     void onTestRunFinished(bool ok, bool matchedNothing, const QString &message);
+    void onTestRunRefused(const QString &message);
     void onSelectionChanged();
     void onFailureLinkActivated(int textPosition);
     void jumpToSource(const QString &nodeId);

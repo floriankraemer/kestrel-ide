@@ -7520,6 +7520,12 @@ mod ffi {
             matched_nothing: bool,
             message: QString,
         );
+
+        /// A run that was accepted could not start once its package,
+        /// configuration and framework were found: `message` says why.
+        #[qsignal]
+        #[cxx_name = "testRunRefused"]
+        fn test_run_refused(self: Pin<&mut TestService>, message: QString);
     }
 
     impl cxx_qt::Threading for TestService {}

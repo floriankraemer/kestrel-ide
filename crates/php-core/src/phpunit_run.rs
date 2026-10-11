@@ -23,6 +23,8 @@ pub enum ConfigError {
     /// A path that leaves the project: paths are passed relative to the
     /// run's working directory, which is inside the project on every host.
     PathOutsideProject(String),
+    /// The working directory, project-relative, is not a directory.
+    MissingWorkingDirectory(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -34,6 +36,10 @@ impl std::fmt::Display for ConfigError {
             Self::PathOutsideProject(path) => {
                 write!(f, "names \"{path}\", which is outside the project")
             }
+            Self::MissingWorkingDirectory(dir) => write!(
+                f,
+                "has the working directory \"{dir}\", which does not exist"
+            ),
         }
     }
 }
@@ -221,6 +227,17 @@ pub fn plan(
     })
 }
 
+/// `plan`'s working directory exists in the project at `root`: a run in a
+/// missing one would only say its program was not found.
+pub fn check_working_directory(plan: &Plan, root: &std::path::Path) -> Result<(), ConfigError> {
+    match &plan.working_directory {
+        Some(dir) if !root.join(dir).is_dir() => {
+            Err(ConfigError::MissingWorkingDirectory(dir.clone()))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// What is wrong with `setting`, worded to follow a quoted configuration
 /// name, or `None`: the editor's refusal to save. A path with a macro is
 /// only checked for being present (its value is known at run time); any
@@ -332,6 +349,138 @@ pub fn temporary_config(setting: PhpUnitRunSetting, name: Option<String>) -> Run
         phpunit: Some(setting),
         ..RunConfigSetting::default()
     }
+}
+
+/// The id earlier builds gave the temporary configuration `config`: before a
+/// package's editor runs started in the package (#424), they had neither a
+/// working directory nor the package's configuration file. `None` for any
+/// other configuration.
+pub fn earlier_id(config: &RunConfigSetting) -> Option<String> {
+    let setting = setting_of(config)
+        .filter(|setting| config.temporary && !setting.working_directory.is_empty())?;
+    Some(id_of(&PhpUnitRunSetting {
+        working_directory: String::new(),
+        configuration: String::new(),
+        ..setting
+    }))
+}
+
+/// The stored configuration an editor run of `config` runs: the one stored
+/// under its id, which the dialog may have edited, else the temporary an
+/// earlier build stored under [`earlier_id`], moved to the package with its
+/// edits kept, else `config` itself.
+pub fn stored_for(stored: &[RunConfigSetting], config: RunConfigSetting) -> RunConfigSetting {
+    let is_phpunit = |stored: &&RunConfigSetting| stored.kind.as_deref() == Some(PHPUNIT_KIND);
+    if let Some(same) = stored.iter().filter(is_phpunit).find(|s| s.id == config.id) {
+        return same.clone();
+    }
+    let earlier = earlier_id(&config).and_then(|id| {
+        stored
+            .iter()
+            .filter(is_phpunit)
+            .find(|s| s.temporary && s.id == id)
+    });
+    let Some(earlier) = earlier else {
+        return config;
+    };
+    let package = config.phpunit.clone().unwrap_or_default();
+    let setting = PhpUnitRunSetting {
+        working_directory: package.working_directory,
+        configuration: package.configuration,
+        ..earlier.phpunit.clone().unwrap_or_default()
+    };
+    RunConfigSetting {
+        id: config.id,
+        phpunit: Some(setting),
+        ..earlier.clone()
+    }
+}
+
+/// Drop the temporary an earlier build stored for `config` under
+/// [`earlier_id`], so the list does not show the run twice.
+pub fn forget_earlier(stored: &mut Vec<RunConfigSetting>, config: &RunConfigSetting) {
+    if let Some(id) = earlier_id(config) {
+        stored.retain(|s| !(s.temporary && s.id == id));
+    }
+}
+
+/// Why the Tests dock cannot rerun a selection as the runs that reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RerunError {
+    /// The tests came from runs in different working directories or with
+    /// different options, and one run can only have one of each.
+    MixedRuns,
+}
+
+impl std::fmt::Display for RerunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MixedRuns => write!(
+                f,
+                "These tests came from runs with different working directories or options; rerun the tests of one run at a time."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RerunError {}
+
+/// Everything about a run except which tests it selects.
+#[derive(Debug, PartialEq, Eq)]
+struct RunContext {
+    setting: PhpUnitRunSetting,
+    env: Vec<(String, String)>,
+}
+
+fn context_of(config: Option<&RunConfigSetting>) -> RunContext {
+    let setting = config.and_then(setting_of).unwrap_or_default();
+    RunContext {
+        setting: PhpUnitRunSetting {
+            configuration: setting.configuration,
+            groups: setting.groups,
+            exclude_groups: setting.exclude_groups,
+            runner_options: setting.runner_options,
+            interpreter: setting.interpreter,
+            working_directory: setting.working_directory,
+            ..PhpUnitRunSetting::default()
+        },
+        env: config.map(|config| config.env.clone()).unwrap_or_default(),
+    }
+}
+
+/// The configuration a Tests dock rerun (Rerun Test, Run Failed) narrows by
+/// its filter, given the configurations of the runs that last reported the
+/// tests (`None` for an ad hoc run, Run All): PhpStorm reruns a test with the
+/// configuration that produced it. One run: its configuration. Several in
+/// one context (working directory, configuration file, groups, options,
+/// interpreter, environment): that context over the configuration file's
+/// whole scope. `Ok(None)` runs ad hoc.
+pub fn rerun_config(
+    producers: &[Option<RunConfigSetting>],
+) -> Result<Option<RunConfigSetting>, RerunError> {
+    let Some((first, rest)) = producers.split_first() else {
+        return Ok(None);
+    };
+    if rest.iter().all(|producer| producer == first) {
+        return Ok(first.clone());
+    }
+    let context = context_of(first.as_ref());
+    if rest
+        .iter()
+        .any(|producer| context_of(producer.as_ref()) != context)
+    {
+        return Err(RerunError::MixedRuns);
+    }
+    Ok(producers.iter().flatten().next().map(|config| {
+        let setting = PhpUnitRunSetting {
+            scope: "config".into(),
+            ..context_of(Some(config)).setting
+        };
+        RunConfigSetting {
+            phpunit: Some(setting),
+            ..config.clone()
+        }
+    }))
 }
 
 /// The configuration a gutter or caret run of `marker` stands for, with the
@@ -825,5 +974,142 @@ mod tests {
         // A saved configuration's name is the user's, whatever it reads.
         assert_eq!(refreshed_name(&directory("tests in 'Unit'", false)), None);
         assert_eq!(refreshed_name(&RunConfigSetting::default()), None);
+    }
+
+    #[test]
+    fn a_missing_working_directory_is_named() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("packages/a")).unwrap();
+        let with_dir = |dir: &str| Plan {
+            scope: TestScope::Config { testsuite: None },
+            options: ScopeOptions::default(),
+            interpreter: None,
+            working_directory: Some(dir.into()),
+        };
+        assert_eq!(
+            check_working_directory(&with_dir("packages/a"), project.path()),
+            Ok(())
+        );
+        let missing = check_working_directory(&with_dir("packages/gone"), project.path());
+        assert_eq!(
+            missing.unwrap_err().to_string(),
+            "has the working directory \"packages/gone\", which does not exist"
+        );
+        let root = Plan {
+            working_directory: None,
+            ..with_dir("")
+        };
+        assert_eq!(check_working_directory(&root, project.path()), Ok(()));
+    }
+
+    fn package_directory_run() -> RunConfigSetting {
+        temporary_config(
+            PhpUnitRunSetting {
+                path: "packages/a/tests".into(),
+                working_directory: "packages/a".into(),
+                configuration: "packages/a/phpunit.xml".into(),
+                ..setting("directory")
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn a_package_run_takes_over_the_temporary_an_earlier_build_stored_for_it() {
+        let config = package_directory_run();
+        let mut earlier = temporary_config(
+            PhpUnitRunSetting {
+                path: "packages/a/tests".into(),
+                runner_options: "--stop-on-failure".into(),
+                ..setting("directory")
+            },
+            Some("tests in 'tests'".into()),
+        );
+        earlier.env = vec![("A".into(), "1".into())];
+        assert_eq!(earlier_id(&config).as_deref(), Some(earlier.id.as_str()));
+
+        let mut stored = vec![earlier.clone()];
+        let run = stored_for(&stored, config.clone());
+        assert_eq!(run.id, config.id);
+        assert_eq!(run.env, earlier.env, "the earlier edits are kept");
+        let setting = run.phpunit.clone().unwrap();
+        assert_eq!(setting.runner_options, "--stop-on-failure");
+        assert_eq!(setting.working_directory, "packages/a");
+        assert_eq!(setting.configuration, "packages/a/phpunit.xml");
+
+        stored.push(run);
+        forget_earlier(&mut stored, &config);
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, config.id);
+        // Stored under its own id now: that one wins.
+        assert_eq!(stored_for(&stored, config.clone()), stored[0]);
+    }
+
+    #[test]
+    fn only_temporaries_with_a_working_directory_have_an_earlier_id() {
+        let root_run = temporary_config(setting("config"), None);
+        assert_eq!(earlier_id(&root_run), None);
+        let saved = RunConfigSetting {
+            temporary: false,
+            ..package_directory_run()
+        };
+        assert_eq!(earlier_id(&saved), None);
+        // A saved configuration under the earlier id is the user's: kept.
+        let earlier_saved = RunConfigSetting {
+            id: earlier_id(&package_directory_run()).unwrap(),
+            ..RunConfigSetting::default()
+        };
+        let mut stored = vec![earlier_saved];
+        forget_earlier(&mut stored, &package_directory_run());
+        assert_eq!(stored.len(), 1);
+        assert_eq!(
+            stored_for(&stored, package_directory_run()),
+            package_directory_run()
+        );
+    }
+
+    #[test]
+    fn a_rerun_uses_the_configuration_of_the_runs_that_reported_the_tests() {
+        let package = package_directory_run();
+        let method = |class: &str| {
+            Some(temporary_config(
+                PhpUnitRunSetting {
+                    class: class.into(),
+                    method: "testX".into(),
+                    working_directory: "packages/a".into(),
+                    configuration: "packages/a/phpunit.xml".into(),
+                    ..setting("method")
+                },
+                None,
+            ))
+        };
+        assert_eq!(rerun_config(&[]), Ok(None));
+        assert_eq!(rerun_config(&[None, None]), Ok(None));
+        assert_eq!(
+            rerun_config(&[Some(package.clone())]),
+            Ok(Some(package.clone()))
+        );
+
+        // Two scopes in one package: the package's whole configuration.
+        let both = rerun_config(&[Some(package.clone()), method("A")])
+            .unwrap()
+            .unwrap();
+        let setting = both.phpunit.unwrap();
+        assert_eq!(setting.scope, "config");
+        assert_eq!(setting.path, "");
+        assert_eq!(setting.working_directory, "packages/a");
+        assert_eq!(setting.configuration, "packages/a/phpunit.xml");
+
+        // A package run and a project run cannot share one process.
+        assert_eq!(
+            rerun_config(&[Some(package.clone()), None]),
+            Err(RerunError::MixedRuns)
+        );
+        let mut with_env = package.clone();
+        with_env.env = vec![("APP_ENV".into(), "test".into())];
+        assert_eq!(
+            rerun_config(&[Some(package), Some(with_env)]),
+            Err(RerunError::MixedRuns)
+        );
     }
 }

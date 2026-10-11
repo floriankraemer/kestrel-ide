@@ -50,7 +50,20 @@ The environment is the configuration's own `env`.
 Unless the configuration allows parallel runs, a run in progress is stopped and the new one starts once it has finished; the Tests dock shows one run, so one that allows them is refused while another runs.
 The Run menu gains `run.runWithCoverage`.
 So the toolbar, the configuration list, Rerun (`run.rerun`) and Debug fill the Tests dock and use the framework selection, interpreter host, filters, coverage and the Xdebug staging that Run All already has.
-Run All and the Tests dock's reruns stay ad hoc.
+Run All stays ad hoc.
+
+**A Tests dock rerun runs the configuration that produced its tests (G2).**
+As in PhpStorm, Rerun Test, Rerun Suite and Run Failed keep the working directory, configuration file, groups, runner options, interpreter and environment of the run that reported the tests, narrowed by the rerun's filter.
+`test_core::TestTree` stamps every node with the run that last reported it, and `TestService` keeps the configuration of each run still in the tree.
+`php_core::phpunit_run::rerun_config` picks the configuration: the one run's own, or, when the tests came from several runs that share all of the above, that context over the configuration file's whole scope.
+Tests from runs in different contexts are refused with a sentence, since one process has one working directory.
+`test_core::scope::rerun_args` keeps the configuration's test suite, options and path and puts the rerun's filter in place of the scope's own.
+A test reported by Run All reruns ad hoc, as before.
+
+**A run is prepared off the Qt thread.**
+`TestService::start` reads only what needs the Qt thread (the tree, the runs that filled it), then a worker finds the editor run's monorepo package, the stored configuration, the settings and the framework's program, which under WSL or in a container is a process start.
+The run then starts on the Qt thread; a refusal found on the worker arrives as `testRunRefused`, shown in the Tests dock and the status bar.
+A configuration whose working directory does not exist is refused with a sentence naming it, before any program is looked for.
 
 **Editor runs create temporary configurations.**
 A caret run, a gutter run and a data-set run resolve to a temporary `phpunit` configuration when the run starts, persisted with `remember_temporary`.
@@ -77,16 +90,23 @@ The "defined in the configuration file" scope with a suite is `--testsuite <name
 A package that only autoloads (a `composer.json` without either) runs with the project's suite, as PhpStorm runs it.
 `TestPackage::scope` gives a tree run, a gutter run, a caret run and a data-set rerun the package as `working_directory` and its PHPUnit configuration as `configuration`; the project's own package leaves the configuration unchanged.
 The working directory is part of a temporary configuration's id only when it is set, so the ids earlier configurations were stored under hold.
+A package's temporary configuration an earlier build stored without the working directory and configuration file (`phpunit_run::earlier_id`) is taken over by the next editor run of the same test, its edits kept, and dropped from the list, so the run is not listed twice.
 `TestService` then treats the working directory as the run's root:
 - the framework program is the package's (`vendor/bin/phpunit` there), else the project's, and the toolchains are detected in both;
-- `test_core::run_on_env` starts in it, and its relative test locations, failure links and diagnostics resolve against it;
-- the PSR-4 roots that locate a Pest class come from the package's `composer.json`;
+- `test_core::run_on_env` starts in it, and its failure links and diagnostics resolve against it;
+- each relative test location is made absolute against it as the event arrives (`TestLocation::anchored`), so a later run in another directory never re-points the nodes an earlier one left in the tree;
+- a Pest class is located through the package's PSR-4 roots, then the project's (`php_core::tests::EventLocator`), so a package with only a `phpunit.xml`, or with its test autoload in the root `composer.json`, keeps its locations;
+- a container engine still starts in the project root, where its relative compose files are; only `-w` carries the working directory into the container;
+- a program probe on WSL or in a container is memoised by the candidate's absolute path, so the package's `vendor/bin/phpunit` and the project's never answer for each other;
 - the coverage report is still written to `.ide/local/coverage/clover.xml` below the project root, named relative to the working directory (`test_core::coverage::args_in`).
 The editor page shows the field as "Custom working directory", and without an explicit configuration file its test suite and group pickers read the working directory's (`phpunit_xml::model_in`); a package without one runs without one, as PHPUnit does.
 
 **Go to Test lists the convention's tests and every covering test (#426).**
 `php_core::test_navigation::CoversIndex` holds the project's `*Test.php` files below the test directories (every `autoload-dev` root, else `tests/`) with the classes each says it covers (`#[CoversClass]`, `#[CoversMethod]`, `@covers`, Pest's `covers()`), read within the PHPUnit model's budget (2000 files, 20000 entries, 512 KiB a file) and parsed only when a file mentions covering at all.
-`CoversCache` keeps one per project on `TestService`: built on a thread of its own on the first Go to Test, rebuilt when the PSR-4 roots change or more than 1000 changes pile up, and refreshed for each PHP file or directory the project watcher reports (re-read, dropped, or a new directory scanned).
+`CoversCache` keeps one per project on `TestService`: built on a thread of its own on the first Go to Test, rebuilt when the PSR-4 roots change or more than 1000 changes pile up, and refreshed for each PHP file or directory the project watcher reports (re-read, dropped, or a new directory scanned for the files it does not hold yet).
+Roots that change while the first build runs mark it stale, so the old roots' index is never published, and the queued changes are kept.
+A search waiting for one project's index gives up when another project is opened rather than answering with that project's index.
+A refresh never grows the index past the scan budget's 2000 files, a renamed or deleted ancestor of a test directory takes its tests along, and a file deleted before its report arrives is not listed.
 The watcher's report only queues the path, so the Qt thread never waits on a `\\wsl.localhost` share; the next search applies the queue on its worker thread.
 A search answers the `<Name>Test` convention's matches, then the tests that cover the class, then (only when the convention found none) the test files named after it.
 While the index is still being built a convention match answers at once with a status-bar note that the covering tests are still being indexed; with no convention match the search waits for the index, since it has nothing to show meanwhile.

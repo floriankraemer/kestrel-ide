@@ -265,6 +265,7 @@ TestsPanel::TestsPanel(TestService *testService, AppSettings *appSettings, OpenA
     connect(testService_, &TestService::testOutputAppended, this,
             &TestsPanel::onTestOutputAppended);
     connect(testService_, &TestService::testRunFinished, this, &TestsPanel::onTestRunFinished);
+    connect(testService_, &TestService::testRunRefused, this, &TestsPanel::onTestRunRefused);
 
     statusLabel_->setText(tr("No tests have run yet."));
 }
@@ -409,6 +410,12 @@ void TestsPanel::onTestRunFinished(bool ok, bool matchedNothing, const QString &
               .arg(ok ? "true" : "false")
               .arg(matchedNothing ? "true" : "false")
               .arg(e2eJson(message)));
+}
+
+void TestsPanel::onTestRunRefused(const QString &message)
+{
+    statusLabel_->setText(message);
+    e2eMark(QStringLiteral("{\"ev\":\"test_run_refused\",\"message\":%1}").arg(e2eJson(message)));
 }
 
 void TestsPanel::onSelectionChanged()

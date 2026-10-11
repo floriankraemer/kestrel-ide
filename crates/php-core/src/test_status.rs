@@ -648,15 +648,18 @@ test('has with data set in name', function () {});
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         let source = "<?php\nnamespace Tests;\nuse PHPUnit\\Framework\\TestCase;\nfinal class ClassTest extends TestCase\n{\n    public function testXyzAbc(): void {}\n    public function test_snake_case(): void {}\n    #[Test]\n    public function attributeOne(): void {}\n    public function testFails(): void {}\n}\n";
         std::fs::write(&file, source).unwrap();
-        let roots = [crate::composer::Psr4Root {
+        let roots = vec![crate::composer::Psr4Root {
             prefix: "Tests\\".into(),
             dir: "tests/".into(),
             dev: true,
         }];
+        let dir = project.path().to_path_buf();
+        let locator =
+            crate::tests::EventLocator::new(vec![(dir.clone(), roots)], ExecHost::Local, dir);
         let mut tree = TestTree::new();
         let mut parser = test_core::TeamCityParser::new();
         for event in parser.feed(PEST_CLASS_BASED) {
-            tree.apply(crate::tests::locate_event(event, &roots, project.path()));
+            tree.apply(locator.locate_event(event));
         }
         let host = ExecHost::Local;
         let nodes = tree.nodes_in_file(&host, project.path(), &file);

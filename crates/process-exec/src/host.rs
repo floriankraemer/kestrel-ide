@@ -7,12 +7,9 @@
 //! `vcs-core`, `analysis-core` and `test-core` get WSL execution without a
 //! line changing in any of them.
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-use std::sync::OnceLock;
 
 use crate::suppress_console_window;
 
@@ -422,16 +419,20 @@ impl ExecHost {
         // nothing — and pinning it to the `\\wsl.localhost\...` path is a
         // way to fail: the spawn needs that UNC path to resolve, which it
         // does not when the distro is stopped or the share is unavailable.
-        // A container's engine is a local process, and a relative compose
-        // file resolves against its cwd — unless the engine itself sits
-        // behind `wsl.exe`.
-        let local_cwd = match self {
-            ExecHost::Local => true,
-            ExecHost::Wsl(_) => false,
-            ExecHost::Container(container) => !container.via_wsl,
-        };
-        if local_cwd {
-            command.current_dir(cwd);
+        // A container's engine is a local process launched from the project
+        // root, where its relative compose files live — `-w` alone carries
+        // `cwd` into the container — unless the engine itself sits behind
+        // `wsl.exe`.
+        match self {
+            ExecHost::Local => {
+                command.current_dir(cwd);
+            }
+            ExecHost::Wsl(_) => {}
+            ExecHost::Container(container) => {
+                if !container.via_wsl {
+                    command.current_dir(&container.path_map.local_root);
+                }
+            }
         }
 
         match self {
@@ -532,203 +533,8 @@ pub fn distros() -> Vec<String> {
 
 // ------------------------------------------------------ tool discovery ---
 
-type ResolveCache = Mutex<HashMap<(String, String), Option<String>>>;
-
-fn resolve_cache() -> &'static ResolveCache {
-    static CACHE: OnceLock<ResolveCache> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// Resolve `program` to an absolute path *inside the distro* `host` names,
-/// memoised per `(distro, program)` for the process's lifetime — one probe
-/// per tool per distro per session, which is what makes [`ExecHost::argv`]'s
-/// exact-argv `-e` guarantee affordable (see the plan's "Tool discovery"
-/// section).
-///
-/// `Local` never probes: `Some(program.to_string())` unchanged, today's
-/// behaviour.
-///
-/// A candidate containing a path separator (`./gradlew`,
-/// `vendor/bin/phpstan`) is joined onto `cwd`'s remote path and confirmed
-/// executable with `test -x`; the probe is about executability *in the
-/// distro*, not existence on the 9P share. A bare name (`rust-analyzer`,
-/// `git`) is resolved with one login-shell `command -v`, since only a login
-/// shell sources the profile that puts `~/.cargo/bin` on `PATH`.
-///
-/// `None` means "not found in the distro" — callers map that onto their own
-/// vocabulary (`VcsError::GitNotInstalled`, `AnalyzerStatus::NotDetected`),
-/// the same split every other `process-exec` failure draws.
-pub fn resolve_program(host: &ExecHost, program: &str, cwd: &Path) -> Option<String> {
-    resolve_program_or_reason(host, program, cwd).ok()
-}
-
-/// [`resolve_program`] that also says *why* a container lookup missed:
-/// `Err(Some(reason))` when the container itself is unavailable (stopped,
-/// no such service, engine down — [`container_unavailable_reason`]), else
-/// `Err(None)`.
-pub fn resolve_program_or_reason(
-    host: &ExecHost,
-    program: &str,
-    cwd: &Path,
-) -> Result<String, Option<&'static str>> {
-    let wsl = match host {
-        ExecHost::Wsl(wsl) => wsl,
-        ExecHost::Container(container) => {
-            return resolve_in_container(host, container, program, cwd)
-        }
-        ExecHost::Local => return Ok(program.to_string()),
-    };
-
-    let key = (wsl.distro.clone(), program.to_string());
-    if let Some(cached) = resolve_cache().lock().unwrap().get(&key) {
-        return cached.clone().ok_or(None);
-    }
-
-    let resolved = if program.contains('/') || program.contains('\\') {
-        let candidate = host.to_remote(&cwd.join(program));
-        probe_executable(&wsl.distro, &candidate).then_some(candidate)
-    } else {
-        probe_command_v(&wsl.distro, program)
-    };
-
-    resolve_cache()
-        .lock()
-        .unwrap()
-        .insert(key, resolved.clone());
-    resolved.ok_or(None)
-}
-
-/// [`resolve_program`] inside a container: `sh -c 'command -v "$1"'` for a
-/// bare name, `test -x` for a path. Only a hit is memoised — a miss may just
-/// mean the container is not up yet, and caching that would keep reporting
-/// it missing after the user starts it.
-fn resolve_in_container(
-    host: &ExecHost,
-    container: &ContainerHost,
-    program: &str,
-    cwd: &Path,
-) -> Result<String, Option<&'static str>> {
-    let key = (
-        format!(
-            "container:{} {:?} {:?}",
-            container.program, container.prefix_args, container.target
-        ),
-        program.to_string(),
-    );
-    if let Some(Some(hit)) = resolve_cache().lock().unwrap().get(&key) {
-        return Ok(hit.clone());
-    }
-
-    let is_path = program.contains('/') || program.contains('\\');
-    let candidate = if is_path {
-        host.to_remote(&cwd.join(program))
-    } else {
-        program.to_string()
-    };
-    let script = if is_path {
-        r#"test -x "$1" && echo "$1""#
-    } else {
-        r#"command -v "$1""#
-    };
-    let mut command = host.command("sh", &["-c", script, "sh", &candidate], cwd, &[]);
-    suppress_console_window(&mut command);
-    let output = crate::retry_text_busy(|| command.output()).map_err(|_| None)?;
-    if !output.status.success() {
-        return Err(container_unavailable_reason(&output.stderr));
-    }
-    let resolved = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if resolved.is_empty() {
-        return Err(None);
-    }
-    resolve_cache()
-        .lock()
-        .unwrap()
-        .insert(key, Some(resolved.clone()));
-    Ok(resolved)
-}
-
-/// The first of `candidates` that [`resolve_program`] would find on `host`,
-/// in order. A container answers the whole list in one probe: with a
-/// `compose run` target each probe starts a container (about a second
-/// each), so three candidates per analyzer would mean three containers.
-/// A hit is memoised per list, a miss is not (the container may be down).
-pub fn resolve_first(host: &ExecHost, candidates: &[String], cwd: &Path) -> Option<String> {
-    let ExecHost::Container(container) = host else {
-        return candidates
-            .iter()
-            .find_map(|candidate| resolve_program(host, candidate, cwd));
-    };
-    let key = (
-        format!(
-            "container-first:{} {:?} {:?}",
-            container.program, container.prefix_args, container.target
-        ),
-        candidates.join("\0"),
-    );
-    if let Some(Some(hit)) = resolve_cache().lock().unwrap().get(&key) {
-        return Some(hit.clone());
-    }
-    // A path candidate is tested by its remote path, a bare name looked up
-    // on the container's PATH; a remote path always has a `/`, a bare name
-    // never does, so the script tells them apart the same way.
-    let remote: Vec<String> = candidates
-        .iter()
-        .map(|candidate| {
-            if candidate.contains('/') || candidate.contains('\\') {
-                host.to_remote(&cwd.join(candidate))
-            } else {
-                candidate.clone()
-            }
-        })
-        .collect();
-    let script = r#"for c in "$@"; do case "$c" in */*) [ -f "$c" ] && [ -x "$c" ] && { echo "$c"; exit 0; } ;; *) command -v "$c" && exit 0 ;; esac; done; exit 0"#;
-    let mut argv = vec!["-c", script, "sh"];
-    argv.extend(remote.iter().map(String::as_str));
-    let mut command = host.command("sh", &argv, cwd, &[]);
-    suppress_console_window(&mut command);
-    let output = crate::retry_text_busy(|| command.output()).ok()?;
-    let resolved = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .to_string();
-    if !output.status.success() || resolved.is_empty() {
-        return None;
-    }
-    resolve_cache()
-        .lock()
-        .unwrap()
-        .insert(key, Some(resolved.clone()));
-    Some(resolved)
-}
-
-fn probe_executable(distro: &str, remote_path: &str) -> bool {
-    let mut command = Command::new("wsl.exe");
-    command.args(["-d", distro, "-e", "test", "-x", remote_path]);
-    suppress_console_window(&mut command);
-    crate::retry_text_busy(|| command.output())
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
-fn probe_command_v(distro: &str, program: &str) -> Option<String> {
-    let script = format!("command -v {program}");
-    let mut command = Command::new("wsl.exe");
-    command.args(["-d", distro, "-e", "/bin/sh", "-lc", &script]);
-    suppress_console_window(&mut command);
-    let output = crate::retry_text_busy(|| command.output()).ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!path.is_empty()).then_some(path)
-}
+mod resolve;
+pub use resolve::{resolve_first, resolve_program, resolve_program_or_reason};
 
 // ------------------------------------------------------- exit mapping ----
 
@@ -807,6 +613,7 @@ pub fn is_missing_program(exit_code: Option<i32>, stderr: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     fn wsl(path: &str) -> ExecHost {
         ExecHost::for_path(Path::new(path))
@@ -1085,10 +892,10 @@ mod tests {
     // `PATH` to put a fake `wsl.exe` in front of the real one, the same
     // technique `run_core::supervisor`'s `launch_wraps_a_remote_cwd_...` test
     // uses.
-    static PATH_LOCK: Mutex<()> = Mutex::new(());
+    pub(super) static PATH_LOCK: Mutex<()> = Mutex::new(());
 
     /// Prepends `dir` to `PATH` and returns the previous value to restore.
-    fn prepend_to_path(dir: &Path) -> String {
+    pub(super) fn prepend_to_path(dir: &Path) -> String {
         let original = std::env::var("PATH").unwrap_or_default();
         // SAFETY: serialized by `PATH_LOCK`, held by every caller.
         unsafe {
@@ -1097,14 +904,14 @@ mod tests {
         original
     }
 
-    fn restore_path(original: String) {
+    pub(super) fn restore_path(original: String) {
         // SAFETY: serialized by `PATH_LOCK`, held by every caller.
         unsafe {
             std::env::set_var("PATH", original);
         }
     }
 
-    fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    pub(super) fn write_executable_script(dir: &Path, name: &str, body: &str) -> PathBuf {
         use std::io::Write as _;
         use std::os::unix::fs::PermissionsExt;
 
@@ -1155,55 +962,6 @@ mod tests {
         assert!(result.is_empty());
     }
 
-    #[test]
-    fn probe_executable_reports_true_when_the_fake_wsl_exe_confirms_it() {
-        let _guard = PATH_LOCK.lock().unwrap();
-        let bin_dir = tempfile::tempdir().unwrap();
-        write_executable_script(
-            bin_dir.path(),
-            "wsl.exe",
-            "case \"$*\" in\n  *present*) exit 0;;\n  *) exit 1;;\nesac\n",
-        );
-
-        let original_path = prepend_to_path(bin_dir.path());
-        let found = probe_executable("Ubuntu", "/opt/present-tool");
-        let missing = probe_executable("Ubuntu", "/opt/absent-tool");
-        restore_path(original_path);
-
-        assert!(found);
-        assert!(!missing);
-    }
-
-    #[test]
-    fn probe_command_v_returns_the_resolved_path_on_success() {
-        let _guard = PATH_LOCK.lock().unwrap();
-        let bin_dir = tempfile::tempdir().unwrap();
-        write_executable_script(
-            bin_dir.path(),
-            "wsl.exe",
-            "echo /usr/bin/rust-analyzer\nexit 0\n",
-        );
-
-        let original_path = prepend_to_path(bin_dir.path());
-        let resolved = probe_command_v("Ubuntu", "rust-analyzer");
-        restore_path(original_path);
-
-        assert_eq!(resolved, Some("/usr/bin/rust-analyzer".to_string()));
-    }
-
-    #[test]
-    fn probe_command_v_returns_none_when_the_fake_wsl_exe_fails() {
-        let _guard = PATH_LOCK.lock().unwrap();
-        let bin_dir = tempfile::tempdir().unwrap();
-        write_executable_script(bin_dir.path(), "wsl.exe", "exit 1\n");
-
-        let original_path = prepend_to_path(bin_dir.path());
-        let resolved = probe_command_v("Ubuntu", "does-not-exist");
-        restore_path(original_path);
-
-        assert_eq!(resolved, None);
-    }
-
     // ----------------------------------------------- container (X1) -----
 
     fn container() -> ExecHost {
@@ -1251,6 +1009,18 @@ mod tests {
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
         assert!(args.windows(2).any(|w| w == ["-e", "A=b"]), "{args:?}");
         assert_eq!(command.get_current_dir(), Some(Path::new("/home/f/proj")));
+    }
+
+    #[test]
+    fn a_container_engine_runs_from_the_project_root_whatever_the_tool_cwd() {
+        // Compose's `-f dc.yml` is project-relative; only `-w` moves.
+        let command = container().command("php", &[], Path::new("/home/f/proj/packages/a"), &[]);
+        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
+        assert_eq!(command.get_current_dir(), Some(Path::new("/home/f/proj")));
+        assert!(
+            args.windows(2).any(|w| w == ["-w", "/var/www/packages/a"]),
+            "{args:?}"
+        );
     }
 
     #[test]
@@ -1341,118 +1111,5 @@ mod tests {
         }
         assert!(!is_missing_program(Some(1), b"PHP Parse error"));
         assert_eq!(container_unavailable_reason(b"PHP Parse error"), None);
-    }
-
-    /// A "container engine" that is `echo` (or `sh -c`), so no test writes an
-    /// executable and races another test's fork (ETXTBSY).
-    fn fake_container(program: &str, prefix: &[&str], root: &Path) -> ExecHost {
-        ExecHost::Container(ContainerHost {
-            program: program.into(),
-            prefix_args: prefix.iter().map(|a| a.to_string()).collect(),
-            engine_env: vec![],
-            via_wsl: false,
-            verb_args: vec!["exec".into(), "-i".into()],
-            target: vec!["web".into()],
-            // The engine is spawned with the project as its cwd, so it must exist.
-            path_map: PathMap::new(root, "/workspace"),
-        })
-    }
-
-    #[test]
-    fn a_bare_name_resolves_with_command_v_inside_the_container() {
-        let dir = tempfile::tempdir().unwrap();
-        // `echo` prints the argv it was given, which is what the probe reads back.
-        let host = fake_container("echo", &[], dir.path());
-        let resolved = resolve_program(&host, "phpcs-x", dir.path());
-        assert_eq!(
-            resolved.as_deref(),
-            Some(r#"exec -i -w /workspace web sh -c command -v "$1" sh phpcs-x"#)
-        );
-    }
-
-    #[test]
-    fn a_path_candidate_is_tested_inside_the_container_by_its_remote_path() {
-        let dir = tempfile::tempdir().unwrap();
-        let host = fake_container("echo", &[], dir.path());
-        let resolved = resolve_program(&host, "vendor/bin/phpstan", dir.path());
-        assert!(
-            resolved
-                .as_deref()
-                .is_some_and(|r| r.ends_with("sh /workspace/vendor/bin/phpstan")),
-            "{resolved:?}"
-        );
-    }
-
-    /// An "engine" that drops `exec -i -w <cwd> web` and runs the rest
-    /// locally, counting its starts; the project maps onto itself.
-    fn counting_container(root: &Path, count: &Path) -> ExecHost {
-        let script = format!("echo x >> {}; shift 5; exec \"$@\"", count.display());
-        ExecHost::Container(ContainerHost {
-            program: "sh".into(),
-            prefix_args: vec!["-c".into(), script, "sh".into()],
-            engine_env: vec![],
-            via_wsl: false,
-            verb_args: vec!["exec".into(), "-i".into()],
-            target: vec!["web".into()],
-            path_map: PathMap::new(root, &root.to_string_lossy()),
-        })
-    }
-
-    #[test]
-    fn a_container_resolves_the_whole_candidate_list_in_one_probe() {
-        let dir = tempfile::tempdir().unwrap();
-        let count = dir.path().join("starts");
-        let host = counting_container(dir.path(), &count);
-        let candidates: Vec<String> = ["vendor/bin/nope", "nope-x.phar", "sh"]
-            .map(String::from)
-            .to_vec();
-        let found = resolve_first(&host, &candidates, dir.path());
-        assert!(
-            found.as_deref().is_some_and(|p| p.ends_with("/sh")),
-            "{found:?}"
-        );
-        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
-        // Memoised: a second lookup starts nothing.
-        assert_eq!(resolve_first(&host, &candidates, dir.path()), found);
-        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 1);
-    }
-
-    #[test]
-    fn a_container_list_with_no_hit_is_none_and_is_asked_again() {
-        let dir = tempfile::tempdir().unwrap();
-        let count = dir.path().join("starts");
-        let host = counting_container(dir.path(), &count);
-        let candidates = vec!["vendor/bin/nope".to_string(), "nope-y".to_string()];
-        assert_eq!(resolve_first(&host, &candidates, dir.path()), None);
-        assert_eq!(resolve_first(&host, &candidates, dir.path()), None);
-        assert_eq!(std::fs::read_to_string(&count).unwrap().lines().count(), 2);
-    }
-
-    #[test]
-    fn a_path_candidate_wins_over_a_later_bare_name() {
-        let dir = tempfile::tempdir().unwrap();
-        let count = dir.path().join("starts");
-        let host = counting_container(dir.path(), &count);
-        // `/bin/sh` is a path candidate outside the project: kept as is.
-        let candidates = vec!["/bin/sh".to_string(), "sh".to_string()];
-        assert_eq!(
-            resolve_first(&host, &candidates, dir.path()).as_deref(),
-            Some("/bin/sh")
-        );
-    }
-
-    #[test]
-    fn a_failing_probe_is_none_and_is_not_cached() {
-        let dir = tempfile::tempdir().unwrap();
-        let flag = dir.path().join("up");
-        let script = format!("[ -e {} ] && echo /usr/bin/nope-x", flag.display());
-        let host = fake_container("sh", &["-c", &script, "sh"], dir.path());
-        assert_eq!(resolve_program(&host, "nope-x", dir.path()), None);
-        // The container comes up: the next lookup must reach it again.
-        std::fs::write(&flag, "").unwrap();
-        assert_eq!(
-            resolve_program(&host, "nope-x", dir.path()),
-            Some("/usr/bin/nope-x".to_string())
-        );
     }
 }

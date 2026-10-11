@@ -189,10 +189,36 @@ fn phpunit_args(
         ),
         TestScope::Config { testsuite } => (None, None, testsuite.as_ref()),
     };
-    let mut args = match filter {
-        Some(pattern) => apply_filter(base, filter_flag, filter_template, &[pattern]),
-        None => base.to_vec(),
+    let patterns: Vec<String> = filter.into_iter().collect();
+    let selection = Selection {
+        patterns: &patterns,
+        testsuite,
+        path,
     };
+    assemble(base, filter_flag, filter_template, selection, options)
+}
+
+/// What a PHPUnit or Pest argv selects: filter patterns, a test suite and
+/// the positional path.
+struct Selection<'a> {
+    patterns: &'a [String],
+    testsuite: Option<&'a String>,
+    path: Option<&'a String>,
+}
+
+fn assemble(
+    base: &[String],
+    filter_flag: Option<&str>,
+    filter_template: Option<&str>,
+    selection: Selection<'_>,
+    options: &ScopeOptions,
+) -> Vec<String> {
+    let Selection {
+        patterns,
+        testsuite,
+        path,
+    } = selection;
+    let mut args = apply_filter(base, filter_flag, filter_template, patterns);
     if let Some(testsuite) = testsuite {
         args.extend(["--testsuite".to_string(), testsuite.clone()]);
     }
@@ -211,6 +237,46 @@ fn phpunit_args(
     args.extend(options.runner_options.iter().cloned());
     args.extend(path.cloned());
     args
+}
+
+/// The argv that reruns the tests `patterns` select (the Tests dock's Rerun
+/// and Run Failed) the way `scope` and `options` ran them: same test suite,
+/// options and path, with `patterns` in place of the scope's own filter.
+/// Only PHPUnit's and Pest's dialects select tests by a filter here.
+pub fn rerun_args(
+    base: &[String],
+    dialect: FilterDialect,
+    filter_flag: Option<&str>,
+    filter_template: Option<&str>,
+    scope: &TestScope,
+    options: &ScopeOptions,
+    patterns: &[String],
+) -> Result<Vec<String>, ScopeError> {
+    if !matches!(
+        dialect,
+        FilterDialect::PhpUnitRegex | FilterDialect::PestRegex
+    ) {
+        return Err(ScopeError::UnsupportedScope(scope.name()));
+    }
+    let (path, testsuite) = match scope {
+        TestScope::Directory { path } | TestScope::File { path, .. } => (Some(path), None),
+        TestScope::Class { path, .. }
+        | TestScope::Method { path, .. }
+        | TestScope::DataSet { path, .. } => (path.as_ref(), None),
+        TestScope::Config { testsuite } => (None, testsuite.as_ref()),
+    };
+    let selection = Selection {
+        patterns,
+        testsuite,
+        path,
+    };
+    Ok(assemble(
+        base,
+        filter_flag,
+        filter_template,
+        selection,
+        options,
+    ))
 }
 
 fn codeception_args(
@@ -526,5 +592,68 @@ mod tests {
         );
         assert_eq!(split_data_set_id("App\\T::testA"), None);
         assert_eq!(split_data_set_id("App\\T::testA with data set x"), None);
+    }
+
+    #[test]
+    fn a_rerun_keeps_the_scope_path_suite_and_options_with_its_own_filter() {
+        let rerun = |scope: &TestScope, options: &ScopeOptions| {
+            rerun_args(
+                &base(),
+                FilterDialect::PhpUnitRegex,
+                Some("--filter"),
+                None,
+                scope,
+                options,
+                &["^A::b$".to_string()],
+            )
+            .unwrap()
+        };
+        let options = ScopeOptions {
+            configuration: Some("phpunit.xml".into()),
+            groups: vec!["slow".into()],
+            ..ScopeOptions::default()
+        };
+        let method = TestScope::Method {
+            class: "A".into(),
+            method: "x".into(),
+            path: Some("tests/ATest.php".into()),
+        };
+        assert_eq!(
+            rerun(&method, &options),
+            words(&[
+                "--teamcity",
+                "--filter",
+                "^A::b$",
+                "--configuration",
+                "phpunit.xml",
+                "--group",
+                "slow",
+                "tests/ATest.php"
+            ])
+        );
+        let suite = TestScope::Config {
+            testsuite: Some("unit".into()),
+        };
+        assert_eq!(
+            rerun(&suite, &ScopeOptions::default()),
+            words(&["--teamcity", "--filter", "^A::b$", "--testsuite", "unit"])
+        );
+        let directory = TestScope::Directory {
+            path: "tests".into(),
+        };
+        assert_eq!(
+            rerun(&directory, &ScopeOptions::default()),
+            words(&["--teamcity", "--filter", "^A::b$", "tests"])
+        );
+        assert!(rerun_args(
+            &base(),
+            FilterDialect::Codeception,
+            None,
+            None,
+            &directory,
+            &ScopeOptions::default(),
+            &[],
+        )
+        .is_err());
     }
 }

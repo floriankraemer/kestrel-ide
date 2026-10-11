@@ -52,15 +52,27 @@ impl TestLocation {
     /// absolute one maps through `host` (WSL `/home/..` becomes
     /// `\\wsl.localhost\..`, a container mount its bind source).
     pub fn local_path(&self, host: &ExecHost, work_dir: &Path) -> PathBuf {
-        let printed = Path::new(&self.file);
-        let absolute = self.file.starts_with('/')
-            || self.file.starts_with('\\')
-            || self.file.as_bytes().get(1) == Some(&b':');
-        if absolute {
+        if self.is_absolute() {
             host.path_from_tool(&self.file)
         } else {
-            work_dir.join(printed)
+            work_dir.join(&self.file)
         }
+    }
+
+    /// This location with a relative [`Self::file`] made absolute on `host`
+    /// against the `work_dir` of the run that printed it. The tree outlives
+    /// its run, and a later run in another directory must not re-point it.
+    pub fn anchored(mut self, host: &ExecHost, work_dir: &Path) -> Self {
+        if !self.file.is_empty() && !self.is_absolute() {
+            self.file = host.to_remote(&work_dir.join(&self.file));
+        }
+        self
+    }
+
+    fn is_absolute(&self) -> bool {
+        self.file.starts_with('/')
+            || self.file.starts_with('\\')
+            || self.file.as_bytes().get(1) == Some(&b':')
     }
 }
 
@@ -305,5 +317,21 @@ mod tests {
             parsed(r"php_qn:///x/T.php::\T").local_path(&local, work),
             Path::new("/x/T.php")
         );
+    }
+
+    #[test]
+    fn an_anchored_location_keeps_its_file_whatever_the_later_work_dir() {
+        let local = ExecHost::Local;
+        let anchored = parsed("pest_qn://tests/A.php").anchored(&local, Path::new("/proj/pkg"));
+        assert_eq!(anchored.file, "/proj/pkg/tests/A.php");
+        assert_eq!(
+            anchored.local_path(&local, Path::new("/proj")),
+            Path::new("/proj/pkg/tests/A.php")
+        );
+        let absolute = parsed(r"php_qn:///x/T.php::\T").anchored(&local, Path::new("/proj"));
+        assert_eq!(absolute.file, "/x/T.php");
+        let unresolved =
+            parsed(r"pest_qn://Greeter (Tests\Greeter)").anchored(&local, Path::new("/p"));
+        assert_eq!(unresolved.file, "");
     }
 }

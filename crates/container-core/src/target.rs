@@ -881,6 +881,17 @@ mod tests {
     }
 
     #[test]
+    fn a_compose_engine_finds_its_project_relative_files_from_a_package_run() {
+        let root = Path::new("/home/f/proj");
+        let host = exec_host(&compose_target(), &local_invocation(), root, None, false);
+        let command = host.command("phpunit", &[], &root.join("packages/a"), &[]);
+        let argv: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
+        assert_eq!(command.get_current_dir(), Some(root));
+        assert!(argv.windows(2).any(|w| w == ["-f", "docker-compose.yml"]));
+        assert!(argv.windows(2).any(|w| w == ["-w", "/var/www/packages/a"]));
+    }
+
+    #[test]
     fn a_compose_service_defaults_to_exec() {
         let root = Path::new("/home/f/proj");
         let host = exec_host(&compose_target(), &local_invocation(), root, None, false);

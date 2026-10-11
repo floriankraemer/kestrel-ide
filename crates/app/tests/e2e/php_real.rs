@@ -521,8 +521,8 @@ pub(crate) fn wait_for_test_run(ide: &Ide, mark: Mark) -> Value {
 }
 
 /// The last reported status of the test row called `name` after `mark`
-/// (the tree is rebuilt on every TeamCity event, so only the last mark of a
-/// row is its settled state).
+/// (a row is marked each time it changes, so only its last mark is its
+/// settled state).
 pub(crate) fn test_status(ide: &Ide, mark: Mark, name: &str) -> Option<String> {
     ide.events_since_of(mark, "test_tree_row")
         .iter()

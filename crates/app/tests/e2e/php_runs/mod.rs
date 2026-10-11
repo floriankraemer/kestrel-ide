@@ -205,29 +205,21 @@ fn wait_for_marker(
 // --- the Tests dock -----------------------------------------------------------
 
 /// Each test (not suite) the run after `mark` ran, by name, with its last
-/// status. A narrowed run updates the tree an earlier run left rather than
-/// replacing it (`test_core::preparation::replaces_tree`), so a test counts
-/// as run when its row went through `running` after `mark`.
+/// status. The dock marks a row only when it changes (#462), and a test a
+/// run reports changes its row even when it ends as before (its run
+/// differs), so a test counts as run when its row was marked after `mark`;
+/// a narrowed run leaves the rows of the tests it did not run unmarked.
 fn ran_tests(ide: &Ide, mark: Mark) -> BTreeMap<String, String> {
-    let rows: Vec<Value> = ide
-        .events_since_of(mark, "test_tree_row")
+    ide.events_since_of(mark, "test_tree_row")
         .into_iter()
         .filter(|row| row["suite"] == false)
-        .collect();
-    let mut tests = BTreeMap::new();
-    for row in &rows {
-        let id = row["id"].as_str().unwrap_or_default();
-        let ran = rows
-            .iter()
-            .any(|r| r["id"] == id && r["status"] == "running");
-        if ran {
-            tests.insert(
+        .map(|row| {
+            (
                 row["name"].as_str().unwrap_or_default().to_string(),
                 row["status"].as_str().unwrap_or_default().to_string(),
-            );
-        }
-    }
-    tests
+            )
+        })
+        .collect()
 }
 
 /// The tests the run started after `mark` reported, once it finished.

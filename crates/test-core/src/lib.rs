@@ -42,6 +42,7 @@ pub mod filter;
 mod junit;
 mod location;
 pub mod preparation;
+mod rows;
 mod runner;
 pub mod scope;
 mod selection;
@@ -52,6 +53,7 @@ mod tree;
 pub use diagnostics::{diagnostics_by_file, diagnostics_by_file_on};
 pub use junit::{parse as parse_junit_xml, JUnitTestCase, ParseError as JUnitParseError};
 pub use location::{parse_location_hint, TestLocation, TestSymbol};
+pub use rows::{rows_of, PublishedRows, RowChanges, TreeRow};
 pub use runner::{
     parse_output_format, run, run_on, run_on_env, OutputFormat, RunFailure, TestRunHandle,
     TestSink, UnknownOutputFormat,

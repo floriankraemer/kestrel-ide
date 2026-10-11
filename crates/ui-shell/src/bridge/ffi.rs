@@ -7202,6 +7202,16 @@ mod ffi {
         duration_ms: i64,
         #[cxx_name = "hasFailure"]
         has_failure: bool,
+        /// The node's position among its parent's children (or the roots).
+        index: i32,
+    }
+
+    /// The Tests dock's rows that changed since it last asked
+    /// (`test_core::PublishedRows`): parents first; with `reset`, the dock
+    /// drops every row it has and builds these from scratch.
+    struct FfiTestNodeChanges {
+        reset: bool,
+        nodes: Vec<FfiTestNode>,
     }
 
     extern "RustQt" {
@@ -7215,10 +7225,12 @@ mod ffi {
         #[qobject]
         type TestService = super::TestServiceRust;
 
-        /// Every node of the current tree, flattened — the Tests dock's
-        /// tree widget. Empty before any run this session.
+        /// The tree's rows the Tests dock does not have yet or has stale,
+        /// remembered as given (#462): a streamed event costs the dock the
+        /// rows it touched, not a rebuild of the whole tree.
         #[qinvokable]
-        fn nodes(self: &TestService) -> Vec<FfiTestNode>;
+        #[cxx_name = "takeNodeChanges"]
+        fn take_node_changes(self: &TestService) -> FfiTestNodeChanges;
 
         /// The failing node's assertion message, for the failure pane's
         /// header line. Empty when the node has no failure or does not

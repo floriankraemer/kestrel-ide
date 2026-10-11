@@ -76,18 +76,25 @@ void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorT
     });
     QObject::connect(
       testService, &TestService::testNavigationReady, window,
-      [window, editorTabs](bool fromTest, const QString &name, const QStringList &paths,
-                           const QStringList &labels) {
-          if (name.isEmpty()) {
+      [window, editorTabs](FfiTestNavigationStatus status, bool fromTest, const QString &name,
+                           const QStringList &paths, const QStringList &labels) {
+          switch (status) {
+          case FfiTestNavigationStatus::NoProject:
+          case FfiTestNavigationStatus::NotPhp:
               window->statusBar()->showMessage(
                 QObject::tr("Go to Test works in the PHP files of an open project."), 4000);
-          } else if (paths.isEmpty()) {
+              return;
+          case FfiTestNavigationStatus::NoneFound:
               // PhpStorm offers Create New Test here; that dialog is #404.
               window->statusBar()->showMessage(
                 fromTest ? QObject::tr("No test subject found for %1.").arg(name)
                          : QObject::tr("No test found for %1.").arg(name),
                 4000);
-          } else if (paths.size() == 1) {
+              return;
+          case FfiTestNavigationStatus::Found:
+              break;
+          }
+          if (paths.size() == 1) {
               editorTabs->openFileAtLine(paths.first(), 1, 0);
           } else {
               chooseTarget(window, editorTabs, fromTest, name, paths, labels);

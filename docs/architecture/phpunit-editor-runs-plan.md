@@ -80,5 +80,5 @@ A row's status and commit hash are updated in the commit that finishes it.
 | E4 — PHPUnit run configuration kind | done | 9ffe63b |
 | E5 — `phpunit.xml` suites and groups | done | ad567a8 |
 | E6 — project tree test entries | done | 0d7e478 |
-| E7 — Go to Test / Test Subject | done | 2aa85fe |
+| E7 — Go to Test / Test Subject | done | 4830654, 2aa85fe |
 | E8 — acceptance (Linux + Windows/WSL) | open | |

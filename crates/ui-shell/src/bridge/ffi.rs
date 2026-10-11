@@ -7069,6 +7069,18 @@ mod ffi {
         message: QString,
     }
 
+    /// How a Go to Test request ended (E7).
+    enum FfiTestNavigationStatus {
+        /// No project is open.
+        NoProject,
+        /// The file is not a PHP file.
+        NotPhp,
+        /// The search found no test or subject.
+        NoneFound,
+        /// `paths` holds at least one file.
+        Found,
+    }
+
     /// What the project tree's test entries call their run (E6):
     /// `php_core::tree_run::TreeRunLabel`, worded and translated by the view.
     enum FfiTreeRunKind {
@@ -7260,18 +7272,26 @@ mod ffi {
         /// Go to Test / Test Subject (E7) from `path` holding `text`,
         /// resolved on a worker thread (the project may sit behind a slow
         /// `\\wsl.localhost` share); answers through `testNavigationReady`.
+        /// One search runs at a time and only the latest request answers.
         #[qinvokable]
         #[cxx_name = "requestTestNavigation"]
         fn request_test_navigation(self: Pin<&mut TestService>, path: &QString, text: &QString);
 
-        /// `requestTestNavigation`'s answer: whether it started from a test,
-        /// the class (or Pest file) it started from — empty for a file that
-        /// is not PHP — and the absolute files, most likely first, each with
-        /// its project-relative label for the chooser.
+        /// Drop the answer of any Go to Test search in flight: the user
+        /// moved on to another tab.
+        #[qinvokable]
+        #[cxx_name = "cancelTestNavigation"]
+        fn cancel_test_navigation(self: &TestService);
+
+        /// `requestTestNavigation`'s answer: whether it could search and
+        /// found anything, whether it started from a test, the class (or
+        /// Pest file) it started from, and the absolute files, most likely
+        /// first, each with its project-relative label for the chooser.
         #[qsignal]
         #[cxx_name = "testNavigationReady"]
         fn test_navigation_ready(
             self: Pin<&mut TestService>,
+            status: FfiTestNavigationStatus,
             from_test: bool,
             name: QString,
             paths: QStringList,

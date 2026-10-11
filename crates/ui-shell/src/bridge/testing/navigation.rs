@@ -1,8 +1,10 @@
 //! Go to Test / Test Subject (PHPUnit editor runs plan, E7): translation
 //! only — which files a class and its tests map to is
-//! `php_core::test_navigation`'s rule; this moves the request off the Qt
-//! thread and the answer back.
+//! `php_core::test_navigation`'s rule, and which answer still counts is its
+//! `NavigationRequests`'; this moves the search off the Qt thread and the
+//! answer back.
 
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use cxx_qt::Threading;
@@ -11,30 +13,82 @@ use cxx_qt_lib::{QString, QStringList};
 use super::gutter::is_php_file;
 use crate::bridge::ffi;
 
+/// One Go to Test search: the project root, the file and its text.
+pub(super) struct NavigationRequest {
+    root: PathBuf,
+    file: PathBuf,
+    text: String,
+}
+
+pub(super) type NavigationRequests =
+    php_core::test_navigation::NavigationRequests<NavigationRequest>;
+
 impl ffi::TestService {
     pub fn is_test_file(&self, path: &QString, text: &QString) -> bool {
         let path = path.to_string();
+        // The gutter's parse of this text, cached, rather than a parse per
+        // menu opening.
         is_php_file(&path)
-            && php_core::test_navigation::is_test_file(
-                std::path::Path::new(&path),
-                &text.to_string(),
-            )
+            && (php_core::test_navigation::is_named_test(Path::new(&path))
+                || !self.markers_of(&path, &text.to_string()).is_empty())
     }
 
     pub fn request_test_navigation(mut self: Pin<&mut Self>, path: &QString, text: &QString) {
-        let path = std::path::PathBuf::from(path.to_string());
-        let root = super::current_project_root();
-        let (Some(root), true) = (root, is_php_file(&path.to_string_lossy())) else {
-            let none = QStringList::default;
-            self.as_mut()
-                .test_navigation_ready(false, QString::default(), none(), none());
-            return;
+        let file = PathBuf::from(path.to_string());
+        let status = match super::current_project_root() {
+            None => Err(ffi::FfiTestNavigationStatus::NoProject),
+            Some(_) if !is_php_file(&file.to_string_lossy()) => {
+                Err(ffi::FfiTestNavigationStatus::NotPhp)
+            }
+            Some(root) => Ok(root),
         };
-        let text = text.to_string();
+        let root = match status {
+            Ok(root) => root,
+            Err(status) => {
+                self.navigation.borrow_mut().cancel();
+                let none = QStringList::default;
+                self.as_mut().test_navigation_ready(
+                    status,
+                    false,
+                    QString::default(),
+                    none(),
+                    none(),
+                );
+                return;
+            }
+        };
+        let request = NavigationRequest {
+            root,
+            file,
+            text: text.to_string(),
+        };
+        let started = self.navigation.borrow_mut().request(request);
+        if let Some((token, request)) = started {
+            self.as_mut().search_navigation(token, request);
+        }
+    }
+
+    pub fn cancel_test_navigation(&self) {
+        self.navigation.borrow_mut().cancel();
+    }
+
+    /// Search for `request` on a worker thread, then answer if it is still
+    /// wanted and start the request that waited for it.
+    fn search_navigation(self: Pin<&mut Self>, token: u64, request: NavigationRequest) {
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
-            let navigation = php_core::test_navigation::navigate(&root, &path, &text);
-            let _ = qt_thread.queue(move |service: Pin<&mut ffi::TestService>| {
+            let navigation =
+                php_core::test_navigation::navigate(&request.root, &request.file, &request.text);
+            let root = request.root;
+            let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
+                let (wanted, next) = service.navigation.borrow_mut().finish(token);
+                if let Some((token, request)) = next {
+                    service.as_mut().search_navigation(token, request);
+                }
+                // A project closed meanwhile has no files to open.
+                if !wanted || super::current_project_root().as_deref() != Some(root.as_path()) {
+                    return;
+                }
                 let paths: QStringList = navigation
                     .files
                     .iter()
@@ -45,8 +99,13 @@ impl ffi::TestService {
                     .iter()
                     .map(|file| QString::from(file.as_str()))
                     .collect();
+                let status = if navigation.files.is_empty() {
+                    ffi::FfiTestNavigationStatus::NoneFound
+                } else {
+                    ffi::FfiTestNavigationStatus::Found
+                };
                 let name = QString::from(navigation.name.as_str());
-                service.test_navigation_ready(navigation.from_test, name, paths, labels);
+                service.test_navigation_ready(status, navigation.from_test, name, paths, labels);
             });
         });
     }

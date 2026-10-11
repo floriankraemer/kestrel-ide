@@ -84,6 +84,8 @@ pub struct TestServiceRust {
     tree_packages: RefCell<tree::PackageCache>,
     /// The run the open project tree menu offers, for its click (E6).
     tree_offer: RefCell<Option<tree::TreeOffer>>,
+    /// Go to Test's searches: one at a time, the latest answers (E7).
+    navigation: RefCell<navigation::NavigationRequests>,
     store: SharedDiagnostics,
 }
 

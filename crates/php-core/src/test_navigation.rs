@@ -141,15 +141,44 @@ fn imports_of(declaration: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// A class name a test says it covers, as written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CoveredName {
+    name: String,
+    /// From a `@covers` annotation, whose names are fully qualified with or
+    /// without the leading `\`; code (`::class`) resolves as PHP does.
+    annotation: bool,
+}
+
+/// The classes a test file declaring `declarations` says it covers, fully
+/// qualified. An annotation's name is tried as written first, then as code
+/// would resolve it, since both spellings occur.
+fn covered_classes(text: &str, declarations: &Declarations) -> Vec<String> {
+    let mut classes = Vec::new();
+    for covered in covered_names(text) {
+        if covered.annotation {
+            classes.push(covered.name.trim_start_matches('\\').to_string());
+        }
+        let resolved = declarations.resolve(&covered.name);
+        if !classes.contains(&resolved) {
+            classes.push(resolved);
+        }
+    }
+    classes
+}
+
 /// The class names a test's coverage attributes, `@covers` annotations and
 /// Pest `covers()` calls name, as written.
-fn covered_names(text: &str) -> Vec<String> {
+fn covered_names(text: &str) -> Vec<CoveredName> {
     let mut names = Vec::new();
     let class_constant = |argument: &str| {
         argument
             .trim()
             .strip_suffix("::class")
-            .map(|name| name.trim().to_string())
+            .map(|name| CoveredName {
+                name: name.trim().to_string(),
+                annotation: false,
+            })
     };
     for attribute in ["CoversClass(", "CoversMethod("] {
         for (at, _) in text.match_indices(attribute) {
@@ -181,7 +210,10 @@ fn covered_names(text: &str) -> Vec<String> {
         let target = rest.split_whitespace().next().unwrap_or_default();
         let class = target.split("::").next().unwrap_or_default();
         if !class.is_empty() && !class.starts_with('*') {
-            names.push(class.to_string());
+            names.push(CoveredName {
+                name: class.to_string(),
+                annotation: true,
+            });
         }
     }
     names
@@ -190,10 +222,14 @@ fn covered_names(text: &str) -> Vec<String> {
 /// Whether `text` is a test file: one with PHPUnit or Pest tests, or named
 /// `*Test.php`. Decides which way Go to Test jumps and how the menu names it.
 pub fn is_test_file(path: &Path, text: &str) -> bool {
-    let named_test = path
-        .file_stem()
-        .is_some_and(|stem| stem.to_string_lossy().ends_with(TEST_SUFFIX));
-    named_test || !crate::tests::markers(text).is_empty()
+    is_named_test(path) || !crate::tests::markers(text).is_empty()
+}
+
+/// Whether `path` is named `*Test.php`: [`is_test_file`] without parsing,
+/// for a caller that holds the file's markers already.
+pub fn is_named_test(path: &Path) -> bool {
+    path.file_stem()
+        .is_some_and(|stem| stem.to_string_lossy().ends_with(TEST_SUFFIX))
 }
 
 /// Go to Test / Test Subject for `file` (absolute, holding `text`) in the
@@ -259,16 +295,12 @@ fn subjects_of(
         let dir = file.parent().unwrap_or(project);
         psr4::namespace_for(roots, project, dir)
     };
-    let mut classes: Vec<String> = covered_names(text)
-        .iter()
-        .map(|covered| declarations.resolve(covered))
-        .collect();
-    if let Some(subject) = name.strip_suffix(TEST_SUFFIX).filter(|s| !s.is_empty()) {
+    let mut classes = covered_classes(text, declarations);
+    let subject = name.strip_suffix(TEST_SUFFIX).filter(|s| !s.is_empty());
+    if let Some(subject) = subject {
         classes.push(join(&namespace, subject));
-        for test_root in roots.iter().filter(|root| root.dev) {
-            let Some(rest) = strip_namespace(&namespace, &test_root.prefix) else {
-                continue;
-            };
+        let test_roots = roots.iter().filter(|root| root.dev);
+        if let Some(rest) = below_longest_prefix(test_roots, &namespace) {
             let mut mirrored = vec![rest.clone()];
             let (kind, below) = rest.split_once('\\').unwrap_or((&rest, ""));
             if TEST_KINDS.contains(&kind) {
@@ -285,14 +317,35 @@ fn subjects_of(
             }
         }
     }
+    let mut files: Vec<String> = classes
+        .iter()
+        .filter_map(|class| psr4::class_file(roots, project, class))
+        .collect();
+    // A layout the namespaces do not mirror (Laravel's flat `tests/Feature`
+    // for `app/Http/Controllers`): the subject's file by name.
+    if let (true, Some(subject)) = (files.is_empty(), subject) {
+        files = scan_sources(roots, project, subject);
+    }
     TestNavigation {
         from_test: true,
         name,
-        files: classes
-            .iter()
-            .filter_map(|class| psr4::class_file(roots, project, class))
-            .collect(),
+        files,
     }
+}
+
+/// `namespace` below the longest of `roots`' prefixes that holds it, so
+/// `App\Legacy\Foo` maps through `App\Legacy\` and not also through `App\`.
+fn below_longest_prefix<'a>(
+    roots: impl Iterator<Item = &'a Psr4Root>,
+    namespace: &str,
+) -> Option<String> {
+    roots
+        .filter_map(|root| {
+            let rest = strip_namespace(namespace, &root.prefix)?;
+            Some((root.prefix.trim_end_matches('\\').len(), rest))
+        })
+        .max_by_key(|(length, _)| *length)
+        .map(|(_, rest)| rest)
 }
 
 /// `namespace` below `prefix` (`App\` or `App`), `None` when it is not.
@@ -311,9 +364,9 @@ fn strip_namespace(namespace: &str, prefix: &str) -> Option<String> {
 }
 
 /// A class's tests: the `<Name>Test` convention under every test root and in
-/// the class's own namespace, then a bounded scan of the test directories for
-/// `<Name>Test.php` files (Pest, or a layout PSR-4 does not mirror) and for
-/// tests that say they cover the class.
+/// the class's own namespace; only when that finds none, a bounded scan of
+/// the test directories for `<Name>Test.php` files (Pest, or a layout PSR-4
+/// does not mirror) and for tests that say they cover the class.
 fn tests_of(
     roots: &[Psr4Root],
     project: &Path,
@@ -327,10 +380,8 @@ fn tests_of(
     let subject = declarations.qualify(&name);
     let test_name = format!("{name}{TEST_SUFFIX}");
     let mut classes = vec![declarations.qualify(&test_name)];
-    for source_root in roots.iter().filter(|root| !root.dev) {
-        let Some(rest) = strip_namespace(&declarations.namespace, &source_root.prefix) else {
-            continue;
-        };
+    let source_roots = roots.iter().filter(|root| !root.dev);
+    if let Some(rest) = below_longest_prefix(source_roots, &declarations.namespace) {
         for test_root in roots.iter().filter(|root| root.dev) {
             let test_prefix = test_root.prefix.trim_end_matches('\\');
             for kind in std::iter::once("").chain(TEST_KINDS.iter().copied()) {
@@ -343,7 +394,9 @@ fn tests_of(
         .iter()
         .filter_map(|class| psr4::class_file(roots, project, class))
         .collect();
-    files.extend(scan_tests(roots, project, &name, &subject));
+    if files.is_empty() {
+        files = scan_tests(roots, project, &name, &subject);
+    }
     TestNavigation {
         from_test: false,
         name,
@@ -366,32 +419,56 @@ fn test_dirs(roots: &[Psr4Root], project: &Path) -> Vec<PathBuf> {
 }
 
 /// The `*Test.php` files under the test directories that are named after
-/// `name` or cover `subject`, within the same budget the PHPUnit model's scan
-/// uses so a huge tree cannot stall the worker.
+/// `name` or cover `subject`.
 fn scan_tests(roots: &[Psr4Root], project: &Path, name: &str, subject: &str) -> Vec<String> {
+    let wanted = format!("{name}{TEST_SUFFIX}.php");
+    scan(
+        project,
+        test_dirs(roots, project),
+        |path, file_name, budget| {
+            file_name.ends_with("Test.php")
+                && (file_name == wanted || covers(path, name, subject, budget))
+        },
+    )
+}
+
+/// The `<subject>.php` files under the source (`autoload`) directories.
+fn scan_sources(roots: &[Psr4Root], project: &Path, subject: &str) -> Vec<String> {
+    let wanted = format!("{subject}.php");
+    let dirs = roots
+        .iter()
+        .filter(|root| !root.dev)
+        .map(|root| project.join(&root.dir))
+        .collect();
+    scan(project, dirs, |_, file_name, _| file_name == wanted)
+}
+
+/// The project-relative files under `dirs` that `wanted` accepts (given the
+/// path, the file name and the budget left), sorted; within the budget the
+/// PHPUnit model's scan uses, so a huge tree cannot stall the worker.
+fn scan(
+    project: &Path,
+    mut dirs: Vec<PathBuf>,
+    mut wanted: impl FnMut(&Path, &str, &mut Budget) -> bool,
+) -> Vec<String> {
     let mut budget = Budget {
         files: phpunit_xml::MAX_SCANNED_FILES,
         entries: phpunit_xml::MAX_VISITED_ENTRIES,
     };
-    let wanted = format!("{name}{TEST_SUFFIX}.php");
     let mut found = Vec::new();
-    let mut pending = test_dirs(roots, project);
-    pending.sort();
-    pending.dedup();
-    while let Some(dir) = pending.pop() {
+    dirs.sort();
+    dirs.dedup();
+    while let Some(dir) = dirs.pop() {
         if budget.spent() {
             break;
         }
         for (path, is_dir, is_file) in phpunit_xml::entries_of(&dir, &mut budget) {
             if is_dir && !phpunit_xml::is_skipped(&path) {
-                pending.push(path);
+                dirs.push(path);
                 continue;
             }
             let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-            let Some(file_name) = file_name.filter(|n| is_file && n.ends_with("Test.php")) else {
-                continue;
-            };
-            if file_name == wanted || covers(&path, name, subject, &mut budget) {
+            if file_name.is_some_and(|name| is_file && wanted(&path, &name, &mut budget)) {
                 found.extend(relative(project, &path));
             }
         }
@@ -414,10 +491,60 @@ fn covers(path: &Path, name: &str, subject: &str, budget: &mut Budget) -> bool {
     if !text.contains(name) {
         return false;
     }
-    let declarations = Declarations::read(&text);
-    covered_names(&text)
+    covered_classes(&text, &Declarations::read(&text))
         .iter()
-        .any(|covered| declarations.resolve(covered) == subject)
+        .any(|covered| covered == subject)
+}
+
+/// Go to Test's requests: one search runs at a time and only the latest
+/// request's answer is used. A request made while a search runs waits for
+/// it, replacing any request already waiting, so repeated presses never
+/// pile up scans and a late answer never jumps after a newer request.
+#[derive(Debug)]
+pub struct NavigationRequests<R> {
+    tracker: lsp_core::RequestTracker,
+    running: bool,
+    waiting: Option<(u64, R)>,
+}
+
+impl<R> Default for NavigationRequests<R> {
+    fn default() -> Self {
+        Self {
+            tracker: lsp_core::RequestTracker::default(),
+            running: false,
+            waiting: None,
+        }
+    }
+}
+
+impl<R> NavigationRequests<R> {
+    /// A new request, with the token its answer carries: returned to start
+    /// now, or `None` while another search runs (it then starts from
+    /// [`Self::finish`]).
+    pub fn request(&mut self, request: R) -> Option<(u64, R)> {
+        let token = self.tracker.begin();
+        if self.running {
+            self.waiting = Some((token, request));
+            return None;
+        }
+        self.running = true;
+        Some((token, request))
+    }
+
+    /// The search for `token` finished: whether its answer is still wanted,
+    /// and the waiting request to start next.
+    pub fn finish(&mut self, token: u64) -> (bool, Option<(u64, R)>) {
+        let wanted = self.tracker.accept(token);
+        let next = self.waiting.take();
+        self.running = next.is_some();
+        (wanted, next)
+    }
+
+    /// No answer in flight is wanted any more: the user moved on.
+    pub fn cancel(&mut self) {
+        self.tracker.cancel();
+        self.waiting = None;
+    }
 }
 
 #[cfg(test)]
@@ -712,6 +839,183 @@ mod tests {
     fn covered_names_skip_other_covers_tags_and_unrelated_calls() {
         let text = "/** @coversNothing\n * @coversDefaultClass X\n * @covers ::m\n */\n\
                     $x->recovers(Foo::class);\ncovers(Bar::class, 'Baz');";
-        assert_eq!(covered_names(text), ["Bar"]);
+        let names: Vec<String> = covered_names(text).into_iter().map(|c| c.name).collect();
+        assert_eq!(names, ["Bar"]);
+    }
+
+    #[test]
+    fn a_covers_annotation_names_a_fully_qualified_class_without_its_backslash() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(project, "src/Foo/Bar.php", SUBJECT);
+        write(
+            project,
+            "tests/Acceptance/CheckoutTest.php",
+            &test_class(
+                "Tests\\Acceptance",
+                "CheckoutTest",
+                "/** @covers App\\Foo\\Bar */",
+            ),
+        );
+
+        assert_eq!(
+            navigate_from(project, "tests/Acceptance/CheckoutTest.php").files,
+            ["src/Foo/Bar.php"]
+        );
+        assert_eq!(
+            navigate_from(project, "src/Foo/Bar.php").files,
+            ["tests/Acceptance/CheckoutTest.php"]
+        );
+    }
+
+    #[test]
+    fn a_laravel_feature_test_finds_its_controller_by_file_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let roots = [
+            root("App\\", "app/", false),
+            root("Tests\\", "tests/", true),
+        ];
+        write(
+            project,
+            "app/Http/Controllers/UserController.php",
+            "<?php\nnamespace App\\Http\\Controllers;\nclass UserController {}\n",
+        );
+        let test = test_class("Tests\\Feature", "UserControllerTest", "");
+        write(project, "tests/Feature/UserControllerTest.php", &test);
+
+        let file = project.join("tests/Feature/UserControllerTest.php");
+        let navigation = navigate_with(&roots, project, &file, &test);
+
+        assert_eq!(
+            navigation.files,
+            ["app/Http/Controllers/UserController.php"]
+        );
+    }
+
+    #[test]
+    fn a_symfony_layout_maps_app_tests_onto_the_tests_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let roots = [
+            root("App\\", "src/", false),
+            root("App\\Tests\\", "tests/", true),
+        ];
+        write(project, "src/Foo/Bar.php", SUBJECT);
+        let test = test_class("App\\Tests\\Foo", "BarTest", "");
+        write(project, "tests/Foo/BarTest.php", &test);
+
+        let subject = project.join("src/Foo/Bar.php");
+        let to_test = navigate_with(&roots, project, &subject, SUBJECT);
+        assert_eq!(to_test.files, ["tests/Foo/BarTest.php"]);
+        let back = navigate_with(
+            &roots,
+            project,
+            &project.join("tests/Foo/BarTest.php"),
+            &test,
+        );
+        assert_eq!(back.files, ["src/Foo/Bar.php"]);
+    }
+
+    #[test]
+    fn a_prefix_with_several_directories_maps_from_each() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let roots = [
+            root("App\\", "src/", false),
+            root("App\\", "lib/", false),
+            root("Tests\\", "tests/", true),
+        ];
+        write(project, "lib/Foo/Bar.php", SUBJECT);
+        let test = test_class("Tests\\Foo", "BarTest", "");
+        write(project, "tests/Foo/BarTest.php", &test);
+
+        let subject = project.join("lib/Foo/Bar.php");
+        assert_eq!(
+            navigate_with(&roots, project, &subject, SUBJECT).files,
+            ["tests/Foo/BarTest.php"]
+        );
+        let back = navigate_with(
+            &roots,
+            project,
+            &project.join("tests/Foo/BarTest.php"),
+            &test,
+        );
+        assert_eq!(back.files, ["lib/Foo/Bar.php"]);
+    }
+
+    #[test]
+    fn the_longest_source_prefix_alone_is_mirrored() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        let roots = [
+            root("App\\", "src/", false),
+            root("App\\Legacy\\", "src/old/", false),
+            root("Tests\\", "tests/", true),
+        ];
+        let legacy = "<?php\nnamespace App\\Legacy;\nclass Foo {}\n";
+        write(project, "src/old/Foo.php", legacy);
+        write(
+            project,
+            "tests/FooTest.php",
+            &test_class("Tests", "FooTest", ""),
+        );
+        // What `App\` alone would mirror `App\Legacy\Foo` to.
+        write(
+            project,
+            "tests/Legacy/FooTest.php",
+            &test_class("Tests\\Legacy", "FooTest", ""),
+        );
+
+        let navigation = navigate_with(&roots, project, &project.join("src/old/Foo.php"), legacy);
+
+        assert_eq!(navigation.files, ["tests/FooTest.php"]);
+    }
+
+    #[test]
+    fn a_convention_match_skips_the_scan_of_the_test_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(project, "src/Foo/Bar.php", SUBJECT);
+        write(
+            project,
+            "tests/Foo/BarTest.php",
+            &test_class("Tests\\Foo", "BarTest", ""),
+        );
+        write(
+            project,
+            "tests/Acceptance/CheckoutTest.php",
+            &test_class(
+                "Tests\\Acceptance",
+                "CheckoutTest",
+                "/** @covers \\App\\Foo\\Bar */",
+            ),
+        );
+
+        assert_eq!(
+            navigate_from(project, "src/Foo/Bar.php").files,
+            ["tests/Foo/BarTest.php"]
+        );
+    }
+
+    #[test]
+    fn requests_run_one_at_a_time_and_only_the_latest_answer_counts() {
+        let mut requests = NavigationRequests::default();
+        let (first, _) = requests.request("a").unwrap();
+        // A second and third press while the first search runs: only the
+        // last waits.
+        assert!(requests.request("b").is_none());
+        assert!(requests.request("c").is_none());
+        let (wanted, next) = requests.finish(first);
+        assert!(!wanted, "a newer request supersedes the first answer");
+        let (third, request) = next.unwrap();
+        assert_eq!(request, "c");
+        assert_eq!(requests.finish(third), (true, None));
+
+        // Nothing running: a request starts at once.
+        let (token, _) = requests.request("d").unwrap();
+        requests.cancel();
+        assert_eq!(requests.finish(token), (false, None));
+        assert!(requests.request("e").is_some());
     }
 }

@@ -884,6 +884,16 @@ impl ffi::RunService {
             &config,
             effective_php_container_target().as_deref(),
         );
+        // The dialog saves a configuration that cannot run (#467); refuse it
+        // here, loudly, with the sentence it was marked with. The containers
+        // kinds have no other launch-time check.
+        if let Some(problem) = run_core::validate::problem(&config, &effective_container_settings())
+        {
+            return errors::failure(
+                errors::CODE_INVALID_RUN_CONFIG,
+                run_core::validate::sentence(&config, &problem),
+            );
+        }
         let config_id = config.id.clone();
         if config.kind.as_deref() == Some("sql-script") {
             return sql_script::launch(self, &config, root);

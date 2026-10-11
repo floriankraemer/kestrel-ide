@@ -14,9 +14,9 @@ namespace ui_shell {
 //
 // Same commit/discard convention `showSettingsDialog` uses for its pages
 // (`KeymapEditor`, `LanguageServerEditor`, ...): `beginEdit()` loads the
-// draft when the dialog opens, Save calls `validate()` then `commit()` (a
-// validation refusal keeps the dialog open with the message shown, rather
-// than closing on invalid data), Cancel calls `revert()`. Modal and
+// draft when the dialog opens, Save calls `commit()` (a configuration
+// that cannot run is saved anyway and marked in the list with the reason,
+// #467), Cancel calls `revert()`. Modal and
 // standalone rather than a Settings page, since editing run configurations
 // is an action reached from the Run menu, not a persistent preference.
 //

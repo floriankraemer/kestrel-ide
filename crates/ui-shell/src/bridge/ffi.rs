@@ -11314,13 +11314,10 @@ mod ffi {
             options: &FfiContainerOptions,
         ) -> u32;
 
-        /// The first problem that would stop the dialog closing — an empty
-        /// `program` (`run_core::RunError::InvalidConfig`'s own rule,
-        /// mirrored here since validation this shallow does not warrant a
-        /// second entry point into `run-core`). Code `0` means the draft is
-        /// savable.
+        /// One sentence per draft configuration that cannot run as it
+        /// stands. Informational: `commit` saves them all regardless.
         #[qinvokable]
-        fn validate(self: &RunConfigEditor) -> FfiResult;
+        fn problems(self: &RunConfigEditor) -> Vec<FfiRunConfigProblem>;
 
         /// Write the draft to `.ide/settings.toml`; announces a write
         /// through `configurationsSaved`.
@@ -11564,6 +11561,13 @@ mod ffi {
         Color,
         SshUser,
         FileSourcePath,
+    }
+
+    /// One draft run configuration that cannot run: its list position and
+    /// the sentence the row's tooltip shows.
+    struct FfiRunConfigProblem {
+        index: u32,
+        sentence: QString,
     }
 
     struct FfiDataSourceProblem {

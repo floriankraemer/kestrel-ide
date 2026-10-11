@@ -431,33 +431,29 @@ impl ffi::RunConfigEditor {
         });
     }
 
-    /// The first problem that would stop the dialog closing — the rule is
-    /// `run_core::validate::problem`'s, per kind.
-    pub fn validate(&self) -> FfiResult {
+    /// What is wrong with each draft configuration, one sentence per broken
+    /// one, in list order. Saving never waits on these (#467): the view marks
+    /// the rows and the launch refuses with the same sentence.
+    pub fn problems(&self) -> Vec<ffi::FfiRunConfigProblem> {
         let containers = effective_container_settings();
-        for config in self.draft.borrow().iter() {
-            let problem = run_core::validate::problem(config, &containers)
-                .or_else(|| super::phpunit_form::problem(config));
-            if let Some(problem) = problem {
-                let label = if config.name.trim().is_empty() {
-                    "one configuration".to_string()
-                } else {
-                    config.name.clone()
-                };
-                return FfiResult {
-                    code: errors::CODE_EMPTY_PROGRAM,
-                    message: QString::from(format!("\"{label}\" {problem}").as_str()),
-                };
-            }
-        }
-        FfiResult::default()
+        self.draft
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, config)| {
+                let problem = run_core::validate::problem(config, &containers)
+                    .or_else(|| super::phpunit_form::problem(config))?;
+                Some(ffi::FfiRunConfigProblem {
+                    index: index as u32,
+                    sentence: QString::from(
+                        run_core::validate::sentence(config, &problem).as_str(),
+                    ),
+                })
+            })
+            .collect()
     }
 
     pub fn commit(self: Pin<&mut Self>) -> FfiResult {
-        let refusal = self.validate();
-        if refusal.code != 0 {
-            return refusal;
-        }
         let Some(root) = current_project_root() else {
             return FfiResult {
                 code: errors::CODE_NO_PROJECT,

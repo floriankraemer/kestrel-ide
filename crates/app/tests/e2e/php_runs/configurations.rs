@@ -327,8 +327,8 @@ fn check_page_pickers(ide: &Ide, findings: &mut Findings) {
 }
 
 /// #457: a configuration edited and saved in the dialog reaches the toolbar
-/// combo at once. The flow's last step: it removes "E8 broken", which the
-/// dialog would refuse to save.
+/// combo at once, and #467: "E8 broken" (a method scope without a method) is
+/// flagged in the list yet no longer blocks saving the other edit.
 fn check_save_refreshes_combo(ide: &Ide, findings: &mut Findings) {
     let opened = open_config_dialog(ide);
     let shown = ide.wait_for_event(opened, "the run configuration dialog", |e| {
@@ -339,8 +339,19 @@ fn check_save_refreshes_combo(ide: &Ide, findings: &mut Findings) {
         close_config_dialog(ide, opened);
         return;
     }
-    let (x, y) = rect_centre(&shown["remove_rect"]);
-    ide.click_at(x, y, 1);
+    let flagged = answer(ide, opened, |e| e["ev"] == "run_config_problems");
+    findings.check(
+        flagged.as_ref().is_some_and(|e| {
+            e["rows"].as_array().is_some_and(|rows| {
+                rows.iter().any(|r| {
+                    r["sentence"]
+                        .as_str()
+                        .is_some_and(|t| t.starts_with("\"E8 broken\""))
+                }) && rows.len() == 1
+            })
+        }),
+        format!("#467: only \"E8 broken\" should be flagged, got {flagged:?}"),
+    );
     // Back to the list's first row, so the keyboard walks the list again.
     let removed = ide.mark();
     let list = &shown["list_rect"];
@@ -372,6 +383,12 @@ fn check_save_refreshes_combo(ide: &Ide, findings: &mut Findings) {
     findings.check(
         answer(ide, saving, |e| e["ev"] == "run_configurations_changed").is_some(),
         "#457: saving the dialog did not refresh the toolbar's configurations",
+    );
+    let stored =
+        std::fs::read_to_string(ide.project_root().join(".ide/settings.toml")).expect("settings");
+    findings.check(
+        stored.contains("extra") && stored.contains("e8-broken"),
+        "#467: saving with an invalid configuration lost the edit or the configuration",
     );
 }
 

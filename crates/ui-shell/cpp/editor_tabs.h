@@ -263,9 +263,9 @@ public:
     // every editor, open or opened later, picks it up.
     void setContextMenuCallback(std::function<void(QMenu *)> callback);
 
-    // ADR-0074's Editor context: `action`'s shortcut is live only while
-    // focus is in the editor area, wherever else the action is shown.
-    void addEditorAction(QAction *action);
+    // ADR-0074's Editor context: what an editor-scoped action is registered
+    // on (`scopeShortcut`), so its shortcut is live only in the editor area.
+    QWidget *editorArea() const;
 
     void hoverFallback();
     void hoverCanceled();

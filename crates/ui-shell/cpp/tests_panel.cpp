@@ -1,5 +1,6 @@
 #include "tests_panel.h"
 
+#include "keymap_page.h"
 #include "code_editor.h"
 #include "coverage_panel.h"
 #include "dock_layout.h"
@@ -440,8 +441,7 @@ void TestsPanel::onFailureLinkActivated(int textPosition)
 
 QKeySequence TestsPanel::jumpToSourceKey() const
 {
-    return QKeySequence(appSettings_->shortcutFor(QStringLiteral("tests.jumpToSource")),
-                        QKeySequence::PortableText);
+    return scopedShortcutKey(QStringLiteral("tests.jumpToSource"), appSettings_);
 }
 
 bool TestsPanel::eventFilter(QObject *watched, QEvent *event)

@@ -1,5 +1,6 @@
 #include "result_grid_view.h"
 
+#include "keymap_page.h"
 #include "e2e_mark.h"
 #include "result_table_model.h"
 #include "result_view_modes.h"
@@ -251,9 +252,9 @@ ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *p
                   [this]() { previewDml(); });
     // Grid-scoped (ADR-0074): it follows the current cell, and the Tests
     // tree's Jump to Source shares its F4.
-    windowShortcut(this, appSettings, QStringLiteral("database.goToReferencedRow"),
-                   [this]() { goToReferencedRow(); })
-      ->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(scopeShortcut(new QAction(this), this, QStringLiteral("database.goToReferencedRow"),
+                          appSettings, ShortcutReach::OwnerAndChildren),
+            &QAction::triggered, this, [this]() { goToReferencedRow(); });
     windowShortcut(this, appSettings, QStringLiteral("database.showReferencingRows"),
                   [this]() { showReferencingRows(); });
     windowShortcut(this, appSettings, QStringLiteral("database.viewTable"),

@@ -33,8 +33,8 @@ impl ShortcutContext {
 
 /// The actions whose shortcut is scoped to a widget; every other action is
 /// [`ShortcutContext::Global`]. The view registers each of these on its
-/// owning widget (`Qt::WidgetWithChildrenShortcut`, or a key filter), never
-/// window-wide.
+/// owning widget through `scopeShortcut` (or `scopedShortcutKey` for a key
+/// filter), never window-wide; a test below holds the two lists equal.
 const SCOPED_ACTIONS: &[(&str, ShortcutContext)] = &[
     ("navigate.goToTest", ShortcutContext::Editor),
     ("terminal.copy", ShortcutContext::Terminal),
@@ -149,5 +149,94 @@ mod tests {
     #[test]
     fn an_unknown_id_conflicts_with_nothing() {
         assert!(keymap().conflicts("gone.action", "Ctrl+S").is_empty());
+    }
+
+    /// The view half of [`SCOPED_ACTIONS`] (#423): a scoped action Qt
+    /// registered window-wide would make two actions sharing its key
+    /// ambiguous, so neither fires. `ui-shell/cpp` registers a scoped action
+    /// only through `scopeShortcut` or `scopedShortcutKey`, which cannot
+    /// register one window-wide; this holds the ids those calls name equal
+    /// to this table, scanning source text as
+    /// `every_registered_cpp_action_has_a_keymap_row` does.
+    #[test]
+    fn every_scoped_action_is_registered_widget_scoped() {
+        let cpp_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../ui-shell/cpp");
+        let mut registered = std::collections::BTreeSet::new();
+        let mut unreadable = Vec::new();
+        for entry in std::fs::read_dir(&cpp_dir).expect("ui-shell/cpp is readable") {
+            let path = entry.expect("readable ui-shell/cpp entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("cpp") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("readable .cpp file");
+            // The helpers' own definitions pass `id` through.
+            let defines_helpers = path
+                .file_name()
+                .is_some_and(|name| name == "keymap_page.cpp");
+            for call in ["scopeShortcut(", "scopedShortcutKey("] {
+                for arguments in call_arguments(&text, call) {
+                    match string_literal(arguments) {
+                        Some(id) => {
+                            registered.insert(id.to_string());
+                        }
+                        None if defines_helpers => {}
+                        None => unreadable.push(format!("{}: {call}{arguments})", path.display())),
+                    }
+                }
+            }
+        }
+        assert!(
+            unreadable.is_empty(),
+            "scoped shortcut registrations whose id is not a QStringLiteral: {unreadable:#?}"
+        );
+        let scoped: std::collections::BTreeSet<String> = SCOPED_ACTIONS
+            .iter()
+            .map(|(id, _)| id.to_string())
+            .collect();
+        assert_eq!(
+            registered, scoped,
+            "ui-shell/cpp's scopeShortcut/scopedShortcutKey ids must equal SCOPED_ACTIONS"
+        );
+    }
+
+    /// The argument text of every `call` (a name ending in `(`) in `text`,
+    /// up to its matching `)`.
+    fn call_arguments<'a>(text: &'a str, call: &str) -> Vec<&'a str> {
+        let mut found = Vec::new();
+        let mut rest = text;
+        while let Some(at) = rest.find(call) {
+            rest = &rest[at + call.len()..];
+            let mut depth = 1;
+            let end = rest.char_indices().find_map(|(index, c)| {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                (depth == 0).then_some(index)
+            });
+            let Some(end) = end else {
+                break;
+            };
+            found.push(&rest[..end]);
+        }
+        found
+    }
+
+    /// The text of the first `QStringLiteral("…")` in `arguments`.
+    fn string_literal(arguments: &str) -> Option<&str> {
+        const LITERAL: &str = "QStringLiteral(\"";
+        let start = arguments.find(LITERAL)? + LITERAL.len();
+        let length = arguments[start..].find('"')?;
+        Some(&arguments[start..start + length])
+    }
+
+    #[test]
+    fn call_arguments_stop_at_the_matching_parenthesis() {
+        let text = r#"a(scopeShortcut(new QAction(tr("x")), QStringLiteral("t.c"), r)); scopeShortcut(id)"#;
+        let calls = call_arguments(text, "scopeShortcut(");
+        assert_eq!(calls.len(), 2);
+        assert_eq!(string_literal(calls[0]), Some("t.c"));
+        assert_eq!(string_literal(calls[1]), None);
     }
 }

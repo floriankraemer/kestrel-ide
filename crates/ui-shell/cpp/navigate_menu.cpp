@@ -59,7 +59,8 @@ void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorT
 {
     QAction *goToTest =
       registerAction(navigateMenu, goToTestId, QObject::tr("Test"), appSettings, actions);
-    editorTabs->addEditorAction(goToTest);
+    scopeShortcut(goToTest, editorTabs->editorArea(), QStringLiteral("navigate.goToTest"),
+                  appSettings, ShortcutReach::OwnerAndChildren);
     QObject::connect(navigateMenu, &QMenu::aboutToShow, goToTest,
                      [goToTest, editorTabs, testService]() {
                          relabelGoToTest(goToTest, editorTabs, testService);

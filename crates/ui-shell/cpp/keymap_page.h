@@ -3,6 +3,7 @@
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
 #include <QHash>
+#include <QKeySequence>
 #include <QString>
 
 class QAction;
@@ -35,5 +36,25 @@ QAction *registerAction(QMenu *menu, const QString &id, const QString &text,
 // action left unbound gets an empty QKeySequence, which Qt renders as no
 // accelerator at all.
 void applyKeymap(const QHash<QString, QAction *> &actions, AppSettings *appSettings);
+
+// How far below its owner a scoped shortcut reaches.
+enum class ShortcutReach { Owner, OwnerAndChildren };
+
+// ADR-0074: gives `action` the keymap shortcut of `id`, live only while focus
+// is in `owner` (and its children, for `OwnerAndChildren`), and adds it to
+// `owner`. The one way the view scopes a keymap action; there is no
+// window-wide reach to pass.
+//
+// `id` must be a scoped action in app_config::keymap (`SCOPED_ACTIONS`), and
+// every scoped action must be registered here or through `scopedShortcutKey`:
+// `every_scoped_action_is_registered_widget_scoped` checks the calls, so
+// `id` must be spelled as a `QStringLiteral` at the call.
+QAction *scopeShortcut(QAction *action, QWidget *owner, const QString &id,
+                       AppSettings *appSettings, ShortcutReach reach);
+
+// ADR-0074: the keymap shortcut of the scoped action `id` that a key filter
+// on its owning widget handles, for an action with no QAction. Same rules
+// for `id` as `scopeShortcut`.
+QKeySequence scopedShortcutKey(const QString &id, AppSettings *appSettings);
 
 } // namespace ui_shell

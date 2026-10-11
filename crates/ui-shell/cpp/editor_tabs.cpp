@@ -362,10 +362,9 @@ void EditorTabs::setContextMenuCallback(std::function<void(QMenu *)> callback)
     contextMenu_ = std::move(callback);
 }
 
-void EditorTabs::addEditorAction(QAction *action)
+QWidget *EditorTabs::editorArea() const
 {
-    action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-    root_->addAction(action);
+    return root_;
 }
 
 QStringList EditorTabs::openPaths() const

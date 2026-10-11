@@ -1,5 +1,6 @@
 #include "terminal_widget.h"
 
+#include "keymap_page.h"
 #include "theme.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
@@ -58,19 +59,15 @@ TerminalWidget::TerminalWidget(TerminalSupervisor *supervisor, quint64 sessionId
     // no button held down.
     setMouseTracking(true);
 
-    copyAction_ = new QAction(tr("Copy"), this);
-    copyAction_->setShortcut(QKeySequence(appSettings_->shortcutFor(QStringLiteral("terminal.copy")),
-                                           QKeySequence::PortableText));
-    copyAction_->setShortcutContext(Qt::WidgetShortcut);
+    copyAction_ = scopeShortcut(new QAction(tr("Copy"), this), this,
+                                QStringLiteral("terminal.copy"), appSettings_,
+                                ShortcutReach::Owner);
     connect(copyAction_, &QAction::triggered, this, &TerminalWidget::copySelection);
-    addAction(copyAction_);
 
-    pasteAction_ = new QAction(tr("Paste"), this);
-    pasteAction_->setShortcut(QKeySequence(
-      appSettings_->shortcutFor(QStringLiteral("terminal.paste")), QKeySequence::PortableText));
-    pasteAction_->setShortcutContext(Qt::WidgetShortcut);
+    pasteAction_ = scopeShortcut(new QAction(tr("Paste"), this), this,
+                                 QStringLiteral("terminal.paste"), appSettings_,
+                                 ShortcutReach::Owner);
     connect(pasteAction_, &QAction::triggered, this, &TerminalWidget::pasteClipboard);
-    addAction(pasteAction_);
 
     // Scrollback (T5): a plain child scrollbar, positioned in
     // `layoutScrollBar` — this widget paints its own grid rather than using

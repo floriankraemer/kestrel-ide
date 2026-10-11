@@ -188,6 +188,21 @@ QAction *registerAction(QMenu *menu, const QString &id, const QString &text,
     return action;
 }
 
+QAction *scopeShortcut(QAction *action, QWidget *owner, const QString &id,
+                       AppSettings *appSettings, ShortcutReach reach)
+{
+    action->setShortcut(scopedShortcutKey(id, appSettings));
+    action->setShortcutContext(reach == ShortcutReach::Owner ? Qt::WidgetShortcut
+                                                              : Qt::WidgetWithChildrenShortcut);
+    owner->addAction(action);
+    return action;
+}
+
+QKeySequence scopedShortcutKey(const QString &id, AppSettings *appSettings)
+{
+    return QKeySequence(appSettings->shortcutFor(id), QKeySequence::PortableText);
+}
+
 void applyKeymap(const QHash<QString, QAction *> &actions, AppSettings *appSettings)
 {
     for (auto it = actions.constBegin(); it != actions.constEnd(); ++it) {

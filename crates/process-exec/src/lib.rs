@@ -233,6 +233,53 @@ pub fn run_on(
     })
 }
 
+/// How long a tool probe (`test -x` or `command -v` in a WSL distro or a
+/// container) may take before it counts as unanswered: a `compose run`
+/// probe may pull an image first, but a hung engine or distro must not hold
+/// its caller (a test run being prepared) forever.
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// `command`'s collected output, like [`Command::output`], or
+/// `io::ErrorKind::TimedOut` once it outlives `timeout`, the child killed.
+pub(crate) fn output_within(
+    command: &mut Command,
+    timeout: Duration,
+) -> io::Result<std::process::Output> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = retry_text_busy(|| command.spawn())?;
+    let mut stdout_pipe = child.stdout.take().expect("stdout was piped");
+    let mut stderr_pipe = child.stderr.take().expect("stderr was piped");
+    let stdout_reader = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        io::Read::read_to_end(&mut stdout_pipe, &mut buffer).map(|_| buffer)
+    });
+    let stderr_reader = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        io::Read::read_to_end(&mut stderr_pipe, &mut buffer).map(|_| buffer)
+    });
+    let Some(status) = wait_with_timeout(&mut child, timeout)? else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "the probe did not answer in time",
+        ));
+    };
+    let join = |reader: thread::JoinHandle<io::Result<Vec<u8>>>| {
+        reader
+            .join()
+            .unwrap_or_else(|_| Err(io::Error::other("reading the probe's output failed")))
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: join(stdout_reader)?,
+        stderr: join(stderr_reader)?,
+    })
+}
+
 /// Wait for `child` for at most `timeout`, returning `None` if it outlives
 /// that.
 ///
@@ -396,6 +443,23 @@ pub fn spawn_on(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_that_outlives_its_deadline_is_killed_and_timed_out() {
+        let started = Instant::now();
+        let mut hung = Command::new("sleep");
+        hung.arg("30");
+        let error = output_within(&mut hung, Duration::from_millis(100)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(10));
+
+        let mut quick = Command::new("sh");
+        quick.args(["-c", "echo out; echo err >&2"]);
+        let output = output_within(&mut quick, Duration::from_secs(10)).unwrap();
+        assert_eq!(output.stdout, b"out\n");
+        assert_eq!(output.stderr, b"err\n");
+    }
 
     /// The race behind flaky fake-executable tests, made deterministic: the
     /// writer's descriptor is still open when the first exec happens.

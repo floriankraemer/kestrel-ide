@@ -11,6 +11,9 @@ use crate::suppress_console_window;
 
 type ResolveCache = Mutex<HashMap<(String, String), Option<String>>>;
 
+/// Why a container probe missed when the engine never answered.
+const PROBE_TIMED_OUT: &str = "the container did not answer within a minute";
+
 fn resolve_cache() -> &'static ResolveCache {
     static CACHE: OnceLock<ResolveCache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
@@ -68,11 +71,32 @@ pub fn resolve_program_or_reason(
         probe_command_v(&wsl.distro, program)
     };
 
-    resolve_cache()
-        .lock()
-        .unwrap()
-        .insert(key, resolved.clone());
+    // A missing `vendor/bin/phpunit` appears with `composer install`, so a
+    // path candidate's miss is asked again next time, as in a container. A
+    // bare name's miss stays memoised: each probe is a login shell.
+    if resolved.is_some() || !is_path(program) {
+        resolve_cache()
+            .lock()
+            .unwrap()
+            .insert(key, resolved.clone());
+    }
     resolved.ok_or(None)
+}
+
+/// What a container probe's answer is memoised under, besides the
+/// candidate: everything that picks the container and the project it sees.
+/// Two projects can share the engine, a relative `compose -f`, the service
+/// and the mount path (`/workspace`), so the project's local root is part
+/// of it.
+fn container_key(kind: &str, container: &ContainerHost) -> String {
+    format!(
+        "{kind}:{} {:?} {:?} {:?} {}",
+        container.program,
+        container.prefix_args,
+        container.verb_args,
+        container.target,
+        container.path_map.local_root.display()
+    )
 }
 
 /// [`resolve_program`] inside a container: `sh -c 'command -v "$1"'` for a
@@ -86,13 +110,7 @@ fn resolve_in_container(
     cwd: &Path,
 ) -> Result<String, Option<&'static str>> {
     let candidate = probe_candidate(host, program, cwd);
-    let key = (
-        format!(
-            "container:{} {:?} {:?}",
-            container.program, container.prefix_args, container.target
-        ),
-        candidate.clone(),
-    );
+    let key = (container_key("container", container), candidate.clone());
     if let Some(Some(hit)) = resolve_cache().lock().unwrap().get(&key) {
         return Ok(hit.clone());
     }
@@ -104,7 +122,13 @@ fn resolve_in_container(
     };
     let mut command = host.command("sh", &["-c", script, "sh", &candidate], cwd, &[]);
     suppress_console_window(&mut command);
-    let output = crate::retry_text_busy(|| command.output()).map_err(|_| None)?;
+    let output = match crate::output_within(&mut command, crate::PROBE_TIMEOUT) {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            return Err(Some(PROBE_TIMED_OUT))
+        }
+        Err(_) => return Err(None),
+    };
     if !output.status.success() {
         return Err(container_unavailable_reason(&output.stderr));
     }
@@ -143,10 +167,7 @@ pub fn resolve_first(host: &ExecHost, candidates: &[String], cwd: &Path) -> Opti
         .map(|candidate| probe_candidate(host, candidate, cwd))
         .collect();
     let key = (
-        format!(
-            "container-first:{} {:?} {:?}",
-            container.program, container.prefix_args, container.target
-        ),
+        container_key("container-first", container),
         remote.join("\0"),
     );
     if let Some(Some(hit)) = resolve_cache().lock().unwrap().get(&key) {
@@ -157,7 +178,7 @@ pub fn resolve_first(host: &ExecHost, candidates: &[String], cwd: &Path) -> Opti
     argv.extend(remote.iter().map(String::as_str));
     let mut command = host.command("sh", &argv, cwd, &[]);
     suppress_console_window(&mut command);
-    let output = crate::retry_text_busy(|| command.output()).ok()?;
+    let output = crate::output_within(&mut command, crate::PROBE_TIMEOUT).ok()?;
     let resolved = String::from_utf8_lossy(&output.stdout)
         .lines()
         .next()
@@ -194,7 +215,7 @@ fn probe_executable(distro: &str, remote_path: &str) -> bool {
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "-e", "test", "-x", remote_path]);
     suppress_console_window(&mut command);
-    crate::retry_text_busy(|| command.output())
+    crate::output_within(&mut command, crate::PROBE_TIMEOUT)
         .map(|out| out.status.success())
         .unwrap_or(false)
 }
@@ -204,7 +225,7 @@ fn probe_command_v(distro: &str, program: &str) -> Option<String> {
     let mut command = Command::new("wsl.exe");
     command.args(["-d", distro, "-e", "/bin/sh", "-lc", &script]);
     suppress_console_window(&mut command);
-    let output = crate::retry_text_busy(|| command.output()).ok()?;
+    let output = crate::output_within(&mut command, crate::PROBE_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -289,6 +310,50 @@ mod tests {
 
         assert_eq!(package, None);
         assert_eq!(project.as_deref(), Some("/proj/vendor/bin/phpunit"));
+    }
+
+    #[test]
+    fn a_missing_path_candidate_in_wsl_is_asked_again_after_it_appears() {
+        let _guard = PATH_LOCK.lock().unwrap();
+        let bin_dir = tempfile::tempdir().unwrap();
+        let installed = bin_dir.path().join("installed");
+        write_executable_script(
+            bin_dir.path(),
+            "wsl.exe",
+            &format!("[ -e {} ]\n", installed.display()),
+        );
+        let host = ExecHost::Wsl(WslHost {
+            distro: "InstallTest".into(),
+            unc_prefix: "//wsl.localhost/InstallTest".into(),
+        });
+        let root = Path::new("//wsl.localhost/InstallTest/proj");
+
+        let original_path = prepend_to_path(bin_dir.path());
+        let before = resolve_program(&host, "vendor/bin/phpunit", root);
+        std::fs::write(&installed, "").unwrap(); // composer install
+        let after = resolve_program(&host, "vendor/bin/phpunit", root);
+        restore_path(original_path);
+
+        assert_eq!(before, None);
+        assert_eq!(after.as_deref(), Some("/proj/vendor/bin/phpunit"));
+    }
+
+    #[test]
+    fn two_projects_on_the_same_mount_path_never_share_a_container_answer() {
+        // Same engine, `compose -f` spelling, service and `/workspace` mount;
+        // only project A has the tool. The engine runs in the project.
+        let script = "[ -e ./has-tool ] && echo /workspace/vendor/bin/phpunit";
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        std::fs::write(a.path().join("has-tool"), "").unwrap();
+        let in_a = fake_container("sh", &["-c", script, "sh"], a.path());
+        let in_b = fake_container("sh", &["-c", script, "sh"], b.path());
+
+        assert!(resolve_program(&in_a, "vendor/bin/phpunit", a.path()).is_some());
+        assert_eq!(resolve_program(&in_b, "vendor/bin/phpunit", b.path()), None);
+        let list = vec!["vendor/bin/phpunit".to_string()];
+        assert!(resolve_first(&in_a, &list, a.path()).is_some());
+        assert_eq!(resolve_first(&in_b, &list, b.path()), None);
     }
 
     /// A "container engine" that is `echo` (or `sh -c`), so no test writes an

@@ -10345,6 +10345,12 @@ mod ffi {
         #[qinvokable]
         fn configurations(self: &RunService) -> Vec<FfiRunConfig>;
 
+        /// Save the temporary configuration `config_id`, which stops it
+        /// being evicted (IntelliJ's "Save '<name>' Configuration", G9).
+        #[qinvokable]
+        #[cxx_name = "saveConfiguration"]
+        fn save_configuration(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
+
         /// Scan the project (`Cargo.toml`, `package.json`, `Makefile`) for
         /// launchable targets on the worker thread, merge the result into
         /// the persisted list and save it; answers via

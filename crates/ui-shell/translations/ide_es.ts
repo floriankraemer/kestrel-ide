@@ -3423,6 +3423,14 @@
         <source>Start Listening for PHP Debug Connections</source>
         <translation>Escuchar conexiones de depuración de PHP</translation>
     </message>
+    <message>
+        <source>Save '%1' Configuration</source>
+        <translation>Guardar la configuración '%1'</translation>
+    </message>
+    <message>
+        <source>Save Configuration</source>
+        <translation>Guardar configuración</translation>
+    </message>
 </context>
 <context>
     <name>SearchEverywhereDialog</name>

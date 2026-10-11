@@ -46,7 +46,7 @@ pub use container_run::{
 pub use container_target::{target_id, validate_run_on, TargetLaunchError};
 pub use context::{
     compose_config, compose_run_lines, compose_service_at, config_for_file, containerfile_config,
-    remember_temporary, TEMPORARY_CAP,
+    remember_temporary, save_temporary, TEMPORARY_CAP,
 };
 pub use detect::{detect, is_compose_file_name, merge_detected};
 pub use error::RunError;

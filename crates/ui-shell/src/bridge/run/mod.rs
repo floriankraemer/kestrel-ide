@@ -671,6 +671,27 @@ impl ffi::RunService {
             .collect()
     }
 
+    pub fn save_configuration(mut self: Pin<&mut Self>, config_id: &QString) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let id = config_id.to_string();
+        let mut saved = false;
+        let written = app_config::project_settings::update(&root, |settings| {
+            let mut configs = settings.run_configs.clone().unwrap_or_default();
+            saved = run_core::save_temporary(&mut configs, &id);
+            settings.run_configs = Some(configs);
+        });
+        match written {
+            Err(error) => errors::failure(errors::CODE_SETTINGS_IO, error.to_string()),
+            Ok(()) if !saved => unknown_run_config("there is no temporary configuration to save"),
+            Ok(()) => {
+                self.as_mut().configurations_changed();
+                ffi::FfiResult::default()
+            }
+        }
+    }
+
     /// Re-announce the configurations after a project open or a menu
     /// refresh. Detected ones are merged in on read, never written: opening
     /// a project must not touch the `.ide/settings.toml` the user commits.

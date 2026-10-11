@@ -317,10 +317,13 @@ mod tests {
             unc_prefix: "//wsl.localhost/UnansweredTest".into(),
         });
         let root = Path::new("//wsl.localhost/UnansweredTest/proj");
-        // No `wsl.exe` at all: the probe cannot start, like one that hung.
-        let empty = tempfile::tempdir().unwrap();
-        let original_path = std::env::var("PATH").unwrap_or_default();
-        restore_path(empty.path().display().to_string());
+        // A `wsl.exe` that cannot be executed: the probe cannot start, like
+        // one that hung. Prepended rather than replacing PATH, because tests
+        // that only spawn `echo`/`sh` do not take `PATH_LOCK` and would find
+        // nothing on an emptied PATH.
+        let unstartable = tempfile::tempdir().unwrap();
+        std::fs::write(unstartable.path().join("wsl.exe"), "").unwrap();
+        let original_path = prepend_to_path(unstartable.path());
         let before = resolve_program(&host, "phpactor", root);
         restore_path(original_path);
 

@@ -157,6 +157,14 @@ void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConso
                       [runService, report](const QString &configId) {
                           report(QObject::tr("Debug"), runService->debugTestConfiguration(configId));
                       });
+    // A run its worker could not start (no framework, a missing working
+    // directory) says why where an editor run's refusal shows.
+    QObject::connect(testService, &TestService::testRunRefused, window,
+                      [window](const QString &message) {
+                          if (auto *mainWindow = qobject_cast<QMainWindow *>(window)) {
+                              mainWindow->statusBar()->showMessage(message, 6000);
+                          }
+                      });
     // An editor run just created a temporary configuration: the list gains
     // it, then the toolbar selects it, so Rerun and the combo name what ran.
     QObject::connect(testService, &TestService::configurationRemembered, runConsolePanel,

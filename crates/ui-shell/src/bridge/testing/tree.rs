@@ -82,7 +82,7 @@ fn is_excluded(root: &Path, path: &Path, is_dir: bool) -> bool {
 
 impl ffi::TestService {
     /// The package of `dir` found before, for the project at `root`.
-    fn cached_package(&self, root: &Path, dir: &Path) -> Option<TestPackage> {
+    pub(super) fn cached_package(&self, root: &Path, dir: &Path) -> Option<TestPackage> {
         let mut cache = self.tree_packages.borrow_mut();
         if cache.root != root {
             *cache = PackageCache {
@@ -93,19 +93,9 @@ impl ffi::TestService {
         cache.by_dir.get(dir).cloned()
     }
 
-    /// The test package `dir` belongs to (#424), cached like the tree's.
-    // ponytail: a few stats on the Qt thread when a run starts in a directory
-    // not seen before; move it behind `within_deadline` if a slow share shows it.
-    pub(super) fn package_of(&self, root: &Path, dir: &Path) -> TestPackage {
-        if let Some(package) = self.cached_package(root, dir) {
-            return package;
-        }
-        let package = TestPackage::containing(root, dir);
-        self.tree_packages
-            .borrow_mut()
-            .by_dir
-            .insert(dir.to_path_buf(), package.clone());
-        package
+    /// Remember the package a run's worker found for `dir`.
+    pub(super) fn cache_package(&self, dir: PathBuf, package: TestPackage) {
+        self.tree_packages.borrow_mut().by_dir.insert(dir, package);
     }
 
     /// What the tree's entries for `path` (a directory when `is_dir`) run

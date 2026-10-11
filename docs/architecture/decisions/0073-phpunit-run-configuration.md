@@ -52,6 +52,10 @@ The Run menu gains `run.runWithCoverage`.
 So the toolbar, the configuration list, Rerun (`run.rerun`) and Debug fill the Tests dock and use the framework selection, interpreter host, filters, coverage and the Xdebug staging that Run All already has.
 Run All and the Tests dock's reruns stay ad hoc.
 
+**A run is prepared off the Qt thread.**
+`TestService::start` reads only what needs the Qt thread (the tree, the runs that filled it), then a worker finds the editor run's monorepo package, the stored configuration, the settings and the framework's program, which under WSL or in a container is a process start.
+The run then starts on the Qt thread; a refusal found on the worker arrives as `testRunRefused`, shown in the Tests dock and the status bar.
+
 **Editor runs create temporary configurations.**
 A caret run, a gutter run and a data-set run resolve to a temporary `phpunit` configuration when the run starts, persisted with `remember_temporary`.
 Its id derives from the scope, so repeated runs reuse one entry and the cap evicts the oldest.

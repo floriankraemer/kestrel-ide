@@ -12,7 +12,7 @@ use std::pin::Pin;
 
 use cxx_qt_lib::QString;
 
-use super::{MarkerSelection, RerunSelection};
+use super::{MarkerSelection, RerunSelection, RunRequest, TreeRerun};
 use crate::bridge::errors;
 use crate::bridge::ffi;
 
@@ -89,10 +89,11 @@ pub(super) fn remember(config: &run_core::RunConfig, root: &Path) -> Result<(), 
     .map_err(|error| error.to_string())
 }
 
-/// The settings a run uses: the effective ones, with a configuration's own
-/// interpreter in place of `[php]`'s.
-pub(super) fn settings_for(run: Option<&ConfigRun>) -> app_config::Settings {
-    let mut settings = crate::bridge::convert::load_resolved_settings();
+/// The settings a run in the project at `root` uses: the effective ones,
+/// with a configuration's own interpreter in place of `[php]`'s. Safe off
+/// the Qt thread.
+pub(super) fn settings_for(root: &Path, run: Option<&ConfigRun>) -> app_config::Settings {
+    let mut settings = crate::bridge::convert::load_resolved_settings_for(root);
     if let Some(interpreter) = run.and_then(|run| run.plan.interpreter.clone()) {
         settings.php.interpreter = Some(interpreter);
     }
@@ -105,7 +106,7 @@ pub(super) fn settings_for(run: Option<&ConfigRun>) -> app_config::Settings {
 /// is looked for on this machine only, never inside WSL or a container.
 pub(crate) fn preview(config: &run_core::RunConfig, root: &Path) -> String {
     let argv = resolve(config, root).and_then(|run| {
-        let settings = settings_for(Some(&run));
+        let settings = settings_for(root, Some(&run));
         let work_dir = root.join(run.plan.working_directory.as_deref().unwrap_or_default());
         let framework = super::Framework::detect(root, &work_dir, &settings, true)?;
         let (program, args) = framework.command(&settings, framework.scoped(&run)?);
@@ -150,7 +151,7 @@ pub(crate) fn run_for_before_launch(config: run_core::RunConfig) -> Result<(), S
 
 /// The project's stored configuration with `config`'s id, if any: an editor
 /// run reuses the temporary configuration the dialog may have edited.
-fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
+pub(super) fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
     app_config::project_settings::load(root)
         .ok()
         .and_then(|settings| settings.run_configs)
@@ -185,40 +186,50 @@ fn saved_config(id: &str) -> Result<run_core::RunConfig, ffi::FfiResult> {
 }
 
 impl ffi::TestService {
-    /// The selection with an editor run (gutter marker, caret, data set)
-    /// replaced by the temporary `phpunit` configuration it stands for.
-    pub(super) fn resolve_editor_run(
+    /// What `selection` runs, from what only the Qt thread can read (the
+    /// tree and the runs that filled it); the package probe and the rest of
+    /// the disk work happen on the run's worker (`super::prepare`).
+    pub(super) fn run_request(
         &self,
         selection: Option<RerunSelection>,
         root: &Path,
-    ) -> Result<Option<RerunSelection>, String> {
-        // Run in the test file's monorepo package, as PhpStorm runs a
-        // package-scoped configuration (#424).
-        let in_package = |config: run_core::RunConfig, file: &Path| {
-            let dir = file.parent().unwrap_or(root);
-            let scoped = self
-                .package_of(root, dir)
-                .scope(config, root, cfg!(windows));
-            RerunSelection::Configuration(Box::new(stored_or(scoped, root)))
+    ) -> Result<RunRequest, String> {
+        // An editor run runs in the test file's monorepo package, as
+        // PhpStorm runs a package-scoped configuration (#424).
+        let in_package = |config: run_core::RunConfig, file: &Path| RunRequest::Editor {
+            config: Box::new(config),
+            dir: Some(file.parent().unwrap_or(root).to_path_buf()),
         };
         Ok(match selection {
+            None => RunRequest::AdHoc,
             Some(RerunSelection::Marker(marker)) => {
                 let config = marker_config(&marker, root)?;
-                Some(in_package(config, Path::new(&marker.file)))
+                in_package(config, Path::new(&marker.file))
             }
             Some(RerunSelection::DataSet(id)) => {
                 let file = self
                     .located(&QString::from(id.as_str()))
                     .map(|(location, host, work_dir)| location.local_path(&host, &work_dir));
                 match (data_set_config(id.as_str(), file.as_deref(), root), file) {
-                    (Some(config), Some(file)) => Some(in_package(config, &file)),
-                    (Some(config), None) => Some(RerunSelection::Configuration(Box::new(
-                        stored_or(config, root),
-                    ))),
-                    (None, _) => Some(RerunSelection::Node(id)),
+                    (Some(config), Some(file)) => in_package(config, &file),
+                    (Some(config), None) => RunRequest::Editor {
+                        config: Box::new(config),
+                        dir: None,
+                    },
+                    (None, _) => self.rerun_request(TreeRerun::Node(id))?,
                 }
             }
-            other => other,
+            Some(RerunSelection::Failed(ids)) => self.rerun_request(TreeRerun::Failed(ids))?,
+            Some(RerunSelection::Node(id)) => self.rerun_request(TreeRerun::Node(id))?,
+            Some(RerunSelection::Configuration(config)) => RunRequest::Configuration(config),
+        })
+    }
+
+    /// A Tests dock rerun, ad hoc in the project root.
+    fn rerun_request(&self, rerun: TreeRerun) -> Result<RunRequest, String> {
+        Ok(RunRequest::Rerun {
+            config: None,
+            rerun,
         })
     }
 
@@ -235,7 +246,7 @@ impl ffi::TestService {
             Ok(config) => config,
             Err(refusal) => return refusal,
         };
-        let restart = !config.allow_parallel && !self.runs.borrow().is_empty();
+        let restart = !config.allow_parallel && self.is_running();
         let selection = RerunSelection::Configuration(Box::new(config));
         if restart {
             *self.queued.borrow_mut() = Some((selection, with_coverage));

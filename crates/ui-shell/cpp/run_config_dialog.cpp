@@ -5,12 +5,15 @@
 #include "run_config_container_pages.h"
 #include "run_config_php_page.h"
 #include "run_config_sql_page.h"
+#include "ui_tokens.h"
 
 #include <QAction>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -21,7 +24,12 @@
 #include <QPoint>
 #include <QPushButton>
 #include <QRect>
+#include <QScreen>
+#include <QScrollArea>
 #include <QSignalBlocker>
+#include <QStyle>
+#include <QStyledItemDelegate>
+#include <QtMath>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -84,12 +92,31 @@ FfiContainerOptions defaultContainerOptions(const QString &kind)
     return options;
 }
 
+// Rows of one fixed height, as wide as the list rather than their text: a
+// long name is elided (its tooltip has it whole) instead of growing a
+// horizontal scrollbar, and the selected row's highlight never cuts into
+// the row above (#460). A list view in list mode stretches every row to the
+// viewport, so the one-pixel width only keeps the contents from widening.
+class ConfigRowDelegate : public QStyledItemDelegate
+{
+public:
+    using QStyledItemDelegate::QStyledItemDelegate;
+
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+    {
+        const int height = QStyledItemDelegate::sizeHint(option, index).height();
+        return QSize(1, qMax(height, tokens::kRowHeight));
+    }
+};
+
 void repaintList(QListWidget *list, RunConfigEditor *editor, int keepIndex)
 {
     const QSignalBlocker blocker(list);
     list->clear();
     for (const FfiRunConfig &config : editor->configurations()) {
-        list->addItem(config.name.isEmpty() ? QObject::tr("(unnamed)") : config.name);
+        auto *item =
+          new QListWidgetItem(config.name.isEmpty() ? QObject::tr("(unnamed)") : config.name, list);
+        item->setToolTip(item->text());
     }
     if (keepIndex >= 0 && keepIndex < list->count()) {
         list->setCurrentRow(keepIndex);
@@ -106,10 +133,12 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
 
     QDialog dialog(parent);
     dialog.setWindowTitle(QObject::tr("Run Configurations"));
-    dialog.resize(760, 520);
 
     auto *list = new QListWidget(&dialog);
     list->setMaximumWidth(200);
+    list->setItemDelegate(new ConfigRowDelegate(list));
+    list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    list->setTextElideMode(Qt::ElideRight);
     // A plain "Add" button plus a Containers submenu (C5, ADR-0056): the
     // default action still adds a plain process configuration with one
     // click, exactly as before.
@@ -178,7 +207,13 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
 
     auto *commandPreviewEdit = new QPlainTextEdit(&dialog);
     commandPreviewEdit->setReadOnly(true);
-    commandPreviewEdit->setMaximumHeight(50);
+    // Two whole lines without a scrollbar; a longer command scrolls (#460).
+    commandPreviewEdit->ensurePolished();
+    const QMargins previewMargins = commandPreviewEdit->contentsMargins();
+    commandPreviewEdit->setFixedHeight(
+      2 * commandPreviewEdit->fontMetrics().lineSpacing()
+      + qCeil(2 * commandPreviewEdit->document()->documentMargin())
+      + previewMargins.top() + previewMargins.bottom());
 
     auto *form = new QVBoxLayout();
     const auto addRow = [form, &dialog](const QString &label, QWidget *field) {
@@ -201,9 +236,20 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     form->addWidget(new QLabel(QObject::tr("Command preview:"), &dialog));
     form->addWidget(commandPreviewEdit);
 
+    // The page scrolls rather than the dialog outgrowing the screen: at
+    // 150 % the PHPUnit page alone is taller than a 1440 px work area (#460).
+    auto *page = new QWidget();
+    page->setLayout(form);
+    form->setContentsMargins(0, 0, 0, 0);
+    auto *pageScroll = new QScrollArea(&dialog);
+    pageScroll->setWidget(page);
+    pageScroll->setWidgetResizable(true);
+    pageScroll->setFrameShape(QFrame::NoFrame);
+    pageScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
     auto *columns = new QHBoxLayout();
     columns->addLayout(listColumn);
-    columns->addLayout(form, 1);
+    columns->addWidget(pageScroll, 1);
 
     auto *buttons =
       new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dialog);
@@ -441,6 +487,16 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     *previousIndex = list->currentRow();
     loadForm(list->currentRow());
 
+    // As tall as the page wants, up to the screen's work area less the
+    // window frame; the page scrolls past that.
+    const QScreen *screen = parent != nullptr ? parent->screen() : QGuiApplication::primaryScreen();
+    const QRect available = screen->availableGeometry();
+    const int frame = dialog.style()->pixelMetric(QStyle::PM_TitleBarHeight)
+      + 2 * dialog.style()->pixelMetric(QStyle::PM_DefaultFrameWidth);
+    const int pageHeight = page->sizeHint().height() + buttons->sizeHint().height()
+      + layout->spacing() + layout->contentsMargins().top() + layout->contentsMargins().bottom();
+    dialog.resize(qMin(760, available.width()), qMin(qMax(520, pageHeight), available.height() - frame));
+
     // A modal `exec()` blocks here until the dialog closes, so — unlike a
     // menu bar's `aboutToShow`/`aboutToHide` — `dialog_shown` has to be
     // marked once the dialog is actually up and `dialog_closed` from
@@ -464,7 +520,17 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     // clicking Add and Save and typing into Program, not by guessing a
     // keyboard tab order through a form whose focus chain is an
     // implementation detail.
-    QTimer::singleShot(0, &dialog, [=]() {
+    QTimer::singleShot(0, &dialog, [=, &dialog]() {
+        // The real window frame is known only now: keep the whole window,
+        // Save and Cancel included, inside the work area.
+        const QRect outer = dialog.frameGeometry();
+        if (!available.contains(outer)) {
+            const int outerHeight = qMin(outer.height(), available.height());
+            dialog.resize(dialog.width(), outerHeight - (outer.height() - dialog.height()));
+            // A window's pos is its frame's.
+            dialog.move(dialog.x(), qBound(available.top(), outer.top(),
+                                           available.bottom() + 1 - outerHeight));
+        }
         const auto rectJson = [](const QRect &rect) {
             return QStringLiteral("[%1,%2,%3,%4]")
               .arg(rect.x())

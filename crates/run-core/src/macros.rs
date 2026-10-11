@@ -175,6 +175,18 @@ pub fn expand(value: &str, context: &MacroContext) -> String {
     expand_as(value, context, PathSpelling::Process)
 }
 
+/// [`expand`], or the first macro `context` has no value for, spelled
+/// `$NAME$`: for a caller that must refuse a launch rather than hand the
+/// literal token on (a PHPUnit option `--log-junit $FILE_DIR$/x.xml` in a
+/// scope with no file, #458).
+pub fn expand_resolved(value: &str, context: &MacroContext) -> Result<String, String> {
+    let out = expand(value, context);
+    match TOKENS.iter().find(|(name, _)| out.contains(name)) {
+        Some((name, _)) => Err(format!("{name}$")),
+        None => Ok(out),
+    }
+}
+
 /// Expand a working directory: paths keep the IDE-side spelling.
 ///
 /// Unlike an argument, a `cwd` is classified by `ExecHost::for_path` at
@@ -220,6 +232,27 @@ mod tests {
     #[test]
     fn the_dollar_terminated_form_does_not_leave_a_trailing_dollar() {
         assert_eq!(expand("$PROJECT_DIR$", &context()), "/home/me/project");
+    }
+
+    #[test]
+    fn a_token_without_a_value_is_named_rather_than_kept() {
+        let project = MacroContext::for_project("/p");
+        assert_eq!(
+            expand_resolved("--log-junit $PROJECT_DIR$/x.xml", &project).as_deref(),
+            Ok("--log-junit /p/x.xml")
+        );
+        assert_eq!(
+            expand_resolved("$FILE_DIR/x.xml", &project),
+            Err("$FILE_DIR$".to_string())
+        );
+        assert_eq!(
+            expand_resolved("$FILE_NAME_WITHOUT_EXTENSION$", &project),
+            Err("$FILE_NAME_WITHOUT_EXTENSION$".to_string())
+        );
+        assert_eq!(
+            expand_resolved("$FILE_DIR$/x.xml", &context()).as_deref(),
+            Ok("/home/me/project/src/x.xml")
+        );
     }
 
     #[test]

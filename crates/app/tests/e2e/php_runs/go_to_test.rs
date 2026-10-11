@@ -108,13 +108,14 @@ fn e2e_phpunit_go_to_test_and_subject() {
                     && labels[1].contains("NotifierTest"),
                 format!("AC9.1: the chooser lists {labels:?}"),
             );
+            // AC9.10: the first entry is preselected (#459), so Enter alone
+            // opens it; the title row is no keyboard stop.
             let mark = ide.mark();
-            ide.key("Down");
             ide.key("Return");
             let line = landing(&ide, mark, "tests/Unit/MailerTest.php");
             findings.check(
                 line.is_some(),
-                "AC9.1: Enter on the first entry opened nothing",
+                "AC9.10: Enter on the chooser did not open its preselected first entry",
             );
         }
         None => findings.check(false, "AC9.1: no chooser for Mailer"),

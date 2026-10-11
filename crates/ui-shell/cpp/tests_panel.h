@@ -109,10 +109,11 @@ private:
     int detailsOffset_ = 0;
     QPlainTextEdit *output_ = nullptr;
 
-    // Rebuilt wholesale on every `testTreeChanged`, the same brute-force
-    // refresh `ProblemsPanel::refresh` uses for its own tree — a test run's
-    // event volume is nowhere near what would make that measurably slow.
+    // Updated row by row from `TestService::takeNodeChanges` (#462).
     QHash<QString, QTreeWidgetItem *> itemsById_;
+    // Whether each row was expanded when a new run replaced the tree, so the
+    // same row comes back the way the user left it.
+    QHash<QString, bool> expandedById_;
     QString selectedNodeId_;
 };
 

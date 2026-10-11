@@ -2,6 +2,7 @@
 
 #include "e2e_mark.h"
 
+#include <QAbstractSpinBox>
 #include <QComboBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -58,9 +59,19 @@ QWidget *addFormRow(QVBoxLayout *layout, QWidget *owner, const QString &label, Q
     rowLayout->setContentsMargins(0, 0, 0, 0);
     auto *labelWidget = new QLabel(label, row);
     labelWidget->setProperty(kFormLabel, true);
-    labelWidget->setAlignment(Qt::AlignLeft | Qt::AlignTop);
     field->setParent(row);
-    rowLayout->addWidget(labelWidget);
+    // The label centres its text in one input line's height at the top of
+    // the row: beside a single-line field it shares the field's text line,
+    // beside a list it sits on the first row, never above either (#460).
+    const bool singleLine = qobject_cast<QLineEdit *>(field) != nullptr
+      || qobject_cast<QComboBox *>(field) != nullptr
+      || qobject_cast<QAbstractSpinBox *>(field) != nullptr;
+    QLineEdit probe(row);
+    QWidget *lineField = singleLine ? field : &probe;
+    lineField->ensurePolished();
+    labelWidget->setMinimumHeight(lineField->sizeHint().height());
+    labelWidget->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    rowLayout->addWidget(labelWidget, 0, Qt::AlignTop);
     rowLayout->addWidget(field, 1);
     layout->addWidget(row);
     return row;

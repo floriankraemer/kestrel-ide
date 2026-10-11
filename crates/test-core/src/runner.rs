@@ -247,6 +247,17 @@ impl TestRunHandle {
         exit_code == Some(0) && self.reported.load(Ordering::Relaxed) == 0
     }
 
+    /// Why a run that exited non-zero without reporting a single test never
+    /// really ran (php could not open the runner, a fatal error in the
+    /// bootstrap), worded as PhpStorm's console ends such a run; `None` for
+    /// any run that reported a test, exited cleanly or was stopped. A run
+    /// like that must not read as a clean, empty "Run finished." (#456).
+    pub fn start_failure(&self, exit_code: Option<i32>) -> Option<String> {
+        exit_code
+            .filter(|code| *code != 0 && self.reported.load(Ordering::Relaxed) == 0)
+            .map(|code| format!("Process finished with exit code {code}"))
+    }
+
     /// Kill the running process, if any. Stopping a run that has already
     /// finished (or never started) is not an error.
     pub fn stop(&self) {
@@ -371,12 +382,11 @@ pub fn run_on_env(
     let mut stdout = spawned.take_stdout().expect("stdout was piped");
     let mut stderr = spawned.take_stderr().expect("stderr was piped");
 
-    // Drained on its own thread purely to avoid the pipe-fills-and-blocks
-    // deadlock `process_exec::run` avoids the same way. A test framework's
-    // own diagnostic chatter belongs on stdout in every format this plan
-    // supports, so stderr is captured wholesale rather than streamed to
-    // `sink` — an acceptable v1 simplification, not a silent data loss:
-    // nothing observed on stdout is affected by it.
+    // Drained on its own thread to avoid the pipe-fills-and-blocks deadlock
+    // `process_exec::run` avoids the same way, and handed to `sink` once the
+    // process has exited: what php says when it cannot even start the
+    // runner ("Could not open input file") goes there, and hiding it left a
+    // run that never started looking like an empty one (#456).
     let stderr_reader = std::thread::spawn(move || {
         let mut buffer = Vec::new();
         let _ = stderr.read_to_end(&mut buffer);
@@ -406,7 +416,10 @@ pub fn run_on_env(
         handle.reported.fetch_add(1, Ordering::Relaxed);
         sink.event(event);
     }
-    let _ = stderr_reader.join();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if !stderr.is_empty() {
+        sink.output(&String::from_utf8_lossy(&stderr));
+    }
 
     let exit_code = spawned.wait().ok().and_then(|status| status.code());
 
@@ -471,6 +484,49 @@ mod tests {
             !handle.matched_nothing(Some(1)),
             "a failing exit is not 'no match'"
         );
+    }
+
+    #[test]
+    fn a_run_that_cannot_start_shows_its_stderr_and_ends_as_a_start_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = TestRunHandle::new();
+        let mut collected = Collected::default();
+        let script = "echo 'Could not open input file: vendor/bin/phpunit' >&2; exit 1";
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), script.into()],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut collected,
+        )
+        .unwrap();
+        assert!(collected.output.contains("Could not open input file"));
+        assert_eq!(
+            handle.start_failure(code).as_deref(),
+            Some("Process finished with exit code 1")
+        );
+        assert_eq!(handle.start_failure(Some(0)), None, "a clean exit");
+        assert_eq!(handle.start_failure(None), None, "a stopped run");
+    }
+
+    #[test]
+    fn a_failing_run_that_reported_tests_is_no_start_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let handle = TestRunHandle::new();
+        let script = "echo \"##teamcity[testFailed name='t' message='m']\"; exit 1";
+        let code = run(
+            &handle,
+            "sh",
+            &["-c".into(), script.into()],
+            dir.path(),
+            OutputFormat::TeamCity,
+            None,
+            &mut Collected::default(),
+        )
+        .unwrap();
+        assert_eq!(handle.start_failure(code), None);
     }
 
     #[test]

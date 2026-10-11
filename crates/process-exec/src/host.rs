@@ -349,6 +349,22 @@ impl ExecHost {
         }
     }
 
+    /// `program` and `args` as the process on this host receives them: a
+    /// path into the WSL distro or the container's mount in the host's own
+    /// spelling (`/home/f/proj/vendor/bin/phpunit`, not the UNC path this
+    /// process opens), anything else unchanged. What a command preview
+    /// shows, since it is what runs.
+    pub fn process_argv(&self, program: &str, args: &[&str]) -> Vec<String> {
+        std::iter::once(program)
+            .chain(args.iter().copied())
+            .map(|arg| match self {
+                ExecHost::Local => arg.to_string(),
+                ExecHost::Wsl(wsl) => wsl.rebase_arg(arg),
+                ExecHost::Container(container) => container.path_map.rebase_arg(arg),
+            })
+            .collect()
+    }
+
     /// Build the argv this host actually runs: unchanged for `Local`,
     /// wrapped in `wsl.exe -d <distro> --cd <linux-cwd> -e <program>
     /// <args...>` for `Wsl` — `-e`, not `--`, so a commit message or a
@@ -382,8 +398,7 @@ impl ExecHost {
                     full.push(format!("{key}={value}"));
                 }
                 full.extend(container.target.iter().cloned());
-                full.push(container.path_map.rebase_arg(program));
-                full.extend(args.iter().map(|a| container.path_map.rebase_arg(a)));
+                full.extend(self.process_argv(program, args));
                 (container.program.clone(), full)
             }
             ExecHost::Local => (
@@ -398,9 +413,8 @@ impl ExecHost {
                     "--cd".to_string(),
                     linux_cwd,
                     "-e".to_string(),
-                    wsl.rebase_arg(program),
                 ];
-                full.extend(args.iter().map(|a| wsl.rebase_arg(a)));
+                full.extend(self.process_argv(program, args));
                 ("wsl.exe".to_string(), full)
             }
         }
@@ -818,6 +832,19 @@ mod tests {
                 "log".to_string(),
                 "--grep=a b $x".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn process_argv_is_what_the_process_on_each_host_receives() {
+        let unc = "//wsl.localhost/Ubuntu/home/f/proj\\vendor/bin/phpunit";
+        assert_eq!(
+            wsl("//wsl.localhost/Ubuntu/home/f/proj").process_argv("php", &[unc, "--teamcity"]),
+            ["php", "/home/f/proj/vendor/bin/phpunit", "--teamcity"]
+        );
+        assert_eq!(
+            ExecHost::Local.process_argv("php", &[unc]),
+            ["php".to_string(), unc.to_string()]
         );
     }
 

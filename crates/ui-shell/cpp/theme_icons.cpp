@@ -147,6 +147,19 @@ public:
         return QProxyStyle::standardIcon(standardIcon, option, widget);
     }
 
+    // A disabled menu entry (a chooser's title row) is never a keyboard
+    // stop, on every platform: the Windows style says otherwise, so a
+    // popup's first Down landed on its title and Enter there did nothing
+    // (#459). Fusion already answers no.
+    int styleHint(StyleHint hint, const QStyleOption *option, const QWidget *widget,
+                  QStyleHintReturn *returnData) const override
+    {
+        if (hint == QStyle::SH_Menu_AllowActiveAndDisabled) {
+            return 0;
+        }
+        return QProxyStyle::styleHint(hint, option, widget, returnData);
+    }
+
     // Breathing room around the [x], and the same amount of it on every
     // platform. QCommonStyle centres the close glyph — 8px of ink at this
     // icon size — in a button PM_TabCloseIndicatorWidth wide, and the base

@@ -343,45 +343,63 @@ void TestsPanel::onTestRunStarted()
 
 void TestsPanel::onTestTreeChanged()
 {
-    // Every id currently expanded, so a long run's live progress does not
-    // collapse the tree the user is watching — restored below by id rather
-    // than by row, since row order can change as new siblings arrive.
-    QHash<QString, bool> expandedById;
-    for (auto it = itemsById_.constBegin(); it != itemsById_.constEnd(); ++it) {
-        expandedById.insert(it.key(), it.value()->isExpanded());
+    // Only the rows that changed since the last call (#462): a rebuild per
+    // streamed event was quadratic in the suite's size.
+    const FfiTestNodeChanges changes = testService_->takeNodeChanges();
+    bool selectedChanged = changes.reset;
+    if (changes.reset) {
+        // Every id currently expanded, so a new run of the same tests does
+        // not collapse the tree the user is watching.
+        expandedById_.clear();
+        for (auto it = itemsById_.constBegin(); it != itemsById_.constEnd(); ++it) {
+            expandedById_.insert(it.key(), it.value()->isExpanded());
+        }
+        tree_->clear();
+        itemsById_.clear();
     }
 
-    tree_->clear();
-    itemsById_.clear();
-
-    const ::rust::Vec<FfiTestNode> nodes = testService_->nodes();
     const int iconPx = tree_->fontMetrics().height();
-    for (const FfiTestNode &node : nodes) {
+    for (const FfiTestNode &node : changes.nodes) {
         const QString id = QString(node.id);
-        const QString parentId = QString(node.parentId);
-        QTreeWidgetItem *parentItem = parentId.isEmpty() ? nullptr : itemsById_.value(parentId);
-        auto *item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(tree_);
+        QTreeWidgetItem *item = itemsById_.value(id);
+        if (item == nullptr) {
+            const QString parentId = QString(node.parentId);
+            QTreeWidgetItem *parentItem = parentId.isEmpty() ? nullptr : itemsById_.value(parentId);
+            item = new QTreeWidgetItem();
+            item->setData(0, kIdRole, id);
+            if (parentItem != nullptr) {
+                parentItem->insertChild(qMin(int(node.index), parentItem->childCount()), item);
+            } else {
+                tree_->insertTopLevelItem(qMin(int(node.index), tree_->topLevelItemCount()), item);
+            }
+            item->setExpanded(expandedById_.value(id, true));
+            itemsById_.insert(id, item);
+        }
         item->setText(0, QString(node.name));
         item->setIcon(0, statusIcon(node.status, iconPx));
         item->setText(1, durationText(node.durationMs));
-        item->setData(0, kIdRole, id);
         item->setData(0, kKindRole, static_cast<int>(node.kind));
-        item->setExpanded(expandedById.value(id, true));
-        itemsById_.insert(id, item);
-        e2eMark(QStringLiteral("{\"ev\":\"test_tree_row\",\"id\":%1,\"name\":%2,\"status\":%3,"
-                               "\"suite\":%4}")
-                  .arg(e2eJson(id), e2eJson(QString(node.name)),
-                        e2eJson(QString::fromUtf8(statusName(node.status))),
-                        node.kind == FfiTestNodeKind::Suite ? QStringLiteral("true")
-                                                            : QStringLiteral("false")));
+        selectedChanged = selectedChanged || id == selectedNodeId_;
+        if (e2eMarksEnabled()) {
+            e2eMark(QStringLiteral("{\"ev\":\"test_tree_row\",\"id\":%1,\"name\":%2,\"status\":%3,"
+                                   "\"suite\":%4}")
+                      .arg(e2eJson(id), e2eJson(QString(node.name)),
+                           e2eJson(QString::fromUtf8(statusName(node.status))),
+                           node.kind == FfiTestNodeKind::Suite ? QStringLiteral("true")
+                                                               : QStringLiteral("false")));
+        }
     }
 
-    if (!selectedNodeId_.isEmpty()) {
+    if (changes.reset && !selectedNodeId_.isEmpty()) {
         if (QTreeWidgetItem *item = itemsById_.value(selectedNodeId_)) {
             item->setSelected(true);
         }
     }
-    onSelectionChanged();
+    // The failure pane follows its node: refreshed only when that node
+    // changed, not on every streamed event.
+    if (selectedChanged) {
+        onSelectionChanged();
+    }
 
     const int total = itemsById_.size();
     statusLabel_->setText(tr("%n test node(s).", nullptr, total));

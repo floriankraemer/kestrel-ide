@@ -44,6 +44,10 @@ constexpr int kDiagnosticWidth = 12;
 // width for a file that has a run target, so a file without one keeps
 // exactly the gutter it had before.
 constexpr int kRunMarkerWidth = 14;
+// Half the height of every glyph in that column — the run triangle and each
+// test status disc alike, so a status never looks bigger than the run icon
+// it replaces at any scale (#463).
+constexpr qreal kRunGlyphRadius = 5.0;
 
 // R7: a blame line's background tint fades from this alpha (freshly
 // committed) to none past a year old — the same "recent change stands out"
@@ -99,7 +103,6 @@ qreal contrastRatio(const QColor &a, const QColor &b)
 // coordinates, so it is as crisp at 2x as at 1x.
 void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF &center)
 {
-    constexpr qreal kRadius = 5.0;
     const SemanticColors colors = semanticColors();
     QColor fill;
     switch (glyph) {
@@ -129,7 +132,7 @@ void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(Qt::NoPen);
     painter.setBrush(fill);
-    painter.drawEllipse(center, kRadius, kRadius);
+    painter.drawEllipse(center, kRunGlyphRadius, kRunGlyphRadius);
     QPen mark(ink, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     painter.setPen(mark);
     painter.setBrush(Qt::NoBrush);
@@ -402,19 +405,23 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
             }
 
             if (runLines_.contains(blockNumber)) {
-                const int cx = kRunMarkerWidth / 2;
-                const int cy = top + fontMetrics().height() / 2;
+                // One centre and one radius for the triangle and the status
+                // discs, both antialiased, so both cover the same pixels.
+                const QPointF center(kRunMarkerWidth / 2.0, top + fontMetrics().height() / 2.0);
                 const auto status = runMarkerStatuses_.constFind(blockNumber);
                 if (status == runMarkerStatuses_.cend()) {
-                    QPolygon play;
-                    play << QPoint(cx - 3, cy - 5) << QPoint(cx - 3, cy + 5) << QPoint(cx + 5, cy);
+                    const qreal r = kRunGlyphRadius;
+                    const QPolygonF play{ center + QPointF(-0.6 * r, -r), center + QPointF(-0.6 * r, r),
+                                          center + QPointF(r, 0) };
+                    painter.save();
+                    painter.setRenderHint(QPainter::Antialiasing, true);
                     painter.setPen(Qt::NoPen);
                     // The toolbar's Run glyph colour, from the theme.
                     painter.setBrush(semanticColors().ok);
                     painter.drawPolygon(play);
-                    painter.setBrush(Qt::NoBrush);
+                    painter.restore();
                 } else {
-                    paintRunMarkerStatus(painter, status->glyph, QPointF(kRunMarkerWidth / 2.0, cy));
+                    paintRunMarkerStatus(painter, status->glyph, center);
                 }
                 // The icon's screen rect: the one place its position is known.
                 const QRect iconRect(lineNumberArea_->mapToGlobal(QPoint(0, top)),

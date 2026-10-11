@@ -32,10 +32,18 @@ pub(super) fn resolve(config: &run_core::RunConfig, root: &Path) -> Result<Confi
     // A `phpunit` kind with no table runs the configuration file's scope.
     let setting = php_core::phpunit_run::setting_of(config)
         .ok_or_else(|| format!("\"{}\" is not a PHPUnit configuration", config.name))?;
-    let context = run_core::MacroContext::for_project(root);
+    // File macros stand for the test file the scope names (#458).
+    let project = run_core::MacroContext::for_project(root);
+    let context = match php_core::phpunit_run::macro_file(&setting) {
+        Some(file) => run_core::MacroContext::for_file(
+            root,
+            root.join(run_core::macros::expand_cwd(&file, &project)),
+        ),
+        None => project,
+    };
     let plan = php_core::phpunit_run::plan(
         &setting,
-        |text| run_core::macros::expand(text, &context),
+        |text| run_core::macros::expand_resolved(text, &context),
         &root.to_string_lossy(),
         cfg!(windows),
     )
@@ -109,18 +117,20 @@ pub(super) fn settings_for(root: &Path, run: Option<&ConfigRun>) -> app_config::
 
 /// The command line `config` runs, as the Run Configurations dialog
 /// previews it: the selected framework's program, its dialect's scope
-/// arguments and the interpreter prefix, or why it cannot run. The program
-/// is looked for on this machine only, never inside WSL or a container.
+/// arguments and the interpreter prefix, spelled as the host it runs on
+/// receives them, or why it cannot run. The program is looked for on this
+/// machine only, never inside WSL or a container.
 pub(crate) fn preview(config: &run_core::RunConfig, root: &Path) -> String {
     let argv = resolve(config, root).and_then(|run| {
         let settings = settings_for(root, Some(&run));
         let work_dir = root.join(run.plan.working_directory.as_deref().unwrap_or_default());
         let framework = super::Framework::detect(root, &work_dir, &settings, true)?;
         let (program, args) = framework.command(&settings, Some(&run), framework.scoped(&run)?);
-        Ok([program.display().to_string()]
-            .into_iter()
-            .chain(args)
-            .collect::<Vec<_>>())
+        // What runs: on a WSL project, the Linux paths the distro gets.
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        Ok(framework
+            .host
+            .process_argv(&program.to_string_lossy(), &args))
     });
     match argv {
         Ok(argv) => container_core::run_config::preview(&argv),

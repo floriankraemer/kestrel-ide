@@ -63,6 +63,8 @@ pub struct TestServiceRust {
     /// one project's one framework's one tree, the same "one at a time"
     /// rule `BuildServiceRust::diagnostics` applies to a build's output.
     tree: RefCell<test_core::TestTree>,
+    /// The rows the Tests dock was last given (`take_node_changes`).
+    published_rows: RefCell<test_core::PublishedRows>,
     /// The framework last run, for the diagnostics `source` column and
     /// this store's key. Empty until the first run.
     framework_name: RefCell<String>,
@@ -356,20 +358,21 @@ fn to_ffi_status(status: test_core::TestStatus) -> ffi::FfiTestStatusKind {
     }
 }
 
-fn to_ffi_node(node: &test_core::TestNode) -> ffi::FfiTestNode {
+fn to_ffi_node(row: &test_core::TreeRow) -> ffi::FfiTestNode {
     ffi::FfiTestNode {
-        id: QString::from(node.id.as_str()),
+        id: QString::from(row.id.as_str()),
         parent_id: QString::from(
-            node.parent
+            row.parent
                 .as_ref()
                 .map(test_core::TestId::as_str)
                 .unwrap_or(""),
         ),
-        name: QString::from(node.name.as_str()),
-        kind: to_ffi_kind(node.kind),
-        status: to_ffi_status(node.status),
-        duration_ms: node.duration_ms.map(|ms| ms as i64).unwrap_or(-1),
-        has_failure: node.failure.is_some(),
+        name: QString::from(row.name.as_str()),
+        kind: to_ffi_kind(row.kind),
+        status: to_ffi_status(row.status),
+        duration_ms: row.duration_ms.map(|ms| ms as i64).unwrap_or(-1),
+        has_failure: row.has_failure,
+        index: i32::try_from(row.index).unwrap_or(i32::MAX),
     }
 }
 
@@ -380,24 +383,12 @@ impl ffi::TestService {
         crate::bridge::registry::set_test_service(self.qt_thread());
     }
 
-    pub fn nodes(&self) -> Vec<ffi::FfiTestNode> {
-        let tree = self.tree.borrow();
-        // Every node the tree knows, walked breadth-first from the roots so
-        // a suite always precedes its own children — what a `QTreeWidget`
-        // needs in order to build parents before it is asked to parent a
-        // child under them.
-        let mut ids: Vec<test_core::TestId> = tree.roots().to_vec();
-        let mut index = 0;
-        while index < ids.len() {
-            if let Some(node) = tree.node(&ids[index]) {
-                ids.extend(node.children.iter().cloned());
-            }
-            index += 1;
+    pub fn take_node_changes(&self) -> ffi::FfiTestNodeChanges {
+        let changes = self.published_rows.borrow_mut().update(&self.tree.borrow());
+        ffi::FfiTestNodeChanges {
+            reset: changes.reset,
+            nodes: changes.rows.iter().map(to_ffi_node).collect(),
         }
-        ids.iter()
-            .filter_map(|id| tree.node(id))
-            .map(to_ffi_node)
-            .collect()
     }
 
     pub fn failure_message(&self, node_id: &QString) -> QString {
@@ -822,6 +813,7 @@ impl ffi::TestService {
             let mut sink = QtSink {
                 qt_thread: qt_thread.clone(),
                 ansi: run_core::AnsiStripper::default(),
+                pending: Default::default(),
                 locator: php_core::tests::EventLocator::for_run(&root, &work_dir, host.clone()),
             };
             let program_str = program.to_string_lossy().into_owned();
@@ -845,6 +837,10 @@ impl ffi::TestService {
             let matched_nothing = result
                 .as_ref()
                 .is_ok_and(|code| handle.matched_nothing(*code));
+            let start_failure = result
+                .as_ref()
+                .ok()
+                .and_then(|code| handle.start_failure(*code));
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
                 // Whatever never reported (Stop, a fatal error, a killed
@@ -862,7 +858,10 @@ impl ffi::TestService {
                     service.as_mut().coverage_changed();
                 }
                 let (ok, message) = match &result {
-                    Ok(_) => (true, String::new()),
+                    Ok(_) => match start_failure {
+                        Some(failure) => (false, failure),
+                        None => (true, String::new()),
+                    },
                     Err(test_core::RunFailure::NotFound) => {
                         (false, "test framework program not found".to_string())
                     }
@@ -1092,6 +1091,9 @@ struct QtSink {
     /// here rather than in `test-core` since `test-core`'s layering row
     /// carries no adapter-layer crate (`run-core` included).
     ansi: run_core::AnsiStripper,
+    /// Events not yet applied on the Qt thread; a flush is queued whenever
+    /// this goes from empty to not.
+    pending: std::sync::Arc<std::sync::Mutex<Vec<test_core::TeamCityEvent>>>,
     /// Anchors each node's file to this run's work dir, and finds the file
     /// of a Pest class-based test, which names only its class.
     locator: php_core::tests::EventLocator,
@@ -1111,10 +1113,32 @@ impl test_core::TestSink for QtSink {
 
     fn event(&mut self, event: test_core::TeamCityEvent) {
         let event = self.locator.locate_event(event);
+        // Coalesced (#462): events pile up here while the Qt thread is busy,
+        // and the one flush queued for the first of them applies them all,
+        // so a burst costs one republish and one tree update, not one each.
+        let Ok(mut pending) = self.pending.lock() else {
+            return;
+        };
+        let first = pending.is_empty();
+        pending.push(event);
+        drop(pending);
+        if !first {
+            return;
+        }
+        let pending = std::sync::Arc::clone(&self.pending);
         let _ = self
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {
-                service.tree.borrow_mut().apply(event);
+                let events = pending
+                    .lock()
+                    .map(|mut pending| std::mem::take(&mut *pending))
+                    .unwrap_or_default();
+                {
+                    let mut tree = service.tree.borrow_mut();
+                    for event in events {
+                        tree.apply(event);
+                    }
+                }
                 republish(&service);
                 service.as_mut().test_tree_changed();
             });

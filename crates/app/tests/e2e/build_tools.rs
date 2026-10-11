@@ -276,9 +276,9 @@ fn e2e_gradle_sync_run_and_test() {
 
     // 6. `GreeterTest::deliberatelyFails` (A4's own fixture) landed in the
     // tree with a failed status. JUnit 5 reports the method as
-    // `deliberatelyFails()` (parens included), and the tree is rebuilt
-    // wholesale on every TeamCity event — so the row repeats, first as
-    // `running`, and only its *last* mark is the settled status.
+    // `deliberatelyFails()` (parens included), and a row is marked each
+    // time it changes — so the row may repeat, first as `running`, and only
+    // its *last* mark is the settled status.
     let rows = ide.events_since_of(mark, "test_tree_row");
     let fails = rows
         .iter()

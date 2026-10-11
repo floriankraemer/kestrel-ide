@@ -179,8 +179,29 @@ Pest lives in its own package, `packages/pest`, so the root project runs real PH
 | `e2e_phpunit_go_to_test_and_subject` | J9, G11 |
 
 The configurations flow also types into the PHPUnit page (AC4.6, AC4.11) and checks its label column (AC4.14) through the dialog's `run_config_form` marker; the tree flow reads a package configuration's page (AC8.6).
+It also runs a `$FILE_DIR$` runner option (AC4.13, #458), a configuration whose interpreter options make php exit before the runner starts (#456), and, as its last step, saves the dialog and waits for the toolbar combo to refresh (#457).
+The Go to Test flow opens the chooser's first entry with Enter alone, so the entry is preselected (AC9.10, #459).
+The Tests dock marks a row only when it changes (#462), so a flow takes a test as run when its row was marked after the run started.
 AC4.8 stays manual: its pickers open the platform's file dialog.
 A Pest dataset row cannot run on its own (#451): AC2.10 checks that no single-row entry is offered and that the call runs every row.
 A flow records each failed AC and keeps going, so one defect does not hide the ACs after it; it fails at its end, listing every failed AC.
 Screenshots for the pixel ACs go to `target/shots` (or `$IDE_SHOT_DIR`) as a diagnostic, never an assertion (ADR-0024).
 
+### Results
+
+Linux (`make test-php`): all thirteen flows pass, the seven `php_runs` flows above and six `php_real` flows; the container interpreter flow runs only under `make test-php-container`.
+Pest dataset rows (AC2.10) are not offered on their own (#451), which the gutter flow checks.
+
+Windows/WSL: the pass ran the real Windows build against a `\\wsl.localhost` clone of a large Symfony project (514 tests in its `core-unit` suite).
+Its first findings blocked everything else: the Windows build wrote no E2E markers (#453, fixed by #454), and php received the UNC path of `vendor/bin/phpunit`, so every run failed silently (#455, fixed by #464).
+With both fixed, Run File reached its first result 0.73–0.79 s after the click (the WSL shell itself takes 0.14 s), and every W check of this spec ran.
+The defects it found are fixed by the PR that closed this plan:
+a run that never started read as "Run finished." and hid php's stderr (#456);
+a configuration saved in the dialog reached the toolbar combo only on the next refresh (#457);
+file macros stayed literal in runner options (#458);
+the Go to Test chooser's title took the keyboard and nothing was preselected (#459);
+the run configuration dialog's labels sat above their fields, its list rows clipped, it showed stray scrollbars and outgrew a 150 % work area (#460);
+German strings were missing or inconsistent (#461);
+the Tests dock rebuilt its whole tree on every event, 42 s for 514 tests with markers on (#462);
+and the gutter's status discs were larger than the run triangle at 150 % (#463).
+The command preview of a WSL project now shows the Linux paths that run.

@@ -26,6 +26,10 @@ pub enum ConfigError {
     PathOutsideProject(String),
     /// The working directory, project-relative, is not a directory.
     MissingWorkingDirectory(String),
+    /// A macro with no value for this run (`$FILE_DIR$` in a scope that
+    /// names no file): passed on literally, PHPUnit would write into a
+    /// directory called `$FILE_DIR$` (#458).
+    UnresolvedMacro(String),
 }
 
 impl std::fmt::Display for ConfigError {
@@ -40,6 +44,10 @@ impl std::fmt::Display for ConfigError {
             Self::MissingWorkingDirectory(dir) => write!(
                 f,
                 "has the working directory \"{dir}\", which does not exist"
+            ),
+            Self::UnresolvedMacro(name) => write!(
+                f,
+                "uses {name}, which needs a file, but its test scope names none"
             ),
         }
     }
@@ -190,21 +198,34 @@ fn scope_of(
     })
 }
 
+/// The file a table's file macros (`$FILE_DIR$`, `$FILE_PATH$`, …) stand
+/// for: the test file its scope names, as written (project-relative, macros
+/// allowed); `None` for a directory or configuration-file scope, or a class
+/// scope that names no file (#458).
+pub fn macro_file(setting: &PhpUnitRunSetting) -> Option<String> {
+    match setting.scope.as_str() {
+        "file" | "class" | "method" | "data_set" => non_blank(&setting.path),
+        _ => None,
+    }
+}
+
 /// Validate `setting` and resolve it for a run in `root`. `expand` replaces
-/// the macros in a path or an option; `ignore_case` is for Windows roots.
+/// the macros in a path or an option, or names the macro it has no value
+/// for; `ignore_case` is for Windows roots.
 pub fn plan(
     setting: &PhpUnitRunSetting,
-    expand: impl Fn(&str) -> String,
+    expand: impl Fn(&str) -> Result<String, String>,
     root: &str,
     ignore_case: bool,
 ) -> Result<Plan, ConfigError> {
+    let expand = |text: &str| expand(text).map_err(ConfigError::UnresolvedMacro);
     let working_directory = non_blank(&setting.working_directory)
-        .map(|dir| project_path(&expand(&dir), root, ignore_case))
+        .map(|dir| project_path(&expand(&dir)?, root, ignore_case))
         .transpose()?
         .and_then(|dir| working_directory(&dir, root, ignore_case));
     let work_dir = working_directory.clone().unwrap_or_default();
     let project = |path: &str| {
-        project_path(&expand(path), root, ignore_case)
+        project_path(&expand(path)?, root, ignore_case)
             .map(|path| test_core::filter::relative_to_work_dir(&path, &work_dir))
     };
     let scope = scope_of(setting, &project)?;
@@ -213,7 +234,7 @@ pub fn plan(
     };
     // Split before expanding: a macro's value (a Windows project directory
     // with backslashes or spaces) is one literal word.
-    let shell_words = |line: &str| -> Vec<String> {
+    let shell_words = |line: &str| -> Result<Vec<String>, ConfigError> {
         container_core::run_config::split_shell_words(line)
             .iter()
             .map(|word| expand(word))
@@ -227,10 +248,10 @@ pub fn plan(
                 .transpose()?,
             groups: words(&setting.groups),
             exclude_groups: words(&setting.exclude_groups),
-            runner_options: shell_words(&setting.runner_options),
+            runner_options: shell_words(&setting.runner_options)?,
         },
         interpreter: non_blank(&setting.interpreter),
-        interpreter_options: shell_words(&setting.interpreter_options),
+        interpreter_options: shell_words(&setting.interpreter_options)?,
         working_directory,
     })
 }
@@ -579,7 +600,7 @@ mod tests {
     fn plan_of(setting: &PhpUnitRunSetting) -> Result<Plan, ConfigError> {
         plan(
             setting,
-            |text| text.replace("$PROJECT_DIR$", "/p"),
+            |text| Ok(text.replace("$PROJECT_DIR$", "/p")),
             "/p",
             false,
         )
@@ -972,7 +993,7 @@ mod tests {
         };
         let plan = plan(
             &setting,
-            |text| text.replace("$PROJECT_DIR$", r"C:\My Proj"),
+            |text| Ok(text.replace("$PROJECT_DIR$", r"C:\My Proj")),
             r"C:\My Proj",
             true,
         )
@@ -988,6 +1009,51 @@ mod tests {
     }
 
     #[test]
+    fn a_macro_without_a_value_refuses_the_run() {
+        let setting = PhpUnitRunSetting {
+            runner_options: "--log-junit $FILE_DIR$/out.xml".into(),
+            ..setting("config")
+        };
+        let refusal = plan(
+            &setting,
+            |text| match text.contains("$FILE_DIR$") {
+                true => Err("$FILE_DIR$".to_string()),
+                false => Ok(text.to_string()),
+            },
+            "/p",
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(refusal, ConfigError::UnresolvedMacro("$FILE_DIR$".into()));
+        assert_eq!(
+            refusal.to_string(),
+            "uses $FILE_DIR$, which needs a file, but its test scope names none"
+        );
+    }
+
+    #[test]
+    fn file_macros_stand_for_the_test_file_the_scope_names() {
+        let with_path = |scope: &str| PhpUnitRunSetting {
+            path: "tests/Unit/MailerTest.php".into(),
+            ..setting(scope)
+        };
+        for scope in ["file", "class", "method", "data_set"] {
+            assert_eq!(
+                macro_file(&with_path(scope)).as_deref(),
+                Some("tests/Unit/MailerTest.php"),
+                "{scope}"
+            );
+        }
+        assert_eq!(macro_file(&with_path("directory")), None);
+        assert_eq!(macro_file(&with_path("config")), None);
+        assert_eq!(
+            macro_file(&setting("class")),
+            None,
+            "a class without a file"
+        );
+    }
+
+    #[test]
     fn interpreter_options_are_split_before_macros_expand() {
         assert!(plan_of(&setting("config"))
             .unwrap()
@@ -999,7 +1065,7 @@ mod tests {
         };
         let plan = plan(
             &setting,
-            |text| text.replace("$PROJECT_DIR$", r"C:\My Proj"),
+            |text| Ok(text.replace("$PROJECT_DIR$", r"C:\My Proj")),
             r"C:\My Proj",
             true,
         )

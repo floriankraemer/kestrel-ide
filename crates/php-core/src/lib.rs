@@ -17,6 +17,7 @@ pub mod phpunit_run;
 pub mod phpunit_xml;
 pub mod probe;
 pub mod psr4;
+pub mod test_history;
 pub mod test_navigation;
 pub mod test_status;
 pub mod tests;

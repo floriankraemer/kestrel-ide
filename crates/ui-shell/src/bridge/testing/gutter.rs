@@ -121,21 +121,37 @@ impl ffi::TestService {
             .collect()
     }
 
-    /// The last run's result for every marker in `text` the run touched, for
-    /// the gutter icons; empty for a file that is not a PHP test or that the
-    /// run has no node in.
+    /// The last result for every marker in `text`, for the gutter icons:
+    /// this session's run, else the project's recorded history (G4); empty
+    /// for a file that is not a PHP test or that neither has a node in.
     pub fn marker_statuses(&self, path: &QString, text: &QString) -> Vec<ffi::FfiMarkerStatus> {
         let path = path.to_string();
         if !is_php_file(&path) {
             return Vec::new();
         }
+        let Some(root) = super::current_project_root() else {
+            return Vec::new();
+        };
+        self.load_history(&root);
+        let history = self.history.borrow();
+        let Some((_, history)) = history.as_ref() else {
+            return Vec::new();
+        };
+        let recorded_nodes = history.tree().nodes_in_file(
+            &process_exec::host::ExecHost::Local,
+            std::path::Path::new(""),
+            std::path::Path::new(&path),
+        );
         let tree = self.tree.borrow();
         let nodes = self.nodes_in(&tree, &path);
-        if nodes.is_empty() {
+        if nodes.is_empty() && recorded_nodes.is_empty() {
             return Vec::new();
         }
         let markers = self.markers_of(&path, &text.to_string());
-        php_core::test_status::marker_statuses(&markers, &tree, &nodes)
+        let live = php_core::test_status::marker_statuses(&markers, &tree, &nodes);
+        let recorded =
+            php_core::test_status::marker_statuses(&markers, history.tree(), &recorded_nodes);
+        php_core::test_status::with_history(live, recorded)
             .into_iter()
             .map(|status| ffi::FfiMarkerStatus {
                 line: status.line,
@@ -192,6 +208,47 @@ impl ffi::TestService {
         *self.pending_debug.borrow_mut() =
             Some(RerunSelection::DataSet(test_core::TestId(id.to_string())));
         ffi::FfiResult::default()
+    }
+
+    /// Load the project's recorded test results, once per project. A small
+    /// TOML read on the Qt thread, on the first gutter paint after a project
+    /// opens; an unreadable file is an empty history.
+    // ponytail: read on the Qt thread; move to a worker if a share makes it slow.
+    fn load_history(&self, root: &std::path::Path) {
+        let mut history = self.history.borrow_mut();
+        if history.as_ref().is_some_and(|(loaded, _)| loaded == root) {
+            return;
+        }
+        let settings = app_config::test_history::load(root).unwrap_or_default();
+        *history = Some((
+            root.to_path_buf(),
+            php_core::test_history::TestHistory::from_settings(settings),
+        ));
+    }
+
+    /// Record the finished run's results for the gutter's next session, and
+    /// persist them off the Qt thread when they changed. A run of a project
+    /// that is no longer open records nothing.
+    pub(super) fn record_history(&self, root: &std::path::Path) {
+        if super::current_project_root().as_deref() != Some(root) {
+            return;
+        }
+        self.load_history(root);
+        let (host, work_dir) = self.run_context(root);
+        let mut history = self.history.borrow_mut();
+        let Some((_, history)) = history.as_mut() else {
+            return;
+        };
+        if !history.record(&self.tree.borrow(), &host, &work_dir) {
+            return;
+        }
+        let settings = history.settings();
+        let root = root.to_path_buf();
+        // The history is a convenience: a failed write only means the next
+        // session starts without these icons.
+        std::thread::spawn(move || {
+            let _ = app_config::test_history::save(&root, &settings);
+        });
     }
 
     /// The tree's nodes located in `path`, mapped through the last run's host.

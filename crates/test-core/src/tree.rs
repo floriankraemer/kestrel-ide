@@ -125,6 +125,20 @@ impl TestTree {
         Self::default()
     }
 
+    /// A tree of `leaves` alone, each a root, as a test history restores
+    /// them: results kept from earlier sessions, located by local paths.
+    pub fn restored(leaves: impl IntoIterator<Item = TestNode>) -> Self {
+        let mut tree = Self::default();
+        for leaf in leaves {
+            if tree.nodes.contains_key(&leaf.id) {
+                continue;
+            }
+            tree.roots.push(leaf.id.clone());
+            tree.nodes.insert(leaf.id.clone(), leaf);
+        }
+        tree
+    }
+
     /// Drop everything — what starting a new run means for the tree a
     /// previous run left behind. A fresh run's tree is never the old one
     /// with rows overwritten: a class that fails to bootstrap this time

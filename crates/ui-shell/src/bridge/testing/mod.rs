@@ -96,6 +96,9 @@ pub struct TestServiceRust {
     preparing: Cell<Option<u64>>,
     /// Stop was asked while a run was being prepared: it never starts.
     preparation_stopped: Cell<bool>,
+    /// The project's recorded test results, loaded on the gutter's first
+    /// question about it (G4).
+    history: RefCell<Option<(PathBuf, php_core::test_history::TestHistory)>>,
     /// The configuration each run still in the tree ran, `None` for an ad
     /// hoc one: what a rerun from the tree runs (G2).
     run_configs: RefCell<HashMap<u64, Option<run_core::RunConfig>>>,
@@ -776,6 +779,7 @@ impl ffi::TestService {
         }
 
         let waiter = waiter.take();
+        let run_root = root.clone();
         std::thread::spawn(move || {
             let mut sink = QtSink {
                 qt_thread: qt_thread.clone(),
@@ -808,6 +812,7 @@ impl ffi::TestService {
                 // Whatever never reported (Stop, a fatal error, a killed
                 // container) must not stay "running" on a gutter icon.
                 service.tree.borrow_mut().finish_run();
+                service.record_history(&run_root);
                 service.as_mut().test_tree_changed();
                 if let Some(coverage) = coverage {
                     if coverage.is_none() {

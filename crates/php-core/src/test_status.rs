@@ -140,7 +140,7 @@ impl Tally {
     }
 }
 
-fn first_lines(message: &str) -> String {
+pub(crate) fn first_lines(message: &str) -> String {
     message
         .lines()
         .map(str::trim)
@@ -202,6 +202,23 @@ pub fn marker_statuses(
             }
             let leaves: Vec<&TestNode> = ids.iter().filter_map(|id| tree.node(id)).collect();
             Tally::of(&leaves).status(marker.line)
+        })
+        .collect()
+}
+
+/// The live run's statuses with the recorded ones (`crate::test_history`)
+/// in place of every marker the live run has no result for: a live result
+/// always supersedes a recorded one. Both lists are [`marker_statuses`] of
+/// the same markers.
+pub fn with_history(live: Vec<MarkerStatus>, recorded: Vec<MarkerStatus>) -> Vec<MarkerStatus> {
+    live.into_iter()
+        .map(|status| match status.state {
+            MarkerState::NeverRun => recorded
+                .iter()
+                .find(|kept| kept.line == status.line)
+                .cloned()
+                .unwrap_or(status),
+            _ => status,
         })
         .collect()
 }
@@ -327,6 +344,20 @@ mod tests {
     }
 
     const CLASS: &str = r"App\GreeterTest";
+
+    #[test]
+    fn a_live_result_supersedes_the_recorded_one_per_marker() {
+        let mut live = tree_with_class();
+        let mut recorded = tree_with_class();
+        run(&mut live, CLASS, "testA", "pass", 1);
+        run(&mut recorded, CLASS, "testA", "fail:old", 1);
+        run(&mut recorded, CLASS, "testB", "fail:kept", 1);
+        let merged = with_history(statuses(&live), statuses(&recorded));
+        assert_eq!(state_at(&merged, 4).state, MarkerState::Passed);
+        assert_eq!(state_at(&merged, 5).state, MarkerState::Failed);
+        assert_eq!(state_at(&merged, 5).message, "kept");
+        assert_eq!(state_at(&merged, 6).state, MarkerState::NeverRun);
+    }
 
     #[test]
     fn markers_without_a_run_are_never_run() {

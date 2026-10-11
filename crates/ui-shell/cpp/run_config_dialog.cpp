@@ -262,8 +262,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.phpunit = phpUnitPage->options();
         const QString preview = editor->commandPreview(form);
         commandPreviewEdit->setPlainText(preview);
-        e2eMark(QStringLiteral("{\"ev\":\"run_config_preview\",\"kind\":%1,\"preview\":%2}")
-                  .arg(e2eJson(*currentKind), e2eJson(preview)));
+        e2eMark(QStringLiteral("{\"ev\":\"run_config_preview\",\"kind\":%1,\"preview\":%2,\"name\":%3}")
+                  .arg(e2eJson(*currentKind), e2eJson(preview), e2eJson(nameEdit->text())));
     };
 
     const auto loadForm = [=](int index) {
@@ -461,11 +461,14 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         const QRect programRect(programEdit->mapToGlobal(QPoint(0, 0)), programEdit->size());
         QPushButton *saveButton = buttons->button(QDialogButtonBox::Save);
         const QRect saveRect(saveButton->mapToGlobal(QPoint(0, 0)), saveButton->size());
+        const QRect listRect(list->mapToGlobal(QPoint(0, 0)), list->size());
         e2eMark(QStringLiteral("{\"ev\":\"dialog_shown\",\"name\":\"run_config_dialog\","
-                                "\"add_rect\":%1,\"program_rect\":%2,\"save_rect\":%3}")
+                                "\"add_rect\":%1,\"program_rect\":%2,\"save_rect\":%3,"
+                                "\"list_rect\":%4}")
                   .arg(rectJson(addRect))
                   .arg(rectJson(programRect))
-                  .arg(rectJson(saveRect)));
+                  .arg(rectJson(saveRect))
+                  .arg(rectJson(listRect)));
     });
     dialog.exec();
 }

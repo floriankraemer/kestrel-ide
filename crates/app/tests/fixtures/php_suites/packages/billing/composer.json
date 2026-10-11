@@ -1,0 +1,25 @@
+{
+    "name": "ide/billing",
+    "description": "A monorepo package with its own PHPUnit",
+    "type": "library",
+    "require": {
+        "php": ">=8.3"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Billing\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Billing\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable"
+}

@@ -67,6 +67,7 @@ public:
     // has a real screen geometry before the dock is actually shown.
     void markE2eToolbar() const;
     void markE2eRows() const;
+    void markE2eFailureLink() const;
 
 private:
     void onTestRunPreparing();

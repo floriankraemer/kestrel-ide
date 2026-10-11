@@ -309,6 +309,13 @@ void EditorTabs::openFileAtLine(const QString &path, int line, int column)
     moveCursorToByteColumn(editor, line, column);
     recordCurrentPosition();
     navigationChanged();
+    // Where a jump (Go to Test, Tests dock, failure link) landed: the tab it
+    // reused or opened, and the caret's 0-based line.
+    const quint64 tabId = editor->property("tabId").toULongLong();
+    e2eMark(QStringLiteral("{\"ev\":\"opened_at\",\"tab_id\":%1,\"path\":%2,\"caret_line\":%3}")
+              .arg(tabId)
+              .arg(e2eJson(docManager_->tabPath(tabId)))
+              .arg(editor->textCursor().blockNumber()));
 }
 
 void EditorTabs::jumpWithinCurrentTab(int line, int column)

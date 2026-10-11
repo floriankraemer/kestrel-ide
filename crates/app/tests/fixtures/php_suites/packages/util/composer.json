@@ -1,0 +1,10 @@
+{
+    "name": "ide/util",
+    "description": "A monorepo package that only autoloads",
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+            "Util\\": "src/"
+        }
+    }
+}

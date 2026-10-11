@@ -21,11 +21,11 @@ use crate::support::{buffer, fixture, open_file, rect_centre, wait_for_index, AP
 /// `e2e::wait::DEFAULT_TIMEOUT` is tight for a real Composer, Intelephense
 /// index or PHPStan run in Docker, so every wait on one of those gets this
 /// ceiling via `Ide::wait_for_event_within`.
-const REAL_TOOLCHAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+pub(crate) const REAL_TOOLCHAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 /// Skip (never fail) unless `IDE_E2E_PHP=1` — set by `make php-ci` inside
 /// the `linux-php` image. Called first thing in every `#[test]` below.
-fn require_php_e2e() -> bool {
+pub(crate) fn require_php_e2e() -> bool {
     let enabled = std::env::var("IDE_E2E_PHP").as_deref() == Ok("1");
     if !enabled {
         eprintln!(
@@ -52,7 +52,7 @@ fn php_project() -> tempfile::TempDir {
     dir
 }
 
-fn copy_fixture(from: &Path, to: &Path) {
+pub(crate) fn copy_fixture(from: &Path, to: &Path) {
     for entry in std::fs::read_dir(from).unwrap_or_else(|e| panic!("{}: {e}", from.display())) {
         let entry = entry.expect("fixture entry");
         let target: PathBuf = to.join(entry.file_name());
@@ -69,13 +69,13 @@ fn copy_fixture(from: &Path, to: &Path) {
 /// `/opt/vscode-home`) rather than the harness' throwaway one, so the PHP
 /// debug adapter's `$HOME/.vscode/extensions` auto-locate finds
 /// vscode-php-debug.
-fn launch_php(name: &str, project: &Path) -> Ide {
+pub(crate) fn launch_php(name: &str, project: &Path) -> Ide {
     let home = std::env::var("HOME").expect("HOME");
     Ide::launch_with_env(name, APP, project, &[("HOME", home.as_str())])
 }
 
 /// Write the project's own `.ide/settings.toml` before the app launches.
-fn write_project_settings(project: &Path, toml: &str) {
+pub(crate) fn write_project_settings(project: &Path, toml: &str) {
     std::fs::create_dir_all(project.join(".ide")).expect(".ide");
     std::fs::write(project.join(".ide/settings.toml"), toml).expect("project settings");
 }
@@ -96,7 +96,7 @@ fn wait_for_problem(ide: &Ide, mark: Mark, source: &str, file: &str) -> Value {
 
 /// Show a dock through the View menu (most docks have no default shortcut)
 /// and focus the main window again.
-fn open_view_item(ide: &Ide, label: &str) -> Mark {
+pub(crate) fn open_view_item(ide: &Ide, label: &str) -> Mark {
     let mark = ide.mark();
     ide.key("alt+v");
     let item = ide.wait_for_event(mark, &format!("the {label} item in the View menu"), |e| {
@@ -268,7 +268,7 @@ fn e2e_php_real_phpcbf_fix_applies_to_an_unsaved_buffer() {
 
 /// Put a breakpoint on 1-based `line` of the open file's tab and wait until
 /// it reaches the gutter.
-fn toggle_breakpoint_at(ide: &Ide, line: usize) {
+pub(crate) fn toggle_breakpoint_at(ide: &Ide, line: usize) {
     ide.focus_main();
     ide.key("ctrl+Home");
     for _ in 1..line {
@@ -282,7 +282,7 @@ fn toggle_breakpoint_at(ide: &Ide, line: usize) {
 }
 
 /// Wait for a stop at `line`, then for its variables.
-fn wait_for_stop_at(ide: &Ide, mark: Mark, line: u64) -> Value {
+pub(crate) fn wait_for_stop_at(ide: &Ide, mark: Mark, line: u64) -> Value {
     let stopped = ide.wait_for_event_within(
         mark,
         REAL_TOOLCHAIN_TIMEOUT,
@@ -483,7 +483,7 @@ fn e2e_php_real_listen_session_serves_triggered_requests() {
 /// Click the gutter's Run icon on 0-based `line` of tab `tab_id` (its latest
 /// reported position), then the popup entry whose label starts with
 /// `prefix`.
-fn choose_gutter_action(ide: &Ide, tab_id: u64, line: u64, prefix: &str) {
+pub(crate) fn choose_gutter_action(ide: &Ide, tab_id: u64, line: u64, prefix: &str) {
     let rect = e2e::wait_for(
         &format!("a run icon on line {line} of tab {tab_id}"),
         || {
@@ -511,7 +511,7 @@ fn choose_gutter_action(ide: &Ide, tab_id: u64, line: u64, prefix: &str) {
 }
 
 /// Wait for the test run that started after `mark` to finish.
-fn wait_for_test_run(ide: &Ide, mark: Mark) -> Value {
+pub(crate) fn wait_for_test_run(ide: &Ide, mark: Mark) -> Value {
     ide.wait_for_event_within(
         mark,
         REAL_TOOLCHAIN_TIMEOUT,
@@ -523,7 +523,7 @@ fn wait_for_test_run(ide: &Ide, mark: Mark) -> Value {
 /// The last reported status of the test row called `name` after `mark`
 /// (the tree is rebuilt on every TeamCity event, so only the last mark of a
 /// row is its settled state).
-fn test_status(ide: &Ide, mark: Mark, name: &str) -> Option<String> {
+pub(crate) fn test_status(ide: &Ide, mark: Mark, name: &str) -> Option<String> {
     ide.events_since_of(mark, "test_tree_row")
         .iter()
         .rev()

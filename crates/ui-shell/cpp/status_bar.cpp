@@ -74,6 +74,13 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     // is static since only UTF-8 is supported today (US-2b's binary-file
     // rejection already rules out anything else reaching an open tab).
     auto *statusBar = window->statusBar();
+    // Every transient status-bar sentence ("No test found for …", a refused
+    // run's reason) — the one place they are all seen.
+    QObject::connect(statusBar, &QStatusBar::messageChanged, statusBar, [](const QString &text) {
+        if (!text.isEmpty()) {
+            e2eMark(QStringLiteral("{\"ev\":\"status_message\",\"text\":%1}").arg(e2eJson(text)));
+        }
+    });
     auto *languageLabel = new QLabel(statusBar);
     auto *positionLabel = new QLabel(statusBar);
     auto *encodingLabel = new QLabel(QStringLiteral("UTF-8"), statusBar);

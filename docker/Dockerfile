@@ -455,6 +455,14 @@ COPY crates/app/tests/fixtures/php_app/composer.json crates/app/tests/fixtures/p
 RUN cd /tmp/php_app && composer install --no-interaction --no-progress \
     && rm -rf /tmp/php_app \
     && chmod -R a+rwX /opt/php-cache
+# The PHPUnit editor runs acceptance fixture (E8): its root lock (whose
+# packages `packages/billing`'s lock repeats) and its Pest package's lock.
+COPY crates/app/tests/fixtures/php_suites/composer.json crates/app/tests/fixtures/php_suites/composer.lock /tmp/php_suites/
+COPY crates/app/tests/fixtures/php_suites/packages/pest/composer.json crates/app/tests/fixtures/php_suites/packages/pest/composer.lock /tmp/php_suites_pest/
+RUN cd /tmp/php_suites && composer install --no-interaction --no-progress --no-autoloader \
+    && cd /tmp/php_suites_pest && composer install --no-interaction --no-progress --no-autoloader \
+    && rm -rf /tmp/php_suites /tmp/php_suites_pest \
+    && chmod -R a+rwX /opt/php-cache
 
 # ---------------------------------------------------------------------------
 # linux-artifact-builder: linux-builder + baked-in source, for buildx

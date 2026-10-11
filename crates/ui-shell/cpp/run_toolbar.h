@@ -67,6 +67,7 @@ public:
 private:
     void refreshConfigurations();
     void refreshButtons();
+    void markE2eSelection() const;
     QString selectedConfigId() const;
     // The trailing "Save '<name>' Configuration" row, shown while the
     // selection is a temporary configuration (G9).

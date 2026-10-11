@@ -22,6 +22,7 @@
 #include <QPolygon>
 #include <QScrollBar>
 #include <QTextBlock>
+#include <QStringList>
 #include <QToolTip>
 
 namespace ui_shell {
@@ -131,6 +132,21 @@ void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF
     }
     painter.restore();
 }
+// The glyph's name in the `run_marker_statuses` E2E mark.
+const char *runMarkerGlyphName(RunMarkerGlyph glyph)
+{
+    switch (glyph) {
+    case RunMarkerGlyph::Passed:
+        return "passed";
+    case RunMarkerGlyph::Failed:
+        return "failed";
+    case RunMarkerGlyph::Ignored:
+        return "ignored";
+    case RunMarkerGlyph::Running:
+        break;
+    }
+    return "running";
+}
 } // namespace
 
 int CodeEditor::runMarkerWidth() const
@@ -190,6 +206,18 @@ void CodeEditor::setRunMarkerStatuses(const QHash<int, RunMarkerStatus> &statuse
     }
     runMarkerStatuses_ = statuses;
     lineNumberArea_->update();
+    if (e2eMarksEnabled()) {
+        QStringList markers;
+        for (auto it = statuses.cbegin(); it != statuses.cend(); ++it) {
+            markers << QStringLiteral("{\"line\":%1,\"status\":%2,\"tooltip\":%3}")
+                         .arg(it.key())
+                         .arg(e2eJson(QString::fromLatin1(runMarkerGlyphName(it->glyph))),
+                              e2eJson(it->tooltip));
+        }
+        e2eMark(QStringLiteral("{\"ev\":\"run_marker_statuses\",\"tab_id\":%1,\"markers\":[%2]}")
+                  .arg(property("tabId").toULongLong())
+                  .arg(markers.join(QLatin1Char(','))));
+    }
 }
 
 void CodeEditor::setCoverageLines(const QSet<int> &covered, const QSet<int> &uncovered)
@@ -536,6 +564,17 @@ void CodeEditor::lineNumberAreaMouseMoveEvent(QMouseEvent *event)
                     QToolTip::showText(lineNumberArea_->mapToGlobal(event->pos()), status->tooltip,
                                        lineNumberArea_,
                                        QRect(0, top, runMarkerWidth(), bottom - top));
+                    const QRect icon(lineNumberArea_->mapToGlobal(QPoint(0, top)),
+                                     QSize(runMarkerWidth(), bottom - top));
+                    e2eMark(QStringLiteral("{\"ev\":\"run_marker_tooltip\",\"tab_id\":%1,"
+                                           "\"line\":%2,\"text\":%3,\"icon\":[%4,%5,%6,%7]}")
+                              .arg(property("tabId").toULongLong())
+                              .arg(blockNumber)
+                              .arg(e2eJson(status->tooltip))
+                              .arg(icon.x())
+                              .arg(icon.y())
+                              .arg(icon.width())
+                              .arg(icon.height()));
                 } else {
                     QToolTip::hideText();
                 }

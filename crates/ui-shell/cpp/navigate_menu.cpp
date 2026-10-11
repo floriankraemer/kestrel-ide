@@ -2,6 +2,7 @@
 
 #include "declaration_navigator.h"
 #include "dock_layout.h"
+#include "e2e_mark.h"
 #include "editor_popup.h"
 #include "editor_tabs.h"
 #include "find_usages_panel.h"
@@ -49,6 +50,7 @@ void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
             editorTabs->openFileAtLine(path, line, 0);
         });
     }
+    e2eMarkMenuActions(&menu, "goto_test_menu_action");
     menu.exec(QCursor::pos());
 }
 
@@ -136,6 +138,7 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
       [navigator](int position) { navigator->resolveAt(position); });
 
     QMenu *navigateMenu = window->menuBar()->addMenu(QObject::tr("&Navigate"));
+    e2eMarkMenuActions(navigateMenu, "navigate_menu_action");
     QAction *goToDeclarationAction =
       registerAction(navigateMenu, QStringLiteral("navigate.goToDeclaration"),
                       QObject::tr("Go to Declaration"), appSettings, actions);
@@ -285,6 +288,7 @@ void wireEditorContextMenu(EditorTabs *editorTabs,
                 to->addAction(action);
             }
         };
+        e2eMarkMenuActions(menu, "editor_context_menu_action");
         menu->addSeparator();
         append(menu, QStringLiteral("navigate.goToDeclaration"));
         append(menu, QStringLiteral("navigate.findUsages"));
@@ -292,7 +296,9 @@ void wireEditorContextMenu(EditorTabs *editorTabs,
         append(menu, QStringLiteral("navigate.showTypeHierarchy"));
         if (QAction *goToTest = actions->value(goToTestId)) {
             relabelGoToTest(goToTest, editorTabs, testService);
-            menu->addMenu(QObject::tr("Go To"))->addAction(goToTest);
+            QMenu *goTo = menu->addMenu(QObject::tr("Go To"));
+            goTo->addAction(goToTest);
+            e2eMarkMenuActions(goTo, "editor_go_to_menu_action");
         }
         menu->addSeparator();
         append(menu, QStringLiteral("refactor.rename"));

@@ -6994,6 +6994,29 @@ mod ffi {
         Skipped,
     }
 
+    /// The icon a gutter test marker wears (PHPUnit editor runs plan, E3);
+    /// `php_core::test_status::MarkerState` decides which.
+    enum FfiMarkerState {
+        NeverRun,
+        Running,
+        Passed,
+        Failed,
+        Ignored,
+    }
+
+    /// One gutter marker's last-run result.
+    struct FfiMarkerStatus {
+        line: u32,
+        state: FfiMarkerState,
+        tooltip: QString,
+    }
+
+    /// One data set a gutter menu offers; an empty `id` is the "…" entry.
+    struct FfiDataSet {
+        id: QString,
+        label: QString,
+    }
+
     /// One row of the Coverage dock (PHP parity plan T5): a file or a
     /// directory with the executable lines beneath it.
     struct FfiCoverageRow {
@@ -7118,6 +7141,33 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "markerLines"]
         fn marker_lines(self: &TestService, path: &QString, text: &QString) -> Vec<u32>;
+
+        /// The last run's result for every marker in `text` (E3).
+        #[qinvokable]
+        #[cxx_name = "markerStatuses"]
+        fn marker_statuses(
+            self: &TestService,
+            path: &QString,
+            text: &QString,
+        ) -> Vec<FfiMarkerStatus>;
+
+        /// The data sets the last run executed for the method on `line`.
+        #[qinvokable]
+        #[cxx_name = "markerDataSets"]
+        fn marker_data_sets(
+            self: &TestService,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> Vec<FfiDataSet>;
+
+        #[qinvokable]
+        #[cxx_name = "runDataSet"]
+        fn run_data_set(self: Pin<&mut TestService>, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "prepareDebugDataSet"]
+        fn prepare_debug_data_set(self: Pin<&mut TestService>, id: &QString) -> FfiResult;
 
         /// What the marker on `line` is called, for its menu.
         #[qinvokable]

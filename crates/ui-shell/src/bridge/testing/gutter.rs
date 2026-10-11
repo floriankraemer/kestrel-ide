@@ -70,6 +70,17 @@ fn plan_caret_run(
     }
 }
 
+fn to_ffi_marker_state(state: php_core::test_status::MarkerState) -> ffi::FfiMarkerState {
+    use php_core::test_status::MarkerState;
+    match state {
+        MarkerState::NeverRun => ffi::FfiMarkerState::NeverRun,
+        MarkerState::Running => ffi::FfiMarkerState::Running,
+        MarkerState::Passed => ffi::FfiMarkerState::Passed,
+        MarkerState::Failed => ffi::FfiMarkerState::Failed,
+        MarkerState::Ignored => ffi::FfiMarkerState::Ignored,
+    }
+}
+
 fn no_marker() -> ffi::FfiResult {
     errors::failure(errors::CODE_REFUSED, "there is no test on this line")
 }
@@ -85,6 +96,87 @@ impl ffi::TestService {
             .into_iter()
             .map(|marker| marker.line)
             .collect()
+    }
+
+    /// The last run's result for every marker in `text`, for the gutter
+    /// icons; empty for a file that is not a PHP test.
+    pub fn marker_statuses(&self, path: &QString, text: &QString) -> Vec<ffi::FfiMarkerStatus> {
+        let path = path.to_string();
+        if !is_php_file(&path) {
+            return Vec::new();
+        }
+        let tree = self.tree.borrow();
+        let nodes = self.nodes_in(&tree, &path);
+        php_core::test_status::marker_statuses(&text.to_string(), &tree, &nodes)
+            .into_iter()
+            .map(|status| ffi::FfiMarkerStatus {
+                line: status.line,
+                state: to_ffi_marker_state(status.state),
+                tooltip: QString::from(status.tooltip.as_str()),
+            })
+            .collect()
+    }
+
+    /// The data sets the last run executed for the method marked on `line`,
+    /// each runnable on its own. An entry with an empty `id` stands for the
+    /// ones the menu left out.
+    pub fn marker_data_sets(
+        &self,
+        path: &QString,
+        text: &QString,
+        line: u32,
+    ) -> Vec<ffi::FfiDataSet> {
+        let path = path.to_string();
+        if !is_php_file(&path) {
+            return Vec::new();
+        }
+        let tree = self.tree.borrow();
+        let nodes = self.nodes_in(&tree, &path);
+        let choices = php_core::test_status::data_sets(&text.to_string(), line, &tree, &nodes);
+        let more = (choices.hidden > 0).then(|| ffi::FfiDataSet {
+            id: QString::default(),
+            label: QString::from(format!("… ({} more)", choices.hidden).as_str()),
+        });
+        choices
+            .shown
+            .into_iter()
+            .map(|set| ffi::FfiDataSet {
+                id: QString::from(set.id.as_str()),
+                label: QString::from(set.label.as_str()),
+            })
+            .chain(more)
+            .collect()
+    }
+
+    /// Run one data set of the last run, by the id `marker_data_sets` gave.
+    pub fn run_data_set(self: Pin<&mut Self>, id: &QString) -> ffi::FfiResult {
+        self.start(
+            Some(RerunSelection::Node(test_core::TestId(id.to_string()))),
+            Vec::new(),
+            false,
+        )
+    }
+
+    /// Stage one data set for debugging, like [`Self::prepare_debug_marker`].
+    pub fn prepare_debug_data_set(self: Pin<&mut Self>, id: &QString) -> ffi::FfiResult {
+        *self.pending_debug.borrow_mut() =
+            Some(RerunSelection::Node(test_core::TestId(id.to_string())));
+        ffi::FfiResult::default()
+    }
+
+    /// The tree's nodes located in `path`, mapped through the last run's host.
+    fn nodes_in<'t>(
+        &self,
+        tree: &'t test_core::TestTree,
+        path: &str,
+    ) -> Vec<&'t test_core::TestNode> {
+        let Some(root) = super::current_project_root() else {
+            return Vec::new();
+        };
+        let host = (*self.run_host.borrow())
+            .clone()
+            .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&root));
+        tree.nodes_in_file(&host, &root, std::path::Path::new(path))
     }
 
     /// The name a marker's menu shows, empty when `line` has no marker.
@@ -117,7 +209,7 @@ impl ffi::TestService {
                 self.start(Some(RerunSelection::Marker(marker)), Vec::new(), false)
             }
             CaretRun::Debug(marker) => {
-                *self.pending_debug.borrow_mut() = Some(marker);
+                *self.pending_debug.borrow_mut() = Some(RerunSelection::Marker(marker));
                 ffi::FfiResult::default()
             }
             CaretRun::PlainRun => errors::failure(errors::CODE_NOT_A_TEST, "not a test file"),
@@ -154,7 +246,7 @@ impl ffi::TestService {
     ) -> ffi::FfiResult {
         match marker_at(path, text, line) {
             Some(marker) => {
-                *self.pending_debug.borrow_mut() = Some(marker);
+                *self.pending_debug.borrow_mut() = Some(RerunSelection::Marker(marker));
                 ffi::FfiResult::default()
             }
             None => no_marker(),
@@ -170,10 +262,10 @@ impl ffi::TestService {
                 "the extra environment is not a list of pairs",
             );
         };
-        let Some(marker) = self.pending_debug.borrow_mut().take() else {
+        let Some(selection) = self.pending_debug.borrow_mut().take() else {
             return errors::failure(errors::CODE_REFUSED, "no test is waiting to be debugged");
         };
-        self.start(Some(RerunSelection::Marker(marker)), env, false)
+        self.start(Some(selection), env, false)
     }
 }
 

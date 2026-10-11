@@ -163,7 +163,8 @@ impl TestTree {
             .collect()
     }
 
-    fn leaves_under(&self, id: &TestId) -> Vec<TestId> {
+    /// The leaf tests at or below `id`, in tree order.
+    pub fn leaves_under(&self, id: &TestId) -> Vec<TestId> {
         let Some(node) = self.nodes.get(id) else {
             return Vec::new();
         };
@@ -312,10 +313,10 @@ impl TestTree {
                 if let Some(node) = self.nodes.get_mut(&id) {
                     node.duration_ms = duration_ms;
                     // A `testFailed` message always precedes `testFinished`
-                    // for the same test (TeamCity's own protocol order);
-                    // only promote to `Passed` if nothing already marked
-                    // it `Failed`.
-                    if node.status != TestStatus::Failed {
+                    // for the same test (TeamCity's own protocol order), and
+                    // so does `testIgnored`; only promote to `Passed` if
+                    // nothing already marked it `Failed` or `Skipped`.
+                    if !matches!(node.status, TestStatus::Failed | TestStatus::Skipped) {
                         node.status = TestStatus::Passed;
                     }
                 }
@@ -531,6 +532,25 @@ mod tests {
             parent: None,
             name: "testSkip".into(),
             message: "not ready".into(),
+        });
+        assert_eq!(
+            tree.node(&id("testSkip")).unwrap().status,
+            TestStatus::Skipped
+        );
+    }
+
+    #[test]
+    fn a_finished_event_after_an_ignored_one_keeps_the_test_skipped() {
+        let mut tree = TestTree::new();
+        tree.apply(TeamCityEvent::TestIgnored {
+            parent: None,
+            name: "testSkip".into(),
+            message: "not ready".into(),
+        });
+        tree.apply(TeamCityEvent::TestFinished {
+            parent: None,
+            name: "testSkip".into(),
+            duration_ms: Some(1),
         });
         assert_eq!(
             tree.node(&id("testSkip")).unwrap().status,

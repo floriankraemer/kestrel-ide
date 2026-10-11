@@ -677,6 +677,10 @@ public:
     // carry a Run icon, and push them into the gutter.
     void refreshRunMarker(CodeEditor *editor);
     void refreshRunMarkers();
+    // E3: only the test result icons, for the throttled `testTreeChanged`
+    // repaint — the run lines themselves cannot have moved.
+    void refreshRunMarkerStatuses();
+    void pushRunMarkerStatuses(CodeEditor *editor, const QString &path);
     // The gutter Run icon on `line` (or `run.runContext`, line 0) fired:
     // launch this editor's file through `RunService::runContext`, or show
     // the Dockerfile/compose popup (C5/C6) scoped to that line.

@@ -7,7 +7,10 @@
 #include <QCloseEvent>
 #include <QCoreApplication>
 #include <QKeyEvent>
+#include <QGuiApplication>
 #include <QRect>
+#include <QScreen>
+#include <QWindow>
 #include <QString>
 
 #ifdef Q_OS_WIN
@@ -98,6 +101,24 @@ void IdeMainWindow::closeEvent(QCloseEvent *event)
         docManager_->shutdownMcpServer();
     }
     QMainWindow::closeEvent(event);
+}
+
+void placeRestored(QMainWindow *window, AppSettings *appSettings)
+{
+    // The Qt-free side decides the rect; the view only reports the screens
+    // and the native frame's top margin (known once the native window exists).
+    ::rust::Vec<FfiWindowGeometry> screenRects;
+    for (const QScreen *screen : QGuiApplication::screens()) {
+        const QRect r = screen->availableGeometry();
+        screenRects.push_back({r.x(), r.y(), static_cast<quint32>(r.width()),
+                               static_cast<quint32>(r.height())});
+    }
+    window->winId();
+    const QWindow *handle = window->windowHandle();
+    const int titleInset = handle ? handle->frameMargins().top() : 0;
+    const FfiWindowGeometry g = appSettings->placedWindowGeometry(
+        std::move(screenRects), static_cast<quint32>(qMax(0, titleInset)));
+    window->setGeometry(g.x, g.y, static_cast<int>(g.width), static_cast<int>(g.height));
 }
 
 void showRestored(QMainWindow *window, AppSettings *appSettings)

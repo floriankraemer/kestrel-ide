@@ -673,14 +673,7 @@ void buildMainWindow(AppSettings *appSettings,
     // the other per-window settings-page editors above.
     auto *analysisEditor = new AnalysisEditor(window);
 
-    const FfiWindowGeometry savedGeometry = appSettings->windowGeometry();
-    if (savedGeometry.width > 0 && savedGeometry.height > 0) {
-        window->setGeometry(savedGeometry.x, savedGeometry.y,
-                             static_cast<int>(savedGeometry.width),
-                             static_cast<int>(savedGeometry.height));
-    } else {
-        window->resize(1280, 800);
-    }
+    placeRestored(window, appSettings);
 
     progress(2, QObject::tr("Starting services..."));
 

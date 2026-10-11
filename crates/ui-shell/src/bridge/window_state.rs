@@ -16,16 +16,37 @@ use cxx_qt_lib::QString;
 
 use crate::bridge::ffi::{self, FfiWindowGeometry};
 
+fn to_ffi(g: &app_config::WindowGeometry) -> FfiWindowGeometry {
+    FfiWindowGeometry {
+        x: g.x,
+        y: g.y,
+        width: g.width,
+        height: g.height,
+    }
+}
+
+fn from_ffi(g: &FfiWindowGeometry) -> app_config::WindowGeometry {
+    app_config::WindowGeometry {
+        x: g.x,
+        y: g.y,
+        width: g.width,
+        height: g.height,
+    }
+}
+
 impl ffi::AppSettings {
-    pub fn window_geometry(&self) -> FfiWindowGeometry {
+    pub fn placed_window_geometry(
+        &self,
+        screens: Vec<FfiWindowGeometry>,
+        title_inset: u32,
+    ) -> FfiWindowGeometry {
         let settings = app_config::load(&app_core::resolve_config_dir()).unwrap_or_default();
-        let g = settings.window_geometry;
-        FfiWindowGeometry {
-            x: g.x,
-            y: g.y,
-            width: g.width,
-            height: g.height,
-        }
+        let screens: Vec<_> = screens.iter().map(from_ffi).collect();
+        to_ffi(
+            &settings
+                .window_geometry
+                .placed_within(&screens, title_inset),
+        )
     }
 
     pub fn save_window_geometry(&self, x: i32, y: i32, width: u32, height: u32) {

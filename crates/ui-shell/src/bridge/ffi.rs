@@ -3347,11 +3347,18 @@ mod ffi {
         #[cxx_name = "recentProjects"]
         fn recent_projects(self: &AppSettings) -> QStringList;
 
-        /// Last-persisted main window geometry, or all-zero if none was
-        /// ever saved (L1).
+        /// Where the main window opens: the saved geometry kept on a screen
+        /// that shows its title bar, else the default size centred on the
+        /// primary screen. `screens` are the available rects in logical
+        /// pixels, primary first; `title_inset` is the native frame's top
+        /// margin (0 while unknown).
         #[qinvokable]
-        #[cxx_name = "windowGeometry"]
-        fn window_geometry(self: &AppSettings) -> FfiWindowGeometry;
+        #[cxx_name = "placedWindowGeometry"]
+        fn placed_window_geometry(
+            self: &AppSettings,
+            screens: Vec<FfiWindowGeometry>,
+            title_inset: u32,
+        ) -> FfiWindowGeometry;
 
         /// Persist the main window's geometry (L1's `closeEvent`).
         #[qinvokable]

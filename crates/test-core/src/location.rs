@@ -52,11 +52,7 @@ impl TestLocation {
     /// absolute one maps through `host` (WSL `/home/..` becomes
     /// `\\wsl.localhost\..`, a container mount its bind source).
     pub fn local_path(&self, host: &ExecHost, work_dir: &Path) -> PathBuf {
-        if self.is_absolute() {
-            host.path_from_tool(&self.file)
-        } else {
-            work_dir.join(&self.file)
-        }
+        local_path(&self.file, host, work_dir)
     }
 
     /// This location with a relative [`Self::file`] made absolute on `host`
@@ -70,9 +66,22 @@ impl TestLocation {
     }
 
     fn is_absolute(&self) -> bool {
-        self.file.starts_with('/')
-            || self.file.starts_with('\\')
-            || self.file.as_bytes().get(1) == Some(&b':')
+        is_absolute(&self.file)
+    }
+}
+
+fn is_absolute(file: &str) -> bool {
+    file.starts_with('/') || file.starts_with('\\') || file.as_bytes().get(1) == Some(&b':')
+}
+
+/// A path a test process printed, on this machine: a relative one joins
+/// the `work_dir` of the run that printed it, an absolute one maps through
+/// that run's `host`.
+pub fn local_path(file: &str, host: &ExecHost, work_dir: &Path) -> PathBuf {
+    if is_absolute(file) {
+        host.path_from_tool(file)
+    } else {
+        work_dir.join(file)
     }
 }
 

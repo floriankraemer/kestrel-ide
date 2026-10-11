@@ -3423,6 +3423,14 @@
         <source>Start Listening for PHP Debug Connections</source>
         <translation>Écouter les connexions de débogage PHP</translation>
     </message>
+    <message>
+        <source>Save '%1' Configuration</source>
+        <translation>Enregistrer la configuration '%1'</translation>
+    </message>
+    <message>
+        <source>Save Configuration</source>
+        <translation>Enregistrer la configuration</translation>
+    </message>
 </context>
 <context>
     <name>SearchEverywhereDialog</name>
@@ -3660,6 +3668,14 @@
         <source>Select a failed test to see why it failed.</source>
         <translation>Sélectionnez un test en échec pour voir pourquoi il a échoué.</translation>
     </message>
+    <message>
+        <source>Preparing...</source>
+        <translation>Préparation…</translation>
+    </message>
+    <message>
+        <source>Run stopped.</source>
+        <translation>Exécution arrêtée.</translation>
+    </message>
 </context>
 <context>
     <name>CoveragePanel</name>
@@ -3833,6 +3849,14 @@
     <message>
         <source>phpunit.xml</source>
         <translation>phpunit.xml</translation>
+    </message>
+    <message>
+        <source>Interpreter options:</source>
+        <translation>Options de l'interpréteur :</translation>
+    </message>
+    <message>
+        <source>e.g. -d memory_limit=-1</source>
+        <translation>p. ex. -d memory_limit=-1</translation>
     </message>
 </context>
 <context>

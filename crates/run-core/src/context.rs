@@ -291,6 +291,19 @@ pub fn remember_temporary(configs: &mut Vec<RunConfig>, config: RunConfig) {
     });
 }
 
+/// Make the temporary configuration `id` a saved one — IntelliJ's "Save
+/// '<name>' Configuration": it keeps its id and contents and is never
+/// evicted again. `false` when `configs` holds no temporary entry `id`.
+pub fn save_temporary(configs: &mut [RunConfig], id: &str) -> bool {
+    match configs.iter_mut().find(|c| c.id == id && c.temporary) {
+        Some(config) => {
+            config.temporary = false;
+            true
+        }
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,5 +522,18 @@ mod tests {
         }
         assert_eq!(configs.len(), TEMPORARY_CAP + 1);
         assert_eq!(configs[0].id, "saved");
+    }
+
+    #[test]
+    fn a_saved_temporary_configuration_survives_the_cap() {
+        let mut configs = vec![temp("kept")];
+        assert!(save_temporary(&mut configs, "kept"));
+        assert!(!configs[0].temporary);
+        assert!(!save_temporary(&mut configs, "kept"), "already saved");
+        assert!(!save_temporary(&mut configs, "missing"));
+        for i in 0..TEMPORARY_CAP + 3 {
+            remember_temporary(&mut configs, temp(&format!("t{i}")));
+        }
+        assert_eq!(configs[0].id, "kept");
     }
 }

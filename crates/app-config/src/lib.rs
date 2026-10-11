@@ -49,9 +49,9 @@ pub mod resolved_cache; // Shared cache of resolved settings reads; `save`/`upda
 /// the committed project settings file.
 pub mod vcs_local_settings;
 
-/// Machine-local breakpoints, under `.ide/local/` for the same reason
-/// (D2-4).
+/// Machine-local breakpoints (D2-4) and test results (G4), under `.ide/local/` too.
 pub mod breakpoint_settings;
+pub mod test_history;
 
 /// What a launch is made of: run configurations, their before-launch tasks,
 /// and debug adapter overrides. Split out of this file when it reached its

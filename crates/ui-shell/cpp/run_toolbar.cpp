@@ -22,6 +22,10 @@ namespace {
 // Run/Stop/Rerun cluster: transparent background, `--r-ctl` hover tint,
 // no visible label — the glyph and the tooltip carry the meaning instead.
 constexpr int kButtonSide = tokens::kToolbarHeight - 10;
+// Combo item data: whether the row's configuration is temporary.
+constexpr int kTemporaryRole = Qt::UserRole + 1;
+// Combo item data of the Save row; no configuration id looks like it.
+const QString kSaveRowData = QStringLiteral("ide:save-configuration-row");
 constexpr int kIconSide = 15;
 
 QToolButton *makeGlyphButton(const QString &accessibleName, const QString &tooltip,
@@ -215,7 +219,19 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
 
     connect(runService_, &RunService::configurationsChanged, this,
             &RunToolbar::refreshConfigurations);
-    connect(configCombo_, &QComboBox::currentIndexChanged, this, &RunToolbar::refreshButtons);
+    connect(configCombo_, &QComboBox::currentIndexChanged, this, [this]() {
+        if (configCombo_->currentData().toString() == kSaveRowData) {
+            return; // `activated` saves and goes back to the configuration.
+        }
+        lastConfigId_ = selectedConfigId();
+        refreshSaveRow();
+        refreshButtons();
+    });
+    connect(configCombo_, &QComboBox::activated, this, [this](int index) {
+        if (configCombo_->itemData(index).toString() == kSaveRowData) {
+            saveSelectedTemporary();
+        }
+    });
     connect(runButton_, &QToolButton::clicked, this, &RunToolbar::runSelected);
     connect(stopButton_, &QToolButton::clicked, this, &RunToolbar::stopSelected);
     connect(rerunButton_, &QToolButton::clicked, this, &RunToolbar::rerunSelected);
@@ -269,17 +285,22 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
 
 void RunToolbar::refreshConfigurations()
 {
-    const QString keepId = selectedConfigId();
+    const QString keepId = lastConfigId_;
     const QSignalBlocker blocker(configCombo_);
     configCombo_->clear();
     int keepIndex = -1;
+    int configCount = 0;
     for (const FfiRunConfig &config : runService_->configurations()) {
         configCombo_->addItem(config.name, config.id);
+        configCombo_->setItemData(configCombo_->count() - 1, config.temporary, kTemporaryRole);
+        ++configCount;
         if (config.id == keepId) {
             keepIndex = configCombo_->count() - 1;
         }
     }
     configCombo_->setCurrentIndex(keepIndex >= 0 ? keepIndex : 0);
+    lastConfigId_ = selectedConfigId();
+    refreshSaveRow();
     refreshButtons();
 
     // The only signal an E2E flow has that a just-detected or just-persisted
@@ -287,7 +308,34 @@ void RunToolbar::refreshConfigurations()
     // is read fresh from disk on every call, so nothing else here marks a
     // moment worth waiting for.
     e2eMark(QStringLiteral("{\"ev\":\"run_configurations_changed\",\"count\":%1}")
-              .arg(configCombo_->count()));
+              .arg(configCount));
+}
+
+void RunToolbar::refreshSaveRow()
+{
+    const QSignalBlocker blocker(configCombo_);
+    const int saveRow = configCombo_->findData(kSaveRowData);
+    if (saveRow >= 0) {
+        configCombo_->removeItem(saveRow);
+        configCombo_->removeItem(saveRow - 1); // its separator
+    }
+    const int current = configCombo_->currentIndex();
+    if (current < 0 || !configCombo_->itemData(current, kTemporaryRole).toBool()) {
+        return;
+    }
+    configCombo_->insertSeparator(configCombo_->count());
+    configCombo_->addItem(tr("Save '%1' Configuration").arg(configCombo_->itemText(current)),
+                          kSaveRowData);
+}
+
+void RunToolbar::saveSelectedTemporary()
+{
+    const QString configId = lastConfigId_;
+    selectConfiguration(configId);
+    const FfiResult result = runService_->saveConfiguration(configId);
+    if (result.code != 0) {
+        QMessageBox::warning(this, tr("Save Configuration"), result.message);
+    }
 }
 
 void RunToolbar::selectConfiguration(const QString &configId)

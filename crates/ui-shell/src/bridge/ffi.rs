@@ -1587,6 +1587,7 @@ mod ffi {
         exclude_groups: QString,
         runner_options: QString,
         interpreter: QString,
+        interpreter_options: QString,
         working_directory: QString,
     }
 
@@ -7101,6 +7102,8 @@ mod ffi {
         paths: QStringList,
         /// Each file's project-relative label for the chooser.
         labels: QStringList,
+        /// Each file's 1-based line to open at: the tested method's, else 1.
+        lines: Vec<u32>,
     }
 
     /// What the project tree's test entries call their run (E6):
@@ -7291,13 +7294,20 @@ mod ffi {
         #[cxx_name = "isTestFile"]
         fn is_test_file(self: &TestService, path: &QString, text: &QString) -> bool;
 
-        /// Go to Test / Test Subject (E7) from `path` holding `text`,
-        /// resolved on a worker thread (the project may sit behind a slow
-        /// `\\wsl.localhost` share); answers through `testNavigationReady`.
-        /// One search runs at a time and only the latest request answers.
+        /// Go to Test / Test Subject (E7) from `path` holding `text`, the
+        /// caret on the 0-based `caret_line` (a test method's jump lands on
+        /// the tested method, G11), resolved on a worker thread (the project
+        /// may sit behind a slow `\\wsl.localhost` share); answers through
+        /// `testNavigationReady`. One search runs at a time and only the
+        /// latest request answers.
         #[qinvokable]
         #[cxx_name = "requestTestNavigation"]
-        fn request_test_navigation(self: Pin<&mut TestService>, path: &QString, text: &QString);
+        fn request_test_navigation(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            caret_line: u32,
+        );
 
         /// Drop the answer of any Go to Test search in flight: the user
         /// moved on to another tab.
@@ -7479,9 +7489,15 @@ mod ffi {
         #[cxx_name = "coverageChanged"]
         fn coverage_changed(self: Pin<&mut TestService>);
 
-        /// Stop the run in progress, if any.
+        /// Stop the run in progress, if any, or the one being prepared.
         #[qinvokable]
         fn stop(self: Pin<&mut TestService>);
+
+        /// Show a refusal `result` (code not `CODE_OK`) where the Tests
+        /// dock's own refusals show: `testRunRefused`.
+        #[qinvokable]
+        #[cxx_name = "reportRefusal"]
+        fn report_refusal(self: Pin<&mut TestService>, result: &FfiResult);
 
         /// Make this the service a `phpunit` before-launch task runs on, so
         /// its results fill this Tests dock (#416).
@@ -7522,10 +7538,24 @@ mod ffi {
         );
 
         /// A run that was accepted could not start once its package,
-        /// configuration and framework were found: `message` says why.
+        /// configuration and framework were found, or was refused before it
+        /// reached this service (`reportRefusal`): `result` says why.
         #[qsignal]
         #[cxx_name = "testRunRefused"]
-        fn test_run_refused(self: Pin<&mut TestService>, message: QString);
+        fn test_run_refused(self: Pin<&mut TestService>, result: FfiResult);
+
+        /// A run is being prepared: its package, configuration and framework
+        /// program are being found (a probe in WSL or a container may take
+        /// a while). Stop ends it.
+        #[qsignal]
+        #[cxx_name = "testRunPreparing"]
+        fn test_run_preparing(self: Pin<&mut TestService>);
+
+        /// Stop ended the run being prepared before it started: not a
+        /// refusal, the user asked for it.
+        #[qsignal]
+        #[cxx_name = "testRunStopped"]
+        fn test_run_stopped(self: Pin<&mut TestService>);
     }
 
     impl cxx_qt::Threading for TestService {}
@@ -10343,6 +10373,12 @@ mod ffi {
         /// with no project open.
         #[qinvokable]
         fn configurations(self: &RunService) -> Vec<FfiRunConfig>;
+
+        /// Save the temporary configuration `config_id`, which stops it
+        /// being evicted (IntelliJ's "Save '<name>' Configuration", G9).
+        #[qinvokable]
+        #[cxx_name = "saveConfiguration"]
+        fn save_configuration(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
 
         /// Scan the project (`Cargo.toml`, `package.json`, `Makefile`) for
         /// launchable targets on the worker thread, merge the result into

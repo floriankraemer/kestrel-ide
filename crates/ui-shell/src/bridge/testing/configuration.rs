@@ -111,7 +111,7 @@ pub(crate) fn preview(config: &run_core::RunConfig, root: &Path) -> String {
         let settings = settings_for(root, Some(&run));
         let work_dir = root.join(run.plan.working_directory.as_deref().unwrap_or_default());
         let framework = super::Framework::detect(root, &work_dir, &settings, true)?;
-        let (program, args) = framework.command(&settings, framework.scoped(&run)?);
+        let (program, args) = framework.command(&settings, Some(&run), framework.scoped(&run)?);
         Ok([program.display().to_string()]
             .into_iter()
             .chain(args)

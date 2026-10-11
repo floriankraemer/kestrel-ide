@@ -93,9 +93,13 @@ impl ffi::TestService {
         cache.by_dir.get(dir).cloned()
     }
 
-    /// Remember the package a run's worker found for `dir`.
-    pub(super) fn cache_package(&self, dir: PathBuf, package: TestPackage) {
-        self.tree_packages.borrow_mut().by_dir.insert(dir, package);
+    /// Remember the package a run's worker found for `dir` of the project
+    /// at `root`; nothing when another project's packages are cached now.
+    pub(super) fn cache_package(&self, root: &Path, dir: PathBuf, package: TestPackage) {
+        let mut cache = self.tree_packages.borrow_mut();
+        if cache.root == root {
+            cache.by_dir.insert(dir, package);
+        }
     }
 
     /// What the tree's entries for `path` (a directory when `is_dir`) run

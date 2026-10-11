@@ -231,6 +231,8 @@ PhpUnitOptionsPage::PhpUnitOptionsPage(RunConfigEditor *editor, QWidget *parent)
     runnerOptionsEdit_->setPlaceholderText(tr("e.g. --stop-on-failure"));
     interpreterEdit_ = addField(tr("Interpreter:"), false, false);
     interpreterEdit_->setPlaceholderText(tr("Project PHP interpreter"));
+    interpreterOptionsEdit_ = addField(tr("Interpreter options:"), false, false);
+    interpreterOptionsEdit_->setPlaceholderText(tr("e.g. -d memory_limit=-1"));
     workingDirectoryEdit_ = addField(tr("Custom working directory:"), true, false);
     workingDirectoryEdit_->setPlaceholderText(tr("Project root"));
     showFieldsForScope();
@@ -376,6 +378,7 @@ void PhpUnitOptionsPage::setOptions(const FfiPhpUnitOptions &options)
     excludeGroupsPicker_->setChecked(splitNames(QString(options.exclude_groups)));
     runnerOptionsEdit_->setText(QString(options.runner_options));
     interpreterEdit_->setText(QString(options.interpreter));
+    interpreterOptionsEdit_->setText(QString(options.interpreter_options));
     workingDirectoryEdit_->setText(QString(options.working_directory));
     for (QLineEdit *edit : edits) {
         edit->blockSignals(false);
@@ -399,6 +402,7 @@ FfiPhpUnitOptions PhpUnitOptionsPage::options() const
     options.exclude_groups = excludeGroupsPicker_->checked().join(QStringLiteral(", "));
     options.runner_options = runnerOptionsEdit_->text();
     options.interpreter = interpreterEdit_->text();
+    options.interpreter_options = interpreterOptionsEdit_->text();
     options.working_directory = workingDirectoryEdit_->text();
     return options;
 }

@@ -68,11 +68,18 @@ private:
     void refreshConfigurations();
     void refreshButtons();
     QString selectedConfigId() const;
+    // The trailing "Save '<name>' Configuration" row, shown while the
+    // selection is a temporary configuration (G9).
+    void refreshSaveRow();
+    void saveSelectedTemporary();
 
     RunService *runService_;
     BuildService *buildService_;
     DebugService *debugService_;
     QComboBox *configCombo_ = nullptr;
+    // The configuration the combo last showed, so choosing its Save row can
+    // go back to it.
+    QString lastConfigId_;
     QToolButton *runButton_ = nullptr;
     QToolButton *stopButton_ = nullptr;
     QToolButton *rerunButton_ = nullptr;

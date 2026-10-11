@@ -17,6 +17,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
+#include <QMainWindow>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -26,6 +27,7 @@
 #include <QScrollBar>
 #include <QKeyEvent>
 #include <QSplitter>
+#include <QStatusBar>
 #include <QTextCursor>
 #include <QTimer>
 #include <QToolButton>
@@ -260,7 +262,9 @@ TestsPanel::TestsPanel(TestService *testService, AppSettings *appSettings, OpenA
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem *item) { jumpToSource(item->data(0, kIdRole).toString()); });
     tree_->installEventFilter(this);
+    connect(testService_, &TestService::testRunPreparing, this, &TestsPanel::onTestRunPreparing);
     connect(testService_, &TestService::testRunStarted, this, &TestsPanel::onTestRunStarted);
+    connect(testService_, &TestService::testRunStopped, this, &TestsPanel::onTestRunStopped);
     connect(testService_, &TestService::testTreeChanged, this, &TestsPanel::onTestTreeChanged);
     connect(testService_, &TestService::testOutputAppended, this,
             &TestsPanel::onTestOutputAppended);
@@ -293,8 +297,22 @@ void TestsPanel::report(const FfiResult &result)
     // A refusal is shown where a run's own status would have been —
     // "no test framework is contributed for this project" is the answer to
     // the same question a modal would ask, per `BuildPanel::report`.
-    statusLabel_->setText(QString(result.message));
-    e2eMark(QStringLiteral("{\"ev\":\"test_run_refused\",\"code\":%1}").arg(result.code));
+    onTestRunRefused(result);
+}
+
+void TestsPanel::onTestRunPreparing()
+{
+    // Finding the framework may wait on WSL or a container: Stop ends it.
+    stopButton_->setEnabled(true);
+    statusLabel_->setText(tr("Preparing..."));
+    e2eMark(QStringLiteral("{\"ev\":\"test_run_preparing\"}"));
+}
+
+void TestsPanel::onTestRunStopped()
+{
+    stopButton_->setEnabled(false);
+    statusLabel_->setText(tr("Run stopped."));
+    e2eMark(QStringLiteral("{\"ev\":\"test_run_stopped\"}"));
 }
 
 void TestsPanel::onTestRunStarted()
@@ -412,10 +430,13 @@ void TestsPanel::onTestRunFinished(bool ok, bool matchedNothing, const QString &
               .arg(e2eJson(message)));
 }
 
-void TestsPanel::onTestRunRefused(const QString &message)
+void TestsPanel::onTestRunRefused(const FfiResult &result)
 {
-    statusLabel_->setText(message);
-    e2eMark(QStringLiteral("{\"ev\":\"test_run_refused\",\"message\":%1}").arg(e2eJson(message)));
+    stopButton_->setEnabled(testService_->isRunning());
+    statusLabel_->setText(QString(result.message));
+    e2eMark(QStringLiteral("{\"ev\":\"test_run_refused\",\"code\":%1,\"message\":%2}")
+              .arg(result.code)
+              .arg(e2eJson(QString(result.message))));
 }
 
 void TestsPanel::onSelectionChanged()
@@ -537,6 +558,15 @@ TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("tests"), dock, ads::CenterDockWidgetArea, relativeTo);
     docks->hide(QStringLiteral("tests"));
+    // Every refusal of a test run, whichever service found it, shows the
+    // same way: in the Tests dock, raised, and on the status bar.
+    QObject::connect(testService, &TestService::testRunRefused, panel,
+                     [docks, dockManager](const FfiResult &result) {
+                         docks->show(QStringLiteral("tests"));
+                         if (auto *window = qobject_cast<QMainWindow *>(dockManager->window())) {
+                             window->statusBar()->showMessage(QString(result.message), 6000);
+                         }
+                     });
     buildCoverageDock(dockManager, docks, relativeTo, testService, openAt);
     // E2E only: same reasoning as `containers_panel.cpp`'s identical
     // `visibilityChanged` connect on its own dock — the toolbar has no

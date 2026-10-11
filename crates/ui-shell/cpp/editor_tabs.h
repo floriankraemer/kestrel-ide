@@ -61,7 +61,7 @@ void wireTestGutter(TestService *testService, DebugService *debugService, Editor
 // `DebugService`, and a temporary configuration an editor run creates
 // refreshes the list and becomes the toolbar's selection.
 void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConsolePanel,
-                               DebugService *debugService, TestService *testService, QWidget *window);
+                               DebugService *debugService, TestService *testService);
 // ADR-0046: builds the one DiagnosticsService, gives EditorTabs the copy its
 // squiggles read, and refreshes them whenever any source's rows in the
 // shared store changed (editor_tabs_lsp.cpp). `analysisService` is the PHP

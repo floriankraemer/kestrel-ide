@@ -140,6 +140,11 @@ pub struct PhpUnitRunSetting {
     /// The `php` program for this configuration; blank uses `[php]`'s.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub interpreter: String,
+    /// PhpStorm's "Interpreter options": arguments for the interpreter
+    /// itself (`-d memory_limit=-1`), placed before the test runner and
+    /// split like a shell line.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub interpreter_options: String,
     /// PhpStorm's "Custom working directory": project-relative with `/`,
     /// macros allowed; blank is the project root. A monorepo package's runs
     /// start in the package.
@@ -217,6 +222,7 @@ mod tests {
             exclude_groups: vec!["slow".into()],
             runner_options: "--stop-on-failure".into(),
             interpreter: "php8.3".into(),
+            interpreter_options: "-d memory_limit=-1".into(),
             working_directory: "packages/mailer".into(),
         };
         let text = toml::to_string(&setting).unwrap();

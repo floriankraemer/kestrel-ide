@@ -574,7 +574,7 @@ impl ProjectSettings {
 /// reflex — `echo .ide >> .gitignore` — silently un-commits the settings the
 /// project is trying to share. An existing file is never touched: it is the
 /// user's.
-fn ensure_gitignore(dir: &Path) -> Result<(), ConfigError> {
+pub(crate) fn ensure_gitignore(dir: &Path) -> Result<(), ConfigError> {
     let path = dir.join(PROJECT_GITIGNORE);
     if path.exists() {
         return Ok(());

@@ -94,8 +94,9 @@ pub struct TestServiceRust {
     /// The run whose package, configuration and framework a worker is
     /// finding; it starts once they are found.
     preparing: Cell<Option<u64>>,
-    /// Stop was asked while a run was being prepared: it never starts.
-    preparation_stopped: Cell<bool>,
+    /// The project's recorded test results, loaded on the gutter's first
+    /// question about it (G4).
+    history: RefCell<Option<(PathBuf, php_core::test_history::TestHistory)>>,
     /// The configuration each run still in the tree ran, `None` for an ad
     /// hoc one: what a rerun from the tree runs (G2).
     run_configs: RefCell<HashMap<u64, Option<run_core::RunConfig>>>,
@@ -277,17 +278,23 @@ impl Framework {
 
     /// The program and arguments as launched: a PHP framework runs under the
     /// configured interpreter, which is what makes it run inside that
-    /// interpreter's container.
+    /// interpreter's container; `run`'s interpreter options go before the
+    /// framework's program.
     fn command(
         &self,
         settings: &app_config::Settings,
+        run: Option<&configuration::ConfigRun>,
         args: Vec<String>,
     ) -> (PathBuf, Vec<String>) {
         match self.contribution.requires_interpreter.as_deref() {
             Some("php") => {
                 let interpreter = settings_model::php::resolve(settings).interpreter;
-                let (program, prefix) =
-                    analysis_core::php_invocation(&self.program, Some(&interpreter));
+                let options = run.map_or(&[][..], |run| &run.plan.interpreter_options);
+                let (program, prefix) = analysis_core::php_invocation_with_options(
+                    &self.program,
+                    Some(&interpreter),
+                    options,
+                );
                 (program, [prefix, args].concat())
             }
             _ => (self.program.clone(), args),
@@ -421,16 +428,20 @@ impl ffi::TestService {
         let Some(root) = current_project_root() else {
             return ffi::FfiResolvedLink::default();
         };
-        let (_, work_dir) = self.run_context(&root);
+        let (_, last_dir) = self.run_context(&root);
         let id = test_core::TestId(node_id.to_string());
-        let details = self
-            .tree
-            .borrow()
-            .node(&id)
-            .and_then(|node| node.failure.as_ref())
-            .map(|failure| failure.details.clone())
+        let tree = self.tree.borrow();
+        let Some(node) = tree.node(&id) else {
+            return ffi::FfiResolvedLink::default();
+        };
+        let details = node
+            .failure
+            .as_ref()
+            .map(|failure| failure.details.as_str())
             .unwrap_or_default();
-        match run_core::resolve_link(&details, byte_offset as usize, &work_dir, None) {
+        // Relative to the run that reported this node (#433).
+        let work_dir = tree.work_dir_of(node, &last_dir);
+        match run_core::resolve_link(details, byte_offset as usize, work_dir, None) {
             Some(link) => ffi::FfiResolvedLink {
                 found: true,
                 path: QString::from(link.path.display().to_string().as_str()),
@@ -452,19 +463,24 @@ impl ffi::TestService {
         PathBuf,
     )> {
         let root = current_project_root()?;
-        let location = self
-            .tree
-            .borrow()
-            .node(&test_core::TestId(node_id.to_string()))?
+        let tree = self.tree.borrow();
+        let node = tree.node(&test_core::TestId(node_id.to_string()))?;
+        let location = node
             .location
             .clone()
             .filter(|location| !location.file.is_empty())?;
+        // The node's own run's host and directory (#433, L8).
         let (host, work_dir) = self.run_context(&root);
-        Some((location, host, work_dir))
+        Some((
+            location,
+            tree.host_of(node, &host).clone(),
+            tree.work_dir_of(node, &work_dir).to_path_buf(),
+        ))
     }
 
-    /// The last run's host and working directory, which its printed paths
-    /// are relative to: the project's own before any run.
+    /// The last run's host and working directory: what a node from no known
+    /// run maps through, the project's own before any run. A node's own
+    /// run's place comes first ([`test_core::TestTree::place_of`]).
     fn run_context(&self, root: &Path) -> (process_exec::host::ExecHost, PathBuf) {
         let host = (*self.run_host.borrow())
             .clone()
@@ -565,10 +581,11 @@ impl ffi::TestService {
     /// tree is read here; the package probe, the configuration files and
     /// the framework's program (a process start under WSL or in a
     /// container) are found on a worker, and the run starts once they are
-    /// ([`Self::launch`]). A refusal found there arrives as
-    /// `test_run_refused`.
+    /// ([`Self::launch`]). Meanwhile the dock shows it preparing
+    /// (`test_run_preparing`), and Stop ends it; a refusal found there
+    /// arrives as `test_run_refused`.
     fn start_with(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         selection: Option<RerunSelection>,
         env: Vec<(String, String)>,
         with_coverage: bool,
@@ -594,40 +611,56 @@ impl ffi::TestService {
         std::thread::spawn(move || {
             let prepared = prepare(request, &root, cached);
             let _ = qt_thread.queue(move |service: Pin<&mut ffi::TestService>| {
-                service.launch(run_id, prepared, env, with_coverage, waiter);
+                service.launch(run_id, &root, prepared, env, with_coverage, waiter);
             });
         });
+        self.as_mut().test_run_preparing();
         ffi::FfiResult::default()
     }
 
-    /// Start the prepared run `run_id`, or say why it cannot start.
+    /// Start the run `run_id` prepared for the project at `root`, or say
+    /// why it cannot start; one that Stop ended meanwhile is dropped
+    /// (`test_core::preparation::prepared`). A refused run lets the run
+    /// queued behind it start.
     fn launch(
         mut self: Pin<&mut Self>,
         run_id: u64,
+        root: &Path,
         prepared: Result<PreparedRun, String>,
         env: Vec<(String, String)>,
         with_coverage: bool,
         mut waiter: Option<Waiter>,
     ) {
-        self.preparing.set(None);
-        let stopped = self.preparation_stopped.replace(false);
-        let prepared = prepared.and_then(|prepared| {
-            if stopped {
-                Err("the run was stopped".to_string())
-            } else {
-                Ok(prepared)
+        use test_core::preparation::Prepared;
+        let current = current_project_root();
+        let outcome = test_core::preparation::prepared(
+            run_id,
+            self.preparing.get(),
+            root,
+            current.as_deref(),
+        );
+        if outcome == Prepared::Dropped {
+            if let Some(waiter) = waiter {
+                let _ = waiter.send(Err("the run was stopped".to_string()));
             }
-        });
-        let started = prepared.and_then(|prepared| {
-            self.as_mut()
-                .begin(run_id, prepared, env, with_coverage, &mut waiter)
-        });
+            return;
+        }
+        self.preparing.set(None);
+        let started = match outcome {
+            Prepared::ProjectChanged => {
+                Err("Another project was opened while the run was being prepared.".to_string())
+            }
+            _ => prepared.and_then(|prepared| {
+                self.as_mut()
+                    .begin(run_id, prepared, env, with_coverage, &mut waiter)
+            }),
+        };
         if let Err(reason) = started {
             if let Some(waiter) = waiter {
                 let _ = waiter.send(Err(reason.clone()));
             }
             self.as_mut()
-                .test_run_refused(QString::from(reason.as_str()));
+                .test_run_refused(errors::failure(errors::CODE_REFUSED, reason));
             self.as_mut().start_queued();
         }
     }
@@ -645,7 +678,7 @@ impl ffi::TestService {
         let root = prepared.root;
         let framework = prepared.framework;
         if let Some((dir, package)) = prepared.package {
-            self.cache_package(dir, package);
+            self.cache_package(&root, dir, package);
         }
         env.extend(prepared.config_run.iter().flat_map(|run| run.env.clone()));
         let dialect = framework.dialect;
@@ -692,26 +725,29 @@ impl ffi::TestService {
             // A report from an earlier run must never pass for this one's.
             let _ = std::fs::remove_file(root.join(test_core::coverage::REPORT_PATH));
         }
-        let (program, args) = framework.command(&prepared.settings, args);
+        let (program, args) =
+            framework.command(&prepared.settings, prepared.config_run.as_ref(), args);
 
         // A run replaces the tree a previous run left behind, unless it is a
         // narrowed rerun, which updates only the nodes it touches, so the
         // rest of the previous run's results stay visible (D6's "reruns
         // exactly the failed node", not "clears the dock").
-        let whole_run = prepared.rerun.is_none()
-            && prepared.config_run.as_ref().is_none_or(|run| {
-                matches!(
-                    run.plan.scope,
-                    test_core::scope::TestScope::Config { .. }
-                        | test_core::scope::TestScope::Directory { .. }
-                )
-            });
+        let whole_run = test_core::preparation::replaces_tree(
+            prepared.rerun.is_some(),
+            prepared.config_run.as_ref().map(|run| &run.plan.scope),
+        );
         {
             let mut tree = self.tree.borrow_mut();
             if whole_run {
                 tree.reset();
             }
-            tree.begin_run(run_id);
+            tree.begin_run(
+                run_id,
+                test_core::RunPlace {
+                    host: framework.host.clone(),
+                    work_dir: prepared.work_dir.clone(),
+                },
+            );
             // A rerun from the tree runs the way the run that reported its
             // tests did (G2); only the runs still in the tree are kept.
             let mut configs = self.run_configs.borrow_mut();
@@ -754,6 +790,7 @@ impl ffi::TestService {
         }
 
         let waiter = waiter.take();
+        let run_root = root.clone();
         std::thread::spawn(move || {
             let mut sink = QtSink {
                 qt_thread: qt_thread.clone(),
@@ -786,6 +823,7 @@ impl ffi::TestService {
                 // Whatever never reported (Stop, a fatal error, a killed
                 // container) must not stay "running" on a gutter icon.
                 service.tree.borrow_mut().finish_run();
+                service.record_history(&run_root);
                 service.as_mut().test_tree_changed();
                 if let Some(coverage) = coverage {
                     if coverage.is_none() {
@@ -835,12 +873,24 @@ impl ffi::TestService {
         }
     }
 
-    pub fn stop(self: Pin<&mut Self>) {
-        if self.preparing.get().is_some() {
-            self.preparation_stopped.set(true);
+    /// Stop the run in progress. One still being prepared ends at once,
+    /// even while its worker waits on a probe, and the run queued behind
+    /// it starts; its worker's answer is dropped when it comes.
+    pub fn stop(mut self: Pin<&mut Self>) {
+        if self.preparing.take().is_some() {
+            self.as_mut().test_run_stopped();
+            self.as_mut().start_queued();
         }
         for handle in self.runs.borrow().values() {
             handle.stop();
+        }
+    }
+
+    /// Report a refusal found before the run reached this service (an
+    /// unknown configuration) where a refusal found here shows.
+    pub fn report_refusal(self: Pin<&mut Self>, result: &ffi::FfiResult) {
+        if result.code != errors::CODE_OK {
+            self.test_run_refused(result.clone());
         }
     }
 }
@@ -907,10 +957,11 @@ fn prepare(
     root: &Path,
     cached: Option<php_core::tree_run::TestPackage>,
 ) -> Result<PreparedRun, String> {
+    use test_core::preparation::RunKind;
     let mut package = None;
-    let (config, remember, rerun) = match request {
-        RunRequest::AdHoc => (None, false, None),
-        RunRequest::Configuration(config) => (Some(*config), true, None),
+    let (config, kind, rerun) = match request {
+        RunRequest::AdHoc => (None, RunKind::AdHoc, None),
+        RunRequest::Configuration(config) => (Some(*config), RunKind::Configuration, None),
         RunRequest::Editor { config, dir } => {
             let scoped = match dir {
                 Some(dir) => {
@@ -922,10 +973,17 @@ fn prepare(
                 }
                 None => *config,
             };
-            (Some(configuration::stored_or(scoped, root)), true, None)
+            (
+                Some(configuration::stored_or(scoped, root)),
+                RunKind::Editor,
+                None,
+            )
         }
-        RunRequest::Rerun { config, rerun } => (config.map(|config| *config), false, Some(rerun)),
+        RunRequest::Rerun { config, rerun } => {
+            (config.map(|config| *config), RunKind::Rerun, Some(rerun))
+        }
     };
+    let remember = kind.remembers_configuration();
     let config_run = config
         .as_ref()
         .map(|config| configuration::resolve(config, root))

@@ -73,32 +73,38 @@ constexpr int kBlameWidth = 220;
 
 namespace {
 // A status disc in the Run column's 14px box: 10px across, colour and
-// inner mark both say the state (never colour alone). Logical coordinates,
-// so it is as crisp at 2x as at 1x.
+// inner mark both say the state (never colour alone). The colours are the
+// theme's status colours, as the hover card's bulbs are (G8). Logical
+// coordinates, so it is as crisp at 2x as at 1x.
 void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF &center)
 {
     constexpr qreal kRadius = 5.0;
+    // Above this lightness a white mark loses its contrast (a light theme's
+    // amber): the mark is the fill's dark shade instead, like the Fix bulb's.
+    constexpr int kLightFill = 170;
+    const SemanticColors colors = semanticColors();
     QColor fill;
     switch (glyph) {
     case RunMarkerGlyph::Passed:
-        fill = QColor(0x4c, 0xaf, 0x50);
+        fill = colors.ok;
         break;
     case RunMarkerGlyph::Failed:
-        fill = QColor(0xe5, 0x39, 0x35);
+        fill = colors.error;
         break;
     case RunMarkerGlyph::Ignored:
-        fill = QColor(0x9e, 0x9e, 0x9e);
+        fill = colors.muted;
         break;
     case RunMarkerGlyph::Running:
-        fill = QColor(0xff, 0xb3, 0x00);
+        fill = colors.warning;
         break;
     }
+    const QColor ink = fill.lightness() > kLightFill ? fill.darker(300) : QColor(Qt::white);
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(Qt::NoPen);
     painter.setBrush(fill);
     painter.drawEllipse(center, kRadius, kRadius);
-    QPen mark(Qt::white, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    QPen mark(ink, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
     painter.setPen(mark);
     painter.setBrush(Qt::NoBrush);
     const qreal x = center.x();
@@ -119,7 +125,7 @@ void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF
         break;
     case RunMarkerGlyph::Running:
         painter.setPen(Qt::NoPen);
-        painter.setBrush(Qt::white);
+        painter.setBrush(ink);
         painter.drawEllipse(center, 1.6, 1.6);
         break;
     }
@@ -342,7 +348,8 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
                     QPolygon play;
                     play << QPoint(cx - 3, cy - 5) << QPoint(cx - 3, cy + 5) << QPoint(cx + 5, cy);
                     painter.setPen(Qt::NoPen);
-                    painter.setBrush(QColor(0x4c, 0xaf, 0x50));
+                    // The toolbar's Run glyph colour, from the theme.
+                    painter.setBrush(semanticColors().ok);
                     painter.drawPolygon(play);
                     painter.setBrush(Qt::NoBrush);
                 } else {

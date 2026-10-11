@@ -44,6 +44,7 @@ pub(super) fn to_ffi_options(config: &run_core::RunConfig) -> ffi::FfiPhpUnitOpt
         exclude_groups: join(&setting.exclude_groups),
         runner_options: QString::from(setting.runner_options.as_str()),
         interpreter: QString::from(setting.interpreter.as_str()),
+        interpreter_options: QString::from(setting.interpreter_options.as_str()),
         working_directory: QString::from(setting.working_directory.as_str()),
     }
 }
@@ -73,6 +74,7 @@ pub(super) fn apply_options(
         exclude_groups: split(&options.exclude_groups),
         runner_options: options.runner_options.to_string(),
         interpreter: options.interpreter.to_string(),
+        interpreter_options: options.interpreter_options.to_string(),
         working_directory: options.working_directory.to_string(),
     });
 }

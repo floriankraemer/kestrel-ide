@@ -77,6 +77,10 @@ pub fn update(
     edit: impl FnOnce(&mut BreakpointSettings),
 ) -> Result<(), ConfigError> {
     let dir = local_dir(project_root)?;
+    std::fs::create_dir_all(&dir)?;
+    // A first breakpoint in a project with no settings yet must not leave
+    // `.ide/local/` without the ignore file that keeps it out of git.
+    project_settings::ensure_gitignore(&project_settings::project_dir(project_root)?)?;
     update_toml(
         &dir.join(BREAKPOINTS_FILE),
         &dir.join(TEMP_BREAKPOINTS_FILE),
@@ -125,6 +129,14 @@ mod tests {
         assert!(loaded.breakpoints[0].enabled);
         assert_eq!(loaded.exception_filters, ["uncaught"]);
         assert!(loaded.muted);
+    }
+
+    #[test]
+    fn a_first_breakpoint_keeps_ide_local_out_of_git() {
+        let root = tempfile::tempdir().unwrap();
+        update(root.path(), |settings| settings.muted = true).unwrap();
+        let gitignore = fs::read_to_string(root.path().join(".ide/.gitignore")).unwrap();
+        assert!(gitignore.contains("local/"), "{gitignore}");
     }
 
     #[test]

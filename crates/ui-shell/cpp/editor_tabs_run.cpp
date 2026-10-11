@@ -30,6 +30,11 @@
 
 namespace ui_shell {
 
+namespace {
+// `errors::CODE_NOT_A_TEST`: the file is not a test file, run it the ordinary way.
+constexpr int kNotATestCode = 1014;
+}  // namespace
+
 void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEditor *runConfigEditor,
                     ContainerService *containerService)
 {
@@ -267,9 +272,7 @@ void EditorTabs::runContextAtCaret(CodeEditor *editor, bool debug)
         return;
     }
     const QString path = docManager_->tabPath(editor->property("tabId").toULongLong());
-    const QString text = editor->toPlainText();
-    const bool isTestFile = testService_ != nullptr && !path.isEmpty() && testService_->hasContextRun(path, text);
-    if (!isTestFile) {
+    if (testService_ == nullptr || path.isEmpty()) {
         if (!debug) {
             requestRunFor(editor);
         } else if (auto *mainWindow = qobject_cast<QMainWindow *>(window_)) {
@@ -278,14 +281,14 @@ void EditorTabs::runContextAtCaret(CodeEditor *editor, bool debug)
         return;
     }
     const quint32 line = static_cast<quint32>(editor->textCursor().blockNumber());
-    FfiResult result;
-    if (!debug) {
-        result = testService_->runContext(path, text, line);
-    } else if (debugService_ != nullptr) {
-        result = testService_->prepareDebugContext(path, text, line);
-        if (result.code == 0) {
-            result = debugService_->debugPhpTests();
-        }
+    FfiResult result = testService_->runCaretContext(path, editor->toPlainText(), line, debug,
+                                                     debugService_ != nullptr);
+    if (result.code == kNotATestCode) {
+        requestRunFor(editor);
+        return;
+    }
+    if (result.code == 0 && debug) {
+        result = debugService_->debugPhpTests();
     }
     auto *mainWindow = qobject_cast<QMainWindow *>(window_);
     if (result.code != 0 && mainWindow != nullptr) {

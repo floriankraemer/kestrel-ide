@@ -151,7 +151,7 @@ enum RerunSelection {
 }
 
 /// A gutter marker's test, kept until the framework's dialect is known.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct MarkerSelection {
     /// The marker's PHPUnit-regex `--filter` pattern.
     filter: String,
@@ -386,10 +386,11 @@ impl ffi::TestService {
             Some(RerunSelection::Marker(marker)) => {
                 // The file goes project-relative: the run's working directory
                 // is the project root on every host.
-                let relative = Path::new(&marker.file)
-                    .strip_prefix(&root)
-                    .ok()
-                    .map(|p| p.to_string_lossy().replace('\\', "/"));
+                let relative = test_core::filter::relative_to_root(
+                    &marker.file,
+                    &root.to_string_lossy(),
+                    cfg!(windows),
+                );
                 let run = test_core::filter::MarkerRun {
                     filter: &marker.filter,
                     name: &marker.name,

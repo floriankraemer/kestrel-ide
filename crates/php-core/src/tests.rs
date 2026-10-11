@@ -43,8 +43,11 @@ pub fn marker_at(text: &str, caret_line: u32) -> Option<TestMarker> {
     if all.is_empty() {
         return None;
     }
+    // Markers are in pre-order, so on equal spans (a one-line class or
+    // `describe`) the innermost comes last: search from the back.
     let enclosing = all
         .iter()
+        .rev()
         .filter(|m| (m.span.0..=m.span.1).contains(&caret_line))
         .min_by_key(|m| m.span.1 - m.span.0);
     Some(enclosing.cloned().unwrap_or(TestMarker {
@@ -122,17 +125,20 @@ impl Walker<'_> {
     }
 
     fn class(&mut self, class: Node<'_>) {
-        let extends_test_case = {
+        let (extends_test_case, is_abstract) = {
             let mut cursor = class.walk();
-            let found = class.children(&mut cursor).any(|child| {
-                child.kind() == "base_clause"
+            let mut extends = false;
+            let mut is_abstract = false;
+            for child in class.children(&mut cursor) {
+                extends |= child.kind() == "base_clause"
                     && self
                         .text_of(child)
                         .trim_start_matches("extends")
                         .trim()
-                        .ends_with("TestCase")
-            });
-            found
+                        .ends_with("TestCase");
+                is_abstract |= child.kind() == "abstract_modifier";
+            }
+            (extends, is_abstract)
         };
         let (Some(name), Some(body)) = (
             class.child_by_field_name("name"),
@@ -140,7 +146,8 @@ impl Walker<'_> {
         ) else {
             return;
         };
-        if !extends_test_case {
+        // An abstract base class cannot run; its tests run through subclasses.
+        if !extends_test_case || is_abstract {
             return;
         }
         let qualified = if self.namespace.is_empty() {
@@ -166,18 +173,17 @@ impl Walker<'_> {
                 continue;
             };
             let method_name = self.text_of(method);
-            let docblock_test =
-                index
-                    .checked_sub(1)
-                    .map(|prev| members[prev])
-                    .is_some_and(|prev| {
-                        prev.kind() == "comment" && self.text_of(prev).contains("@test")
-                    });
+            let comment = index
+                .checked_sub(1)
+                .map(|prev| members[prev])
+                .filter(|prev| prev.kind() == "comment");
+            let docblock_test = comment.is_some_and(|c| self.text_of(c).contains("@test"));
             if method_name.starts_with("test") || self.has_test_attribute(*member) || docblock_test
             {
                 let mut span = span_of(*member);
-                if docblock_test {
-                    span.0 = span_of(members[index - 1]).0;
+                // Any comment right above the method belongs to it.
+                if let Some(comment) = comment {
+                    span.0 = span_of(comment).0;
                 }
                 self.out.push(TestMarker {
                     line: method.start_position().row as u32,
@@ -275,9 +281,21 @@ impl Walker<'_> {
             scope: MarkerScope::Test,
             name: description,
             filter: test_core::filter::escape_regex(&full),
-            span: span_of(call),
+            span: span_of(self.call_chain(call)),
         });
         true
+    }
+
+    /// The call with the `->with(..)->skip()` modifiers chained onto it.
+    fn call_chain<'t>(&self, call: Node<'t>) -> Node<'t> {
+        let mut outer = call;
+        while let Some(parent) = outer.parent().filter(|p| {
+            p.kind() == "member_call_expression"
+                && p.child_by_field_name("object").map(|o| o.id()) == Some(outer.id())
+        }) {
+            outer = parent;
+        }
+        outer
     }
 
     fn first_string_argument(&self, call: Node<'_>) -> Option<String> {
@@ -490,5 +508,37 @@ class OtherTest extends TestCase
         assert_eq!(at(text, 6), Some((MarkerScope::Group, "G".into())));
         assert_eq!(at(text, 8), Some((MarkerScope::Test, "top".into())));
         assert_eq!(marker_at(text, 1).unwrap().scope, MarkerScope::File);
+    }
+
+    #[test]
+    fn a_pest_call_spans_its_chained_modifiers() {
+        let text = "<?php\ntest('a', function () {\n})\n    ->with([1])\n    ->skip();\n";
+        let marker = marker_at(text, 4).unwrap();
+        assert_eq!(
+            (marker.scope, marker.name.as_str()),
+            (MarkerScope::Test, "a")
+        );
+        assert_eq!(marker.span, (1, 4));
+    }
+
+    #[test]
+    fn any_comment_above_a_method_is_in_its_span() {
+        let text = "<?php\nclass ATest extends TestCase\n{\n    /** Adds. */\n    public function testAdds() {}\n}\n";
+        assert_eq!(at(text, 3), Some((MarkerScope::Test, "testAdds".into())));
+    }
+
+    #[test]
+    fn equal_spans_go_to_the_innermost_marker() {
+        let text = "<?php\nclass ATest extends TestCase { public function testA() {} }\n";
+        assert_eq!(at(text, 1), Some((MarkerScope::Test, "testA".into())));
+        let pest = "<?php\ndescribe('G', function () { it('x', fn () => 1); });\n";
+        assert_eq!(at(pest, 1), Some((MarkerScope::Test, "x".into())));
+    }
+
+    #[test]
+    fn an_abstract_test_class_has_no_markers() {
+        let text = "<?php\nabstract class BaseTest extends TestCase\n{\n    public function testA() {}\n}\n";
+        assert!(markers(text).is_empty());
+        assert!(marker_at(text, 3).is_none());
     }
 }

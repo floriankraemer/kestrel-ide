@@ -17,6 +17,15 @@
 
 namespace {
 
+// Close-on-exec keeps the stream out of the processes the IDE spawns. glibc
+// spells that `e`; the Windows CRT rejects `e` as an invalid mode (fopen
+// returns null, so no marker was ever written) and spells it `N`.
+#ifdef _WIN32
+constexpr const char *kAppendNoInheritMode = "aN";
+#else
+constexpr const char *kAppendNoInheritMode = "ae";
+#endif
+
 // Opened once. Re-opening per call would cost a syscall on paths the view
 // takes thousands of times, and appending from two handles interleaves.
 std::FILE *markStream()
@@ -26,7 +35,7 @@ std::FILE *markStream()
         if (path == nullptr || *path == '\0') {
             return nullptr;
         }
-        return std::fopen(path, "ae");
+        return std::fopen(path, kAppendNoInheritMode);
     }();
     return stream;
 }

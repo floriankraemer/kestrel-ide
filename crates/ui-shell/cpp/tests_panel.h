@@ -115,4 +115,8 @@ TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            AppSettings *appSettings, TestsPanel::OpenAt openAt,
                            EditorTabs *editorTabs);
 
+// The text of `path`'s editor, unsaved edits included; none when it is not
+// open. What the Tests dock and the project tree's test entries parse.
+std::optional<QString> openEditorText(const EditorTabs *editorTabs, const QString &path);
+
 } // namespace ui_shell

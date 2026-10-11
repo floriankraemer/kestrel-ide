@@ -1,5 +1,6 @@
 #include "tests_panel.h"
 
+#include "keymap_page.h"
 #include "code_editor.h"
 #include "coverage_panel.h"
 #include "dock_layout.h"
@@ -440,8 +441,7 @@ void TestsPanel::onFailureLinkActivated(int textPosition)
 
 QKeySequence TestsPanel::jumpToSourceKey() const
 {
-    return QKeySequence(appSettings_->shortcutFor(QStringLiteral("tests.jumpToSource")),
-                        QKeySequence::PortableText);
+    return scopedShortcutKey(QStringLiteral("tests.jumpToSource"), appSettings_);
 }
 
 bool TestsPanel::eventFilter(QObject *watched, QEvent *event)
@@ -511,14 +511,19 @@ void TestsPanel::showContextMenu(const QPoint &pos)
     }
 }
 
+std::optional<QString> openEditorText(const EditorTabs *editorTabs, const QString &path)
+{
+    const CodeEditor *editor = editorTabs->editorForPath(path);
+    return editor != nullptr ? std::optional<QString>(editor->toPlainText()) : std::nullopt;
+}
+
 TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            ads::CDockAreaWidget *relativeTo, TestService *testService,
                            AppSettings *appSettings, TestsPanel::OpenAt openAt,
                            EditorTabs *editorTabs)
 {
-    const auto openText = [editorTabs](const QString &path) -> std::optional<QString> {
-        const CodeEditor *editor = editorTabs->editorForPath(path);
-        return editor != nullptr ? std::optional<QString>(editor->toPlainText()) : std::nullopt;
+    const auto openText = [editorTabs](const QString &path) {
+        return openEditorText(editorTabs, path);
     };
     auto *panel = new TestsPanel(testService, appSettings, openAt, openText, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Tests"));

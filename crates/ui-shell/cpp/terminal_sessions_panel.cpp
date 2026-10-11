@@ -1,5 +1,6 @@
 #include "terminal_sessions_panel.h"
 
+#include "keymap_page.h"
 #include "terminal_widget.h"
 #include "theme.h"
 #include "styled_tab_widget.h"
@@ -60,22 +61,17 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
     layout->setSpacing(0);
     layout->addWidget(tabs_);
 
-    newSessionAction_ = new QAction(tr("New Terminal Tab"), this);
-    newSessionAction_->setShortcut(QKeySequence(
-      appSettings_->shortcutFor(QStringLiteral("terminal.newSession")), QKeySequence::PortableText));
     // WithChildren: focus normally lives on a tab's TerminalWidget, a child
     // of this panel, not the panel itself.
-    newSessionAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    newSessionAction_ = scopeShortcut(new QAction(tr("New Terminal Tab"), this), this,
+                                      QStringLiteral("terminal.newSession"), appSettings_,
+                                      ShortcutReach::OwnerAndChildren);
     connect(newSessionAction_, &QAction::triggered, this, [this]() { addSession(); });
-    addAction(newSessionAction_);
 
-    selectShellAction_ = new QAction(tr("Select Shell..."), this);
-    selectShellAction_->setShortcut(QKeySequence(
-      appSettings_->shortcutFor(QStringLiteral("terminal.selectShell")),
-      QKeySequence::PortableText));
-    selectShellAction_->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    selectShellAction_ = scopeShortcut(new QAction(tr("Select Shell..."), this), this,
+                                       QStringLiteral("terminal.selectShell"), appSettings_,
+                                       ShortcutReach::OwnerAndChildren);
     connect(selectShellAction_, &QAction::triggered, newTabButton_, &QToolButton::showMenu);
-    addAction(selectShellAction_);
 
     // A terminal dock is never empty: exactly like the single-session
     // predecessor of this class, there is always at least one shell ready

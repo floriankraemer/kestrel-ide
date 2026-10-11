@@ -12,7 +12,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
 mod context;
-pub use context::ShortcutContext;
+pub use context::{migrate_overrides, ShortcutContext, KEYMAP_VERSION};
 
 /// One user-triggerable command: a stable id (the persisted key), the menu
 /// label the settings UI shows, the menu it lives under, and the shortcut it

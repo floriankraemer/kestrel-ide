@@ -388,14 +388,13 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto [buildToolsPanel, containersPanel, databasePanel] = buildContributedToolWindows(
       appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService, exchangeService, consoleService, resultProvider);
 
-    // Structure tracks whatever tab is current: refresh on open, on
-    // switch, and whenever a tab becomes clean. `tabModifiedChanged`
-    // firing with `modified == false` doubles as "just saved" — there is
-    // no separate "save completed" signal, and this one already fires
-    // exactly when EditorTabs::saveTab succeeds (it forwards
-    // QTextDocument::modificationChanged, which setModified(false) there
-    // triggers). It also fires on initial load and on undo-to-clean, both
-    // harmless extra refreshes of the same content.
+    // Structure tracks whatever tab is current: refresh on open, on switch,
+    // and whenever a tab becomes clean. `tabModifiedChanged` firing with
+    // `modified == false` doubles as "just saved" — there is no separate
+    // "save completed" signal, and this one fires exactly when
+    // EditorTabs::saveTab succeeds (it forwards QTextDocument::
+    // modificationChanged). It also fires on initial load and on
+    // undo-to-clean, both harmless extra refreshes of the same content.
     QObject::connect(docManager, &DocumentManager::tabOpened, structurePanel,
                       [structurePanel, editorTabs](quint64, const QString &) {
                           structurePanel->refresh(editorTabs->currentTabId());
@@ -415,8 +414,9 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
 
     editorTabs->setActiveTabChangedCallback(
       [structurePanel, editorTabs, problemsPanel, fileHistoryPanel, previewPanel,
-       previewDocks, previewProvider, projectTreeLocateAction]() {
+       previewDocks, previewProvider, projectTreeLocateAction, testService]() {
           structurePanel->refresh(editorTabs->currentTabId());
+          testService->cancelTestNavigation(); // a late Go to Test must not jump
           // The current file's group sorts to the top of the Problems panel.
           problemsPanel->setCurrentFile(editorTabs->currentPath());
           // F3-18: keep File History pinned to the current tab, but only
@@ -620,7 +620,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                        vcsService,
                                        fileHistoryPanel,
                                        [editorTabs](const QString &path) { editorTabs->showDiffForPath(path); },
-                                       [editorTabs](const QString &path, const QString &revision) { editorTabs->openCompareRevisions(path, revision, revision, QString(), QObject::tr("Working Tree")); }, runService, debugService, testService});
+                                       [editorTabs](const QString &path, const QString &revision) { editorTabs->openCompareRevisions(path, revision, revision, QString(), QObject::tr("Working Tree")); }, runService, debugService, testService, [editorTabs](const QString &path) { return openEditorText(editorTabs, path); }});
 
     return CentralWidgets{editorTabs,       diagnosticsService, dockManager,      docks,
                            treeView,         searchResultsPanel, structurePanel,

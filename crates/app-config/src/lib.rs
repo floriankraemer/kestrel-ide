@@ -283,6 +283,10 @@ pub struct Settings {
     /// See [`Keymap`] for the rules layered over this map.
     #[serde(default)]
     pub keymap: HashMap<String, String>,
+    /// The keymap rules `keymap` was last edited under; absent is before
+    /// ADR-0074. [`load`] migrates an older map ([`keymap::migrate_overrides`]).
+    #[serde(default)]
+    pub keymap_version: u32,
     /// Base syntax colors: scope name -> style, applying to every language.
     ///
     /// Per-language overrides deliberately live in a *separate* top-level
@@ -540,6 +544,7 @@ impl Settings {
     /// Replace the shortcut overrides with `keymap`'s.
     pub fn set_keymap(&mut self, keymap: Keymap) {
         self.keymap = keymap.into_overrides();
+        self.keymap_version = keymap::KEYMAP_VERSION;
     }
 
     /// Push `path` to the front of `recent_projects`, deduping any existing
@@ -690,8 +695,9 @@ fn save_toml<T: Serialize>(path: &Path, temp_path: &Path, value: &T) -> Result<(
 /// reported rather than silently clamped, unlike `EditingSettings`'s own
 /// bounded fields.
 pub fn load(config_dir: &Path) -> Result<Settings, ConfigError> {
-    let settings: Settings = load_toml(&config_dir.join(SETTINGS_FILE))?;
+    let mut settings: Settings = load_toml(&config_dir.join(SETTINGS_FILE))?;
     settings.tab_padding.validate()?;
+    keymap::migrate_overrides(&mut settings.keymap, settings.keymap_version);
     Ok(settings)
 }
 
@@ -966,6 +972,7 @@ mod tests {
                 },
             )]),
             keymap: HashMap::from([("view.goToLine".to_string(), "Ctrl+L".to_string())]),
+            keymap_version: keymap::KEYMAP_VERSION,
             syntax_colors: HashMap::from([
                 (
                     "keyword".to_string(),

@@ -262,6 +262,24 @@ pub fn default_name(setting: &PhpUnitRunSetting) -> String {
     }
 }
 
+/// The name a temporary configuration should carry now, when it still
+/// wears one an earlier version generated for its scope; `None` keeps the
+/// name, as for any name the user chose or a saved configuration.
+pub fn refreshed_name(config: &RunConfigSetting) -> Option<String> {
+    let setting = setting_of(config).filter(|_| config.temporary)?;
+    let current = default_name(&setting);
+    (config.name != current && earlier_default_names(&setting).contains(&config.name))
+        .then_some(current)
+}
+
+/// The names [`default_name`] gave a scope before they read as PhpStorm's.
+fn earlier_default_names(setting: &PhpUnitRunSetting) -> Vec<String> {
+    match setting.scope.as_str() {
+        "directory" => vec![format!("tests in '{}'", last_component(&setting.path))],
+        _ => Vec::new(),
+    }
+}
+
 /// A stable id for the scope, so repeated runs of one test reuse one
 /// temporary entry.
 fn id_of(setting: &PhpUnitRunSetting) -> String {
@@ -330,77 +348,6 @@ pub fn marker_config(
     // A Pest call has no class to name; its description is the useful name.
     let name = (setting.scope == "file" && !marker.name.is_empty()).then(|| marker.name.clone());
     Ok(temporary_config(setting, name))
-}
-
-/// What a project tree row stands for.
-#[derive(Debug, Clone, Copy)]
-pub enum TreeTarget<'a> {
-    /// The project itself: its whole suite, as `phpunit.xml` configures it.
-    Project,
-    /// A project-relative directory.
-    Directory(&'a str),
-    /// A project-relative PHP file and its source.
-    File { relative: &'a str, text: &'a str },
-}
-
-/// The temporary configuration the project tree's Run entries stand for, or
-/// `None` when the row holds nothing runnable (a file without tests).
-pub fn tree_config(target: TreeTarget<'_>) -> Option<RunConfigSetting> {
-    match target {
-        TreeTarget::Project => Some(temporary_config(
-            PhpUnitRunSetting {
-                scope: "config".into(),
-                ..PhpUnitRunSetting::default()
-            },
-            Some("All tests".into()),
-        )),
-        TreeTarget::Directory(relative) => Some(temporary_config(
-            PhpUnitRunSetting {
-                scope: "directory".into(),
-                path: relative.into(),
-                ..PhpUnitRunSetting::default()
-            },
-            None,
-        )),
-        TreeTarget::File { relative, text } => {
-            let all = crate::tests::markers(text);
-            if all.is_empty() {
-                return None;
-            }
-            // PhpStorm runs a PHPUnit file as its class; a Pest file (no
-            // class to name) as the file.
-            match all
-                .iter()
-                .find(|m| m.scope == MarkerScope::Group && !m.class.is_empty())
-            {
-                Some(class) => marker_config(class, Some(relative)).ok(),
-                None => Some(temporary_config(
-                    PhpUnitRunSetting {
-                        scope: "file".into(),
-                        path: relative.into(),
-                        ..PhpUnitRunSetting::default()
-                    },
-                    None,
-                )),
-            }
-        }
-    }
-}
-
-/// Whether `root` looks like a PHPUnit or Pest project: a `phpunit.xml` in
-/// it or either package in its `composer.json`. Two small reads, so the
-/// project tree can ask on every right-click.
-pub fn has_test_framework(root: &std::path::Path) -> bool {
-    crate::phpunit_xml::discover(root, "").is_some()
-        || crate::composer::ComposerJson::read(root)
-            .ok()
-            .flatten()
-            .is_some_and(|composer| {
-                composer
-                    .require
-                    .iter()
-                    .any(|r| matches!(r.name.as_str(), "phpunit/phpunit" | "pestphp/pest"))
-            })
 }
 
 /// The configuration that reruns one data-set row of the Tests dock (`id` is
@@ -765,56 +712,26 @@ mod tests {
     }
 
     #[test]
-    fn tree_rows_become_directory_class_file_and_project_configurations() {
-        let dir = tree_config(TreeTarget::Directory("tests/Unit")).unwrap();
-        assert_eq!(dir.name, "Tests in 'Unit'");
-        assert!(dir.temporary);
-        assert_eq!(dir.phpunit.unwrap().path, "tests/Unit");
-
-        let class = tree_config(TreeTarget::File {
-            relative: "tests/GreeterTest.php",
-            text: SOURCE,
-        })
-        .unwrap();
-        assert_eq!(class.name, "GreeterTest");
-        assert_eq!(class.phpunit.unwrap().scope, "class");
-
-        let pest = tree_config(TreeTarget::File {
-            relative: "tests/Greets.php",
-            text: "<?php\nit('greets', fn () => 1);\n",
-        })
-        .unwrap();
-        assert_eq!(pest.name, "Greets.php");
-        assert_eq!(pest.phpunit.unwrap().scope, "file");
-
-        assert!(tree_config(TreeTarget::File {
-            relative: "src/Greeter.php",
-            text: "<?php\nclass Greeter {}\n",
-        })
-        .is_none());
-
-        let all = tree_config(TreeTarget::Project).unwrap();
-        assert_eq!(all.name, "All tests");
-        assert_eq!(all.phpunit.unwrap().scope, "config");
-        // Running a directory twice reuses one entry.
+    fn an_earlier_generated_name_is_refreshed_and_a_chosen_one_kept() {
+        let directory = |name: &str, temporary: bool| RunConfigSetting {
+            name: name.into(),
+            temporary,
+            ..temporary_config(
+                PhpUnitRunSetting {
+                    path: "tests/Unit".into(),
+                    ..setting("directory")
+                },
+                None,
+            )
+        };
         assert_eq!(
-            tree_config(TreeTarget::Directory("tests/Unit")).unwrap().id,
-            dir.id
+            refreshed_name(&directory("tests in 'Unit'", true)).as_deref(),
+            Some("Tests in 'Unit'")
         );
-    }
-
-    #[test]
-    fn a_test_framework_is_a_phpunit_file_or_a_composer_requirement() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(!has_test_framework(dir.path()));
-        std::fs::write(
-            dir.path().join("composer.json"),
-            r#"{"require-dev": {"pestphp/pest": "^3"}}"#,
-        )
-        .unwrap();
-        assert!(has_test_framework(dir.path()));
-        std::fs::remove_file(dir.path().join("composer.json")).unwrap();
-        std::fs::write(dir.path().join("phpunit.xml.dist"), "<phpunit/>").unwrap();
-        assert!(has_test_framework(dir.path()));
+        assert_eq!(refreshed_name(&directory("Tests in 'Unit'", true)), None);
+        assert_eq!(refreshed_name(&directory("My unit tests", true)), None);
+        // A saved configuration's name is the user's, whatever it reads.
+        assert_eq!(refreshed_name(&directory("tests in 'Unit'", false)), None);
+        assert_eq!(refreshed_name(&RunConfigSetting::default()), None);
     }
 }

@@ -85,7 +85,11 @@ fn no_marker() -> ffi::FfiResult {
 
 impl ffi::TestService {
     /// The markers of `text`, parsed once per distinct text of `path`.
-    fn markers_of(&self, path: &str, text: &str) -> std::rc::Rc<Vec<php_core::tests::TestMarker>> {
+    pub(super) fn markers_of(
+        &self,
+        path: &str,
+        text: &str,
+    ) -> std::rc::Rc<Vec<php_core::tests::TestMarker>> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut hasher);

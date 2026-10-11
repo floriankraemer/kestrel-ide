@@ -138,16 +138,15 @@ void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConso
             QMessageBox::warning(window, title, result.message);
         }
     };
-    // Run, Run with Coverage and Debug all reach here once the configuration's
+    // Run, Run with Coverage and Debug reach these once the configuration's
     // before-launch tasks have run (#420).
     QObject::connect(runService, &RunService::testConfigurationRequested, testService,
-                      [testService, debugService, report](const QString &configId,
-                                                          bool withCoverage, bool debug) {
-                          if (!debug) {
-                              report(QObject::tr("Run"),
-                                     testService->runConfiguration(configId, withCoverage));
-                              return;
-                          }
+                      [testService, report](const QString &configId, bool withCoverage) {
+                          report(QObject::tr("Run"),
+                                 testService->runConfiguration(configId, withCoverage));
+                      });
+    QObject::connect(runService, &RunService::testConfigurationDebugReady, testService,
+                      [testService, debugService, report](const QString &configId) {
                           FfiResult result = testService->prepareDebugConfiguration(configId);
                           if (result.code == 0) {
                               result = debugService->debugPhpTests();

@@ -13,8 +13,9 @@ struct ProjectTreeActions;
 // area) to the open context menu: PHPUnit/Pest tests in a folder, in a test
 // file, or the whole suite.
 //
-// Which name applies, or whether the row holds tests at all, is
-// `TestService::treeRunName`'s answer; a no-op when it is empty. The entries
+// Which run applies, or whether the row holds tests at all, is
+// `TestService::treeRun`'s answer, given the file's unsaved editor text
+// when it is open; a no-op when there is none to offer. The entries
 // create or refresh a temporary configuration and then run it exactly as
 // the toolbar would, so before-launch tasks and the toolbar selection follow.
 void appendTestEntries(QMenu &menu, const QString &path, bool isDir,

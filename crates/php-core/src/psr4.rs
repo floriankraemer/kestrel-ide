@@ -64,11 +64,12 @@ pub fn namespace_for_dir(project: &Path, dir: &Path) -> String {
 /// The project-relative file (`/`-separated) that declares `class` under a
 /// PSR-4 root, when it exists: the longest matching prefix is tried first,
 /// and every root of a prefix is a candidate (`autoload` and `autoload-dev`).
+/// The empty prefix (`"": "src/"`) is the fallback for every class.
 pub fn class_file(roots: &[Psr4Root], project: &Path, class: &str) -> Option<String> {
     let class = class.trim_start_matches('\\');
     let mut matching: Vec<&Psr4Root> = roots
         .iter()
-        .filter(|root| class.starts_with(root.prefix.as_str()) && !root.prefix.is_empty())
+        .filter(|root| class.starts_with(root.prefix.as_str()))
         .collect();
     matching.sort_by_key(|root| std::cmp::Reverse(root.prefix.len()));
     matching.into_iter().find_map(|root| {
@@ -198,5 +199,24 @@ mod tests {
         );
         assert_eq!(found("Tests\\Unit\\Missing"), None);
         assert_eq!(found("Other\\Greeter"), None);
+    }
+
+    #[test]
+    fn class_file_falls_back_to_the_empty_prefix_root() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in ["src/Greeter.php", "lib/Util/Clock.php"] {
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "<?php").unwrap();
+        }
+        let roots = [root("App\\", "src/", false), root("", "lib/", false)];
+        let found = |class: &str| class_file(&roots, dir.path(), class);
+        assert_eq!(found("App\\Greeter").as_deref(), Some("src/Greeter.php"));
+        assert_eq!(found("Util\\Clock").as_deref(), Some("lib/Util/Clock.php"));
+        assert_eq!(
+            found("\\Util\\Clock").as_deref(),
+            Some("lib/Util/Clock.php")
+        );
+        assert_eq!(found("Util\\Missing"), None);
     }
 }

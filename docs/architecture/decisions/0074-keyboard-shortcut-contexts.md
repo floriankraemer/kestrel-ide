@@ -31,8 +31,9 @@ Two contexts overlap when they are equal or either is `Global`.
 `Keymap::conflicts`, the "default taken by an override" rule of `Keymap::shortcut_for`, and therefore the Keymap settings page's warning and `assign`'s steal, consider only actions in overlapping contexts.
 The shipped-defaults test applies the same rule.
 
-The view registers a scoped action on its owning widget and never window-wide:
-`Qt::WidgetWithChildrenShortcut` on the editor area (`EditorTabs::addEditorAction`), on the terminal dock and on a result grid, or the Tests tree's existing key filter, which claims the key on `ShortcutOverride`.
+The view registers a scoped action on its owning widget and never window-wide, through one helper in `keymap_page.h`:
+`scopeShortcut` gives a `QAction` `Qt::WidgetShortcut` or `Qt::WidgetWithChildrenShortcut` on its owner (the editor area, a terminal, the terminal dock, a result grid) and has no window-wide reach to pass, and `scopedShortcutKey` serves the Tests tree's key filter, which claims the key on `ShortcutOverride`.
+The test `every_scoped_action_is_registered_widget_scoped` scans `ui-shell/cpp` for the two helpers' calls and holds the ids they name equal to `SCOPED_ACTIONS` (#423).
 A scoped action may still appear in a menu; Qt only matches a menu-associated shortcut while focus is in the menu bar, so the widget association is what makes the key live.
 
 With the rule in place, `navigate.goToTest` (Editor) and `terminal.newSession` (Terminal) share `Ctrl+Shift+T`, and `tests.jumpToSource` (TestsTree) and `database.goToReferencedRow` (DataGrid) share `F4`.
@@ -51,7 +52,9 @@ With the rule in place, `navigate.goToTest` (Editor) and `terminal.newSession` (
 
 - JetBrains default keys can be used where PhpStorm uses them, without Qt ambiguity.
 - A user rebind only warns about, and only steals from, actions that can actually be active at the same time.
-- The catalogue's context and the view's registration must agree; nothing checks that across the seam, so a new scoped action needs both the table entry and the widget-scoped registration.
+- The catalogue's context and the view's registration must agree; a new scoped action needs both the table entry and a `scopeShortcut` (or `scopedShortcutKey`) call, and the scanning test fails until it has both.
+- A keymap saved under the old global rule can hold an unbinding that only the now-disjoint context caused (binding Jump to Source to `F4` unbound Go to Referenced Row).
+  `Settings::keymap_version` records the rules a keymap was last edited under, and loading an older one restores such defaults once (`keymap::migrate_overrides`).
 - A scoped action's shortcut does nothing when focus is elsewhere, so the menu bar entry is the way to reach it from another widget (Go to Test from the terminal, for instance).
 
 ## Related

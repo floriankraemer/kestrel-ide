@@ -301,6 +301,13 @@ impl ffi::DebugService {
             };
         };
 
+        // A PHPUnit configuration debugs through `TestService`, which stages
+        // it and asks for `debugPhpTests` (ADR-0073).
+        if config.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND) {
+            self.as_mut()
+                .test_configuration_debug_requested(QString::from(config_id.as_str()));
+            return ffi::FfiResult::default();
+        }
         let config = run_core::php_run::inherit_container_target(
             &config,
             crate::bridge::run::effective_php_container_target().as_deref(),

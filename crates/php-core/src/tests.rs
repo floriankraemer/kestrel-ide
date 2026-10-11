@@ -40,6 +40,11 @@ pub struct TestMarker {
     /// enclosing `describe` descriptions and the call's own (`it ...` for
     /// `it`), joined with ` → `. Empty for everything PHPUnit.
     pub description: String,
+    /// The PHPUnit class's fully qualified name; empty for Pest calls and
+    /// for the whole-file marker.
+    pub class: String,
+    /// The PHPUnit method's name; empty for everything else.
+    pub method: String,
 }
 
 /// The test a caret on `caret_line` (0-based) runs: the innermost method or
@@ -64,6 +69,8 @@ pub fn marker_at(text: &str, caret_line: u32) -> Option<TestMarker> {
         filter: String::new(),
         span: (0, u32::MAX),
         description: String::new(),
+        class: String::new(),
+        method: String::new(),
     }))
 }
 
@@ -306,6 +313,8 @@ impl Walker<'_> {
             filter: format!("^{escaped}::"),
             span: span_of(class),
             description: String::new(),
+            class: qualified.clone(),
+            method: String::new(),
         });
         let mut cursor = body.walk();
         let members: Vec<Node<'_>> = body.named_children(&mut cursor).collect();
@@ -340,6 +349,8 @@ impl Walker<'_> {
                     ),
                     span,
                     description: String::new(),
+                    class: qualified.clone(),
+                    method: method_name.to_string(),
                 });
             }
         }
@@ -404,6 +415,8 @@ impl Walker<'_> {
                 )),
                 span: span_of(call),
                 description: self.describes.join(" → "),
+                class: String::new(),
+                method: String::new(),
             });
             let mut cursor = call.walk();
             for child in call.children(&mut cursor) {
@@ -429,6 +442,8 @@ impl Walker<'_> {
             filter: test_core::filter::escape_regex(&full),
             span: span_of(self.call_chain(call)),
             description: full.clone(),
+            class: String::new(),
+            method: String::new(),
         });
         true
     }

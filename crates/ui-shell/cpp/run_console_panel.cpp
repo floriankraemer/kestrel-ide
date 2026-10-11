@@ -551,6 +551,11 @@ void RunConsolePanel::killSelected()
     toolbar_->killSelected();
 }
 
+void RunConsolePanel::runSelectedWithCoverage()
+{
+    toolbar_->runSelectedWithCoverage();
+}
+
 void RunConsolePanel::rerunSelected()
 {
     toolbar_->rerunSelected();

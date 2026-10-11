@@ -26,6 +26,9 @@
 //! - [`junit`] — the batch fallback format, `--log-junit`.
 //! - [`coverage`] — Clover reports: per-file line hits and per-directory
 //!   summaries (PHP parity plan T4).
+//! - [`scope`] — the argv a test scope (directory, file, class, method, data
+//!   set, configuration file) and its options turn into (PHPUnit editor runs
+//!   plan, E4).
 //! - [`runner`] — spawning the process and turning its output into tree
 //!   events, over pipes rather than a PTY (same reasoning as analyzers).
 //! - [`diagnostics`] — a failing test becomes a `diagnostics_core::
@@ -39,6 +42,7 @@ pub mod filter;
 mod junit;
 mod location;
 mod runner;
+pub mod scope;
 mod selection;
 mod source;
 mod teamcity;

@@ -28,7 +28,14 @@ pub fn problem(config: &RunConfig, containers: &ContainerSettings) -> Option<Str
             .compose
             .as_ref()
             .and_then(container_core::run_config::validate_compose),
-        Some(php_run::KIND_BUILTIN_SERVER | php_run::KIND_CONSOLE | "sql-script") => None,
+        // `phpunit`'s table is checked by `php-core::phpunit_run::problem`;
+        // `run-core` cannot depend on it (ADR-0039), so the editor asks it.
+        Some(
+            php_run::KIND_BUILTIN_SERVER
+            | php_run::KIND_CONSOLE
+            | app_config::php::PHPUNIT_KIND
+            | "sql-script",
+        ) => None,
         _ => config
             .program
             .trim()
@@ -80,7 +87,11 @@ mod tests {
     #[test]
     fn the_php_kinds_have_no_program_to_check_either() {
         let containers = ContainerSettings::default();
-        for kind in [php_run::KIND_BUILTIN_SERVER, php_run::KIND_CONSOLE] {
+        for kind in [
+            php_run::KIND_BUILTIN_SERVER,
+            php_run::KIND_CONSOLE,
+            app_config::php::PHPUNIT_KIND,
+        ] {
             assert_eq!(
                 problem(&config(Some(kind), ""), &containers),
                 None,

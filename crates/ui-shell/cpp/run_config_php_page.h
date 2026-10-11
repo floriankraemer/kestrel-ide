@@ -2,10 +2,13 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QHash>
 #include <QWidget>
 
+class QComboBox;
 class QLineEdit;
 class QSpinBox;
+class QVBoxLayout;
 
 namespace ui_shell {
 
@@ -33,6 +36,48 @@ private:
     QSpinBox *portSpin_;
     QLineEdit *documentRootEdit_;
     QLineEdit *routerEdit_;
+};
+
+// The `phpunit` run configuration's own page (PHPUnit editor runs plan, E4):
+// the scope selector and the fields each scope reads, then the options every
+// scope shares — `FfiPhpUnitOptions`'s exact fields. Which fields a scope
+// needs is shown, not decided: `php-core::phpunit_run` refuses a table that
+// leaves a needed one blank when the dialog saves.
+class PhpUnitOptionsPage : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit PhpUnitOptionsPage(RunConfigEditor *editor, QWidget *parent);
+
+    void setOptions(const FfiPhpUnitOptions &options);
+    FfiPhpUnitOptions options() const;
+
+signals:
+    void changed();
+
+private:
+    void showFieldsForScope();
+    // Fills `edit` with the project-relative path of a picked file or
+    // directory.
+    void browse(QLineEdit *edit, bool directory);
+    QLineEdit *addField(const QString &label, bool browseDirectory, bool browseFile);
+    QVBoxLayout *layout_;
+
+    RunConfigEditor *editor_;
+    QComboBox *scopeCombo_;
+    QLineEdit *pathEdit_;
+    QLineEdit *classEdit_;
+    QLineEdit *methodEdit_;
+    QLineEdit *dataSetEdit_;
+    QLineEdit *filterEdit_;
+    QLineEdit *testsuiteEdit_;
+    QLineEdit *configurationEdit_;
+    QLineEdit *groupsEdit_;
+    QLineEdit *excludeGroupsEdit_;
+    QLineEdit *runnerOptionsEdit_;
+    QLineEdit *interpreterEdit_;
+    // Each field's whole row, so a scope can hide the rows it ignores.
+    QHash<QLineEdit *, QWidget *> rows_;
 };
 
 } // namespace ui_shell

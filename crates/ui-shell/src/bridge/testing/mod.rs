@@ -31,6 +31,8 @@ use crate::bridge::errors;
 use crate::bridge::ffi;
 use crate::bridge::registry::SharedDiagnostics;
 
+mod configuration;
+pub(crate) use configuration::run_blocking;
 mod gutter;
 
 /// This source's key in the shared store (ADR-0046): distinct from an
@@ -152,17 +154,21 @@ fn framework_host(
 enum RerunSelection {
     Failed(Vec<test_core::TestId>),
     Node(test_core::TestId),
-    /// A test the editor named, from a gutter marker (T3).
+    /// A test the editor named, from a gutter marker (T3); becomes a
+    /// temporary `phpunit` configuration when the run starts.
     Marker(MarkerSelection),
+    /// One data set of the last run; becomes a temporary `phpunit`
+    /// configuration, or a plain node rerun when it is not a data-set row.
+    DataSet(test_core::TestId),
+    /// A `phpunit` run configuration (E4, ADR-0073); a temporary one is
+    /// remembered when the run starts.
+    Configuration(Box<run_core::RunConfig>),
 }
 
-/// A gutter marker's test, kept until the framework's dialect is known.
+/// A gutter marker's test, kept until the run starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct MarkerSelection {
-    /// The marker's PHPUnit-regex `--filter` pattern.
-    filter: String,
-    name: String,
-    is_class: bool,
+    marker: php_core::tests::TestMarker,
     /// The test file, absolute as the editor spells it.
     file: String,
 }
@@ -393,7 +399,29 @@ impl ffi::TestService {
         let Some(root) = current_project_root() else {
             return errors::failure(errors::CODE_NO_PROJECT, "no project is open");
         };
-        let settings = crate::bridge::convert::load_resolved_settings();
+        // Editor runs are temporary `phpunit` configurations, so they show in
+        // the configuration list and rerun like any other (ADR-0073).
+        let selection = match self.resolve_editor_run(selection, &root) {
+            Ok(selection) => selection,
+            Err(reason) => return errors::failure(errors::CODE_REFUSED, reason),
+        };
+        let config_run = match &selection {
+            Some(RerunSelection::Configuration(config)) => {
+                match configuration::resolve(config, &root) {
+                    Ok(run) => Some(run),
+                    Err(reason) => return errors::failure(errors::CODE_REFUSED, reason),
+                }
+            }
+            _ => None,
+        };
+        let mut settings = crate::bridge::convert::load_resolved_settings();
+        if let Some(interpreter) = config_run
+            .as_ref()
+            .and_then(|run| run.plan.interpreter.clone())
+        {
+            settings.php.interpreter = Some(interpreter);
+        }
+        env.extend(config_run.iter().flat_map(|run| run.env.clone()));
         let Some((plugin, framework, program, host)) = detect_framework(&root, &settings) else {
             return errors::failure(
                 errors::CODE_REFUSED,
@@ -456,7 +484,12 @@ impl ffi::TestService {
             return errors::failure(errors::CODE_REFUSED, reason);
         }
         let patterns = match &selection {
-            None | Some(RerunSelection::Marker(_)) => Vec::new(),
+            None
+            | Some(
+                RerunSelection::Marker(_)
+                | RerunSelection::DataSet(_)
+                | RerunSelection::Configuration(_),
+            ) => Vec::new(),
             Some(RerunSelection::Failed(ids)) => test_core::filter::for_many(ids, dialect),
             Some(RerunSelection::Node(id)) => {
                 test_core::filter::for_node(&self.tree.borrow(), id, dialect)
@@ -464,30 +497,18 @@ impl ffi::TestService {
         };
 
         let mut args = plugin_host::expand_asset_dir(&framework.args, &asset_dir);
-        args = match &selection {
-            Some(RerunSelection::Marker(marker)) => {
-                // The file goes project-relative: the run's working directory
-                // is the project root on every host.
-                let relative = test_core::filter::relative_to_root(
-                    &marker.file,
-                    &root.to_string_lossy(),
-                    cfg!(windows),
-                );
-                let run = test_core::filter::MarkerRun {
-                    filter: &marker.filter,
-                    name: &marker.name,
-                    is_class: marker.is_class,
-                    file: relative.as_deref(),
-                };
-                match test_core::filter::marker_args(
+        args = match (&selection, &config_run) {
+            (Some(RerunSelection::Configuration(_)), Some(run)) => {
+                match test_core::scope::scope_args(
                     &args,
                     dialect,
                     framework.filter_flag.as_deref(),
                     framework.filter_template.as_deref(),
-                    &run,
+                    &run.plan.scope,
+                    &run.plan.options,
                 ) {
                     Ok(args) => args,
-                    Err(reason) => return errors::failure(errors::CODE_REFUSED, reason),
+                    Err(error) => return errors::failure(errors::CODE_REFUSED, error.to_string()),
                 }
             }
             _ => test_core::filter::apply_filter(
@@ -533,8 +554,16 @@ impl ffi::TestService {
         let handle = test_core::TestRunHandle::new();
         self.runs.borrow_mut().insert(run_id, handle.clone());
 
+        let remembered = matches!(
+            &selection,
+            Some(RerunSelection::Configuration(config))
+                if config.temporary && configuration::remember(config, &root)
+        );
         let qt_thread = self.as_mut().qt_thread();
         self.as_mut().test_run_started();
+        if remembered {
+            self.as_mut().configuration_remembered();
+        }
 
         std::thread::spawn(move || {
             let mut sink = QtSink {

@@ -888,6 +888,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Shift+F10",
     },
     ActionDef {
+        id: "run.runWithCoverage",
+        label: "Run with Coverage",
+        category: "Run",
+        default_shortcut: "",
+    },
+    ActionDef {
         id: "run.runContext",
         label: "Run File",
         category: "Run",

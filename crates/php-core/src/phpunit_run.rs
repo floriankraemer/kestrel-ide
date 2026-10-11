@@ -1,0 +1,492 @@
+//! The `phpunit` run configuration (PHPUnit editor runs plan, E4, ADR-0073):
+//! validating its table, turning it into a `test-core` scope, and building
+//! the temporary configuration an editor run (caret, gutter, data set)
+//! creates.
+//!
+//! Persistence is `app-config`'s [`PhpUnitRunSetting`]; the argv a scope
+//! becomes is `test-core`'s; launching is `ui-shell`'s `TestService`.
+
+use app_config::php::{PhpUnitRunSetting, PHPUNIT_KIND};
+use app_config::RunConfigSetting;
+use test_core::scope::{split_data_set_id, ScopeOptions, TestScope};
+
+use crate::tests::{MarkerScope, TestMarker};
+
+/// Why a `phpunit` table cannot be run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigError {
+    /// The scope needs a field the table leaves blank.
+    MissingField {
+        scope: &'static str,
+        field: &'static str,
+    },
+    /// A path that leaves the project; the run's working directory is the
+    /// project root on every host, so only project paths can be passed.
+    PathOutsideProject(String),
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingField { scope, field } => {
+                write!(f, "needs a {field} for its {scope} scope")
+            }
+            Self::PathOutsideProject(path) => {
+                write!(f, "names \"{path}\", which is outside the project")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+/// What a validated table asks `TestService` to run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    pub scope: TestScope,
+    pub options: ScopeOptions,
+    /// The `php` program to use instead of `[php]`'s.
+    pub interpreter: Option<String>,
+}
+
+fn non_blank(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn require(value: &str, scope: &'static str, field: &'static str) -> Result<String, ConfigError> {
+    non_blank(value).ok_or(ConfigError::MissingField { scope, field })
+}
+
+/// A project path: `expand` has run; backslashes become `/`, a path under
+/// `root` becomes relative to it, and anything else absolute or climbing out
+/// with `..` is outside the project.
+fn project_path(path: &str, root: &str, ignore_case: bool) -> Result<String, ConfigError> {
+    let path = path.trim().replace('\\', "/");
+    let absolute = path.starts_with('/') || path.as_bytes().get(1) == Some(&b':');
+    let relative = if absolute {
+        test_core::filter::relative_to_root(&path, root, ignore_case)
+    } else {
+        Some(path.trim_start_matches("./").to_string())
+    };
+    relative
+        .filter(|relative| !relative.split('/').any(|part| part == ".."))
+        .ok_or(ConfigError::PathOutsideProject(path))
+}
+
+/// The scope a table names, with only the fields that scope needs checked.
+/// An unknown or blank scope is the configuration-file scope.
+fn scope_of(
+    setting: &PhpUnitRunSetting,
+    project: &impl Fn(&str) -> Result<String, ConfigError>,
+) -> Result<TestScope, ConfigError> {
+    let optional_path = || non_blank(&setting.path).map(|p| project(&p)).transpose();
+    Ok(match setting.scope.as_str() {
+        "directory" => TestScope::Directory {
+            path: project(&require(&setting.path, "directory", "path")?)?,
+        },
+        "file" => TestScope::File {
+            path: project(&require(&setting.path, "file", "path")?)?,
+            filter: non_blank(&setting.filter),
+        },
+        "class" => TestScope::Class {
+            class: require(&setting.class, "class", "class")?,
+            path: optional_path()?,
+        },
+        "method" => TestScope::Method {
+            class: require(&setting.class, "method", "class")?,
+            method: require(&setting.method, "method", "method")?,
+            path: optional_path()?,
+        },
+        "data_set" => TestScope::DataSet {
+            class: require(&setting.class, "data_set", "class")?,
+            method: require(&setting.method, "data_set", "method")?,
+            data_set: require(&setting.data_set, "data_set", "data set")?,
+            path: optional_path()?,
+        },
+        _ => TestScope::Config {
+            testsuite: non_blank(&setting.testsuite),
+        },
+    })
+}
+
+/// Validate `setting` and resolve it for a run in `root`. `expand` replaces
+/// the macros in a path or an option; `ignore_case` is for Windows roots.
+pub fn plan(
+    setting: &PhpUnitRunSetting,
+    expand: impl Fn(&str) -> String,
+    root: &str,
+    ignore_case: bool,
+) -> Result<Plan, ConfigError> {
+    let project = |path: &str| project_path(&expand(path), root, ignore_case);
+    let scope = scope_of(setting, &project)?;
+    let words = |list: &[String]| -> Vec<String> {
+        list.iter().filter_map(|word| non_blank(word)).collect()
+    };
+    Ok(Plan {
+        scope,
+        options: ScopeOptions {
+            configuration: non_blank(&setting.configuration)
+                .map(|file| project(&file))
+                .transpose()?,
+            groups: words(&setting.groups),
+            exclude_groups: words(&setting.exclude_groups),
+            runner_options: container_core::run_config::split_shell_words(&expand(
+                &setting.runner_options,
+            )),
+        },
+        interpreter: non_blank(&setting.interpreter),
+    })
+}
+
+/// What is wrong with `setting`, worded to follow a quoted configuration
+/// name, or `None`: the editor's refusal to save. Macros are not expanded,
+/// so a path is only checked for being present.
+pub fn problem(setting: &PhpUnitRunSetting) -> Option<String> {
+    scope_of(setting, &|path| Ok(path.to_string()))
+        .err()
+        .map(|error| error.to_string())
+}
+
+fn short_class(class: &str) -> &str {
+    class.rsplit('\\').next().unwrap_or(class)
+}
+
+fn last_component(path: &str) -> &str {
+    path.trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
+}
+
+/// The name PhpStorm gives a configuration of this scope.
+pub fn default_name(setting: &PhpUnitRunSetting) -> String {
+    match setting.scope.as_str() {
+        "directory" => format!("tests in '{}'", last_component(&setting.path)),
+        "file" => last_component(&setting.path).to_string(),
+        "class" => short_class(&setting.class).to_string(),
+        "method" => format!("{}::{}", short_class(&setting.class), setting.method),
+        "data_set" => format!(
+            "{}::{} with data set {}",
+            short_class(&setting.class),
+            setting.method,
+            setting.data_set
+        ),
+        _ => {
+            let suite = non_blank(&setting.testsuite).unwrap_or_else(|| "All tests".to_string());
+            let file = non_blank(&setting.configuration).map_or_else(
+                || "phpunit.xml".to_string(),
+                |c| last_component(&c).to_string(),
+            );
+            format!("{suite} ({file})")
+        }
+    }
+}
+
+/// A stable id for the scope, so repeated runs of one test reuse one
+/// temporary entry.
+fn id_of(setting: &PhpUnitRunSetting) -> String {
+    format!(
+        "phpunit:{}:{}:{}:{}:{}:{}:{}:{}",
+        setting.scope,
+        setting.path,
+        setting.class,
+        setting.method,
+        setting.data_set,
+        setting.filter,
+        setting.testsuite,
+        setting.configuration
+    )
+}
+
+/// The temporary configuration for `setting`, named `name` (or its default).
+pub fn temporary_config(setting: PhpUnitRunSetting, name: Option<String>) -> RunConfigSetting {
+    RunConfigSetting {
+        id: id_of(&setting),
+        name: name.unwrap_or_else(|| default_name(&setting)),
+        kind: Some(PHPUNIT_KIND.to_string()),
+        temporary: true,
+        phpunit: Some(setting),
+        ..RunConfigSetting::default()
+    }
+}
+
+/// The configuration a gutter or caret run of `marker` stands for, with the
+/// test file project-relative when it is inside the project.
+pub fn marker_config(
+    marker: &TestMarker,
+    relative_file: Option<&str>,
+) -> Result<RunConfigSetting, ConfigError> {
+    let path = relative_file.unwrap_or_default().to_string();
+    let setting = match (marker.scope, marker.class.is_empty()) {
+        (MarkerScope::File, _) | (_, true) => {
+            let scope = "file";
+            if path.is_empty() {
+                return Err(ConfigError::MissingField {
+                    scope,
+                    field: "path",
+                });
+            }
+            PhpUnitRunSetting {
+                scope: scope.into(),
+                path,
+                filter: marker.filter.clone(),
+                ..PhpUnitRunSetting::default()
+            }
+        }
+        (MarkerScope::Group, false) => PhpUnitRunSetting {
+            scope: "class".into(),
+            path,
+            class: marker.class.clone(),
+            ..PhpUnitRunSetting::default()
+        },
+        (MarkerScope::Test, false) => PhpUnitRunSetting {
+            scope: "method".into(),
+            path,
+            class: marker.class.clone(),
+            method: marker.method.clone(),
+            ..PhpUnitRunSetting::default()
+        },
+    };
+    // A Pest call has no class to name; its description is the useful name.
+    let name = (setting.scope == "file" && !marker.name.is_empty()).then(|| marker.name.clone());
+    Ok(temporary_config(setting, name))
+}
+
+/// The configuration that reruns one data-set row of the Tests dock (`id` is
+/// the node id), or `None` when `id` is not a data-set row.
+pub fn data_set_config(id: &str, relative_file: Option<&str>) -> Option<RunConfigSetting> {
+    let (class, method, data_set) = split_data_set_id(id)?;
+    Some(temporary_config(
+        PhpUnitRunSetting {
+            scope: "data_set".into(),
+            path: relative_file.unwrap_or_default().to_string(),
+            class: class.into(),
+            method: method.into(),
+            data_set: data_set.into(),
+            ..PhpUnitRunSetting::default()
+        },
+        None,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::markers;
+
+    fn setting(scope: &str) -> PhpUnitRunSetting {
+        PhpUnitRunSetting {
+            scope: scope.into(),
+            ..PhpUnitRunSetting::default()
+        }
+    }
+
+    fn plan_of(setting: &PhpUnitRunSetting) -> Result<Plan, ConfigError> {
+        plan(
+            setting,
+            |text| text.replace("$PROJECT_DIR$", "/p"),
+            "/p",
+            false,
+        )
+    }
+
+    #[test]
+    fn every_scope_names_the_fields_it_needs() {
+        let cases = [
+            ("directory", "path"),
+            ("file", "path"),
+            ("class", "class"),
+            ("method", "class"),
+            ("data_set", "class"),
+        ];
+        for (scope, field) in cases {
+            assert_eq!(
+                plan_of(&setting(scope)).unwrap_err(),
+                ConfigError::MissingField {
+                    scope: match scope {
+                        "directory" => "directory",
+                        "file" => "file",
+                        "class" => "class",
+                        "method" => "method",
+                        _ => "data_set",
+                    },
+                    field
+                }
+            );
+        }
+        let no_method = PhpUnitRunSetting {
+            class: "A".into(),
+            ..setting("method")
+        };
+        assert!(problem(&no_method).unwrap().contains("method"));
+        assert!(problem(&setting("data_set")).is_some());
+        assert_eq!(problem(&setting("config")), None);
+    }
+
+    #[test]
+    fn blank_and_unknown_scopes_read_as_the_configuration_file() {
+        for scope in ["", "nonsense"] {
+            let plan = plan_of(&setting(scope)).unwrap();
+            assert_eq!(plan.scope, TestScope::Config { testsuite: None });
+        }
+    }
+
+    #[test]
+    fn paths_expand_macros_and_become_project_relative() {
+        let directory = PhpUnitRunSetting {
+            path: "$PROJECT_DIR$/tests\\Unit".into(),
+            ..setting("directory")
+        };
+        assert_eq!(
+            plan_of(&directory).unwrap().scope,
+            TestScope::Directory {
+                path: "tests/Unit".into()
+            }
+        );
+        let relative = PhpUnitRunSetting {
+            path: "./tests".into(),
+            ..setting("directory")
+        };
+        assert_eq!(
+            plan_of(&relative).unwrap().scope,
+            TestScope::Directory {
+                path: "tests".into()
+            }
+        );
+    }
+
+    #[test]
+    fn a_path_outside_the_project_is_refused() {
+        for path in ["/elsewhere/tests", "../tests", "a/../../b"] {
+            let outside = PhpUnitRunSetting {
+                path: path.into(),
+                ..setting("file")
+            };
+            assert!(matches!(
+                plan_of(&outside),
+                Err(ConfigError::PathOutsideProject(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn options_are_trimmed_and_the_runner_options_shell_split() {
+        let setting = PhpUnitRunSetting {
+            configuration: "ci/phpunit.xml".into(),
+            groups: vec![" a ".into(), "".into()],
+            exclude_groups: vec!["slow".into()],
+            runner_options: "--stop-on-failure --filter 'a b'".into(),
+            interpreter: " php8.3 ".into(),
+            testsuite: "Unit".into(),
+            ..setting("config")
+        };
+        let plan = plan_of(&setting).unwrap();
+        assert_eq!(
+            plan.scope,
+            TestScope::Config {
+                testsuite: Some("Unit".into())
+            }
+        );
+        assert_eq!(
+            plan.options.configuration.as_deref(),
+            Some("ci/phpunit.xml")
+        );
+        assert_eq!(plan.options.groups, ["a"]);
+        assert_eq!(plan.options.exclude_groups, ["slow"]);
+        assert_eq!(
+            plan.options.runner_options,
+            ["--stop-on-failure", "--filter", "a b"]
+        );
+        assert_eq!(plan.interpreter.as_deref(), Some("php8.3"));
+    }
+
+    #[test]
+    fn names_follow_phpstorm() {
+        let name = |s: PhpUnitRunSetting| default_name(&s);
+        assert_eq!(
+            name(PhpUnitRunSetting {
+                path: "tests/Unit".into(),
+                ..setting("directory")
+            }),
+            "tests in 'Unit'"
+        );
+        assert_eq!(
+            name(PhpUnitRunSetting {
+                class: "App\\GreeterTest".into(),
+                ..setting("class")
+            }),
+            "GreeterTest"
+        );
+        assert_eq!(
+            name(PhpUnitRunSetting {
+                class: "App\\GreeterTest".into(),
+                method: "testGreets".into(),
+                ..setting("method")
+            }),
+            "GreeterTest::testGreets"
+        );
+        assert_eq!(
+            name(PhpUnitRunSetting {
+                testsuite: "Unit".into(),
+                ..setting("config")
+            }),
+            "Unit (phpunit.xml)"
+        );
+        assert_eq!(name(setting("config")), "All tests (phpunit.xml)");
+    }
+
+    const SOURCE: &str = "<?php\nnamespace App;\nclass GreeterTest extends TestCase\n{\n    public function testGreets() {}\n}\n";
+
+    #[test]
+    fn a_phpunit_marker_becomes_a_class_or_method_configuration() {
+        let all = markers(SOURCE);
+        let class = marker_config(&all[0], Some("tests/GreeterTest.php")).unwrap();
+        assert_eq!(class.name, "GreeterTest");
+        assert!(class.temporary);
+        assert_eq!(class.kind.as_deref(), Some(PHPUNIT_KIND));
+        let method = marker_config(&all[1], Some("tests/GreeterTest.php")).unwrap();
+        assert_eq!(method.name, "GreeterTest::testGreets");
+        let setting = method.phpunit.unwrap();
+        assert_eq!(
+            (setting.scope.as_str(), setting.class.as_str()),
+            ("method", "App\\GreeterTest")
+        );
+        // The same test reuses one entry.
+        let again = marker_config(&all[1], Some("tests/GreeterTest.php")).unwrap();
+        assert_eq!(again.id, method.id);
+        assert_ne!(again.id, class.id);
+    }
+
+    #[test]
+    fn a_pest_call_runs_its_file_narrowed_by_the_marker_filter() {
+        let text = "<?php\nit('greets', fn () => 1);\n";
+        let marker = &markers(text)[0];
+        let config = marker_config(marker, Some("tests/Pest.php")).unwrap();
+        assert_eq!(config.name, "greets");
+        let setting = config.phpunit.unwrap();
+        assert_eq!(setting.scope, "file");
+        assert_eq!(setting.filter, marker.filter);
+        assert!(matches!(
+            marker_config(marker, None),
+            Err(ConfigError::MissingField { .. })
+        ));
+    }
+
+    #[test]
+    fn the_whole_file_marker_needs_a_project_file() {
+        let marker = crate::tests::marker_at(SOURCE, 0).unwrap();
+        assert!(marker_config(&marker, None).is_err());
+    }
+
+    #[test]
+    fn a_data_set_row_becomes_a_data_set_configuration() {
+        let config =
+            data_set_config("App\\T::testA with data set \"x\"", Some("tests/T.php")).unwrap();
+        let setting = config.phpunit.unwrap();
+        assert_eq!(setting.scope, "data_set");
+        assert_eq!(setting.data_set, "\"x\"");
+        assert_eq!(config.name, "T::testA with data set \"x\"");
+        assert!(data_set_config("App\\T::testA", None).is_none());
+    }
+}

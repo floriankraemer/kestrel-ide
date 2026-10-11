@@ -5,7 +5,7 @@
 use cxx_qt_lib::QString;
 
 use super::{
-    container_form, env_from_string, env_to_string, php_server_form, sql_script_form,
+    container_form, env_from_string, env_to_string, php_server_form, phpunit_form, sql_script_form,
     tasks_from_string,
 };
 use super::{ffi, tasks_to_string};
@@ -27,6 +27,7 @@ pub(crate) fn to_ffi_run_config(config: &run_core::RunConfig) -> ffi::FfiRunConf
         container: container_form::to_ffi_options(config),
         sql_script: sql_script_form::to_ffi_options(config),
         php_server: php_server_form::to_ffi_options(config),
+        phpunit: phpunit_form::to_ffi_options(config),
         run_on: QString::from(config.run_on.clone().unwrap_or_default().as_str()),
     }
 }
@@ -67,6 +68,7 @@ pub(crate) fn from_ffi_run_config(form: &ffi::FfiRunConfig) -> run_core::RunConf
     container_form::apply_options(&mut config, &form.kind.to_string(), &form.container);
     sql_script_form::apply_options(&mut config, &form.kind.to_string(), &form.sql_script);
     php_server_form::apply_options(&mut config, &form.kind.to_string(), &form.php_server);
+    phpunit_form::apply_options(&mut config, &form.kind.to_string(), &form.phpunit);
     let run_on = form.run_on.to_string();
     config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
     config

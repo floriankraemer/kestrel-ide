@@ -16,6 +16,8 @@ pub enum MarkerScope {
     Group,
     /// One PHPUnit method or one Pest `test`/`it` call.
     Test,
+    /// Every test in the file; only [`marker_at`] produces it.
+    File,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +28,42 @@ pub struct TestMarker {
     /// What the menu calls it: the class, method or Pest description.
     pub name: String,
     /// What the `--filter` flag takes to run exactly this.
+    /// Empty for [`MarkerScope::File`], which runs the file without a filter.
     pub filter: String,
+    /// First and last 0-based line of the class, method or call, so a caret
+    /// anywhere inside it selects this marker.
+    pub span: (u32, u32),
+}
+
+/// The test a caret on `caret_line` (0-based) runs: the innermost method or
+/// Pest call around it, else the enclosing class or `describe`, else the whole
+/// file when it holds tests at all. `None` for a file without tests.
+pub fn marker_at(text: &str, caret_line: u32) -> Option<TestMarker> {
+    let all = markers(text);
+    if all.is_empty() {
+        return None;
+    }
+    // Markers are in pre-order, so on equal spans (a one-line class or
+    // `describe`) the innermost comes last: search from the back.
+    let enclosing = all
+        .iter()
+        .rev()
+        .filter(|m| (m.span.0..=m.span.1).contains(&caret_line))
+        .min_by_key(|m| m.span.1 - m.span.0);
+    Some(enclosing.cloned().unwrap_or(TestMarker {
+        line: 0,
+        scope: MarkerScope::File,
+        name: String::new(),
+        filter: String::new(),
+        span: (0, u32::MAX),
+    }))
+}
+
+fn span_of(node: Node<'_>) -> (u32, u32) {
+    (
+        node.start_position().row as u32,
+        node.end_position().row as u32,
+    )
 }
 
 /// Every runnable test position in `text`, in file order. Empty for a file
@@ -88,17 +125,20 @@ impl Walker<'_> {
     }
 
     fn class(&mut self, class: Node<'_>) {
-        let extends_test_case = {
+        let (extends_test_case, is_abstract) = {
             let mut cursor = class.walk();
-            let found = class.children(&mut cursor).any(|child| {
-                child.kind() == "base_clause"
+            let mut extends = false;
+            let mut is_abstract = false;
+            for child in class.children(&mut cursor) {
+                extends |= child.kind() == "base_clause"
                     && self
                         .text_of(child)
                         .trim_start_matches("extends")
                         .trim()
-                        .ends_with("TestCase")
-            });
-            found
+                        .ends_with("TestCase");
+                is_abstract |= child.kind() == "abstract_modifier";
+            }
+            (extends, is_abstract)
         };
         let (Some(name), Some(body)) = (
             class.child_by_field_name("name"),
@@ -106,7 +146,8 @@ impl Walker<'_> {
         ) else {
             return;
         };
-        if !extends_test_case {
+        // An abstract base class cannot run; its tests run through subclasses.
+        if !extends_test_case || is_abstract {
             return;
         }
         let qualified = if self.namespace.is_empty() {
@@ -120,6 +161,7 @@ impl Walker<'_> {
             scope: MarkerScope::Group,
             name: self.text_of(name).to_string(),
             filter: format!("^{escaped}::"),
+            span: span_of(class),
         });
         let mut cursor = body.walk();
         let members: Vec<Node<'_>> = body.named_children(&mut cursor).collect();
@@ -131,15 +173,18 @@ impl Walker<'_> {
                 continue;
             };
             let method_name = self.text_of(method);
-            let docblock_test =
-                index
-                    .checked_sub(1)
-                    .map(|prev| members[prev])
-                    .is_some_and(|prev| {
-                        prev.kind() == "comment" && self.text_of(prev).contains("@test")
-                    });
+            let comment = index
+                .checked_sub(1)
+                .map(|prev| members[prev])
+                .filter(|prev| prev.kind() == "comment");
+            let docblock_test = comment.is_some_and(|c| self.text_of(c).contains("@test"));
             if method_name.starts_with("test") || self.has_test_attribute(*member) || docblock_test
             {
+                let mut span = span_of(*member);
+                // Any comment right above the method belongs to it.
+                if let Some(comment) = comment {
+                    span.0 = span_of(comment).0;
+                }
                 self.out.push(TestMarker {
                     line: method.start_position().row as u32,
                     scope: MarkerScope::Test,
@@ -149,6 +194,7 @@ impl Walker<'_> {
                         "^{escaped}::{}( with data set .+)?$",
                         test_core::filter::escape_regex(method_name)
                     ),
+                    span,
                 });
             }
         }
@@ -211,6 +257,7 @@ impl Walker<'_> {
                     "{} → ",
                     self.describes.join(" → ")
                 )),
+                span: span_of(call),
             });
             let mut cursor = call.walk();
             for child in call.children(&mut cursor) {
@@ -234,8 +281,21 @@ impl Walker<'_> {
             scope: MarkerScope::Test,
             name: description,
             filter: test_core::filter::escape_regex(&full),
+            span: span_of(self.call_chain(call)),
         });
         true
+    }
+
+    /// The call with the `->with(..)->skip()` modifiers chained onto it.
+    fn call_chain<'t>(&self, call: Node<'t>) -> Node<'t> {
+        let mut outer = call;
+        while let Some(parent) = outer.parent().filter(|p| {
+            p.kind() == "member_call_expression"
+                && p.child_by_field_name("object").map(|o| o.id()) == Some(outer.id())
+        }) {
+            outer = parent;
+        }
+        outer
     }
 
     fn first_string_argument(&self, call: Node<'_>) -> Option<String> {
@@ -367,5 +427,118 @@ describe('Greeter', function () {
     #[test]
     fn a_pest_call_with_a_computed_description_is_skipped() {
         assert!(markers("<?php\ntest($name, function () {});\n").is_empty());
+    }
+
+    const CLASS_FILE: &str = "<?php
+class GreeterTest extends TestCase
+{
+    /** @test */
+    public function it_adds(): void
+    {
+        $x = 1;
+    }
+
+    public function helper(): void
+    {
+    }
+
+    #[Test]
+    public function it_subs(): void {}
+}
+
+class OtherTest extends TestCase
+{
+    public function testB() {}
+}
+";
+
+    fn at(text: &str, line: u32) -> Option<(MarkerScope, String)> {
+        marker_at(text, line).map(|m| (m.scope, m.name))
+    }
+
+    #[test]
+    fn the_caret_anywhere_in_a_test_method_selects_it() {
+        let method = (MarkerScope::Test, "it_adds".to_string());
+        // docblock, signature, body
+        for line in [3, 4, 6] {
+            assert_eq!(at(CLASS_FILE, line), Some(method.clone()), "line {line}");
+        }
+        assert_eq!(
+            at(CLASS_FILE, 13),
+            Some((MarkerScope::Test, "it_subs".into()))
+        );
+    }
+
+    #[test]
+    fn the_caret_in_a_non_test_method_or_the_class_head_selects_the_class() {
+        let class = Some((MarkerScope::Group, "GreeterTest".to_string()));
+        assert_eq!(at(CLASS_FILE, 10), class);
+        assert_eq!(at(CLASS_FILE, 2), class);
+    }
+
+    #[test]
+    fn each_class_of_a_file_is_selected_on_its_own() {
+        assert_eq!(
+            at(CLASS_FILE, 19),
+            Some((MarkerScope::Test, "testB".into()))
+        );
+        assert_eq!(
+            at(CLASS_FILE, 17),
+            Some((MarkerScope::Group, "OtherTest".into()))
+        );
+    }
+
+    #[test]
+    fn a_caret_outside_every_class_selects_the_file() {
+        let selected = marker_at(CLASS_FILE, 0).unwrap();
+        assert_eq!(selected.scope, MarkerScope::File);
+        assert_eq!(selected.filter, "");
+    }
+
+    #[test]
+    fn a_file_without_tests_selects_nothing() {
+        assert!(marker_at("<?php\nclass Greeter { function run() {} }\n", 1).is_none());
+        assert!(marker_at("<?php\n", 0).is_none());
+    }
+
+    #[test]
+    fn pest_selects_the_innermost_call_then_the_describe_then_the_file() {
+        let text = "<?php\nuse function Pest\\x;\ndescribe('G', function () {\n    it('greets', function () {\n        expect(1)->toBe(1);\n    });\n    // gap\n});\ntest('top', fn () => 1);\n";
+        assert_eq!(at(text, 4), Some((MarkerScope::Test, "greets".into())));
+        assert_eq!(at(text, 6), Some((MarkerScope::Group, "G".into())));
+        assert_eq!(at(text, 8), Some((MarkerScope::Test, "top".into())));
+        assert_eq!(marker_at(text, 1).unwrap().scope, MarkerScope::File);
+    }
+
+    #[test]
+    fn a_pest_call_spans_its_chained_modifiers() {
+        let text = "<?php\ntest('a', function () {\n})\n    ->with([1])\n    ->skip();\n";
+        let marker = marker_at(text, 4).unwrap();
+        assert_eq!(
+            (marker.scope, marker.name.as_str()),
+            (MarkerScope::Test, "a")
+        );
+        assert_eq!(marker.span, (1, 4));
+    }
+
+    #[test]
+    fn any_comment_above_a_method_is_in_its_span() {
+        let text = "<?php\nclass ATest extends TestCase\n{\n    /** Adds. */\n    public function testAdds() {}\n}\n";
+        assert_eq!(at(text, 3), Some((MarkerScope::Test, "testAdds".into())));
+    }
+
+    #[test]
+    fn equal_spans_go_to_the_innermost_marker() {
+        let text = "<?php\nclass ATest extends TestCase { public function testA() {} }\n";
+        assert_eq!(at(text, 1), Some((MarkerScope::Test, "testA".into())));
+        let pest = "<?php\ndescribe('G', function () { it('x', fn () => 1); });\n";
+        assert_eq!(at(pest, 1), Some((MarkerScope::Test, "x".into())));
+    }
+
+    #[test]
+    fn an_abstract_test_class_has_no_markers() {
+        let text = "<?php\nabstract class BaseTest extends TestCase\n{\n    public function testA() {}\n}\n";
+        assert!(markers(text).is_empty());
+        assert!(marker_at(text, 3).is_none());
     }
 }

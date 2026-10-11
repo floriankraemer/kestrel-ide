@@ -93,6 +93,9 @@ baseline() {
 	# declaration, re-export and Settings field; the type and its tests live
 	# in hover.rs.
 	crates/app-config/src/lib.rs) echo 1483 ;;
+	# 1500 ceiling + 7 lines for the `run.debugContext` ActionDef (E1); the
+	# keymap table is one entry per action, so it grows with the actions.
+	crates/app-config/src/keymap.rs) echo 1507 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)

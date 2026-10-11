@@ -682,6 +682,9 @@ public:
     // the Dockerfile/compose popup (C5/C6) scoped to that line.
     void requestRunFor(CodeEditor *editor, int line = 0);
     // PHP parity T3: the Run/Debug popup of the test marker on `line`.
+    // `run.runContext` / `run.debugContext`: the caret's test scope in a PHP
+    // test file, else (Run only) `requestRunFor`'s ordinary file run.
+    void runContextAtCaret(CodeEditor *editor, bool debug);
     void showTestMarkerMenu(CodeEditor *editor, const QString &path, int line);
 
     // C6: `ContainerService::composeLenses` for a compose file, pushed into

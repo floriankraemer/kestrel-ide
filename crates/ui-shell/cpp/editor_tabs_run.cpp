@@ -30,6 +30,11 @@
 
 namespace ui_shell {
 
+namespace {
+// `errors::CODE_NOT_A_TEST`: the file is not a test file, run it the ordinary way.
+constexpr int kNotATestCode = 1014;
+}  // namespace
+
 void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEditor *runConfigEditor,
                     ContainerService *containerService)
 {
@@ -259,6 +264,36 @@ void EditorTabs::requestRunFor(CodeEditor *editor, int line)
     }
 
     runService_->runContext(path);
+}
+
+void EditorTabs::runContextAtCaret(CodeEditor *editor, bool debug)
+{
+    if (!editor) {
+        return;
+    }
+    const QString path = docManager_->tabPath(editor->property("tabId").toULongLong());
+    if (testService_ == nullptr || path.isEmpty()) {
+        if (!debug) {
+            requestRunFor(editor);
+        } else if (auto *mainWindow = qobject_cast<QMainWindow *>(window_)) {
+            mainWindow->statusBar()->showMessage(tr("There is no test in this file to debug."), 6000);
+        }
+        return;
+    }
+    const quint32 line = static_cast<quint32>(editor->textCursor().blockNumber());
+    FfiResult result = testService_->runCaretContext(path, editor->toPlainText(), line, debug,
+                                                     debugService_ != nullptr);
+    if (result.code == kNotATestCode) {
+        requestRunFor(editor);
+        return;
+    }
+    if (result.code == 0 && debug) {
+        result = debugService_->debugPhpTests();
+    }
+    auto *mainWindow = qobject_cast<QMainWindow *>(window_);
+    if (result.code != 0 && mainWindow != nullptr) {
+        mainWindow->statusBar()->showMessage(QString(result.message), 6000);
+    }
 }
 
 void EditorTabs::showTestMarkerMenu(CodeEditor *editor, const QString &path, int line)

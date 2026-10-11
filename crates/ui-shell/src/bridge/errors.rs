@@ -75,6 +75,10 @@ pub const CODE_UNKNOWN_DB_CONSOLE: i32 = 1012;
 /// finished and its rows were dropped, or the id was never issued.
 pub const CODE_UNKNOWN_RESULT: i32 = 1013;
 
+/// A caret-aware run was asked of a file that is not a test file; the view
+/// branches on it to run the file the ordinary way.
+pub const CODE_NOT_A_TEST: i32 = 1014;
+
 /// A failure with an adapter code and a finished sentence.
 pub fn failure(code: i32, message: impl AsRef<str>) -> FfiResult {
     debug_assert!(
@@ -108,6 +112,7 @@ mod tests {
             CODE_RUN_TARGET,
             CODE_UNKNOWN_DB_CONSOLE,
             CODE_UNKNOWN_RESULT,
+            CODE_NOT_A_TEST,
         ];
         for code in codes {
             assert!(

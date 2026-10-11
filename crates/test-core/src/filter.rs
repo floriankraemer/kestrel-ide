@@ -187,7 +187,8 @@ pub fn tree_rerun_block(dialect: Option<&str>) -> Option<String> {
 /// A test the editor can name: what a gutter marker run is built from.
 #[derive(Debug, Clone, Copy)]
 pub struct MarkerRun<'a> {
-    /// The marker's PHPUnit-regex `--filter` pattern.
+    /// The marker's PHPUnit-regex `--filter` pattern; empty runs the whole
+    /// file.
     pub filter: &'a str,
     /// The method (or class) name, for dialects that select by name.
     pub name: &'a str,
@@ -212,12 +213,20 @@ pub fn marker_args(
 ) -> Result<Vec<String>, &'static str> {
     match dialect {
         FilterDialect::PhpUnitRegex | FilterDialect::PestRegex => {
-            let mut args = apply_filter(
-                base,
-                filter_flag,
-                filter_template,
-                &[marker.filter.to_string()],
-            );
+            let mut args = if marker.filter.is_empty() {
+                base.to_vec()
+            } else {
+                apply_filter(
+                    base,
+                    filter_flag,
+                    filter_template,
+                    &[marker.filter.to_string()],
+                )
+            };
+            // A file run with no filter and no path would be the whole suite.
+            if marker.filter.is_empty() && marker.file.is_none() {
+                return Err("The test's file is outside the project, so it cannot be run alone.");
+            }
             args.extend(marker.file.map(str::to_string));
             Ok(args)
         }
@@ -235,6 +244,25 @@ pub fn marker_args(
         }
         _ => Err("This test framework cannot run a single test from the editor."),
     }
+}
+
+/// `file` relative to `root` with `/` separators; `None` when it is not
+/// inside. Windows paths differ in drive-letter case and separators, so
+/// `ignore_case` compares them folded.
+pub fn relative_to_root(file: &str, root: &str, ignore_case: bool) -> Option<String> {
+    let norm = |p: &str| p.replace('\\', "/");
+    let (file, root) = (norm(file), norm(root));
+    let root = root.trim_end_matches('/');
+    let rest = if ignore_case {
+        let prefix = file
+            .get(..root.len())
+            .filter(|p| p.eq_ignore_ascii_case(root))?;
+        &file[prefix.len()..]
+    } else {
+        file.strip_prefix(root)?
+    };
+    let rest = rest.strip_prefix('/')?;
+    (!rest.is_empty()).then(|| rest.to_string())
 }
 
 fn surefire_pattern(id: &TestId) -> String {
@@ -813,6 +841,49 @@ mod tests {
         )
         .unwrap();
         assert_eq!(without_file.len(), 3);
+    }
+
+    #[test]
+    fn a_file_run_without_a_known_file_is_refused_not_the_whole_suite() {
+        let run = MarkerRun {
+            filter: "",
+            name: "",
+            is_class: true,
+            file: None,
+        };
+        for dialect in [FilterDialect::PhpUnitRegex, FilterDialect::PestRegex] {
+            assert!(marker_args(&[], dialect, Some("--filter"), None, &run).is_err());
+        }
+    }
+
+    #[test]
+    fn relative_to_root_handles_separators_and_windows_case() {
+        assert_eq!(
+            relative_to_root("/p/tests/A.php", "/p", false).as_deref(),
+            Some("tests/A.php")
+        );
+        assert_eq!(relative_to_root("/other/A.php", "/p", false), None);
+        assert_eq!(relative_to_root("/pp/A.php", "/p", false), None);
+        assert_eq!(
+            relative_to_root(r"c:\Proj\tests\A.php", r"C:\proj", true).as_deref(),
+            Some("tests/A.php")
+        );
+        assert_eq!(relative_to_root(r"c:\Proj\A.php", r"C:\proj", false), None);
+    }
+
+    #[test]
+    fn a_file_marker_run_is_the_file_without_a_filter() {
+        let base = vec!["--teamcity".to_string()];
+        let file = MarkerRun {
+            filter: "",
+            name: "",
+            is_class: true,
+            file: Some("tests/FooTest.php"),
+        };
+        for dialect in [FilterDialect::PhpUnitRegex, FilterDialect::PestRegex] {
+            let args = marker_args(&base, dialect, Some("--filter"), None, &file).unwrap();
+            assert_eq!(args, vec!["--teamcity", "tests/FooTest.php"]);
+        }
     }
 
     #[test]

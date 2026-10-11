@@ -242,22 +242,55 @@ pub fn is_named_test(path: &Path) -> bool {
 }
 
 /// Go to Test / Test Subject for `file` (absolute, holding `text`) in the
-/// project at `project`, with the PSR-4 roots read from its `composer.json`
-/// and the covering tests from `covers`. Blocking filesystem work: call it
-/// off the GUI thread.
+/// project at `project`, with the PSR-4 roots of [`roots_for`] and the
+/// covering tests from `covers`. Blocking filesystem work: call it off the
+/// GUI thread.
 pub fn navigate(
     project: &Path,
     file: &Path,
     text: &str,
     covers: &Arc<CoversCache>,
 ) -> TestNavigation {
-    let roots = match ComposerJson::read(project) {
-        Ok(Some(composer)) => composer.psr4,
-        _ => Vec::new(),
-    };
+    let roots = roots_for(project, file);
     navigate_with(&roots, project, file, text, |wait| {
         covers.index(project, &roots, wait)
     })
+}
+
+/// The PSR-4 roots a jump from `file` maps through, as PhpStorm merges
+/// every `composer.json`: the nearest monorepo package's own roots
+/// (`packages/mailer/composer.json`, its directories made
+/// project-relative), then the project's (#428). A few stats per ancestor.
+pub fn roots_for(project: &Path, file: &Path) -> Vec<Psr4Root> {
+    let package = file
+        .ancestors()
+        .skip(1)
+        .take_while(|dir| dir.starts_with(project) && *dir != project)
+        .find(|dir| dir.join("composer.json").is_file());
+    let mut roots: Vec<Psr4Root> = package
+        .and_then(|dir| {
+            let relative = relative(project, dir)?;
+            let composer = ComposerJson::read(dir).ok()??;
+            Some(
+                composer
+                    .psr4
+                    .into_iter()
+                    .map(|root| Psr4Root {
+                        dir: format!("{relative}/{}", root.dir.trim_start_matches("./")),
+                        ..root
+                    })
+                    .collect(),
+            )
+        })
+        .unwrap_or_default();
+    if let Ok(Some(composer)) = ComposerJson::read(project) {
+        for root in composer.psr4 {
+            if !roots.contains(&root) {
+                roots.push(root);
+            }
+        }
+    }
+    roots
 }
 
 /// [`navigate`] over explicit roots. `covers` answers the covers index,
@@ -807,6 +840,98 @@ mod tests {
         let navigation = navigate(project, &project.join("src/Foo/Bar.php"), SUBJECT, &cache);
 
         assert_eq!(navigation.files, ["tests/Foo/BarTest.php"]);
+    }
+
+    #[test]
+    fn a_monorepo_package_maps_through_its_own_composer_roots() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(
+            project,
+            "composer.json",
+            r#"{"autoload":{"psr-4":{"App\\":"src/"}}}"#,
+        );
+        write(
+            project,
+            "packages/mailer/composer.json",
+            r#"{"autoload":{"psr-4":{"Mailer\\":"src/"}},"autoload-dev":{"psr-4":{"Mailer\\Tests\\":"tests/"}}}"#,
+        );
+        let sender = "<?php\nnamespace Mailer;\n\nfinal class Sender {}\n";
+        let queue = "<?php\nnamespace Mailer;\n\nfinal class Queue {}\n";
+        write(project, "packages/mailer/src/Sender.php", sender);
+        write(project, "packages/mailer/src/Queue.php", queue);
+        write(
+            project,
+            "packages/mailer/tests/SenderTest.php",
+            &test_class("Mailer\\Tests", "SenderTest", ""),
+        );
+        write(
+            project,
+            "packages/mailer/tests/Flow/DeliveryTest.php",
+            &test_class(
+                "Mailer\\Tests\\Flow",
+                "DeliveryTest",
+                "use Mailer\\Queue;\n#[CoversClass(Queue::class)]",
+            ),
+        );
+        let cache = Arc::new(CoversCache::default());
+        let file = |name: &str| project.join(name);
+
+        let from_class = navigate(
+            project,
+            &file("packages/mailer/src/Sender.php"),
+            sender,
+            &cache,
+        );
+        assert_eq!(from_class.files, ["packages/mailer/tests/SenderTest.php"]);
+
+        let test = std::fs::read_to_string(file("packages/mailer/tests/SenderTest.php")).unwrap();
+        let from_test = navigate(
+            project,
+            &file("packages/mailer/tests/SenderTest.php"),
+            &test,
+            &cache,
+        );
+        assert_eq!(from_test.files, ["packages/mailer/src/Sender.php"]);
+
+        // The package's test directory is indexed: a covering test is found.
+        let covered = navigate(
+            project,
+            &file("packages/mailer/src/Queue.php"),
+            queue,
+            &cache,
+        );
+        assert_eq!(
+            covered.files,
+            ["packages/mailer/tests/Flow/DeliveryTest.php"]
+        );
+    }
+
+    #[test]
+    fn package_roots_come_before_the_projects_and_are_not_repeated() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(
+            project,
+            "composer.json",
+            r#"{"autoload":{"psr-4":{"App\\":"src/"}}}"#,
+        );
+        write(
+            project,
+            "packages/a/composer.json",
+            r#"{"autoload":{"psr-4":{"A\\":"./lib/"}}}"#,
+        );
+        assert_eq!(
+            roots_for(project, &project.join("packages/a/lib/X.php")),
+            [
+                root("A\\", "packages/a/lib/", false),
+                root("App\\", "src/", false)
+            ]
+        );
+        assert_eq!(
+            roots_for(project, &project.join("src/Y.php")),
+            [root("App\\", "src/", false)]
+        );
     }
 
     #[test]

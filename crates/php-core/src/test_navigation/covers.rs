@@ -267,8 +267,18 @@ impl CoversCache {
             // A search still waiting for the old project's index gives up.
             self.published.notify_all();
         }
-        if state.roots != roots {
-            state.roots = roots.to_vec();
+        // The roots only grow: a jump from another monorepo package adds its
+        // roots (#428), and alternating between two packages must not
+        // rebuild the index each time.
+        // ponytail: a root dropped from a composer.json stays indexed until
+        // the project is reopened; harmless, its tests still exist.
+        let added: Vec<Psr4Root> = roots
+            .iter()
+            .filter(|root| !state.roots.contains(root))
+            .cloned()
+            .collect();
+        if !added.is_empty() {
+            state.roots.extend(added);
             // Even while the first build runs: it reads the old roots.
             state.stale = true;
         }
@@ -496,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    fn new_roots_or_too_many_changes_rebuild_and_another_project_starts_over() {
+    fn new_roots_join_the_index_too_many_changes_rebuild_and_another_project_starts_over() {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path();
         write(project, "tests/CheckoutTest.php", COVERS_BAR);
@@ -509,8 +519,14 @@ mod tests {
             dir: "spec/".into(),
             dev: true,
         }];
+        // The roots only grow: a second package's roots join the first's.
         let index = cache.index(project, &spec, true).unwrap();
-        assert_eq!(index.covering("App\\Bar"), ["spec/CartTest.php"]);
+        assert_eq!(
+            index.covering("App\\Bar"),
+            ["spec/CartTest.php", "tests/CheckoutTest.php"]
+        );
+        // Asking with the first roots again rebuilds nothing.
+        cache.index(project, &roots(), false).unwrap();
 
         for n in 0..=MAX_PENDING_CHANGES {
             cache.file_changed(&project.join(format!("spec/F{n}Test.php")));
@@ -518,7 +534,10 @@ mod tests {
         assert!(cache.lock().stale);
         assert!(cache.lock().pending.is_empty());
         let index = cache.index(project, &spec, true).unwrap();
-        assert_eq!(index.covering("App\\Bar"), ["spec/CartTest.php"]);
+        assert_eq!(
+            index.covering("App\\Bar"),
+            ["spec/CartTest.php", "tests/CheckoutTest.php"]
+        );
 
         let other = tempfile::tempdir().unwrap();
         write(other.path(), "tests/OtherTest.php", COVERS_BAR);
@@ -560,7 +579,10 @@ mod tests {
 
         cache.keep_current(generation);
         let index = cache.index(project, &spec_roots(), true).unwrap();
-        assert_eq!(index.covering("App\\Bar"), ["spec/CartTest.php"]);
+        assert_eq!(
+            index.covering("App\\Bar"),
+            ["spec/CartTest.php", "tests/CheckoutTest.php"]
+        );
     }
 
     #[test]

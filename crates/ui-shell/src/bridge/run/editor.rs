@@ -90,6 +90,7 @@ impl ffi::RunConfigEditor {
         container_form::apply_options(config, &form.kind.to_string(), &form.container);
         super::sql_script_form::apply_options(config, &form.kind.to_string(), &form.sql_script);
         super::php_server_form::apply_options(config, &form.kind.to_string(), &form.php_server);
+        super::phpunit_form::apply_options(config, &form.kind.to_string(), &form.phpunit);
         let run_on = form.run_on.to_string();
         config.run_on = (!run_on.trim().is_empty()).then_some(run_on);
         // Editing a temporary configuration is how IntelliJ's "Save
@@ -142,6 +143,10 @@ impl ffi::RunConfigEditor {
             &form.kind.to_string(),
             &form.php_server,
         );
+        super::phpunit_form::apply_options(&mut scratch, &form.kind.to_string(), &form.phpunit);
+        if let Some(preview) = super::phpunit_form::preview(&scratch) {
+            return QString::from(preview.as_str());
+        }
 
         let root = current_project_root().unwrap_or_default();
         let context = run_core::MacroContext::for_project(&root)
@@ -158,6 +163,30 @@ impl ffi::RunConfigEditor {
         let mut argv = vec![spec.program];
         argv.extend(spec.args);
         QString::from(container_core::run_config::preview(&argv).as_str())
+    }
+
+    pub fn project_root(&self) -> QString {
+        QString::from(
+            current_project_root()
+                .map(|root| root.to_string_lossy().into_owned())
+                .unwrap_or_default()
+                .as_str(),
+        )
+    }
+
+    pub fn request_php_unit_model(self: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
+        super::phpunit_form::request_model(self, configuration);
+    }
+
+    pub fn project_relative_path(&self, path: &QString) -> QString {
+        let relative = current_project_root().and_then(|root| {
+            test_core::filter::relative_to_root(
+                &path.to_string(),
+                &root.to_string_lossy(),
+                cfg!(windows),
+            )
+        });
+        QString::from(relative.unwrap_or_default().as_str())
     }
 
     /// The run targets the "Run on" combo lists (C8), effective settings
@@ -396,7 +425,8 @@ impl ffi::RunConfigEditor {
     pub fn validate(&self) -> FfiResult {
         let containers = effective_container_settings();
         for config in self.draft.borrow().iter() {
-            let problem = run_core::validate::problem(config, &containers);
+            let problem = run_core::validate::problem(config, &containers)
+                .or_else(|| super::phpunit_form::problem(config));
             if let Some(problem) = problem {
                 let label = if config.name.trim().is_empty() {
                     "one configuration".to_string()

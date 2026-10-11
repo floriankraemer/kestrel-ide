@@ -1533,6 +1533,9 @@ mod ffi {
         /// The `php-builtin-server` kind's own sub-table (PHP parity plan,
         /// I6) — meaningless (and left at its default) for any other kind.
         php_server: FfiPhpServerOptions,
+        /// The `phpunit` kind's own sub-table (PHPUnit editor runs plan, E4)
+        /// — meaningless (and left at its default) for any other kind.
+        phpunit: FfiPhpUnitOptions,
         /// Run targets (C8): empty for "Local" (run on this machine, as
         /// always), else `"container:<target-id>"` — the "Run on" combo's
         /// selection. Meaningless for a container-kind configuration
@@ -1563,6 +1566,42 @@ mod ffi {
         port: u32,
         document_root: QString,
         router: QString,
+    }
+
+    /// The `phpunit` run configuration's own page (PHPUnit editor runs plan,
+    /// E4): `app_config::php::PhpUnitRunSetting`'s exact fields. `groups` and
+    /// `exclude_groups` are comma-separated; `scope` is the settings-file
+    /// spelling (`directory`, `file`, `class`, `method`, `data_set`,
+    /// `config`).
+    #[derive(Default)]
+    struct FfiPhpUnitOptions {
+        scope: QString,
+        path: QString,
+        class_name: QString,
+        method: QString,
+        data_set: QString,
+        filter: QString,
+        testsuite: QString,
+        configuration: QString,
+        groups: QString,
+        exclude_groups: QString,
+        runner_options: QString,
+        interpreter: QString,
+    }
+
+    /// What a PHPUnit configuration file offers the `phpunit` run
+    /// configuration's pickers (PHPUnit editor runs plan, E5). `suites` and
+    /// `groups` are `\n`-separated (no bare `Vec<QString>` on the seam);
+    /// `configuration` echoes the request so a stale answer can be dropped.
+    #[derive(Default)]
+    struct FfiPhpUnitModel {
+        configuration: QString,
+        /// The file read, project-relative; empty when there is none.
+        file: QString,
+        suites: QString,
+        groups: QString,
+        /// Why the file could not be read; empty when it could.
+        problem: QString,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -6994,6 +7033,42 @@ mod ffi {
         Skipped,
     }
 
+    /// The icon a gutter test marker wears (PHPUnit editor runs plan, E3);
+    /// `php_core::test_status::MarkerState` decides which.
+    enum FfiMarkerState {
+        NeverRun,
+        Running,
+        Passed,
+        Failed,
+        Ignored,
+    }
+
+    /// One gutter marker's last-run result, as numbers and a message the
+    /// view words (and translates) itself.
+    struct FfiMarkerStatus {
+        line: u32,
+        state: FfiMarkerState,
+        total: u32,
+        failed: u32,
+        passed: u32,
+        duration_ms: u64,
+        /// The one failure's, or the ignore reason; empty when there is none.
+        message: QString,
+    }
+
+    /// One data set a gutter menu offers.
+    struct FfiDataSet {
+        id: QString,
+        label: QString,
+    }
+
+    /// The data sets a gutter menu lists, and how many more the cap left out.
+    #[derive(Default)]
+    struct FfiDataSetChoices {
+        sets: Vec<FfiDataSet>,
+        hidden: u32,
+    }
+
     /// One row of the Coverage dock (PHP parity plan T5): a file or a
     /// directory with the executable lines beneath it.
     struct FfiCoverageRow {
@@ -7074,12 +7149,31 @@ mod ffi {
             byte_offset: u32,
         ) -> FfiResolvedLink;
 
-        /// The source position of this node's class, method or test file
-        /// (`found == false` when the framework gave it no location), for
-        /// the tree's double-click / Jump to Source. `line` is 1-based.
+        /// The file this node lives in, empty when the framework gave it no
+        /// location or the file does not exist yet: a cheap check (no file
+        /// is read), for enabling Jump to Source.
+        #[qinvokable]
+        #[cxx_name = "nodeSourcePath"]
+        fn node_source_path(self: &TestService, node_id: &QString) -> QString;
+
+        /// The source position of this node's class, method or test
+        /// (`found == false` when it has none), for Jump to Source. `line`
+        /// is 1-based. `open_text` is the node's file as the editor holds it
+        /// when `has_open_text` (unsaved edits move lines).
         #[qinvokable]
         #[cxx_name = "nodeSource"]
-        fn node_source(self: &TestService, node_id: &QString) -> FfiResolvedLink;
+        fn node_source(
+            self: &TestService,
+            node_id: &QString,
+            open_text: &QString,
+            has_open_text: bool,
+        ) -> FfiResolvedLink;
+
+        /// Every file the last run located a node in: the gutter repaints
+        /// only the editors showing one.
+        #[qinvokable]
+        #[cxx_name = "testedFiles"]
+        fn tested_files(self: &TestService) -> QStringList;
 
         /// Whether a run is currently in flight — the toolbar's run/stop
         /// enablement.
@@ -7118,6 +7212,33 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "markerLines"]
         fn marker_lines(self: &TestService, path: &QString, text: &QString) -> Vec<u32>;
+
+        /// The last run's result for every marker in `text` (E3).
+        #[qinvokable]
+        #[cxx_name = "markerStatuses"]
+        fn marker_statuses(
+            self: &TestService,
+            path: &QString,
+            text: &QString,
+        ) -> Vec<FfiMarkerStatus>;
+
+        /// The data sets the last run executed for the method on `line`.
+        #[qinvokable]
+        #[cxx_name = "markerDataSets"]
+        fn marker_data_sets(
+            self: &TestService,
+            path: &QString,
+            text: &QString,
+            line: u32,
+        ) -> FfiDataSetChoices;
+
+        #[qinvokable]
+        #[cxx_name = "runDataSet"]
+        fn run_data_set(self: Pin<&mut TestService>, id: &QString) -> FfiResult;
+
+        #[qinvokable]
+        #[cxx_name = "prepareDebugDataSet"]
+        fn prepare_debug_data_set(self: Pin<&mut TestService>, id: &QString) -> FfiResult;
 
         /// What the marker on `line` is called, for its menu.
         #[qinvokable]
@@ -7164,6 +7285,33 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "runPendingWithEnv"]
         fn run_pending_with_env(self: Pin<&mut TestService>, env_json: &QString) -> FfiResult;
+
+        /// Run the `phpunit` run configuration `config_id` (E4); results fill
+        /// the Tests dock. `with_coverage` collects coverage as well.
+        #[qinvokable]
+        #[cxx_name = "runConfiguration"]
+        fn run_configuration(
+            self: Pin<&mut TestService>,
+            config_id: &QString,
+            with_coverage: bool,
+        ) -> FfiResult;
+
+        /// Remember the `phpunit` run configuration a Debug click chose;
+        /// like `prepareDebugMarker`, the run starts with
+        /// `runPendingWithEnv`.
+        #[qinvokable]
+        #[cxx_name = "prepareDebugConfiguration"]
+        fn prepare_debug_configuration(
+            self: Pin<&mut TestService>,
+            config_id: &QString,
+        ) -> FfiResult;
+
+        /// A run created (or refreshed) a temporary `phpunit` configuration
+        /// `config_id`: the configuration list is stale, and the toolbar
+        /// selects it (as PhpStorm does).
+        #[qsignal]
+        #[cxx_name = "configurationRemembered"]
+        fn configuration_remembered(self: Pin<&mut TestService>, config_id: QString);
 
         /// Run the whole project's tests collecting coverage (T5).
         #[qinvokable]
@@ -10075,6 +10223,23 @@ mod ffi {
         #[qinvokable]
         fn run(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
 
+        /// Run `config_id` collecting coverage. Only a test configuration can;
+        /// anything else is refused.
+        #[qinvokable]
+        #[cxx_name = "runWithCoverage"]
+        fn run_with_coverage(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
+
+        /// A `phpunit` configuration was asked to run: it never gets a
+        /// console, `TestService` runs it (ADR-0073), so the view hands it
+        /// over.
+        #[qsignal]
+        #[cxx_name = "testConfigurationRequested"]
+        fn test_configuration_requested(
+            self: Pin<&mut RunService>,
+            config_id: QString,
+            with_coverage: bool,
+        );
+
         /// Run `config_id` with extra environment variables (`env_json` is
         /// `[[key, value], ...]`) — how a PHP debug launch carries the Xdebug
         /// settings, including into a container.
@@ -10531,6 +10696,12 @@ mod ffi {
         #[cxx_name = "debugPhpTests"]
         fn debug_php_tests(self: Pin<&mut DebugService>) -> FfiResult;
 
+        /// A `phpunit` configuration was asked to debug: the view stages it in
+        /// `TestService` and calls `debugPhpTests` (ADR-0073).
+        #[qsignal]
+        #[cxx_name = "testConfigurationDebugRequested"]
+        fn test_configuration_debug_requested(self: Pin<&mut DebugService>, config_id: QString);
+
         /// The listener is up for a debugged test: the view hands the
         /// environment (`[[key, value], ...]`) to `TestService`.
         #[qsignal]
@@ -10935,6 +11106,30 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "commandPreview"]
         fn command_preview(self: &RunConfigEditor, form: &FfiRunConfig) -> QString;
+
+        /// `path` relative to the open project with `/` separators, or empty
+        /// when it is outside the project: what a `phpunit` configuration's
+        /// directory and file pickers store.
+        #[qinvokable]
+        #[cxx_name = "projectRelativePath"]
+        fn project_relative_path(self: &RunConfigEditor, path: &QString) -> QString;
+
+        /// Read the PHPUnit configuration `configuration` names (blank: the
+        /// project's own) and its groups on a worker thread; answers through
+        /// `phpUnitModelReady`.
+        #[qinvokable]
+        #[cxx_name = "requestPhpUnitModel"]
+        fn request_php_unit_model(self: Pin<&mut RunConfigEditor>, configuration: &QString);
+
+        /// `requestPhpUnitModel`'s answer.
+        #[qsignal]
+        #[cxx_name = "phpUnitModelReady"]
+        fn php_unit_model_ready(self: Pin<&mut RunConfigEditor>, model: FfiPhpUnitModel);
+
+        /// The open project's root, where the pickers start; empty without one.
+        #[qinvokable]
+        #[cxx_name = "projectRoot"]
+        fn project_root(self: &RunConfigEditor) -> QString;
 
         /// `compose -f <files>… config --services` against `connection_id`,
         /// for the Compose page's Services picker: runs on a worker thread

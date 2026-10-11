@@ -551,9 +551,19 @@ void RunConsolePanel::killSelected()
     toolbar_->killSelected();
 }
 
+void RunConsolePanel::runSelectedWithCoverage()
+{
+    toolbar_->runSelectedWithCoverage();
+}
+
 void RunConsolePanel::rerunSelected()
 {
     toolbar_->rerunSelected();
+}
+
+void RunConsolePanel::selectConfiguration(const QString &configId)
+{
+    toolbar_->selectConfiguration(configId);
 }
 
 void RunConsolePanel::debugSelected()

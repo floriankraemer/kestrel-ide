@@ -6193,10 +6193,12 @@ dependencies = [
 name = "php-core"
 version = "0.1.0"
 dependencies = [
+ "analysis-core",
  "app-config",
  "container-core",
  "lsp-core",
  "process-exec",
+ "quick-xml",
  "serde_json",
  "syntax-core",
  "tempfile",

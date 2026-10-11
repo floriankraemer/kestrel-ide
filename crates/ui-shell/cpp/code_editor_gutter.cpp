@@ -71,6 +71,62 @@ constexpr int kCoverageStripeWidth = 3;
 constexpr int kBlameWidth = 220;
 } // namespace
 
+namespace {
+// A status disc in the Run column's 14px box: 10px across, colour and
+// inner mark both say the state (never colour alone). Logical coordinates,
+// so it is as crisp at 2x as at 1x.
+void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF &center)
+{
+    constexpr qreal kRadius = 5.0;
+    QColor fill;
+    switch (glyph) {
+    case RunMarkerGlyph::Passed:
+        fill = QColor(0x4c, 0xaf, 0x50);
+        break;
+    case RunMarkerGlyph::Failed:
+        fill = QColor(0xe5, 0x39, 0x35);
+        break;
+    case RunMarkerGlyph::Ignored:
+        fill = QColor(0x9e, 0x9e, 0x9e);
+        break;
+    case RunMarkerGlyph::Running:
+        fill = QColor(0xff, 0xb3, 0x00);
+        break;
+    }
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(fill);
+    painter.drawEllipse(center, kRadius, kRadius);
+    QPen mark(Qt::white, 1.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+    painter.setPen(mark);
+    painter.setBrush(Qt::NoBrush);
+    const qreal x = center.x();
+    const qreal y = center.y();
+    switch (glyph) {
+    case RunMarkerGlyph::Passed: {
+        QPolygonF check;
+        check << QPointF(x - 2.2, y + 0.2) << QPointF(x - 0.6, y + 1.8) << QPointF(x + 2.4, y - 1.6);
+        painter.drawPolyline(check);
+        break;
+    }
+    case RunMarkerGlyph::Failed:
+        painter.drawLine(QPointF(x - 1.8, y - 1.8), QPointF(x + 1.8, y + 1.8));
+        painter.drawLine(QPointF(x - 1.8, y + 1.8), QPointF(x + 1.8, y - 1.8));
+        break;
+    case RunMarkerGlyph::Ignored:
+        painter.drawLine(QPointF(x - 2.0, y), QPointF(x + 2.0, y));
+        break;
+    case RunMarkerGlyph::Running:
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(Qt::white);
+        painter.drawEllipse(center, 1.6, 1.6);
+        break;
+    }
+    painter.restore();
+}
+} // namespace
+
 int CodeEditor::runMarkerWidth() const
 {
     return runLines_.isEmpty() ? 0 : kRunMarkerWidth;
@@ -110,6 +166,23 @@ void CodeEditor::setRunLines(const QSet<int> &lines)
     // The column is only there when the file is runnable, so the gutter has
     // to be remeasured, not just repainted.
     updateLineNumberAreaWidth(0);
+    lineNumberArea_->update();
+}
+
+void CodeEditor::setRunMarkerStatuses(const QHash<int, RunMarkerStatus> &statuses)
+{
+    if (runMarkerStatuses_.size() == statuses.size()) {
+        bool same = true;
+        for (auto it = statuses.cbegin(); same && it != statuses.cend(); ++it) {
+            const auto old = runMarkerStatuses_.constFind(it.key());
+            same = old != runMarkerStatuses_.cend() && old->glyph == it->glyph
+              && old->tooltip == it->tooltip;
+        }
+        if (same) {
+            return;
+        }
+    }
+    runMarkerStatuses_ = statuses;
     lineNumberArea_->update();
 }
 
@@ -264,12 +337,17 @@ void CodeEditor::lineNumberAreaPaintEvent(QPaintEvent *event)
             if (runLines_.contains(blockNumber)) {
                 const int cx = kRunMarkerWidth / 2;
                 const int cy = top + fontMetrics().height() / 2;
-                QPolygon play;
-                play << QPoint(cx - 3, cy - 5) << QPoint(cx - 3, cy + 5) << QPoint(cx + 5, cy);
-                painter.setPen(Qt::NoPen);
-                painter.setBrush(QColor(0x4c, 0xaf, 0x50));
-                painter.drawPolygon(play);
-                painter.setBrush(Qt::NoBrush);
+                const auto status = runMarkerStatuses_.constFind(blockNumber);
+                if (status == runMarkerStatuses_.cend()) {
+                    QPolygon play;
+                    play << QPoint(cx - 3, cy - 5) << QPoint(cx - 3, cy + 5) << QPoint(cx + 5, cy);
+                    painter.setPen(Qt::NoPen);
+                    painter.setBrush(QColor(0x4c, 0xaf, 0x50));
+                    painter.drawPolygon(play);
+                    painter.setBrush(Qt::NoBrush);
+                } else {
+                    paintRunMarkerStatus(painter, status->glyph, QPointF(kRunMarkerWidth / 2.0, cy));
+                }
                 // The icon's screen rect: the one place its position is known.
                 const QRect iconRect(lineNumberArea_->mapToGlobal(QPoint(0, top)),
                                      QSize(kRunMarkerWidth, fontMetrics().height()));
@@ -423,13 +501,16 @@ void CodeEditor::lineNumberAreaMousePressEvent(QMouseEvent *event)
 
 void CodeEditor::lineNumberAreaMouseMoveEvent(QMouseEvent *event)
 {
-    if (!blameEnabled_) {
-        return;
-    }
     const int x = static_cast<int>(event->position().x());
     const int y = static_cast<int>(event->position().y());
+    const bool overRunMarker = !runMarkerStatuses_.isEmpty() && x < runMarkerWidth();
+    if (!blameEnabled_ && !overRunMarker) {
+        // The pointer left the icon: a result tooltip must not outlive it.
+        QToolTip::hideText();
+        return;
+    }
     const int digitAreaWidth = lineNumberAreaWidth() - kBlameWidth;
-    if (x < digitAreaWidth) {
+    if (!overRunMarker && x < digitAreaWidth) {
         QToolTip::hideText();
         return;
     }
@@ -441,6 +522,18 @@ void CodeEditor::lineNumberAreaMouseMoveEvent(QMouseEvent *event)
 
     while (block.isValid() && top <= y) {
         if (block.isVisible() && y >= top && y < bottom) {
+            if (overRunMarker) {
+                const auto status = runMarkerStatuses_.constFind(blockNumber);
+                if (status != runMarkerStatuses_.cend() && !status->tooltip.isEmpty()) {
+                    // The icon's rect: Qt hides the tip itself once the pointer leaves it.
+                    QToolTip::showText(lineNumberArea_->mapToGlobal(event->pos()), status->tooltip,
+                                       lineNumberArea_,
+                                       QRect(0, top, runMarkerWidth(), bottom - top));
+                } else {
+                    QToolTip::hideText();
+                }
+                return;
+            }
             const auto blameIt = blameAnnotations_.constFind(blockNumber);
             if (blameIt != blameAnnotations_.constEnd() && !blameIt.value().tooltip.isEmpty()) {
                 QToolTip::showText(lineNumberArea_->mapToGlobal(event->pos()),

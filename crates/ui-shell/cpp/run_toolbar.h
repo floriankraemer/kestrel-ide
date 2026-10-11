@@ -50,12 +50,17 @@ public:
     // R2-4: stop without the grace period `stopSelected` allows.
     void killSelected();
     void rerunSelected();
+    // Run the selected test configuration collecting coverage.
+    void runSelectedWithCoverage();
     // D3-8: start a debug session for whatever configuration is selected.
     void debugSelected();
 
     // Gives the configuration combo box keyboard focus — `run.
     // selectConfiguration`'s target.
     void focusConfigSelector();
+
+    // Makes `configId` the combo's selection; unknown ids are ignored.
+    void selectConfiguration(const QString &configId);
 
     RunService *runService() const { return runService_; }
 

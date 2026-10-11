@@ -888,6 +888,12 @@ pub const ACTIONS: &[ActionDef] = &[
         default_shortcut: "Shift+F10",
     },
     ActionDef {
+        id: "run.runWithCoverage",
+        label: "Run with Coverage",
+        category: "Run",
+        default_shortcut: "",
+    },
+    ActionDef {
         id: "run.runContext",
         label: "Run File",
         category: "Run",
@@ -897,6 +903,15 @@ pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         id: "run.debugContext",
         label: "Debug File",
+        category: "Run",
+        default_shortcut: "",
+    },
+    // F4 is `database.goToReferencedRow`'s and a window shortcut: bound twice
+    // it fires neither, so the Tests dock's Jump to Source ships unbound and
+    // is handled by the tree itself once the user binds it.
+    ActionDef {
+        id: "tests.jumpToSource",
+        label: "Jump to Source (Tests)",
         category: "Run",
         default_shortcut: "",
     },

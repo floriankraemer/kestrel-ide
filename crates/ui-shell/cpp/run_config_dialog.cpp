@@ -126,6 +126,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     QMenu *phpMenu = addMenu->addMenu(QObject::tr("PHP"));
     QAction *addPhpServerAction = phpMenu->addAction(QObject::tr("PHP Built-in Server"));
     QAction *addPhpConsoleAction = phpMenu->addAction(QObject::tr("PHP Console"));
+    QAction *addPhpUnitAction = phpMenu->addAction(QObject::tr("PHPUnit"));
     addButton->setMenu(addMenu);
     auto *removeButton = new QPushButton(QObject::tr("Remove"), &dialog);
     auto *listButtons = new QHBoxLayout();
@@ -172,6 +173,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     sqlPage->setVisible(false);
     auto *phpServerPage = new PhpServerOptionsPage(&dialog);
     phpServerPage->setVisible(false);
+    auto *phpUnitPage = new PhpUnitOptionsPage(editor, &dialog);
+    phpUnitPage->setVisible(false);
 
     auto *commandPreviewEdit = new QPlainTextEdit(&dialog);
     commandPreviewEdit->setReadOnly(true);
@@ -199,6 +202,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     form->addWidget(containerPage, 1);
     form->addWidget(sqlPage, 1);
     form->addWidget(phpServerPage);
+    form->addWidget(phpUnitPage);
     form->addWidget(new QLabel(QObject::tr("Command preview:"), &dialog));
     form->addWidget(commandPreviewEdit);
 
@@ -241,6 +245,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.container = containerPage->options();
         form.sql_script = sqlPage->options();
         form.php_server = phpServerPage->options();
+        form.phpunit = phpUnitPage->options();
         form.run_on = runOnCombo->currentData().toString();
         editor->updateConfiguration(static_cast<quint32>(index), form);
     };
@@ -254,6 +259,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         form.container = containerPage->options();
         form.sql_script = sqlPage->options();
         form.php_server = phpServerPage->options();
+        form.phpunit = phpUnitPage->options();
         const QString preview = editor->commandPreview(form);
         commandPreviewEdit->setPlainText(preview);
         e2eMark(QStringLiteral("{\"ev\":\"run_config_preview\",\"kind\":%1,\"preview\":%2}")
@@ -296,6 +302,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         sqlPage->setOptions(config.sql_script);
         phpServerPage->setVisible(config.kind == QLatin1String("php-builtin-server"));
         phpServerPage->setOptions(config.php_server);
+        phpUnitPage->setVisible(config.kind == QLatin1String("phpunit"));
+        phpUnitPage->setOptions(config.phpunit);
         refreshPreview();
     };
 
@@ -322,6 +330,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
     QObject::connect(containerPage, &ContainerOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(sqlPage, &SqlScriptOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(phpServerPage, &PhpServerOptionsPage::changed, &dialog, refreshPreview);
+    QObject::connect(phpUnitPage, &PhpUnitOptionsPage::changed, &dialog, refreshPreview);
     QObject::connect(programEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
     QObject::connect(argsEdit, &QLineEdit::textChanged, &dialog, refreshPreview);
 
@@ -371,6 +380,8 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
                       [=]() { addWithKind(QStringLiteral("php-builtin-server")); });
     QObject::connect(addPhpConsoleAction, &QAction::triggered, &dialog,
                       [=]() { addWithKind(QStringLiteral("php-console")); });
+    QObject::connect(addPhpUnitAction, &QAction::triggered, &dialog,
+                      [=]() { addWithKind(QStringLiteral("phpunit")); });
 
     QObject::connect(removeButton, &QPushButton::clicked, &dialog, [=]() {
         const int index = list->currentRow();

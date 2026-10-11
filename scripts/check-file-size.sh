@@ -93,9 +93,15 @@ baseline() {
 	# declaration, re-export and Settings field; the type and its tests live
 	# in hover.rs.
 	crates/app-config/src/lib.rs) echo 1483 ;;
-	# 1500 ceiling + 7 lines for the `run.debugContext` ActionDef (E1); the
-	# keymap table is one entry per action, so it grows with the actions.
-	crates/app-config/src/keymap.rs) echo 1507 ;;
+	# 1500 ceiling + 16 lines for the `run.debugContext` (E1) and
+	# `tests.jumpToSource` (E2) ActionDefs; the keymap table is one entry per
+	# action, so it grows with the actions.
+	# Raised from 1516 by 6 lines for the PHPUnit run configuration kind (E4):
+	# `run.runWithCoverage`'s ActionDef. No split planned.
+	crates/app-config/src/keymap.rs) echo 1522 ;;
+	# 1500 ceiling + 37 lines for the PHPUnit run configuration kind (E4): the
+	# `phpunit` before-launch task and its launch/debug signals. No split planned.
+	crates/ui-shell/src/bridge/run/mod.rs) echo 1537 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)
@@ -198,7 +204,9 @@ baseline() {
 	# Raised from 1241 by 12 lines for the hover card's menu callbacks
 	# (persist "Show on Mouse Hover", open Settings on Editor) and the
 	# startup apply of the saved hover options (H6).
-	crates/ui-shell/cpp/main_window.cpp) echo 1244 ;;
+	# Raised from 1244 by 5 lines: the Tests dock's open-editor-text callback.
+	# Raised from 1249 by 1 line for the PHPUnit configuration wiring (E4/E5).
+	crates/ui-shell/cpp/main_window.cpp) echo 1250 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

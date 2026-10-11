@@ -290,6 +290,14 @@ void RunToolbar::refreshConfigurations()
               .arg(configCombo_->count()));
 }
 
+void RunToolbar::selectConfiguration(const QString &configId)
+{
+    const int index = configCombo_->findData(configId);
+    if (index >= 0) {
+        configCombo_->setCurrentIndex(index);
+    }
+}
+
 void RunToolbar::refreshButtons()
 {
     const QString configId = selectedConfigId();
@@ -310,6 +318,18 @@ void RunToolbar::runSelected()
     const QString configId = selectedConfigId();
     if (!configId.isEmpty()) {
         runService_->run(configId);
+    }
+}
+
+void RunToolbar::runSelectedWithCoverage()
+{
+    const QString configId = selectedConfigId();
+    if (configId.isEmpty()) {
+        return;
+    }
+    const FfiResult result = runService_->runWithCoverage(configId);
+    if (result.code != 0) {
+        QMessageBox::warning(this, tr("Run with Coverage"), result.message);
     }
 }
 

@@ -84,6 +84,12 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
     QObject::connect(runAction, &QAction::triggered, runConsolePanel,
                       [runConsolePanel]() { runConsolePanel->runSelected(); });
 
+    QAction *runCoverageAction =
+      registerAction(runMenu, QStringLiteral("run.runWithCoverage"),
+                      QObject::tr("Run with Coverage"), appSettings, actions);
+    QObject::connect(runCoverageAction, &QAction::triggered, runConsolePanel,
+                      [runConsolePanel]() { runConsolePanel->runSelectedWithCoverage(); });
+
     // IntelliJ's "run context configuration": run whatever the focused
     // editor's file is, the keyboard door onto the same gutter icon
     // `editor_tabs_run.cpp` wires up.

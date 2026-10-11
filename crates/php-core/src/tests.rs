@@ -7,6 +7,9 @@
 //! The parse goes through `syntax-core`'s registry — the grammar the editor
 //! already highlights with.
 
+use std::path::{Path, PathBuf};
+
+use process_exec::host::ExecHost;
 use test_core::{TeamCityEvent, TestLocation, TestSymbol};
 
 use crate::composer::Psr4Root;
@@ -154,58 +157,96 @@ fn pest_title(method: &str) -> String {
         .unwrap_or_default()
 }
 
-/// [`locate_pest_class`] over the location an event carries.
-pub fn locate_event(
-    event: TeamCityEvent,
-    roots: &[Psr4Root],
-    project: &std::path::Path,
-) -> TeamCityEvent {
-    let locate = |location: Option<TestLocation>| {
-        location.map(|location| locate_pest_class(roots, project, location))
-    };
-    match event {
-        TeamCityEvent::SuiteStarted {
-            parent,
-            name,
-            location,
-        } => TeamCityEvent::SuiteStarted {
-            parent,
-            name,
-            location: locate(location),
-        },
-        TeamCityEvent::TestStarted {
-            parent,
-            name,
-            location,
-        } => TeamCityEvent::TestStarted {
-            parent,
-            name,
-            location: locate(location),
-        },
-        other => other,
-    }
+/// Where a run's events point: a Pest class-based test's file found through
+/// the PSR-4 roots (the run's package first, then the project's), and every
+/// relative file made absolute against the run's work dir, so a later run
+/// in another directory never re-points this one's nodes.
+pub struct EventLocator {
+    /// Each directory a class may live under, with its own roots.
+    class_roots: Vec<(PathBuf, Vec<Psr4Root>)>,
+    host: ExecHost,
+    work_dir: PathBuf,
 }
 
-/// A Pest class-based location resolved to its file by the project's PSR-4
-/// roots; unchanged when it names a file already or the class is not found.
-/// Pest drops the `Test` suffix from the class it reports, so both spellings
-/// are tried.
-pub fn locate_pest_class(
-    roots: &[Psr4Root],
-    project: &std::path::Path,
-    location: TestLocation,
-) -> TestLocation {
-    let Some(class) = location.unresolved_class() else {
-        return location;
-    };
-    let found = [class.to_string(), format!("{class}Test")]
-        .into_iter()
-        .find_map(|candidate| {
-            crate::psr4::class_file(roots, project, &candidate).map(|file| (file, candidate))
-        });
-    match found {
-        Some((file, declared)) => location.with_file(file, &declared),
-        None => location,
+impl EventLocator {
+    pub fn new(
+        class_roots: Vec<(PathBuf, Vec<Psr4Root>)>,
+        host: ExecHost,
+        work_dir: PathBuf,
+    ) -> Self {
+        Self {
+            class_roots,
+            host,
+            work_dir,
+        }
+    }
+
+    /// The locator of a run in `work_dir` of the project at `root`, reading
+    /// both `composer.json` files (a package may have none of its own).
+    pub fn for_run(root: &Path, work_dir: &Path, host: ExecHost) -> Self {
+        let mut dirs = vec![work_dir];
+        if work_dir != root {
+            dirs.push(root);
+        }
+        let class_roots = dirs
+            .into_iter()
+            .filter_map(|dir| {
+                let composer = crate::composer::ComposerJson::read(dir).ok().flatten()?;
+                Some((dir.to_path_buf(), composer.psr4))
+            })
+            .collect();
+        Self::new(class_roots, host, work_dir.to_path_buf())
+    }
+
+    pub fn locate_event(&self, event: TeamCityEvent) -> TeamCityEvent {
+        let locate =
+            |location: Option<TestLocation>| location.map(|location| self.locate(location));
+        match event {
+            TeamCityEvent::SuiteStarted {
+                parent,
+                name,
+                location,
+            } => TeamCityEvent::SuiteStarted {
+                parent,
+                name,
+                location: locate(location),
+            },
+            TeamCityEvent::TestStarted {
+                parent,
+                name,
+                location,
+            } => TeamCityEvent::TestStarted {
+                parent,
+                name,
+                location: locate(location),
+            },
+            other => other,
+        }
+    }
+
+    /// A Pest class-based location resolved to its file, unchanged when the
+    /// class is found under none of the roots; then anchored. Pest drops the
+    /// `Test` suffix from the class it reports, so both spellings are tried.
+    pub fn locate(&self, location: TestLocation) -> TestLocation {
+        let location = match location.unresolved_class() {
+            Some(class) => {
+                let found = [class.to_string(), format!("{class}Test")]
+                    .into_iter()
+                    .find_map(|candidate| {
+                        self.class_roots.iter().find_map(|(dir, roots)| {
+                            crate::psr4::class_file(roots, dir, &candidate).map(|file| {
+                                (self.host.to_remote(&dir.join(file)), candidate.clone())
+                            })
+                        })
+                    });
+                match found {
+                    Some((file, declared)) => location.with_file(file, &declared),
+                    None => location,
+                }
+            }
+            None => location,
+        };
+        location.anchored(&self.host, &self.work_dir)
     }
 }
 
@@ -766,26 +807,55 @@ class OtherTest extends TestCase
         let project = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(project.path().join("tests")).unwrap();
         std::fs::write(project.path().join("tests/GreeterTest.php"), "<?php").unwrap();
-        let roots = [Psr4Root {
+        let roots = vec![Psr4Root {
             prefix: "Tests\\".into(),
             dir: "tests/".into(),
             dev: true,
         }];
+        let dir = project.path().to_path_buf();
+        let locator = EventLocator::new(vec![(dir.clone(), roots)], ExecHost::Local, dir.clone());
         let hint = |h: &str| test_core::parse_location_hint(h).unwrap();
-        let located = locate_pest_class(
-            &roots,
-            project.path(),
-            hint(r"pest_qn://Greeter (Tests\Greeter)"),
-        );
-        assert_eq!(located.file, "tests/GreeterTest.php");
+        let in_project = |file: &str| dir.join(file).to_string_lossy().into_owned();
+        let located = locator.locate(hint(r"pest_qn://Greeter (Tests\Greeter)"));
+        assert_eq!(located.file, in_project("tests/GreeterTest.php"));
         assert_eq!(
             located.symbol,
             Some(TestSymbol::PestClass(r"Tests\GreeterTest".into()))
         );
-        let unknown =
-            locate_pest_class(&roots, project.path(), hint(r"pest_qn://Nope (Tests\Nope)"));
+        let unknown = locator.locate(hint(r"pest_qn://Nope (Tests\Nope)"));
         assert_eq!(unknown.unresolved_class(), Some(r"Tests\Nope"));
-        let filed = locate_pest_class(&roots, project.path(), hint("pest_qn://tests/A.php::it x"));
-        assert_eq!(filed.file, "tests/A.php");
+        let filed = locator.locate(hint("pest_qn://tests/A.php::it x"));
+        assert_eq!(filed.file, in_project("tests/A.php"));
+    }
+
+    #[test]
+    fn a_package_pest_class_is_found_in_the_package_first_then_the_project() {
+        let project = tempfile::tempdir().unwrap();
+        let root = project.path();
+        let write = |file: &str, text: &str| {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        let autoload = r#"{"autoload-dev": {"psr-4": {"Tests\\": "tests/"}}}"#;
+        write("composer.json", autoload);
+        write("tests/GreeterTest.php", "<?php");
+        // A package with only a phpunit.xml: its test autoload is the root's.
+        write("packages/a/phpunit.xml", "<phpunit/>");
+        // A package with its own autoload and its own GreeterTest.
+        write("packages/b/composer.json", autoload);
+        write("packages/b/tests/GreeterTest.php", "<?php");
+        let hint = test_core::parse_location_hint(r"pest_qn://Greeter (Tests\Greeter)").unwrap();
+        let file_for = |package: &str| {
+            EventLocator::for_run(root, &root.join(package), ExecHost::Local)
+                .locate(hint.clone())
+                .file
+        };
+        let path = |file: &str| root.join(file).to_string_lossy().into_owned();
+        assert_eq!(file_for("packages/a"), path("tests/GreeterTest.php"));
+        assert_eq!(
+            file_for("packages/b"),
+            path("packages/b/tests/GreeterTest.php")
+        );
     }
 }

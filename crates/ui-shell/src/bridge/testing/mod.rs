@@ -689,12 +689,7 @@ impl ffi::TestService {
             let mut sink = QtSink {
                 qt_thread: qt_thread.clone(),
                 ansi: run_core::AnsiStripper::default(),
-                psr4_roots: php_core::composer::ComposerJson::read(&work_dir)
-                    .ok()
-                    .flatten()
-                    .map(|composer| composer.psr4)
-                    .unwrap_or_default(),
-                work_dir: work_dir.clone(),
+                locator: php_core::tests::EventLocator::for_run(&root, &work_dir, host.clone()),
             };
             let program_str = program.to_string_lossy().into_owned();
             let result = test_core::run_on_env(
@@ -813,10 +808,9 @@ struct QtSink {
     /// here rather than in `test-core` since `test-core`'s layering row
     /// carries no adapter-layer crate (`run-core` included).
     ansi: run_core::AnsiStripper,
-    /// A Pest class-based test names its class and no file; the PSR-4
-    /// roots of the run's package find the file.
-    psr4_roots: Vec<php_core::composer::Psr4Root>,
-    work_dir: PathBuf,
+    /// Anchors each node's file to this run's work dir, and finds the file
+    /// of a Pest class-based test, which names only its class.
+    locator: php_core::tests::EventLocator,
 }
 
 impl test_core::TestSink for QtSink {
@@ -832,7 +826,7 @@ impl test_core::TestSink for QtSink {
     }
 
     fn event(&mut self, event: test_core::TeamCityEvent) {
-        let event = php_core::tests::locate_event(event, &self.psr4_roots, &self.work_dir);
+        let event = self.locator.locate_event(event);
         let _ = self
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {

@@ -79,8 +79,11 @@ A package that only autoloads (a `composer.json` without either) runs with the p
 The working directory is part of a temporary configuration's id only when it is set, so the ids earlier configurations were stored under hold.
 `TestService` then treats the working directory as the run's root:
 - the framework program is the package's (`vendor/bin/phpunit` there), else the project's, and the toolchains are detected in both;
-- `test_core::run_on_env` starts in it, and its relative test locations, failure links and diagnostics resolve against it;
-- the PSR-4 roots that locate a Pest class come from the package's `composer.json`;
+- `test_core::run_on_env` starts in it, and its failure links and diagnostics resolve against it;
+- each relative test location is made absolute against it as the event arrives (`TestLocation::anchored`), so a later run in another directory never re-points the nodes an earlier one left in the tree;
+- a Pest class is located through the package's PSR-4 roots, then the project's (`php_core::tests::EventLocator`), so a package with only a `phpunit.xml`, or with its test autoload in the root `composer.json`, keeps its locations;
+- a container engine still starts in the project root, where its relative compose files are; only `-w` carries the working directory into the container;
+- a program probe on WSL or in a container is memoised by the candidate's absolute path, so the package's `vendor/bin/phpunit` and the project's never answer for each other;
 - the coverage report is still written to `.ide/local/coverage/clover.xml` below the project root, named relative to the working directory (`test_core::coverage::args_in`).
 The editor page shows the field as "Custom working directory", and without an explicit configuration file its test suite and group pickers read the working directory's (`phpunit_xml::model_in`); a package without one runs without one, as PHPUnit does.
 

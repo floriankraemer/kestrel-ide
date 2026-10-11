@@ -53,6 +53,8 @@ With the rule in place, `navigate.goToTest` (Editor) and `terminal.newSession` (
 - JetBrains default keys can be used where PhpStorm uses them, without Qt ambiguity.
 - A user rebind only warns about, and only steals from, actions that can actually be active at the same time.
 - The catalogue's context and the view's registration must agree; a new scoped action needs both the table entry and a `scopeShortcut` (or `scopedShortcutKey`) call, and the scanning test fails until it has both.
+- A keymap saved under the old global rule can hold an unbinding that only the now-disjoint context caused (binding Jump to Source to `F4` unbound Go to Referenced Row).
+  `Settings::keymap_version` records the rules a keymap was last edited under, and loading an older one restores such defaults once (`keymap::migrate_overrides`).
 - A scoped action's shortcut does nothing when focus is elsewhere, so the menu bar entry is the way to reach it from another widget (Go to Test from the terminal, for instance).
 
 ## Related

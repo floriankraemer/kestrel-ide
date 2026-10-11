@@ -3668,6 +3668,14 @@
         <source>Select a failed test to see why it failed.</source>
         <translation>Wählen Sie einen fehlgeschlagenen Test aus, um den Grund zu sehen.</translation>
     </message>
+    <message>
+        <source>Preparing...</source>
+        <translation>Wird vorbereitet …</translation>
+    </message>
+    <message>
+        <source>Run stopped.</source>
+        <translation>Lauf gestoppt.</translation>
+    </message>
 </context>
 <context>
     <name>CoveragePanel</name>

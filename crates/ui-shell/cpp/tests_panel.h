@@ -69,11 +69,13 @@ public:
     void markE2eRows() const;
 
 private:
+    void onTestRunPreparing();
     void onTestRunStarted();
+    void onTestRunStopped();
     void onTestTreeChanged();
     void onTestOutputAppended(const QString &text);
     void onTestRunFinished(bool ok, bool matchedNothing, const QString &message);
-    void onTestRunRefused(const QString &message);
+    void onTestRunRefused(const FfiResult &result);
     void onSelectionChanged();
     void onFailureLinkActivated(int textPosition);
     void jumpToSource(const QString &nodeId);

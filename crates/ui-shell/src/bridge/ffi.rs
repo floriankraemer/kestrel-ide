@@ -7489,9 +7489,15 @@ mod ffi {
         #[cxx_name = "coverageChanged"]
         fn coverage_changed(self: Pin<&mut TestService>);
 
-        /// Stop the run in progress, if any.
+        /// Stop the run in progress, if any, or the one being prepared.
         #[qinvokable]
         fn stop(self: Pin<&mut TestService>);
+
+        /// Show a refusal `result` (code not `CODE_OK`) where the Tests
+        /// dock's own refusals show: `testRunRefused`.
+        #[qinvokable]
+        #[cxx_name = "reportRefusal"]
+        fn report_refusal(self: Pin<&mut TestService>, result: &FfiResult);
 
         /// Make this the service a `phpunit` before-launch task runs on, so
         /// its results fill this Tests dock (#416).
@@ -7532,10 +7538,24 @@ mod ffi {
         );
 
         /// A run that was accepted could not start once its package,
-        /// configuration and framework were found: `message` says why.
+        /// configuration and framework were found, or was refused before it
+        /// reached this service (`reportRefusal`): `result` says why.
         #[qsignal]
         #[cxx_name = "testRunRefused"]
-        fn test_run_refused(self: Pin<&mut TestService>, message: QString);
+        fn test_run_refused(self: Pin<&mut TestService>, result: FfiResult);
+
+        /// A run is being prepared: its package, configuration and framework
+        /// program are being found (a probe in WSL or a container may take
+        /// a while). Stop ends it.
+        #[qsignal]
+        #[cxx_name = "testRunPreparing"]
+        fn test_run_preparing(self: Pin<&mut TestService>);
+
+        /// Stop ended the run being prepared before it started: not a
+        /// refusal, the user asked for it.
+        #[qsignal]
+        #[cxx_name = "testRunStopped"]
+        fn test_run_stopped(self: Pin<&mut TestService>);
     }
 
     impl cxx_qt::Threading for TestService {}

@@ -94,8 +94,6 @@ pub struct TestServiceRust {
     /// The run whose package, configuration and framework a worker is
     /// finding; it starts once they are found.
     preparing: Cell<Option<u64>>,
-    /// Stop was asked while a run was being prepared: it never starts.
-    preparation_stopped: Cell<bool>,
     /// The project's recorded test results, loaded on the gutter's first
     /// question about it (G4).
     history: RefCell<Option<(PathBuf, php_core::test_history::TestHistory)>>,
@@ -583,10 +581,11 @@ impl ffi::TestService {
     /// tree is read here; the package probe, the configuration files and
     /// the framework's program (a process start under WSL or in a
     /// container) are found on a worker, and the run starts once they are
-    /// ([`Self::launch`]). A refusal found there arrives as
-    /// `test_run_refused`.
+    /// ([`Self::launch`]). Meanwhile the dock shows it preparing
+    /// (`test_run_preparing`), and Stop ends it; a refusal found there
+    /// arrives as `test_run_refused`.
     fn start_with(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         selection: Option<RerunSelection>,
         env: Vec<(String, String)>,
         with_coverage: bool,
@@ -612,40 +611,56 @@ impl ffi::TestService {
         std::thread::spawn(move || {
             let prepared = prepare(request, &root, cached);
             let _ = qt_thread.queue(move |service: Pin<&mut ffi::TestService>| {
-                service.launch(run_id, prepared, env, with_coverage, waiter);
+                service.launch(run_id, &root, prepared, env, with_coverage, waiter);
             });
         });
+        self.as_mut().test_run_preparing();
         ffi::FfiResult::default()
     }
 
-    /// Start the prepared run `run_id`, or say why it cannot start.
+    /// Start the run `run_id` prepared for the project at `root`, or say
+    /// why it cannot start; one that Stop ended meanwhile is dropped
+    /// (`test_core::preparation::prepared`). A refused run lets the run
+    /// queued behind it start.
     fn launch(
         mut self: Pin<&mut Self>,
         run_id: u64,
+        root: &Path,
         prepared: Result<PreparedRun, String>,
         env: Vec<(String, String)>,
         with_coverage: bool,
         mut waiter: Option<Waiter>,
     ) {
-        self.preparing.set(None);
-        let stopped = self.preparation_stopped.replace(false);
-        let prepared = prepared.and_then(|prepared| {
-            if stopped {
-                Err("the run was stopped".to_string())
-            } else {
-                Ok(prepared)
+        use test_core::preparation::Prepared;
+        let current = current_project_root();
+        let outcome = test_core::preparation::prepared(
+            run_id,
+            self.preparing.get(),
+            root,
+            current.as_deref(),
+        );
+        if outcome == Prepared::Dropped {
+            if let Some(waiter) = waiter {
+                let _ = waiter.send(Err("the run was stopped".to_string()));
             }
-        });
-        let started = prepared.and_then(|prepared| {
-            self.as_mut()
-                .begin(run_id, prepared, env, with_coverage, &mut waiter)
-        });
+            return;
+        }
+        self.preparing.set(None);
+        let started = match outcome {
+            Prepared::ProjectChanged => {
+                Err("Another project was opened while the run was being prepared.".to_string())
+            }
+            _ => prepared.and_then(|prepared| {
+                self.as_mut()
+                    .begin(run_id, prepared, env, with_coverage, &mut waiter)
+            }),
+        };
         if let Err(reason) = started {
             if let Some(waiter) = waiter {
                 let _ = waiter.send(Err(reason.clone()));
             }
             self.as_mut()
-                .test_run_refused(QString::from(reason.as_str()));
+                .test_run_refused(errors::failure(errors::CODE_REFUSED, reason));
             self.as_mut().start_queued();
         }
     }
@@ -663,7 +678,7 @@ impl ffi::TestService {
         let root = prepared.root;
         let framework = prepared.framework;
         if let Some((dir, package)) = prepared.package {
-            self.cache_package(dir, package);
+            self.cache_package(&root, dir, package);
         }
         env.extend(prepared.config_run.iter().flat_map(|run| run.env.clone()));
         let dialect = framework.dialect;
@@ -717,14 +732,10 @@ impl ffi::TestService {
         // narrowed rerun, which updates only the nodes it touches, so the
         // rest of the previous run's results stay visible (D6's "reruns
         // exactly the failed node", not "clears the dock").
-        let whole_run = prepared.rerun.is_none()
-            && prepared.config_run.as_ref().is_none_or(|run| {
-                matches!(
-                    run.plan.scope,
-                    test_core::scope::TestScope::Config { .. }
-                        | test_core::scope::TestScope::Directory { .. }
-                )
-            });
+        let whole_run = test_core::preparation::replaces_tree(
+            prepared.rerun.is_some(),
+            prepared.config_run.as_ref().map(|run| &run.plan.scope),
+        );
         {
             let mut tree = self.tree.borrow_mut();
             if whole_run {
@@ -862,12 +873,24 @@ impl ffi::TestService {
         }
     }
 
-    pub fn stop(self: Pin<&mut Self>) {
-        if self.preparing.get().is_some() {
-            self.preparation_stopped.set(true);
+    /// Stop the run in progress. One still being prepared ends at once,
+    /// even while its worker waits on a probe, and the run queued behind
+    /// it starts; its worker's answer is dropped when it comes.
+    pub fn stop(mut self: Pin<&mut Self>) {
+        if self.preparing.take().is_some() {
+            self.as_mut().test_run_stopped();
+            self.as_mut().start_queued();
         }
         for handle in self.runs.borrow().values() {
             handle.stop();
+        }
+    }
+
+    /// Report a refusal found before the run reached this service (an
+    /// unknown configuration) where a refusal found here shows.
+    pub fn report_refusal(self: Pin<&mut Self>, result: &ffi::FfiResult) {
+        if result.code != errors::CODE_OK {
+            self.test_run_refused(result.clone());
         }
     }
 }
@@ -934,10 +957,11 @@ fn prepare(
     root: &Path,
     cached: Option<php_core::tree_run::TestPackage>,
 ) -> Result<PreparedRun, String> {
+    use test_core::preparation::RunKind;
     let mut package = None;
-    let (config, remember, rerun) = match request {
-        RunRequest::AdHoc => (None, false, None),
-        RunRequest::Configuration(config) => (Some(*config), true, None),
+    let (config, kind, rerun) = match request {
+        RunRequest::AdHoc => (None, RunKind::AdHoc, None),
+        RunRequest::Configuration(config) => (Some(*config), RunKind::Configuration, None),
         RunRequest::Editor { config, dir } => {
             let scoped = match dir {
                 Some(dir) => {
@@ -949,10 +973,17 @@ fn prepare(
                 }
                 None => *config,
             };
-            (Some(configuration::stored_or(scoped, root)), true, None)
+            (
+                Some(configuration::stored_or(scoped, root)),
+                RunKind::Editor,
+                None,
+            )
         }
-        RunRequest::Rerun { config, rerun } => (config.map(|config| *config), false, Some(rerun)),
+        RunRequest::Rerun { config, rerun } => {
+            (config.map(|config| *config), RunKind::Rerun, Some(rerun))
+        }
     };
+    let remember = kind.remembers_configuration();
     let config_run = config
         .as_ref()
         .map(|config| configuration::resolve(config, root))

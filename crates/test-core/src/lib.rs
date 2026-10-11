@@ -41,6 +41,7 @@ mod diagnostics;
 pub mod filter;
 mod junit;
 mod location;
+pub mod preparation;
 mod runner;
 pub mod scope;
 mod selection;

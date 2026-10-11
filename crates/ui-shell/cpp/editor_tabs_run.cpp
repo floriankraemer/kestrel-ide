@@ -25,7 +25,6 @@
 #include <QDir>
 #include <QMainWindow>
 #include <QMenu>
-#include <QMessageBox>
 #include <QHash>
 #include <QPlainTextEdit>
 #include <QSet>
@@ -95,8 +94,7 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEdi
                     DebugService *debugService, TestService *testService)
 {
     editorTabs->setRunService(runService);
-    wirePhpUnitConfigurations(runService, runConsolePanel, debugService, testService,
-                              runConsolePanel->window()); // E4
+    wirePhpUnitConfigurations(runService, runConsolePanel, debugService, testService); // E4
     editorTabs->setContainerRunContext(runConfigEditor, containerService); // C5
     // A configuration list that just changed can make a file runnable that
     // was not — the first `cargo run` entry a detection scan adds, say — so
@@ -129,21 +127,19 @@ void wireTestGutter(TestService *testService, DebugService *debugService, Editor
 }
 
 void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConsolePanel,
-                               DebugService *debugService, TestService *testService,
-                               QWidget *window)
+                               DebugService *debugService, TestService *testService)
 {
     testService->registerBeforeLaunchRunner();
-    const auto report = [window](const QString &title, const FfiResult &result) {
-        if (result.code != 0) {
-            QMessageBox::warning(window, title, result.message);
-        }
+    // A refusal shows where the Tests dock's own refusals do (raised, and
+    // on the status bar), not in a modal of its own.
+    const auto report = [testService](const FfiResult &result) {
+        testService->reportRefusal(result);
     };
     // Run, Run with Coverage and Debug reach these once the configuration's
     // before-launch tasks have run (#420).
     QObject::connect(runService, &RunService::testConfigurationRequested, testService,
                       [testService, report](const QString &configId, bool withCoverage) {
-                          report(QObject::tr("Run"),
-                                 testService->runConfiguration(configId, withCoverage));
+                          report(testService->runConfiguration(configId, withCoverage));
                       });
     QObject::connect(runService, &RunService::testConfigurationDebugReady, testService,
                       [testService, debugService, report](const QString &configId) {
@@ -151,19 +147,11 @@ void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConso
                           if (result.code == 0) {
                               result = debugService->debugPhpTests();
                           }
-                          report(QObject::tr("Debug"), result);
+                          report(result);
                       });
     QObject::connect(debugService, &DebugService::testConfigurationDebugRequested, runService,
                       [runService, report](const QString &configId) {
-                          report(QObject::tr("Debug"), runService->debugTestConfiguration(configId));
-                      });
-    // A run its worker could not start (no framework, a missing working
-    // directory) says why where an editor run's refusal shows.
-    QObject::connect(testService, &TestService::testRunRefused, window,
-                      [window](const QString &message) {
-                          if (auto *mainWindow = qobject_cast<QMainWindow *>(window)) {
-                              mainWindow->statusBar()->showMessage(message, 6000);
-                          }
+                          report(runService->debugTestConfiguration(configId));
                       });
     // An editor run just created a temporary configuration: the list gains
     // it, then the toolbar selects it, so Rerun and the combo name what ran.

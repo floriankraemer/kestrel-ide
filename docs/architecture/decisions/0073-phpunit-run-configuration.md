@@ -64,7 +64,11 @@ A test reported by Run All reruns ad hoc, as before.
 
 **A run is prepared off the Qt thread.**
 `TestService::start` reads only what needs the Qt thread (the tree, the runs that filled it), then a worker finds the editor run's monorepo package, the stored configuration, the settings and the framework's program, which under WSL or in a container is a process start.
-The run then starts on the Qt thread; a refusal found on the worker arrives as `testRunRefused`, shown in the Tests dock and the status bar.
+The run then starts on the Qt thread; a refusal found on the worker arrives as `testRunRefused`, a typed `FfiResult` (ADR-0003).
+Every refusal of a test run shows the same way, whichever service found it: in the Tests dock, raised, and on the status bar (`TestService::reportRefusal` carries the ones found before the run reached `TestService`, such as an unknown configuration).
+While the worker runs, `testRunPreparing` shows the dock preparing and enables its Stop; Stop ends the preparation at once (`testRunStopped`, not a refusal), even while the worker waits on a probe, and the worker's late answer is dropped.
+A preparation whose project was closed or replaced meanwhile is refused, so it never resets the new project's tree or writes a temporary configuration into the old project's settings.
+`test_core::preparation` holds these rules: which preparation still starts, which runs replace the tree, and which runs remember their temporary configuration.
 A configuration whose working directory does not exist is refused with a sentence naming it, before any program is looked for.
 
 **Editor runs create temporary configurations.**

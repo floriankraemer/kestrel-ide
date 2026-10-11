@@ -14,6 +14,9 @@ use super::{MarkerSelection, RerunSelection};
 use crate::bridge::errors;
 use crate::bridge::ffi;
 
+/// Files whose parsed markers the gutter keeps.
+const MAX_CACHED_FILES: usize = 64;
+
 fn is_php_file(path: &str) -> bool {
     syntax_core::language_for_path(std::path::Path::new(path)).id() == "php"
 }
@@ -86,20 +89,42 @@ fn no_marker() -> ffi::FfiResult {
 }
 
 impl ffi::TestService {
+    /// The markers of `text`, parsed once per distinct text of `path`.
+    fn markers_of(&self, path: &str, text: &str) -> std::rc::Rc<Vec<php_core::tests::TestMarker>> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        text.hash(&mut hasher);
+        let key = hasher.finish();
+        let mut cache = self.marker_cache.borrow_mut();
+        if let Some((cached, markers)) = cache.get(path).filter(|(cached, _)| *cached == key) {
+            let _ = cached;
+            return markers.clone();
+        }
+        // ponytail: a plain cap, no LRU; the gutter only asks for open files.
+        if cache.len() >= MAX_CACHED_FILES {
+            cache.clear();
+        }
+        let markers = std::rc::Rc::new(php_core::tests::markers(text));
+        cache.insert(path.to_string(), (key, markers.clone()));
+        markers
+    }
+
     /// The 0-based lines of `text` that carry a test marker; empty for a
     /// file that is not a PHP test.
     pub fn marker_lines(&self, path: &QString, text: &QString) -> Vec<u32> {
-        if !is_php_file(&path.to_string()) {
+        let path = path.to_string();
+        if !is_php_file(&path) {
             return Vec::new();
         }
-        php_core::tests::markers(&text.to_string())
-            .into_iter()
+        self.markers_of(&path, &text.to_string())
+            .iter()
             .map(|marker| marker.line)
             .collect()
     }
 
-    /// The last run's result for every marker in `text`, for the gutter
-    /// icons; empty for a file that is not a PHP test.
+    /// The last run's result for every marker in `text` the run touched, for
+    /// the gutter icons; empty for a file that is not a PHP test or that the
+    /// run has no node in.
     pub fn marker_statuses(&self, path: &QString, text: &QString) -> Vec<ffi::FfiMarkerStatus> {
         let path = path.to_string();
         if !is_php_file(&path) {
@@ -107,45 +132,51 @@ impl ffi::TestService {
         }
         let tree = self.tree.borrow();
         let nodes = self.nodes_in(&tree, &path);
-        php_core::test_status::marker_statuses(&text.to_string(), &tree, &nodes)
+        if nodes.is_empty() {
+            return Vec::new();
+        }
+        let markers = self.markers_of(&path, &text.to_string());
+        php_core::test_status::marker_statuses(&markers, &tree, &nodes)
             .into_iter()
             .map(|status| ffi::FfiMarkerStatus {
                 line: status.line,
                 state: to_ffi_marker_state(status.state),
-                tooltip: QString::from(status.tooltip.as_str()),
+                total: status.total,
+                failed: status.failed,
+                passed: status.passed,
+                duration_ms: status.duration_ms,
+                message: QString::from(status.message.as_str()),
             })
             .collect()
     }
 
     /// The data sets the last run executed for the method marked on `line`,
-    /// each runnable on its own. An entry with an empty `id` stands for the
-    /// ones the menu left out.
+    /// each runnable on its own.
     pub fn marker_data_sets(
         &self,
         path: &QString,
         text: &QString,
         line: u32,
-    ) -> Vec<ffi::FfiDataSet> {
+    ) -> ffi::FfiDataSetChoices {
         let path = path.to_string();
         if !is_php_file(&path) {
-            return Vec::new();
+            return ffi::FfiDataSetChoices::default();
         }
         let tree = self.tree.borrow();
         let nodes = self.nodes_in(&tree, &path);
-        let choices = php_core::test_status::data_sets(&text.to_string(), line, &tree, &nodes);
-        let more = (choices.hidden > 0).then(|| ffi::FfiDataSet {
-            id: QString::default(),
-            label: QString::from(format!("… ({} more)", choices.hidden).as_str()),
-        });
-        choices
-            .shown
-            .into_iter()
-            .map(|set| ffi::FfiDataSet {
-                id: QString::from(set.id.as_str()),
-                label: QString::from(set.label.as_str()),
-            })
-            .chain(more)
-            .collect()
+        let markers = self.markers_of(&path, &text.to_string());
+        let choices = php_core::test_status::data_sets(&markers, line, &tree, &nodes);
+        ffi::FfiDataSetChoices {
+            sets: choices
+                .shown
+                .into_iter()
+                .map(|set| ffi::FfiDataSet {
+                    id: QString::from(set.id.as_str()),
+                    label: QString::from(set.label.as_str()),
+                })
+                .collect(),
+            hidden: u32::try_from(choices.hidden).unwrap_or(u32::MAX),
+        }
     }
 
     /// Run one data set of the last run, by the id `marker_data_sets` gave.

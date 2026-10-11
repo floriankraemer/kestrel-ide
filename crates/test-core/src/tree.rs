@@ -13,7 +13,7 @@
 //! while a run is in flight is worse than one that doesn't.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use process_exec::host::ExecHost;
 
@@ -50,6 +50,9 @@ pub enum TestStatus {
     Passed,
     Skipped,
 }
+
+/// The failure a test gets when its run ends without a result for it.
+pub const UNFINISHED_MESSAGE: &str = "Test did not finish";
 
 /// Whether a node is a leaf test or a suite/class grouping others.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +142,20 @@ impl TestTree {
             }
         }
         found
+    }
+
+    /// Every distinct file any node is located in, on this machine: one pass
+    /// that lets a caller skip the files a run never touched before paying
+    /// for [`Self::nodes_in_file`] on each.
+    pub fn located_files(&self, host: &ExecHost, work_dir: &Path) -> Vec<PathBuf> {
+        let files: std::collections::BTreeSet<PathBuf> = self
+            .nodes
+            .values()
+            .filter_map(|node| node.location.as_ref())
+            .filter(|location| !location.file.is_empty())
+            .map(|location| location.local_path(host, work_dir))
+            .collect();
+        files.into_iter().collect()
     }
 
     pub fn roots(&self) -> &[TestId] {
@@ -268,6 +285,33 @@ impl TestTree {
             match self.nodes.get(&parent).and_then(|n| n.parent.clone()) {
                 Some(next) => parent = next,
                 None => break,
+            }
+        }
+    }
+
+    /// The run has ended: whatever is still `Running` never reported a
+    /// result (Stop, a fatal error, a killed container). A leaf becomes a
+    /// failure, so no aggregate keeps claiming progress; a suite that never
+    /// got a child goes back to `Pending`.
+    pub fn finish_run(&mut self) {
+        let unfinished: Vec<TestId> = self
+            .nodes
+            .values()
+            .filter(|n| n.kind == NodeKind::Test && n.status == TestStatus::Running)
+            .map(|n| n.id.clone())
+            .collect();
+        for id in unfinished {
+            if let Some(node) = self.nodes.get_mut(&id) {
+                node.failure = Some(TestFailure {
+                    message: UNFINISHED_MESSAGE.to_string(),
+                    details: String::new(),
+                });
+            }
+            self.set_status(&id, TestStatus::Failed);
+        }
+        for node in self.nodes.values_mut() {
+            if node.kind == NodeKind::Suite && node.status == TestStatus::Running {
+                node.status = TestStatus::Pending;
             }
         }
     }
@@ -595,6 +639,45 @@ mod tests {
         assert!(tree.roots().is_empty());
     }
     #[test]
+    fn finishing_a_run_fails_the_tests_that_never_reported() {
+        let mut tree = TestTree::new();
+        tree.apply(TeamCityEvent::SuiteStarted {
+            parent: None,
+            name: "S".into(),
+            location: None,
+        });
+        tree.apply(TeamCityEvent::SuiteStarted {
+            parent: None,
+            name: "Empty".into(),
+            location: None,
+        });
+        let parent = Some(id("S"));
+        tree.apply(TeamCityEvent::TestStarted {
+            parent: parent.clone(),
+            name: "ok".into(),
+            location: None,
+        });
+        tree.apply(TeamCityEvent::TestFinished {
+            parent: parent.clone(),
+            name: "ok".into(),
+            duration_ms: Some(1),
+        });
+        tree.apply(TeamCityEvent::TestStarted {
+            parent,
+            name: "dies".into(),
+            location: None,
+        });
+        tree.finish_run();
+        let dies = tree.node(&id("S::dies")).unwrap();
+        assert_eq!(dies.status, TestStatus::Failed);
+        assert_eq!(dies.failure.as_ref().unwrap().message, UNFINISHED_MESSAGE);
+        assert_eq!(tree.node(&id("S::ok")).unwrap().status, TestStatus::Passed);
+        assert_eq!(tree.node(&id("S")).unwrap().status, TestStatus::Failed);
+        assert_eq!(tree.node(&id("Empty")).unwrap().status, TestStatus::Pending);
+        assert_eq!(tree.counts().running, 0);
+    }
+
+    #[test]
     fn nodes_in_file_lists_the_located_nodes_in_tree_order() {
         use crate::teamcity::TeamCityParser;
         let mut parser = TeamCityParser::new();
@@ -617,5 +700,9 @@ mod tests {
         assert!(tree
             .nodes_in_file(&ExecHost::Local, Path::new("/p"), Path::new("/p/none.php"))
             .is_empty());
+        assert_eq!(
+            tree.located_files(&ExecHost::Local, Path::new("/p")),
+            [PathBuf::from("/p/T.php"), PathBuf::from("/p/U.php")]
+        );
     }
 }

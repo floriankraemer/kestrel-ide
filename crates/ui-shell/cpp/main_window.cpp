@@ -384,7 +384,12 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *runConsolePanel = buildRunConsoleDock(dockManager, docks, bottomArea, runToolbar, openAt);
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
-    buildTestsDock(dockManager, docks, bottomArea, testService, openAt);
+    buildTestsDock(dockManager, docks, bottomArea, testService, appSettings, openAt,
+                   [editorTabs](const QString &path) -> std::optional<QString> {
+                       const CodeEditor *editor = editorTabs->editorForPath(path);
+                       return editor != nullptr ? std::optional<QString>(editor->toPlainText())
+                                                : std::nullopt;
+                   });
     auto [buildToolsPanel, containersPanel, databasePanel] = buildContributedToolWindows(
       appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService, exchangeService, consoleService, resultProvider);
 

@@ -7004,17 +7004,30 @@ mod ffi {
         Ignored,
     }
 
-    /// One gutter marker's last-run result.
+    /// One gutter marker's last-run result, as numbers and a message the
+    /// view words (and translates) itself.
     struct FfiMarkerStatus {
         line: u32,
         state: FfiMarkerState,
-        tooltip: QString,
+        total: u32,
+        failed: u32,
+        passed: u32,
+        duration_ms: u64,
+        /// The one failure's, or the ignore reason; empty when there is none.
+        message: QString,
     }
 
-    /// One data set a gutter menu offers; an empty `id` is the "…" entry.
+    /// One data set a gutter menu offers.
     struct FfiDataSet {
         id: QString,
         label: QString,
+    }
+
+    /// The data sets a gutter menu lists, and how many more the cap left out.
+    #[derive(Default)]
+    struct FfiDataSetChoices {
+        sets: Vec<FfiDataSet>,
+        hidden: u32,
     }
 
     /// One row of the Coverage dock (PHP parity plan T5): a file or a
@@ -7097,12 +7110,31 @@ mod ffi {
             byte_offset: u32,
         ) -> FfiResolvedLink;
 
-        /// The source position of this node's class, method or test file
-        /// (`found == false` when the framework gave it no location), for
-        /// the tree's double-click / Jump to Source. `line` is 1-based.
+        /// The file this node lives in, empty when the framework gave it no
+        /// location or the file does not exist yet: a cheap check (no file
+        /// is read), for enabling Jump to Source.
+        #[qinvokable]
+        #[cxx_name = "nodeSourcePath"]
+        fn node_source_path(self: &TestService, node_id: &QString) -> QString;
+
+        /// The source position of this node's class, method or test
+        /// (`found == false` when it has none), for Jump to Source. `line`
+        /// is 1-based. `open_text` is the node's file as the editor holds it
+        /// when `has_open_text` (unsaved edits move lines).
         #[qinvokable]
         #[cxx_name = "nodeSource"]
-        fn node_source(self: &TestService, node_id: &QString) -> FfiResolvedLink;
+        fn node_source(
+            self: &TestService,
+            node_id: &QString,
+            open_text: &QString,
+            has_open_text: bool,
+        ) -> FfiResolvedLink;
+
+        /// Every file the last run located a node in: the gutter repaints
+        /// only the editors showing one.
+        #[qinvokable]
+        #[cxx_name = "testedFiles"]
+        fn tested_files(self: &TestService) -> QStringList;
 
         /// Whether a run is currently in flight — the toolbar's run/stop
         /// enablement.
@@ -7159,7 +7191,7 @@ mod ffi {
             path: &QString,
             text: &QString,
             line: u32,
-        ) -> Vec<FfiDataSet>;
+        ) -> FfiDataSetChoices;
 
         #[qinvokable]
         #[cxx_name = "runDataSet"]

@@ -5,18 +5,25 @@
 //! results come from the run's [`TestTree`]. They meet through the
 //! `locationHint` symbol each node carries, so a result follows its method
 //! when edits move it, and a method that no longer exists simply has none.
-//! A class or `describe` marker aggregates the tests inside its span.
+//! A class or `describe` marker aggregates the tests inside its span, and
+//! the tests the framework reported on the class itself (a failing
+//! `setUpBeforeClass` is a `testFailed` named after the class).
+//!
+//! The result is typed counts and a message, never prose: the view words
+//! them (and translates them).
 
 use std::collections::HashSet;
 
 use test_core::{TestId, TestNode, TestStatus, TestTree};
 
-use crate::tests::{marker_names, markers, MarkerScope, TestMarker};
+use crate::tests::{marker_names, MarkerScope, TestMarker};
 
 /// How many data sets a gutter menu lists before it says "…".
 const MAX_MENU_DATA_SETS: usize = 15;
 /// Lines of a failure message a tooltip keeps.
 const TOOLTIP_MESSAGE_LINES: usize = 3;
+/// PHPUnit and Pest both name a data-set row `<test> with data set <set>`,
+/// the set being `#0` or quoted.
 const DATA_SET_INFIX: &str = " with data set ";
 
 /// The icon a marker wears. Aggregates follow IntelliJ: running, then
@@ -30,13 +37,21 @@ pub enum MarkerState {
     Ignored,
 }
 
+/// A marker's result, as numbers the view words itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkerStatus {
     /// 0-based line, as [`TestMarker::line`].
     pub line: u32,
     pub state: MarkerState,
-    /// Empty for [`MarkerState::NeverRun`].
-    pub tooltip: String,
+    /// Tests behind the marker (a method with data sets counts each set).
+    pub total: u32,
+    pub failed: u32,
+    pub passed: u32,
+    /// Of the passed tests.
+    pub duration_ms: u64,
+    /// The failure message when exactly one test failed, the first ignore
+    /// reason when the marker is ignored; at most three lines, else empty.
+    pub message: String,
 }
 
 /// One data set of a method, to run on its own.
@@ -56,16 +71,22 @@ pub struct DataSetChoices {
 
 #[derive(Default)]
 struct Tally {
-    running: usize,
-    failed: usize,
-    ignored: usize,
-    passed: usize,
+    running: u32,
+    failed: u32,
+    ignored: u32,
+    passed: u32,
     duration_ms: u64,
     first_failure: Option<String>,
     first_ignore: Option<String>,
 }
 
 impl Tally {
+    fn of(leaves: &[&TestNode]) -> Self {
+        let mut tally = Self::default();
+        leaves.iter().for_each(|leaf| tally.add(leaf));
+        tally
+    }
+
     fn add(&mut self, leaf: &TestNode) {
         let message = || leaf.failure.as_ref().map(|f| first_lines(&f.message));
         match leaf.status {
@@ -86,47 +107,35 @@ impl Tally {
         }
     }
 
-    fn merge(&mut self, other: &Tally) {
-        self.running += other.running;
-        self.failed += other.failed;
-        self.ignored += other.ignored;
-        self.passed += other.passed;
-        self.duration_ms += other.duration_ms;
-        self.first_failure = self.first_failure.take().or(other.first_failure.clone());
-        self.first_ignore = self.first_ignore.take().or(other.first_ignore.clone());
-    }
-
-    fn total(&self) -> usize {
-        self.running + self.failed + self.ignored + self.passed
-    }
-
-    fn status(&self) -> (MarkerState, String) {
+    fn state(&self) -> MarkerState {
         if self.running > 0 {
-            (MarkerState::Running, "Running…".into())
+            MarkerState::Running
         } else if self.failed > 0 {
-            let tooltip = match (&self.first_failure, self.failed) {
-                (Some(message), 1) if !message.is_empty() => message.clone(),
-                _ => format!("{} of {} tests failed", self.failed, self.total()),
-            };
-            (MarkerState::Failed, tooltip)
+            MarkerState::Failed
         } else if self.ignored > 0 {
-            let tooltip = match &self.first_ignore {
-                Some(message) if !message.is_empty() => format!("Ignored: {message}"),
-                _ => "Ignored".into(),
-            };
-            (MarkerState::Ignored, tooltip)
+            MarkerState::Ignored
         } else if self.passed > 0 {
-            let tests = if self.passed > 1 {
-                format!("{} tests, ", self.passed)
-            } else {
-                String::new()
-            };
-            (
-                MarkerState::Passed,
-                format!("Passed ({tests}{} ms)", self.duration_ms),
-            )
+            MarkerState::Passed
         } else {
-            (MarkerState::NeverRun, String::new())
+            MarkerState::NeverRun
+        }
+    }
+
+    fn status(&self, line: u32) -> MarkerStatus {
+        let state = self.state();
+        let message = match state {
+            MarkerState::Failed if self.failed == 1 => self.first_failure.clone(),
+            MarkerState::Ignored => self.first_ignore.clone(),
+            _ => None,
+        };
+        MarkerStatus {
+            line,
+            state,
+            total: self.running + self.failed + self.ignored + self.passed,
+            failed: self.failed,
+            passed: self.passed,
+            duration_ms: self.duration_ms,
+            message: message.unwrap_or_default(),
         }
     }
 }
@@ -142,11 +151,7 @@ fn first_lines(message: &str) -> String {
 }
 
 /// The distinct leaf tests, in tree order, of the nodes that name `marker`.
-fn leaves_of<'t>(
-    marker: &TestMarker,
-    tree: &'t TestTree,
-    file_nodes: &[&TestNode],
-) -> Vec<&'t TestNode> {
+fn leaves_of(marker: &TestMarker, tree: &TestTree, file_nodes: &[&TestNode]) -> Vec<TestId> {
     let mut seen = HashSet::new();
     file_nodes
         .iter()
@@ -158,68 +163,73 @@ fn leaves_of<'t>(
         })
         .flat_map(|node| tree.leaves_under(&node.id))
         .filter(|id| seen.insert(id.clone()))
-        .filter_map(|id| tree.node(&id))
         .collect()
 }
 
-/// The status of every marker in `text`. `file_nodes` is the tree's nodes
-/// located in this file ([`TestTree::nodes_in_file`]).
-pub fn marker_statuses(text: &str, tree: &TestTree, file_nodes: &[&TestNode]) -> Vec<MarkerStatus> {
-    let all = markers(text);
-    let tallies: Vec<Option<Tally>> = all
+/// The status of every marker. `file_nodes` is the tree's nodes located in
+/// this file ([`TestTree::nodes_in_file`]).
+pub fn marker_statuses(
+    markers: &[TestMarker],
+    tree: &TestTree,
+    file_nodes: &[&TestNode],
+) -> Vec<MarkerStatus> {
+    if file_nodes.is_empty() {
+        return markers
+            .iter()
+            .map(|marker| Tally::default().status(marker.line))
+            .collect();
+    }
+    let own: Vec<Vec<TestId>> = markers
         .iter()
-        .map(|marker| {
-            (marker.scope == MarkerScope::Test).then(|| {
-                let mut tally = Tally::default();
-                leaves_of(marker, tree, file_nodes)
-                    .into_iter()
-                    .for_each(|leaf| tally.add(leaf));
-                tally
-            })
-        })
+        .map(|marker| leaves_of(marker, tree, file_nodes))
         .collect();
-    all.iter()
+    markers
+        .iter()
         .enumerate()
         .map(|(index, marker)| {
-            let tally = match &tallies[index] {
-                Some(own) => own.status(),
-                None => {
-                    let mut group = Tally::default();
-                    for (inner, tally) in all.iter().zip(&tallies) {
-                        let inside = inner.span.0 >= marker.span.0 && inner.span.1 <= marker.span.1;
-                        if let Some(tally) = tally.as_ref().filter(|_| inside) {
-                            group.merge(tally);
-                        }
+            let mut ids = own[index].clone();
+            if marker.scope != MarkerScope::Test {
+                for (inner, inner_ids) in markers.iter().zip(&own) {
+                    let inside = inner.scope == MarkerScope::Test
+                        && inner.span.0 >= marker.span.0
+                        && inner.span.1 <= marker.span.1;
+                    if inside {
+                        ids.extend(inner_ids.iter().cloned());
                     }
-                    group.status()
                 }
-            };
-            MarkerStatus {
-                line: marker.line,
-                state: tally.0,
-                tooltip: tally.1,
+                let mut seen = HashSet::new();
+                ids.retain(|id| seen.insert(id.clone()));
             }
+            let leaves: Vec<&TestNode> = ids.iter().filter_map(|id| tree.node(id)).collect();
+            Tally::of(&leaves).status(marker.line)
         })
         .collect()
+}
+
+/// Whether `name` is a data-set row: the infix, then `#<n>` or a quoted set.
+fn is_data_set_row(name: &str) -> bool {
+    name.match_indices(DATA_SET_INFIX)
+        .any(|(at, _)| name[at + DATA_SET_INFIX.len()..].starts_with(['#', '"']))
 }
 
 /// The data sets the last run executed for the method marked on `line`;
 /// empty for anything else.
 pub fn data_sets(
-    text: &str,
+    markers: &[TestMarker],
     line: u32,
     tree: &TestTree,
     file_nodes: &[&TestNode],
 ) -> DataSetChoices {
-    let Some(marker) = markers(text)
-        .into_iter()
+    let Some(marker) = markers
+        .iter()
         .find(|m| m.line == line && m.scope == MarkerScope::Test)
     else {
         return DataSetChoices::default();
     };
-    let mut sets: Vec<DataSet> = leaves_of(&marker, tree, file_nodes)
+    let mut sets: Vec<DataSet> = leaves_of(marker, tree, file_nodes)
         .into_iter()
-        .filter(|leaf| leaf.name.contains(DATA_SET_INFIX))
+        .filter_map(|id| tree.node(&id))
+        .filter(|leaf| is_data_set_row(&leaf.name))
         .map(|leaf| DataSet {
             id: leaf.id.clone(),
             label: leaf.name.clone(),
@@ -241,6 +251,7 @@ mod tests {
     use test_core::TeamCityEvent;
 
     use super::*;
+    use crate::tests::markers;
 
     const FILE: &str = "/p/tests/GreeterTest.php";
     const SOURCE: &str = "<?php\nnamespace App;\nclass GreeterTest extends TestCase\n{\n    public function testA() {}\n    public function testB() {}\n    public function testSets() {}\n}\n";
@@ -295,10 +306,20 @@ mod tests {
         tree
     }
 
-    fn statuses(tree: &TestTree) -> Vec<MarkerStatus> {
+    fn statuses_of(text: &str, tree: &TestTree) -> Vec<MarkerStatus> {
         let host = ExecHost::for_path(Path::new("/p"));
         let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(FILE));
-        marker_statuses(SOURCE, tree, &nodes)
+        marker_statuses(&markers(text), tree, &nodes)
+    }
+
+    fn statuses(tree: &TestTree) -> Vec<MarkerStatus> {
+        statuses_of(SOURCE, tree)
+    }
+
+    fn sets_of(text: &str, line: u32, tree: &TestTree) -> DataSetChoices {
+        let host = ExecHost::for_path(Path::new("/p"));
+        let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(FILE));
+        data_sets(&markers(text), line, tree, &nodes)
     }
 
     fn state_at(statuses: &[MarkerStatus], line: u32) -> &MarkerStatus {
@@ -313,7 +334,7 @@ mod tests {
         assert_eq!(statuses.len(), 4);
         assert!(statuses
             .iter()
-            .all(|s| s.state == MarkerState::NeverRun && s.tooltip.is_empty()));
+            .all(|s| s.state == MarkerState::NeverRun && s.message.is_empty()));
     }
 
     #[test]
@@ -330,16 +351,16 @@ mod tests {
         let statuses = statuses(&tree);
         let a = state_at(&statuses, 4);
         assert_eq!(
-            (a.state, a.tooltip.as_str()),
-            (MarkerState::Passed, "Passed (12 ms)")
+            (a.state, a.passed, a.total, a.duration_ms),
+            (MarkerState::Passed, 1, 1, 12)
         );
         let b = state_at(&statuses, 5);
         assert_eq!(b.state, MarkerState::Failed);
-        assert_eq!(b.tooltip, "Failed asserting that 1 is 2.\nat line 9");
+        assert_eq!(b.message, "Failed asserting that 1 is 2.\nat line 9");
         assert_eq!(state_at(&statuses, 6).state, MarkerState::NeverRun);
         let class = state_at(&statuses, 2);
         assert_eq!(class.state, MarkerState::Failed);
-        assert_eq!(class.tooltip, b.tooltip);
+        assert_eq!(class.message, b.message);
     }
 
     #[test]
@@ -348,7 +369,9 @@ mod tests {
         run(&mut tree, CLASS, "testA", "fail:x", 1);
         run(&mut tree, CLASS, "testB", "fail:y", 1);
         run(&mut tree, CLASS, "testSets", "pass", 1);
-        assert_eq!(state_at(&statuses(&tree), 2).tooltip, "2 of 3 tests failed");
+        let class = state_at(&statuses(&tree), 2).clone();
+        assert_eq!((class.failed, class.total), (2, 3));
+        assert_eq!(class.message, "");
     }
 
     #[test]
@@ -359,7 +382,7 @@ mod tests {
         let statuses = statuses(&tree);
         let class = state_at(&statuses, 2);
         assert_eq!(class.state, MarkerState::Ignored);
-        assert_eq!(class.tooltip, "Ignored: not yet");
+        assert_eq!(class.message, "not yet");
         assert_eq!(state_at(&statuses, 5).state, MarkerState::Ignored);
     }
 
@@ -371,8 +394,8 @@ mod tests {
         let statuses = statuses(&tree);
         let class = state_at(&statuses, 2);
         assert_eq!(
-            (class.state, class.tooltip.as_str()),
-            (MarkerState::Passed, "Passed (2 tests, 5 ms)")
+            (class.state, class.passed, class.duration_ms),
+            (MarkerState::Passed, 2, 5)
         );
     }
 
@@ -413,13 +436,11 @@ mod tests {
         let statuses = statuses(&tree);
         let sets = state_at(&statuses, 6);
         assert_eq!(
-            (sets.state, sets.tooltip.as_str()),
+            (sets.state, sets.message.as_str()),
             (MarkerState::Failed, "no")
         );
 
-        let host = ExecHost::for_path(Path::new("/p"));
-        let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(FILE));
-        let choices = data_sets(SOURCE, 6, &tree, &nodes);
+        let choices = sets_of(SOURCE, 6, &tree);
         let labels: Vec<_> = choices.shown.iter().map(|d| d.label.as_str()).collect();
         assert_eq!(
             labels,
@@ -429,8 +450,8 @@ mod tests {
             ]
         );
         assert_eq!(choices.hidden, 0);
-        assert!(data_sets(SOURCE, 4, &tree, &nodes).shown.is_empty());
-        assert!(data_sets(SOURCE, 2, &tree, &nodes).shown.is_empty());
+        assert!(sets_of(SOURCE, 4, &tree).shown.is_empty());
+        assert!(sets_of(SOURCE, 2, &tree).shown.is_empty());
     }
 
     #[test]
@@ -451,9 +472,7 @@ mod tests {
                 1,
             );
         }
-        let host = ExecHost::for_path(Path::new("/p"));
-        let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(FILE));
-        let choices = data_sets(SOURCE, 6, &tree, &nodes);
+        let choices = sets_of(SOURCE, 6, &tree);
         assert_eq!(
             (choices.shown.len(), choices.hidden),
             (MAX_MENU_DATA_SETS, 5)
@@ -464,11 +483,189 @@ mod tests {
     fn a_result_follows_its_method_when_edits_move_it() {
         let mut tree = tree_with_class();
         run(&mut tree, CLASS, "testB", "fail:boom", 1);
-        let host = ExecHost::for_path(Path::new("/p"));
-        let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(FILE));
         let moved = SOURCE.replacen("<?php\n", "<?php\n// one\n// two\n", 1);
-        let statuses = marker_statuses(&moved, &tree, &nodes);
+        let statuses = statuses_of(&moved, &tree);
         assert_eq!(state_at(&statuses, 7).state, MarkerState::Failed);
         assert_eq!(state_at(&statuses, 6).state, MarkerState::NeverRun);
+    }
+
+    // Real output of `phpunit --teamcity` (12.0.9) and `pest --teamcity`
+    // (5.3), captured in the scratch projects the review findings named.
+    const PHPUNIT_CLASS_LEVEL_ERROR: &str =
+        include_str!("fixtures/phpunit12_class_level_error.txt");
+    const PHPUNIT_FATAL_EXIT: &str = include_str!("fixtures/phpunit12_fatal_exit.txt");
+    const PEST_FILE_BASED: &str = include_str!("fixtures/pest_file_based.txt");
+    const PEST_CLASS_BASED: &str = include_str!("fixtures/pest_class_based.txt");
+
+    fn replayed(output: &str) -> TestTree {
+        let mut tree = TestTree::new();
+        let mut parser = test_core::TeamCityParser::new();
+        for event in parser.feed(output) {
+            tree.apply(event);
+        }
+        tree
+    }
+
+    fn statuses_for(file: &str, text: &str, tree: &TestTree) -> Vec<MarkerStatus> {
+        let host = ExecHost::for_path(Path::new("/p"));
+        let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(file));
+        marker_statuses(&markers(text), tree, &nodes)
+    }
+
+    const BEFORE_CLASS: &str = "<?php\nnamespace App;\nuse PHPUnit\\Framework\\TestCase;\nfinal class BeforeClassTest extends TestCase\n{\n    public static function setUpBeforeClass(): void {}\n    public function testA(): void {}\n}\n";
+
+    #[test]
+    fn a_class_level_error_marks_the_class_failed() {
+        // `setUpBeforeClass` threw: PHPUnit sends one `testFailed` named
+        // after the class and no test of it ever starts.
+        let tree = replayed(PHPUNIT_CLASS_LEVEL_ERROR);
+        let got = statuses_for("/p/tests/BeforeClassTest.php", BEFORE_CLASS, &tree);
+        let class = state_at(&got, 3);
+        assert_eq!(
+            (class.state, class.failed, class.message.as_str()),
+            (
+                MarkerState::Failed,
+                1,
+                "RuntimeException: boom in setUpBeforeClass"
+            )
+        );
+        assert_eq!(state_at(&got, 6).state, MarkerState::NeverRun);
+    }
+
+    #[test]
+    fn a_run_that_dies_mid_test_leaves_no_marker_running_once_finished() {
+        let mut tree = replayed(PHPUNIT_FATAL_EXIT);
+        let source = "<?php\nnamespace App;\nuse PHPUnit\\Framework\\TestCase;\nfinal class FatalTest extends TestCase\n{\n    public function testDies(): void {}\n}\n";
+        let before = statuses_for("/p/tests/FatalTest.php", source, &tree);
+        assert_eq!(state_at(&before, 5).state, MarkerState::Running);
+        assert_eq!(state_at(&before, 3).state, MarkerState::Running);
+        tree.finish_run();
+        let after = statuses_for("/p/tests/FatalTest.php", source, &tree);
+        assert_eq!(state_at(&after, 5).state, MarkerState::Failed);
+        assert_eq!(state_at(&after, 5).message, test_core::UNFINISHED_MESSAGE);
+        assert_eq!(state_at(&after, 3).state, MarkerState::Failed);
+    }
+
+    const PEST_SOURCE: &str = "<?php
+test('adds', function () {})->with([1, 2]);
+test('named sets', function () {})->with(['one' => 1, 'two' => 2]);
+it('says hello with (parens) in it', function () {});
+describe('Greeter', function () {
+    it('greets', function () {});
+    describe('loud', function () {
+        it('shouts', function () {});
+    });
+});
+test('has with data set in name', function () {});
+";
+    const PEST_FILE: &str = "/p/tests/GreetTest.php";
+
+    #[test]
+    fn pest_calls_describes_and_data_sets_get_their_results() {
+        let tree = replayed(PEST_FILE_BASED);
+        let got = statuses_for(PEST_FILE, PEST_SOURCE, &tree);
+        let adds = state_at(&got, 1);
+        assert_eq!(
+            (adds.state, adds.passed, adds.total),
+            (MarkerState::Passed, 2, 2)
+        );
+        assert_eq!(state_at(&got, 2).total, 2);
+        assert_eq!(state_at(&got, 3).state, MarkerState::Passed);
+        // The describes: `loud` holds the failing `it`, `Greeter` both.
+        let shouts = state_at(&got, 7);
+        assert_eq!(
+            (shouts.state, shouts.message.as_str()),
+            (
+                MarkerState::Failed,
+                "Failed asserting that 1 is identical to 2."
+            )
+        );
+        assert_eq!(state_at(&got, 6).state, MarkerState::Failed);
+        let greeter = state_at(&got, 4);
+        assert_eq!(
+            (greeter.state, greeter.failed, greeter.total),
+            (MarkerState::Failed, 1, 2)
+        );
+        // A name that contains the words of a data set is a test, not a row.
+        let odd = state_at(&got, 10);
+        assert_eq!((odd.state, odd.total), (MarkerState::Passed, 1));
+    }
+
+    #[test]
+    fn pest_data_set_rows_are_listed_and_a_lookalike_name_is_not() {
+        let tree = replayed(PEST_FILE_BASED);
+        let host = ExecHost::for_path(Path::new("/p"));
+        let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(PEST_FILE));
+        let all = markers(PEST_SOURCE);
+        let labels = |line| -> Vec<String> {
+            data_sets(&all, line, &tree, &nodes)
+                .shown
+                .into_iter()
+                .map(|d| d.label)
+                .collect()
+        };
+        assert_eq!(
+            labels(1),
+            [r#"adds with data set "(1)""#, r#"adds with data set "(2)""#]
+        );
+        assert_eq!(labels(2).len(), 2);
+        assert!(labels(10).is_empty());
+        assert!(labels(3).is_empty());
+    }
+
+    #[test]
+    fn a_nested_describes_it_does_not_light_up_the_same_named_it_of_another_describe() {
+        let source = "<?php\ndescribe('a', function () {\n    it('x', function () {});\n});\ndescribe('b', function () {\n    it('x', function () {});\n});\n";
+        let tree = replayed(
+            "##teamcity[testStarted name='`a` → it x' locationHint='pest_qn://tests/GreetTest.php::`a` → it x']\n\
+             ##teamcity[testFinished name='`a` → it x' duration='3']\n",
+        );
+        let got = statuses_for(PEST_FILE, source, &tree);
+        assert_eq!(state_at(&got, 2).state, MarkerState::Passed);
+        assert_eq!(state_at(&got, 5).state, MarkerState::NeverRun);
+        assert_eq!(state_at(&got, 1).state, MarkerState::Passed);
+        assert_eq!(state_at(&got, 4).state, MarkerState::NeverRun);
+    }
+
+    #[test]
+    fn results_of_the_same_class_in_another_file_stay_out() {
+        let tree = replayed(&format!(
+            "##teamcity[testStarted name='testA' locationHint='php_qn:///p/other/GreeterTest.php::\\App\\GreeterTest::testA']\n\
+             ##teamcity[testFailed name='testA' message='no' details='']\n\
+             ##teamcity[testFinished name='testA' duration='1']\n\
+             ##teamcity[testStarted name='testB' locationHint='php_qn://{FILE}::\\App\\GreeterTest::testB']\n\
+             ##teamcity[testFinished name='testB' duration='1']\n"
+        ));
+        let got = statuses(&tree);
+        assert_eq!(state_at(&got, 4).state, MarkerState::NeverRun);
+        assert_eq!(state_at(&got, 5).state, MarkerState::Passed);
+    }
+
+    #[test]
+    fn a_class_based_pest_run_reaches_the_phpunit_file_through_psr4() {
+        let project = tempfile::tempdir().unwrap();
+        let file = project.path().join("tests/ClassTest.php");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let source = "<?php\nnamespace Tests;\nuse PHPUnit\\Framework\\TestCase;\nfinal class ClassTest extends TestCase\n{\n    public function testXyzAbc(): void {}\n    public function test_snake_case(): void {}\n    #[Test]\n    public function attributeOne(): void {}\n    public function testFails(): void {}\n}\n";
+        std::fs::write(&file, source).unwrap();
+        let roots = [crate::composer::Psr4Root {
+            prefix: "Tests\\".into(),
+            dir: "tests/".into(),
+            dev: true,
+        }];
+        let mut tree = TestTree::new();
+        let mut parser = test_core::TeamCityParser::new();
+        for event in parser.feed(PEST_CLASS_BASED) {
+            tree.apply(crate::tests::locate_event(event, &roots, project.path()));
+        }
+        let host = ExecHost::Local;
+        let nodes = tree.nodes_in_file(&host, project.path(), &file);
+        let got = marker_statuses(&markers(source), &tree, &nodes);
+        let state = |line| state_at(&got, line).state;
+        assert_eq!(state(3), MarkerState::Failed, "class");
+        assert_eq!(state(5), MarkerState::Passed, "testXyzAbc");
+        assert_eq!(state(6), MarkerState::Passed, "test_snake_case");
+        assert_eq!(state(8), MarkerState::Passed, "#[Test] attributeOne");
+        assert_eq!(state(9), MarkerState::Failed, "testFails");
     }
 }

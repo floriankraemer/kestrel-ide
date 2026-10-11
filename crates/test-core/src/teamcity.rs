@@ -570,7 +570,7 @@ mod tests {
             file("Tests\\Feature\\GreeterPestTest::it greets by name"),
             want
         );
-        // `pest_qn://Greeter (Tests\Greeter)` names no file.
-        assert_eq!(file("Tests\\GreeterTest"), None);
+        // `pest_qn://Greeter (Tests\Greeter)` names a class, not a file.
+        assert_eq!(file("Tests\\GreeterTest"), Some(String::new()));
     }
 }

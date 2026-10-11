@@ -505,6 +505,8 @@ void CodeEditor::lineNumberAreaMouseMoveEvent(QMouseEvent *event)
     const int y = static_cast<int>(event->position().y());
     const bool overRunMarker = !runMarkerStatuses_.isEmpty() && x < runMarkerWidth();
     if (!blameEnabled_ && !overRunMarker) {
+        // The pointer left the icon: a result tooltip must not outlive it.
+        QToolTip::hideText();
         return;
     }
     const int digitAreaWidth = lineNumberAreaWidth() - kBlameWidth;
@@ -523,8 +525,10 @@ void CodeEditor::lineNumberAreaMouseMoveEvent(QMouseEvent *event)
             if (overRunMarker) {
                 const auto status = runMarkerStatuses_.constFind(blockNumber);
                 if (status != runMarkerStatuses_.cend() && !status->tooltip.isEmpty()) {
+                    // The icon's rect: Qt hides the tip itself once the pointer leaves it.
                     QToolTip::showText(lineNumberArea_->mapToGlobal(event->pos()), status->tooltip,
-                                       lineNumberArea_);
+                                       lineNumberArea_,
+                                       QRect(0, top, runMarkerWidth(), bottom - top));
                 } else {
                     QToolTip::hideText();
                 }

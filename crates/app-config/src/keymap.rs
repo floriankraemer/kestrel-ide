@@ -900,6 +900,15 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Run",
         default_shortcut: "",
     },
+    // F4 is `database.goToReferencedRow`'s and a window shortcut: bound twice
+    // it fires neither, so the Tests dock's Jump to Source ships unbound and
+    // is handled by the tree itself once the user binds it.
+    ActionDef {
+        id: "tests.jumpToSource",
+        label: "Jump to Source (Tests)",
+        category: "Run",
+        default_shortcut: "",
+    },
     ActionDef {
         id: "run.stop",
         label: "Stop",

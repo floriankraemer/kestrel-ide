@@ -7,7 +7,9 @@
 //! The parse goes through `syntax-core`'s registry — the grammar the editor
 //! already highlights with.
 
-use test_core::TestSymbol;
+use test_core::{TeamCityEvent, TestLocation, TestSymbol};
+
+use crate::composer::Psr4Root;
 use tree_sitter::Node;
 
 /// What a marker runs.
@@ -78,36 +80,126 @@ pub fn symbol_line(text: &str, symbol: &TestSymbol) -> Option<u32> {
 /// Whether `symbol` (from a test's `locationHint`) names `marker`'s class,
 /// method or Pest call.
 pub(crate) fn marker_names(marker: &TestMarker, symbol: &TestSymbol) -> bool {
+    let class_prefix = |class: &str| format!("^{}::", test_core::filter::escape_regex(class));
     match symbol {
-        TestSymbol::Class(class) => {
-            marker.scope == MarkerScope::Group
-                && marker.filter == format!("^{}::", test_core::filter::escape_regex(class))
+        TestSymbol::Class(class) | TestSymbol::PestClass(class) => {
+            marker.scope == MarkerScope::Group && marker.filter == class_prefix(class)
         }
         TestSymbol::Method { class, method } => {
             let prefix = format!(
-                "^{}::{}(",
-                test_core::filter::escape_regex(class),
+                "{}{}(",
+                class_prefix(class),
                 test_core::filter::escape_regex(method)
             );
             marker.scope == MarkerScope::Test && marker.filter.starts_with(&prefix)
         }
+        TestSymbol::PestMethod { class, title } => {
+            marker.scope == MarkerScope::Test
+                && marker.filter.starts_with(&class_prefix(class))
+                && pest_title(&marker.name) == *title
+        }
         TestSymbol::Description(description) => {
             marker.scope == MarkerScope::Test
                 && !marker.description.is_empty()
-                && strip_pest_data_set(description) == marker.description
+                && names_pest_call(description, &marker.description)
         }
     }
 }
 
-/// A Pest data-set row reports `<description> with data set "x"` (or
-/// `with (1, 2)`); the marker names the call, so the row's suffix goes.
-fn strip_pest_data_set(description: &str) -> &str {
-    let end = [" with data set ", " with ("]
-        .iter()
-        .filter_map(|infix| description.find(infix))
-        .min()
-        .unwrap_or(description.len());
-    &description[..end]
+/// A Pest data-set row reports `<description> with data set "<set>"`; the
+/// call it belongs to is the one whose whole description is the prefix. A
+/// description that merely contains the words stays a different test.
+fn names_pest_call(reported: &str, description: &str) -> bool {
+    reported == description
+        || reported
+            .strip_prefix(description)
+            .is_some_and(|rest| rest.starts_with(PEST_DATA_SET_INFIX))
+}
+
+const PEST_DATA_SET_INFIX: &str = " with data set \"";
+
+/// The title Pest reports for a class-based test method: `test` dropped,
+/// snake and camel case split into lowercase words, first letter capitalized
+/// (`testXyzAbc`, `test_xyz_abc` and `#[Test] xyzAbc` all give `Xyz abc`).
+fn pest_title(method: &str) -> String {
+    let rest = method
+        .strip_prefix("test")
+        .filter(|rest| rest.starts_with(|c: char| c == '_' || c.is_uppercase()))
+        .unwrap_or(method);
+    let mut words = String::new();
+    let mut previous_lower = false;
+    for c in rest.chars() {
+        if c == '_' {
+            words.push(' ');
+        } else {
+            if c.is_uppercase() && previous_lower {
+                words.push(' ');
+            }
+            words.extend(c.to_lowercase());
+        }
+        previous_lower = c.is_lowercase() || c.is_ascii_digit();
+    }
+    let words = words.trim();
+    let mut chars = words.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
+/// [`locate_pest_class`] over the location an event carries.
+pub fn locate_event(
+    event: TeamCityEvent,
+    roots: &[Psr4Root],
+    project: &std::path::Path,
+) -> TeamCityEvent {
+    let locate = |location: Option<TestLocation>| {
+        location.map(|location| locate_pest_class(roots, project, location))
+    };
+    match event {
+        TeamCityEvent::SuiteStarted {
+            parent,
+            name,
+            location,
+        } => TeamCityEvent::SuiteStarted {
+            parent,
+            name,
+            location: locate(location),
+        },
+        TeamCityEvent::TestStarted {
+            parent,
+            name,
+            location,
+        } => TeamCityEvent::TestStarted {
+            parent,
+            name,
+            location: locate(location),
+        },
+        other => other,
+    }
+}
+
+/// A Pest class-based location resolved to its file by the project's PSR-4
+/// roots; unchanged when it names a file already or the class is not found.
+/// Pest drops the `Test` suffix from the class it reports, so both spellings
+/// are tried.
+pub fn locate_pest_class(
+    roots: &[Psr4Root],
+    project: &std::path::Path,
+    location: TestLocation,
+) -> TestLocation {
+    let Some(class) = location.unresolved_class() else {
+        return location;
+    };
+    let found = [class.to_string(), format!("{class}Test")]
+        .into_iter()
+        .find_map(|candidate| {
+            crate::psr4::class_file(roots, project, &candidate).map(|file| (file, candidate))
+        });
+    match found {
+        Some((file, declared)) => location.with_file(file, &declared),
+        None => location,
+    }
 }
 
 fn span_of(node: Node<'_>) -> (u32, u32) {
@@ -627,5 +719,58 @@ class OtherTest extends TestCase
         let nested = "<?php\ndescribe('a', function () {\n    it('x', function () {});\n});\ndescribe('b', function () {\n    it('x', function () {});\n});\n";
         assert_eq!(symbol_line(nested, &described("`a` → it x")), Some(2));
         assert_eq!(symbol_line(nested, &described("`b` → it x")), Some(5));
+    }
+
+    #[test]
+    fn a_pest_name_that_merely_contains_the_data_set_words_is_another_test() {
+        let text = "<?php\ntest('has', function () {});\ntest('has with data set in name', function () {});\n";
+        let described = |d: &str| TestSymbol::Description(d.into());
+        assert_eq!(symbol_line(text, &described("has")), Some(1));
+        assert_eq!(
+            symbol_line(text, &described("has with data set in name")),
+            Some(2)
+        );
+        assert_eq!(
+            symbol_line(text, &described("has with data set \"(1)\"")),
+            Some(1)
+        );
+        // Pest never writes a `with (…)` row, so that spelling names nothing.
+        assert_eq!(symbol_line(text, &described("has with (1, 2)")), None);
+    }
+
+    #[test]
+    fn pest_titles_humanize_method_names() {
+        assert_eq!(pest_title("testXyzAbc"), "Xyz abc");
+        assert_eq!(pest_title("test_snake_case"), "Snake case");
+        assert_eq!(pest_title("attributeOne"), "Attribute one");
+        assert_eq!(pest_title("testing"), "Testing");
+    }
+
+    #[test]
+    fn pest_class_locations_resolve_against_the_psr4_roots_only_when_unresolved() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join("tests")).unwrap();
+        std::fs::write(project.path().join("tests/GreeterTest.php"), "<?php").unwrap();
+        let roots = [Psr4Root {
+            prefix: "Tests\\".into(),
+            dir: "tests/".into(),
+            dev: true,
+        }];
+        let hint = |h: &str| test_core::parse_location_hint(h).unwrap();
+        let located = locate_pest_class(
+            &roots,
+            project.path(),
+            hint(r"pest_qn://Greeter (Tests\Greeter)"),
+        );
+        assert_eq!(located.file, "tests/GreeterTest.php");
+        assert_eq!(
+            located.symbol,
+            Some(TestSymbol::PestClass(r"Tests\GreeterTest".into()))
+        );
+        let unknown =
+            locate_pest_class(&roots, project.path(), hint(r"pest_qn://Nope (Tests\Nope)"));
+        assert_eq!(unknown.unresolved_class(), Some(r"Tests\Nope"));
+        let filed = locate_pest_class(&roots, project.path(), hint("pest_qn://tests/A.php::it x"));
+        assert_eq!(filed.file, "tests/A.php");
     }
 }

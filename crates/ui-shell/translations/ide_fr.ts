@@ -84,43 +84,43 @@
     </message>
     <message>
         <source>Location</source>
-        <translation type="unfinished"></translation>
+        <translation>Emplacement</translation>
     </message>
     <message>
         <source>Recent commit messages…</source>
-        <translation type="unfinished"></translation>
+        <translation>Messages de commit récents…</translation>
     </message>
     <message>
         <source>Author / Sign-off</source>
-        <translation type="unfinished"></translation>
+        <translation>Auteur / Signature</translation>
     </message>
     <message>
         <source>Author (Name &lt;email&gt;), empty for your git identity</source>
-        <translation type="unfinished"></translation>
+        <translation>Auteur (Nom &lt;e-mail&gt;), vide pour votre identité git</translation>
     </message>
     <message>
         <source>Sign-off</source>
-        <translation type="unfinished"></translation>
+        <translation>Signature</translation>
     </message>
     <message>
         <source>Add a Signed-off-by trailer (git commit --signoff)</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter un trailer Signed-off-by (git commit --signoff)</translation>
     </message>
     <message>
         <source>Merge Conflicts</source>
-        <translation type="unfinished"></translation>
+        <translation>Conflits de fusion</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished">%1 (%2)</translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>@@ -%1,%2 +%3,%4 @@</source>
-        <translation type="unfinished"></translation>
+        <translation>@@ -%1,%2 +%3,%4 @@</translation>
     </message>
     <message>
         <source>Cannot show changes: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible d&apos;afficher les modifications : %1</translation>
     </message>
     <message>
         <source>Show Diff</source>
@@ -136,7 +136,7 @@
     </message>
     <message>
         <source>Discard Changes…</source>
-        <translation type="unfinished"></translation>
+        <translation>Annuler les modifications…</translation>
     </message>
     <message>
         <source>Show File History</source>
@@ -144,11 +144,11 @@
     </message>
     <message>
         <source>Copy Path</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier le chemin</translation>
     </message>
     <message>
         <source>Copy Relative Path</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier le chemin relatif</translation>
     </message>
 </context>
 <context>
@@ -159,59 +159,59 @@
     </message>
     <message>
         <source>Message contains…</source>
-        <translation type="unfinished"></translation>
+        <translation>Le message contient…</translation>
     </message>
     <message>
         <source>Author…</source>
-        <translation type="unfinished"></translation>
+        <translation>Auteur…</translation>
     </message>
     <message>
         <source>Path…</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin…</translation>
     </message>
     <message>
         <source>Since</source>
-        <translation type="unfinished"></translation>
+        <translation>Depuis</translation>
     </message>
     <message>
         <source>Until</source>
-        <translation type="unfinished"></translation>
+        <translation>Jusqu&apos;à</translation>
     </message>
     <message>
         <source>Checkout Revision</source>
-        <translation type="unfinished"></translation>
+        <translation>Extraire la révision</translation>
     </message>
     <message>
         <source>New Branch Here…</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle branche ici…</translation>
     </message>
     <message>
         <source>Cherry-pick</source>
-        <translation type="unfinished"></translation>
+        <translation>Cherry-pick</translation>
     </message>
     <message>
         <source>Revert Commit</source>
-        <translation type="unfinished"></translation>
+        <translation>Annuler le commit</translation>
     </message>
     <message>
         <source>Reset Current Branch Here</source>
-        <translation type="unfinished"></translation>
+        <translation>Réinitialiser la branche courante ici</translation>
     </message>
     <message>
         <source>Soft</source>
-        <translation type="unfinished"></translation>
+        <translation>Soft</translation>
     </message>
     <message>
         <source>Mixed</source>
-        <translation type="unfinished"></translation>
+        <translation>Mixed</translation>
     </message>
     <message>
         <source>Hard…</source>
-        <translation type="unfinished"></translation>
+        <translation>Hard…</translation>
     </message>
     <message>
         <source>Copy Hash</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier le hash</translation>
     </message>
     <message>
         <source>New Branch</source>
@@ -223,18 +223,18 @@
     </message>
     <message>
         <source>Reset Current Branch</source>
-        <translation type="unfinished"></translation>
+        <translation>Réinitialiser la branche courante</translation>
     </message>
     <message>
         <source>Reset the current branch to %1 (hard)? Uncommitted changes and every commit after it on this branch are discarded.</source>
-        <translation type="unfinished"></translation>
+        <translation>Réinitialiser la branche courante sur %1 (hard) ? Les modifications non validées et tous les commits postérieurs sur cette branche seront perdus.</translation>
     </message>
 </context>
 <context>
     <name>ContainersPanel</name>
     <message>
         <source>Start</source>
-        <translation type="unfinished"></translation>
+        <translation>Démarrer</translation>
     </message>
     <message>
         <source>Stop</source>
@@ -242,31 +242,31 @@
     </message>
     <message>
         <source>Restart</source>
-        <translation type="unfinished"></translation>
+        <translation>Redémarrer</translation>
     </message>
     <message>
         <source>Pause</source>
-        <translation type="unfinished">Suspendre</translation>
+        <translation>Mettre en pause</translation>
     </message>
     <message>
         <source>Remove…</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer…</translation>
     </message>
     <message>
         <source>Unpause</source>
-        <translation type="unfinished"></translation>
+        <translation>Reprendre</translation>
     </message>
     <message>
         <source>Remove Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le conteneur</translation>
     </message>
     <message>
         <source>Remove container &quot;%1&quot;?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le conteneur « %1 » ?</translation>
     </message>
     <message>
         <source>Force (kill if running)</source>
-        <translation type="unfinished"></translation>
+        <translation>Forcer (arrêt brutal s&apos;il est en cours d&apos;exécution)</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -274,11 +274,11 @@
     </message>
     <message>
         <source>Clean Up</source>
-        <translation type="unfinished"></translation>
+        <translation>Nettoyer</translation>
     </message>
     <message>
         <source>Remove every stopped container on this connection? This cannot be undone.</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer tous les conteneurs arrêtés de cette connexion ? Cette action est irréversible.</translation>
     </message>
     <message>
         <source>Terminal</source>
@@ -286,75 +286,75 @@
     </message>
     <message>
         <source>As current user</source>
-        <translation type="unfinished"></translation>
+        <translation>En tant qu&apos;utilisateur actuel</translation>
     </message>
     <message>
         <source>As root</source>
-        <translation type="unfinished"></translation>
+        <translation>En tant que root</translation>
     </message>
     <message>
         <source>Exec…</source>
-        <translation type="unfinished"></translation>
+        <translation>Exec…</translation>
     </message>
     <message>
         <source>Attach</source>
-        <translation type="unfinished"></translation>
+        <translation>Attacher</translation>
     </message>
     <message>
         <source>Log</source>
-        <translation type="unfinished"></translation>
+        <translation>Journal</translation>
     </message>
     <message>
         <source>Inspect</source>
-        <translation type="unfinished"></translation>
+        <translation>Inspecter</translation>
     </message>
     <message>
         <source>Show Processes</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les processus</translation>
     </message>
     <message>
         <source>Show Files</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les fichiers</translation>
     </message>
     <message>
         <source>Copy Container ID</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier l&apos;ID du conteneur</translation>
     </message>
     <message>
         <source>Copy Image ID</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier l&apos;ID de l&apos;image</translation>
     </message>
     <message>
         <source>Clean Up…</source>
-        <translation type="unfinished"></translation>
+        <translation>Nettoyer…</translation>
     </message>
     <message>
         <source>Start All</source>
-        <translation type="unfinished"></translation>
+        <translation>Tout démarrer</translation>
     </message>
     <message>
         <source>Down</source>
-        <translation type="unfinished"></translation>
+        <translation>Arrêter et supprimer</translation>
     </message>
     <message>
         <source>Jump to Source</source>
-        <translation type="unfinished">Aller à la source</translation>
+        <translation>Aller à la source</translation>
     </message>
     <message>
         <source>Copy ID</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier l&apos;ID</translation>
     </message>
     <message>
         <source>Scale…</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre à l&apos;échelle…</translation>
     </message>
     <message>
         <source>Scale</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre à l&apos;échelle</translation>
     </message>
     <message>
         <source>Number of containers for &quot;%1&quot;:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre de conteneurs pour « %1 » :</translation>
     </message>
     <message>
         <source>Add</source>
@@ -362,19 +362,19 @@
     </message>
     <message>
         <source>New connection…</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle connexion…</translation>
     </message>
     <message>
         <source>Add from contexts…</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter depuis les contextes…</translation>
     </message>
     <message>
         <source>Registry…</source>
-        <translation type="unfinished"></translation>
+        <translation>Registre…</translation>
     </message>
     <message>
         <source>Registries</source>
-        <translation type="unfinished"></translation>
+        <translation>Registres</translation>
     </message>
     <message>
         <source>Refresh</source>
@@ -382,79 +382,79 @@
     </message>
     <message>
         <source>Connect</source>
-        <translation type="unfinished"></translation>
+        <translation>Se connecter</translation>
     </message>
     <message>
         <source>Disconnect</source>
-        <translation type="unfinished"></translation>
+        <translation>Se déconnecter</translation>
     </message>
     <message>
         <source>Pull Image…</source>
-        <translation type="unfinished"></translation>
+        <translation>Tirer une image…</translation>
     </message>
     <message>
         <source>All (stopped containers, unused networks/volumes, dangling images)</source>
-        <translation type="unfinished"></translation>
+        <translation>Tout (conteneurs arrêtés, réseaux/volumes inutilisés, images orphelines)</translation>
     </message>
     <message>
         <source>Clean up everything unused on this connection?</source>
-        <translation type="unfinished"></translation>
+        <translation>Nettoyer tout ce qui est inutilisé sur cette connexion ?</translation>
     </message>
     <message>
         <source>Stopped Containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Conteneurs arrêtés</translation>
     </message>
     <message>
         <source>Remove every stopped container?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer tous les conteneurs arrêtés ?</translation>
     </message>
     <message>
         <source>Unused Networks</source>
-        <translation type="unfinished"></translation>
+        <translation>Réseaux inutilisés</translation>
     </message>
     <message>
         <source>Remove every unused network?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer tous les réseaux inutilisés ?</translation>
     </message>
     <message>
         <source>Unused Volumes</source>
-        <translation type="unfinished"></translation>
+        <translation>Volumes inutilisés</translation>
     </message>
     <message>
         <source>Remove every unused volume?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer tous les volumes inutilisés ?</translation>
     </message>
     <message>
         <source>Dangling Images</source>
-        <translation type="unfinished"></translation>
+        <translation>Images orphelines</translation>
     </message>
     <message>
         <source>Remove every dangling image?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer toutes les images orphelines ?</translation>
     </message>
     <message>
         <source>Build Cache</source>
-        <translation type="unfinished"></translation>
+        <translation>Cache de compilation</translation>
     </message>
     <message>
         <source>Remove the build cache?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le cache de compilation ?</translation>
     </message>
     <message>
         <source>Filter</source>
-        <translation type="unfinished">Filtre</translation>
+        <translation>Filtre</translation>
     </message>
     <message>
         <source>Stopped containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Conteneurs arrêtés</translation>
     </message>
     <message>
         <source>Untagged images</source>
-        <translation type="unfinished"></translation>
+        <translation>Images sans tag</translation>
     </message>
     <message>
         <source>Type to filter</source>
-        <translation type="unfinished"></translation>
+        <translation>Saisir pour filtrer</translation>
     </message>
     <message>
         <source>Name</source>
@@ -466,19 +466,19 @@
     </message>
     <message>
         <source>Details</source>
-        <translation type="unfinished">Détails</translation>
+        <translation>Détails</translation>
     </message>
     <message>
         <source>ID</source>
-        <translation type="unfinished"></translation>
+        <translation>ID</translation>
     </message>
     <message>
         <source>Dashboard</source>
-        <translation type="unfinished"></translation>
+        <translation>Tableau de bord</translation>
     </message>
     <message>
         <source>Image to pull:</source>
-        <translation type="unfinished"></translation>
+        <translation>Image à tirer :</translation>
     </message>
     <message>
         <source>Pull</source>
@@ -486,271 +486,271 @@
     </message>
     <message>
         <source>Add from Contexts</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter depuis les contextes</translation>
     </message>
     <message>
         <source>No connections were discovered.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucune connexion n&apos;a été détectée.</translation>
     </message>
     <message>
         <source>Every discovered connection is already configured.</source>
-        <translation type="unfinished"></translation>
+        <translation>Toutes les connexions détectées sont déjà configurées.</translation>
     </message>
     <message>
         <source>Select the connections to add:</source>
-        <translation type="unfinished"></translation>
+        <translation>Sélectionnez les connexions à ajouter :</translation>
     </message>
     <message>
         <source>No connections configured. Use Add to create one.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucune connexion configurée. Utilisez Ajouter pour en créer une.</translation>
     </message>
     <message>
         <source>Edit configuration…</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier la configuration…</translation>
     </message>
     <message>
         <source>Copy Pod ID</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier l&apos;ID du pod</translation>
     </message>
     <message>
         <source>Remove Pod</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le pod</translation>
     </message>
     <message>
         <source>Remove pod &quot;%1&quot; and every container in it?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le pod « %1 » et tous les conteneurs qu&apos;il contient ?</translation>
     </message>
     <message>
         <source>Start machine</source>
-        <translation type="unfinished"></translation>
+        <translation>Démarrer la machine</translation>
     </message>
     <message>
         <source>Stop machine</source>
-        <translation type="unfinished"></translation>
+        <translation>Arrêter la machine</translation>
     </message>
     <message>
         <source>Edit…</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier…</translation>
     </message>
     <message>
         <source>Remove Registry</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le registre</translation>
     </message>
     <message>
         <source>Remove registry &quot;%1&quot;? Its stored password/token is deleted too.</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le registre « %1 » ? Son mot de passe/jeton enregistré est également supprimé.</translation>
     </message>
     <message>
         <source>Copy repository name</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier le nom du dépôt</translation>
     </message>
     <message>
         <source>Copy reference</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier la référence</translation>
     </message>
     <message>
         <source>Pull Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Tirer l&apos;image</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished">%1 (%2)</translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>Pull into</source>
-        <translation type="unfinished"></translation>
+        <translation>Tirer vers</translation>
     </message>
     <message>
         <source>No connection is configured to pull into.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucune connexion n&apos;est configurée pour y tirer l&apos;image.</translation>
     </message>
     <message>
         <source>Could not build a pull command for this tag.</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible de construire une commande pull pour ce tag.</translation>
     </message>
     <message>
         <source>Pull: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Pull : %1</translation>
     </message>
     <message>
         <source>Push Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Pousser l&apos;image</translation>
     </message>
     <message>
         <source>No registry is configured yet — add one in Settings &gt; Containers.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun registre n&apos;est encore configuré — ajoutez-en un dans Paramètres &gt; Conteneurs.</translation>
     </message>
     <message>
         <source>Registry</source>
-        <translation type="unfinished"></translation>
+        <translation>Registre</translation>
     </message>
     <message>
         <source>Repository</source>
-        <translation type="unfinished"></translation>
+        <translation>Dépôt</translation>
     </message>
     <message>
         <source>Tag</source>
-        <translation type="unfinished"></translation>
+        <translation>Tag</translation>
     </message>
     <message>
         <source>Reference</source>
-        <translation type="unfinished"></translation>
+        <translation>Référence</translation>
     </message>
     <message>
         <source>%1/%2:%3</source>
-        <translation type="unfinished">%1/%2:%3</translation>
+        <translation>%1/%2:%3</translation>
     </message>
     <message>
         <source>&lt;tag&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;tag&gt;</translation>
     </message>
     <message>
         <source>Could not build a push command for this image.</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible de construire une commande push pour cette image.</translation>
     </message>
     <message>
         <source>Push: %1/%2</source>
-        <translation type="unfinished"></translation>
+        <translation>Push : %1/%2</translation>
     </message>
     <message>
         <source>Select a connection first.</source>
-        <translation type="unfinished"></translation>
+        <translation>Sélectionnez d&apos;abord une connexion.</translation>
     </message>
     <message>
         <source>Image reference</source>
-        <translation type="unfinished"></translation>
+        <translation>Référence de l&apos;image</translation>
     </message>
     <message>
         <source>Create Container…</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un conteneur…</translation>
     </message>
     <message>
         <source>Push Image…</source>
-        <translation type="unfinished"></translation>
+        <translation>Pousser l&apos;image…</translation>
     </message>
     <message>
         <source>Copy Image to…</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier l&apos;image vers…</translation>
     </message>
     <message>
         <source>Tag…</source>
-        <translation type="unfinished"></translation>
+        <translation>Tag…</translation>
     </message>
     <message>
         <source>Show Layers</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les couches</translation>
     </message>
     <message>
         <source>Show Labels</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les étiquettes</translation>
     </message>
     <message>
         <source>Remove Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer l&apos;image</translation>
     </message>
     <message>
         <source>Remove image &quot;%1&quot;?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer l&apos;image « %1 » ?</translation>
     </message>
     <message>
         <source>Force</source>
-        <translation type="unfinished"></translation>
+        <translation>Forcer</translation>
     </message>
     <message>
         <source>Remove Network</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le réseau</translation>
     </message>
     <message>
         <source>Remove network &quot;%1&quot;?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le réseau « %1 » ?</translation>
     </message>
     <message>
         <source>Remove Volume</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le volume</translation>
     </message>
     <message>
         <source>Remove volume &quot;%1&quot;?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le volume « %1 » ?</translation>
     </message>
     <message>
         <source>Clean Up: Dangling Images</source>
-        <translation type="unfinished"></translation>
+        <translation>Nettoyer : images orphelines</translation>
     </message>
     <message>
         <source>Clean Up: All Unused Images</source>
-        <translation type="unfinished"></translation>
+        <translation>Nettoyer : toutes les images inutilisées</translation>
     </message>
     <message>
         <source>Remove every unused image, not just dangling ones?</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer toutes les images inutilisées, pas seulement les images orphelines ?</translation>
     </message>
     <message>
         <source>Create Network…</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un réseau…</translation>
     </message>
     <message>
         <source>Create Volume…</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un volume…</translation>
     </message>
     <message>
         <source>Create Network</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un réseau</translation>
     </message>
     <message>
         <source>Driver</source>
-        <translation type="unfinished"></translation>
+        <translation>Pilote</translation>
     </message>
     <message>
         <source>Subnet</source>
-        <translation type="unfinished"></translation>
+        <translation>Sous-réseau</translation>
     </message>
     <message>
         <source>Gateway</source>
-        <translation type="unfinished"></translation>
+        <translation>Passerelle</translation>
     </message>
     <message>
         <source>Internal</source>
-        <translation type="unfinished"></translation>
+        <translation>Interne</translation>
     </message>
     <message>
         <source>Attachable</source>
-        <translation type="unfinished"></translation>
+        <translation>Attachable</translation>
     </message>
     <message>
         <source>Labels</source>
-        <translation type="unfinished"></translation>
+        <translation>Étiquettes</translation>
     </message>
     <message>
         <source>Create Volume</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un volume</translation>
     </message>
     <message>
         <source>Options</source>
-        <translation type="unfinished"></translation>
+        <translation>Options</translation>
     </message>
     <message>
         <source>Tag Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Taguer l&apos;image</translation>
     </message>
     <message>
         <source>New tag</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouveau tag</translation>
     </message>
     <message>
         <source>Copy Image To</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier l&apos;image vers</translation>
     </message>
     <message>
         <source>Target connection</source>
-        <translation type="unfinished"></translation>
+        <translation>Connexion cible</translation>
     </message>
     <message>
         <source>No other connection is configured to copy this image to.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucune autre connexion n&apos;est configurée pour y copier cette image.</translation>
     </message>
     <message>
         <source>Create Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un conteneur</translation>
     </message>
 </context>
 <context>
@@ -792,7 +792,7 @@
     <name>DatabaseConsoleBar</name>
     <message>
         <source>Auto-commit</source>
-        <translation type="unfinished"></translation>
+        <translation>Validation automatique</translation>
     </message>
     <message>
         <source>Manual</source>
@@ -800,15 +800,15 @@
     </message>
     <message>
         <source>Stop on error</source>
-        <translation type="unfinished"></translation>
+        <translation>Arrêter en cas d&apos;erreur</translation>
     </message>
     <message>
         <source>Continue on error</source>
-        <translation type="unfinished"></translation>
+        <translation>Continuer en cas d&apos;erreur</translation>
     </message>
     <message>
         <source>Ask on error</source>
-        <translation type="unfinished"></translation>
+        <translation>Demander en cas d&apos;erreur</translation>
     </message>
     <message>
         <source>Run</source>
@@ -816,11 +816,11 @@
     </message>
     <message>
         <source>Run script</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter le script</translation>
     </message>
     <message>
         <source>Cancel</source>
-        <translation type="unfinished">Annuler</translation>
+        <translation>Annuler</translation>
     </message>
     <message>
         <source>Commit</source>
@@ -828,14 +828,14 @@
     </message>
     <message>
         <source>Rollback</source>
-        <translation type="unfinished"></translation>
+        <translation>Annuler la transaction</translation>
     </message>
 </context>
 <context>
     <name>DatabasePanel</name>
     <message>
         <source>New data source…</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle source de données…</translation>
     </message>
     <message>
         <source>Refresh</source>
@@ -843,39 +843,39 @@
     </message>
     <message>
         <source>Force Refresh</source>
-        <translation type="unfinished"></translation>
+        <translation>Forcer l&apos;actualisation</translation>
     </message>
     <message>
         <source>Go to DDL</source>
-        <translation type="unfinished"></translation>
+        <translation>Aller au DDL</translation>
     </message>
     <message>
         <source>View options</source>
-        <translation type="unfinished"></translation>
+        <translation>Options d&apos;affichage</translation>
     </message>
     <message>
         <source>Group by Object Type</source>
-        <translation type="unfinished"></translation>
+        <translation>Grouper par type d&apos;objet</translation>
     </message>
     <message>
         <source>Flat</source>
-        <translation type="unfinished"></translation>
+        <translation>À plat</translation>
     </message>
     <message>
         <source>Separate Procedures and Functions</source>
-        <translation type="unfinished"></translation>
+        <translation>Séparer les procédures et les fonctions</translation>
     </message>
     <message>
         <source>Sort Natural</source>
-        <translation type="unfinished"></translation>
+        <translation>Tri naturel</translation>
     </message>
     <message>
         <source>Sort Alphabetical</source>
-        <translation type="unfinished"></translation>
+        <translation>Tri alphabétique</translation>
     </message>
     <message>
         <source>Filter (e.g. table:-payment_.*)</source>
-        <translation type="unfinished"></translation>
+        <translation>Filtre (p. ex. table:-payment_.*)</translation>
     </message>
     <message>
         <source>Name</source>
@@ -883,19 +883,19 @@
     </message>
     <message>
         <source>Detail</source>
-        <translation type="unfinished"></translation>
+        <translation>Détail</translation>
     </message>
     <message>
         <source>Open Console</source>
-        <translation type="unfinished"></translation>
+        <translation>Ouvrir la console</translation>
     </message>
     <message>
         <source>Edit Data…</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier les données…</translation>
     </message>
     <message>
         <source>Copy Name</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier le nom</translation>
     </message>
     <message>
         <source>Rename…</source>
@@ -903,79 +903,79 @@
     </message>
     <message>
         <source>Drop…</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer…</translation>
     </message>
     <message>
         <source>Truncate…</source>
-        <translation type="unfinished"></translation>
+        <translation>Tronquer…</translation>
     </message>
     <message>
         <source>Comment…</source>
-        <translation type="unfinished"></translation>
+        <translation>Commenter…</translation>
     </message>
     <message>
         <source>Export Data…</source>
-        <translation type="unfinished"></translation>
+        <translation>Exporter les données…</translation>
     </message>
     <message>
         <source>Import Data…</source>
-        <translation type="unfinished"></translation>
+        <translation>Importer des données…</translation>
     </message>
     <message>
         <source>Copy Table to…</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier la table vers…</translation>
     </message>
     <message>
         <source>ER Diagram</source>
-        <translation type="unfinished"></translation>
+        <translation>Diagramme ER</translation>
     </message>
     <message>
         <source>Compare Data with…</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer les données avec…</translation>
     </message>
     <message>
         <source>Dump…</source>
-        <translation type="unfinished"></translation>
+        <translation>Dump…</translation>
     </message>
     <message>
         <source>Restore…</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurer…</translation>
     </message>
     <message>
         <source>Compare Structure with…</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer la structure avec…</translation>
     </message>
     <message>
         <source>Delete Key…</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer la clé…</translation>
     </message>
     <message>
         <source>Set TTL…</source>
-        <translation type="unfinished"></translation>
+        <translation>Définir le TTL…</translation>
     </message>
     <message>
         <source>Create Table…</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer une table…</translation>
     </message>
     <message>
         <source>Create User…</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un utilisateur…</translation>
     </message>
     <message>
         <source>Modify Column…</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier la colonne…</translation>
     </message>
     <message>
         <source>Add Column…</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter une colonne…</translation>
     </message>
     <message>
         <source>Drop Column…</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer la colonne…</translation>
     </message>
     <message>
         <source>Create Index…</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un index…</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -987,60 +987,62 @@
     </message>
     <message>
         <source>Drop</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer</translation>
     </message>
     <message>
         <source>Truncate</source>
-        <translation type="unfinished"></translation>
+        <translation>Tronquer</translation>
     </message>
     <message>
         <source>Comment</source>
-        <translation type="unfinished"></translation>
+        <translation>Commentaire</translation>
     </message>
     <message>
         <source>Comment:</source>
-        <translation type="unfinished"></translation>
+        <translation>Commentaire :</translation>
     </message>
     <message>
         <source>Delete Key</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer la clé</translation>
     </message>
     <message>
         <source>Delete key &apos;%1&apos;? This cannot be undone.</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer la clé « %1 » ? Cette action est irréversible.</translation>
     </message>
     <message>
         <source>Set TTL</source>
-        <translation type="unfinished"></translation>
+        <translation>Définir le TTL</translation>
     </message>
     <message>
         <source>Expire &apos;%1&apos; after how many seconds:</source>
-        <translation type="unfinished"></translation>
+        <translation>Faire expirer « %1 » après combien de secondes :</translation>
     </message>
     <message>
         <source>Run this statement?
 
 %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter cette instruction ?
+
+%1</translation>
     </message>
 </context>
 <context>
     <name>DatabaseResultsPanel</name>
     <message>
         <source>Export / Copy As…</source>
-        <translation type="unfinished"></translation>
+        <translation>Exporter / Copier sous…</translation>
     </message>
     <message>
         <source>Output</source>
-        <translation type="unfinished"></translation>
+        <translation>Sortie</translation>
     </message>
     <message>
         <source>Result</source>
-        <translation type="unfinished"></translation>
+        <translation>Résultat</translation>
     </message>
     <message>
         <source>Console</source>
-        <translation type="unfinished"></translation>
+        <translation>Console</translation>
     </message>
 </context>
 <context>
@@ -1123,31 +1125,31 @@
     </message>
     <message>
         <source>Filter variables</source>
-        <translation type="unfinished"></translation>
+        <translation>Filtrer les variables</translation>
     </message>
     <message>
         <source>Expression</source>
-        <translation type="unfinished"></translation>
+        <translation>Expression</translation>
     </message>
     <message>
         <source>Console</source>
-        <translation type="unfinished"></translation>
+        <translation>Console</translation>
     </message>
     <message>
         <source>Evaluate</source>
-        <translation type="unfinished"></translation>
+        <translation>Évaluer</translation>
     </message>
     <message>
         <source>Copy Value</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier la valeur</translation>
     </message>
     <message>
         <source>Copy Path</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier le chemin</translation>
     </message>
     <message>
         <source>Remove Watch</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer l&apos;espion</translation>
     </message>
 </context>
 <context>
@@ -1336,71 +1338,71 @@
     </message>
     <message>
         <source>Edit Breakpoint…</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier le point d&apos;arrêt…</translation>
     </message>
     <message>
         <source>Add Breakpoint</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter un point d&apos;arrêt</translation>
     </message>
     <message>
         <source>Remove Breakpoint</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer le point d&apos;arrêt</translation>
     </message>
     <message>
         <source>Run to Cursor</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter jusqu&apos;au curseur</translation>
     </message>
     <message>
         <source>Close All in Group</source>
-        <translation type="unfinished"></translation>
+        <translation>Tout fermer dans le groupe</translation>
     </message>
     <message>
         <source>Show Code Map</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher la carte du code</translation>
     </message>
     <message>
         <source>Open localhost:%1</source>
-        <translation type="unfinished"></translation>
+        <translation>Ouvrir localhost:%1</translation>
     </message>
     <message>
         <source>● running (%1/%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>● en cours (%1/%2)</translation>
     </message>
     <message>
         <source>✗ exited (%1)</source>
-        <translation type="unfinished"></translation>
+        <translation>✗ terminé (%1)</translation>
     </message>
     <message>
         <source>○ stopped</source>
-        <translation type="unfinished"></translation>
+        <translation>○ arrêté</translation>
     </message>
     <message>
         <source>Containerfile</source>
-        <translation type="unfinished"></translation>
+        <translation>Containerfile</translation>
     </message>
     <message>
         <source>Dockerfile</source>
-        <translation type="unfinished"></translation>
+        <translation>Dockerfile</translation>
     </message>
     <message>
         <source>Build Image from %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Construire l&apos;image depuis %1</translation>
     </message>
     <message>
         <source>Run Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter le conteneur</translation>
     </message>
     <message>
         <source>New Configuration…</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle configuration…</translation>
     </message>
     <message>
         <source>Run Compose Project</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter le projet Compose</translation>
     </message>
     <message>
         <source>Run Service &apos;%1&apos;</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter le service « %1 »</translation>
     </message>
     <message>
         <source>Formatting before saving…</source>
@@ -1412,14 +1414,14 @@
     </message>
     <message>
         <source>This file&apos;s diff is open in the Diff dock.</source>
-        <translation type="unfinished"></translation>
+        <translation>Le diff de ce fichier est ouvert dans le dock Diff.</translation>
     </message>
 </context>
 <context>
     <name>ErrorStripe</name>
     <message>
         <source>%1 error(s), %2 warning(s)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 erreur(s), %2 avertissement(s)</translation>
     </message>
 </context>
 <context>
@@ -1477,11 +1479,11 @@
     </message>
     <message>
         <source>%1 [%2]</source>
-        <translation type="unfinished">%1:%2 [%3] {1 ?} {2]?}</translation>
+        <translation>%1 [%2]</translation>
     </message>
     <message>
         <source>%1 [%2] in %3</source>
-        <translation type="unfinished">%1:%2 [%3] dans %3 {1 ?} {2]?}</translation>
+        <translation>%1 [%2] dans %3</translation>
     </message>
 </context>
 <context>
@@ -1591,7 +1593,7 @@
     </message>
     <message>
         <source>Current File</source>
-        <translation type="unfinished">Fichier actuel</translation>
+        <translation>Fichier actuel</translation>
     </message>
     <message>
         <source>Waiting for %1…</source>
@@ -1599,7 +1601,7 @@
     </message>
     <message>
         <source>Quick Fixes…</source>
-        <translation type="unfinished"></translation>
+        <translation>Correctifs rapides…</translation>
     </message>
 </context>
 <context>
@@ -3535,61 +3537,63 @@ Corrigez la commande, puis cliquez sur Redémarrer le serveur.</translation>
     </message>
     <message>
         <source>This repository has no remotes configured.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ce dépôt n&apos;a aucun dépôt distant configuré.</translation>
     </message>
     <message>
         <source>Remote:</source>
-        <translation type="unfinished"></translation>
+        <translation>Dépôt distant :</translation>
     </message>
     <message>
         <source>%1 left conflicts. Resolve them in the Changes dock&apos;s &quot;Merge Conflicts&quot; group, then commit.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 a laissé des conflits. Résolvez-les dans le groupe « Conflits de fusion » du dock Modifications, puis validez.</translation>
     </message>
     <message>
         <source>Branches</source>
-        <translation type="unfinished"></translation>
+        <translation>Branches</translation>
     </message>
     <message>
         <source>Search branches…</source>
-        <translation type="unfinished"></translation>
+        <translation>Rechercher des branches…</translation>
     </message>
     <message>
         <source>Local</source>
-        <translation type="unfinished"></translation>
+        <translation>Locales</translation>
     </message>
     <message>
         <source>Remote</source>
-        <translation type="unfinished"></translation>
+        <translation>Distantes</translation>
     </message>
     <message>
         <source> (current)</source>
-        <translation type="unfinished"></translation>
+        <translation> (actuelle)</translation>
     </message>
     <message>
         <source>Compare with Current</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer avec la branche courante</translation>
     </message>
     <message>
         <source>No files differ from %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun fichier ne diffère de %1.</translation>
     </message>
     <message>
         <source>%1 file(s) differ from %2:
 
 %3</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 fichier(s) diffèrent de %2 :
+
+%3</translation>
     </message>
     <message>
         <source>Checkout</source>
-        <translation type="unfinished"></translation>
+        <translation>Extraire</translation>
     </message>
     <message>
         <source>Merge into Current</source>
-        <translation type="unfinished"></translation>
+        <translation>Fusionner dans la branche courante</translation>
     </message>
     <message>
         <source>Rebase Current onto %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Rebaser la branche courante sur %1</translation>
     </message>
     <message>
         <source>Rename…</source>
@@ -3597,19 +3601,19 @@ Corrigez la commande, puis cliquez sur Redémarrer le serveur.</translation>
     </message>
     <message>
         <source>Delete…</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer…</translation>
     </message>
     <message>
         <source>Merge</source>
-        <translation type="unfinished"></translation>
+        <translation>Fusionner</translation>
     </message>
     <message>
         <source>Rebase</source>
-        <translation type="unfinished"></translation>
+        <translation>Rebaser</translation>
     </message>
     <message>
         <source>Rename Branch</source>
-        <translation type="unfinished"></translation>
+        <translation>Renommer la branche</translation>
     </message>
     <message>
         <source>New Branch…</source>
@@ -3617,789 +3621,789 @@ Corrigez la commande, puis cliquez sur Redémarrer le serveur.</translation>
     </message>
     <message>
         <source>Edit Breakpoint</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier le point d&apos;arrêt</translation>
     </message>
     <message>
         <source>Remove once hit (temporary)</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer après le premier passage (temporaire)</translation>
     </message>
     <message>
         <source>e.g. i &gt; 2</source>
-        <translation type="unfinished"></translation>
+        <translation>p. ex. i &gt; 2</translation>
     </message>
     <message>
         <source>e.g. 5, or %3 == 0</source>
-        <translation type="unfinished"></translation>
+        <translation>p. ex. 5, ou %3 == 0</translation>
     </message>
     <message>
         <source>Log this instead of suspending, e.g. i is {i}</source>
-        <translation type="unfinished"></translation>
+        <translation>Journaliser ceci au lieu de suspendre, p. ex. i vaut {i}</translation>
     </message>
     <message>
         <source>Condition:</source>
-        <translation type="unfinished"></translation>
+        <translation>Condition :</translation>
     </message>
     <message>
         <source>Hit count:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre de passages :</translation>
     </message>
     <message>
         <source>Log message:</source>
-        <translation type="unfinished"></translation>
+        <translation>Message du journal :</translation>
     </message>
     <message>
         <source>Reload Build Tool Project</source>
-        <translation type="unfinished"></translation>
+        <translation>Recharger le projet d&apos;outil de build</translation>
     </message>
     <message>
         <source>Gradle</source>
-        <translation type="unfinished"></translation>
+        <translation>Gradle</translation>
     </message>
     <message>
         <source>Maven</source>
-        <translation type="unfinished"></translation>
+        <translation>Maven</translation>
     </message>
     <message>
         <source>Gradle &amp; Maven</source>
-        <translation type="unfinished"></translation>
+        <translation>Gradle &amp; Maven</translation>
     </message>
     <message>
         <source>Build Tools</source>
-        <translation type="unfinished"></translation>
+        <translation>Outils de build</translation>
     </message>
     <message>
         <source>Gradle project detected — load it to see tasks and dependencies.</source>
-        <translation type="unfinished"></translation>
+        <translation>Projet Gradle détecté — chargez-le pour voir les tâches et les dépendances.</translation>
     </message>
     <message>
         <source>Maven project detected — load it to see tasks and dependencies.</source>
-        <translation type="unfinished"></translation>
+        <translation>Projet Maven détecté — chargez-le pour voir les tâches et les dépendances.</translation>
     </message>
     <message>
         <source>Gradle and Maven projects detected — load them to see tasks and dependencies.</source>
-        <translation type="unfinished"></translation>
+        <translation>Projets Gradle et Maven détectés — chargez-les pour voir les tâches et les dépendances.</translation>
     </message>
     <message>
         <source>No Gradle or Maven project detected.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun projet Gradle ou Maven détecté.</translation>
     </message>
     <message>
         <source>%1 — syncing…</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 — synchronisation…</translation>
     </message>
     <message>
         <source>%1 — sync failed</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 — échec de la synchronisation</translation>
     </message>
     <message>
         <source>External changes</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifications externes</translation>
     </message>
     <message>
         <source>Any changes</source>
-        <translation type="unfinished"></translation>
+        <translation>Toutes les modifications</translation>
     </message>
     <message>
         <source>Never (show a banner)</source>
-        <translation type="unfinished"></translation>
+        <translation>Jamais (afficher une bannière)</translation>
     </message>
     <message>
         <source>Project wrapper</source>
-        <translation type="unfinished"></translation>
+        <translation>Wrapper du projet</translation>
     </message>
     <message>
         <source>Local installation</source>
-        <translation type="unfinished"></translation>
+        <translation>Installation locale</translation>
     </message>
     <message>
         <source>Distribution:</source>
-        <translation type="unfinished"></translation>
+        <translation>Distribution :</translation>
     </message>
     <message>
         <source>Gradle home:</source>
-        <translation type="unfinished"></translation>
+        <translation>Répertoire Gradle :</translation>
     </message>
     <message>
         <source>JDK home:</source>
-        <translation type="unfinished"></translation>
+        <translation>Répertoire du JDK :</translation>
     </message>
     <message>
         <source>Offline:</source>
-        <translation type="unfinished"></translation>
+        <translation>Hors ligne :</translation>
     </message>
     <message>
         <source>Reload:</source>
-        <translation type="unfinished"></translation>
+        <translation>Recharger :</translation>
     </message>
     <message>
         <source>Download sources:</source>
-        <translation type="unfinished"></translation>
+        <translation>Télécharger les sources :</translation>
     </message>
     <message>
         <source>JVM arguments:</source>
-        <translation type="unfinished"></translation>
+        <translation>Arguments JVM :</translation>
     </message>
     <message>
         <source>Maven home:</source>
-        <translation type="unfinished"></translation>
+        <translation>Répertoire Maven :</translation>
     </message>
     <message>
         <source>User settings file:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier de paramètres utilisateur :</translation>
     </message>
     <message>
         <source>Local repository:</source>
-        <translation type="unfinished"></translation>
+        <translation>Dépôt local :</translation>
     </message>
     <message>
         <source>Skip tests:</source>
-        <translation type="unfinished"></translation>
+        <translation>Ignorer les tests :</translation>
     </message>
     <message>
         <source>Threads:</source>
-        <translation type="unfinished"></translation>
+        <translation>Threads :</translation>
     </message>
     <message>
         <source>Always update snapshots:</source>
-        <translation type="unfinished"></translation>
+        <translation>Toujours mettre à jour les snapshots :</translation>
     </message>
     <message>
         <source>Renamed</source>
-        <translation type="unfinished"></translation>
+        <translation>Renommé</translation>
     </message>
     <message>
         <source>Copied</source>
-        <translation type="unfinished"></translation>
+        <translation>Copié</translation>
     </message>
     <message>
         <source>Conflicted</source>
-        <translation type="unfinished"></translation>
+        <translation>En conflit</translation>
     </message>
     <message>
         <source>A</source>
         <comment>status letter: Added</comment>
-        <translation type="unfinished"></translation>
+        <translation>A</translation>
     </message>
     <message>
         <source>M</source>
         <comment>status letter: Modified</comment>
-        <translation type="unfinished"></translation>
+        <translation>M</translation>
     </message>
     <message>
         <source>D</source>
         <comment>status letter: Deleted</comment>
-        <translation type="unfinished"></translation>
+        <translation>S</translation>
     </message>
     <message>
         <source>T</source>
         <comment>status letter: Type Changed</comment>
-        <translation type="unfinished"></translation>
+        <translation>T</translation>
     </message>
     <message>
         <source>U</source>
         <comment>status letter: Untracked</comment>
-        <translation type="unfinished"></translation>
+        <translation>N</translation>
     </message>
     <message>
         <source>R</source>
         <comment>status letter: Renamed</comment>
-        <translation type="unfinished"></translation>
+        <translation>R</translation>
     </message>
     <message>
         <source>C</source>
         <comment>status letter: Conflicted/Copied</comment>
-        <translation type="unfinished"></translation>
+        <translation>C</translation>
     </message>
     <message>
         <source>← was: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>← était : %1</translation>
     </message>
     <message>
         <source>%1  ← was: %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1  ← était : %2</translation>
     </message>
     <message>
         <source>New Run Target</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle cible d&apos;exécution</translation>
     </message>
     <message>
         <source>Where does this run?</source>
-        <translation type="unfinished"></translation>
+        <translation>Où cela s&apos;exécute-t-il ?</translation>
     </message>
     <message>
         <source>Server:</source>
-        <translation type="unfinished"></translation>
+        <translation>Serveur :</translation>
     </message>
     <message>
         <source>Pull or use an existing image</source>
-        <translation type="unfinished"></translation>
+        <translation>Tirer ou utiliser une image existante</translation>
     </message>
     <message>
         <source>Build from a Dockerfile</source>
-        <translation type="unfinished"></translation>
+        <translation>Construire depuis un Dockerfile</translation>
     </message>
     <message>
         <source>Compose service</source>
-        <translation type="unfinished"></translation>
+        <translation>Service Compose</translation>
     </message>
     <message>
         <source>Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Image</translation>
     </message>
     <message>
         <source>Image:</source>
-        <translation type="unfinished"></translation>
+        <translation>Image :</translation>
     </message>
     <message>
         <source>Dockerfile:</source>
-        <translation type="unfinished"></translation>
+        <translation>Dockerfile :</translation>
     </message>
     <message>
         <source>Context:</source>
-        <translation type="unfinished"></translation>
+        <translation>Contexte :</translation>
     </message>
     <message>
         <source>leave blank for an automatic tag</source>
-        <translation type="unfinished"></translation>
+        <translation>laisser vide pour un tag automatique</translation>
     </message>
     <message>
         <source>Image tag:</source>
-        <translation type="unfinished"></translation>
+        <translation>Tag de l&apos;image :</translation>
     </message>
     <message>
         <source>Compose files:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichiers Compose :</translation>
     </message>
     <message>
         <source>Add…</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter…</translation>
     </message>
     <message>
         <source>Add Compose File</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter un fichier Compose</translation>
     </message>
     <message>
         <source>Service:</source>
-        <translation type="unfinished"></translation>
+        <translation>Service :</translation>
     </message>
     <message>
         <source>Build step: not checked yet</source>
-        <translation type="unfinished"></translation>
+        <translation>Étape de build : pas encore vérifiée</translation>
     </message>
     <message>
         <source>Build step: checking…</source>
-        <translation type="unfinished"></translation>
+        <translation>Étape de build : vérification…</translation>
     </message>
     <message>
         <source>Build step: this service builds before it runs</source>
-        <translation type="unfinished"></translation>
+        <translation>Étape de build : ce service est construit avant son exécution</translation>
     </message>
     <message>
         <source>Build step: none (uses a published image)</source>
-        <translation type="unfinished"></translation>
+        <translation>Étape de build : aucune (utilise une image publiée)</translation>
     </message>
     <message>
         <source>Dockerfile</source>
-        <translation type="unfinished"></translation>
+        <translation>Dockerfile</translation>
     </message>
     <message>
         <source>Mount and options</source>
-        <translation type="unfinished"></translation>
+        <translation>Montage et options</translation>
     </message>
     <message>
         <source>Mount at:</source>
-        <translation type="unfinished"></translation>
+        <translation>Monter sur :</translation>
     </message>
     <message>
         <source>Key</source>
-        <translation type="unfinished"></translation>
+        <translation>Clé</translation>
     </message>
     <message>
         <source>Value</source>
-        <translation type="unfinished">Valeur</translation>
+        <translation>Valeur</translation>
     </message>
     <message>
         <source>Port bindings:</source>
-        <translation type="unfinished"></translation>
+        <translation>Liaisons de ports :</translation>
     </message>
     <message>
         <source>Host IP</source>
-        <translation type="unfinished"></translation>
+        <translation>IP de l&apos;hôte</translation>
     </message>
     <message>
         <source>Host port</source>
-        <translation type="unfinished"></translation>
+        <translation>Port de l&apos;hôte</translation>
     </message>
     <message>
         <source>Container port</source>
-        <translation type="unfinished"></translation>
+        <translation>Port du conteneur</translation>
     </message>
     <message>
         <source>Protocol</source>
-        <translation type="unfinished"></translation>
+        <translation>Protocole</translation>
     </message>
     <message>
         <source>Extra mounts:</source>
-        <translation type="unfinished"></translation>
+        <translation>Montages supplémentaires :</translation>
     </message>
     <message>
         <source>Host path</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin de l&apos;hôte</translation>
     </message>
     <message>
         <source>Container path</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin du conteneur</translation>
     </message>
     <message>
         <source>Read-only</source>
-        <translation type="unfinished"></translation>
+        <translation>Lecture seule</translation>
     </message>
     <message>
         <source>Run options:</source>
-        <translation type="unfinished"></translation>
+        <translation>Options d&apos;exécution :</translation>
     </message>
     <message>
         <source>-&gt; %1</source>
-        <translation type="unfinished"></translation>
+        <translation>-&gt; %1</translation>
     </message>
     <message>
         <source>Unix socket</source>
-        <translation type="unfinished"></translation>
+        <translation>Socket Unix</translation>
     </message>
     <message>
         <source>TCP</source>
-        <translation type="unfinished"></translation>
+        <translation>TCP</translation>
     </message>
     <message>
         <source>Named pipe</source>
-        <translation type="unfinished"></translation>
+        <translation>Tube nommé</translation>
     </message>
     <message>
         <source>Docker context / Podman connection</source>
-        <translation type="unfinished"></translation>
+        <translation>Contexte Docker / connexion Podman</translation>
     </message>
     <message>
         <source>SSH</source>
-        <translation type="unfinished"></translation>
+        <translation>SSH</translation>
     </message>
     <message>
         <source>WSL distro</source>
-        <translation type="unfinished"></translation>
+        <translation>Distribution WSL</translation>
     </message>
     <message>
         <source>Podman machine</source>
-        <translation type="unfinished"></translation>
+        <translation>Machine Podman</translation>
     </message>
     <message>
         <source>Minikube</source>
-        <translation type="unfinished"></translation>
+        <translation>Minikube</translation>
     </message>
     <message>
         <source>Auto (CLI default)</source>
-        <translation type="unfinished"></translation>
+        <translation>Auto (défaut de la CLI)</translation>
     </message>
     <message>
         <source>Engine:</source>
-        <translation type="unfinished"></translation>
+        <translation>Moteur :</translation>
     </message>
     <message>
         <source>Connect via:</source>
-        <translation type="unfinished"></translation>
+        <translation>Se connecter via :</translation>
     </message>
     <message>
         <source>Uses the CLI&apos;s own default connection.</source>
-        <translation type="unfinished"></translation>
+        <translation>Utilise la connexion par défaut de la CLI.</translation>
     </message>
     <message>
         <source>Socket path:</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin du socket :</translation>
     </message>
     <message>
         <source>Daemon URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>URL du démon :</translation>
     </message>
     <message>
         <source>Certificate directory:</source>
-        <translation type="unfinished"></translation>
+        <translation>Répertoire des certificats :</translation>
     </message>
     <message>
         <source>Pipe path:</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin du tube :</translation>
     </message>
     <message>
         <source>Context/connection name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom du contexte/de la connexion :</translation>
     </message>
     <message>
         <source>SSH URL (user@host):</source>
-        <translation type="unfinished"></translation>
+        <translation>URL SSH (utilisateur@hôte) :</translation>
     </message>
     <message>
         <source>Identity file (optional):</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier d&apos;identité (facultatif) :</translation>
     </message>
     <message>
         <source>WSL distro:</source>
-        <translation type="unfinished"></translation>
+        <translation>Distribution WSL :</translation>
     </message>
     <message>
         <source>Machine name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom de la machine :</translation>
     </message>
     <message>
         <source>Reads the environment from `minikube docker-env`.</source>
-        <translation type="unfinished"></translation>
+        <translation>Lit l&apos;environnement depuis `minikube docker-env`.</translation>
     </message>
     <message>
         <source>Default: docker / podman</source>
-        <translation type="unfinished"></translation>
+        <translation>Par défaut : docker / podman</translation>
     </message>
     <message>
         <source>Executable override:</source>
-        <translation type="unfinished"></translation>
+        <translation>Remplacement de l&apos;exécutable :</translation>
     </message>
     <message>
         <source>Default: same as above</source>
-        <translation type="unfinished"></translation>
+        <translation>Par défaut : identique à ci-dessus</translation>
     </message>
     <message>
         <source>Compose executable override:</source>
-        <translation type="unfinished"></translation>
+        <translation>Remplacement de l&apos;exécutable Compose :</translation>
     </message>
     <message>
         <source>Test connection</source>
-        <translation type="unfinished"></translation>
+        <translation>Tester la connexion</translation>
     </message>
     <message>
         <source>Edit…</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier…</translation>
     </message>
     <message>
         <source>Add from contexts…</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter depuis les contextes…</translation>
     </message>
     <message>
         <source>Containers dock</source>
-        <translation type="unfinished"></translation>
+        <translation>Dock Conteneurs</translation>
     </message>
     <message>
         <source>Show stopped containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les conteneurs arrêtés</translation>
     </message>
     <message>
         <source>Show untagged images</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les images sans tag</translation>
     </message>
     <message>
         <source>Add the SELinux &quot;:z&quot; relabel suffix to bind mounts this IDE creates</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter le suffixe de relabellisation SELinux « :z » aux montages bind créés par cet IDE</translation>
     </message>
     <message>
         <source>Connections</source>
-        <translation type="unfinished"></translation>
+        <translation>Connexions</translation>
     </message>
     <message>
         <source>Registries</source>
-        <translation type="unfinished"></translation>
+        <translation>Registres</translation>
     </message>
     <message>
         <source>Run targets</source>
-        <translation type="unfinished"></translation>
+        <translation>Cibles d&apos;exécution</translation>
     </message>
     <message>
         <source>New connection</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle connexion</translation>
     </message>
     <message>
         <source>No connections found</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucune connexion trouvée</translation>
     </message>
     <message>
         <source>Testing…</source>
-        <translation type="unfinished"></translation>
+        <translation>Test en cours…</translation>
     </message>
     <message>
         <source>Containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Conteneurs</translation>
     </message>
     <message>
         <source>Images</source>
-        <translation type="unfinished"></translation>
+        <translation>Images</translation>
     </message>
     <message>
         <source>Networks</source>
-        <translation type="unfinished"></translation>
+        <translation>Réseaux</translation>
     </message>
     <message>
         <source>Volumes</source>
-        <translation type="unfinished"></translation>
+        <translation>Volumes</translation>
     </message>
     <message>
         <source>Compose</source>
-        <translation type="unfinished"></translation>
+        <translation>Compose</translation>
     </message>
     <message>
         <source>Pods</source>
-        <translation type="unfinished"></translation>
+        <translation>Pods</translation>
     </message>
     <message>
         <source>Load more…</source>
-        <translation type="unfinished"></translation>
+        <translation>Charger plus…</translation>
     </message>
     <message numerus="yes">
         <source>%n s</source>
         <comment>age in seconds</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n s</numerusform>
+            <numerusform>%n s</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n min</source>
         <comment>age in minutes</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n min</numerusform>
+            <numerusform>%n min</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n h</source>
         <comment>age in hours</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n h</numerusform>
+            <numerusform>%n h</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n d</source>
         <comment>age in days</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n j</numerusform>
+            <numerusform>%n j</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n mo</source>
         <comment>age in months</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n mois</numerusform>
+            <numerusform>%n mois</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>%n y</source>
         <comment>age in years</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n an</numerusform>
+            <numerusform>%n ans</numerusform>
         </translation>
     </message>
     <message>
         <source>disconnected</source>
-        <translation type="unfinished"></translation>
+        <translation>déconnecté</translation>
     </message>
     <message>
         <source>connecting…</source>
-        <translation type="unfinished"></translation>
+        <translation>connexion…</translation>
     </message>
     <message>
         <source>%1 Engine %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 Engine %2</translation>
     </message>
     <message>
         <source>error: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>erreur : %1</translation>
     </message>
     <message>
         <source>running</source>
-        <translation type="unfinished"></translation>
+        <translation>en cours d&apos;exécution</translation>
     </message>
     <message>
         <source>paused</source>
-        <translation type="unfinished"></translation>
+        <translation>en pause</translation>
     </message>
     <message>
         <source>restarting</source>
-        <translation type="unfinished"></translation>
+        <translation>redémarrage</translation>
     </message>
     <message>
         <source>exited (%1)</source>
-        <translation type="unfinished"></translation>
+        <translation>terminé (%1)</translation>
     </message>
     <message>
         <source>created</source>
-        <translation type="unfinished"></translation>
+        <translation>créé</translation>
     </message>
     <message>
         <source>dead</source>
-        <translation type="unfinished"></translation>
+        <translation>mort</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished">%1 (%2)</translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>%1/%2 running</source>
-        <translation type="unfinished"></translation>
+        <translation>%1/%2 en cours d&apos;exécution</translation>
     </message>
     <message numerus="yes">
         <source>%n container(s)</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n conteneur</numerusform>
+            <numerusform>%n conteneurs</numerusform>
         </translation>
     </message>
     <message>
         <source>stopped</source>
-        <translation type="unfinished"></translation>
+        <translation>arrêté</translation>
     </message>
     <message>
         <source>%1 · %2</source>
-        <translation type="unfinished">%1 · %2</translation>
+        <translation>%1 · %2</translation>
     </message>
     <message>
         <source>GitLab</source>
-        <translation type="unfinished"></translation>
+        <translation>GitLab</translation>
     </message>
     <message>
         <source>Docker V2</source>
-        <translation type="unfinished"></translation>
+        <translation>Docker V2</translation>
     </message>
     <message>
         <source>Generic (push-only)</source>
-        <translation type="unfinished"></translation>
+        <translation>Générique (push uniquement)</translation>
     </message>
     <message>
         <source>Docker Hub</source>
-        <translation type="unfinished"></translation>
+        <translation>Docker Hub</translation>
     </message>
     <message>
         <source>Kind:</source>
-        <translation type="unfinished"></translation>
+        <translation>Type :</translation>
     </message>
     <message>
         <source>host[:port], e.g. ghcr.io</source>
-        <translation type="unfinished"></translation>
+        <translation>hôte[:port], p. ex. ghcr.io</translation>
     </message>
     <message>
         <source>GHCR</source>
-        <translation type="unfinished"></translation>
+        <translation>GHCR</translation>
     </message>
     <message>
         <source>Quay</source>
-        <translation type="unfinished"></translation>
+        <translation>Quay</translation>
     </message>
     <message>
         <source>Address:</source>
-        <translation type="unfinished"></translation>
+        <translation>Adresse :</translation>
     </message>
     <message>
         <source>Username:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom d&apos;utilisateur :</translation>
     </message>
     <message>
         <source>Leave blank to keep the stored password/token</source>
-        <translation type="unfinished"></translation>
+        <translation>Laisser vide pour conserver le mot de passe/jeton enregistré</translation>
     </message>
     <message>
         <source>Password/Token:</source>
-        <translation type="unfinished"></translation>
+        <translation>Mot de passe/jeton :</translation>
     </message>
     <message>
         <source>Stored in the OS keychain, never in settings.toml. If no OS keychain is available here, leave this blank and run `docker login &lt;address&gt;` instead — push/pull still work through the CLI&apos;s own stored credentials.</source>
-        <translation type="unfinished"></translation>
+        <translation>Stocké dans le trousseau du système, jamais dans settings.toml. Si aucun trousseau n&apos;est disponible ici, laissez ce champ vide et exécutez plutôt `docker login &lt;adresse&gt;` — push/pull fonctionnent alors avec les identifiants propres à la CLI.</translation>
     </message>
     <message>
         <source>GitLab project:</source>
-        <translation type="unfinished"></translation>
+        <translation>Projet GitLab :</translation>
     </message>
     <message>
         <source>group/project or a numeric project id</source>
-        <translation type="unfinished"></translation>
+        <translation>groupe/projet ou un ID de projet numérique</translation>
     </message>
     <message>
         <source>A password/token is stored — leave blank to keep it</source>
-        <translation type="unfinished"></translation>
+        <translation>Un mot de passe/jeton est enregistré — laisser vide pour le conserver</translation>
     </message>
     <message>
         <source>New registry</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouveau registre</translation>
     </message>
     <message>
         <source>(default)</source>
-        <translation type="unfinished"></translation>
+        <translation>(par défaut)</translation>
     </message>
     <message>
         <source>Auth database:</source>
-        <translation type="unfinished"></translation>
+        <translation>Base d&apos;authentification :</translation>
     </message>
     <message>
         <source>Database index:</source>
-        <translation type="unfinished"></translation>
+        <translation>Index de la base :</translation>
     </message>
     <message>
         <source>Keyspace:</source>
-        <translation type="unfinished"></translation>
+        <translation>Keyspace :</translation>
     </message>
     <message>
         <source>Database:</source>
-        <translation type="unfinished"></translation>
+        <translation>Base de données :</translation>
     </message>
     <message>
         <source>Replica set:</source>
-        <translation type="unfinished"></translation>
+        <translation>Replica set :</translation>
     </message>
     <message>
         <source>TLS</source>
-        <translation type="unfinished"></translation>
+        <translation>TLS</translation>
     </message>
     <message>
         <source>Local datacenter:</source>
-        <translation type="unfinished"></translation>
+        <translation>Datacenter local :</translation>
     </message>
     <message>
         <source>Add Data Source</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter une source de données</translation>
     </message>
     <message>
         <source>Edit Data Source</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier la source de données</translation>
     </message>
     <message>
         <source>None</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun</translation>
     </message>
     <message>
         <source>Password</source>
-        <translation type="unfinished"></translation>
+        <translation>Mot de passe</translation>
     </message>
     <message>
         <source>Agent</source>
-        <translation type="unfinished">Agent</translation>
+        <translation>Agent</translation>
     </message>
     <message>
         <source>Stored — leave blank to keep it</source>
-        <translation type="unfinished"></translation>
+        <translation>Enregistré — laisser vide pour le conserver</translation>
     </message>
     <message>
         <source>Not set</source>
-        <translation type="unfinished"></translation>
+        <translation>Non défini</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Historique</translation>
+        <translation>Historique</translation>
     </message>
     <message>
         <source>Driver:</source>
-        <translation type="unfinished"></translation>
+        <translation>Pilote :</translation>
     </message>
     <message>
         <source>Group:</source>
-        <translation type="unfinished"></translation>
+        <translation>Groupe :</translation>
     </message>
     <message>
         <source>Colour:</source>
-        <translation type="unfinished"></translation>
+        <translation>Couleur :</translation>
     </message>
     <message>
         <source>Host:</source>
@@ -4407,212 +4411,217 @@ Corrigez la commande, puis cliquez sur Redémarrer le serveur.</translation>
     </message>
     <message>
         <source>User:</source>
-        <translation type="unfinished"></translation>
+        <translation>Utilisateur :</translation>
     </message>
     <message>
         <source>Authentication:</source>
-        <translation type="unfinished"></translation>
+        <translation>Authentification :</translation>
     </message>
     <message>
         <source>Password:</source>
-        <translation type="unfinished"></translation>
+        <translation>Mot de passe :</translation>
     </message>
     <message>
         <source>General</source>
-        <translation type="unfinished"></translation>
+        <translation>Général</translation>
     </message>
     <message>
         <source>Key file</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier de clé</translation>
     </message>
     <message>
         <source>Bastion host:</source>
-        <translation type="unfinished"></translation>
+        <translation>Hôte bastion :</translation>
     </message>
     <message>
         <source>Key file:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier de clé :</translation>
     </message>
     <message>
         <source>Disable</source>
-        <translation type="unfinished"></translation>
+        <translation>Désactiver</translation>
     </message>
     <message>
         <source>Prefer</source>
-        <translation type="unfinished"></translation>
+        <translation>Préférer</translation>
     </message>
     <message>
         <source>Require</source>
-        <translation type="unfinished"></translation>
+        <translation>Exiger</translation>
     </message>
     <message>
         <source>Verify CA</source>
-        <translation type="unfinished"></translation>
+        <translation>Vérifier la CA</translation>
     </message>
     <message>
         <source>Verify full</source>
-        <translation type="unfinished"></translation>
+        <translation>Vérification complète</translation>
     </message>
     <message>
         <source>Mode:</source>
-        <translation type="unfinished"></translation>
+        <translation>Mode :</translation>
     </message>
     <message>
         <source>CA file:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier CA :</translation>
     </message>
     <message>
         <source>SSL</source>
-        <translation type="unfinished"></translation>
+        <translation>SSL</translation>
     </message>
     <message>
         <source>A full connection URL, if this driver takes one</source>
-        <translation type="unfinished"></translation>
+        <translation>Une URL de connexion complète, si ce pilote en accepte une</translation>
     </message>
     <message>
         <source>URL:</source>
-        <translation type="unfinished"></translation>
+        <translation>URL :</translation>
     </message>
     <message>
         <source>Options</source>
-        <translation type="unfinished"></translation>
+        <translation>Options</translation>
     </message>
     <message>
         <source>Uses a DSN (&quot;DSN=name&quot;) or a full connection string in the URL field (Options tab).</source>
-        <translation type="unfinished"></translation>
+        <translation>Utilise un DSN (« DSN=nom ») ou une chaîne de connexion complète dans le champ URL (onglet Options).</translation>
     </message>
     <message>
         <source>Re-enable</source>
-        <translation type="unfinished"></translation>
+        <translation>Réactiver</translation>
     </message>
     <message>
         <source>Install…</source>
-        <translation type="unfinished"></translation>
+        <translation>Installer…</translation>
     </message>
     <message>
         <source>Unknown host key</source>
-        <translation type="unfinished"></translation>
+        <translation>Clé d&apos;hôte inconnue</translation>
     </message>
     <message>
         <source>The authenticity of host &apos;%1&apos; can&apos;t be established.
 %2
 
 Accept and add to known_hosts?</source>
-        <translation type="unfinished"></translation>
+        <translation>L&apos;authenticité de l&apos;hôte « %1 » ne peut pas être établie.
+%2
+
+Accepter et ajouter à known_hosts ?</translation>
     </message>
     <message>
         <source>Connection cancelled: host key not trusted.</source>
-        <translation type="unfinished"></translation>
+        <translation>Connexion annulée : la clé d&apos;hôte n&apos;est pas approuvée.</translation>
     </message>
     <message>
         <source>Could not save</source>
-        <translation type="unfinished"></translation>
+        <translation>Enregistrement impossible</translation>
     </message>
     <message>
         <source>Statement Failed</source>
-        <translation type="unfinished"></translation>
+        <translation>Échec de l&apos;instruction</translation>
     </message>
     <message>
         <source>A statement in this script failed:
 
 %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Une instruction de ce script a échoué :
+
+%1</translation>
     </message>
     <message>
         <source>Continue running the rest of the script?</source>
-        <translation type="unfinished"></translation>
+        <translation>Poursuivre l&apos;exécution du reste du script ?</translation>
     </message>
     <message>
         <source>Continue</source>
-        <translation type="unfinished"></translation>
+        <translation>Continuer</translation>
     </message>
     <message>
         <source>CSV</source>
-        <translation type="unfinished"></translation>
+        <translation>CSV</translation>
     </message>
     <message>
         <source>TSV</source>
-        <translation type="unfinished"></translation>
+        <translation>TSV</translation>
     </message>
     <message>
         <source>JSON (array)</source>
-        <translation type="unfinished"></translation>
+        <translation>JSON (tableau)</translation>
     </message>
     <message>
         <source>JSON Lines</source>
-        <translation type="unfinished"></translation>
+        <translation>JSON Lines</translation>
     </message>
     <message>
         <source>Markdown table</source>
-        <translation type="unfinished"></translation>
+        <translation>Tableau Markdown</translation>
     </message>
     <message>
         <source>HTML table</source>
-        <translation type="unfinished"></translation>
+        <translation>Tableau HTML</translation>
     </message>
     <message>
         <source>SQL INSERT</source>
-        <translation type="unfinished"></translation>
+        <translation>SQL INSERT</translation>
     </message>
     <message>
         <source>SQL UPDATE</source>
-        <translation type="unfinished"></translation>
+        <translation>SQL UPDATE</translation>
     </message>
     <message>
         <source>Excel (XLSX)</source>
-        <translation type="unfinished"></translation>
+        <translation>Excel (XLSX)</translation>
     </message>
     <message>
         <source>Format:</source>
-        <translation type="unfinished"></translation>
+        <translation>Format :</translation>
     </message>
     <message>
         <source>Header row</source>
-        <translation type="unfinished"></translation>
+        <translation>Ligne d&apos;en-tête</translation>
     </message>
     <message>
         <source>Null text:</source>
-        <translation type="unfinished"></translation>
+        <translation>Texte pour NULL :</translation>
     </message>
     <message>
         <source>Quote every field</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre tous les champs entre guillemets</translation>
     </message>
     <message>
         <source>Delimiter (CSV/TSV):</source>
-        <translation type="unfinished"></translation>
+        <translation>Délimiteur (CSV/TSV) :</translation>
     </message>
     <message>
         <source>Date format:</source>
-        <translation type="unfinished"></translation>
+        <translation>Format de date :</translation>
     </message>
     <message>
         <source>Table name (SQL):</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom de la table (SQL) :</translation>
     </message>
     <message>
         <source>id, other_key</source>
-        <translation type="unfinished"></translation>
+        <translation>id, autre_cle</translation>
     </message>
     <message>
         <source>Key columns (SQL UPDATE):</source>
-        <translation type="unfinished"></translation>
+        <translation>Colonnes clés (SQL UPDATE) :</translation>
     </message>
     <message>
         <source>Done: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Terminé : %1</translation>
     </message>
     <message>
         <source>Failed: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Échec : %1</translation>
     </message>
     <message>
         <source>Output: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Sortie : %1</translation>
     </message>
     <message>
         <source>Export Data — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Exporter les données — %1</translation>
     </message>
     <message>
         <source>Browse…</source>
@@ -4620,353 +4629,355 @@ Accept and add to known_hosts?</source>
     </message>
     <message>
         <source>Destination file:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier de destination :</translation>
     </message>
     <message>
         <source>Export Data</source>
-        <translation type="unfinished"></translation>
+        <translation>Exporter les données</translation>
     </message>
     <message>
         <source>Preview first rows</source>
-        <translation type="unfinished"></translation>
+        <translation>Aperçu des premières lignes</translation>
     </message>
     <message>
         <source>Choose a destination file.</source>
-        <translation type="unfinished"></translation>
+        <translation>Choisissez un fichier de destination.</translation>
     </message>
     <message>
         <source>Exporting %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Exportation de %1</translation>
     </message>
     <message>
         <source>Export / Copy As</source>
-        <translation type="unfinished"></translation>
+        <translation>Exporter / Copier sous</translation>
     </message>
     <message>
         <source>Copy to clipboard instead of a file</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier dans le presse-papiers au lieu d&apos;un fichier</translation>
     </message>
     <message>
         <source>Export</source>
-        <translation type="unfinished"></translation>
+        <translation>Exporter</translation>
     </message>
     <message>
         <source>Import Data — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Importer des données — %1</translation>
     </message>
     <message>
         <source>Source column</source>
-        <translation type="unfinished"></translation>
+        <translation>Colonne source</translation>
     </message>
     <message>
         <source>Target column</source>
-        <translation type="unfinished"></translation>
+        <translation>Colonne cible</translation>
     </message>
     <message>
         <source>Skip</source>
-        <translation type="unfinished"></translation>
+        <translation>Ignorer</translation>
     </message>
     <message>
         <source>Create table if it does not exist</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer la table si elle n&apos;existe pas</translation>
     </message>
     <message>
         <source>Target table:</source>
-        <translation type="unfinished"></translation>
+        <translation>Table cible :</translation>
     </message>
     <message>
         <source>Batch size:</source>
-        <translation type="unfinished"></translation>
+        <translation>Taille de lot :</translation>
     </message>
     <message>
         <source>Import Data</source>
-        <translation type="unfinished"></translation>
+        <translation>Importer des données</translation>
     </message>
     <message>
         <source>CSV/XLSX (*.csv *.xlsx)</source>
-        <translation type="unfinished"></translation>
+        <translation>CSV/XLSX (*.csv *.xlsx)</translation>
     </message>
     <message>
         <source>Choose a source file.</source>
-        <translation type="unfinished"></translation>
+        <translation>Choisissez un fichier source.</translation>
     </message>
     <message>
         <source>Importing into %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Importation dans %1</translation>
     </message>
     <message>
         <source>Copy Table — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier la table — %1</translation>
     </message>
     <message>
         <source>Destination source:</source>
-        <translation type="unfinished"></translation>
+        <translation>Source de destination :</translation>
     </message>
     <message>
         <source>Destination table:</source>
-        <translation type="unfinished"></translation>
+        <translation>Table de destination :</translation>
     </message>
     <message>
         <source>Copying %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Copie de %1</translation>
     </message>
     <message>
         <source>Dump — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Dump — %1</translation>
     </message>
     <message>
         <source>%1 found on PATH.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 trouvé dans le PATH.</translation>
     </message>
     <message>
         <source>%1 not found. %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 introuvable. %2</translation>
     </message>
     <message>
         <source>Schema only</source>
-        <translation type="unfinished"></translation>
+        <translation>Schéma uniquement</translation>
     </message>
     <message>
         <source>Data only</source>
-        <translation type="unfinished"></translation>
+        <translation>Données uniquement</translation>
     </message>
     <message>
         <source>Every table, or a comma-separated subset</source>
-        <translation type="unfinished"></translation>
+        <translation>Toutes les tables, ou un sous-ensemble séparé par des virgules</translation>
     </message>
     <message>
         <source>Tables:</source>
-        <translation type="unfinished"></translation>
+        <translation>Tables :</translation>
     </message>
     <message>
         <source>Output file:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier de sortie :</translation>
     </message>
     <message>
         <source>Dump Output</source>
-        <translation type="unfinished"></translation>
+        <translation>Sortie du dump</translation>
     </message>
     <message>
         <source>Dump</source>
-        <translation type="unfinished"></translation>
+        <translation>Dump</translation>
     </message>
     <message>
         <source>Choose an output file.</source>
-        <translation type="unfinished"></translation>
+        <translation>Choisissez un fichier de sortie.</translation>
     </message>
     <message>
         <source>Dumping %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Dump de %1 en cours</translation>
     </message>
     <message>
         <source>Restore — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Restauration — %1</translation>
     </message>
     <message>
         <source>This writes into &apos;%1&apos;. Existing data may be overwritten or duplicated.</source>
-        <translation type="unfinished"></translation>
+        <translation>Cette opération écrit dans « %1 ». Les données existantes peuvent être écrasées ou dupliquées.</translation>
     </message>
     <message>
         <source>Dump file:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier de dump :</translation>
     </message>
     <message>
         <source>Restore From</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurer depuis</translation>
     </message>
     <message>
         <source>Restore</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurer</translation>
     </message>
     <message>
         <source>Choose a dump file.</source>
-        <translation type="unfinished"></translation>
+        <translation>Choisissez un fichier de dump.</translation>
     </message>
     <message>
         <source>Restore &apos;%1&apos; from &apos;%2&apos;? This may overwrite existing data.</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurer « %1 » depuis « %2 » ? Cela peut écraser des données existantes.</translation>
     </message>
     <message>
         <source>Restoring %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Restauration de %1</translation>
     </message>
     <message>
         <source>ER Diagram — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Diagramme ER — %1</translation>
     </message>
     <message>
         <source>No tables to diagram.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucune table à représenter.</translation>
     </message>
     <message>
         <source>View as Mermaid Text</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher en texte Mermaid</translation>
     </message>
     <message>
         <source>Compare Structure — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer la structure — %1</translation>
     </message>
     <message>
         <source>Compare</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer</translation>
     </message>
     <message>
         <source>Migration Script</source>
-        <translation type="unfinished"></translation>
+        <translation>Script de migration</translation>
     </message>
     <message>
         <source>Compare Data — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer les données — %1</translation>
     </message>
     <message>
         <source>Right source:</source>
-        <translation type="unfinished"></translation>
+        <translation>Source de droite :</translation>
     </message>
     <message>
         <source>Right table:</source>
-        <translation type="unfinished"></translation>
+        <translation>Table de droite :</translation>
     </message>
     <message>
         <source>Key columns:</source>
-        <translation type="unfinished"></translation>
+        <translation>Colonnes clés :</translation>
     </message>
     <message>
         <source>Float tolerance:</source>
-        <translation type="unfinished"></translation>
+        <translation>Tolérance sur les flottants :</translation>
     </message>
     <message>
         <source>Show Row Diff</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les différences de lignes</translation>
     </message>
     <message>
         <source>Only left: %1  Only right: %2  Changed: %3  Equal: %4</source>
-        <translation type="unfinished"></translation>
+        <translation>Gauche seulement : %1  Droite seulement : %2  Modifiées : %3  Identiques : %4</translation>
     </message>
     <message>
         <source>Database</source>
-        <translation type="unfinished"></translation>
+        <translation>Base de données</translation>
     </message>
     <message>
         <source>Database Results</source>
-        <translation type="unfinished"></translation>
+        <translation>Résultats de la base de données</translation>
     </message>
     <message>
         <source>project</source>
-        <translation type="unfinished"></translation>
+        <translation>projet</translation>
     </message>
     <message>
         <source>global</source>
-        <translation type="unfinished"></translation>
+        <translation>global</translation>
     </message>
     <message>
         <source>Database Drivers</source>
-        <translation type="unfinished"></translation>
+        <translation>Pilotes de base de données</translation>
     </message>
     <message>
         <source>Install / Re-enable…</source>
-        <translation type="unfinished"></translation>
+        <translation>Installer / Réactiver…</translation>
     </message>
     <message>
         <source>Duplicate</source>
-        <translation type="unfinished"></translation>
+        <translation>Dupliquer</translation>
     </message>
     <message>
         <source>Drivers…</source>
-        <translation type="unfinished"></translation>
+        <translation>Pilotes…</translation>
     </message>
     <message>
         <source>Allow installing drivers contributed by third-party plugins</source>
-        <translation type="unfinished"></translation>
+        <translation>Autoriser l&apos;installation de pilotes fournis par des extensions tierces</translation>
     </message>
     <message>
         <source>Run this statement?
 
 %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter cette instruction ?
+
+%1</translation>
     </message>
     <message>
         <source>Nullable</source>
-        <translation type="unfinished"></translation>
+        <translation>Nullable</translation>
     </message>
     <message>
         <source>Default</source>
-        <translation type="unfinished"></translation>
+        <translation>Par défaut</translation>
     </message>
     <message>
         <source>Primary Key</source>
-        <translation type="unfinished"></translation>
+        <translation>Clé primaire</translation>
     </message>
     <message>
         <source>Create Table</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer une table</translation>
     </message>
     <message>
         <source>Table name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom de la table :</translation>
     </message>
     <message>
         <source>Add Column</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter une colonne</translation>
     </message>
     <message>
         <source>Remove Column</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer la colonne</translation>
     </message>
     <message>
         <source>Column name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom de la colonne :</translation>
     </message>
     <message>
         <source>Type:</source>
-        <translation type="unfinished"></translation>
+        <translation>Type :</translation>
     </message>
     <message>
         <source>Default (optional):</source>
-        <translation type="unfinished"></translation>
+        <translation>Valeur par défaut (facultatif) :</translation>
     </message>
     <message>
         <source>Modify Column</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier la colonne</translation>
     </message>
     <message>
         <source>Drop Column</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer la colonne</translation>
     </message>
     <message>
         <source>Create Index</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un index</translation>
     </message>
     <message>
         <source>Index name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom de l&apos;index :</translation>
     </message>
     <message>
         <source>comma-separated column names</source>
-        <translation type="unfinished"></translation>
+        <translation>noms de colonnes séparés par des virgules</translation>
     </message>
     <message>
         <source>Columns:</source>
-        <translation type="unfinished"></translation>
+        <translation>Colonnes :</translation>
     </message>
     <message>
         <source>Unique</source>
-        <translation type="unfinished"></translation>
+        <translation>Unique</translation>
     </message>
     <message>
         <source>Create User</source>
-        <translation type="unfinished"></translation>
+        <translation>Créer un utilisateur</translation>
     </message>
     <message>
         <source>User name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom d&apos;utilisateur :</translation>
     </message>
     <message>
         <source>comma-separated roles (Mongo only)</source>
-        <translation type="unfinished"></translation>
+        <translation>rôles séparés par des virgules (Mongo uniquement)</translation>
     </message>
     <message>
         <source>Roles:</source>
-        <translation type="unfinished"></translation>
+        <translation>Rôles :</translation>
     </message>
     <message>
         <source>Attach to Process…</source>
@@ -4978,23 +4989,23 @@ Accept and add to known_hosts?</source>
     </message>
     <message>
         <source>Run to Cursor</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter jusqu&apos;au curseur</translation>
     </message>
     <message>
         <source>Edit Breakpoint…</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier le point d&apos;arrêt…</translation>
     </message>
     <message>
         <source>View Breakpoints…</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les points d&apos;arrêt…</translation>
     </message>
     <message>
         <source>Diff</source>
-        <translation type="unfinished"></translation>
+        <translation>Diff</translation>
     </message>
     <message>
         <source>Install %1 Driver</source>
-        <translation type="unfinished"></translation>
+        <translation>Installer le pilote %1</translation>
     </message>
     <message>
         <source>This downloads a driver published by %1:
@@ -5003,19 +5014,24 @@ Accept and add to known_hosts?</source>
 sha256: %3
 
 The download is verified against this checksum before it is unpacked or used.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ceci télécharge un pilote publié par %1 :
+%2
+
+sha256 : %3
+
+Le téléchargement est vérifié par rapport à cette somme de contrôle avant d&apos;être décompressé ou utilisé.</translation>
     </message>
     <message>
         <source>Could not install</source>
-        <translation type="unfinished"></translation>
+        <translation>Installation impossible</translation>
     </message>
     <message>
         <source>Soft Wrap</source>
-        <translation type="unfinished"></translation>
+        <translation>Retour à la ligne automatique</translation>
     </message>
     <message>
         <source>Wrap lines at the guide (soft wrap):</source>
-        <translation type="unfinished"></translation>
+        <translation>Renvoyer à la ligne au repère (retour automatique) :</translation>
     </message>
     <message>
         <source>Background Color…</source>
@@ -5031,23 +5047,23 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Pattern</source>
-        <translation type="unfinished"></translation>
+        <translation>Motif</translation>
     </message>
     <message>
         <source>Handler</source>
-        <translation type="unfinished"></translation>
+        <translation>Gestionnaire</translation>
     </message>
     <message>
         <source>Global</source>
-        <translation type="unfinished"></translation>
+        <translation>Global</translation>
     </message>
     <message>
         <source>Override the global associations for this project</source>
-        <translation type="unfinished"></translation>
+        <translation>Remplacer les associations globales pour ce projet</translation>
     </message>
     <message>
         <source>Open a project to override its file associations.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ouvrez un projet pour remplacer ses associations de fichiers.</translation>
     </message>
     <message>
         <source>Discard all changes to &quot;%1&quot;?</source>
@@ -5055,12 +5071,13 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Restart the app for a language change to take effect.</source>
-        <translation type="unfinished"></translation>
+        <translation>Redémarrez l&apos;application pour qu&apos;un changement de langue prenne effet.</translation>
     </message>
     <message>
         <source>%1: command not found.
 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 : commande introuvable.
+%2</translation>
     </message>
     <message>
         <source>Add Language…</source>
@@ -5168,63 +5185,63 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Next Highlighted Error</source>
-        <translation type="unfinished"></translation>
+        <translation>Erreur en surbrillance suivante</translation>
     </message>
     <message>
         <source>Previous Highlighted Error</source>
-        <translation type="unfinished"></translation>
+        <translation>Erreur en surbrillance précédente</translation>
     </message>
     <message>
         <source>Project Scope</source>
-        <translation type="unfinished"></translation>
+        <translation>Portée du projet</translation>
     </message>
     <message>
         <source>Excluded Folders — this project</source>
-        <translation type="unfinished"></translation>
+        <translation>Dossiers exclus — ce projet</translation>
     </message>
     <message>
         <source>No excluded folders. Use Add… or right-click a folder in the Project tree → Mark Directory as Excluded.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun dossier exclu. Utilisez Ajouter… ou faites un clic droit sur un dossier dans l&apos;arborescence du projet → Marquer le répertoire comme exclu.</translation>
     </message>
     <message>
         <source>Open a project to edit its excluded folders.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ouvrez un projet pour modifier ses dossiers exclus.</translation>
     </message>
     <message>
         <source>Choose a Folder to Exclude</source>
-        <translation type="unfinished"></translation>
+        <translation>Choisir un dossier à exclure</translation>
     </message>
     <message>
         <source>Ignored Names — all projects</source>
-        <translation type="unfinished"></translation>
+        <translation>Noms ignorés — tous les projets</translation>
     </message>
     <message>
         <source>Name or glob, e.g. *.bak</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom ou glob, p. ex. *.bak</translation>
     </message>
     <message>
         <source>Reset to Defaults</source>
-        <translation type="unfinished"></translation>
+        <translation>Rétablir les valeurs par défaut</translation>
     </message>
     <message>
         <source>Reset Ignored Names</source>
-        <translation type="unfinished"></translation>
+        <translation>Réinitialiser les noms ignorés</translation>
     </message>
     <message>
         <source>Restore the default ignored-names list? Any names you added or removed are lost.</source>
-        <translation type="unfinished"></translation>
+        <translation>Rétablir la liste par défaut des noms ignorés ? Les noms que vous avez ajoutés ou retirés seront perdus.</translation>
     </message>
     <message>
         <source>Files larger than %1 MiB are found by name only; binary files (a NUL byte in the first %2 KiB) and non-UTF-8 files are not indexed at all.</source>
-        <translation type="unfinished"></translation>
+        <translation>Les fichiers de plus de %1 Mio ne sont trouvés que par leur nom ; les fichiers binaires (un octet NUL dans les %2 premiers Kio) et les fichiers non UTF-8 ne sont pas indexés du tout.</translation>
     </message>
     <message>
         <source>Cancel Exclusion</source>
-        <translation type="unfinished"></translation>
+        <translation>Annuler l&apos;exclusion</translation>
     </message>
     <message>
         <source>Mark Directory as Excluded</source>
-        <translation type="unfinished"></translation>
+        <translation>Marquer le répertoire comme exclu</translation>
     </message>
     <message>
         <source>Delete folder &quot;%1&quot; and everything inside it? This deletes its contents recursively and cannot be undone.</source>
@@ -5240,63 +5257,63 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Cannot change exclusion</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible de modifier l&apos;exclusion</translation>
     </message>
     <message>
         <source>Compare with Branch, Tag or Revision</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer avec une branche, un tag ou une révision</translation>
     </message>
     <message>
         <source>Branch, tag or revision:</source>
-        <translation type="unfinished"></translation>
+        <translation>Branche, tag ou révision :</translation>
     </message>
     <message>
         <source>Compare Project with Branch, Tag or Revision…</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer le projet avec une branche, un tag ou une révision…</translation>
     </message>
     <message>
         <source>Compare Project with %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer le projet avec %1</translation>
     </message>
     <message>
         <source>(no changes)</source>
-        <translation type="unfinished"></translation>
+        <translation>(aucune modification)</translation>
     </message>
     <message>
         <source>File to compare:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier à comparer :</translation>
     </message>
     <message>
         <source>Add to .gitignore</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter à .gitignore</translation>
     </message>
     <message>
         <source>Compare with Branch, Tag or Revision…</source>
-        <translation type="unfinished"></translation>
+        <translation>Comparer avec une branche, un tag ou une révision…</translation>
     </message>
     <message>
         <source>Process</source>
-        <translation type="unfinished"></translation>
+        <translation>Processus</translation>
     </message>
     <message>
         <source>Container Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Image de conteneur</translation>
     </message>
     <message>
         <source>Containerfile</source>
-        <translation type="unfinished"></translation>
+        <translation>Containerfile</translation>
     </message>
     <message>
         <source>SQL Script</source>
-        <translation type="unfinished"></translation>
+        <translation>Script SQL</translation>
     </message>
     <message>
         <source>New target…</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle cible…</translation>
     </message>
     <message>
         <source>New Configuration</source>
-        <translation type="unfinished"></translation>
+        <translation>Nouvelle configuration</translation>
     </message>
     <message>
         <source>Select Run Configuration…</source>
@@ -5308,15 +5325,15 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>File Associations</source>
-        <translation type="unfinished"></translation>
+        <translation>Associations de fichiers</translation>
     </message>
     <message>
         <source>Tabs</source>
-        <translation type="unfinished"></translation>
+        <translation>Onglets</translation>
     </message>
     <message>
         <source>Search settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Rechercher dans les paramètres</translation>
     </message>
     <message>
         <source>Opening project…</source>
@@ -5336,27 +5353,27 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Gradle/Maven</source>
-        <translation type="unfinished"></translation>
+        <translation>Gradle/Maven</translation>
     </message>
     <message>
         <source>%1: syncing…</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 : synchronisation…</translation>
     </message>
     <message>
         <source>%1: sync failed</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 : échec de la synchronisation</translation>
     </message>
     <message>
         <source>WSL: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>WSL : %1</translation>
     </message>
     <message>
         <source>Running this project&apos;s tooling inside %1 (%2)</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécution des outils de ce projet dans %1 (%2)</translation>
     </message>
     <message>
         <source>Live file watching could not be started: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible de démarrer la surveillance des fichiers en direct : %1</translation>
     </message>
     <message>
         <source>Choose…</source>
@@ -5372,23 +5389,23 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Top:</source>
-        <translation type="unfinished"></translation>
+        <translation>Haut :</translation>
     </message>
     <message>
         <source>Bottom:</source>
-        <translation type="unfinished"></translation>
+        <translation>Bas :</translation>
     </message>
     <message>
         <source>Left:</source>
-        <translation type="unfinished"></translation>
+        <translation>Gauche :</translation>
     </message>
     <message>
         <source>Right:</source>
-        <translation type="unfinished"></translation>
+        <translation>Droite :</translation>
     </message>
     <message>
         <source>The right side also carries the tab&apos;s close button, which keeps its own spacing regardless of this setting.</source>
-        <translation type="unfinished"></translation>
+        <translation>Le côté droit contient aussi le bouton de fermeture de l&apos;onglet, qui garde son propre espacement quelle que soit cette option.</translation>
     </message>
     <message>
         <source>Custom…</source>
@@ -5396,27 +5413,27 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Not staged</source>
-        <translation type="unfinished"></translation>
+        <translation>Non indexé</translation>
     </message>
     <message>
         <source>Staged</source>
-        <translation type="unfinished"></translation>
+        <translation>Indexé</translation>
     </message>
     <message>
         <source>Partially staged</source>
-        <translation type="unfinished"></translation>
+        <translation>Partiellement indexé</translation>
     </message>
     <message>
         <source>Stage Hunk</source>
-        <translation type="unfinished"></translation>
+        <translation>Indexer le bloc</translation>
     </message>
     <message>
         <source>Unstage Hunk</source>
-        <translation type="unfinished"></translation>
+        <translation>Désindexer le bloc</translation>
     </message>
     <message>
         <source>Open Branches… to push it to a chosen remote?</source>
-        <translation type="unfinished"></translation>
+        <translation>Ouvrir les branches… pour pousser vers un dépôt distant choisi ?</translation>
     </message>
     <message>
         <source>Commit…</source>
@@ -5428,31 +5445,31 @@ The download is verified against this checksum before it is unpacked or used.</s
     </message>
     <message>
         <source>Stash Changes…</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre de côté les modifications…</translation>
     </message>
     <message>
         <source>Stash Changes</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre de côté les modifications</translation>
     </message>
     <message>
         <source>Message (optional):</source>
-        <translation type="unfinished"></translation>
+        <translation>Message (facultatif) :</translation>
     </message>
     <message>
         <source>Unstash…</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurer la mise de côté…</translation>
     </message>
     <message>
         <source>Unstash</source>
-        <translation type="unfinished"></translation>
+        <translation>Restaurer la mise de côté</translation>
     </message>
     <message>
         <source>There are no stashed changes.</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucune modification n&apos;est mise de côté.</translation>
     </message>
     <message>
         <source>Stash entry:</source>
-        <translation type="unfinished"></translation>
+        <translation>Entrée de stash :</translation>
     </message>
 </context>
 <context>
@@ -5685,7 +5702,7 @@ Enregistrer tous les fichiers et renommer maintenant ?</translation>
     </message>
     <message>
         <source>Quick Documentation</source>
-        <translation type="unfinished"></translation>
+        <translation>Documentation rapide</translation>
     </message>
 </context>
 <context>
@@ -5714,19 +5731,19 @@ Enregistrer tous les fichiers et renommer maintenant ?</translation>
     <name>ResultGridView</name>
     <message>
         <source>WHERE</source>
-        <translation type="unfinished"></translation>
+        <translation>WHERE</translation>
     </message>
     <message>
         <source>ORDER BY</source>
-        <translation type="unfinished"></translation>
+        <translation>ORDER BY</translation>
     </message>
     <message>
         <source>Apply</source>
-        <translation type="unfinished">Appliquer</translation>
+        <translation>Appliquer</translation>
     </message>
     <message>
         <source>Submit</source>
-        <translation type="unfinished"></translation>
+        <translation>Soumettre</translation>
     </message>
     <message>
         <source>Revert</source>
@@ -5734,83 +5751,83 @@ Enregistrer tous les fichiers et renommer maintenant ?</translation>
     </message>
     <message>
         <source>Add Row</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter une ligne</translation>
     </message>
     <message>
         <source>Delete Row</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer la ligne</translation>
     </message>
     <message>
         <source>Clone Row</source>
-        <translation type="unfinished"></translation>
+        <translation>Cloner la ligne</translation>
     </message>
     <message>
         <source>Preview DML</source>
-        <translation type="unfinished"></translation>
+        <translation>Aperçu du DML</translation>
     </message>
     <message>
         <source>Table</source>
-        <translation type="unfinished"></translation>
+        <translation>Tableau</translation>
     </message>
     <message>
         <source>Transpose</source>
-        <translation type="unfinished"></translation>
+        <translation>Transposer</translation>
     </message>
     <message>
         <source>Text</source>
-        <translation type="unfinished">Texte</translation>
+        <translation>Texte</translation>
     </message>
     <message>
         <source>Record</source>
-        <translation type="unfinished"></translation>
+        <translation>Enregistrement</translation>
     </message>
     <message>
         <source>CSV</source>
-        <translation type="unfinished"></translation>
+        <translation>CSV</translation>
     </message>
     <message>
         <source>TSV</source>
-        <translation type="unfinished"></translation>
+        <translation>TSV</translation>
     </message>
     <message>
         <source>JSON</source>
-        <translation type="unfinished"></translation>
+        <translation>JSON</translation>
     </message>
     <message>
         <source>Markdown</source>
-        <translation type="unfinished"></translation>
+        <translation>Markdown</translation>
     </message>
     <message>
         <source>Columns…</source>
-        <translation type="unfinished"></translation>
+        <translation>Colonnes…</translation>
     </message>
     <message>
         <source>Sum</source>
-        <translation type="unfinished"></translation>
+        <translation>Somme</translation>
     </message>
     <message>
         <source>Avg</source>
-        <translation type="unfinished"></translation>
+        <translation>Moy.</translation>
     </message>
     <message>
         <source>Min</source>
-        <translation type="unfinished"></translation>
+        <translation>Min</translation>
     </message>
     <message>
         <source>Max</source>
-        <translation type="unfinished"></translation>
+        <translation>Max</translation>
     </message>
     <message>
         <source>Count</source>
-        <translation type="unfinished"></translation>
+        <translation>Nombre</translation>
     </message>
     <message>
         <source>%1 (from fetched rows only — %2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (sur les lignes récupérées uniquement — %2)</translation>
     </message>
     <message>
         <source>%1 (over all %2 rows)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (sur les %2 lignes)</translation>
     </message>
     <message>
         <source>Running…</source>
@@ -5818,19 +5835,19 @@ Enregistrer tous les fichiers et renommer maintenant ?</translation>
     </message>
     <message>
         <source>%1 row(s) — %2 ms</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 ligne(s) — %2 ms</translation>
     </message>
     <message>
         <source>Failed — %1 ms</source>
-        <translation type="unfinished"></translation>
+        <translation>Échec — %1 ms</translation>
     </message>
     <message>
         <source>Show Referencing Rows…</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher les lignes référençantes…</translation>
     </message>
     <message>
         <source>computing…</source>
-        <translation type="unfinished"></translation>
+        <translation>calcul en cours…</translation>
     </message>
 </context>
 <context>
@@ -5969,17 +5986,17 @@ Processus arrêté
     <name>ScopeNoticeBar</name>
     <message>
         <source>Review…</source>
-        <translation type="unfinished"></translation>
+        <translation>Examiner…</translation>
     </message>
     <message>
         <source>Dismiss</source>
-        <translation type="unfinished"></translation>
+        <translation>Ignorer</translation>
     </message>
     <message numerus="yes">
         <source>Found ignored but not excluded folders (%n)</source>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>Dossiers ignorés mais non exclus trouvés (%n)</numerusform>
+            <numerusform>Dossiers ignorés mais non exclus trouvés (%n)</numerusform>
         </translation>
     </message>
 </context>
@@ -5987,11 +6004,11 @@ Processus arrêté
     <name>ScopeReviewDialog</name>
     <message>
         <source>Review Ignored Folders</source>
-        <translation type="unfinished"></translation>
+        <translation>Examiner les dossiers ignorés</translation>
     </message>
     <message>
         <source>These folders are ignored by Git but not excluded from the project. Checked folders will be excluded; unchecked folders will not be offered again.</source>
-        <translation type="unfinished"></translation>
+        <translation>Ces dossiers sont ignorés par Git mais non exclus du projet. Les dossiers cochés seront exclus ; les dossiers non cochés ne seront plus proposés.</translation>
     </message>
 </context>
 <context>
@@ -6101,7 +6118,7 @@ Processus arrêté
     </message>
     <message>
         <source>Whole word</source>
-        <translation type="unfinished"></translation>
+        <translation>Mot entier</translation>
     </message>
     <message>
         <source>Replace with…</source>
@@ -6109,7 +6126,7 @@ Processus arrêté
     </message>
     <message>
         <source>File mask (*.rs, !*_test.rs)</source>
-        <translation type="unfinished"></translation>
+        <translation>Masque de fichier (*.rs, !*_test.rs)</translation>
     </message>
     <message>
         <source>Project</source>
@@ -6117,15 +6134,15 @@ Processus arrêté
     </message>
     <message>
         <source>Open Files</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichiers ouverts</translation>
     </message>
     <message>
         <source>Current File</source>
-        <translation type="unfinished">Fichier actuel</translation>
+        <translation>Fichier actuel</translation>
     </message>
     <message>
         <source>Showing %1 of %2 match(es) — refine your search.</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 correspondance(s) affichée(s) sur %2 — affinez votre recherche.</translation>
     </message>
     <message>
         <source>Searching…</source>
@@ -6186,78 +6203,78 @@ Processus arrêté
     <name>SymbolCategory</name>
     <message>
         <source>Constants</source>
-        <translation type="unfinished"></translation>
+        <translation>Constantes</translation>
     </message>
     <message>
         <source>Fields</source>
-        <translation type="unfinished"></translation>
+        <translation>Champs</translation>
     </message>
     <message>
         <source>Properties</source>
-        <translation type="unfinished"></translation>
+        <translation>Propriétés</translation>
     </message>
     <message>
         <source>Constructors</source>
-        <translation type="unfinished"></translation>
+        <translation>Constructeurs</translation>
     </message>
     <message>
         <source>Methods</source>
-        <translation type="unfinished"></translation>
+        <translation>Méthodes</translation>
     </message>
     <message>
         <source>Nested types</source>
-        <translation type="unfinished"></translation>
+        <translation>Types imbriqués</translation>
     </message>
     <message>
         <source>Other</source>
-        <translation type="unfinished"></translation>
+        <translation>Autres</translation>
     </message>
 </context>
 <context>
     <name>SymbolKind</name>
     <message>
         <source>class</source>
-        <translation type="unfinished"></translation>
+        <translation>classe</translation>
     </message>
     <message>
         <source>struct</source>
-        <translation type="unfinished"></translation>
+        <translation>struct</translation>
     </message>
     <message>
         <source>enum</source>
-        <translation type="unfinished"></translation>
+        <translation>enum</translation>
     </message>
     <message>
         <source>interface</source>
-        <translation type="unfinished"></translation>
+        <translation>interface</translation>
     </message>
     <message>
         <source>method</source>
-        <translation type="unfinished"></translation>
+        <translation>méthode</translation>
     </message>
     <message>
         <source>function</source>
-        <translation type="unfinished"></translation>
+        <translation>fonction</translation>
     </message>
     <message>
         <source>field</source>
-        <translation type="unfinished"></translation>
+        <translation>champ</translation>
     </message>
     <message>
         <source>constant</source>
-        <translation type="unfinished"></translation>
+        <translation>constante</translation>
     </message>
     <message>
         <source>property</source>
-        <translation type="unfinished"></translation>
+        <translation>propriété</translation>
     </message>
     <message>
         <source>constructor</source>
-        <translation type="unfinished"></translation>
+        <translation>constructeur</translation>
     </message>
     <message>
         <source>enum member</source>
-        <translation type="unfinished"></translation>
+        <translation>membre d&apos;enum</translation>
     </message>
 </context>
 <context>
@@ -6344,7 +6361,7 @@ Réel : %2
     <name>ui_shell::AiChatPanel</name>
     <message>
         <source>Which provider the next message goes to.</source>
-        <translation type="unfinished">À quel fournisseur le prochain message est envoyé.</translation>
+        <translation>Fournisseur auquel le prochain message est envoyé.</translation>
     </message>
     <message>
         <source>Ask</source>
@@ -6352,31 +6369,31 @@ Réel : %2
     </message>
     <message>
         <source>Agent</source>
-        <translation type="unfinished">Agent</translation>
+        <translation>Agent</translation>
     </message>
     <message>
         <source>Answer questions; you press Apply on a code block.</source>
-        <translation type="unfinished">Répondre aux questions ; vous cliquez sur Appliquer sur un bloc de code.</translation>
+        <translation>Répondre aux questions ; vous cliquez sur Appliquer sur un bloc de code.</translation>
     </message>
     <message>
         <source>Let the model use tools, under the approval policy.</source>
-        <translation type="unfinished">Autoriser le modèle à utiliser des outils, selon la politique d&apos;approbation.</translation>
+        <translation>Autoriser le modèle à utiliser des outils, selon la politique d&apos;approbation.</translation>
     </message>
     <message>
         <source>New Chat</source>
-        <translation type="unfinished">Nouveau chat</translation>
+        <translation>Nouvelle discussion</translation>
     </message>
     <message>
         <source>History</source>
-        <translation type="unfinished">Historique</translation>
+        <translation>Historique</translation>
     </message>
     <message>
         <source>Ask about the attached context.  @ mentions a file  ·  Ctrl+Enter sends</source>
-        <translation type="unfinished">Posez une question sur le contexte joint.  @ mentionne un fichier  ·  Ctrl+Entrée envoie</translation>
+        <translation>Posez une question sur le contexte joint.  @ mentionne un fichier  ·  Ctrl+Entrée envoie</translation>
     </message>
     <message>
         <source>Send</source>
-        <translation type="unfinished">Envoyer</translation>
+        <translation>Envoyer</translation>
     </message>
     <message>
         <source>Stop</source>
@@ -6384,19 +6401,19 @@ Réel : %2
     </message>
     <message>
         <source>Abandon the request or agent run without applying pending work.</source>
-        <translation type="unfinished">Abandonner la requête ou l&apos;exécution de l&apos;agent sans appliquer le travail en attente.</translation>
+        <translation>Abandonner la requête ou l&apos;exécution de l&apos;agent sans appliquer le travail en attente.</translation>
     </message>
     <message>
         <source>%1 (no API key)</source>
-        <translation type="unfinished">%1 (pas de clé API)</translation>
+        <translation>%1 (pas de clé API)</translation>
     </message>
     <message>
         <source>The environment variable holding this provider&apos;s key is not set in this process. Settings &gt; AI Providers says which one it is.</source>
-        <translation type="unfinished">La variable d&apos;environnement contenant la clé de ce fournisseur n&apos;est pas définie dans ce processus. Paramètres &gt; Fournisseurs d&apos;IA indique laquelle.</translation>
+        <translation>La variable d&apos;environnement contenant la clé de ce fournisseur n&apos;est pas définie dans ce processus. Paramètres &gt; Fournisseurs d&apos;IA indique laquelle.</translation>
     </message>
     <message>
         <source>%1 · %2 messages</source>
-        <translation type="unfinished">%1 · %2 messages</translation>
+        <translation>%1 · %2 messages</translation>
     </message>
     <message>
         <source>Rename…</source>
@@ -6408,39 +6425,39 @@ Réel : %2
     </message>
     <message>
         <source>Rename Conversation</source>
-        <translation type="unfinished">Renommer la conversation</translation>
+        <translation>Renommer la conversation</translation>
     </message>
     <message>
         <source>Title:</source>
-        <translation type="unfinished">Titre :</translation>
+        <translation>Titre :</translation>
     </message>
     <message>
         <source>Delete Conversation</source>
-        <translation type="unfinished">Supprimer la conversation</translation>
+        <translation>Supprimer la conversation</translation>
     </message>
     <message>
         <source>Delete &quot;%1&quot;? Its transcript is removed from disk.</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer « %1 » ? Sa transcription est supprimée du disque.</translation>
     </message>
     <message>
         <source>You</source>
-        <translation type="unfinished">Vous</translation>
+        <translation>Vous</translation>
     </message>
     <message>
         <source>Assistant</source>
-        <translation type="unfinished">Assistant</translation>
+        <translation>Assistant</translation>
     </message>
     <message>
         <source>Code block %1</source>
-        <translation type="unfinished">Bloc de code %1</translation>
+        <translation>Bloc de code %1</translation>
     </message>
     <message>
         <source>Apply</source>
-        <translation type="unfinished">Appliquer</translation>
+        <translation>Appliquer</translation>
     </message>
     <message>
         <source>Preview and apply this block through the refactoring preview.</source>
-        <translation type="unfinished">Prévisualiser et appliquer ce bloc via l&apos;aperçu de refactorisation.</translation>
+        <translation>Prévisualiser et appliquer ce bloc via l&apos;aperçu de refactorisation.</translation>
     </message>
     <message>
         <source>Copy</source>
@@ -6448,62 +6465,62 @@ Réel : %2
     </message>
     <message>
         <source>Details</source>
-        <translation type="unfinished">Détails</translation>
+        <translation>Détails</translation>
     </message>
     <message>
         <source>Approve</source>
-        <translation type="unfinished">Approuver</translation>
+        <translation>Approuver</translation>
     </message>
     <message>
         <source>Approve always</source>
-        <translation type="unfinished">Toujours approuver</translation>
+        <translation>Toujours approuver</translation>
     </message>
     <message>
         <source>Allow this tool without asking for the rest of this conversation.</source>
-        <translation type="unfinished">Autoriser cet outil sans demander pour le reste de cette conversation.</translation>
+        <translation>Autoriser cet outil sans demander pour le reste de cette conversation.</translation>
     </message>
     <message>
         <source>Deny</source>
-        <translation type="unfinished">Refuser</translation>
+        <translation>Refuser</translation>
     </message>
     <message>
         <source>%1 · %2</source>
-        <translation type="unfinished">%1 · %2</translation>
+        <translation>%1 · %2</translation>
     </message>
     <message>
         <source> — %1</source>
-        <translation type="unfinished"> — %1</translation>
+        <translation> — %1</translation>
     </message>
     <message>
         <source>Run finished after %1 steps.</source>
-        <translation type="unfinished">Exécution terminée après %1 étapes.</translation>
+        <translation>Exécution terminée après %1 étapes.</translation>
     </message>
     <message>
         <source>%1  (%2 tok)</source>
-        <translation type="unfinished">%1  (%2 jetons)</translation>
+        <translation>%1  (%2 jetons)</translation>
     </message>
     <message>
         <source>Remove this attachment</source>
-        <translation type="unfinished">Retirer cette pièce jointe</translation>
+        <translation>Retirer cette pièce jointe</translation>
     </message>
     <message>
         <source>Counted by the provider&apos;s own tokenizer.</source>
-        <translation type="unfinished">Compté par le tokeniseur propre au fournisseur.</translation>
+        <translation>Compté par le tokeniseur propre au fournisseur.</translation>
     </message>
     <message>
         <source>An estimate — no tokenizer was reachable for this provider.</source>
-        <translation type="unfinished">Une estimation — aucun tokeniseur n&apos;était accessible pour ce fournisseur.</translation>
+        <translation>Estimation — aucun tokeniseur n&apos;était accessible pour ce fournisseur.</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::BuildToolsPanel</name>
     <message>
         <source>Reload All Gradle/Maven Projects</source>
-        <translation type="unfinished"></translation>
+        <translation>Recharger tous les projets Gradle/Maven</translation>
     </message>
     <message>
         <source>Execute…</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter…</translation>
     </message>
     <message>
         <source>Run</source>
@@ -6511,31 +6528,31 @@ Réel : %2
     </message>
     <message>
         <source>Toggle Offline Mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Basculer le mode hors ligne</translation>
     </message>
     <message>
         <source>Toggle Skip Tests</source>
-        <translation type="unfinished"></translation>
+        <translation>Basculer « Ignorer les tests »</translation>
     </message>
     <message>
         <source>Settings…</source>
-        <translation type="unfinished"></translation>
+        <translation>Paramètres…</translation>
     </message>
     <message>
         <source>All Scopes</source>
-        <translation type="unfinished"></translation>
+        <translation>Toutes les portées</translation>
     </message>
     <message>
         <source>Show Conflicts Only</source>
-        <translation type="unfinished"></translation>
+        <translation>Afficher uniquement les conflits</translation>
     </message>
     <message>
         <source>Run with Arguments…</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter avec des arguments…</translation>
     </message>
     <message>
         <source>Open Build File</source>
-        <translation type="unfinished"></translation>
+        <translation>Ouvrir le fichier de build</translation>
     </message>
     <message>
         <source>Go to Declaration</source>
@@ -6543,14 +6560,14 @@ Réel : %2
     </message>
     <message>
         <source>Copy Coordinate</source>
-        <translation type="unfinished"></translation>
+        <translation>Copier les coordonnées</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::ChangesToolbar</name>
     <message>
         <source>Refresh (git status)</source>
-        <translation type="unfinished"></translation>
+        <translation>Actualiser (git status)</translation>
     </message>
     <message>
         <source>Fetch</source>
@@ -6566,11 +6583,11 @@ Réel : %2
     </message>
     <message>
         <source>Stage all</source>
-        <translation type="unfinished"></translation>
+        <translation>Tout indexer</translation>
     </message>
     <message>
         <source>Unstage all</source>
-        <translation type="unfinished"></translation>
+        <translation>Tout désindexer</translation>
     </message>
     <message>
         <source>(detached)</source>
@@ -6578,57 +6595,57 @@ Réel : %2
     </message>
     <message>
         <source>⎇ %1  ↓%2 ↑%3</source>
-        <translation type="unfinished"></translation>
+        <translation>⎇ %1  ↓%2 ↑%3</translation>
     </message>
     <message>
         <source>git fetch %1</source>
-        <translation type="unfinished"></translation>
+        <translation>git fetch %1</translation>
     </message>
     <message>
         <source>git pull %1 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>git pull %1 %2</translation>
     </message>
     <message>
         <source>git push %1 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>git push %1 %2</translation>
     </message>
     <message>
         <source>git push -u %1 %2</source>
-        <translation type="unfinished"></translation>
+        <translation>git push -u %1 %2</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::CodeEditor</name>
     <message>
         <source>Collapse All</source>
-        <translation type="unfinished">Tout réduire</translation>
+        <translation>Tout réduire</translation>
     </message>
     <message>
         <source>Expand All</source>
-        <translation type="unfinished">Tout développer</translation>
+        <translation>Tout développer</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::CommitDetailView</name>
     <message>
         <source>Loading…</source>
-        <translation type="unfinished">Chargement…</translation>
+        <translation>Chargement…</translation>
     </message>
     <message>
         <source>&lt;b&gt;%1&lt;/b&gt;&lt;br&gt;Commit %2&lt;br&gt;Author: %3 &amp;lt;%4&amp;gt;, %5</source>
-        <translation type="unfinished">&lt;b&gt;%1&lt;/b&gt;&lt;br&gt;Commit %2&lt;br&gt;Auteur : %3 &amp;lt;%4&amp;gt;, %5</translation>
+        <translation>&lt;b&gt;%1&lt;/b&gt;&lt;br&gt;Commit %2&lt;br&gt;Auteur : %3 &amp;lt;%4&amp;gt;, %5</translation>
     </message>
     <message>
         <source>&lt;br&gt;Committer: %1 &amp;lt;%2&amp;gt;, %3</source>
-        <translation type="unfinished">&lt;br&gt;Committer : %1 &amp;lt;%2&amp;gt;, %3</translation>
+        <translation>&lt;br&gt;Committer : %1 &amp;lt;%2&amp;gt;, %3</translation>
     </message>
     <message>
         <source>%1 (%2)</source>
-        <translation type="unfinished">%1 (%2)</translation>
+        <translation>%1 (%2)</translation>
     </message>
     <message>
         <source>Loading diff…</source>
-        <translation type="unfinished">Chargement du diff…</translation>
+        <translation>Chargement du diff…</translation>
     </message>
 </context>
 <context>
@@ -6639,11 +6656,11 @@ Réel : %2
     </message>
     <message>
         <source>ID</source>
-        <translation type="unfinished"></translation>
+        <translation>ID</translation>
     </message>
     <message>
         <source>Image</source>
-        <translation type="unfinished"></translation>
+        <translation>Image</translation>
     </message>
     <message>
         <source>Status</source>
@@ -6651,47 +6668,47 @@ Réel : %2
     </message>
     <message>
         <source>Network</source>
-        <translation type="unfinished"></translation>
+        <translation>Réseau</translation>
     </message>
     <message>
         <source>Restart policy</source>
-        <translation type="unfinished"></translation>
+        <translation>Politique de redémarrage</translation>
     </message>
     <message>
         <source>Env</source>
-        <translation type="unfinished"></translation>
+        <translation>Env</translation>
     </message>
     <message>
         <source>Key</source>
-        <translation type="unfinished"></translation>
+        <translation>Clé</translation>
     </message>
     <message>
         <source>Value</source>
-        <translation type="unfinished">Valeur</translation>
+        <translation>Valeur</translation>
     </message>
     <message>
         <source>Ports</source>
-        <translation type="unfinished"></translation>
+        <translation>Ports</translation>
     </message>
     <message>
         <source>Host IP</source>
-        <translation type="unfinished"></translation>
+        <translation>IP de l&apos;hôte</translation>
     </message>
     <message>
         <source>Host Port</source>
-        <translation type="unfinished"></translation>
+        <translation>Port de l&apos;hôte</translation>
     </message>
     <message>
         <source>Container Port</source>
-        <translation type="unfinished"></translation>
+        <translation>Port du conteneur</translation>
     </message>
     <message>
         <source>Protocol</source>
-        <translation type="unfinished"></translation>
+        <translation>Protocole</translation>
     </message>
     <message>
         <source>Mounts</source>
-        <translation type="unfinished"></translation>
+        <translation>Montages</translation>
     </message>
     <message>
         <source>Type</source>
@@ -6703,75 +6720,75 @@ Réel : %2
     </message>
     <message>
         <source>Target</source>
-        <translation type="unfinished"></translation>
+        <translation>Cible</translation>
     </message>
     <message>
         <source>Read-only</source>
-        <translation type="unfinished"></translation>
+        <translation>Lecture seule</translation>
     </message>
     <message>
         <source>Recreate with changes</source>
-        <translation type="unfinished"></translation>
+        <translation>Recréer avec les modifications</translation>
     </message>
     <message>
         <source>no</source>
-        <translation type="unfinished"></translation>
+        <translation>non</translation>
     </message>
     <message>
         <source>Recreate Container</source>
-        <translation type="unfinished"></translation>
+        <translation>Recréer le conteneur</translation>
     </message>
     <message>
         <source>Recreate &quot;%1&quot; with these changes?</source>
-        <translation type="unfinished"></translation>
+        <translation>Recréer « %1 » avec ces modifications ?</translation>
     </message>
     <message>
         <source>The container will be removed and a new one created in its place. If the new container fails to start, the old one is already gone.</source>
-        <translation type="unfinished"></translation>
+        <translation>Le conteneur sera supprimé et un nouveau sera créé à sa place. Si le nouveau conteneur ne démarre pas, l&apos;ancien a déjà disparu.</translation>
     </message>
     <message>
         <source>Recreate</source>
-        <translation type="unfinished"></translation>
+        <translation>Recréer</translation>
     </message>
     <message>
         <source>- </source>
-        <translation type="unfinished"></translation>
+        <translation>- </translation>
     </message>
     <message>
         <source>~ </source>
-        <translation type="unfinished"></translation>
+        <translation>~ </translation>
     </message>
     <message>
         <source>+ </source>
-        <translation type="unfinished"></translation>
+        <translation>+ </translation>
     </message>
     <message>
         <source>Dashboard</source>
-        <translation type="unfinished"></translation>
+        <translation>Tableau de bord</translation>
     </message>
     <message>
         <source>Size</source>
-        <translation type="unfinished"></translation>
+        <translation>Taille</translation>
     </message>
     <message>
         <source>Created</source>
-        <translation type="unfinished"></translation>
+        <translation>Créé</translation>
     </message>
     <message>
         <source>Tags</source>
-        <translation type="unfinished"></translation>
+        <translation>Tags</translation>
     </message>
     <message>
         <source>Digests</source>
-        <translation type="unfinished"></translation>
+        <translation>Digests</translation>
     </message>
     <message>
         <source>Containers using this image</source>
-        <translation type="unfinished"></translation>
+        <translation>Conteneurs utilisant cette image</translation>
     </message>
     <message>
         <source>Driver</source>
-        <translation type="unfinished"></translation>
+        <translation>Pilote</translation>
     </message>
     <message>
         <source>Scope</source>
@@ -6779,39 +6796,39 @@ Réel : %2
     </message>
     <message>
         <source>Subnets / Gateways</source>
-        <translation type="unfinished"></translation>
+        <translation>Sous-réseaux / Passerelles</translation>
     </message>
     <message>
         <source>Connected containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Conteneurs connectés</translation>
     </message>
     <message>
         <source>Labels</source>
-        <translation type="unfinished"></translation>
+        <translation>Étiquettes</translation>
     </message>
     <message>
         <source>%1 (gateway %2)</source>
-        <translation type="unfinished"></translation>
+        <translation>%1 (passerelle %2)</translation>
     </message>
     <message>
         <source>Mountpoint</source>
-        <translation type="unfinished"></translation>
+        <translation>Point de montage</translation>
     </message>
     <message>
         <source>Containers using this volume</source>
-        <translation type="unfinished"></translation>
+        <translation>Conteneurs utilisant ce volume</translation>
     </message>
     <message>
         <source>Restart</source>
-        <translation type="unfinished"></translation>
+        <translation>Redémarrer</translation>
     </message>
     <message>
         <source>Log</source>
-        <translation type="unfinished"></translation>
+        <translation>Journal</translation>
     </message>
     <message>
         <source>Terminal (root)</source>
-        <translation type="unfinished"></translation>
+        <translation>Terminal (root)</translation>
     </message>
     <message>
         <source>Terminal</source>
@@ -6819,7 +6836,7 @@ Réel : %2
     </message>
     <message>
         <source>Exec Command</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter une commande</translation>
     </message>
     <message>
         <source>Command</source>
@@ -6827,11 +6844,11 @@ Réel : %2
     </message>
     <message>
         <source>Exec: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Exec : %1</translation>
     </message>
     <message>
         <source>Attach</source>
-        <translation type="unfinished"></translation>
+        <translation>Attacher</translation>
     </message>
     <message>
         <source>Refresh</source>
@@ -6839,43 +6856,43 @@ Réel : %2
     </message>
     <message>
         <source>Processes</source>
-        <translation type="unfinished"></translation>
+        <translation>Processus</translation>
     </message>
     <message>
         <source>Size / Target</source>
-        <translation type="unfinished"></translation>
+        <translation>Taille / Cible</translation>
     </message>
     <message>
         <source>Files</source>
-        <translation type="unfinished">Fichiers</translation>
+        <translation>Fichiers</translation>
     </message>
     <message>
         <source>Download…</source>
-        <translation type="unfinished"></translation>
+        <translation>Télécharger…</translation>
     </message>
     <message>
         <source>Download</source>
-        <translation type="unfinished"></translation>
+        <translation>Télécharger</translation>
     </message>
     <message>
         <source>Layer ID</source>
-        <translation type="unfinished"></translation>
+        <translation>ID de la couche</translation>
     </message>
     <message>
         <source>Created By</source>
-        <translation type="unfinished"></translation>
+        <translation>Créé par</translation>
     </message>
     <message>
         <source>Analyze image</source>
-        <translation type="unfinished"></translation>
+        <translation>Analyser l&apos;image</translation>
     </message>
     <message>
         <source>Path</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin</translation>
     </message>
     <message>
         <source>Kind</source>
-        <translation type="unfinished"></translation>
+        <translation>Type</translation>
     </message>
     <message>
         <source>Open File</source>
@@ -6883,42 +6900,42 @@ Réel : %2
     </message>
     <message>
         <source>Layers</source>
-        <translation type="unfinished"></translation>
+        <translation>Couches</translation>
     </message>
     <message>
         <source>Pull: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Pull : %1</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::ContainerOptionsPage</name>
     <message>
         <source>Server:</source>
-        <translation type="unfinished"></translation>
+        <translation>Serveur :</translation>
     </message>
     <message>
         <source>Modify options ▾</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier les options ▾</translation>
     </message>
     <message>
         <source>Image:</source>
-        <translation type="unfinished"></translation>
+        <translation>Image :</translation>
     </message>
     <message>
         <source>Container name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom du conteneur :</translation>
     </message>
     <message>
         <source>Publish all exposed ports</source>
-        <translation type="unfinished"></translation>
+        <translation>Publier tous les ports exposés</translation>
     </message>
     <message>
         <source>If missing</source>
-        <translation type="unfinished"></translation>
+        <translation>S&apos;il est absent</translation>
     </message>
     <message>
         <source>Always</source>
-        <translation type="unfinished"></translation>
+        <translation>Toujours</translation>
     </message>
     <message>
         <source>Never</source>
@@ -6926,63 +6943,63 @@ Réel : %2
     </message>
     <message>
         <source>Pull policy:</source>
-        <translation type="unfinished"></translation>
+        <translation>Politique de pull :</translation>
     </message>
     <message>
         <source>Attach console (instead of running detached)</source>
-        <translation type="unfinished"></translation>
+        <translation>Attacher la console (au lieu d&apos;une exécution détachée)</translation>
     </message>
     <message>
         <source>Port bindings</source>
-        <translation type="unfinished"></translation>
+        <translation>Liaisons de ports</translation>
     </message>
     <message>
         <source>Host IP</source>
-        <translation type="unfinished"></translation>
+        <translation>IP de l&apos;hôte</translation>
     </message>
     <message>
         <source>Host port</source>
-        <translation type="unfinished"></translation>
+        <translation>Port de l&apos;hôte</translation>
     </message>
     <message>
         <source>Container port</source>
-        <translation type="unfinished"></translation>
+        <translation>Port du conteneur</translation>
     </message>
     <message>
         <source>Protocol</source>
-        <translation type="unfinished"></translation>
+        <translation>Protocole</translation>
     </message>
     <message>
         <source>Bind mounts</source>
-        <translation type="unfinished"></translation>
+        <translation>Montages bind</translation>
     </message>
     <message>
         <source>Host path</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin de l&apos;hôte</translation>
     </message>
     <message>
         <source>Container path</source>
-        <translation type="unfinished"></translation>
+        <translation>Chemin du conteneur</translation>
     </message>
     <message>
         <source>Read only (true/false)</source>
-        <translation type="unfinished"></translation>
+        <translation>Lecture seule (true/false)</translation>
     </message>
     <message>
         <source>Environment</source>
-        <translation type="unfinished"></translation>
+        <translation>Environnement</translation>
     </message>
     <message>
         <source>Key</source>
-        <translation type="unfinished"></translation>
+        <translation>Clé</translation>
     </message>
     <message>
         <source>Value</source>
-        <translation type="unfinished">Valeur</translation>
+        <translation>Valeur</translation>
     </message>
     <message>
         <source>Entrypoint:</source>
-        <translation type="unfinished"></translation>
+        <translation>Entrypoint :</translation>
     </message>
     <message>
         <source>Command:</source>
@@ -6990,39 +7007,39 @@ Réel : %2
     </message>
     <message>
         <source>Extra run options:</source>
-        <translation type="unfinished"></translation>
+        <translation>Options d&apos;exécution supplémentaires :</translation>
     </message>
     <message>
         <source>Dockerfile:</source>
-        <translation type="unfinished"></translation>
+        <translation>Dockerfile :</translation>
     </message>
     <message>
         <source>Context directory:</source>
-        <translation type="unfinished"></translation>
+        <translation>Répertoire de contexte :</translation>
     </message>
     <message>
         <source>Image tag:</source>
-        <translation type="unfinished"></translation>
+        <translation>Tag de l&apos;image :</translation>
     </message>
     <message>
         <source>Extra build options:</source>
-        <translation type="unfinished"></translation>
+        <translation>Options de build supplémentaires :</translation>
     </message>
     <message>
         <source>Run built image</source>
-        <translation type="unfinished"></translation>
+        <translation>Exécuter l&apos;image construite</translation>
     </message>
     <message>
         <source>Build arguments</source>
-        <translation type="unfinished"></translation>
+        <translation>Arguments de build</translation>
     </message>
     <message>
         <source>Compose files:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichiers Compose :</translation>
     </message>
     <message>
         <source>Add…</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter…</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -7030,259 +7047,259 @@ Réel : %2
     </message>
     <message>
         <source>Up</source>
-        <translation type="unfinished"></translation>
+        <translation>Monter</translation>
     </message>
     <message>
         <source>Down</source>
-        <translation type="unfinished"></translation>
+        <translation>Descendre</translation>
     </message>
     <message>
         <source>Add Compose File</source>
-        <translation type="unfinished"></translation>
+        <translation>Ajouter un fichier Compose</translation>
     </message>
     <message>
         <source>Compose files (*compose*.yml *compose*.yaml);;All files (*)</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichiers Compose (*compose*.yml *compose*.yaml);;Tous les fichiers (*)</translation>
     </message>
     <message>
         <source>Services (none selected = every service):</source>
-        <translation type="unfinished"></translation>
+        <translation>Services (aucun sélectionné = tous les services) :</translation>
     </message>
     <message>
         <source>Project name:</source>
-        <translation type="unfinished"></translation>
+        <translation>Nom du projet :</translation>
     </message>
     <message>
         <source>Advanced compose options</source>
-        <translation type="unfinished"></translation>
+        <translation>Options Compose avancées</translation>
     </message>
     <message>
         <source>Profiles:</source>
-        <translation type="unfinished"></translation>
+        <translation>Profils :</translation>
     </message>
     <message>
         <source>Env files:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichiers d&apos;environnement :</translation>
     </message>
     <message>
         <source>Compatibility mode</source>
-        <translation type="unfinished"></translation>
+        <translation>Mode de compatibilité</translation>
     </message>
     <message>
         <source>Remove orphans on Down</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer les orphelins lors du Down</translation>
     </message>
     <message>
         <source>Remove volumes on Down</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer les volumes lors du Down</translation>
     </message>
     <message>
         <source>None</source>
-        <translation type="unfinished"></translation>
+        <translation>Aucun</translation>
     </message>
     <message>
         <source>All</source>
-        <translation type="unfinished">Tout</translation>
+        <translation>Tout</translation>
     </message>
     <message>
         <source>Local</source>
-        <translation type="unfinished"></translation>
+        <translation>Local</translation>
     </message>
     <message>
         <source>Remove images on Down:</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer les images lors du Down :</translation>
     </message>
     <message>
         <source>SIGKILL timeout (s):</source>
-        <translation type="unfinished"></translation>
+        <translation>Délai SIGKILL (s) :</translation>
     </message>
     <message>
         <source>Exit code from service:</source>
-        <translation type="unfinished"></translation>
+        <translation>Code de sortie du service :</translation>
     </message>
     <message>
         <source>Always recreate dependencies</source>
-        <translation type="unfinished"></translation>
+        <translation>Toujours recréer les dépendances</translation>
     </message>
     <message>
         <source>Renew anonymous volumes</source>
-        <translation type="unfinished"></translation>
+        <translation>Renouveler les volumes anonymes</translation>
     </message>
     <message>
         <source>Remove orphan containers</source>
-        <translation type="unfinished"></translation>
+        <translation>Supprimer les conteneurs orphelins</translation>
     </message>
     <message>
         <source>No log prefix</source>
-        <translation type="unfinished"></translation>
+        <translation>Pas de préfixe de journal</translation>
     </message>
     <message>
         <source>Selected and dependencies</source>
-        <translation type="unfinished"></translation>
+        <translation>Sélectionnés et dépendances</translation>
     </message>
     <message>
         <source>Selected only</source>
-        <translation type="unfinished"></translation>
+        <translation>Sélectionnés uniquement</translation>
     </message>
     <message>
         <source>Start:</source>
-        <translation type="unfinished"></translation>
+        <translation>Démarrer :</translation>
     </message>
     <message>
         <source>Selected</source>
-        <translation type="unfinished"></translation>
+        <translation>Sélectionnés</translation>
     </message>
     <message>
         <source>Attach:</source>
-        <translation type="unfinished"></translation>
+        <translation>Attacher :</translation>
     </message>
     <message>
         <source>Changed</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifiés</translation>
     </message>
     <message>
         <source>Recreate:</source>
-        <translation type="unfinished"></translation>
+        <translation>Recréer :</translation>
     </message>
     <message>
         <source>Build:</source>
-        <translation type="unfinished"></translation>
+        <translation>Build :</translation>
     </message>
     <message>
         <source>Abort on container exit</source>
-        <translation type="unfinished"></translation>
+        <translation>Abandonner à la sortie d&apos;un conteneur</translation>
     </message>
     <message>
         <source>Scale</source>
-        <translation type="unfinished"></translation>
+        <translation>Mettre à l&apos;échelle</translation>
     </message>
     <message>
         <source>Service</source>
-        <translation type="unfinished"></translation>
+        <translation>Service</translation>
     </message>
     <message>
         <source>Replicas</source>
-        <translation type="unfinished"></translation>
+        <translation>Réplicas</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::DiffDivider</name>
     <message>
         <source>Replace with left side</source>
-        <translation type="unfinished">Remplacer par le côté gauche</translation>
+        <translation>Remplacer par le côté gauche</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::DiffToolbar</name>
     <message>
         <source>Previous Change (Shift+F7)</source>
-        <translation type="unfinished">Modification précédente (Maj+F7)</translation>
+        <translation>Modification précédente (Maj+F7)</translation>
     </message>
     <message>
         <source>Next Change (F7)</source>
-        <translation type="unfinished">Modification suivante (F7)</translation>
+        <translation>Modification suivante (F7)</translation>
     </message>
     <message>
         <source>Side-by-side viewer</source>
-        <translation type="unfinished">Affichage côte à côte</translation>
+        <translation>Affichage côte à côte</translation>
     </message>
     <message>
         <source>Unified viewer</source>
-        <translation type="unfinished">Affichage unifié</translation>
+        <translation>Affichage unifié</translation>
     </message>
     <message>
         <source>Viewer</source>
-        <translation type="unfinished">Affichage</translation>
+        <translation>Affichage</translation>
     </message>
     <message>
         <source>Do not ignore</source>
-        <translation type="unfinished">Ne pas ignorer</translation>
+        <translation>Ne pas ignorer</translation>
     </message>
     <message>
         <source>Trim whitespaces</source>
-        <translation type="unfinished">Supprimer les espaces</translation>
+        <translation>Supprimer les espaces</translation>
     </message>
     <message>
         <source>Ignore whitespaces</source>
-        <translation type="unfinished">Ignorer les espaces</translation>
+        <translation>Ignorer les espaces</translation>
     </message>
     <message>
         <source>Ignore whitespaces and empty lines</source>
-        <translation type="unfinished">Ignorer les espaces et les lignes vides</translation>
+        <translation>Ignorer les espaces et les lignes vides</translation>
     </message>
     <message>
         <source>Ignore whitespace</source>
-        <translation type="unfinished">Ignorer les espaces</translation>
+        <translation>Ignorer les espaces</translation>
     </message>
     <message>
         <source>Highlight words</source>
-        <translation type="unfinished">Surligner les mots</translation>
+        <translation>Surligner les mots</translation>
     </message>
     <message>
         <source>Highlight characters</source>
-        <translation type="unfinished">Surligner les caractères</translation>
+        <translation>Surligner les caractères</translation>
     </message>
     <message>
         <source>Highlight lines</source>
-        <translation type="unfinished">Surligner les lignes</translation>
+        <translation>Surligner les lignes</translation>
     </message>
     <message>
         <source>Do not highlight</source>
-        <translation type="unfinished">Ne pas surligner</translation>
+        <translation>Ne pas surligner</translation>
     </message>
     <message>
         <source>Highlighting mode</source>
-        <translation type="unfinished">Mode de surlignage</translation>
+        <translation>Mode de surlignage</translation>
     </message>
     <message>
         <source>Collapse unchanged fragments</source>
-        <translation type="unfinished">Réduire les fragments inchangés</translation>
+        <translation>Réduire les fragments inchangés</translation>
     </message>
     <message>
         <source>Synchronize scrolling</source>
-        <translation type="unfinished">Synchroniser le défilement</translation>
+        <translation>Synchroniser le défilement</translation>
     </message>
     <message>
         <source>No differences</source>
-        <translation type="unfinished">Aucune différence</translation>
+        <translation>Aucune différence</translation>
     </message>
     <message>
         <source>1 difference</source>
-        <translation type="unfinished">1 différence</translation>
+        <translation>1 différence</translation>
     </message>
     <message>
         <source>%1 differences</source>
-        <translation type="unfinished">%1 différences</translation>
+        <translation>%1 différences</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::DiffViewPage</name>
     <message>
         <source>%1 → %2</source>
-        <translation type="unfinished">%1 → %2</translation>
+        <translation>%1 → %2</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::EditorBanner</name>
     <message>
         <source>Gradle project detected. Load it?</source>
-        <translation type="unfinished"></translation>
+        <translation>Projet Gradle détecté. Le charger ?</translation>
     </message>
     <message>
         <source>Load</source>
-        <translation type="unfinished"></translation>
+        <translation>Charger</translation>
     </message>
     <message>
         <source>Not Now</source>
-        <translation type="unfinished"></translation>
+        <translation>Pas maintenant</translation>
     </message>
     <message>
         <source>Maven project detected. Load it?</source>
-        <translation type="unfinished"></translation>
+        <translation>Projet Maven détecté. Le charger ?</translation>
     </message>
     <message>
         <source>Build files changed. Reload?</source>
-        <translation type="unfinished"></translation>
+        <translation>Les fichiers de build ont changé. Recharger ?</translation>
     </message>
     <message>
         <source>Reload</source>
@@ -7290,54 +7307,54 @@ Réel : %2
     </message>
     <message>
         <source>Dismiss</source>
-        <translation type="unfinished"></translation>
+        <translation>Ignorer</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::FindBar</name>
     <message>
         <source>Find</source>
-        <translation type="unfinished">Rechercher</translation>
+        <translation>Rechercher</translation>
     </message>
     <message>
         <source>Regular expression</source>
-        <translation type="unfinished">Expression régulière</translation>
+        <translation>Expression régulière</translation>
     </message>
     <message>
         <source>Match case</source>
-        <translation type="unfinished">Respecter la casse</translation>
+        <translation>Respecter la casse</translation>
     </message>
     <message>
         <source>Previous match</source>
-        <translation type="unfinished">Correspondance précédente</translation>
+        <translation>Correspondance précédente</translation>
     </message>
     <message>
         <source>Next match</source>
-        <translation type="unfinished">Correspondance suivante</translation>
+        <translation>Correspondance suivante</translation>
     </message>
     <message>
         <source>Close</source>
-        <translation type="unfinished">Fermer</translation>
+        <translation>Fermer</translation>
     </message>
     <message>
         <source>Replace</source>
-        <translation type="unfinished">Remplacer</translation>
+        <translation>Remplacer</translation>
     </message>
     <message>
         <source>Replace All</source>
-        <translation type="unfinished">Tout remplacer</translation>
+        <translation>Tout remplacer</translation>
     </message>
     <message>
         <source>No results</source>
-        <translation type="unfinished">Aucun résultat</translation>
+        <translation>Aucun résultat</translation>
     </message>
     <message>
         <source>%1/%2</source>
-        <translation type="unfinished">%1/%2</translation>
+        <translation>%1/%2</translation>
     </message>
     <message>
         <source>Invalid pattern</source>
-        <translation type="unfinished">Motif non valide</translation>
+        <translation>Motif non valide</translation>
     </message>
 </context>
 <context>
@@ -7351,25 +7368,25 @@ Réel : %2
     <name>ui_shell::HistoryListView</name>
     <message>
         <source>Loading…</source>
-        <translation type="unfinished">Chargement…</translation>
+        <translation>Chargement…</translation>
     </message>
     <message>
         <source>(no further description)</source>
-        <translation type="unfinished">(aucune description supplémentaire)</translation>
+        <translation>(aucune description supplémentaire)</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::ImageViewer</name>
     <message>
         <source>Couldn&apos;t load image</source>
-        <translation type="unfinished"></translation>
+        <translation>Impossible de charger l&apos;image</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::MarkdownPreviewPanel</name>
     <message>
         <source>Nothing to preview.</source>
-        <translation type="unfinished">Rien à prévisualiser.</translation>
+        <translation>Rien à prévisualiser.</translation>
     </message>
 </context>
 <context>
@@ -7558,58 +7575,58 @@ Réel : %2
     <name>ui_shell::SqlScriptOptionsPage</name>
     <message>
         <source>Data source:</source>
-        <translation type="unfinished"></translation>
+        <translation>Source de données :</translation>
     </message>
     <message>
         <source>…</source>
-        <translation type="unfinished"></translation>
+        <translation>…</translation>
     </message>
     <message>
         <source>SQL file:</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichier SQL :</translation>
     </message>
     <message>
         <source>Auto-commit each statement</source>
-        <translation type="unfinished"></translation>
+        <translation>Valider automatiquement chaque instruction</translation>
     </message>
     <message>
         <source>Single transaction</source>
-        <translation type="unfinished"></translation>
+        <translation>Transaction unique</translation>
     </message>
     <message>
         <source>Transaction mode:</source>
-        <translation type="unfinished"></translation>
+        <translation>Mode de transaction :</translation>
     </message>
     <message>
         <source>Stop on first error</source>
-        <translation type="unfinished"></translation>
+        <translation>S&apos;arrêter à la première erreur</translation>
     </message>
     <message>
         <source>Select SQL File</source>
-        <translation type="unfinished"></translation>
+        <translation>Sélectionner un fichier SQL</translation>
     </message>
     <message>
         <source>SQL files (*.sql);;All files (*)</source>
-        <translation type="unfinished"></translation>
+        <translation>Fichiers SQL (*.sql);;Tous les fichiers (*)</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::TerminalSessionsPanel</name>
     <message>
         <source>New Terminal Tab</source>
-        <translation type="unfinished">Nouvel onglet de terminal</translation>
+        <translation>Nouvel onglet de terminal</translation>
     </message>
     <message>
         <source>Select Shell…</source>
-        <translation type="unfinished"></translation>
+        <translation>Sélectionner un shell…</translation>
     </message>
     <message>
         <source>Select Shell</source>
-        <translation type="unfinished">Sélectionner un shell</translation>
+        <translation>Sélectionner un shell</translation>
     </message>
     <message>
         <source>Terminal %1</source>
-        <translation type="unfinished">Terminal %1</translation>
+        <translation>Terminal %1</translation>
     </message>
 </context>
 <context>
@@ -7628,58 +7645,58 @@ Réel : %2
     </message>
     <message>
         <source>Open Link</source>
-        <translation type="unfinished">Ouvrir le lien</translation>
+        <translation>Ouvrir le lien</translation>
     </message>
 </context>
 <context>
     <name>ui_shell::ValueEditorDialog</name>
     <message>
         <source>Edit Value — %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Modifier la valeur — %1</translation>
     </message>
     <message>
         <source>Hex bytes, e.g. deadbeef or 0xdeadbeef (empty means zero-length)</source>
-        <translation type="unfinished"></translation>
+        <translation>Octets hexadécimaux, p. ex. deadbeef ou 0xdeadbeef (vide = longueur nulle)</translation>
     </message>
     <message>
         <source>NULL</source>
-        <translation type="unfinished"></translation>
+        <translation>NULL</translation>
     </message>
     <message>
         <source>DEFAULT</source>
-        <translation type="unfinished"></translation>
+        <translation>DEFAULT</translation>
     </message>
     <message>
         <source>Pretty JSON</source>
-        <translation type="unfinished"></translation>
+        <translation>JSON indenté</translation>
     </message>
     <message>
         <source>Load from File…</source>
-        <translation type="unfinished"></translation>
+        <translation>Charger depuis un fichier…</translation>
     </message>
     <message>
         <source>Save to File…</source>
-        <translation type="unfinished"></translation>
+        <translation>Enregistrer dans un fichier…</translation>
     </message>
     <message>
         <source>Load Value From File</source>
-        <translation type="unfinished"></translation>
+        <translation>Charger la valeur depuis un fichier</translation>
     </message>
     <message>
         <source>Load from File</source>
-        <translation type="unfinished"></translation>
+        <translation>Charger depuis un fichier</translation>
     </message>
     <message>
         <source>Valid hex.</source>
-        <translation type="unfinished"></translation>
+        <translation>Hexadécimal valide.</translation>
     </message>
     <message>
         <source>Save Value To File</source>
-        <translation type="unfinished"></translation>
+        <translation>Enregistrer la valeur dans un fichier</translation>
     </message>
     <message>
         <source>Save to File</source>
-        <translation type="unfinished"></translation>
+        <translation>Enregistrer dans un fichier</translation>
     </message>
 </context>
 </TS>

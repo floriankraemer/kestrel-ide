@@ -139,6 +139,15 @@ impl CoversIndex {
                 .filter(|dir| dir.starts_with(path))
                 .cloned()
                 .collect();
+            // An ancestor of the test directories that still holds indexed
+            // tests was only modified (Windows reports the project root on
+            // every child write, `.phpunit.result.cache` included): its tests
+            // arrive as reports of their own. Only a new one is scanned (a
+            // package created or renamed into place, #434 review L7).
+            let is_ancestor = !below.is_empty() && below.iter().all(|dir| dir != path);
+            if is_ancestor && self.files.keys().any(|file| file.starts_with(path)) {
+                return;
+            }
             let targets = if below.is_empty() {
                 vec![path.to_path_buf()]
             } else {
@@ -212,6 +221,8 @@ struct CacheState {
     /// The index must be rebuilt: the roots changed, or too many files did.
     stale: bool,
     worker_running: bool,
+    /// Searches blocked until the worker publishes.
+    waiters: usize,
     /// The worker is building the index from scratch, not refreshing it.
     rebuilding: bool,
 }
@@ -262,6 +273,8 @@ impl CoversCache {
             *state = CacheState {
                 project: project.to_path_buf(),
                 generation: state.generation + 1,
+                // The old project's searches still wait, to give up below.
+                waiters: state.waiters,
                 ..CacheState::default()
             };
             // A search still waiting for the old project's index gives up.
@@ -301,12 +314,14 @@ impl CoversCache {
             return None;
         }
         let generation = state.generation;
+        state.waiters += 1;
         while state.worker_running && state.generation == generation {
             state = self
                 .published
                 .wait(state)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
+        state.waiters -= 1;
         // Another project's index is no answer for this one.
         if state.generation != generation {
             return None;
@@ -604,14 +619,49 @@ mod tests {
             let project = first.path().to_path_buf();
             std::thread::spawn(move || cache.index(&project, &roots(), true))
         };
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        // Switch projects only once the search is blocked on the build.
+        while cache.lock().waiters == 0 {
+            std::thread::yield_now();
+        }
         let _ = cache.index(second.path(), &roots(), true);
 
         let answer = waiter.join().unwrap();
         assert!(
-            answer.is_none_or(|index| index.covering("App\\Bar") == ["tests/CheckoutTest.php"]),
+            answer.is_none(),
             "the first project's search got the second project's index"
         );
+    }
+
+    #[test]
+    fn a_modified_ancestor_rescans_nothing_and_a_new_or_removed_one_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(project, "tests/CheckoutTest.php", COVERS_BAR);
+        let package_roots = vec![Psr4Root {
+            prefix: "Pkg\\".into(),
+            dir: "packages/a/tests/".into(),
+            dev: true,
+        }];
+        let all: Vec<Psr4Root> = roots().into_iter().chain(package_roots).collect();
+        let mut index = CoversIndex::build(project, &all);
+
+        // A test written without a report of its own: a report of the
+        // project root (a parent-modified event) must not walk for it.
+        write(project, "tests/UnreportedTest.php", COVERS_BAR);
+        index.refresh(project);
+        assert_eq!(index.covering("App\\Bar"), ["tests/CheckoutTest.php"]);
+
+        // A package created with its tests: its directory is scanned.
+        write(project, "packages/a/tests/NewTest.php", COVERS_BAR);
+        index.refresh(&project.join("packages"));
+        assert!(index
+            .covering("App\\Bar")
+            .contains(&"packages/a/tests/NewTest.php".to_string()));
+
+        // Removed: its tests go with it.
+        std::fs::remove_dir_all(project.join("packages")).unwrap();
+        index.refresh(&project.join("packages"));
+        assert_eq!(index.covering("App\\Bar"), ["tests/CheckoutTest.php"]);
     }
 
     #[test]

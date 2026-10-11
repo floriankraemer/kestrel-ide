@@ -72,14 +72,16 @@ Sequential tasks, one PR each, in this order (each builds on the previous).
 
 Every row starts as `open`.
 A row's status and commit hash are updated in the commit that finishes it.
+The hashes are the squash commits on `main`, with their pull requests.
 
 | Task | Status | Commit |
 |---|---|---|
-| E1 — caret-aware Run / Debug File for tests | done | bef8ab0 |
-| E2 — test node locations | done | a59db68 |
-| E3 — gutter test status | done | f4c42b8 |
-| E4 — PHPUnit run configuration kind | done | 9ffe63b |
-| E5 — `phpunit.xml` suites and groups | done | ad567a8 |
-| E6 — project tree test entries | done | 0d7e478 |
-| E7 — Go to Test / Test Subject | done | 4830654, 2aa85fe |
-| E8 — acceptance (Linux + Windows/WSL) | open | |
+| E1 — caret-aware Run / Debug File for tests | done | bef8ab0 (#408) |
+| E2 — test node locations | done | 7ad3d71 (#409) |
+| E3 — gutter test status | done | b9a2c54 (#417), 8dce6dc (#418) |
+| E4 — PHPUnit run configuration kind | done | b9a2c54 (#417), 8dce6dc (#418) |
+| E5 — `phpunit.xml` suites and groups | done | b9a2c54 (#417), 8dce6dc (#418) |
+| E6 — project tree test entries | done | 776e43e (#421) |
+| E7 — Go to Test / Test Subject | done | 6c305f1 (#422) |
+| Follow-ups — review fixes, monorepo packages, acceptance gaps G2–G11 | done | 1e5d2c6 (#425), e05a6c3 (#427), c626dc7 (#434), 0ebaabb (#435) |
+| E8 — acceptance (Linux + Windows/WSL) | done | 3e3d12c (#439), f07b8a5 (#452), 9a627de (#464), c531ce7 (#454), this PR |

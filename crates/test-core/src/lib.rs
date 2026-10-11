@@ -21,6 +21,8 @@
 //! - [`teamcity`] — the primary streaming format, PHPUnit's `--teamcity`.
 //! - [`location`] — the TeamCity `locationHint`: which file (and class or
 //!   method) a node lives in.
+//! - [`source`] — where Jump to Source goes for a node: its file and the
+//!   line of its class, method or test.
 //! - [`junit`] — the batch fallback format, `--log-junit`.
 //! - [`coverage`] — Clover reports: per-file line hits and per-directory
 //!   summaries (PHP parity plan T4).
@@ -38,6 +40,7 @@ mod junit;
 mod location;
 mod runner;
 mod selection;
+mod source;
 mod teamcity;
 mod tree;
 
@@ -49,5 +52,8 @@ pub use runner::{
     TestSink, UnknownOutputFormat,
 };
 pub use selection::{select_framework, SUPPORTED_OUTPUT_FORMATS};
+pub use source::{source_target, SourceTarget};
 pub use teamcity::{TeamCityEvent, TeamCityParser};
-pub use tree::{NodeKind, TestCounts, TestFailure, TestId, TestNode, TestStatus, TestTree};
+pub use tree::{
+    NodeKind, TestCounts, TestFailure, TestId, TestNode, TestStatus, TestTree, UNFINISHED_MESSAGE,
+};

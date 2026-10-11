@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
 use cxx_qt::{CxxQtThread, Threading};
-use cxx_qt_lib::QString;
+use cxx_qt_lib::{QString, QStringList};
 
 use crate::bridge::errors;
 use crate::bridge::ffi;
@@ -39,6 +39,9 @@ mod gutter;
 fn source_key(framework_name: &str) -> String {
     format!("test:{framework_name}")
 }
+
+/// A file's markers with the hash of the text they were parsed from.
+type CachedMarkers = (u64, std::rc::Rc<Vec<php_core::tests::TestMarker>>);
 
 /// Rust side of the `TestService` QObject.
 #[derive(Default)]
@@ -63,6 +66,9 @@ pub struct TestServiceRust {
     pending_debug: RefCell<Option<RerunSelection>>,
     /// The last coverage run's report, local paths (T5).
     coverage: RefCell<Option<test_core::coverage::Coverage>>,
+    /// Parsed markers per open file, keyed by the text they came from: the
+    /// gutter repaints on every streamed event, the text rarely changes.
+    marker_cache: RefCell<HashMap<String, CachedMarkers>>,
     store: SharedDiagnostics,
 }
 
@@ -273,36 +279,80 @@ impl ffi::TestService {
         }
     }
 
-    /// Where `node_id` lives in source. The hint names the file, and at most
-    /// a class or method; its line comes from the file's current text.
-    pub fn node_source(&self, node_id: &QString) -> ffi::FfiResolvedLink {
-        let Some(root) = current_project_root() else {
+    /// The node's location, and the host/work dir that map its paths.
+    fn located(
+        &self,
+        node_id: &QString,
+    ) -> Option<(
+        test_core::TestLocation,
+        process_exec::host::ExecHost,
+        PathBuf,
+    )> {
+        let root = current_project_root()?;
+        let location = self
+            .tree
+            .borrow()
+            .node(&test_core::TestId(node_id.to_string()))?
+            .location
+            .clone()
+            .filter(|location| !location.file.is_empty())?;
+        let host = (*self.run_host.borrow())
+            .clone()
+            .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&root));
+        Some((location, host, root))
+    }
+
+    /// The node's file on this machine; empty without a location. No I/O.
+    pub fn node_source_path(&self, node_id: &QString) -> QString {
+        self.located(node_id)
+            .map(|(location, host, root)| location.local_path(&host, &root))
+            .map(|path| QString::from(path.display().to_string().as_str()))
+            .unwrap_or_default()
+    }
+
+    /// Where `node_id` lives in source: `test_core::source_target`'s rule,
+    /// with the PHP symbol lookup and the editor's unsaved text plugged in.
+    pub fn node_source(
+        &self,
+        node_id: &QString,
+        open_text: &QString,
+        has_open_text: bool,
+    ) -> ffi::FfiResolvedLink {
+        let Some((location, host, root)) = self.located(node_id) else {
             return ffi::FfiResolvedLink::default();
         };
-        let id = test_core::TestId(node_id.to_string());
-        let tree = self.tree.borrow();
-        let Some(location) = tree.node(&id).and_then(|node| node.location.as_ref()) else {
-            return ffi::FfiResolvedLink::default();
+        let open = has_open_text.then(|| open_text.to_string());
+        let target = test_core::source_target(
+            &location,
+            &host,
+            &root,
+            |_| open.clone(),
+            php_core::tests::symbol_line,
+        );
+        target.map_or_else(ffi::FfiResolvedLink::default, |target| {
+            ffi::FfiResolvedLink {
+                found: true,
+                path: QString::from(target.path.display().to_string().as_str()),
+                line: target.line,
+                has_column: false,
+                column: 0,
+            }
+        })
+    }
+
+    pub fn tested_files(&self) -> QStringList {
+        let Some(root) = current_project_root() else {
+            return QStringList::default();
         };
         let host = (*self.run_host.borrow())
             .clone()
             .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&root));
-        let path = location.local_path(&host, &root);
-        let line = location.line.unwrap_or_else(|| {
-            let symbol = location.symbol.as_ref();
-            let text = std::fs::read_to_string(&path).ok();
-            symbol
-                .zip(text)
-                .and_then(|(symbol, text)| php_core::tests::symbol_line(&text, symbol))
-                .map_or(1, |zero_based| zero_based + 1)
-        });
-        ffi::FfiResolvedLink {
-            found: true,
-            path: QString::from(path.display().to_string().as_str()),
-            line,
-            has_column: false,
-            column: 0,
-        }
+        self.tree
+            .borrow()
+            .located_files(&host, &root)
+            .iter()
+            .map(|path| QString::from(path.display().to_string().as_str()))
+            .collect()
     }
 
     pub fn is_running(&self) -> bool {
@@ -490,6 +540,12 @@ impl ffi::TestService {
             let mut sink = QtSink {
                 qt_thread: qt_thread.clone(),
                 ansi: run_core::AnsiStripper::default(),
+                psr4_roots: php_core::composer::ComposerJson::read(&root)
+                    .ok()
+                    .flatten()
+                    .map(|composer| composer.psr4)
+                    .unwrap_or_default(),
+                root: root.clone(),
             };
             let program_str = program.to_string_lossy().into_owned();
             let result = test_core::run_on_env(
@@ -514,6 +570,10 @@ impl ffi::TestService {
                 .is_ok_and(|code| handle.matched_nothing(*code));
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
+                // Whatever never reported (Stop, a fatal error, a killed
+                // container) must not stay "running" on a gutter icon.
+                service.tree.borrow_mut().finish_run();
+                service.as_mut().test_tree_changed();
                 if let Some(coverage) = coverage {
                     if coverage.is_none() {
                         service.as_mut().test_output_appended(QString::from(
@@ -586,6 +646,10 @@ struct QtSink {
     /// here rather than in `test-core` since `test-core`'s layering row
     /// carries no adapter-layer crate (`run-core` included).
     ansi: run_core::AnsiStripper,
+    /// A Pest class-based test names its class and no file; the project's
+    /// PSR-4 roots find the file.
+    psr4_roots: Vec<php_core::composer::Psr4Root>,
+    root: PathBuf,
 }
 
 impl test_core::TestSink for QtSink {
@@ -601,6 +665,7 @@ impl test_core::TestSink for QtSink {
     }
 
     fn event(&mut self, event: test_core::TeamCityEvent) {
+        let event = php_core::tests::locate_event(event, &self.psr4_roots, &self.root);
         let _ = self
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {

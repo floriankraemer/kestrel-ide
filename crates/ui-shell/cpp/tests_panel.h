@@ -4,10 +4,12 @@
 
 #include <QHash>
 #include <QCoreApplication>
+#include <QKeySequence>
 #include <QString>
 #include <QWidget>
 
 #include <functional>
+#include <optional>
 
 class QLabel;
 class QPlainTextEdit;
@@ -44,8 +46,12 @@ public:
     // `openAt(path, line, column)` jumps the editor to a failure's location
     // — the same contract every other panel with a clickable location uses.
     using OpenAt = std::function<void(const QString &, int, int)>;
+    // The text of `path` as the editor holds it, `nullopt` when it is not
+    // open: Jump to Source finds the line in what the user sees.
+    using OpenText = std::function<std::optional<QString>(const QString &)>;
 
-    TestsPanel(TestService *testService, OpenAt openAt, QWidget *parent);
+    TestsPanel(TestService *testService, AppSettings *appSettings, OpenAt openAt, OpenText openText,
+               QWidget *parent);
 
     // Targets of the Tests menu / shortcuts, so they act regardless of
     // which widget has focus (the same arrangement `BuildPanel` has with
@@ -73,8 +79,16 @@ private:
     void report(const FfiResult &result);
     void updateToolbarEnablement();
 
+    // The tree's keys: `tests.jumpToSource` is rebindable and handled here,
+    // not as a shortcut, so it cannot be ambiguous with a window action
+    // bound to the same key (F4 is `database.goToReferencedRow`'s).
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    QKeySequence jumpToSourceKey() const;
+
     TestService *testService_;
+    AppSettings *appSettings_;
     OpenAt openAt_;
+    OpenText openText_;
 
     QToolButton *runAllButton_ = nullptr;
     QToolButton *runFailedButton_ = nullptr;
@@ -96,6 +110,7 @@ private:
 // under id `"tests"` — the same one-call pattern `buildBuildDock` uses.
 TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            ads::CDockAreaWidget *relativeTo, TestService *testService,
-                           TestsPanel::OpenAt openAt);
+                           AppSettings *appSettings, TestsPanel::OpenAt openAt,
+                           TestsPanel::OpenText openText);
 
 } // namespace ui_shell

@@ -25,12 +25,22 @@ pub enum TestSymbol {
     },
     /// A Pest test description, verbatim.
     Description(String),
+    /// A class-based test run by Pest, `Name (Ns\Class)`: Pest drops the
+    /// `Test` suffix, so this is `Ns\Class` for the declared `Ns\ClassTest`.
+    PestClass(String),
+    /// A method of a [`Self::PestClass`], under Pest's humanized title
+    /// (`testXyzAbc` and `test_xyz_abc` both report `Xyz abc`).
+    PestMethod {
+        class: String,
+        title: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestLocation {
     /// The path as the test process printed it: absolute on the run's host
     /// (WSL, container) or relative to the work dir. See [`Self::local_path`].
+    /// Empty while [`Self::unresolved_class`] is `Some`.
     pub file: String,
     /// 1-based, when the hint carried one.
     pub line: Option<u32>,
@@ -54,10 +64,44 @@ impl TestLocation {
     }
 }
 
-/// `None` for a hint that names no PHP file (other schemes, Pest's
-/// class-based `Greeter (Tests\Greeter)`).
+impl TestLocation {
+    /// The class a Pest class-based hint names but no file: the caller
+    /// resolves it (PSR-4) and calls [`Self::with_file`].
+    pub fn unresolved_class(&self) -> Option<&str> {
+        if !self.file.is_empty() {
+            return None;
+        }
+        match self.symbol.as_ref()? {
+            TestSymbol::PestClass(class) | TestSymbol::PestMethod { class, .. } => Some(class),
+            _ => None,
+        }
+    }
+
+    /// This location with `file` (as [`Self::file`] means it) and, for a
+    /// Pest class-based hint, the class Pest abbreviated spelled out.
+    pub fn with_file(mut self, file: String, class: &str) -> Self {
+        self.file = file;
+        self.symbol = self.symbol.map(|symbol| match symbol {
+            TestSymbol::PestClass(_) => TestSymbol::PestClass(class.to_string()),
+            TestSymbol::PestMethod { title, .. } => TestSymbol::PestMethod {
+                class: class.to_string(),
+                title,
+            },
+            other => other,
+        });
+        self
+    }
+}
+
+/// `None` for a hint that names no PHP file (other schemes). A Pest
+/// class-based `Greeter (Tests\Greeter)` names a class and no file yet.
 pub fn parse_location_hint(hint: &str) -> Option<TestLocation> {
     let (scheme, rest) = hint.split_once("://")?;
+    if scheme == "pest_qn" {
+        if let Some(location) = parse_pest_class_hint(rest) {
+            return Some(location);
+        }
+    }
     let (file, symbol) = match rest.split_once("::") {
         Some((file, symbol)) => (file, Some(symbol)),
         None => (rest, None),
@@ -73,7 +117,32 @@ pub fn parse_location_hint(hint: &str) -> Option<TestLocation> {
     Some(TestLocation {
         file: file.to_string(),
         line,
-        symbol: symbol.and_then(parse_symbol),
+        symbol: symbol.and_then(|symbol| parse_symbol(scheme, symbol)),
+    })
+}
+
+/// `Greeter (Tests\Greeter)` or `Greeter (Tests\Greeter)::Xyz abc`.
+fn parse_pest_class_hint(rest: &str) -> Option<TestLocation> {
+    let (head, title) = match rest.split_once("::") {
+        Some((head, title)) => (head, Some(title)),
+        None => (rest, None),
+    };
+    let class = head.strip_suffix(')')?.rsplit_once(" (")?.1;
+    if class.is_empty() || head.to_ascii_lowercase().ends_with(".php)") {
+        return None;
+    }
+    let class = class.to_string();
+    let symbol = match title {
+        Some(title) => TestSymbol::PestMethod {
+            class,
+            title: title.to_string(),
+        },
+        None => TestSymbol::PestClass(class),
+    };
+    Some(TestLocation {
+        file: String::new(),
+        line: None,
+        symbol: Some(symbol),
     })
 }
 
@@ -92,10 +161,14 @@ fn split_line(path: &str) -> (&str, Option<u32>) {
     }
 }
 
-fn parse_symbol(symbol: &str) -> Option<TestSymbol> {
-    let Some(php) = symbol.strip_prefix('\\') else {
+/// What the part after the file's `::` names. Pest's is a verbatim
+/// description (`\Foo::bar works` is a title, not a method); PHPUnit's starts
+/// with the class's leading backslash.
+fn parse_symbol(scheme: &str, symbol: &str) -> Option<TestSymbol> {
+    if scheme == "pest_qn" {
         return (!symbol.is_empty()).then(|| TestSymbol::Description(symbol.to_string()));
-    };
+    }
+    let php = symbol.strip_prefix('\\')?;
     Some(match php.split_once("::") {
         Some((class, method)) => TestSymbol::Method {
             class: class.to_string(),
@@ -172,11 +245,40 @@ mod tests {
     }
 
     #[test]
-    fn a_hint_without_a_php_file_has_no_location() {
+    fn a_pest_class_hint_names_a_class_and_no_file_yet() {
+        let class = parsed(r"pest_qn://Greeter (Tests\Greeter)");
+        assert_eq!(class.file, "");
+        assert_eq!(class.unresolved_class(), Some(r"Tests\Greeter"));
+        let method = parsed(r"pest_qn://Class (Tests\Class)::Xyz abc");
         assert_eq!(
-            parse_location_hint(r"pest_qn://Greeter (Tests\Greeter)"),
-            None
+            method.symbol,
+            Some(TestSymbol::PestMethod {
+                class: r"Tests\Class".into(),
+                title: "Xyz abc".into()
+            })
         );
+        let resolved = method.with_file("tests/ClassTest.php".into(), r"Tests\ClassTest");
+        assert_eq!(resolved.unresolved_class(), None);
+        assert_eq!(
+            resolved.symbol,
+            Some(TestSymbol::PestMethod {
+                class: r"Tests\ClassTest".into(),
+                title: "Xyz abc".into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_pest_description_that_looks_like_a_method_stays_a_description() {
+        let location = parsed(r"pest_qn://tests/A.php::\Foo::bar works");
+        assert_eq!(
+            location.symbol,
+            Some(TestSymbol::Description(r"\Foo::bar works".into()))
+        );
+    }
+
+    #[test]
+    fn a_hint_without_a_php_file_has_no_location() {
         assert_eq!(parse_location_hint("java:test://com.a.ATest/testX"), None);
         assert_eq!(parse_location_hint("nonsense"), None);
     }

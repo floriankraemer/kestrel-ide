@@ -21,7 +21,7 @@
 #include <QPlainTextEdit>
 #include <QPoint>
 #include <QScrollBar>
-#include <QShortcut>
+#include <QKeyEvent>
 #include <QSplitter>
 #include <QTextCursor>
 #include <QTimer>
@@ -172,10 +172,13 @@ private:
 
 } // namespace
 
-TestsPanel::TestsPanel(TestService *testService, OpenAt openAt, QWidget *parent)
+TestsPanel::TestsPanel(TestService *testService, AppSettings *appSettings, OpenAt openAt,
+                       OpenText openText, QWidget *parent)
   : QWidget(parent)
   , testService_(testService)
+  , appSettings_(appSettings)
   , openAt_(std::move(openAt))
+  , openText_(std::move(openText))
 {
     runAllButton_ = new QToolButton(this);
     runAllButton_->setText(tr("Run All"));
@@ -253,12 +256,7 @@ TestsPanel::TestsPanel(TestService *testService, OpenAt openAt, QWidget *parent)
     connect(tree_, &QTreeWidget::customContextMenuRequested, this, &TestsPanel::showContextMenu);
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem *item) { jumpToSource(item->data(0, kIdRole).toString()); });
-    // Widget-scoped, so it neither collides with the data editor's F4 nor
-    // fires from another dock.
-    auto *jumpShortcut = new QShortcut(QKeySequence(Qt::Key_F4), tree_);
-    jumpShortcut->setContext(Qt::WidgetShortcut);
-    connect(jumpShortcut, &QShortcut::activated, this,
-            [this] { jumpToSource(selectedNodeId_); });
+    tree_->installEventFilter(this);
     connect(testService_, &TestService::testRunStarted, this, &TestsPanel::onTestRunStarted);
     connect(testService_, &TestService::testTreeChanged, this, &TestsPanel::onTestTreeChanged);
     connect(testService_, &TestService::testOutputAppended, this,
@@ -438,12 +436,43 @@ void TestsPanel::onFailureLinkActivated(int textPosition)
     }
 }
 
+QKeySequence TestsPanel::jumpToSourceKey() const
+{
+    return QKeySequence(appSettings_->shortcutFor(QStringLiteral("tests.jumpToSource")),
+                        QKeySequence::PortableText);
+}
+
+bool TestsPanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == tree_
+        && (event->type() == QEvent::ShortcutOverride || event->type() == QEvent::KeyPress)) {
+        const auto *key = static_cast<QKeyEvent *>(event);
+        const QKeySequence bound = jumpToSourceKey();
+        if (!bound.isEmpty() && QKeySequence(key->keyCombination()) == bound) {
+            // Claiming the override keeps a window action on the same key
+            // from taking it; the press itself then does the jump.
+            if (event->type() == QEvent::KeyPress) {
+                jumpToSource(selectedNodeId_);
+            }
+            event->accept();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
 void TestsPanel::jumpToSource(const QString &nodeId)
 {
     if (nodeId.isEmpty() || !openAt_) {
         return;
     }
-    const FfiResolvedLink source = testService_->nodeSource(nodeId);
+    const QString path = testService_->nodeSourcePath(nodeId);
+    if (path.isEmpty()) {
+        return;
+    }
+    const std::optional<QString> open = openText_ ? openText_(path) : std::nullopt;
+    const FfiResolvedLink source =
+      testService_->nodeSource(nodeId, open.value_or(QString()), open.has_value());
     if (source.found) {
         openAt_(source.path, static_cast<int>(source.line), 0);
     }
@@ -463,8 +492,8 @@ void TestsPanel::showContextMenu(const QPoint &pos)
     QMenu menu(tree_);
     menu.setToolTipsVisible(true);
     QAction *jump = menu.addAction(tr("Jump to Source"));
-    jump->setShortcut(QKeySequence(Qt::Key_F4));
-    jump->setEnabled(testService_->nodeSource(id).found);
+    jump->setShortcut(jumpToSourceKey());
+    jump->setEnabled(!testService_->nodeSourcePath(id).isEmpty());
     QAction *rerun = menu.addAction(label);
     // The framework cannot narrow a rerun to a tree node (decided in Rust):
     // show the action greyed out with the reason rather than refuse a click.
@@ -482,9 +511,10 @@ void TestsPanel::showContextMenu(const QPoint &pos)
 
 TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            ads::CDockAreaWidget *relativeTo, TestService *testService,
-                           TestsPanel::OpenAt openAt)
+                           AppSettings *appSettings, TestsPanel::OpenAt openAt,
+                           TestsPanel::OpenText openText)
 {
-    auto *panel = new TestsPanel(testService, openAt, dockManager);
+    auto *panel = new TestsPanel(testService, appSettings, openAt, std::move(openText), dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Tests"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("tests"), dock, ads::CenterDockWidgetArea, relativeTo);

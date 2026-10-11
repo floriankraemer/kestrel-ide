@@ -21,6 +21,7 @@
 #include <QAction>
 #include <QCursor>
 #include <QDesktopServices>
+#include <QDir>
 #include <QMainWindow>
 #include <QMenu>
 #include <QHash>
@@ -54,6 +55,36 @@ RunMarkerGlyph toGlyph(FfiMarkerState state)
         break;
     }
     return RunMarkerGlyph::Passed; // unreachable: NeverRun entries are not pushed
+}
+
+// Words for the counts and message `TestService::markerStatuses` returns.
+QString statusTooltip(const FfiMarkerStatus &status)
+{
+    const QString message(status.message);
+    switch (status.state) {
+    case FfiMarkerState::Running:
+        return QObject::tr("Running…");
+    case FfiMarkerState::Failed:
+        return !message.isEmpty()
+                 ? message
+                 : QObject::tr("%1 of %n tests failed", nullptr, static_cast<int>(status.total))
+                     .arg(status.failed);
+    case FfiMarkerState::Ignored:
+        return message.isEmpty() ? QObject::tr("Ignored") : QObject::tr("Ignored: %1").arg(message);
+    case FfiMarkerState::Passed:
+        return status.passed > 1
+                 ? QObject::tr("Passed (%n tests, %1 ms)", nullptr, static_cast<int>(status.passed))
+                     .arg(status.duration_ms)
+                 : QObject::tr("Passed (%1 ms)").arg(status.duration_ms);
+    case FfiMarkerState::NeverRun:
+        break;
+    }
+    return {};
+}
+
+QString comparablePath(const QString &path)
+{
+    return QDir::cleanPath(QDir::fromNativeSeparators(path));
 }
 }  // namespace
 
@@ -223,7 +254,7 @@ void EditorTabs::pushRunMarkerStatuses(CodeEditor *editor, const QString &path)
         for (const FfiMarkerStatus &status : testService_->markerStatuses(path, editor->toPlainText())) {
             if (status.state != FfiMarkerState::NeverRun) {
                 statuses.insert(static_cast<int>(status.line),
-                                RunMarkerStatus{ toGlyph(status.state), QString(status.tooltip) });
+                                RunMarkerStatus{ toGlyph(status.state), statusTooltip(status) });
             }
         }
     }
@@ -232,11 +263,24 @@ void EditorTabs::pushRunMarkerStatuses(CodeEditor *editor, const QString &path)
 
 void EditorTabs::refreshRunMarkerStatuses()
 {
-    forEachEditor([this](QPlainTextEdit *plain) {
+    // One pass over the tree names the files the run touched; every other
+    // editor (and any without test markers) is spared a parse and a walk.
+    QSet<QString> tested;
+    if (testService_ != nullptr) {
+        for (const QString &file : testService_->testedFiles()) {
+            tested.insert(comparablePath(file));
+        }
+    }
+    forEachEditor([this, &tested](QPlainTextEdit *plain) {
         auto *editor = qobject_cast<CodeEditor *>(plain);
-        if (editor != nullptr) {
-            pushRunMarkerStatuses(
-              editor, docManager_->tabPath(editor->property("tabId").toULongLong()));
+        if (editor == nullptr) {
+            return;
+        }
+        const QString path = docManager_->tabPath(editor->property("tabId").toULongLong());
+        if (editor->runnable() && tested.contains(comparablePath(path))) {
+            pushRunMarkerStatuses(editor, path);
+        } else {
+            editor->setRunMarkerStatuses({});
         }
     });
 }
@@ -365,25 +409,23 @@ void EditorTabs::showTestMarkerMenu(CodeEditor *editor, const QString &path, int
     QAction *run = menu.addAction(tr("Run '%1'").arg(name));
     QAction *debug = debugService_ != nullptr ? menu.addAction(tr("Debug '%1'").arg(name)) : nullptr;
     QAction *coverage = menu.addAction(tr("Run '%1' with Coverage").arg(name));
-    // E3: each data set of the last run, runnable on its own. An entry
-    // without an id is the "..." overflow line.
+    // E3: each data set of the last run, runnable on its own.
     QHash<QAction *, QString> runDataSet;
     QHash<QAction *, QString> debugDataSet;
-    const auto dataSets = testService_->markerDataSets(path, text, testLine);
-    if (!dataSets.empty()) {
+    const FfiDataSetChoices dataSets = testService_->markerDataSets(path, text, testLine);
+    if (!dataSets.sets.empty()) {
         menu.addSeparator();
     }
-    for (const FfiDataSet &set : dataSets) {
+    for (const FfiDataSet &set : dataSets.sets) {
         const QString id(set.id);
         const QString label(set.label);
-        if (id.isEmpty()) {
-            menu.addAction(label)->setEnabled(false);
-            continue;
-        }
         runDataSet.insert(menu.addAction(tr("Run '%1'").arg(label)), id);
         if (debugService_ != nullptr) {
             debugDataSet.insert(menu.addAction(tr("Debug '%1'").arg(label)), id);
         }
+    }
+    if (dataSets.hidden > 0) {
+        menu.addAction(tr("… (%n more)", nullptr, static_cast<int>(dataSets.hidden)))->setEnabled(false);
     }
     e2eMarkMenuActions(&menu, "run_gutter_menu_action");
     QAction *chosen = menu.exec(QCursor::pos());

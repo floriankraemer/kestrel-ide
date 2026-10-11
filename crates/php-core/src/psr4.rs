@@ -61,6 +61,28 @@ pub fn namespace_for_dir(project: &Path, dir: &Path) -> String {
     }
 }
 
+/// The project-relative file (`/`-separated) that declares `class` under a
+/// PSR-4 root, when it exists: the longest matching prefix is tried first,
+/// and every root of a prefix is a candidate (`autoload` and `autoload-dev`).
+pub fn class_file(roots: &[Psr4Root], project: &Path, class: &str) -> Option<String> {
+    let class = class.trim_start_matches('\\');
+    let mut matching: Vec<&Psr4Root> = roots
+        .iter()
+        .filter(|root| class.starts_with(root.prefix.as_str()) && !root.prefix.is_empty())
+        .collect();
+    matching.sort_by_key(|root| std::cmp::Reverse(root.prefix.len()));
+    matching.into_iter().find_map(|root| {
+        let rest = class[root.prefix.len()..].replace('\\', "/");
+        let dir = components(Path::new(&root.dir)).join("/");
+        let file = if dir.is_empty() {
+            format!("{rest}.php")
+        } else {
+            format!("{dir}/{rest}.php")
+        };
+        project.join(&file).is_file().then_some(file)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,5 +172,31 @@ mod tests {
             namespace_for_dir(dir.path(), &dir.path().join("src/Models")),
             "App\\Models"
         );
+    }
+
+    #[test]
+    fn class_file_maps_a_class_through_the_longest_existing_root() {
+        let dir = tempfile::tempdir().unwrap();
+        for file in [
+            "tests/Unit/GreeterTest.php",
+            "src/Greeter.php",
+            "src/old/Greeter.php",
+        ] {
+            let path = dir.path().join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "<?php").unwrap();
+        }
+        let found = |class: &str| class_file(&roots(), dir.path(), class);
+        assert_eq!(
+            found("Tests\\Unit\\GreeterTest").as_deref(),
+            Some("tests/Unit/GreeterTest.php")
+        );
+        assert_eq!(found("App\\Greeter").as_deref(), Some("src/Greeter.php"));
+        assert_eq!(
+            found("App\\Legacy\\Greeter").as_deref(),
+            Some("src/old/Greeter.php")
+        );
+        assert_eq!(found("Tests\\Unit\\Missing"), None);
+        assert_eq!(found("Other\\Greeter"), None);
     }
 }

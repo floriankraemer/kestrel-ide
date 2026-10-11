@@ -73,6 +73,15 @@ pub(crate) use target_form::{from_ffi_target, to_ffi_target};
 /// ever touches the `Supervisor` from two threads at once.
 type RunJob = Box<dyn FnOnce(&mut RunWorker) + Send>;
 
+/// How a `phpunit` configuration is launched once its before-launch tasks
+/// have run.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestLaunch {
+    Run,
+    Coverage,
+    Debug,
+}
+
 /// What the worker thread owns.
 struct RunWorker {
     supervisor: run_core::Supervisor,
@@ -676,7 +685,28 @@ impl ffi::RunService {
                 message: QString::from("only a test configuration can run with coverage"),
             };
         };
-        self.as_mut().launch_tests(&config, &root, true)
+        self.as_mut()
+            .launch_tests(&config, &root, TestLaunch::Coverage)
+    }
+
+    /// Debug a `phpunit` configuration: before-launch tasks first, then the
+    /// view stages it with `TestService` and starts the debug session.
+    pub fn debug_test_configuration(
+        mut self: Pin<&mut Self>,
+        config_id: &QString,
+    ) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let id = config_id.to_string();
+        let Some(config) = effective_run_configs(&root)
+            .into_iter()
+            .find(|c| c.id == id && c.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND))
+        else {
+            return unknown_run_config("unknown PHPUnit run configuration");
+        };
+        self.as_mut()
+            .launch_tests(&config, &root, TestLaunch::Debug)
     }
 
     pub fn run_with_env(
@@ -801,7 +831,7 @@ impl ffi::RunService {
         context: &run_core::MacroContext,
     ) -> ffi::FfiResult {
         if config.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND) {
-            return self.launch_tests(&config, root, false);
+            return self.launch_tests(&config, root, TestLaunch::Run);
         }
         let config = run_core::php_run::inherit_container_target(
             &config,
@@ -877,7 +907,7 @@ impl ffi::RunService {
         self: Pin<&mut Self>,
         config: &run_core::RunConfig,
         root: &Path,
-        with_coverage: bool,
+        mode: TestLaunch,
     ) -> ffi::FfiResult {
         let (tasks, configs) =
             match before_launch::plan(config, root, &effective_container_settings()) {
@@ -897,7 +927,8 @@ impl ffi::RunService {
                 let _ = requester.queue(move |mut service: Pin<&mut ffi::RunService>| {
                     service.as_mut().test_configuration_requested(
                         QString::from(config_id.as_str()),
-                        with_coverage,
+                        mode == TestLaunch::Coverage,
+                        mode == TestLaunch::Debug,
                     );
                 });
             },

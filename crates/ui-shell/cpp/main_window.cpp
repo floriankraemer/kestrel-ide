@@ -620,7 +620,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
                                        vcsService,
                                        fileHistoryPanel,
                                        [editorTabs](const QString &path) { editorTabs->showDiffForPath(path); },
-                                       [editorTabs](const QString &path, const QString &revision) { editorTabs->openCompareRevisions(path, revision, revision, QString(), QObject::tr("Working Tree")); }});
+                                       [editorTabs](const QString &path, const QString &revision) { editorTabs->openCompareRevisions(path, revision, revision, QString(), QObject::tr("Working Tree")); }, runService, debugService, testService});
 
     return CentralWidgets{editorTabs,       diagnosticsService, dockManager,      docks,
                            treeView,         searchResultsPanel, structurePanel,

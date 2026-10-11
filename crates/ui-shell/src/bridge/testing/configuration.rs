@@ -148,7 +148,7 @@ pub(crate) fn run_for_before_launch(config: run_core::RunConfig) -> Result<(), S
 
 /// The project's stored configuration with `config`'s id, if any: an editor
 /// run reuses the temporary configuration the dialog may have edited.
-fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
+pub(super) fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
     app_config::project_settings::load(root)
         .ok()
         .and_then(|settings| settings.run_configs)

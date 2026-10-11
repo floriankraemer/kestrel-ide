@@ -7319,6 +7319,19 @@ mod ffi {
             config_id: &QString,
         ) -> FfiResult;
 
+        /// What the project tree's Run entries call `path`, empty when it
+        /// holds nothing runnable (E6).
+        #[qinvokable]
+        #[cxx_name = "treeRunName"]
+        fn tree_run_name(self: &TestService, path: &QString, is_dir: bool) -> QString;
+
+        /// Store the temporary configuration `path` stands for and return
+        /// its id (empty when none); the view then runs it as any
+        /// configuration.
+        #[qinvokable]
+        #[cxx_name = "rememberTreeRun"]
+        fn remember_tree_run(self: Pin<&mut TestService>, path: &QString, is_dir: bool) -> QString;
+
         /// A run created (or refreshed) a temporary `phpunit` configuration
         /// `config_id`: the configuration list is stale, and the toolbar
         /// selects it (as PhpStorm does).
@@ -10257,7 +10270,14 @@ mod ffi {
             self: Pin<&mut RunService>,
             config_id: QString,
             with_coverage: bool,
+            debug: bool,
         );
+
+        /// Debug the `phpunit` configuration `config_id` once its
+        /// before-launch tasks have run, as Run does (#420).
+        #[qinvokable]
+        #[cxx_name = "debugTestConfiguration"]
+        fn debug_test_configuration(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
 
         /// Run `config_id` with extra environment variables (`env_json` is
         /// `[[key, value], ...]`) — how a PHP debug launch carries the Xdebug

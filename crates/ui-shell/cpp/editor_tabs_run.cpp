@@ -138,18 +138,25 @@ void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConso
             QMessageBox::warning(window, title, result.message);
         }
     };
+    // Run, Run with Coverage and Debug all reach here once the configuration's
+    // before-launch tasks have run (#420).
     QObject::connect(runService, &RunService::testConfigurationRequested, testService,
-                      [testService, report](const QString &configId, bool withCoverage) {
-                          report(QObject::tr("Run"),
-                                 testService->runConfiguration(configId, withCoverage));
-                      });
-    QObject::connect(debugService, &DebugService::testConfigurationDebugRequested, testService,
-                      [testService, debugService, report](const QString &configId) {
+                      [testService, debugService, report](const QString &configId,
+                                                          bool withCoverage, bool debug) {
+                          if (!debug) {
+                              report(QObject::tr("Run"),
+                                     testService->runConfiguration(configId, withCoverage));
+                              return;
+                          }
                           FfiResult result = testService->prepareDebugConfiguration(configId);
                           if (result.code == 0) {
                               result = debugService->debugPhpTests();
                           }
                           report(QObject::tr("Debug"), result);
+                      });
+    QObject::connect(debugService, &DebugService::testConfigurationDebugRequested, runService,
+                      [runService, report](const QString &configId) {
+                          report(QObject::tr("Debug"), runService->debugTestConfiguration(configId));
                       });
     // An editor run just created a temporary configuration: the list gains
     // it, then the toolbar selects it, so Rerun and the combo name what ran.

@@ -34,6 +34,7 @@ use crate::bridge::registry::SharedDiagnostics;
 mod configuration;
 pub(crate) use configuration::{preview as configuration_preview, run_for_before_launch};
 mod gutter;
+mod tree;
 
 /// This source's key in the shared store (ADR-0046): distinct from an
 /// analyzer's or a build's, so a test failure's rows for a file never

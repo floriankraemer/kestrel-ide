@@ -8,6 +8,9 @@ class AiChat;
 class ProjectTreeModel;
 class SearchModel;
 class VcsService;
+class RunService;
+class DebugService;
+class TestService;
 
 class QAction;
 class QMainWindow;
@@ -66,6 +69,11 @@ struct ProjectTreeActions
     // tab (`EditorTabs::openCompareRevisions`). Same callback reason as
     // `showDiffAgainstHead`.
     std::function<void(const QString &, const QString &)> compareWithRevision;
+    // E6: "Run / Debug / Run with Coverage 'Tests in …'". Null when the app
+    // has no such service; the entries are then absent.
+    RunService *runService;
+    DebugService *debugService;
+    TestService *testService;
 };
 
 // The tree view plus the toolbar's locate action, which the active-tab-

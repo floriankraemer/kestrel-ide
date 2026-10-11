@@ -79,6 +79,6 @@ A row's status and commit hash are updated in the commit that finishes it.
 | E3 — gutter test status | done | f4c42b8 |
 | E4 — PHPUnit run configuration kind | done | 9ffe63b |
 | E5 — `phpunit.xml` suites and groups | done | ad567a8 |
-| E6 — project tree test entries | open | |
+| E6 — project tree test entries | done | (see git log) |
 | E7 — Go to Test / Test Subject | open | |
 | E8 — acceptance (Linux + Windows/WSL) | open | |

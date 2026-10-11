@@ -33,9 +33,11 @@ pub const PHPCS_CONFIG_CANDIDATES: &[&str] = &[
 
 /// PHPUnit's own automatic config-file discovery order (no `-c` given,
 /// PHPUnit's `Configuration::locateConfigurationFile`): the bare filename
-/// before its `.dist` counterpart, since a tracked default should not
-/// shadow a developer's own untracked override.
-pub const PHPUNIT_CONFIG_CANDIDATES: &[&str] = &["phpunit.xml", "phpunit.xml.dist"];
+/// before its `.dist` counterparts, since a tracked default should not
+/// shadow a developer's own untracked override. `phpunit.dist.xml` is the
+/// PHPUnit 10+ spelling of `phpunit.xml.dist`.
+pub const PHPUNIT_CONFIG_CANDIDATES: &[&str] =
+    &["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"];
 
 /// Does `program` need to be run through a PHP binary rather than executed
 /// directly?
@@ -213,7 +215,7 @@ mod tests {
     fn phpunit_config_candidates_match_its_own_discovery_order() {
         assert_eq!(
             PHPUNIT_CONFIG_CANDIDATES,
-            &["phpunit.xml", "phpunit.xml.dist"]
+            &["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"]
         );
     }
 }

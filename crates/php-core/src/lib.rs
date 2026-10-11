@@ -14,6 +14,7 @@ pub mod level;
 pub mod licence;
 pub mod lsp;
 pub mod phpunit_run;
+pub mod phpunit_xml;
 pub mod probe;
 pub mod psr4;
 pub mod test_status;

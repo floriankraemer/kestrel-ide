@@ -292,6 +292,30 @@ mod tests {
     }
 
     #[test]
+    fn a_configuration_scope_with_a_test_suite_passes_testsuite_and_configuration() {
+        let plan = plan_of(&PhpUnitRunSetting {
+            testsuite: "core-unit".into(),
+            configuration: "phpunit.dist.xml".into(),
+            groups: vec!["api".into()],
+            ..setting("config")
+        })
+        .unwrap();
+        let args = test_core::scope::scope_args(
+            &["--teamcity".to_string()],
+            test_core::filter::FilterDialect::PhpUnitRegex,
+            Some("--filter"),
+            None,
+            &plan.scope,
+            &plan.options,
+        )
+        .unwrap();
+        let line = args.join(" ");
+        assert!(line.contains("--testsuite core-unit"), "{line}");
+        assert!(line.contains("--configuration phpunit.dist.xml"), "{line}");
+        assert!(line.contains("--group api"), "{line}");
+    }
+
+    #[test]
     fn every_scope_names_the_fields_it_needs() {
         let cases = [
             ("directory", "path"),

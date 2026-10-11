@@ -59,9 +59,18 @@ Editing a temporary configuration in the dialog saves it, as for every kind.
 **A `phpunit` configuration as a before-launch task** runs to completion on the task's worker thread through the same plan and `test_core::run_on_env`, and fails the launch on a non-zero exit.
 Its results do not reach the Tests dock, because `TestService` lives on the Qt thread the task cannot wait on.
 
+**The configuration editor offers what `phpunit.xml` declares (E5).**
+`php_core::phpunit_xml::parse` reads the test suites (`<directory suffix>`, `<file>`, `<exclude>`), `<groups>` include/exclude and `bootstrap` of a PHPUnit 9 to 12 configuration over `quick-xml`.
+`discover` finds the file the way PHPUnit does (`phpunit.xml`, `phpunit.dist.xml`, `phpunit.xml.dist` from `analysis-core`'s single list, or the configuration field's path) and `model` joins it with a bounded scan (2000 files, 512 KiB each) of the suites' test files for `#[Group('x')]` attributes and `@group x` tags.
+`RunConfigEditor::requestPhpUnitModel` runs that on a worker thread and answers through `phpUnitModelReady`; the page shows the test suite as an editable combo and the groups as checkable lists, and asks again when the configuration file field changes.
+A glob in a suite path is not expanded.
+The "defined in the configuration file" scope with a suite is `--testsuite <name>`, unit-tested end to end through `plan` and `scope_args`.
+
+**An editor run selects its temporary configuration (#415).**
+`TestService::configurationRemembered(configId)` makes the view refresh the configuration list and select that entry in the toolbar combo, so the combo, Rerun and `run.rerun` name what just ran.
+
 ## Consequences
 
 - Every way of running tests from the editor now has one code path and one persisted shape, which E5 (suites and groups from `phpunit.xml`) and E6 (project tree entries) add scopes to without a new launch path.
 - A framework that cannot express a scope fails with a sentence instead of running the wrong tests.
-- The configuration dialog has plain text fields for the test suite and groups until E5 offers pickers.
-- The toolbar combo does not yet select the temporary configuration an editor run creates.
+- A group nobody declared in a scanned file can still be typed into the group picker; a suite name can be typed into the combo.

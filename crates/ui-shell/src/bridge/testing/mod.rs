@@ -554,15 +554,19 @@ impl ffi::TestService {
         let handle = test_core::TestRunHandle::new();
         self.runs.borrow_mut().insert(run_id, handle.clone());
 
-        let remembered = matches!(
-            &selection,
+        let remembered = match &selection {
             Some(RerunSelection::Configuration(config))
-                if config.temporary && configuration::remember(config, &root)
-        );
+                if config.temporary && configuration::remember(config, &root) =>
+            {
+                Some(config.id.clone())
+            }
+            _ => None,
+        };
         let qt_thread = self.as_mut().qt_thread();
         self.as_mut().test_run_started();
-        if remembered {
-            self.as_mut().configuration_remembered();
+        if let Some(config_id) = remembered {
+            self.as_mut()
+                .configuration_remembered(QString::from(config_id.as_str()));
         }
 
         std::thread::spawn(move || {

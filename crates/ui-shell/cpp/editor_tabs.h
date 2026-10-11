@@ -28,6 +28,7 @@ class QWidget;
 
 namespace ui_shell {
 
+class RunConsolePanel;
 class CodeEditor;
 class DiffPanel;
 class DiffViewPage;
@@ -57,9 +58,9 @@ void wireTestGutter(TestService *testService, DebugService *debugService, Editor
 // PHPUnit run configurations (ADR-0073): Run, Run with Coverage and Debug of a
 // `phpunit` configuration reach `TestService` from `RunService` and
 // `DebugService`, and a temporary configuration an editor run creates
-// refreshes the configuration list.
-void wirePhpUnitConfigurations(RunService *runService, DebugService *debugService,
-                               TestService *testService, QWidget *window);
+// refreshes the list and becomes the toolbar's selection.
+void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConsolePanel,
+                               DebugService *debugService, TestService *testService, QWidget *window);
 // ADR-0046: builds the one DiagnosticsService, gives EditorTabs the copy its
 // squiggles read, and refreshes them whenever any source's rows in the
 // shared store changed (editor_tabs_lsp.cpp). `analysisService` is the PHP

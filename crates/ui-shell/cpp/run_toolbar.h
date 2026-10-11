@@ -59,6 +59,9 @@ public:
     // selectConfiguration`'s target.
     void focusConfigSelector();
 
+    // Makes `configId` the combo's selection; unknown ids are ignored.
+    void selectConfiguration(const QString &configId);
+
     RunService *runService() const { return runService_; }
 
 private:

@@ -290,6 +290,14 @@ void RunToolbar::refreshConfigurations()
               .arg(configCombo_->count()));
 }
 
+void RunToolbar::selectConfiguration(const QString &configId)
+{
+    const int index = configCombo_->findData(configId);
+    if (index >= 0) {
+        configCombo_->setCurrentIndex(index);
+    }
+}
+
 void RunToolbar::refreshButtons()
 {
     const QString configId = selectedConfigId();

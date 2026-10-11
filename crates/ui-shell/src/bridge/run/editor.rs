@@ -174,6 +174,10 @@ impl ffi::RunConfigEditor {
         )
     }
 
+    pub fn request_php_unit_model(self: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
+        super::phpunit_form::request_model(self, configuration);
+    }
+
     pub fn project_relative_path(&self, path: &QString) -> QString {
         let relative = current_project_root().and_then(|root| {
             test_core::filter::relative_to_root(

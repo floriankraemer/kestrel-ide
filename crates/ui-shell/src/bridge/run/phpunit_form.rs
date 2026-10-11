@@ -2,6 +2,9 @@
 //! `phpunit` kind's own sub-table (PHPUnit editor runs plan, E4), the same
 //! shape as `php_server_form`.
 
+use std::pin::Pin;
+
+use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
 use app_config::php::{PhpUnitRunSetting, PHPUNIT_KIND};
@@ -112,4 +115,33 @@ pub(super) fn preview(config: &run_core::RunConfig) -> Option<String> {
         }
         Err(message) => message,
     })
+}
+
+/// Read the PHPUnit configuration `configuration` names (blank: the
+/// project's own) and scan its suites for groups on a worker thread,
+/// answering through `phpUnitModelReady`. The scan walks the filesystem, so
+/// it never runs on the Qt thread.
+pub(super) fn request_model(editor: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
+    let configuration = configuration.to_string();
+    let root = super::current_project_root();
+    let qt_thread = editor.qt_thread();
+    std::thread::spawn(move || {
+        let model = root.map(|root| {
+            let context = run_core::MacroContext::for_project(&root);
+            let explicit = run_core::macros::expand(&configuration, &context);
+            php_core::phpunit_xml::model(&root, &explicit)
+        });
+        let model = model.unwrap_or_default();
+        let lines = |list: &[String]| QString::from(list.join("\n").as_str());
+        let answer = ffi::FfiPhpUnitModel {
+            configuration: QString::from(configuration.as_str()),
+            file: QString::from(model.file.unwrap_or_default().as_str()),
+            suites: lines(&model.suites),
+            groups: lines(&model.groups),
+            problem: QString::from(model.problem.unwrap_or_default().as_str()),
+        };
+        let _ = qt_thread.queue(move |mut editor: Pin<&mut ffi::RunConfigEditor>| {
+            editor.as_mut().php_unit_model_ready(answer);
+        });
+    });
 }

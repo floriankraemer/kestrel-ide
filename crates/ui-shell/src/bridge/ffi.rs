@@ -1589,6 +1589,21 @@ mod ffi {
         interpreter: QString,
     }
 
+    /// What a PHPUnit configuration file offers the `phpunit` run
+    /// configuration's pickers (PHPUnit editor runs plan, E5). `suites` and
+    /// `groups` are `\n`-separated (no bare `Vec<QString>` on the seam);
+    /// `configuration` echoes the request so a stale answer can be dropped.
+    #[derive(Default)]
+    struct FfiPhpUnitModel {
+        configuration: QString,
+        /// The file read, project-relative; empty when there is none.
+        file: QString,
+        suites: QString,
+        groups: QString,
+        /// Why the file could not be read; empty when it could.
+        problem: QString,
+    }
+
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
     /// `dap_core::StackFrame`. `path` is empty for a frame the adapter knows
     /// only by address — a runtime-internal frame — which the view shows
@@ -7291,11 +7306,12 @@ mod ffi {
             config_id: &QString,
         ) -> FfiResult;
 
-        /// A run created (or refreshed) a temporary `phpunit` configuration:
-        /// the configuration list is stale.
+        /// A run created (or refreshed) a temporary `phpunit` configuration
+        /// `config_id`: the configuration list is stale, and the toolbar
+        /// selects it (as PhpStorm does).
         #[qsignal]
         #[cxx_name = "configurationRemembered"]
-        fn configuration_remembered(self: Pin<&mut TestService>);
+        fn configuration_remembered(self: Pin<&mut TestService>, config_id: QString);
 
         /// Run the whole project's tests collecting coverage (T5).
         #[qinvokable]
@@ -11097,6 +11113,18 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "projectRelativePath"]
         fn project_relative_path(self: &RunConfigEditor, path: &QString) -> QString;
+
+        /// Read the PHPUnit configuration `configuration` names (blank: the
+        /// project's own) and its groups on a worker thread; answers through
+        /// `phpUnitModelReady`.
+        #[qinvokable]
+        #[cxx_name = "requestPhpUnitModel"]
+        fn request_php_unit_model(self: Pin<&mut RunConfigEditor>, configuration: &QString);
+
+        /// `requestPhpUnitModel`'s answer.
+        #[qsignal]
+        #[cxx_name = "phpUnitModelReady"]
+        fn php_unit_model_ready(self: Pin<&mut RunConfigEditor>, model: FfiPhpUnitModel);
 
         /// The open project's root, where the pickers start; empty without one.
         #[qinvokable]

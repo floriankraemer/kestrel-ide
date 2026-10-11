@@ -16,6 +16,7 @@
 #include "code_editor.h"
 #include "e2e_mark.h"
 #include "run_config_dialog.h"
+#include "run_console_panel.h"
 
 #include <algorithm>
 #include <QAction>
@@ -124,8 +125,9 @@ void wireTestGutter(TestService *testService, DebugService *debugService, Editor
                       [testService](const QString &envJson) { testService->runPendingWithEnv(envJson); });
 }
 
-void wirePhpUnitConfigurations(RunService *runService, DebugService *debugService,
-                               TestService *testService, QWidget *window)
+void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConsolePanel,
+                               DebugService *debugService, TestService *testService,
+                               QWidget *window)
 {
     const auto report = [window](const QString &title, const FfiResult &result) {
         if (result.code != 0) {
@@ -145,9 +147,13 @@ void wirePhpUnitConfigurations(RunService *runService, DebugService *debugServic
                           }
                           report(QObject::tr("Debug"), result);
                       });
-    // An editor run just created a temporary configuration.
-    QObject::connect(testService, &TestService::configurationRemembered, runService,
-                      [runService]() { runService->detectConfigurations(); });
+    // An editor run just created a temporary configuration: the list gains
+    // it, then the toolbar selects it, so Rerun and the combo name what ran.
+    QObject::connect(testService, &TestService::configurationRemembered, runConsolePanel,
+                      [runService, runConsolePanel](const QString &configId) {
+                          runService->detectConfigurations();
+                          runConsolePanel->selectConfiguration(configId);
+                      });
 }
 
 void EditorTabs::setRunService(RunService *runService)

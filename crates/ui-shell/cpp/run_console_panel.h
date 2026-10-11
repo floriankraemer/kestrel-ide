@@ -59,6 +59,8 @@ public:
     void stopSelected();
     void killSelected();
     void rerunSelected();
+    // Makes `configId` the toolbar combo's selection.
+    void selectConfiguration(const QString &configId);
     // Run the selected test configuration collecting coverage.
     void runSelectedWithCoverage();
     // D3-8: Debug the selected configuration, forwarded like the others so

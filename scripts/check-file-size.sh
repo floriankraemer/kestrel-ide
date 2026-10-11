@@ -98,7 +98,10 @@ baseline() {
 	# action, so it grows with the actions.
 	# Raised from 1516 by 6 lines for the PHPUnit run configuration kind (E4):
 	# `run.runWithCoverage`'s ActionDef. No split planned.
-	crates/app-config/src/keymap.rs) echo 1522 ;;
+	# Raised from 1522 by 16 lines for `navigate.goToTest`'s ActionDef (E7)
+	# and the context-aware `shortcut_for`/`conflicts` (ADR-0074); the
+	# contexts themselves and their tests live in keymap/context.rs.
+	crates/app-config/src/keymap.rs) echo 1538 ;;
 	# 1442 -> 2052 across the C1-C12 csharp-ls chain: registerCapability
 	# (C4), didChangeWatchedFiles (C5), workspace/configuration (C6),
 	# completionItem/resolve (C7), semantic tokens (C9), code lens (C10)
@@ -201,7 +204,7 @@ baseline() {
 	# Raised from 1241 by 12 lines for the hover card's menu callbacks
 	# (persist "Show on Mouse Hover", open Settings on Editor) and the
 	# startup apply of the saved hover options (H6).
-	crates/ui-shell/cpp/main_window.cpp) echo 1244 ;;
+	crates/ui-shell/cpp/main_window.cpp) echo 1221 ;;
 	# Raised from 1446 by 91 lines for issue #164's regression test: a
 	# second-commit git fixture, opening File History via Find Action, and
 	# driving the fixed context-menu interaction end to end. Ratcheted down

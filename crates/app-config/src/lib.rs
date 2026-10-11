@@ -87,7 +87,7 @@ pub use containers::{
 pub use editing::EditingSettings;
 pub use file_associations::{FileAssociationRule, FileAssociationSettings};
 pub use hover::{HoverScope, HoverSettings};
-pub use keymap::{action, ActionDef, Binding, Keymap, ACTIONS};
+pub use keymap::{action, ActionDef, Binding, Keymap, ShortcutContext, ACTIONS};
 pub use language_server::LanguageServerSetting;
 pub use launch_settings::{BeforeLaunchSetting, DebugAdapterSetting, RunConfigSetting};
 pub use live_template::LiveTemplateSetting;

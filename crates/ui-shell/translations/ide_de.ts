@@ -3105,6 +3105,42 @@
         <source>More</source>
         <translation>Mehr</translation>
     </message>
+    <message>
+        <source>Test</source>
+        <translation>Test</translation>
+    </message>
+    <message>
+        <source>Test Subject</source>
+        <translation>Testsubjekt</translation>
+    </message>
+    <message>
+        <source>Choose Test Subject for %1</source>
+        <translation>Testsubjekt für %1 auswählen</translation>
+    </message>
+    <message>
+        <source>Choose Test for %1</source>
+        <translation>Test für %1 auswählen</translation>
+    </message>
+    <message>
+        <source>Open a PHP file to go to its test.</source>
+        <translation>Öffnen Sie eine PHP-Datei, um zu ihrem Test zu springen.</translation>
+    </message>
+    <message>
+        <source>Go to Test works in the PHP files of an open project.</source>
+        <translation>Zum Test springen funktioniert in den PHP-Dateien eines geöffneten Projekts.</translation>
+    </message>
+    <message>
+        <source>No test subject found for %1.</source>
+        <translation>Kein Testsubjekt für %1 gefunden.</translation>
+    </message>
+    <message>
+        <source>No test found for %1.</source>
+        <translation>Kein Test für %1 gefunden.</translation>
+    </message>
+    <message>
+        <source>Go To</source>
+        <translation>Springen zu</translation>
+    </message>
 </context>
 <context>
     <name>RefactorController</name>

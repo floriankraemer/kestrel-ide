@@ -17,7 +17,7 @@ use crate::bridge::ffi;
 /// Files whose parsed markers the gutter keeps.
 const MAX_CACHED_FILES: usize = 64;
 
-fn is_php_file(path: &str) -> bool {
+pub(super) fn is_php_file(path: &str) -> bool {
     syntax_core::language_for_path(std::path::Path::new(path)).id() == "php"
 }
 

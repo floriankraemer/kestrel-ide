@@ -80,9 +80,9 @@ private:
     void report(const FfiResult &result);
     void updateToolbarEnablement();
 
-    // The tree's keys: `tests.jumpToSource` is rebindable and handled here,
-    // not as a shortcut, so it cannot be ambiguous with a window action
-    // bound to the same key (F4 is `database.goToReferencedRow`'s).
+    // The tree's keys: `tests.jumpToSource` (F4, the Tests tree context of
+    // ADR-0074) is rebindable and handled here, not as a shortcut, so it
+    // cannot be ambiguous with any other action bound to the same key.
     bool eventFilter(QObject *watched, QEvent *event) override;
     QKeySequence jumpToSourceKey() const;
 

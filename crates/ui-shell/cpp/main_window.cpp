@@ -1000,31 +1000,8 @@ void buildMainWindow(AppSettings *appSettings,
 
     refactorer->buildCodeActions(refactorMenu, appSettings, *actions);
 
-    // The same gestures on the editor's right-click menu. The actions are
-    // looked up by id rather than captured, so this does not depend on which
-    // menus have been built yet — and because they are the *same* QActions,
-    // their shortcuts show here and a rebinding in Settings > Keymap reaches
-    // both places at once.
-    editorTabs->setContextMenuCallback([actions](QMenu *menu) {
-        const auto append = [menu, actions](const QString &id) {
-            if (QAction *action = actions->value(id)) {
-                menu->addAction(action);
-            }
-        };
-        menu->addSeparator();
-        append(QStringLiteral("navigate.goToDeclaration"));
-        append(QStringLiteral("navigate.findUsages"));
-        append(QStringLiteral("navigate.showCallHierarchy"));
-        append(QStringLiteral("navigate.showTypeHierarchy"));
-        menu->addSeparator();
-        append(QStringLiteral("refactor.rename"));
-        append(QStringLiteral("refactor.extractMethod"));
-        append(QStringLiteral("refactor.extractClass"));
-        append(QStringLiteral("refactor.refactorThis"));
-        menu->addSeparator();
-        append(QStringLiteral("ai.addSelection"));
-        append(QStringLiteral("ai.addSelectionNewChat"));
-    });
+    // The same gestures on the editor's right-click menu (navigate_menu.cpp).
+    wireEditorContextMenu(editorTabs, actions, testService);
 
     QMenu *viewMenu = window->menuBar()->addMenu(QObject::tr("&View"));
     // Each entry's rect, the same convention `vcs_menu.cpp` uses for its menu.
@@ -1102,7 +1079,7 @@ void buildMainWindow(AppSettings *appSettings,
                     appSettings, *actions, central.docks, viewMenu);
 
     buildNavigateMenu(window, languageService, searchModel, editorTabs, appSettings, *actions,
-                       central.docks, central.findUsagesPanel, central.hierarchyPanel);
+                       central.docks, central.findUsagesPanel, central.hierarchyPanel, testService);
 
     buildAiMenu(window, aiChat, editorTabs, appSettings, *actions, central.docks,
                 central.aiChatPanel);

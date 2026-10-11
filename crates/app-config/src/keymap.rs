@@ -11,6 +11,9 @@ use std::collections::HashMap;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
+mod context;
+pub use context::ShortcutContext;
+
 /// One user-triggerable command: a stable id (the persisted key), the menu
 /// label the settings UI shows, the menu it lives under, and the shortcut it
 /// has when the user hasn't rebound it.
@@ -535,6 +538,14 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Navigate",
         default_shortcut: "Ctrl+Alt+U",
     },
+    // E7: PhpStorm's Navigate > Test / Test Subject. Editor-scoped, so it
+    // shares Ctrl+Shift+T with the terminal's New Terminal Tab (ADR-0074).
+    ActionDef {
+        id: "navigate.goToTest",
+        label: "Go to Test / Test Subject",
+        category: "Navigate",
+        default_shortcut: "Ctrl+Shift+T",
+    },
     // C11-followup: call/type hierarchy dock. JetBrains' own defaults —
     // Ctrl+Alt+H for the call hierarchy, Ctrl+H for the type hierarchy.
     ActionDef {
@@ -906,14 +917,13 @@ pub const ACTIONS: &[ActionDef] = &[
         category: "Run",
         default_shortcut: "",
     },
-    // F4 is `database.goToReferencedRow`'s and a window shortcut: bound twice
-    // it fires neither, so the Tests dock's Jump to Source ships unbound and
-    // is handled by the tree itself once the user binds it.
+    // JetBrains' F4, handled by the tree itself: scoped to the Tests tree, it
+    // shares the key with the data grid's Go to Referenced Row (ADR-0074).
     ActionDef {
         id: "tests.jumpToSource",
         label: "Jump to Source (Tests)",
         category: "Run",
-        default_shortcut: "",
+        default_shortcut: "F4",
     },
     ActionDef {
         id: "run.stop",
@@ -1003,9 +1013,9 @@ pub const ACTIONS: &[ActionDef] = &[
         label: "Submit",
         category: "Database",
         // The plan's own suggestion, `Ctrl+Return`, is already
-        // `database.run`'s default and this keymap has no per-widget-focus
-        // scoping (`Keymap::conflicts` checks every action globally) — this
-        // codebase's own free slot for the same "run/submit" gesture.
+        // `database.run`'s default, and the grid registers this one
+        // window-wide (a global context, ADR-0074) — this codebase's own free
+        // slot for the same "run/submit" gesture.
         default_shortcut: "Ctrl+Alt+Return",
     },
     ActionDef {
@@ -1044,6 +1054,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     // F4.3/F4c: the current cell's forward FK navigation — same gesture
     // most IDEs bind "go to declaration/reference" family actions to.
+    // Scoped to the grid, so the Tests tree's F4 does not clash (ADR-0074).
     ActionDef {
         id: "database.goToReferencedRow",
         label: "Go to Referenced Row",
@@ -1141,16 +1152,20 @@ impl Keymap {
 
     /// The shortcut `id` currently responds to: the user's override if it has
     /// one, otherwise the shipped default. Empty means unbound — either
-    /// shipped that way or deliberately cleared. A default that another
-    /// action's override holds is left unbound.
+    /// shipped that way or deliberately cleared. A default that the override
+    /// of an action in an overlapping context holds is left unbound.
     pub fn shortcut_for(&self, id: &str) -> &str {
         if let Some(over) = self.overrides.get(id) {
             return over;
         }
+        let taken = |own: &ActionDef| {
+            self.overrides.iter().any(|(other, over)| {
+                over == own.default_shortcut && action(other).is_some_and(|o| own.overlaps(o))
+            })
+        };
         action(id)
-            .map(|a| a.default_shortcut)
-            .filter(|default| !self.overrides.values().any(|over| over == default))
-            .unwrap_or("")
+            .filter(|own| !taken(own))
+            .map_or("", |own| own.default_shortcut)
     }
 
     /// Whether `id` still has its shipped default shortcut. An override that
@@ -1163,15 +1178,16 @@ impl Keymap {
     }
 
     /// The actions that would lose their binding if `shortcut` were assigned
-    /// to `id`. Unbinding (an empty `shortcut`) never conflicts, and an action
-    /// never conflicts with itself.
+    /// to `id`: those holding it in a context that overlaps `id`'s (ADR-0074).
+    /// Unbinding (an empty `shortcut`) never conflicts, an action never
+    /// conflicts with itself, and an unknown id conflicts with nothing.
     pub fn conflicts(&self, id: &str, shortcut: &str) -> Vec<&'static ActionDef> {
-        if shortcut.is_empty() {
+        let Some(own) = action(id).filter(|_| !shortcut.is_empty()) else {
             return Vec::new();
-        }
+        };
         ACTIONS
             .iter()
-            .filter(|a| a.id != id && self.shortcut_for(a.id) == shortcut)
+            .filter(|a| a.id != id && own.overlaps(a) && self.shortcut_for(a.id) == shortcut)
             .collect()
     }
 
@@ -1310,7 +1326,7 @@ mod tests {
     #[test]
     fn shipped_defaults_do_not_conflict_with_each_other() {
         // Any collision here would mean the app ships with two actions on one
-        // shortcut, which Qt resolves ambiguously.
+        // shortcut in overlapping contexts, which Qt resolves ambiguously.
         let map = keymap();
         for a in ACTIONS {
             assert!(

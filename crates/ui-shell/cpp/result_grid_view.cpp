@@ -249,8 +249,11 @@ ResultGridView::ResultGridView(ConsoleService *consoleService, ResultProvider *p
                   [this]() { cloneSelectedRow(); });
     windowShortcut(this, appSettings, QStringLiteral("database.previewDml"),
                   [this]() { previewDml(); });
+    // Grid-scoped (ADR-0074): it follows the current cell, and the Tests
+    // tree's Jump to Source shares its F4.
     windowShortcut(this, appSettings, QStringLiteral("database.goToReferencedRow"),
-                  [this]() { goToReferencedRow(); });
+                   [this]() { goToReferencedRow(); })
+      ->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     windowShortcut(this, appSettings, QStringLiteral("database.showReferencingRows"),
                   [this]() { showReferencingRows(); });
     windowShortcut(this, appSettings, QStringLiteral("database.viewTable"),

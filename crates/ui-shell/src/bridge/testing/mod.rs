@@ -781,6 +781,10 @@ impl ffi::TestService {
         // Diagnostics are recomputed as events arrive (`republish`), each
         // failure under the framework of the run that reported it.
         republish(&self);
+        if whole_run {
+            // The dock drops the old rows now, not at the first event.
+            self.as_mut().test_tree_changed();
+        }
         // Surefire's `-Dtest=` and Gradle's `--tests` each need their own
         // pattern shape built from the node being rerun, not a PHPUnit-
         // shaped one that would compile fine and match nothing.
@@ -846,6 +850,9 @@ impl ffi::TestService {
                 // Whatever never reported (Stop, a fatal error, a killed
                 // container) must not stay "running" on a gutter icon.
                 service.tree.borrow_mut().finish_run();
+                if start_failure.is_some() {
+                    service.tree.borrow_mut().discard_after_failed_start();
+                }
                 service.record_history(&run_root);
                 service.as_mut().test_tree_changed();
                 if let Some(coverage) = coverage {

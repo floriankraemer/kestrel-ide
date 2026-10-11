@@ -546,6 +546,13 @@ fn e2e_phpunit_saved_configurations() {
         }),
         "#456: php's stderr is not in the Tests dock's output",
     );
+    // #468: the earlier run's rows are not presented as this run's result.
+    findings.check(
+        ide.events_since_of(mark, "test_tree_changed")
+            .last()
+            .is_some_and(|e| e["nodes"] == 0),
+        "#468: a run that never started left the previous run's rows in the Tests dock",
+    );
 
     // AC4.10: Debug and Run with Coverage on a saved configuration.
     select_config(&ide, "E8 method");

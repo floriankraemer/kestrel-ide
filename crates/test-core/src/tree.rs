@@ -164,6 +164,15 @@ impl TestTree {
         self.roots.clear();
     }
 
+    /// A run ended without ever starting its runner (#468). It reported
+    /// nothing, so the tree still holds only earlier runs' results, which
+    /// would read as this run's; drop them. A scoped run merges into the old
+    /// tree, so the rows outside its scope go too: they are as stale as the
+    /// ones inside it.
+    pub fn discard_after_failed_start(&mut self) {
+        self.reset();
+    }
+
     /// The events applied from now on come from `run`, executed at `place`.
     /// Places of runs no node is from any more are dropped.
     pub fn begin_run(&mut self, run: u64, place: RunPlace) {
@@ -565,6 +574,24 @@ mod tests {
 
     fn id(s: &str) -> TestId {
         TestId(s.to_string())
+    }
+
+    #[test]
+    fn a_failed_start_drops_the_results_of_earlier_runs() {
+        let mut tree = TestTree::new();
+        tree.apply(TeamCityEvent::TestStarted {
+            parent: None,
+            name: "testOne".into(),
+            location: None,
+        });
+        tree.apply(TeamCityEvent::TestFinished {
+            parent: None,
+            name: "testOne".into(),
+            duration_ms: Some(1),
+        });
+        tree.discard_after_failed_start();
+        assert!(tree.node(&id("testOne")).is_none());
+        assert!(tree.roots().is_empty());
     }
 
     #[test]

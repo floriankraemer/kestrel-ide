@@ -14,6 +14,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QStatusBar>
+#include <QTimer>
 
 namespace ui_shell {
 
@@ -41,6 +42,7 @@ void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
                                              : QObject::tr("Choose Test for %1").arg(name));
     title->setEnabled(false);
     menu.addSeparator();
+    QAction *first = nullptr;
     for (qsizetype i = 0; i < paths.size(); ++i) {
         const QString path = paths.at(i);
         const int line = static_cast<std::size_t>(i) < lines.size() ? int(lines[i]) : 1;
@@ -48,8 +50,15 @@ void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
         QObject::connect(action, &QAction::triggered, window, [editorTabs, path, line]() {
             editorTabs->openFileAtLine(path, line, 0);
         });
+        first = first != nullptr ? first : action;
     }
     e2eMarkMenuActions(&menu, "goto_test_menu_action");
+    // The first entry is highlighted, so Enter opens it at once, as
+    // PhpStorm's chooser does (#459). Set once the popup is up: `exec()`
+    // starts a menu with nothing active.
+    QObject::connect(&menu, &QMenu::aboutToShow, &menu, [&menu, first]() {
+        QTimer::singleShot(0, &menu, [&menu, first]() { menu.setActiveAction(first); });
+    });
     menu.exec(caretPopupPosition(editorTabs->currentEditor()));
 }
 

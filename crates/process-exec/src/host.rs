@@ -241,6 +241,20 @@ fn parse_unc(path: &Path) -> Option<(String, String, String)> {
     Some((unc_prefix, distro.to_string(), remainder.to_string()))
 }
 
+impl WslHost {
+    /// `arg` as the distro spells it when it is a UNC path into this
+    /// distro (a tool resolved under the project, handed to `php`), else
+    /// unchanged — the WSL counterpart of a container's `rebase_arg`.
+    fn rebase_arg(&self, arg: &str) -> String {
+        match parse_unc(Path::new(arg)) {
+            Some((_, distro, remainder)) if distro.eq_ignore_ascii_case(&self.distro) => {
+                format!("/{remainder}")
+            }
+            _ => arg.to_string(),
+        }
+    }
+}
+
 impl ExecHost {
     /// Classify `path`: `Local` unless it names a WSL UNC path.
     ///
@@ -384,9 +398,9 @@ impl ExecHost {
                     "--cd".to_string(),
                     linux_cwd,
                     "-e".to_string(),
-                    program.to_string(),
+                    wsl.rebase_arg(program),
                 ];
-                full.extend(args.iter().map(|a| a.to_string()));
+                full.extend(args.iter().map(|a| wsl.rebase_arg(a)));
                 ("wsl.exe".to_string(), full)
             }
         }
@@ -803,6 +817,33 @@ mod tests {
                 "git".to_string(),
                 "log".to_string(),
                 "--grep=a b $x".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn wsl_argv_hands_the_distro_its_own_spelling_of_a_unc_program_and_arguments() {
+        // A tool found under the project (`vendor/bin/phpunit`) resolves to
+        // the UNC path this process opens; Linux `php` cannot open that.
+        let host = wsl("//wsl.localhost/Ubuntu/home/f/proj");
+        let (_, args) = host.argv(
+            "php",
+            &[
+                "//wsl.localhost/Ubuntu/home/f/proj/vendor/bin/phpunit",
+                r"\\wsl$\Ubuntu\home\f\proj\tests",
+                "--filter=//wsl.localhost/Ubuntu/x",
+                "//wsl.localhost/Debian/home/f/other",
+            ],
+            Path::new("//wsl.localhost/Ubuntu/home/f/proj"),
+        );
+        assert_eq!(
+            args[5..],
+            [
+                "php".to_string(),
+                "/home/f/proj/vendor/bin/phpunit".to_string(),
+                "/home/f/proj/tests".to_string(),
+                "--filter=//wsl.localhost/Ubuntu/x".to_string(),
+                "//wsl.localhost/Debian/home/f/other".to_string(),
             ]
         );
     }

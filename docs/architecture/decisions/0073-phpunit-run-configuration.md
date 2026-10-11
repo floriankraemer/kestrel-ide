@@ -15,16 +15,18 @@ PhpStorm has a PHPUnit run configuration with a test scope and options, and its 
 ## Decision
 
 **`kind = "phpunit"` with a `[run_configs.phpunit]` table.**
-`app_config::php::PhpUnitRunSetting` holds `scope`, `path`, `class`, `method`, `data_set`, `filter`, `testsuite`, `configuration`, `groups`, `exclude_groups`, `runner_options`, `interpreter` and `working_directory`.
+`app_config::php::PhpUnitRunSetting` holds `scope`, `path`, `class`, `method`, `data_set`, `filter`, `testsuite`, `configuration`, `groups`, `exclude_groups`, `runner_options`, `interpreter`, `interpreter_options` and `working_directory`.
 The environment is the configuration's own `env`.
 - `scope` is a string, like `kind` (ADR-0039): `directory`, `file`, `class`, `method`, `data_set` or `config`.
   Blank and unknown read as `config`, so a newer file loads in an older build.
-- `path`, `configuration`, `working_directory` and `runner_options` may use macros.
+- `path`, `configuration`, `working_directory`, `runner_options` and `interpreter_options` may use macros.
   A path is stored project-relative with `/`; an absolute path inside the project is made relative, one outside it is refused.
   The run's working directory is `working_directory` (PhpStorm's "Custom working directory"), the project root when it is blank.
   Paths are passed relative to the working directory (`../b/tests` from `packages/a`), so WSL and container hosts, which map the project root, see the right path.
 - `interpreter` replaces `[php].interpreter` for this configuration.
   The host (local, WSL, container) is still `[php]`'s, so it is not a second target mechanism.
+- `interpreter_options` is PhpStorm's "Interpreter options" (`-d memory_limit=-1 -d xdebug.mode=coverage`): split like a shell line, then macro-expanded, and placed after the interpreter and before the framework's program (`php -d memory_limit=-1 vendor/bin/phpunit …`) on every host.
+  A framework program that runs without the interpreter (a native binary) has no interpreter to pass them to, so they are not passed.
 - `filter` narrows a `file` scope by a PCRE.
   A Pest `it()` has no class to name, so its configuration is the file plus the marker's filter.
 - `data_set` is the text after `with data set `: `"name"` with its quotes, or `#0`.
@@ -53,7 +55,7 @@ So the toolbar, the configuration list, Rerun (`run.rerun`) and Debug fill the T
 Run All stays ad hoc.
 
 **A Tests dock rerun runs the configuration that produced its tests (G2).**
-As in PhpStorm, Rerun Test, Rerun Suite and Run Failed keep the working directory, configuration file, groups, runner options, interpreter and environment of the run that reported the tests, narrowed by the rerun's filter.
+As in PhpStorm, Rerun Test, Rerun Suite and Run Failed keep the working directory, configuration file, groups, runner options, interpreter, interpreter options and environment of the run that reported the tests, narrowed by the rerun's filter.
 `test_core::TestTree` stamps every node with the run that last reported it, and `TestService` keeps the configuration of each run still in the tree.
 `php_core::phpunit_run::rerun_config` picks the configuration: the one run's own, or, when the tests came from several runs that share all of the above, that context over the configuration file's whole scope.
 Tests from runs in different contexts are refused with a sentence, since one process has one working directory.

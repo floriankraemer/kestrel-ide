@@ -18,7 +18,7 @@ This plan closes the gaps between that and PhpStorm.
 
 - Context run: `Ctrl+Shift+F10` (Run) and `Ctrl+Shift+F9` (Debug) in a test file run the method under the caret, else the class, else every test class in the file.
 - A context run creates a temporary run configuration that shows in the configuration list, can be saved, and is pushed out by newer ones (IntelliJ keeps five).
-- A PHPUnit run configuration has a test scope — directory, file, class, method, or "defined in the configuration file" with an optional test suite — plus an alternative configuration file, include/exclude groups, test runner options, environment variables and the interpreter.
+- A PHPUnit run configuration has a test scope — directory, file, class, method, or "defined in the configuration file" with an optional test suite — plus an alternative configuration file, include/exclude groups, test runner options, environment variables, the interpreter and its options.
 - Running a PHPUnit configuration fills the Tests dock, exactly like Run All; Run / Debug / Run with Coverage apply to every scope.
 - Gutter icons on a test class and method reflect the last run: passed, failed (or errored), ignored, or never run; the tooltip of a failed one shows the failure message.
 - The project tree offers Run / Debug / Run with Coverage "Tests in '<dir>'" on a directory and "'<file>'" on a test file.

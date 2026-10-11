@@ -1587,6 +1587,7 @@ mod ffi {
         exclude_groups: QString,
         runner_options: QString,
         interpreter: QString,
+        interpreter_options: QString,
         working_directory: QString,
     }
 

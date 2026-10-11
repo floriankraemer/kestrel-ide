@@ -38,7 +38,8 @@ pub use detect::{
 pub use format::{format, FormatError, FormatterDef};
 pub use launch_cache::LaunchCache;
 pub use php::{
-    invocation as php_invocation, needs_php_prefix, PHPCS_CONFIG_CANDIDATES,
-    PHPSTAN_CONFIG_CANDIDATES, PHPUNIT_CONFIG_CANDIDATES,
+    invocation as php_invocation, invocation_with_options as php_invocation_with_options,
+    needs_php_prefix, PHPCS_CONFIG_CANDIDATES, PHPSTAN_CONFIG_CANDIDATES,
+    PHPUNIT_CONFIG_CANDIDATES,
 };
 pub use scheduler::{RunFailure, RunOutput, RunResult, Scheduler};

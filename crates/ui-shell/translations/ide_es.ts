@@ -3834,6 +3834,14 @@
         <source>phpunit.xml</source>
         <translation>phpunit.xml</translation>
     </message>
+    <message>
+        <source>Interpreter options:</source>
+        <translation>Opciones del intérprete:</translation>
+    </message>
+    <message>
+        <source>e.g. -d memory_limit=-1</source>
+        <translation>p. ej. -d memory_limit=-1</translation>
+    </message>
 </context>
 <context>
     <name>ui_shell::GroupPicker</name>

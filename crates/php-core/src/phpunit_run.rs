@@ -53,6 +53,9 @@ pub struct Plan {
     pub options: ScopeOptions,
     /// The `php` program to use instead of `[php]`'s.
     pub interpreter: Option<String>,
+    /// Arguments for the interpreter, before the test runner's program
+    /// (`-d memory_limit=-1`), split then expanded like the runner options.
+    pub interpreter_options: Vec<String>,
     /// Where the run starts, project-relative; `None` is the project root.
     /// The scope's and options' paths are relative to it.
     pub working_directory: Option<String>,
@@ -207,6 +210,14 @@ pub fn plan(
     let words = |list: &[String]| -> Vec<String> {
         list.iter().filter_map(|word| non_blank(word)).collect()
     };
+    // Split before expanding: a macro's value (a Windows project directory
+    // with backslashes or spaces) is one literal word.
+    let shell_words = |line: &str| -> Vec<String> {
+        container_core::run_config::split_shell_words(line)
+            .iter()
+            .map(|word| expand(word))
+            .collect()
+    };
     Ok(Plan {
         scope,
         options: ScopeOptions {
@@ -215,14 +226,10 @@ pub fn plan(
                 .transpose()?,
             groups: words(&setting.groups),
             exclude_groups: words(&setting.exclude_groups),
-            // Split before expanding: a macro's value (a Windows project
-            // directory with backslashes or spaces) is one literal word.
-            runner_options: container_core::run_config::split_shell_words(&setting.runner_options)
-                .iter()
-                .map(|word| expand(word))
-                .collect(),
+            runner_options: shell_words(&setting.runner_options),
         },
         interpreter: non_blank(&setting.interpreter),
+        interpreter_options: shell_words(&setting.interpreter_options),
         working_directory,
     })
 }
@@ -441,6 +448,7 @@ fn context_of(config: Option<&RunConfigSetting>) -> RunContext {
             exclude_groups: setting.exclude_groups,
             runner_options: setting.runner_options,
             interpreter: setting.interpreter,
+            interpreter_options: setting.interpreter_options,
             working_directory: setting.working_directory,
             ..PhpUnitRunSetting::default()
         },
@@ -924,6 +932,34 @@ mod tests {
     }
 
     #[test]
+    fn interpreter_options_are_split_before_macros_expand() {
+        assert!(plan_of(&setting("config"))
+            .unwrap()
+            .interpreter_options
+            .is_empty());
+        let setting = PhpUnitRunSetting {
+            interpreter_options: "-d memory_limit=-1 -d 'include_path=$PROJECT_DIR$/lib'".into(),
+            ..setting("config")
+        };
+        let plan = plan(
+            &setting,
+            |text| text.replace("$PROJECT_DIR$", r"C:\My Proj"),
+            r"C:\My Proj",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.interpreter_options,
+            [
+                "-d",
+                "memory_limit=-1",
+                "-d",
+                r"include_path=C:\My Proj/lib"
+            ]
+        );
+    }
+
+    #[test]
     fn scope_fields_match_what_each_scope_reads() {
         assert_eq!(
             fields_of("config"),
@@ -984,6 +1020,7 @@ mod tests {
             scope: TestScope::Config { testsuite: None },
             options: ScopeOptions::default(),
             interpreter: None,
+            interpreter_options: Vec::new(),
             working_directory: Some(dir.into()),
         };
         assert_eq!(
@@ -1108,7 +1145,17 @@ mod tests {
         let mut with_env = package.clone();
         with_env.env = vec![("APP_ENV".into(), "test".into())];
         assert_eq!(
-            rerun_config(&[Some(package), Some(with_env)]),
+            rerun_config(&[Some(package.clone()), Some(with_env)]),
+            Err(RerunError::MixedRuns)
+        );
+        let mut with_interpreter_options = package.clone();
+        with_interpreter_options
+            .phpunit
+            .as_mut()
+            .unwrap()
+            .interpreter_options = "-d memory_limit=-1".into();
+        assert_eq!(
+            rerun_config(&[Some(package), Some(with_interpreter_options)]),
             Err(RerunError::MixedRuns)
         );
     }

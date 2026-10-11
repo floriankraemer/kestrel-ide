@@ -277,17 +277,23 @@ impl Framework {
 
     /// The program and arguments as launched: a PHP framework runs under the
     /// configured interpreter, which is what makes it run inside that
-    /// interpreter's container.
+    /// interpreter's container; `run`'s interpreter options go before the
+    /// framework's program.
     fn command(
         &self,
         settings: &app_config::Settings,
+        run: Option<&configuration::ConfigRun>,
         args: Vec<String>,
     ) -> (PathBuf, Vec<String>) {
         match self.contribution.requires_interpreter.as_deref() {
             Some("php") => {
                 let interpreter = settings_model::php::resolve(settings).interpreter;
-                let (program, prefix) =
-                    analysis_core::php_invocation(&self.program, Some(&interpreter));
+                let options = run.map_or(&[][..], |run| &run.plan.interpreter_options);
+                let (program, prefix) = analysis_core::php_invocation_with_options(
+                    &self.program,
+                    Some(&interpreter),
+                    options,
+                );
                 (program, [prefix, args].concat())
             }
             _ => (self.program.clone(), args),
@@ -692,7 +698,8 @@ impl ffi::TestService {
             // A report from an earlier run must never pass for this one's.
             let _ = std::fs::remove_file(root.join(test_core::coverage::REPORT_PATH));
         }
-        let (program, args) = framework.command(&prepared.settings, args);
+        let (program, args) =
+            framework.command(&prepared.settings, prepared.config_run.as_ref(), args);
 
         // A run replaces the tree a previous run left behind, unless it is a
         // narrowed rerun, which updates only the nodes it touches, so the

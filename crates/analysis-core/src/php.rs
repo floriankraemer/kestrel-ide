@@ -102,6 +102,22 @@ pub fn invocation(program: &Path, php_binary: Option<&str>) -> (PathBuf, Vec<Str
     }
 }
 
+/// [`invocation`] with `interpreter_options` (PhpStorm's "Interpreter
+/// options", `-d memory_limit=-1`) between the PHP binary and `program`. A
+/// program that runs without the interpreter has none to pass them to, so
+/// it is returned as [`invocation`] returns it.
+pub fn invocation_with_options(
+    program: &Path,
+    php_binary: Option<&str>,
+    interpreter_options: &[String],
+) -> (PathBuf, Vec<String>) {
+    let (spawned, prefix) = invocation(program, php_binary);
+    if prefix.is_empty() {
+        return (spawned, prefix);
+    }
+    (spawned, [interpreter_options, &prefix].concat())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +182,20 @@ mod tests {
         let path = dir.path().join("tool");
         std::fs::write(&path, "<?php echo 1;").unwrap();
         assert!(is_php_script(&path));
+    }
+
+    #[test]
+    fn interpreter_options_go_between_the_php_binary_and_the_program() {
+        let options = ["-d".to_string(), "memory_limit=-1".to_string()];
+        let phar = Path::new("vendor/phpunit.phar");
+        let (program, args) = invocation_with_options(phar, Some("php8.3"), &options);
+        assert_eq!(program, PathBuf::from("php8.3"));
+        assert_eq!(args, ["-d", "memory_limit=-1", "vendor/phpunit.phar"]);
+        assert_eq!(
+            invocation_with_options(phar, None, &options),
+            (phar.to_path_buf(), Vec::new()),
+            "no interpreter to take them"
+        );
     }
 
     #[test]

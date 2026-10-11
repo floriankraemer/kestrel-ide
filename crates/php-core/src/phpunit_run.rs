@@ -334,6 +334,85 @@ pub fn temporary_config(setting: PhpUnitRunSetting, name: Option<String>) -> Run
     }
 }
 
+/// Why the Tests dock cannot rerun a selection as the runs that reported it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RerunError {
+    /// The tests came from runs in different working directories or with
+    /// different options, and one run can only have one of each.
+    MixedRuns,
+}
+
+impl std::fmt::Display for RerunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MixedRuns => write!(
+                f,
+                "These tests came from runs with different working directories or options; rerun the tests of one run at a time."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RerunError {}
+
+/// Everything about a run except which tests it selects.
+#[derive(Debug, PartialEq, Eq)]
+struct RunContext {
+    setting: PhpUnitRunSetting,
+    env: Vec<(String, String)>,
+}
+
+fn context_of(config: Option<&RunConfigSetting>) -> RunContext {
+    let setting = config.and_then(setting_of).unwrap_or_default();
+    RunContext {
+        setting: PhpUnitRunSetting {
+            configuration: setting.configuration,
+            groups: setting.groups,
+            exclude_groups: setting.exclude_groups,
+            runner_options: setting.runner_options,
+            interpreter: setting.interpreter,
+            working_directory: setting.working_directory,
+            ..PhpUnitRunSetting::default()
+        },
+        env: config.map(|config| config.env.clone()).unwrap_or_default(),
+    }
+}
+
+/// The configuration a Tests dock rerun (Rerun Test, Run Failed) narrows by
+/// its filter, given the configurations of the runs that last reported the
+/// tests (`None` for an ad hoc run, Run All): PhpStorm reruns a test with the
+/// configuration that produced it. One run: its configuration. Several in
+/// one context (working directory, configuration file, groups, options,
+/// interpreter, environment): that context over the configuration file's
+/// whole scope. `Ok(None)` runs ad hoc.
+pub fn rerun_config(
+    producers: &[Option<RunConfigSetting>],
+) -> Result<Option<RunConfigSetting>, RerunError> {
+    let Some((first, rest)) = producers.split_first() else {
+        return Ok(None);
+    };
+    if rest.iter().all(|producer| producer == first) {
+        return Ok(first.clone());
+    }
+    let context = context_of(first.as_ref());
+    if rest
+        .iter()
+        .any(|producer| context_of(producer.as_ref()) != context)
+    {
+        return Err(RerunError::MixedRuns);
+    }
+    Ok(producers.iter().flatten().next().map(|config| {
+        let setting = PhpUnitRunSetting {
+            scope: "config".into(),
+            ..context_of(Some(config)).setting
+        };
+        RunConfigSetting {
+            phpunit: Some(setting),
+            ..config.clone()
+        }
+    }))
+}
+
 /// The configuration a gutter or caret run of `marker` stands for, with the
 /// test file project-relative when it is inside the project.
 pub fn marker_config(
@@ -825,5 +904,62 @@ mod tests {
         // A saved configuration's name is the user's, whatever it reads.
         assert_eq!(refreshed_name(&directory("tests in 'Unit'", false)), None);
         assert_eq!(refreshed_name(&RunConfigSetting::default()), None);
+    }
+
+    fn package_directory_run() -> RunConfigSetting {
+        temporary_config(
+            PhpUnitRunSetting {
+                path: "packages/a/tests".into(),
+                working_directory: "packages/a".into(),
+                configuration: "packages/a/phpunit.xml".into(),
+                ..setting("directory")
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn a_rerun_uses_the_configuration_of_the_runs_that_reported_the_tests() {
+        let package = package_directory_run();
+        let method = |class: &str| {
+            Some(temporary_config(
+                PhpUnitRunSetting {
+                    class: class.into(),
+                    method: "testX".into(),
+                    working_directory: "packages/a".into(),
+                    configuration: "packages/a/phpunit.xml".into(),
+                    ..setting("method")
+                },
+                None,
+            ))
+        };
+        assert_eq!(rerun_config(&[]), Ok(None));
+        assert_eq!(rerun_config(&[None, None]), Ok(None));
+        assert_eq!(
+            rerun_config(&[Some(package.clone())]),
+            Ok(Some(package.clone()))
+        );
+
+        // Two scopes in one package: the package's whole configuration.
+        let both = rerun_config(&[Some(package.clone()), method("A")])
+            .unwrap()
+            .unwrap();
+        let setting = both.phpunit.unwrap();
+        assert_eq!(setting.scope, "config");
+        assert_eq!(setting.path, "");
+        assert_eq!(setting.working_directory, "packages/a");
+        assert_eq!(setting.configuration, "packages/a/phpunit.xml");
+
+        // A package run and a project run cannot share one process.
+        assert_eq!(
+            rerun_config(&[Some(package.clone()), None]),
+            Err(RerunError::MixedRuns)
+        );
+        let mut with_env = package.clone();
+        with_env.env = vec![("APP_ENV".into(), "test".into())];
+        assert_eq!(
+            rerun_config(&[Some(package), Some(with_env)]),
+            Err(RerunError::MixedRuns)
+        );
     }
 }

@@ -82,6 +82,9 @@ pub struct TestNode {
     pub location: Option<TestLocation>,
     pub parent: Option<TestId>,
     pub children: Vec<TestId>,
+    /// The run that last reported this node ([`TestTree::begin_run`]): a
+    /// rerun from the tree runs the way that run did.
+    pub run: u64,
 }
 
 /// Live counts across every node currently known, for the dock's toolbar
@@ -101,6 +104,8 @@ pub struct TestCounts {
 pub struct TestTree {
     nodes: HashMap<TestId, TestNode>,
     roots: Vec<TestId>,
+    /// The run whose events are being applied.
+    current_run: u64,
 }
 
 impl TestTree {
@@ -115,6 +120,30 @@ impl TestTree {
     pub fn reset(&mut self) {
         self.nodes.clear();
         self.roots.clear();
+    }
+
+    /// The events applied from now on come from `run`.
+    pub fn begin_run(&mut self, run: u64) {
+        self.current_run = run;
+    }
+
+    /// The runs that last reported the leaf tests at or below `ids`, each
+    /// once, in tree order.
+    pub fn runs_of(&self, ids: &[TestId]) -> Vec<u64> {
+        let mut runs = Vec::new();
+        for leaf in ids.iter().flat_map(|id| self.leaves_under(id)) {
+            if let Some(node) = self.nodes.get(&leaf) {
+                if !runs.contains(&node.run) {
+                    runs.push(node.run);
+                }
+            }
+        }
+        runs
+    }
+
+    /// Whether any node was last reported by `run`.
+    pub fn holds_run(&self, run: u64) -> bool {
+        self.nodes.values().any(|node| node.run == run)
     }
 
     pub fn node(&self, id: &TestId) -> Option<&TestNode> {
@@ -245,6 +274,7 @@ impl TestTree {
                 location: None,
                 parent,
                 children: Vec::new(),
+                run: self.current_run,
             },
         );
     }
@@ -258,6 +288,7 @@ impl TestTree {
     fn set_status(&mut self, id: &TestId, status: TestStatus) {
         if let Some(node) = self.nodes.get_mut(id) {
             node.status = status;
+            node.run = self.current_run;
         }
         self.recompute_ancestors(id);
     }
@@ -704,5 +735,30 @@ mod tests {
             tree.located_files(&ExecHost::Local, Path::new("/p")),
             [PathBuf::from("/p/T.php"), PathBuf::from("/p/U.php")]
         );
+    }
+
+    #[test]
+    fn each_leaf_remembers_the_run_that_last_reported_it() {
+        let started = |name: &str| TeamCityEvent::TestStarted {
+            parent: Some(id("Suite")),
+            name: name.into(),
+            location: None,
+        };
+        let mut tree = TestTree::new();
+        tree.begin_run(1);
+        tree.apply(TeamCityEvent::SuiteStarted {
+            parent: None,
+            name: "Suite".into(),
+            location: None,
+        });
+        tree.apply(started("testA"));
+        tree.apply(started("testB"));
+        tree.begin_run(2);
+        tree.apply(started("testB"));
+
+        assert_eq!(tree.runs_of(&[id("Suite::testA")]), [1]);
+        assert_eq!(tree.runs_of(&[id("Suite::testB")]), [2]);
+        assert_eq!(tree.runs_of(&[id("Suite")]), [1, 2]);
+        assert!(tree.holds_run(1) && tree.holds_run(2) && !tree.holds_run(3));
     }
 }

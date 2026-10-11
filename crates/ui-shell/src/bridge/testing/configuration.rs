@@ -225,10 +225,23 @@ impl ffi::TestService {
         })
     }
 
-    /// A Tests dock rerun, ad hoc in the project root.
+    /// A Tests dock rerun, run with the configuration of the runs that
+    /// reported its tests (`php_core::phpunit_run::rerun_config`).
     fn rerun_request(&self, rerun: TreeRerun) -> Result<RunRequest, String> {
+        let ids = match &rerun {
+            TreeRerun::Failed(ids) => ids.clone(),
+            TreeRerun::Node(id) => vec![id.clone()],
+        };
+        let runs = self.tree.borrow().runs_of(&ids);
+        let configs = self.run_configs.borrow();
+        let producers: Vec<Option<run_core::RunConfig>> = runs
+            .iter()
+            .map(|run| configs.get(run).cloned().flatten())
+            .collect();
+        let config =
+            php_core::phpunit_run::rerun_config(&producers).map_err(|error| error.to_string())?;
         Ok(RunRequest::Rerun {
-            config: None,
+            config: config.map(Box::new),
             rerun,
         })
     }

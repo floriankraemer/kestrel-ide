@@ -50,7 +50,15 @@ The environment is the configuration's own `env`.
 Unless the configuration allows parallel runs, a run in progress is stopped and the new one starts once it has finished; the Tests dock shows one run, so one that allows them is refused while another runs.
 The Run menu gains `run.runWithCoverage`.
 So the toolbar, the configuration list, Rerun (`run.rerun`) and Debug fill the Tests dock and use the framework selection, interpreter host, filters, coverage and the Xdebug staging that Run All already has.
-Run All and the Tests dock's reruns stay ad hoc.
+Run All stays ad hoc.
+
+**A Tests dock rerun runs the configuration that produced its tests (G2).**
+As in PhpStorm, Rerun Test, Rerun Suite and Run Failed keep the working directory, configuration file, groups, runner options, interpreter and environment of the run that reported the tests, narrowed by the rerun's filter.
+`test_core::TestTree` stamps every node with the run that last reported it, and `TestService` keeps the configuration of each run still in the tree.
+`php_core::phpunit_run::rerun_config` picks the configuration: the one run's own, or, when the tests came from several runs that share all of the above, that context over the configuration file's whole scope.
+Tests from runs in different contexts are refused with a sentence, since one process has one working directory.
+`test_core::scope::rerun_args` keeps the configuration's test suite, options and path and puts the rerun's filter in place of the scope's own.
+A test reported by Run All reruns ad hoc, as before.
 
 **A run is prepared off the Qt thread.**
 `TestService::start` reads only what needs the Qt thread (the tree, the runs that filled it), then a worker finds the editor run's monorepo package, the stored configuration, the settings and the framework's program, which under WSL or in a container is a process start.

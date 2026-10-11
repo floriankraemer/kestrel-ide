@@ -96,6 +96,9 @@ pub struct TestServiceRust {
     preparing: Cell<Option<u64>>,
     /// Stop was asked while a run was being prepared: it never starts.
     preparation_stopped: Cell<bool>,
+    /// The configuration each run still in the tree ran, `None` for an ad
+    /// hoc one: what a rerun from the tree runs (G2).
+    run_configs: RefCell<HashMap<u64, Option<run_core::RunConfig>>>,
     store: SharedDiagnostics,
 }
 
@@ -249,6 +252,25 @@ impl Framework {
             self.contribution.filter_template.as_deref(),
             &run.plan.scope,
             &run.plan.options,
+        )
+        .map_err(|error| error.to_string())
+    }
+
+    /// The arguments that rerun the tests `patterns` select the way `run`
+    /// ran them.
+    fn narrowed(
+        &self,
+        run: &configuration::ConfigRun,
+        patterns: &[String],
+    ) -> Result<Vec<String>, String> {
+        test_core::scope::rerun_args(
+            &self.args,
+            self.dialect,
+            self.contribution.filter_flag.as_deref(),
+            self.contribution.filter_template.as_deref(),
+            &run.plan.scope,
+            &run.plan.options,
+            patterns,
         )
         .map_err(|error| error.to_string())
     }
@@ -640,7 +662,8 @@ impl ffi::TestService {
             None => Vec::new(),
         };
         let mut args = match (&prepared.config_run, &prepared.rerun) {
-            (Some(run), _) => framework.scoped(run)?,
+            (Some(run), Some(_)) => framework.narrowed(run, &patterns)?,
+            (Some(run), None) => framework.scoped(run)?,
             (None, _) => test_core::filter::apply_filter(
                 &framework.args,
                 framework.contribution.filter_flag.as_deref(),
@@ -683,8 +706,17 @@ impl ffi::TestService {
                         | test_core::scope::TestScope::Directory { .. }
                 )
             });
-        if whole_run {
-            self.tree.borrow_mut().reset();
+        {
+            let mut tree = self.tree.borrow_mut();
+            if whole_run {
+                tree.reset();
+            }
+            tree.begin_run(run_id);
+            // A rerun from the tree runs the way the run that reported its
+            // tests did (G2); only the runs still in the tree are kept.
+            let mut configs = self.run_configs.borrow_mut();
+            configs.retain(|run, _| tree.holds_run(*run));
+            configs.insert(run_id, prepared.config.clone());
         }
         *self.framework_name.borrow_mut() = framework.contribution.name.clone();
         *self.run_host.borrow_mut() = Some(framework.host.clone());

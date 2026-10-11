@@ -20,7 +20,7 @@ This plan closes the gaps between that and PhpStorm.
 - A context run creates a temporary run configuration that shows in the configuration list, can be saved, and is pushed out by newer ones (IntelliJ keeps five).
 - A PHPUnit run configuration has a test scope — directory, file, class, method, or "defined in the configuration file" with an optional test suite — plus an alternative configuration file, include/exclude groups, test runner options, environment variables, the interpreter and its options.
 - Running a PHPUnit configuration fills the Tests dock, exactly like Run All; Run / Debug / Run with Coverage apply to every scope.
-- Gutter icons on a test class and method reflect the last run: passed, failed (or errored), ignored, or never run; the tooltip of a failed one shows the failure message.
+- Gutter icons on a test class and method reflect the last run: passed, failed (or errored), ignored, or never run, in the theme's status colours (`ok`, `error`, `muted`, `warning` while running); the tooltip of a failed one shows the failure message.
   As PhpStorm restores them from its test history, they survive a restart: `php_core::test_history` keeps each test's last result (status, short message, duration, file and symbol) in `.ide/local/test-history.toml`, at most 2000 of them, loaded on the gutter's first paint of the project; a live run's result for a marker supersedes the recorded one, and a recorded test that no longer exists has no marker to show on.
 - The project tree offers Run / Debug / Run with Coverage "Tests in '<dir>'" on a directory and "'<file>'" on a test file.
 - Double-clicking a test in the Tests dock navigates to its source, using PHPUnit's TeamCity `locationHint` (`php_qn://<file>::\Class::method`), Pest's `pest_qn://` alike.

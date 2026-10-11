@@ -21,6 +21,7 @@ use crate::phpunit_xml::{self, Budget};
 use crate::psr4;
 
 mod covers;
+mod subject_method;
 pub use covers::{CoversCache, CoversIndex};
 
 /// The suffix a test class or file carries.
@@ -40,6 +41,9 @@ pub struct TestNavigation {
     pub name: String,
     /// Project-relative, `/`-separated files, most likely first.
     pub files: Vec<String>,
+    /// From a test method: the 0-based line of the tested method in each of
+    /// `files` that declares it (G11); a file without one opens at its top.
+    pub lines: std::collections::BTreeMap<String, u32>,
     /// From a class: the covers index was still being built, so `files`
     /// holds the convention's matches only.
     pub still_indexing: bool,
@@ -241,18 +245,19 @@ pub fn is_named_test(path: &Path) -> bool {
         .is_some_and(|stem| stem.to_string_lossy().ends_with(TEST_SUFFIX))
 }
 
-/// Go to Test / Test Subject for `file` (absolute, holding `text`) in the
-/// project at `project`, with the PSR-4 roots of [`roots_for`] and the
-/// covering tests from `covers`. Blocking filesystem work: call it off the
-/// GUI thread.
+/// Go to Test / Test Subject for `file` (absolute, holding `text`, the caret
+/// on the 0-based `caret_line`) in the project at `project`, with the PSR-4
+/// roots of [`roots_for`] and the covering tests from `covers`. Blocking
+/// filesystem work: call it off the GUI thread.
 pub fn navigate(
     project: &Path,
     file: &Path,
     text: &str,
+    caret_line: Option<u32>,
     covers: &Arc<CoversCache>,
 ) -> TestNavigation {
     let roots = roots_for(project, file);
-    navigate_with(&roots, project, file, text, |wait| {
+    navigate_with(&roots, project, file, text, caret_line, |wait| {
         covers.index(project, &roots, wait)
     })
 }
@@ -300,11 +305,13 @@ pub fn navigate_with(
     project: &Path,
     file: &Path,
     text: &str,
+    caret_line: Option<u32>,
     covers: impl FnOnce(bool) -> Option<Arc<CoversIndex>>,
 ) -> TestNavigation {
     let declarations = Declarations::read(text);
     let current = relative(project, file);
-    let mut navigation = if is_test_file(file, text) {
+    let from_test = is_test_file(file, text);
+    let mut navigation = if from_test {
         subjects_of(roots, project, file, text, &declarations)
     } else {
         tests_of(roots, project, file, &declarations, covers)
@@ -313,6 +320,16 @@ pub fn navigate_with(
     navigation
         .files
         .retain(|candidate| Some(candidate) != current.as_ref() && seen.insert(candidate.clone()));
+    if let (true, Some(line)) = (from_test, caret_line) {
+        navigation.lines = subject_method::subject_lines(
+            roots,
+            project,
+            text,
+            &declarations,
+            line,
+            &mut navigation.files,
+        );
+    }
     navigation
 }
 
@@ -382,7 +399,7 @@ fn subjects_of(
         from_test: true,
         name,
         files,
-        still_indexing: false,
+        ..TestNavigation::default()
     }
 }
 
@@ -463,6 +480,7 @@ fn tests_of(
         name,
         files,
         still_indexing: index.is_none(),
+        ..TestNavigation::default()
     }
 }
 
@@ -614,7 +632,7 @@ mod tests {
         text: &str,
     ) -> TestNavigation {
         let index = Arc::new(CoversIndex::build(project, roots));
-        navigate_with(roots, project, file, text, |_| Some(index))
+        navigate_with(roots, project, file, text, None, |_| Some(index))
     }
 
     fn navigate_from(project: &Path, file: &str) -> TestNavigation {
@@ -837,7 +855,13 @@ mod tests {
         );
 
         let cache = Arc::new(CoversCache::default());
-        let navigation = navigate(project, &project.join("src/Foo/Bar.php"), SUBJECT, &cache);
+        let navigation = navigate(
+            project,
+            &project.join("src/Foo/Bar.php"),
+            SUBJECT,
+            None,
+            &cache,
+        );
 
         assert_eq!(navigation.files, ["tests/Foo/BarTest.php"]);
     }
@@ -881,6 +905,7 @@ mod tests {
             project,
             &file("packages/mailer/src/Sender.php"),
             sender,
+            None,
             &cache,
         );
         assert_eq!(from_class.files, ["packages/mailer/tests/SenderTest.php"]);
@@ -890,6 +915,7 @@ mod tests {
             project,
             &file("packages/mailer/tests/SenderTest.php"),
             &test,
+            None,
             &cache,
         );
         assert_eq!(from_test.files, ["packages/mailer/src/Sender.php"]);
@@ -899,6 +925,7 @@ mod tests {
             project,
             &file("packages/mailer/src/Queue.php"),
             queue,
+            None,
             &cache,
         );
         assert_eq!(
@@ -932,6 +959,69 @@ mod tests {
             roots_for(project, &project.join("src/Y.php")),
             [root("App\\", "src/", false)]
         );
+    }
+
+    /// A subject with two methods and a test of it whose `testIt` caret
+    /// line is 8 (0-based), with `extra` above the class and `doc` above
+    /// the method.
+    fn method_jump(extra: &str, doc: &str, test_name: &str) -> (tempfile::TempDir, TestNavigation) {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(
+            project,
+            "src/Foo/Bar.php",
+            "<?php\nnamespace App\\Foo;\n\nfinal class Bar\n{\n    public function run() {}\n    public function fooBar() {}\n}\n",
+        );
+        write(
+            project,
+            "src/Baz.php",
+            "<?php\nnamespace App;\nclass Baz\n{\n    public function go() {}\n}\n",
+        );
+        let text = format!(
+            "<?php\nnamespace Tests\\Foo;\n\nuse PHPUnit\\Framework\\TestCase;\n{extra}\nfinal class BarTest extends TestCase\n{{\n{doc}\n    public function {test_name}(): void {{}}\n}}\n"
+        );
+        let file = project.join("tests/Foo/BarTest.php");
+        let line = text
+            .lines()
+            .position(|line| line.contains(test_name))
+            .unwrap() as u32;
+        let index = Arc::new(CoversIndex::build(project, &roots()));
+        let navigation =
+            navigate_with(&roots(), project, &file, &text, Some(line), |_| Some(index));
+        (dir, navigation)
+    }
+
+    #[test]
+    fn a_test_method_lands_on_the_method_its_name_names() {
+        let (_dir, navigation) = method_jump("", "", "testFooBar");
+        assert_eq!(navigation.files, ["src/Foo/Bar.php"]);
+        assert_eq!(navigation.lines.get("src/Foo/Bar.php"), Some(&6));
+    }
+
+    #[test]
+    fn a_test_method_without_a_matching_subject_method_lands_on_the_class() {
+        let (_dir, navigation) = method_jump("", "", "testSomethingElse");
+        assert_eq!(navigation.files, ["src/Foo/Bar.php"]);
+        assert!(navigation.lines.is_empty());
+    }
+
+    #[test]
+    fn covers_method_names_the_method_and_its_class_comes_first() {
+        let (_dir, navigation) = method_jump(
+            "use App\\Baz;\n#[CoversMethod(Baz::class, 'go')]\n#[CoversMethod(Bar::class, 'run')]",
+            "",
+            "testGo",
+        );
+        assert_eq!(navigation.files[0], "src/Baz.php");
+        assert_eq!(navigation.lines.get("src/Baz.php"), Some(&4));
+    }
+
+    #[test]
+    fn the_methods_own_covers_annotation_wins() {
+        let (_dir, navigation) =
+            method_jump("", "    /** @covers \\App\\Foo\\Bar::run */", "testFooBar");
+        assert_eq!(navigation.files, ["src/Foo/Bar.php"]);
+        assert_eq!(navigation.lines.get("src/Foo/Bar.php"), Some(&5));
     }
 
     #[test]
@@ -1151,6 +1241,7 @@ mod tests {
             project,
             &project.join("src/Foo/Bar.php"),
             SUBJECT,
+            None,
             |wait| {
                 waited = Some(wait);
                 None
@@ -1168,6 +1259,7 @@ mod tests {
             project,
             &project.join("src/Foo/Bar.php"),
             SUBJECT,
+            None,
             |wait| {
                 waited = Some(wait);
                 None
@@ -1188,11 +1280,11 @@ mod tests {
         let cache = Arc::new(CoversCache::default());
         let file = project.join("src/Foo/Bar.php");
         // The convention answers at once; the index may still be building.
-        let first = navigate(project, &file, SUBJECT, &cache);
+        let first = navigate(project, &file, SUBJECT, None, &cache);
         assert_eq!(first.files[0], "tests/Foo/BarTest.php");
         let roots = ComposerJson::read(project).unwrap().unwrap().psr4;
         cache.index(project, &roots, true).unwrap();
-        let built = navigate(project, &file, SUBJECT, &cache);
+        let built = navigate(project, &file, SUBJECT, None, &cache);
         assert!(!built.still_indexing);
         assert_eq!(
             built.files,

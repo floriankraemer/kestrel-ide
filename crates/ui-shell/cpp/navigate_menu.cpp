@@ -33,7 +33,8 @@ void relabelGoToTest(QAction *action, EditorTabs *editorTabs, TestService *testS
 
 // Several targets: offer them at the pointer, as Go to Declaration does.
 void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
-                  const QString &name, const QStringList &paths, const QStringList &labels)
+                  const QString &name, const QStringList &paths, const QStringList &labels,
+                  const rust::Vec<quint32> &lines)
 {
     QMenu menu(window);
     QAction *title = menu.addAction(fromTest ? QObject::tr("Choose Test Subject for %1").arg(name)
@@ -42,9 +43,11 @@ void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
     menu.addSeparator();
     for (qsizetype i = 0; i < paths.size(); ++i) {
         const QString path = paths.at(i);
+        const int line = static_cast<std::size_t>(i) < lines.size() ? int(lines[i]) : 1;
         QAction *action = menu.addAction(labels.value(i, path));
-        QObject::connect(action, &QAction::triggered, window,
-                         [editorTabs, path]() { editorTabs->openFileAtLine(path, 1, 0); });
+        QObject::connect(action, &QAction::triggered, window, [editorTabs, path, line]() {
+            editorTabs->openFileAtLine(path, line, 0);
+        });
     }
     menu.exec(QCursor::pos());
 }
@@ -72,7 +75,11 @@ void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorT
                                              4000);
             return;
         }
-        testService->requestTestNavigation(path, editorTabs->currentContent());
+        // The caret's line: from a test method the jump lands on the tested
+        // method (G11).
+        const quint32 caretLine =
+          editorTabs->lspPositionAt(editorTabs->caretPosition()).first;
+        testService->requestTestNavigation(path, editorTabs->currentContent(), caretLine);
     });
     QObject::connect(
       testService, &TestService::testNavigationReady, window,
@@ -104,9 +111,11 @@ void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorT
                 4000);
           }
           if (paths.size() == 1) {
-              editorTabs->openFileAtLine(paths.first(), 1, 0);
+              editorTabs->openFileAtLine(paths.first(),
+                                         answer.lines.empty() ? 1 : int(answer.lines[0]), 0);
           } else {
-              chooseTarget(window, editorTabs, fromTest, name, paths, answer.labels);
+              chooseTarget(window, editorTabs, fromTest, name, paths, answer.labels,
+                           answer.lines);
           }
       });
 }

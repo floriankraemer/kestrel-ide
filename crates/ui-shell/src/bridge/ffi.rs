@@ -7102,6 +7102,8 @@ mod ffi {
         paths: QStringList,
         /// Each file's project-relative label for the chooser.
         labels: QStringList,
+        /// Each file's 1-based line to open at: the tested method's, else 1.
+        lines: Vec<u32>,
     }
 
     /// What the project tree's test entries call their run (E6):
@@ -7292,13 +7294,20 @@ mod ffi {
         #[cxx_name = "isTestFile"]
         fn is_test_file(self: &TestService, path: &QString, text: &QString) -> bool;
 
-        /// Go to Test / Test Subject (E7) from `path` holding `text`,
-        /// resolved on a worker thread (the project may sit behind a slow
-        /// `\\wsl.localhost` share); answers through `testNavigationReady`.
-        /// One search runs at a time and only the latest request answers.
+        /// Go to Test / Test Subject (E7) from `path` holding `text`, the
+        /// caret on the 0-based `caret_line` (a test method's jump lands on
+        /// the tested method, G11), resolved on a worker thread (the project
+        /// may sit behind a slow `\\wsl.localhost` share); answers through
+        /// `testNavigationReady`. One search runs at a time and only the
+        /// latest request answers.
         #[qinvokable]
         #[cxx_name = "requestTestNavigation"]
-        fn request_test_navigation(self: Pin<&mut TestService>, path: &QString, text: &QString);
+        fn request_test_navigation(
+            self: Pin<&mut TestService>,
+            path: &QString,
+            text: &QString,
+            caret_line: u32,
+        );
 
         /// Drop the answer of any Go to Test search in flight: the user
         /// moved on to another tab.

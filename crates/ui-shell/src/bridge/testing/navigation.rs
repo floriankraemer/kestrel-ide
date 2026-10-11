@@ -19,6 +19,7 @@ pub(super) struct NavigationRequest {
     root: PathBuf,
     file: PathBuf,
     text: String,
+    caret_line: u32,
 }
 
 pub(super) type NavigationRequests =
@@ -34,7 +35,12 @@ impl ffi::TestService {
                 || !self.markers_of(&path, &text.to_string()).is_empty())
     }
 
-    pub fn request_test_navigation(mut self: Pin<&mut Self>, path: &QString, text: &QString) {
+    pub fn request_test_navigation(
+        mut self: Pin<&mut Self>,
+        path: &QString,
+        text: &QString,
+        caret_line: u32,
+    ) {
         let file = PathBuf::from(path.to_string());
         let status = match super::current_project_root() {
             None => Err(ffi::FfiTestNavigationStatus::NoProject),
@@ -54,6 +60,7 @@ impl ffi::TestService {
                     name: QString::default(),
                     paths: QStringList::default(),
                     labels: QStringList::default(),
+                    lines: Vec::new(),
                 });
                 return;
             }
@@ -62,6 +69,7 @@ impl ffi::TestService {
             root,
             file,
             text: text.to_string(),
+            caret_line,
         };
         let started = self.navigation.borrow_mut().request(request);
         if let Some((token, request)) = started {
@@ -83,6 +91,7 @@ impl ffi::TestService {
                 &request.root,
                 &request.file,
                 &request.text,
+                Some(request.caret_line),
                 &covers,
             );
             let root = request.root;
@@ -99,6 +108,11 @@ impl ffi::TestService {
                     .files
                     .iter()
                     .map(|file| QString::from(root.join(file).to_string_lossy().as_ref()))
+                    .collect();
+                let lines: Vec<u32> = navigation
+                    .files
+                    .iter()
+                    .map(|file| navigation.lines.get(file).map_or(1, |line| line + 1))
                     .collect();
                 let labels: QStringList = navigation
                     .files
@@ -117,6 +131,7 @@ impl ffi::TestService {
                     name: QString::from(navigation.name.as_str()),
                     paths,
                     labels,
+                    lines,
                 });
             });
         });

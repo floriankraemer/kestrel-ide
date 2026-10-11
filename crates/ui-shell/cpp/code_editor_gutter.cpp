@@ -14,6 +14,8 @@
 #include "theme.h"
 #include "vcs_gutter.h"
 
+#include <cmath>
+
 #include <QDateTime>
 #include <QMenu>
 #include <QMouseEvent>
@@ -73,6 +75,24 @@ constexpr int kBlameWidth = 220;
 } // namespace
 
 namespace {
+// WCAG 2 relative luminance of `color`.
+qreal relativeLuminance(const QColor &color)
+{
+    const auto linear = [](qreal channel) {
+        return channel <= 0.04045 ? channel / 12.92 : std::pow((channel + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * linear(color.redF()) + 0.7152 * linear(color.greenF())
+         + 0.0722 * linear(color.blueF());
+}
+
+// WCAG 2 contrast ratio between two colours (1 to 21).
+qreal contrastRatio(const QColor &a, const QColor &b)
+{
+    const qreal la = relativeLuminance(a);
+    const qreal lb = relativeLuminance(b);
+    return (qMax(la, lb) + 0.05) / (qMin(la, lb) + 0.05);
+}
+
 // A status disc in the Run column's 14px box: 10px across, colour and
 // inner mark both say the state (never colour alone). The colours are the
 // theme's status colours, as the hover card's bulbs are (G8). Logical
@@ -80,9 +100,6 @@ namespace {
 void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF &center)
 {
     constexpr qreal kRadius = 5.0;
-    // Above this lightness a white mark loses its contrast (a light theme's
-    // amber): the mark is the fill's dark shade instead, like the Fix bulb's.
-    constexpr int kLightFill = 170;
     const SemanticColors colors = semanticColors();
     QColor fill;
     switch (glyph) {
@@ -98,8 +115,16 @@ void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF
     case RunMarkerGlyph::Running:
         fill = colors.warning;
         break;
+    case RunMarkerGlyph::Terminated:
+        fill = colors.warning;
+        break;
     }
-    const QColor ink = fill.lightness() > kLightFill ? fill.darker(300) : QColor(Qt::white);
+    // The inner mark is white or the fill's dark shade, whichever stands
+    // out more against the fill by WCAG contrast: a mid-light fill (the
+    // dark theme's amber or green) loses a white mark.
+    const QColor white(Qt::white);
+    const QColor shade = fill.darker(300);
+    const QColor ink = contrastRatio(white, fill) >= contrastRatio(shade, fill) ? white : shade;
     painter.save();
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setPen(Qt::NoPen);
@@ -129,6 +154,12 @@ void paintRunMarkerStatus(QPainter &painter, RunMarkerGlyph glyph, const QPointF
         painter.setBrush(ink);
         painter.drawEllipse(center, 1.6, 1.6);
         break;
+    case RunMarkerGlyph::Terminated:
+        // A stop square: the run ended before the test did.
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(ink);
+        painter.drawRect(QRectF(x - 1.7, y - 1.7, 3.4, 3.4));
+        break;
     }
     painter.restore();
 }
@@ -142,6 +173,8 @@ const char *runMarkerGlyphName(RunMarkerGlyph glyph)
         return "failed";
     case RunMarkerGlyph::Ignored:
         return "ignored";
+    case RunMarkerGlyph::Terminated:
+        return "terminated";
     case RunMarkerGlyph::Running:
         break;
     }

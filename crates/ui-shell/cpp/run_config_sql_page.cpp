@@ -1,5 +1,7 @@
 #include "run_config_sql_page.h"
 
+#include "run_config_php_page.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QFileDialog>
@@ -20,12 +22,7 @@ SqlScriptOptionsPage::SqlScriptOptionsPage(ConsoleService *consoleService, QWidg
     layout->setContentsMargins(0, 0, 0, 0);
 
     const auto addRow = [this, layout](const QString &label, QWidget *field) {
-        auto *row = new QHBoxLayout();
-        auto *labelWidget = new QLabel(label, this);
-        labelWidget->setMinimumWidth(90);
-        row->addWidget(labelWidget);
-        row->addWidget(field, 1);
-        layout->addLayout(row);
+        addFormRow(layout, this, label, field);
     };
 
     sourceCombo_ = new QComboBox(this);

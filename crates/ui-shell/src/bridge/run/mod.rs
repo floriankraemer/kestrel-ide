@@ -680,7 +680,11 @@ impl ffi::RunService {
         let written = app_config::project_settings::update(&root, |settings| {
             let mut configs = settings.run_configs.clone().unwrap_or_default();
             saved = run_core::save_temporary(&mut configs, &id);
-            settings.run_configs = Some(configs);
+            // An unknown id changes nothing: `Some(vec![])` for a file with
+            // no configurations would still create or rewrite it.
+            if saved {
+                settings.run_configs = Some(configs);
+            }
         });
         match written {
             Err(error) => errors::failure(errors::CODE_SETTINGS_IO, error.to_string()),

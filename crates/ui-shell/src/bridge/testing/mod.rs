@@ -51,6 +51,9 @@ type CachedMarkers = (u64, std::rc::Rc<Vec<php_core::tests::TestMarker>>);
 /// only when the framework exits 0.
 type Waiter = std::sync::mpsc::Sender<Result<(), String>>;
 
+/// What a waiter is told about a run Stop ended.
+const STOPPED: &str = "the run was stopped";
+
 /// Rust side of the `TestService` QObject.
 #[derive(Default)]
 pub struct TestServiceRust {
@@ -94,9 +97,14 @@ pub struct TestServiceRust {
     /// The run whose package, configuration and framework a worker is
     /// finding; it starts once they are found.
     preparing: Cell<Option<u64>>,
-    /// The project's recorded test results, loaded on the gutter's first
-    /// question about it (G4).
-    history: RefCell<Option<(PathBuf, php_core::test_history::TestHistory)>>,
+    /// Who waits for the run being prepared: Stop answers it at once (#438).
+    preparing_waiter: RefCell<Option<Waiter>>,
+    /// The project's recorded test results, loaded on a worker on the
+    /// gutter's first question about it (G4, #437).
+    history: RefCell<gutter::HistoryState>,
+    /// The diagnostics sources this service has published under, each
+    /// cleared before a republish (#447).
+    published_sources: RefCell<std::collections::HashSet<String>>,
     /// The configuration each run still in the tree ran, `None` for an ad
     /// hoc one: what a rerun from the tree runs (G2).
     run_configs: RefCell<HashMap<u64, Option<run_core::RunConfig>>>,
@@ -344,6 +352,7 @@ fn to_ffi_status(status: test_core::TestStatus) -> ffi::FfiTestStatusKind {
         test_core::TestStatus::Pending => ffi::FfiTestStatusKind::Pending,
         test_core::TestStatus::Passed => ffi::FfiTestStatusKind::Passed,
         test_core::TestStatus::Skipped => ffi::FfiTestStatusKind::Skipped,
+        test_core::TestStatus::Terminated => ffi::FfiTestStatusKind::Terminated,
     }
 }
 
@@ -401,6 +410,24 @@ impl ffi::TestService {
             .map(|failure| failure.message.clone())
             .unwrap_or_default();
         QString::from(message.as_str())
+    }
+
+    /// The failing node's expected/actual, `found == false` when its
+    /// assertion compared nothing (or the node has no failure).
+    pub fn failure_comparison(&self, node_id: &QString) -> ffi::FfiTestComparison {
+        let id = test_core::TestId(node_id.to_string());
+        self.tree
+            .borrow()
+            .node(&id)
+            .and_then(|node| node.failure.as_ref())
+            .and_then(|failure| failure.comparison.as_ref())
+            .map_or_else(ffi::FfiTestComparison::default, |comparison| {
+                ffi::FfiTestComparison {
+                    found: true,
+                    expected: QString::from(comparison.expected.as_str()),
+                    actual: QString::from(comparison.actual.as_str()),
+                }
+            })
     }
 
     pub fn failure_details(&self, node_id: &QString) -> QString {
@@ -491,10 +518,12 @@ impl ffi::TestService {
         (host, work_dir)
     }
 
-    /// The node's file on this machine; empty without a location. No I/O.
+    /// The node's file on this machine; empty without a location or when
+    /// the file no longer exists (one stat, on a menu's or a key's demand).
     pub fn node_source_path(&self, node_id: &QString) -> QString {
         self.located(node_id)
             .map(|(location, host, root)| location.local_path(&host, &root))
+            .filter(|path| path.is_file())
             .map(|path| QString::from(path.display().to_string().as_str()))
             .unwrap_or_default()
     }
@@ -529,14 +558,16 @@ impl ffi::TestService {
         })
     }
 
+    /// The files with a result: this session's, and the recorded ones the
+    /// gutter shows too, so a repaint for a run elsewhere keeps their icons.
     pub fn tested_files(&self) -> QStringList {
         let Some(root) = current_project_root() else {
             return QStringList::default();
         };
         let (host, work_dir) = self.run_context(&root);
-        self.tree
-            .borrow()
-            .located_files(&host, &work_dir)
+        let mut files = self.tree.borrow().located_files(&host, &work_dir);
+        files.extend(self.history_files(&root));
+        files
             .iter()
             .map(|path| QString::from(path.display().to_string().as_str()))
             .collect()
@@ -607,11 +638,12 @@ impl ffi::TestService {
         let run_id = self.next_id.get() + 1;
         self.next_id.set(run_id);
         self.preparing.set(Some(run_id));
+        *self.preparing_waiter.borrow_mut() = waiter;
         let qt_thread = self.qt_thread();
         std::thread::spawn(move || {
             let prepared = prepare(request, &root, cached);
             let _ = qt_thread.queue(move |service: Pin<&mut ffi::TestService>| {
-                service.launch(run_id, &root, prepared, env, with_coverage, waiter);
+                service.launch(run_id, &root, prepared, env, with_coverage);
             });
         });
         self.as_mut().test_run_preparing();
@@ -620,8 +652,8 @@ impl ffi::TestService {
 
     /// Start the run `run_id` prepared for the project at `root`, or say
     /// why it cannot start; one that Stop ended meanwhile is dropped
-    /// (`test_core::preparation::prepared`). A refused run lets the run
-    /// queued behind it start.
+    /// (`test_core::preparation::prepared`), its waiter already answered by
+    /// Stop. A refused run lets the run queued behind it start.
     fn launch(
         mut self: Pin<&mut Self>,
         run_id: u64,
@@ -629,7 +661,6 @@ impl ffi::TestService {
         prepared: Result<PreparedRun, String>,
         env: Vec<(String, String)>,
         with_coverage: bool,
-        mut waiter: Option<Waiter>,
     ) {
         use test_core::preparation::Prepared;
         let current = current_project_root();
@@ -640,12 +671,10 @@ impl ffi::TestService {
             current.as_deref(),
         );
         if outcome == Prepared::Dropped {
-            if let Some(waiter) = waiter {
-                let _ = waiter.send(Err("the run was stopped".to_string()));
-            }
             return;
         }
         self.preparing.set(None);
+        let mut waiter = self.preparing_waiter.take();
         let started = match outcome {
             Prepared::ProjectChanged => {
                 Err("Another project was opened while the run was being prepared.".to_string())
@@ -746,6 +775,7 @@ impl ffi::TestService {
                 test_core::RunPlace {
                     host: framework.host.clone(),
                     work_dir: prepared.work_dir.clone(),
+                    framework: framework.contribution.name.clone(),
                 },
             );
             // A rerun from the tree runs the way the run that reported its
@@ -757,12 +787,9 @@ impl ffi::TestService {
         *self.framework_name.borrow_mut() = framework.contribution.name.clone();
         *self.run_host.borrow_mut() = Some(framework.host.clone());
         *self.run_dir.borrow_mut() = Some(prepared.work_dir.clone());
-        // Diagnostics from the framework this run uses are recomputed as
-        // events arrive (`republish`); a stale row from a source this
-        // project no longer contributes would otherwise never be cleared.
-        self.store
-            .borrow_mut()
-            .clear_source(&source_key(&framework.contribution.name));
+        // Diagnostics are recomputed as events arrive (`republish`), each
+        // failure under the framework of the run that reported it.
+        republish(&self);
         // Surefire's `-Dtest=` and Gradle's `--tests` each need their own
         // pattern shape built from the node being rerun, not a PHPUnit-
         // shaped one that would compile fine and match nothing.
@@ -845,7 +872,7 @@ impl ffi::TestService {
                     let _ = waiter.send(match result {
                         Ok(Some(0)) => Ok(()),
                         Ok(Some(code)) => Err(format!("exit {code}")),
-                        Ok(None) => Err("the run was stopped".to_string()),
+                        Ok(None) => Err(STOPPED.to_string()),
                         Err(_) => Err(message.clone()),
                     });
                 }
@@ -878,6 +905,9 @@ impl ffi::TestService {
     /// it starts; its worker's answer is dropped when it comes.
     pub fn stop(mut self: Pin<&mut Self>) {
         if self.preparing.take().is_some() {
+            if let Some(waiter) = self.preparing_waiter.take() {
+                let _ = waiter.send(Err(STOPPED.to_string()));
+            }
             self.as_mut().test_run_stopped();
             self.as_mut().start_queued();
         }
@@ -1010,28 +1040,45 @@ fn prepare(
     })
 }
 
-/// Regroup the current tree's failures by file and publish them under this
-/// run's source key — the same "full regroup on every chunk" rule
-/// `bridge::build::republish` uses, since a later event can add a failure
-/// to a file an earlier one already reported on.
+/// Regroup the current tree's failures by file and publish each under the
+/// source of the framework that reported it — the same "full regroup on
+/// every chunk" rule `bridge::build::republish` uses, since a later event
+/// can add a failure to a file an earlier one already reported on. Every
+/// source published before is cleared first, so a framework whose results
+/// left the tree leaves no stale rows (#447).
 fn republish(service: &ffi::TestService) {
     let framework = service.framework_name.borrow().clone();
-    let key = source_key(&framework);
     let mut store = service.store.borrow_mut();
-    store.clear_source(&key);
+    let mut published = service.published_sources.borrow_mut();
+    for key in published.drain() {
+        store.clear_source(&key);
+    }
+    store.clear_source(&source_key(&framework));
     // Locating a JVM failure's real source file (test-core's `diagnostics`
     // module, review finding 3) needs the project root to resolve a class
     // name to a path; with no project open there is nothing to republish
-    // against in the first place, so clearing the stale source above is all
-    // this call does.
+    // against in the first place, so clearing the stale sources above is
+    // all this call does.
     let Some(root) = current_project_root() else {
         return;
     };
     let (host, work_dir) = service.run_context(&root);
     let grouped =
         test_core::diagnostics_by_file_on(&host, &service.tree.borrow(), &framework, &work_dir);
+    let mut by_source: HashMap<(String, String), Vec<diagnostics_core::Diagnostic>> =
+        HashMap::new();
     for (uri, diagnostics) in grouped {
+        for diagnostic in diagnostics {
+            let key = source_key(&diagnostic.source);
+            by_source
+                .entry((key, uri.clone()))
+                .or_default()
+                .push(diagnostic);
+        }
+    }
+    for ((key, uri), diagnostics) in by_source {
         store.replace(&key, &uri, diagnostics);
+        published.insert(key);
     }
 }
 

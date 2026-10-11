@@ -53,6 +53,10 @@ public:
     // restored layout left it homeless, then `toggleView(true)` + `raise()`.
     void show(const QString &id);
 
+    // Opens dock `id` without taking its area's current tab: whatever the
+    // user looks at there stays in front (an auto-open, #446).
+    void showBehind(const QString &id);
+
     // Applies a base64 `CDockManager::saveState()` blob, then puts every dock
     // the blob never mentioned back at its registered placement. An empty
     // blob does nothing, which is what "no layout has been saved" means.

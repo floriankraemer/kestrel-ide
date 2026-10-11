@@ -4,8 +4,10 @@
 #include "theme.h"
 #include "ui_tokens.h"
 
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
@@ -13,6 +15,7 @@
 #include <QToolButton>
 
 #include <functional>
+#include <utility>
 
 namespace ui_shell {
 
@@ -170,11 +173,12 @@ void setPhpListening(DebugService *debugService, QWidget *parent, bool enabled)
 }
 
 RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
-                        DebugService *debugService, QWidget *parent)
+                        DebugService *debugService, TestService *testService, QWidget *parent)
   : QWidget(parent)
   , runService_(runService)
   , buildService_(buildService)
   , debugService_(debugService)
+  , testService_(testService)
 {
     // Height comes from the QToolBar this sits in (chromeStyleSheet()'s
     // `QToolBar` rule); the horizontal padding is this layout's, because a
@@ -219,16 +223,25 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
 
     connect(runService_, &RunService::configurationsChanged, this,
             &RunToolbar::refreshConfigurations);
+    configCombo_->installEventFilter(this);
+    configCombo_->view()->installEventFilter(this);
+    configCombo_->view()->viewport()->installEventFilter(this);
     connect(configCombo_, &QComboBox::currentIndexChanged, this, [this]() {
         if (configCombo_->currentData().toString() == kSaveRowData) {
-            return; // `activated` saves and goes back to the configuration.
+            // A popup choice: `activated` saves and goes back. A wheel turn
+            // or arrow key on the closed combo only goes back.
+            if (!popupChoice_) {
+                selectConfiguration(lastConfigId_);
+            }
+            return;
         }
         lastConfigId_ = selectedConfigId();
         refreshSaveRow();
         refreshButtons();
     });
     connect(configCombo_, &QComboBox::activated, this, [this](int index) {
-        if (configCombo_->itemData(index).toString() == kSaveRowData) {
+        const bool chosen = std::exchange(popupChoice_, false);
+        if (chosen && configCombo_->itemData(index).toString() == kSaveRowData) {
             saveSelectedTemporary();
         }
     });
@@ -280,7 +293,38 @@ RunToolbar::RunToolbar(RunService *runService, BuildService *buildService,
                 QMessageBox::warning(this, tr("Run"), error.message);
             });
 
+    // Asked rather than toggled: a refused second launch leaves the first
+    // run going.
+    const auto refreshTestRun = [this]() {
+        testRunning_ = testService_->isRunning();
+        refreshButtons();
+    };
+    connect(testService_, &TestService::testRunPreparing, this, refreshTestRun);
+    connect(testService_, &TestService::testRunStarted, this, refreshTestRun);
+    connect(testService_, &TestService::testRunStopped, this, refreshTestRun);
+    connect(testService_, &TestService::testRunFinished, this, refreshTestRun);
+    connect(testService_, &TestService::testRunRefused, this, refreshTestRun);
+
     refreshConfigurations();
+}
+
+bool RunToolbar::eventFilter(QObject *watched, QEvent *event)
+{
+    QAbstractItemView *view = configCombo_->view();
+    const bool released =
+      watched == view->viewport() && event->type() == QEvent::MouseButtonRelease;
+    const bool entered = watched == view && event->type() == QEvent::KeyPress
+      && (static_cast<QKeyEvent *>(event)->key() == Qt::Key_Return
+          || static_cast<QKeyEvent *>(event)->key() == Qt::Key_Enter);
+    if (released || entered) {
+        popupChoice_ = true;
+    } else if (watched == configCombo_
+               && (event->type() == QEvent::Wheel || event->type() == QEvent::KeyPress)) {
+        // The closed combo's own wheel and arrow keys choose nothing; this
+        // also drops a release in the popup that chose no row.
+        popupChoice_ = false;
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void RunToolbar::refreshConfigurations()
@@ -350,7 +394,8 @@ void RunToolbar::refreshButtons()
 {
     const QString configId = selectedConfigId();
     const bool hasConfig = !configId.isEmpty();
-    const bool running = hasConfig && runningConsoleIdByConfig_.contains(configId);
+    const bool running =
+      testRunning_ || (hasConfig && runningConsoleIdByConfig_.contains(configId));
     runButton_->setEnabled(hasConfig);
     stopButton_->setEnabled(running);
     rerunButton_->setEnabled(running);
@@ -411,6 +456,8 @@ void RunToolbar::stopSelected()
     const auto it = runningConsoleIdByConfig_.constFind(configId);
     if (it != runningConsoleIdByConfig_.constEnd()) {
         runService_->stop(it.value());
+    } else if (testRunning_) {
+        testService_->stop();
     }
 }
 
@@ -420,6 +467,8 @@ void RunToolbar::killSelected()
     const auto it = runningConsoleIdByConfig_.constFind(configId);
     if (it != runningConsoleIdByConfig_.constEnd()) {
         runService_->kill(it.value());
+    } else if (testRunning_) {
+        testService_->stop(); // a test run's Stop already ends its process
     }
 }
 

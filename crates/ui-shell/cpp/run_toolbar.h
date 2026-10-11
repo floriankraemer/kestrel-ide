@@ -39,8 +39,11 @@ class RunToolbar : public QWidget
     Q_DECLARE_TR_FUNCTIONS(RunToolbar)
 
 public:
+    // Stop, Kill and Rerun also reach `testService`'s run in progress, as
+    // PhpStorm's toolbar does, whichever configuration or editor run
+    // started it (#443).
     RunToolbar(RunService *runService, BuildService *buildService, DebugService *debugService,
-               QWidget *parent);
+               TestService *testService, QWidget *parent);
 
     // Run/Stop/Rerun the currently selected configuration — the targets of
     // the global `run.run`/`run.stop`/`run.rerun` shortcuts, so they act on
@@ -65,6 +68,10 @@ public:
     RunService *runService() const { return runService_; }
 
 private:
+    // Notes a Save row choice made in the combo's open popup: `activated`
+    // also fires for a wheel turn or an arrow key on the closed combo,
+    // which must never write the project's settings (M4).
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void refreshConfigurations();
     void refreshButtons();
     void markE2eSelection() const;
@@ -77,6 +84,11 @@ private:
     RunService *runService_;
     BuildService *buildService_;
     DebugService *debugService_;
+    TestService *testService_;
+    // A test run is preparing or running.
+    bool testRunning_ = false;
+    // The next `activated` comes from a click or Enter in the open popup.
+    bool popupChoice_ = false;
     QComboBox *configCombo_ = nullptr;
     // The configuration the combo last showed, so choosing its Save row can
     // go back to it.

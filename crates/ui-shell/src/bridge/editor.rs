@@ -548,6 +548,19 @@ impl ffi::DocumentManager {
 
     pub fn check_external_change(mut self: Pin<&mut Self>, path: &QString) {
         let path_buf = std::path::PathBuf::from(path.to_string());
+        let deletion = self.session.borrow_mut().check_external_deletion(&path_buf);
+        match deletion {
+            Some(app_core::watcher_policy::ExternalDeletion::Close(id)) => {
+                self.as_mut().close_tab(id.raw());
+                return;
+            }
+            Some(app_core::watcher_policy::ExternalDeletion::Keep(tab)) => {
+                self.as_mut()
+                    .tab_title_changed(tab.id.raw(), QString::from(tab.title.as_str()));
+                return;
+            }
+            None => {}
+        }
         let hit = self.session.borrow_mut().check_external_change(&path_buf);
         if let Some(id) = hit {
             self.as_mut()

@@ -7,10 +7,16 @@
 #include <QWidget>
 
 class QMenu;
+class QPlainTextEdit;
 class QTextBrowser;
 class QToolButton;
 
 namespace ui_shell {
+
+// Where a chooser popup a keyboard action opened goes: just below `editor`'s
+// caret, as IntelliJ places Go to Declaration's and Go to Test's (AC9.10);
+// the pointer without an editor.
+QPoint caretPopupPosition(const QPlainTextEdit *editor);
 
 // R3: the one popup hover, hover's diagnostic text, the index-declaration
 // fallback and F2-11's signature tip all show through now, replacing three

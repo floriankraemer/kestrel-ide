@@ -15,6 +15,16 @@ class QVBoxLayout;
 
 namespace ui_shell {
 
+// The Run Configurations dialog's one form layout, shared by its own rows
+// and every kind's page (#448): a row is a widget of its own holding a
+// label and its field, so hiding the row hides both, and
+// `alignFormLabels` gives every label one width, so every field column
+// starts at the same x.
+QWidget *addFormRow(QVBoxLayout *layout, QWidget *owner, const QString &label, QWidget *field);
+void alignFormLabels(QWidget *root);
+// E2E only: each visible row's label and its field's global x.
+QString formRowsJson(const QWidget *root);
+
 // The `php-builtin-server` run configuration's own page (PHP parity plan,
 // I6): listen host and port, document root and router script —
 // `FfiPhpServerOptions`'s exact fields.
@@ -55,6 +65,8 @@ public:
     void setChecked(const QStringList &names);
     // Replaces the offered names, keeping what is checked.
     void setChoices(const QStringList &names);
+    // E2E only: the line a flow types a new group into.
+    QLineEdit *addEdit() const { return addEdit_; }
 
 signals:
     void changed();
@@ -81,6 +93,8 @@ public:
 
     void setOptions(const FfiPhpUnitOptions &options);
     FfiPhpUnitOptions options() const;
+    // E2E only: the fields a flow types into, with their rects and text.
+    QString e2eFieldsJson() const;
 
 signals:
     void changed();
@@ -96,7 +110,7 @@ private:
     // directory.
     void browse(QLineEdit *edit, bool directory);
     QLineEdit *addField(const QString &label, bool browseDirectory, bool browseFile);
-    // Puts `field` in a labelled row of its own.
+    // Puts `field` in a labelled row of the shared form.
     void addRow(const QString &label, QWidget *field);
     QVBoxLayout *layout_;
 

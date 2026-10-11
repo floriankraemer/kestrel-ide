@@ -1001,6 +1001,18 @@
 <context>
     <name>QObject</name>
     <message>
+        <source>%1
+Expected: %2
+Actual:   %3</source>
+        <translation>%1
+Attendu : %2
+Réel : %3</translation>
+    </message>
+    <message>
+        <source>Not finished</source>
+        <translation>Non terminé</translation>
+    </message>
+    <message>
         <source>%1 (not installed)</source>
         <translation>%1 (non installé)</translation>
     </message>
@@ -3609,6 +3621,16 @@
 </context>
 <context>
     <name>TestsPanel</name>
+    <message>
+        <source>Expected: %1
+Actual:   %2
+
+</source>
+        <translation>Attendu : %1
+Réel : %2
+
+</translation>
+    </message>
     <message numerus="yes">
         <source>%n test node(s).</source>
         <translation>

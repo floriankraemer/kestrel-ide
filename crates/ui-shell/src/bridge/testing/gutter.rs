@@ -6,8 +6,10 @@
 //! `php_core::tests::markers`'s; the framework, its argv and its output
 //! parsing are the ordinary `start` path's.
 
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 
+use cxx_qt::Threading;
 use cxx_qt_lib::QString;
 
 use super::{MarkerSelection, RerunSelection};
@@ -16,6 +18,26 @@ use crate::bridge::ffi;
 
 /// Files whose parsed markers the gutter keeps.
 const MAX_CACHED_FILES: usize = 64;
+
+/// The project's recorded test results (G4), read on a worker (#437).
+#[derive(Default)]
+pub(super) enum HistoryState {
+    /// Not asked for yet, or the last read failed: the next paint asks.
+    #[default]
+    Absent,
+    Loading(PathBuf),
+    Loaded(PathBuf, php_core::test_history::TestHistory),
+}
+
+impl HistoryState {
+    /// The loaded history of the project at `root`.
+    pub(super) fn of(&self, root: &Path) -> Option<&php_core::test_history::TestHistory> {
+        match self {
+            Self::Loaded(loaded, history) if loaded == root => Some(history),
+            _ => None,
+        }
+    }
+}
 
 pub(super) fn is_php_file(path: &str) -> bool {
     syntax_core::language_for_path(std::path::Path::new(path)).id() == "php"
@@ -76,6 +98,7 @@ fn to_ffi_marker_state(state: php_core::test_status::MarkerState) -> ffi::FfiMar
         MarkerState::Passed => ffi::FfiMarkerState::Passed,
         MarkerState::Failed => ffi::FfiMarkerState::Failed,
         MarkerState::Ignored => ffi::FfiMarkerState::Ignored,
+        MarkerState::Terminated => ffi::FfiMarkerState::Terminated,
     }
 }
 
@@ -134,33 +157,46 @@ impl ffi::TestService {
         };
         self.load_history(&root);
         let history = self.history.borrow();
-        let Some((_, history)) = history.as_ref() else {
-            return Vec::new();
-        };
-        let recorded_nodes = history.tree().nodes_in_file(
-            &process_exec::host::ExecHost::Local,
-            std::path::Path::new(""),
-            std::path::Path::new(&path),
-        );
+        let recorded_tree = history.of(&root).map(|history| history.tree());
+        let recorded_nodes = recorded_tree
+            .map(|tree| {
+                tree.nodes_in_file(
+                    &process_exec::host::ExecHost::Local,
+                    Path::new(""),
+                    Path::new(&path),
+                )
+            })
+            .unwrap_or_default();
         let tree = self.tree.borrow();
         let nodes = self.nodes_in(&tree, &path);
         if nodes.is_empty() && recorded_nodes.is_empty() {
             return Vec::new();
         }
         let markers = self.markers_of(&path, &text.to_string());
-        let live = php_core::test_status::marker_statuses(&markers, &tree, &nodes);
-        let recorded =
-            php_core::test_status::marker_statuses(&markers, history.tree(), &recorded_nodes);
-        php_core::test_status::with_history(live, recorded)
+        use php_core::test_status::Results;
+        let live = Results {
+            tree: &tree,
+            file_nodes: &nodes,
+        };
+        let recorded = Results {
+            tree: recorded_tree.unwrap_or(&tree),
+            file_nodes: &recorded_nodes,
+        };
+        php_core::test_status::marker_statuses_with_history(&markers, live, recorded)
             .into_iter()
-            .map(|status| ffi::FfiMarkerStatus {
-                line: status.line,
-                state: to_ffi_marker_state(status.state),
-                total: status.total,
-                failed: status.failed,
-                passed: status.passed,
-                duration_ms: status.duration_ms,
-                message: QString::from(status.message.as_str()),
+            .map(|status| {
+                let comparison = status.comparison.unwrap_or_default();
+                ffi::FfiMarkerStatus {
+                    line: status.line,
+                    state: to_ffi_marker_state(status.state),
+                    total: status.total,
+                    failed: status.failed,
+                    passed: status.passed,
+                    duration_ms: status.duration_ms,
+                    message: QString::from(status.message.as_str()),
+                    expected: QString::from(comparison.expected.as_str()),
+                    actual: QString::from(comparison.actual.as_str()),
+                }
             })
             .collect()
     }
@@ -210,45 +246,112 @@ impl ffi::TestService {
         ffi::FfiResult::default()
     }
 
-    /// Load the project's recorded test results, once per project. A small
-    /// TOML read on the Qt thread, on the first gutter paint after a project
-    /// opens; an unreadable file is an empty history.
-    // ponytail: read on the Qt thread; move to a worker if a share makes it slow.
-    fn load_history(&self, root: &std::path::Path) {
-        let mut history = self.history.borrow_mut();
-        if history.as_ref().is_some_and(|(loaded, _)| loaded == root) {
+    /// Start reading the project's recorded test results on a worker, once
+    /// per project; the gutter repaints when they arrive (#437). A read that
+    /// failed is retried on the next paint, and nothing overwrites the file
+    /// unread: a save moves an unreadable one aside.
+    // ponytail: a corrupt file is re-read on every paint until a run's save
+    // moves it aside; cheap next to the paint, and it heals itself.
+    fn load_history(&self, root: &Path) {
+        let mut state = self.history.borrow_mut();
+        if matches!(&*state, HistoryState::Loading(loading) if loading == root)
+            || state.of(root).is_some()
+        {
             return;
         }
-        let settings = app_config::test_history::load(root).unwrap_or_default();
-        *history = Some((
-            root.to_path_buf(),
-            php_core::test_history::TestHistory::from_settings(settings),
-        ));
+        *state = HistoryState::Loading(root.to_path_buf());
+        let qt_thread = self.qt_thread();
+        let root = root.to_path_buf();
+        std::thread::spawn(move || {
+            let loaded = app_config::test_history::load(&root).ok();
+            let _ = qt_thread.queue(move |service: Pin<&mut ffi::TestService>| {
+                service.history_arrived(&root, loaded);
+            });
+        });
+    }
+
+    /// The project's recorded results arrived (`None`: the file could not
+    /// be read): merged into whatever this session recorded meanwhile.
+    fn history_arrived(
+        self: Pin<&mut Self>,
+        root: &Path,
+        loaded: Option<app_config::test_history::TestHistorySettings>,
+    ) {
+        {
+            let mut state = self.history.borrow_mut();
+            match (&mut *state, loaded) {
+                (HistoryState::Loaded(at, history), Some(settings)) if at == root => {
+                    history.merge(settings);
+                }
+                (HistoryState::Loading(at), Some(settings)) if at == root => {
+                    *state = HistoryState::Loaded(
+                        root.to_path_buf(),
+                        php_core::test_history::TestHistory::from_settings(settings),
+                    );
+                }
+                (HistoryState::Loading(at), None) if at == root => *state = HistoryState::Absent,
+                // Another project is open now, or the read failed after a
+                // run recorded results of its own.
+                _ => return,
+            }
+        }
+        self.test_history_loaded();
     }
 
     /// Record the finished run's results for the gutter's next session, and
-    /// persist them off the Qt thread when they changed. A run of a project
-    /// that is no longer open records nothing.
-    pub(super) fn record_history(&self, root: &std::path::Path) {
+    /// persist them off the Qt thread when they changed: merged with what
+    /// the file holds by then, so concurrent saves and other IDE instances
+    /// keep each other's results. A run of a project that is no longer open
+    /// records nothing.
+    pub(super) fn record_history(&self, root: &Path) {
         if super::current_project_root().as_deref() != Some(root) {
             return;
         }
-        self.load_history(root);
         let (host, work_dir) = self.run_context(root);
-        let mut history = self.history.borrow_mut();
-        let Some((_, history)) = history.as_mut() else {
+        let mut state = self.history.borrow_mut();
+        // Still loading, or unread: the load (or the save's merge) adds the
+        // file's results to these.
+        if state.of(root).is_none() {
+            *state = HistoryState::Loaded(
+                root.to_path_buf(),
+                php_core::test_history::TestHistory::default(),
+            );
+        }
+        let HistoryState::Loaded(_, history) = &mut *state else {
             return;
         };
-        if !history.record(&self.tree.borrow(), &host, &work_dir) {
+        let now = php_core::test_history::now_ms();
+        if !history.record(&self.tree.borrow(), &host, &work_dir, now) {
             return;
         }
-        let settings = history.settings();
+        let ours = history.settings();
         let root = root.to_path_buf();
+        let qt_thread = self.qt_thread();
         // The history is a convenience: a failed write only means the next
         // session starts without these icons.
         std::thread::spawn(move || {
-            let _ = app_config::test_history::save(&root, &settings);
+            let saved = app_config::test_history::update(&root, |on_disk| {
+                php_core::test_history::merged(on_disk, &ours)
+            });
+            if let Ok(saved) = saved {
+                let _ = qt_thread.queue(move |service: Pin<&mut ffi::TestService>| {
+                    service.history_arrived(&root, Some(saved));
+                });
+            }
         });
+    }
+
+    /// The files the recorded results name, on this machine.
+    pub(super) fn history_files(&self, root: &Path) -> Vec<PathBuf> {
+        self.history
+            .borrow()
+            .of(root)
+            .map(|history| {
+                history
+                    .tree()
+                    .located_files(&process_exec::host::ExecHost::Local, Path::new(""))
+            })
+            .unwrap_or_default()
     }
 
     /// The tree's nodes located in `path`, mapped through the last run's host.

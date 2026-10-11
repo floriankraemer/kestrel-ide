@@ -36,7 +36,7 @@ class QWheelEvent;
 namespace ui_shell {
 
 // E3: what a gutter Run marker shows of its test's last run.
-enum class RunMarkerGlyph { Passed, Failed, Ignored, Running };
+enum class RunMarkerGlyph { Passed, Failed, Ignored, Running, Terminated };
 struct RunMarkerStatus {
     RunMarkerGlyph glyph;
     QString tooltip;

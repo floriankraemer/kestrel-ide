@@ -20,6 +20,7 @@
 #include <QScreen>
 #include <QTextBlock>
 #include <QScrollBar>
+#include <QPlainTextEdit>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -29,6 +30,14 @@
 #include <algorithm>
 
 namespace ui_shell {
+
+QPoint caretPopupPosition(const QPlainTextEdit *editor)
+{
+    if (editor == nullptr) {
+        return QCursor::pos();
+    }
+    return editor->viewport()->mapToGlobal(editor->cursorRect().bottomLeft());
+}
 
 namespace {
 constexpr int kMaxWidth = 560;

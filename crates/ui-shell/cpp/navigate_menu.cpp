@@ -10,7 +10,6 @@
 #include "keymap_page.h"
 
 #include <QAction>
-#include <QCursor>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
@@ -32,7 +31,7 @@ void relabelGoToTest(QAction *action, EditorTabs *editorTabs, TestService *testS
     action->setText(inTest ? QObject::tr("Test Subject") : QObject::tr("Test"));
 }
 
-// Several targets: offer them at the pointer, as Go to Declaration does.
+// Several targets: offer them below the caret, as Go to Declaration does.
 void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
                   const QString &name, const QStringList &paths, const QStringList &labels,
                   const rust::Vec<quint32> &lines)
@@ -51,7 +50,7 @@ void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
         });
     }
     e2eMarkMenuActions(&menu, "goto_test_menu_action");
-    menu.exec(QCursor::pos());
+    menu.exec(caretPopupPosition(editorTabs->currentEditor()));
 }
 
 // E7: Navigate > Test / Test Subject. Editor-scoped (ADR-0074): the
@@ -107,10 +106,13 @@ void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorT
           }
           // #426: the convention's tests answered at once; the ones that say
           // they cover the class join once the project's tests are indexed.
+          // A complete answer takes back an earlier "still indexing" (#449).
+          const QString stillIndexing =
+            QObject::tr("Still indexing the tests that cover %1.").arg(name);
           if (answer.stillIndexing) {
-              window->statusBar()->showMessage(
-                QObject::tr("Still indexing the tests that cover %1.").arg(name),
-                4000);
+              window->statusBar()->showMessage(stillIndexing, 4000);
+          } else if (window->statusBar()->currentMessage() == stillIndexing) {
+              window->statusBar()->clearMessage();
           }
           if (paths.size() == 1) {
               editorTabs->openFileAtLine(paths.first(),

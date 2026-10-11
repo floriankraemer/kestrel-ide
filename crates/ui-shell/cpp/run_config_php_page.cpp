@@ -36,6 +36,72 @@ QStringList splitNames(const QString &text)
 
 namespace ui_shell {
 
+namespace {
+// Marks a label as one of the form's, for `alignFormLabels`.
+const char *const kFormLabel = "runConfigFormLabel";
+
+QString rectJson(const QWidget *widget)
+{
+    const QPoint origin = widget->mapToGlobal(QPoint(0, 0));
+    return QStringLiteral("[%1,%2,%3,%4]")
+      .arg(origin.x())
+      .arg(origin.y())
+      .arg(widget->width())
+      .arg(widget->height());
+}
+} // namespace
+
+QWidget *addFormRow(QVBoxLayout *layout, QWidget *owner, const QString &label, QWidget *field)
+{
+    auto *row = new QWidget(owner);
+    auto *rowLayout = new QHBoxLayout(row);
+    rowLayout->setContentsMargins(0, 0, 0, 0);
+    auto *labelWidget = new QLabel(label, row);
+    labelWidget->setProperty(kFormLabel, true);
+    labelWidget->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+    field->setParent(row);
+    rowLayout->addWidget(labelWidget);
+    rowLayout->addWidget(field, 1);
+    layout->addWidget(row);
+    return row;
+}
+
+void alignFormLabels(QWidget *root)
+{
+    const QList<QLabel *> labels = root->findChildren<QLabel *>();
+    int width = 0;
+    for (const QLabel *label : labels) {
+        if (label->property(kFormLabel).toBool()) {
+            width = qMax(width, label->sizeHint().width());
+        }
+    }
+    for (QLabel *label : labels) {
+        if (label->property(kFormLabel).toBool()) {
+            label->setFixedWidth(width);
+        }
+    }
+}
+
+QString formRowsJson(const QWidget *root)
+{
+    QStringList rows;
+    for (const QLabel *label : root->findChildren<QLabel *>()) {
+        if (!label->property(kFormLabel).toBool() || !label->isVisible()) {
+            continue;
+        }
+        const QLayout *rowLayout = label->parentWidget()->layout();
+        const QLayoutItem *fieldItem = rowLayout != nullptr ? rowLayout->itemAt(1) : nullptr;
+        const QWidget *field = fieldItem != nullptr ? fieldItem->widget() : nullptr;
+        if (field == nullptr) {
+            continue;
+        }
+        rows << QStringLiteral("{\"label\":%1,\"field_x\":%2}")
+                  .arg(e2eJson(label->text()))
+                  .arg(field->mapToGlobal(QPoint(0, 0)).x());
+    }
+    return QStringLiteral("[%1]").arg(rows.join(QLatin1Char(',')));
+}
+
 PhpServerOptionsPage::PhpServerOptionsPage(QWidget *parent)
   : QWidget(parent)
 {
@@ -43,12 +109,7 @@ PhpServerOptionsPage::PhpServerOptionsPage(QWidget *parent)
     layout->setContentsMargins(0, 0, 0, 0);
 
     const auto addRow = [this, layout](const QString &label, QWidget *field) {
-        auto *row = new QHBoxLayout();
-        auto *labelWidget = new QLabel(label, this);
-        labelWidget->setMinimumWidth(90);
-        row->addWidget(labelWidget);
-        row->addWidget(field, 1);
-        layout->addLayout(row);
+        addFormRow(layout, this, label, field);
     };
 
     hostEdit_ = new QLineEdit(this);
@@ -182,10 +243,6 @@ PhpUnitOptionsPage::PhpUnitOptionsPage(RunConfigEditor *editor, QWidget *parent)
     layout_ = new QVBoxLayout(this);
     layout_->setContentsMargins(0, 0, 0, 0);
 
-    auto *scopeRow = new QHBoxLayout();
-    auto *scopeLabel = new QLabel(tr("Test scope:"), this);
-    scopeLabel->setMinimumWidth(90);
-    scopeRow->addWidget(scopeLabel);
     scopeCombo_ = new QComboBox(this);
     // The data is `PhpUnitRunSetting::scope`'s spelling.
     scopeCombo_->addItem(tr("Defined in the configuration file"), QStringLiteral("config"));
@@ -194,8 +251,7 @@ PhpUnitOptionsPage::PhpUnitOptionsPage(RunConfigEditor *editor, QWidget *parent)
     scopeCombo_->addItem(tr("Class"), QStringLiteral("class"));
     scopeCombo_->addItem(tr("Method"), QStringLiteral("method"));
     scopeCombo_->addItem(tr("Data set"), QStringLiteral("data_set"));
-    scopeRow->addWidget(scopeCombo_, 1);
-    layout_->addLayout(scopeRow);
+    addRow(tr("Test scope:"), scopeCombo_);
     connect(scopeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this]() {
         showFieldsForScope();
         emit changed();
@@ -306,17 +362,17 @@ void PhpUnitOptionsPage::applyModel(const FfiPhpUnitModel &model)
 
 void PhpUnitOptionsPage::addRow(const QString &label, QWidget *field)
 {
-    auto *row = new QWidget(this);
-    auto *rowLayout = new QHBoxLayout(row);
-    rowLayout->setContentsMargins(0, 0, 0, 0);
-    auto *labelWidget = new QLabel(label, row);
-    labelWidget->setMinimumWidth(90);
-    labelWidget->setAlignment(Qt::AlignLeft | Qt::AlignTop);
-    field->setParent(row);
-    rowLayout->addWidget(labelWidget);
-    rowLayout->addWidget(field, 1);
-    layout_->addWidget(row);
-    rows_.insert(field, row);
+    rows_.insert(field, addFormRow(layout_, this, label, field));
+}
+
+QString PhpUnitOptionsPage::e2eFieldsJson() const
+{
+    return QStringLiteral("{\"configuration_rect\":%1,\"configuration\":%2,"
+                          "\"group_add_rect\":%3,\"groups\":%4,"
+                          "\"working_directory\":%5}")
+      .arg(rectJson(configurationEdit_), e2eJson(configurationEdit_->text()),
+           rectJson(groupsPicker_->addEdit()), e2eJson(groupsPicker_->checked().join(QLatin1Char(','))),
+           e2eJson(workingDirectoryEdit_->text()));
 }
 
 QLineEdit *PhpUnitOptionsPage::addField(const QString &label, bool browseDirectory, bool browseFile)

@@ -690,10 +690,10 @@ public:
     // repaint — the run lines themselves cannot have moved.
     void refreshRunMarkerStatuses();
     void pushRunMarkerStatuses(CodeEditor *editor, const QString &path);
-    // The gutter Run icon on `line` (or `run.runContext`, line 0) fired:
-    // launch this editor's file through `RunService::runContext`, or show
-    // the Dockerfile/compose popup (C5/C6) scoped to that line.
+    // The gutter Run icon on `line` (or `run.runContext`, line 0): a test file runs its
+    // tests, any other `runPlainFile`s (`RunService::runContext`, or a Dockerfile/compose popup).
     void requestRunFor(CodeEditor *editor, int line = 0);
+    void runPlainFile(CodeEditor *editor, const QString &path, int line);
     // PHP parity T3: the Run/Debug popup of the test marker on `line`.
     // `run.runContext` / `run.debugContext`: the caret's test scope in a PHP
     // test file, else (Run only) `requestRunFor`'s ordinary file run.

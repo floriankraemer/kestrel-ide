@@ -484,3 +484,54 @@ fn gutter_run_then_dock(ide: &Ide, tab_id: u64, line: u64, prefix: &str) -> Mark
     wait_for_test_run(ide, mark);
     mark
 }
+
+/// Open Run > Edit Configurations... and select its first row; the mark is
+/// the one taken before the dialog opened.
+fn open_config_dialog(ide: &Ide) -> Mark {
+    let mark = ide.mark();
+    click_run_menu_item(ide, "Edit Configurations...");
+    let shown = ide.wait_for_event(mark, "the run configuration dialog", |e| {
+        e["ev"] == "dialog_shown" && e["name"] == "run_config_dialog"
+    });
+    // No window manager hands a new toplevel the focus.
+    let dialog = e2e::wait_for("the dialog's window", || {
+        e2e::xdotool::visible_windows("^Run Configurations$")
+            .into_iter()
+            .next()
+    });
+    ide.focus_window(&dialog);
+    let list = &shown["list_rect"];
+    let (x, _) = rect_centre(list);
+    ide.click_at(x, list[1].as_i64().unwrap() as i32 + 8, 1);
+    mark
+}
+
+/// The dialog's form once the row `pick` accepts is selected, walking the
+/// list down at most `count` rows; `None` when no row matched.
+fn find_config_row(
+    ide: &Ide,
+    opened: Mark,
+    count: usize,
+    pick: impl Fn(&Value) -> bool,
+) -> Option<Value> {
+    let mut since = opened;
+    for _ in 0..=count {
+        let form = ide.wait_for_ev(since, "run_config_form");
+        if pick(&form) {
+            return Some(form);
+        }
+        since = ide.mark();
+        ide.key("Down");
+        answer(ide, since, |e| e["ev"] == "run_config_form")?;
+    }
+    None
+}
+
+/// Close the dialog without saving.
+fn close_config_dialog(ide: &Ide, opened: Mark) {
+    ide.key("Escape");
+    ide.wait_for_event(opened, "the dialog to close", |e| {
+        e["ev"] == "dialog_closed" && e["name"] == "run_config_dialog"
+    });
+    ide.focus_main();
+}

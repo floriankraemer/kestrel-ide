@@ -178,6 +178,9 @@ Pest lives in its own package, `packages/pest`, so the root project runs real PH
 | `e2e_phpunit_project_tree_and_monorepo_packages` | J7, J8 |
 | `e2e_phpunit_go_to_test_and_subject` | J9, G11 |
 
+The configurations flow also types into the PHPUnit page (AC4.6, AC4.11) and checks its label column (AC4.14) through the dialog's `run_config_form` marker; the tree flow reads a package configuration's page (AC8.6).
+AC4.8 stays manual: its pickers open the platform's file dialog.
+A Pest dataset row cannot run on its own (#451), so AC2.10's dataset part fails until that is solved.
 A flow records each failed AC and keeps going, so one defect does not hide the ACs after it; it fails at its end, listing every failed AC.
 Screenshots for the pixel ACs go to `target/shots` (or `$IDE_SHOT_DIR`) as a diagnostic, never an assertion (ADR-0024).
 

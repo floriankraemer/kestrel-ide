@@ -311,18 +311,22 @@ fn e2e_phpunit_gutter_status_data_sets_and_coverage() {
     wait_for_marker(&ide, mark, pest, PEST_IT_ADDS, "passed");
     wait_for_marker(&ide, mark, pest, 4, "passed");
     let squares = gutter_menu_labels(&ide, pest, 15);
-    let three = squares
+    // A finding, not a panic: the ACs after this one still run.
+    match squares
         .iter()
         .find(|l| l.starts_with("Run") && l.contains("three"))
-        .unwrap_or_else(|| panic!("AC2.10: no data set entry in {squares:?}"))
-        .clone();
-    let mark = ide.mark();
-    gutter(&ide, pest, 15, &three);
-    let (finished, tests) = run_and_collect(&ide, mark);
-    findings.check(
-        tests.len() == 1 && tests.keys().all(|n| n.contains("three")),
-        format!("AC2.10: the Pest dataset row `three` ran {tests:?}: {finished}"),
-    );
+    {
+        Some(three) => {
+            let mark = ide.mark();
+            gutter(&ide, pest, 15, &three.clone());
+            let (finished, tests) = run_and_collect(&ide, mark);
+            findings.check(
+                tests.len() == 1 && tests.keys().all(|n| n.contains("three")),
+                format!("AC2.10: the Pest dataset row `three` ran {tests:?}: {finished}"),
+            );
+        }
+        None => findings.check(false, format!("AC2.10: no data set entry in {squares:?}")),
+    }
 
     // AC2.5: a running test shows the running state.
     let slow = open(&ide, "SlowTest.php");

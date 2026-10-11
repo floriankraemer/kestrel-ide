@@ -5,6 +5,8 @@
 #include <QHash>
 #include <QString>
 
+#include <memory>
+
 class QAction;
 class QMainWindow;
 
@@ -24,6 +26,14 @@ class HierarchyPanel;
 void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
                         SearchModel *searchModel, EditorTabs *editorTabs, AppSettings *appSettings,
                         QHash<QString, QAction *> &actions, DockRegistry *docks,
-                        FindUsagesPanel *findUsagesPanel, HierarchyPanel *hierarchyPanel);
+                        FindUsagesPanel *findUsagesPanel, HierarchyPanel *hierarchyPanel,
+                        TestService *testService);
+
+// The editor's right-click menu: the navigation, refactoring and AI actions
+// registered under `actions` (the same QActions as the menu bar's, so their
+// shortcuts show and a rebind reaches both), and Go To > Test.
+void wireEditorContextMenu(EditorTabs *editorTabs,
+                           std::shared_ptr<QHash<QString, QAction *>> actions,
+                           TestService *testService);
 
 } // namespace ui_shell

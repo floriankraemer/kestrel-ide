@@ -239,9 +239,8 @@ public:
     // resulting popup pinned once it arrives.
     void requestQuickDocumentation();
 
-    // Where the hover card opens: the hovered position's cursor rect in the
-    // current editor, in global coordinates — the caret's for Ctrl+Alt+Q,
-    // since both requests go through `hoverPosition()`.
+    // Where the hover card opens: the hovered position's global cursor rect —
+    // the caret's for Ctrl+Alt+Q, as both go through `hoverPosition()`.
     QRect hoverAnchor() const;
 
     // Whichever of `hoverReady`/`hoverSignatureReady` answers the request
@@ -255,19 +254,20 @@ public:
         return pending;
     }
 
-    // Called when no server answered a hover, and when there was no server
-    // to ask. Set by the window, which owns the SearchModel.
+    // No server answered a hover, or none to ask; set by the SearchModel's owner.
     void setHoverFallbackCallback(std::function<void()> callback);
 
     void setHoverCanceledCallback(std::function<void()> callback);
 
     // What the window wants added to an editor's right-click menu. Set once;
-    // every editor opened afterwards picks it up, and so does every one
-    // already open.
+    // every editor, open or opened later, picks it up.
     void setContextMenuCallback(std::function<void(QMenu *)> callback);
 
-    void hoverFallback();
+    // ADR-0074's Editor context: `action`'s shortcut is live only while
+    // focus is in the editor area, wherever else the action is shown.
+    void addEditorAction(QAction *action);
 
+    void hoverFallback();
     void hoverCanceled();
 
     // Save every tab with unsaved changes. The name-based rename needs this

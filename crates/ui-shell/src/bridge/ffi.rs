@@ -7226,6 +7226,33 @@ mod ffi {
         #[cxx_name = "markerLines"]
         fn marker_lines(self: &TestService, path: &QString, text: &QString) -> Vec<u32>;
 
+        /// Whether Go to Test from `path` (holding `text`) leads to subjects:
+        /// a PHP test file. The Navigate menu names the action after it.
+        #[qinvokable]
+        #[cxx_name = "isTestFile"]
+        fn is_test_file(self: &TestService, path: &QString, text: &QString) -> bool;
+
+        /// Go to Test / Test Subject (E7) from `path` holding `text`,
+        /// resolved on a worker thread (the project may sit behind a slow
+        /// `\\wsl.localhost` share); answers through `testNavigationReady`.
+        #[qinvokable]
+        #[cxx_name = "requestTestNavigation"]
+        fn request_test_navigation(self: Pin<&mut TestService>, path: &QString, text: &QString);
+
+        /// `requestTestNavigation`'s answer: whether it started from a test,
+        /// the class (or Pest file) it started from — empty for a file that
+        /// is not PHP — and the absolute files, most likely first, each with
+        /// its project-relative label for the chooser.
+        #[qsignal]
+        #[cxx_name = "testNavigationReady"]
+        fn test_navigation_ready(
+            self: Pin<&mut TestService>,
+            from_test: bool,
+            name: QString,
+            paths: QStringList,
+            labels: QStringList,
+        );
+
         /// The last run's result for every marker in `text` (E3).
         #[qinvokable]
         #[cxx_name = "markerStatuses"]

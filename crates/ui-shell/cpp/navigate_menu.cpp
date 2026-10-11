@@ -9,16 +9,98 @@
 #include "keymap_page.h"
 
 #include <QAction>
+#include <QCursor>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
+#include <QStatusBar>
 
 namespace ui_shell {
+
+namespace {
+
+const QString goToTestId = QStringLiteral("navigate.goToTest");
+
+// PhpStorm names the action after where it leads: "Test Subject" from a
+// test, "Test" from anything else. Whether the file is a test is
+// `php_core::test_navigation`'s rule.
+void relabelGoToTest(QAction *action, EditorTabs *editorTabs, TestService *testService)
+{
+    const bool inTest =
+      testService->isTestFile(editorTabs->currentPath(), editorTabs->currentContent());
+    action->setText(inTest ? QObject::tr("Test Subject") : QObject::tr("Test"));
+}
+
+// Several targets: offer them at the pointer, as Go to Declaration does.
+void chooseTarget(QMainWindow *window, EditorTabs *editorTabs, bool fromTest,
+                  const QString &name, const QStringList &paths, const QStringList &labels)
+{
+    QMenu menu(window);
+    QAction *title = menu.addAction(fromTest ? QObject::tr("Choose Test Subject for %1").arg(name)
+                                             : QObject::tr("Choose Test for %1").arg(name));
+    title->setEnabled(false);
+    menu.addSeparator();
+    for (qsizetype i = 0; i < paths.size(); ++i) {
+        const QString path = paths.at(i);
+        QAction *action = menu.addAction(labels.value(i, path));
+        QObject::connect(action, &QAction::triggered, window,
+                         [editorTabs, path]() { editorTabs->openFileAtLine(path, 1, 0); });
+    }
+    menu.exec(QCursor::pos());
+}
+
+// E7: Navigate > Test / Test Subject. Editor-scoped (ADR-0074): the
+// shortcut is live only while focus is inside the editor area, so it shares
+// Ctrl+Shift+T with the terminal's New Terminal Tab without Qt finding the
+// key ambiguous. The menu entry itself works from anywhere.
+void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorTabs,
+                   AppSettings *appSettings, QHash<QString, QAction *> &actions,
+                   TestService *testService)
+{
+    QAction *goToTest =
+      registerAction(navigateMenu, goToTestId, QObject::tr("Test"), appSettings, actions);
+    editorTabs->addEditorAction(goToTest);
+    QObject::connect(navigateMenu, &QMenu::aboutToShow, goToTest,
+                     [goToTest, editorTabs, testService]() {
+                         relabelGoToTest(goToTest, editorTabs, testService);
+                     });
+    QObject::connect(goToTest, &QAction::triggered, window, [window, editorTabs, testService]() {
+        const QString path = editorTabs->currentPath();
+        if (path.isEmpty()) {
+            window->statusBar()->showMessage(QObject::tr("Open a PHP file to go to its test."),
+                                             4000);
+            return;
+        }
+        testService->requestTestNavigation(path, editorTabs->currentContent());
+    });
+    QObject::connect(
+      testService, &TestService::testNavigationReady, window,
+      [window, editorTabs](bool fromTest, const QString &name, const QStringList &paths,
+                           const QStringList &labels) {
+          if (name.isEmpty()) {
+              window->statusBar()->showMessage(
+                QObject::tr("Go to Test works in the PHP files of an open project."), 4000);
+          } else if (paths.isEmpty()) {
+              // PhpStorm offers Create New Test here; that dialog is #404.
+              window->statusBar()->showMessage(
+                fromTest ? QObject::tr("No test subject found for %1.").arg(name)
+                         : QObject::tr("No test found for %1.").arg(name),
+                4000);
+          } else if (paths.size() == 1) {
+              editorTabs->openFileAtLine(paths.first(), 1, 0);
+          } else {
+              chooseTarget(window, editorTabs, fromTest, name, paths, labels);
+          }
+      });
+}
+
+} // namespace
 
 void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
                         SearchModel *searchModel, EditorTabs *editorTabs, AppSettings *appSettings,
                         QHash<QString, QAction *> &actions, DockRegistry *docks,
-                        FindUsagesPanel *findUsagesPanel, HierarchyPanel *hierarchyPanel)
+                        FindUsagesPanel *findUsagesPanel, HierarchyPanel *hierarchyPanel,
+                        TestService *testService)
 {
     // N8: code navigation. The Ctrl+Click gesture and every action below
     // route through the one DeclarationNavigator, so there is a single
@@ -95,6 +177,8 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
         findUsagesPanel->findSupertypes(name);
     });
 
+    buildGoToTest(window, navigateMenu, editorTabs, appSettings, actions, testService);
+
     // C11-followup: the caret's own file and LSP position — same convention
     // requestIntentions/requestSignatureHelp already send.
     auto atCaret = [editorTabs]() {
@@ -161,6 +245,38 @@ void buildNavigateMenu(QMainWindow *window, LanguageService *languageService,
     };
     editorTabs->setNavigationChangedCallback(refreshNavigationActions);
     refreshNavigationActions();
+}
+
+void wireEditorContextMenu(EditorTabs *editorTabs,
+                           std::shared_ptr<QHash<QString, QAction *>> actions,
+                           TestService *testService)
+{
+    // The actions are looked up by id rather than captured, so this does not
+    // depend on which menus have been built yet.
+    editorTabs->setContextMenuCallback([actions, editorTabs, testService](QMenu *menu) {
+        const auto append = [actions](QMenu *to, const QString &id) {
+            if (QAction *action = actions->value(id)) {
+                to->addAction(action);
+            }
+        };
+        menu->addSeparator();
+        append(menu, QStringLiteral("navigate.goToDeclaration"));
+        append(menu, QStringLiteral("navigate.findUsages"));
+        append(menu, QStringLiteral("navigate.showCallHierarchy"));
+        append(menu, QStringLiteral("navigate.showTypeHierarchy"));
+        if (QAction *goToTest = actions->value(goToTestId)) {
+            relabelGoToTest(goToTest, editorTabs, testService);
+            menu->addMenu(QObject::tr("Go To"))->addAction(goToTest);
+        }
+        menu->addSeparator();
+        append(menu, QStringLiteral("refactor.rename"));
+        append(menu, QStringLiteral("refactor.extractMethod"));
+        append(menu, QStringLiteral("refactor.extractClass"));
+        append(menu, QStringLiteral("refactor.refactorThis"));
+        menu->addSeparator();
+        append(menu, QStringLiteral("ai.addSelection"));
+        append(menu, QStringLiteral("ai.addSelectionNewChat"));
+    });
 }
 
 } // namespace ui_shell

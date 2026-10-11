@@ -233,7 +233,7 @@ pub fn markers(text: &str) -> Vec<TestMarker> {
     out
 }
 
-fn parse(text: &str) -> Option<tree_sitter::Tree> {
+pub(crate) fn parse(text: &str) -> Option<tree_sitter::Tree> {
     let language = syntax_core::language_by_id("php")?;
     let compiled = syntax_core::registry().compiled(language)?.ok()?;
     let mut parser = tree_sitter::Parser::new();

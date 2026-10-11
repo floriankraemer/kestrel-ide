@@ -18,9 +18,9 @@ use quick_xml::Reader;
 const DEFAULT_SUFFIX: &str = "Test.php";
 /// The scan stops after this many test files, so a suite that points at
 /// `vendor` cannot stall the editor.
-const MAX_SCANNED_FILES: usize = 2000;
+pub(crate) const MAX_SCANNED_FILES: usize = 2000;
 /// A test file larger than this is not read.
-const MAX_FILE_BYTES: u64 = 512 * 1024;
+pub(crate) const MAX_FILE_BYTES: u64 = 512 * 1024;
 
 /// A `<directory>` of a test suite.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,13 +362,13 @@ pub fn reads_annotations(lock: Option<&crate::composer::ComposerLock>) -> bool {
 }
 
 /// The scan's shared limits: test files read, directory entries visited.
-struct Budget {
-    files: usize,
-    entries: usize,
+pub(crate) struct Budget {
+    pub(crate) files: usize,
+    pub(crate) entries: usize,
 }
 
 impl Budget {
-    fn spent(&self) -> bool {
+    pub(crate) fn spent(&self) -> bool {
         self.files == 0 || self.entries == 0
     }
 }
@@ -377,7 +377,7 @@ impl Budget {
 /// names: dependencies, never the project's own tests.
 const SKIPPED_DIRECTORIES: &[&str] = &["vendor", "node_modules", ".git"];
 
-fn is_skipped(dir: &Path) -> bool {
+pub(crate) fn is_skipped(dir: &Path) -> bool {
     dir.file_name()
         .is_some_and(|name| SKIPPED_DIRECTORIES.iter().any(|skipped| name == *skipped))
 }
@@ -397,7 +397,7 @@ fn clean(path: &Path) -> PathBuf {
 /// whether it is a file. A symlinked directory is neither, so a link cycle
 /// is never walked; a symlinked file still counts. Uses the entry's own
 /// type, which `read_dir` already has, rather than a stat per entry.
-fn entries_of(dir: &Path, budget: &mut Budget) -> Vec<(PathBuf, bool, bool)> {
+pub(crate) fn entries_of(dir: &Path, budget: &mut Budget) -> Vec<(PathBuf, bool, bool)> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
@@ -540,7 +540,7 @@ pub struct PhpUnitModel {
 
 /// The scan reads at most this many directory entries in all, so a suite
 /// rooted at a huge tree cannot stall the editor even when few files match.
-const MAX_VISITED_ENTRIES: usize = 20_000;
+pub(crate) const MAX_VISITED_ENTRIES: usize = 20_000;
 
 /// Read the configuration `explicit` names (default: the project's own) and
 /// scan its suites' test files for groups. Blocking filesystem work: call it

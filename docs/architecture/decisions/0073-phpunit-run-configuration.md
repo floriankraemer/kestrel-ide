@@ -95,7 +95,7 @@ The working directory is part of a temporary configuration's id only when it is 
 A package's temporary configuration an earlier build stored without the working directory and configuration file (`phpunit_run::earlier_id`) is taken over by the next editor run of the same test, its edits kept, and dropped from the list, so the run is not listed twice.
 `TestService` then treats the working directory as the run's root:
 - the framework program is the package's (`vendor/bin/phpunit` there), else the project's, and the toolchains are detected in both;
-- `test_core::run_on_env` starts in it, and its failure links and diagnostics resolve against it;
+- `test_core::run_on_env` starts in it, and its failure links and diagnostics resolve against it: the tree keeps each run's host and working directory (`test_core::RunPlace`, #433), so a relative path in an earlier run's failure, and a node of an earlier run on another host, still map through the run that reported them;
 - each relative test location is made absolute against it as the event arrives (`TestLocation::anchored`), so a later run in another directory never re-points the nodes an earlier one left in the tree;
 - a Pest class is located through the package's PSR-4 roots, then the project's (`php_core::tests::EventLocator`), so a package with only a `phpunit.xml`, or with its test autoload in the root `composer.json`, keeps its locations;
 - a container engine still starts in the project root, where its relative compose files are; only `-w` carries the working directory into the container;

@@ -427,16 +427,20 @@ impl ffi::TestService {
         let Some(root) = current_project_root() else {
             return ffi::FfiResolvedLink::default();
         };
-        let (_, work_dir) = self.run_context(&root);
+        let (_, last_dir) = self.run_context(&root);
         let id = test_core::TestId(node_id.to_string());
-        let details = self
-            .tree
-            .borrow()
-            .node(&id)
-            .and_then(|node| node.failure.as_ref())
-            .map(|failure| failure.details.clone())
+        let tree = self.tree.borrow();
+        let Some(node) = tree.node(&id) else {
+            return ffi::FfiResolvedLink::default();
+        };
+        let details = node
+            .failure
+            .as_ref()
+            .map(|failure| failure.details.as_str())
             .unwrap_or_default();
-        match run_core::resolve_link(&details, byte_offset as usize, &work_dir, None) {
+        // Relative to the run that reported this node (#433).
+        let work_dir = tree.work_dir_of(node, &last_dir);
+        match run_core::resolve_link(details, byte_offset as usize, work_dir, None) {
             Some(link) => ffi::FfiResolvedLink {
                 found: true,
                 path: QString::from(link.path.display().to_string().as_str()),
@@ -458,19 +462,24 @@ impl ffi::TestService {
         PathBuf,
     )> {
         let root = current_project_root()?;
-        let location = self
-            .tree
-            .borrow()
-            .node(&test_core::TestId(node_id.to_string()))?
+        let tree = self.tree.borrow();
+        let node = tree.node(&test_core::TestId(node_id.to_string()))?;
+        let location = node
             .location
             .clone()
             .filter(|location| !location.file.is_empty())?;
+        // The node's own run's host and directory (#433, L8).
         let (host, work_dir) = self.run_context(&root);
-        Some((location, host, work_dir))
+        Some((
+            location,
+            tree.host_of(node, &host).clone(),
+            tree.work_dir_of(node, &work_dir).to_path_buf(),
+        ))
     }
 
-    /// The last run's host and working directory, which its printed paths
-    /// are relative to: the project's own before any run.
+    /// The last run's host and working directory: what a node from no known
+    /// run maps through, the project's own before any run. A node's own
+    /// run's place comes first ([`test_core::TestTree::place_of`]).
     fn run_context(&self, root: &Path) -> (process_exec::host::ExecHost, PathBuf) {
         let host = (*self.run_host.borrow())
             .clone()
@@ -718,7 +727,13 @@ impl ffi::TestService {
             if whole_run {
                 tree.reset();
             }
-            tree.begin_run(run_id);
+            tree.begin_run(
+                run_id,
+                test_core::RunPlace {
+                    host: framework.host.clone(),
+                    work_dir: prepared.work_dir.clone(),
+                },
+            );
             // A rerun from the tree runs the way the run that reported its
             // tests did (G2); only the runs still in the tree are kept.
             let mut configs = self.run_configs.borrow_mut();

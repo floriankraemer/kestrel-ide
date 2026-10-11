@@ -98,6 +98,16 @@ pub struct TestCounts {
     pub pending: usize,
 }
 
+/// Where a run executed: the host and working directory its printed paths
+/// are relative to (#433). The tree keeps one per run it still holds, so a
+/// node from an earlier run maps back through that run's host and directory,
+/// not the latest run's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPlace {
+    pub host: ExecHost,
+    pub work_dir: PathBuf,
+}
+
 /// A test run's live tree. Starts empty; [`Self::apply`]/[`Self::apply_junit`]
 /// are the only ways anything gets into it.
 #[derive(Debug, Default)]
@@ -106,6 +116,8 @@ pub struct TestTree {
     roots: Vec<TestId>,
     /// The run whose events are being applied.
     current_run: u64,
+    /// Where each run still in the tree executed.
+    places: HashMap<u64, RunPlace>,
 }
 
 impl TestTree {
@@ -122,9 +134,32 @@ impl TestTree {
         self.roots.clear();
     }
 
-    /// The events applied from now on come from `run`.
-    pub fn begin_run(&mut self, run: u64) {
+    /// The events applied from now on come from `run`, executed at `place`.
+    /// Places of runs no node is from any more are dropped.
+    pub fn begin_run(&mut self, run: u64, place: RunPlace) {
         self.current_run = run;
+        let held: std::collections::HashSet<u64> =
+            self.nodes.values().map(|node| node.run).collect();
+        self.places.retain(|run, _| held.contains(run));
+        self.places.insert(run, place);
+    }
+
+    /// Where the run that last reported `node` executed; `None` for a node
+    /// applied outside any [`Self::begin_run`].
+    pub fn place_of(&self, node: &TestNode) -> Option<&RunPlace> {
+        self.places.get(&node.run)
+    }
+
+    /// `node`'s run's host and working directory, else the given ones.
+    fn place_or<'a>(
+        &'a self,
+        node: &TestNode,
+        host: &'a ExecHost,
+        work_dir: &'a Path,
+    ) -> (&'a ExecHost, &'a Path) {
+        self.place_of(node).map_or((host, work_dir), |place| {
+            (&place.host, place.work_dir.as_path())
+        })
     }
 
     /// The runs that last reported the leaf tests at or below `ids`, each
@@ -152,8 +187,9 @@ impl TestTree {
 
     /// Every node whose source is `file` on this machine, in tree order —
     /// what the editor gutter reads to paint a test file's last result.
-    /// `host` and `work_dir` are the run's, to map the paths the framework
-    /// printed (see [`TestLocation::local_path`]).
+    /// Each node's paths map through its own run's place; `host` and
+    /// `work_dir` stand in for a node from no known run (see
+    /// [`TestLocation::local_path`]).
     pub fn nodes_in_file(&self, host: &ExecHost, work_dir: &Path, file: &Path) -> Vec<&TestNode> {
         let mut found = Vec::new();
         let mut pending: Vec<&TestId> = self.roots.iter().rev().collect();
@@ -162,11 +198,7 @@ impl TestTree {
                 continue;
             };
             pending.extend(node.children.iter().rev());
-            if node
-                .location
-                .as_ref()
-                .is_some_and(|l| l.local_path(host, work_dir) == file)
-            {
+            if self.local_path(node, host, work_dir).as_deref() == Some(file) {
                 found.push(node);
             }
         }
@@ -180,11 +212,30 @@ impl TestTree {
         let files: std::collections::BTreeSet<PathBuf> = self
             .nodes
             .values()
-            .filter_map(|node| node.location.as_ref())
-            .filter(|location| !location.file.is_empty())
-            .map(|location| location.local_path(host, work_dir))
+            .filter_map(|node| self.local_path(node, host, work_dir))
             .collect();
         files.into_iter().collect()
+    }
+
+    /// `node`'s source file on this machine, through its own run's place
+    /// (`host` and `work_dir` for a node from no known run); `None` without
+    /// a located file.
+    pub fn local_path(&self, node: &TestNode, host: &ExecHost, work_dir: &Path) -> Option<PathBuf> {
+        let location = node.location.as_ref().filter(|l| !l.file.is_empty())?;
+        let (host, work_dir) = self.place_or(node, host, work_dir);
+        Some(location.local_path(host, work_dir))
+    }
+
+    /// The working directory of the run that last reported `node`, else
+    /// `work_dir`: what a relative path in its failure is relative to.
+    pub fn work_dir_of<'a>(&'a self, node: &TestNode, work_dir: &'a Path) -> &'a Path {
+        self.place_of(node)
+            .map_or(work_dir, |place| place.work_dir.as_path())
+    }
+
+    /// The host of the run that last reported `node`, else `host`.
+    pub fn host_of<'a>(&'a self, node: &TestNode, host: &'a ExecHost) -> &'a ExecHost {
+        self.place_of(node).map_or(host, |place| &place.host)
     }
 
     pub fn roots(&self) -> &[TestId] {
@@ -708,6 +759,56 @@ mod tests {
         assert_eq!(tree.counts().running, 0);
     }
 
+    fn local_place(dir: &str) -> RunPlace {
+        RunPlace {
+            host: ExecHost::Local,
+            work_dir: PathBuf::from(dir),
+        }
+    }
+
+    #[test]
+    fn each_node_maps_its_paths_through_the_place_of_its_own_run() {
+        let pest = |file: &str, name: &str| TeamCityEvent::TestStarted {
+            parent: None,
+            name: name.into(),
+            location: crate::location::parse_location_hint(&format!("pest_qn://{file}")),
+        };
+        let mut tree = TestTree::new();
+        tree.begin_run(1, local_place("/p/packages/a"));
+        tree.apply(pest("tests/ATest.php", "a"));
+        tree.begin_run(2, local_place("/p/packages/b"));
+        tree.apply(pest("tests/BTest.php", "b"));
+        let latest = (ExecHost::Local, Path::new("/p/packages/b"));
+
+        let a = tree.node(&id("a")).unwrap().clone();
+        assert_eq!(
+            tree.local_path(&a, &latest.0, latest.1),
+            Some(PathBuf::from("/p/packages/a/tests/ATest.php"))
+        );
+        assert_eq!(tree.work_dir_of(&a, latest.1), Path::new("/p/packages/a"));
+        assert_eq!(
+            tree.nodes_in_file(
+                &latest.0,
+                latest.1,
+                Path::new("/p/packages/a/tests/ATest.php")
+            )
+            .len(),
+            1
+        );
+        assert_eq!(
+            tree.located_files(&latest.0, latest.1),
+            [
+                PathBuf::from("/p/packages/a/tests/ATest.php"),
+                PathBuf::from("/p/packages/b/tests/BTest.php")
+            ]
+        );
+
+        // A whole run replaces the tree: the earlier run's place goes too.
+        tree.reset();
+        tree.begin_run(3, local_place("/p"));
+        assert!(tree.place_of(&a).is_none());
+    }
+
     #[test]
     fn nodes_in_file_lists_the_located_nodes_in_tree_order() {
         use crate::teamcity::TeamCityParser;
@@ -745,7 +846,7 @@ mod tests {
             location: None,
         };
         let mut tree = TestTree::new();
-        tree.begin_run(1);
+        tree.begin_run(1, local_place("/p"));
         tree.apply(TeamCityEvent::SuiteStarted {
             parent: None,
             name: "Suite".into(),
@@ -753,7 +854,7 @@ mod tests {
         });
         tree.apply(started("testA"));
         tree.apply(started("testB"));
-        tree.begin_run(2);
+        tree.begin_run(2, local_place("/p"));
         tree.apply(started("testB"));
 
         assert_eq!(tree.runs_of(&[id("Suite::testA")]), [1]);

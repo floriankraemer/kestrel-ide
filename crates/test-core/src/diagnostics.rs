@@ -73,7 +73,10 @@ pub fn diagnostics_by_file(
 }
 
 /// [`diagnostics_by_file`] for a run that executed on `host`: a path the
-/// framework printed under a container's mount opens the local file.
+/// framework printed under a container's mount opens the local file. A
+/// node from a run the tree knows the place of maps through that run's host
+/// and working directory instead (#433): a relative path Pest printed in an
+/// earlier run in another package is relative to that package.
 pub fn diagnostics_by_file_on(
     host: &process_exec::host::ExecHost,
     tree: &TestTree,
@@ -85,11 +88,12 @@ pub fn diagnostics_by_file_on(
         let Some(failure) = &node.failure else {
             continue;
         };
-        let Some((path, line)) = locate(failure, &node.id, work_dir) else {
+        let run_dir = tree.work_dir_of(node, work_dir);
+        let Some((path, line)) = locate(failure, &node.id, run_dir) else {
             continue;
         };
         // PHPUnit run under WSL or in a container prints that side's paths.
-        let local = host.path_from_tool(&path);
+        let local = crate::location::local_path(&path, tree.host_of(node, host), run_dir);
         let uri = diagnostics_core::uri_from_path(&local.to_string_lossy());
         grouped.entry(uri).or_default().push(Diagnostic {
             code: None,
@@ -213,8 +217,8 @@ mod tests {
     #[test]
     fn a_trailing_stack_frame_locates_the_file() {
         let tree = failing_tree("at Tests\\GreeterTest::testAdds (GreeterTest.php:20)");
-        let grouped = diagnostics_by_file(&tree, "phpunit", Path::new("."));
-        let uri = diagnostics_core::uri_from_path("GreeterTest.php");
+        let grouped = diagnostics_by_file(&tree, "phpunit", Path::new("/p"));
+        let uri = diagnostics_core::uri_from_path("/p/GreeterTest.php");
         assert_eq!(grouped[&uri].len(), 1);
         assert_eq!(grouped[&uri][0].range.start.line, 19);
         assert_eq!(grouped[&uri][0].source, "phpunit");
@@ -251,6 +255,32 @@ mod tests {
             "//wsl.localhost/Ubuntu/home/f/proj/tests/GreeterTest.php",
         );
         assert_eq!(grouped[&uri].len(), 1);
+    }
+
+    #[test]
+    fn a_relative_path_resolves_against_the_run_that_reported_the_failure() {
+        let mut tree = TestTree::new();
+        let place = |dir: &str| crate::tree::RunPlace {
+            host: process_exec::host::ExecHost::Local,
+            work_dir: dir.into(),
+        };
+        tree.begin_run(1, place("/p/packages/a"));
+        tree.apply(TeamCityEvent::TestStarted {
+            parent: None,
+            name: "it adds".into(),
+            location: None,
+        });
+        tree.apply(TeamCityEvent::TestFailed {
+            parent: None,
+            name: "it adds".into(),
+            message: "Failed".into(),
+            details: "at tests/AddTest.php:7".into(),
+        });
+        // A later run elsewhere must not re-point the earlier failure.
+        tree.begin_run(2, place("/p/packages/b"));
+        let grouped = diagnostics_by_file(&tree, "pest", Path::new("/p/packages/b"));
+        let uri = diagnostics_core::uri_from_path("/p/packages/a/tests/AddTest.php");
+        assert_eq!(grouped[&uri][0].range.start.line, 6);
     }
 
     #[test]

@@ -60,7 +60,7 @@ pub struct TestServiceRust {
     run_host: RefCell<Option<process_exec::host::ExecHost>>,
     /// The filter a gutter Debug click chose, run once the PHP listener is
     /// up (T3): Xdebug does not retry, so the run starts after it.
-    pending_debug: RefCell<Option<MarkerSelection>>,
+    pending_debug: RefCell<Option<RerunSelection>>,
     /// The last coverage run's report, local paths (T5).
     coverage: RefCell<Option<test_core::coverage::Coverage>>,
     store: SharedDiagnostics,

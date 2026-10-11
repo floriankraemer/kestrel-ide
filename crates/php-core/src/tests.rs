@@ -34,6 +34,10 @@ pub struct TestMarker {
     /// First and last 0-based line of the class, method or call, so a caret
     /// anywhere inside it selects this marker.
     pub span: (u32, u32),
+    /// A Pest call's full description as the framework reports it: the
+    /// enclosing `describe` descriptions and the call's own (`it ...` for
+    /// `it`), joined with ` → `. Empty for everything PHPUnit.
+    pub description: String,
 }
 
 /// The test a caret on `caret_line` (0-based) runs: the innermost method or
@@ -57,6 +61,7 @@ pub fn marker_at(text: &str, caret_line: u32) -> Option<TestMarker> {
         name: String::new(),
         filter: String::new(),
         span: (0, u32::MAX),
+        description: String::new(),
     }))
 }
 
@@ -64,16 +69,19 @@ pub fn marker_at(text: &str, caret_line: u32) -> Option<TestMarker> {
 /// name, or the Pest call whose description matches. `None` when the file no
 /// longer holds it (edited since the run).
 pub fn symbol_line(text: &str, symbol: &TestSymbol) -> Option<u32> {
-    let all = markers(text);
-    let line_of = |scope: MarkerScope, filter: &dyn Fn(&TestMarker) -> bool| {
-        all.iter()
-            .find(|m| m.scope == scope && filter(m))
-            .map(|m| m.line)
-    };
+    markers(text)
+        .iter()
+        .find(|m| marker_names(m, symbol))
+        .map(|m| m.line)
+}
+
+/// Whether `symbol` (from a test's `locationHint`) names `marker`'s class,
+/// method or Pest call.
+pub(crate) fn marker_names(marker: &TestMarker, symbol: &TestSymbol) -> bool {
     match symbol {
         TestSymbol::Class(class) => {
-            let filter = format!("^{}::", test_core::filter::escape_regex(class));
-            line_of(MarkerScope::Group, &|m| m.filter == filter)
+            marker.scope == MarkerScope::Group
+                && marker.filter == format!("^{}::", test_core::filter::escape_regex(class))
         }
         TestSymbol::Method { class, method } => {
             let prefix = format!(
@@ -81,12 +89,25 @@ pub fn symbol_line(text: &str, symbol: &TestSymbol) -> Option<u32> {
                 test_core::filter::escape_regex(class),
                 test_core::filter::escape_regex(method)
             );
-            line_of(MarkerScope::Test, &|m| m.filter.starts_with(&prefix))
+            marker.scope == MarkerScope::Test && marker.filter.starts_with(&prefix)
         }
-        TestSymbol::Description(description) => line_of(MarkerScope::Test, &|m| {
-            description == &m.name || *description == format!("it {}", m.name)
-        }),
+        TestSymbol::Description(description) => {
+            marker.scope == MarkerScope::Test
+                && !marker.description.is_empty()
+                && strip_pest_data_set(description) == marker.description
+        }
     }
+}
+
+/// A Pest data-set row reports `<description> with data set "x"` (or
+/// `with (1, 2)`); the marker names the call, so the row's suffix goes.
+fn strip_pest_data_set(description: &str) -> &str {
+    let end = [" with data set ", " with ("]
+        .iter()
+        .filter_map(|infix| description.find(infix))
+        .min()
+        .unwrap_or(description.len());
+    &description[..end]
 }
 
 fn span_of(node: Node<'_>) -> (u32, u32) {
@@ -192,6 +213,7 @@ impl Walker<'_> {
             name: self.text_of(name).to_string(),
             filter: format!("^{escaped}::"),
             span: span_of(class),
+            description: String::new(),
         });
         let mut cursor = body.walk();
         let members: Vec<Node<'_>> = body.named_children(&mut cursor).collect();
@@ -225,6 +247,7 @@ impl Walker<'_> {
                         test_core::filter::escape_regex(method_name)
                     ),
                     span,
+                    description: String::new(),
                 });
             }
         }
@@ -288,6 +311,7 @@ impl Walker<'_> {
                     self.describes.join(" → ")
                 )),
                 span: span_of(call),
+                description: self.describes.join(" → "),
             });
             let mut cursor = call.walk();
             for child in call.children(&mut cursor) {
@@ -312,6 +336,7 @@ impl Walker<'_> {
             name: description,
             filter: test_core::filter::escape_regex(&full),
             span: span_of(self.call_chain(call)),
+            description: full.clone(),
         });
         true
     }
@@ -593,5 +618,14 @@ class OtherTest extends TestCase
         assert_eq!(symbol_line(pest, &described("it greets by name")), Some(2));
         assert_eq!(symbol_line(pest, &described("whispers")), Some(3));
         assert_eq!(symbol_line(pest, &described("missing")), None);
+        assert_eq!(symbol_line(pest, &described("greets by name")), None);
+        assert_eq!(
+            symbol_line(pest, &described("it greets by name with data set \"a\"")),
+            Some(2)
+        );
+
+        let nested = "<?php\ndescribe('a', function () {\n    it('x', function () {});\n});\ndescribe('b', function () {\n    it('x', function () {});\n});\n";
+        assert_eq!(symbol_line(nested, &described("`a` → it x")), Some(2));
+        assert_eq!(symbol_line(nested, &described("`b` → it x")), Some(5));
     }
 }

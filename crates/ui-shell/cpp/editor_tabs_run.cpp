@@ -23,8 +23,10 @@
 #include <QDesktopServices>
 #include <QMainWindow>
 #include <QMenu>
+#include <QHash>
 #include <QPlainTextEdit>
 #include <QSet>
+#include <QTimer>
 #include <QStatusBar>
 #include <QUrl>
 
@@ -33,6 +35,26 @@ namespace ui_shell {
 namespace {
 // `errors::CODE_NOT_A_TEST`: the file is not a test file, run it the ordinary way.
 constexpr int kNotATestCode = 1014;
+// E3: a run streams tree changes by the message; the icons repaint at most
+// this often.
+constexpr int kStatusRepaintMs = 100;
+
+RunMarkerGlyph toGlyph(FfiMarkerState state)
+{
+    switch (state) {
+    case FfiMarkerState::Running:
+        return RunMarkerGlyph::Running;
+    case FfiMarkerState::Passed:
+        return RunMarkerGlyph::Passed;
+    case FfiMarkerState::Failed:
+        return RunMarkerGlyph::Failed;
+    case FfiMarkerState::Ignored:
+        return RunMarkerGlyph::Ignored;
+    case FfiMarkerState::NeverRun:
+        break;
+    }
+    return RunMarkerGlyph::Passed; // unreachable: NeverRun entries are not pushed
+}
 }  // namespace
 
 void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEditor *runConfigEditor,
@@ -53,6 +75,18 @@ void wireTestGutter(TestService *testService, DebugService *debugService, Editor
     // A coverage run (or clearing it) repaints every open editor's stripes.
     QObject::connect(testService, &TestService::coverageChanged, editorTabs,
                       [editorTabs]() { editorTabs->refreshRunMarkers(); });
+    // E3: the tree changes with every streamed message; coalesce into one
+    // icon repaint per interval.
+    auto *statusRepaint = new QTimer(editorTabs);
+    statusRepaint->setSingleShot(true);
+    statusRepaint->setInterval(kStatusRepaintMs);
+    QObject::connect(statusRepaint, &QTimer::timeout, editorTabs,
+                      [editorTabs]() { editorTabs->refreshRunMarkerStatuses(); });
+    QObject::connect(testService, &TestService::testTreeChanged, statusRepaint, [statusRepaint]() {
+        if (!statusRepaint->isActive()) {
+            statusRepaint->start();
+        }
+    });
     // A debugged test starts once `DebugService` has the listener up.
     QObject::connect(debugService, &DebugService::phpTestLaunchRequested, testService,
                       [testService](const QString &envJson) { testService->runPendingWithEnv(envJson); });
@@ -149,6 +183,7 @@ void EditorTabs::refreshRunMarker(CodeEditor *editor)
         }
     }
     editor->setRunLines(lines);
+    pushRunMarkerStatuses(editor, path);
     QSet<int> covered;
     QSet<int> uncovered;
     if (testService_ != nullptr && !path.isEmpty()) {
@@ -179,6 +214,31 @@ void EditorTabs::refreshRunMarker(CodeEditor *editor)
     }
     e2eMark(QStringLiteral("{\"ev\":\"gutter_run_lines\",\"path\":%1,\"lines\":[%2]}")
               .arg(e2eJson(path), lineNumbers.join(QLatin1Char(','))));
+}
+
+void EditorTabs::pushRunMarkerStatuses(CodeEditor *editor, const QString &path)
+{
+    QHash<int, RunMarkerStatus> statuses;
+    if (testService_ != nullptr && !path.isEmpty()) {
+        for (const FfiMarkerStatus &status : testService_->markerStatuses(path, editor->toPlainText())) {
+            if (status.state != FfiMarkerState::NeverRun) {
+                statuses.insert(static_cast<int>(status.line),
+                                RunMarkerStatus{ toGlyph(status.state), QString(status.tooltip) });
+            }
+        }
+    }
+    editor->setRunMarkerStatuses(statuses);
+}
+
+void EditorTabs::refreshRunMarkerStatuses()
+{
+    forEachEditor([this](QPlainTextEdit *plain) {
+        auto *editor = qobject_cast<CodeEditor *>(plain);
+        if (editor != nullptr) {
+            pushRunMarkerStatuses(
+              editor, docManager_->tabPath(editor->property("tabId").toULongLong()));
+        }
+    });
 }
 
 void EditorTabs::refreshRunMarkers()
@@ -305,6 +365,26 @@ void EditorTabs::showTestMarkerMenu(CodeEditor *editor, const QString &path, int
     QAction *run = menu.addAction(tr("Run '%1'").arg(name));
     QAction *debug = debugService_ != nullptr ? menu.addAction(tr("Debug '%1'").arg(name)) : nullptr;
     QAction *coverage = menu.addAction(tr("Run '%1' with Coverage").arg(name));
+    // E3: each data set of the last run, runnable on its own. An entry
+    // without an id is the "..." overflow line.
+    QHash<QAction *, QString> runDataSet;
+    QHash<QAction *, QString> debugDataSet;
+    const auto dataSets = testService_->markerDataSets(path, text, testLine);
+    if (!dataSets.empty()) {
+        menu.addSeparator();
+    }
+    for (const FfiDataSet &set : dataSets) {
+        const QString id(set.id);
+        const QString label(set.label);
+        if (id.isEmpty()) {
+            menu.addAction(label)->setEnabled(false);
+            continue;
+        }
+        runDataSet.insert(menu.addAction(tr("Run '%1'").arg(label)), id);
+        if (debugService_ != nullptr) {
+            debugDataSet.insert(menu.addAction(tr("Debug '%1'").arg(label)), id);
+        }
+    }
     e2eMarkMenuActions(&menu, "run_gutter_menu_action");
     QAction *chosen = menu.exec(QCursor::pos());
     FfiResult result;
@@ -314,6 +394,13 @@ void EditorTabs::showTestMarkerMenu(CodeEditor *editor, const QString &path, int
         result = testService_->runMarkerWithCoverage(path, text, testLine);
     } else if (debug != nullptr && chosen == debug) {
         result = testService_->prepareDebugMarker(path, text, testLine);
+        if (result.code == 0) {
+            result = debugService_->debugPhpTests();
+        }
+    } else if (runDataSet.contains(chosen)) {
+        result = testService_->runDataSet(runDataSet.value(chosen));
+    } else if (debugDataSet.contains(chosen)) {
+        result = testService_->prepareDebugDataSet(debugDataSet.value(chosen));
         if (result.code == 0) {
             result = debugService_->debugPhpTests();
         }

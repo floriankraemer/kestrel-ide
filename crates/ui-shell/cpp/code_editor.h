@@ -35,6 +35,13 @@ class QWheelEvent;
 
 namespace ui_shell {
 
+// E3: what a gutter Run marker shows of its test's last run.
+enum class RunMarkerGlyph { Passed, Failed, Ignored, Running };
+struct RunMarkerStatus {
+    RunMarkerGlyph glyph;
+    QString tooltip;
+};
+
 class LineNumberArea;
 class CompletionDocsPanel;
 
@@ -516,6 +523,10 @@ public:
     // gutter column at all. The widget never asks what makes a line
     // runnable.
     void setRunLines(const QSet<int> &lines);
+    // E3: the last run's result for a test marker's line, decided by
+    // `TestService::markerStatuses`. A run line without an entry wears the
+    // plain Run triangle; the widget only maps a glyph to a drawing.
+    void setRunMarkerStatuses(const QHash<int, RunMarkerStatus> &statuses);
     bool runnable() const { return !runLines_.isEmpty(); }
 
     // PHP parity T5: the lines the last coverage run executed and the
@@ -807,6 +818,7 @@ private:
     // R1-7/C6: set from RunService::runLines; a non-empty set widens the
     // gutter by one icon column and puts a Run triangle on each line.
     QSet<int> runLines_;
+    QHash<int, RunMarkerStatus> runMarkerStatuses_;
     // E2E only: the last global rect reported for each run icon, so the
     // marker stream (e2e_mark.h) hears about a line's icon once per move.
     QHash<int, QRect> reportedRunIcons_;

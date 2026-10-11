@@ -15,6 +15,7 @@ pub mod licence;
 pub mod lsp;
 pub mod probe;
 pub mod psr4;
+pub mod test_status;
 pub mod tests;
 
 /// The `secret-store` service name for PHP secrets, distinct from the

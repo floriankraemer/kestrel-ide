@@ -442,6 +442,9 @@ fn main() {
         // The project tree's Git submenu. No Q_OBJECT (one free function),
         // so only the source is listed.
         .cpp_file("cpp/project_tree_git_menu.cpp")
+        // The project tree's Run / Debug / Coverage test entries (E6). No
+        // Q_OBJECT (one free function), so only the source is listed.
+        .cpp_file("cpp/project_tree_test_menu.cpp")
         // The Discard Changes confirm dialog shared by the project tree's
         // Git submenu and the Changes dock (G8). No Q_OBJECT.
         .cpp_file("cpp/git_dialogs.cpp")

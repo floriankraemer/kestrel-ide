@@ -1,6 +1,7 @@
 #include "project_tree_dock.h"
 
 #include "project_tree_git_menu.h"
+#include "project_tree_test_menu.h"
 
 #include "ai_chat_panel.h"
 #include "dock_layout.h"
@@ -647,6 +648,7 @@ void wireProjectTree(QTreeView *treeView,
                                       ? QObject::tr("Cancel Exclusion")
                                       : QObject::tr("Mark Directory as Excluded"));
               }
+              appendTestEntries(menu, itemPath, itemIsDir, actions);
               // A folder attaches its contents, which is why the two entries
               // read the same for a file and a folder: what differs is the
               // rule `ai_chat_core::expand_folder` applies, not the gesture.
@@ -655,6 +657,7 @@ void wireProjectTree(QTreeView *treeView,
               addToNewChatAction = menu.addAction(QObject::tr("Add to New AI Chat"));
           } else {
               // The empty area is the project itself (R6).
+              appendTestEntries(menu, rootPath, true, actions);
               appendProjectGitSubmenu(menu, actions);
           }
 

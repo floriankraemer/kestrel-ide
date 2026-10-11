@@ -115,6 +115,7 @@ private:
     QTimer *modelTimer_;
     QLineEdit *runnerOptionsEdit_;
     QLineEdit *interpreterEdit_;
+    QLineEdit *workingDirectoryEdit_;
     // Each field's whole row, so a scope can hide the rows it ignores.
     QHash<QWidget *, QWidget *> rows_;
 };

@@ -44,6 +44,7 @@ pub(super) fn to_ffi_options(config: &run_core::RunConfig) -> ffi::FfiPhpUnitOpt
         exclude_groups: join(&setting.exclude_groups),
         runner_options: QString::from(setting.runner_options.as_str()),
         interpreter: QString::from(setting.interpreter.as_str()),
+        working_directory: QString::from(setting.working_directory.as_str()),
     }
 }
 
@@ -72,6 +73,7 @@ pub(super) fn apply_options(
         exclude_groups: split(&options.exclude_groups),
         runner_options: options.runner_options.to_string(),
         interpreter: options.interpreter.to_string(),
+        working_directory: options.working_directory.to_string(),
     });
 }
 
@@ -107,16 +109,19 @@ pub(super) fn scope_fields(scope: &QString) -> ffi::FfiPhpUnitScopeFields {
 /// is reused only while the file is unchanged. `None` when there is none.
 type Stamp = Option<(std::path::PathBuf, Option<SystemTime>)>;
 
+/// The configuration and working directory fields' texts a model answers.
+type ModelKey = (String, String);
+
 /// The editor's `phpunit.xml` answers: one cached answer per configuration
-/// field text while its file is unchanged, and one scan in flight at a time
+/// and working directory field text while its file is unchanged, and one scan in flight at a time
 /// (the page asks on every show, load and typing pause). Cleared when the
 /// dialog opens, so a group added to a test file since shows up.
 #[derive(Default)]
 pub(super) struct ModelRequests {
     in_flight: bool,
     /// The newest request made while a scan ran.
-    waiting: Option<String>,
-    cache: HashMap<String, (Stamp, ffi::FfiPhpUnitModel)>,
+    waiting: Option<ModelKey>,
+    cache: HashMap<ModelKey, (Stamp, ffi::FfiPhpUnitModel)>,
 }
 
 impl ModelRequests {
@@ -125,8 +130,8 @@ impl ModelRequests {
     }
 }
 
-fn stamp(root: &Path, explicit: &str) -> Stamp {
-    let file = php_core::phpunit_xml::discover(root, explicit)?;
+fn stamp(root: &Path, work_dir: &str, explicit: &str) -> Stamp {
+    let file = php_core::phpunit_xml::discover_in(root, work_dir, explicit)?;
     let modified = std::fs::metadata(&file)
         .and_then(|meta| meta.modified())
         .ok();
@@ -134,7 +139,7 @@ fn stamp(root: &Path, explicit: &str) -> Stamp {
 }
 
 fn to_ffi_model(
-    configuration: &str,
+    key: &ModelKey,
     model: php_core::phpunit_xml::PhpUnitModel,
 ) -> ffi::FfiPhpUnitModel {
     use php_core::phpunit_xml::ModelProblem;
@@ -149,7 +154,8 @@ fn to_ffi_model(
         }
     };
     ffi::FfiPhpUnitModel {
-        configuration: QString::from(configuration),
+        configuration: QString::from(key.0.as_str()),
+        working_directory: QString::from(key.1.as_str()),
         file: QString::from(model.file.unwrap_or_default().as_str()),
         suites: lines(&model.suites),
         groups: lines(&model.groups),
@@ -158,31 +164,46 @@ fn to_ffi_model(
 }
 
 /// Answer with the PHPUnit configuration `configuration` names (blank: the
-/// project's own) and its suites' groups through `phpUnitModelReady`. A scan
-/// walks the filesystem, so it runs on a worker thread, never on the Qt
-/// thread.
-pub(super) fn request_model(mut editor: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
-    let configuration = configuration.to_string();
+/// one in `working_directory`, else the project's own) and its suites'
+/// groups through `phpUnitModelReady`. A scan walks the filesystem, so it
+/// runs on a worker thread, never on the Qt thread.
+pub(super) fn request_model(
+    editor: Pin<&mut ffi::RunConfigEditor>,
+    configuration: &QString,
+    working_directory: &QString,
+) {
+    request_model_for(
+        editor,
+        (configuration.to_string(), working_directory.to_string()),
+    );
+}
+
+fn request_model_for(mut editor: Pin<&mut ffi::RunConfigEditor>, key: ModelKey) {
     let Some(root) = super::current_project_root() else {
-        let answer = to_ffi_model(
-            &configuration,
-            php_core::phpunit_xml::PhpUnitModel::default(),
-        );
+        let answer = to_ffi_model(&key, php_core::phpunit_xml::PhpUnitModel::default());
         editor.as_mut().php_unit_model_ready(answer);
         return;
     };
     let context = run_core::MacroContext::for_project(&root);
-    let explicit = run_core::macros::expand(&configuration, &context);
-    let stamp = stamp(&root, &explicit);
+    let explicit = run_core::macros::expand(&key.0, &context);
+    // One outside the project reads as the project's own; the editor
+    // refuses to save it.
+    let work_dir = php_core::phpunit_run::working_directory(
+        &run_core::macros::expand(&key.1, &context),
+        &root.to_string_lossy(),
+        cfg!(windows),
+    )
+    .unwrap_or_default();
+    let stamp = stamp(&root, &work_dir, &explicit);
     let cached = {
         let mut requests = editor.phpunit_model.borrow_mut();
         let cached = requests
             .cache
-            .get(&configuration)
+            .get(&key)
             .filter(|(cached_stamp, _)| *cached_stamp == stamp)
             .map(|(_, answer)| answer.clone());
         if cached.is_none() && requests.in_flight {
-            requests.waiting = Some(configuration);
+            requests.waiting = Some(key);
             return;
         }
         requests.in_flight |= cached.is_none();
@@ -195,22 +216,18 @@ pub(super) fn request_model(mut editor: Pin<&mut ffi::RunConfigEditor>, configur
     let qt_thread = editor.qt_thread();
     std::thread::spawn(move || {
         let answer = to_ffi_model(
-            &configuration,
-            php_core::phpunit_xml::model(&root, &explicit),
+            &key,
+            php_core::phpunit_xml::model_in(&root, &work_dir, &explicit),
         );
         let _ = qt_thread.queue(move |mut editor: Pin<&mut ffi::RunConfigEditor>| {
             let next = {
                 let mut requests = editor.phpunit_model.borrow_mut();
                 requests.in_flight = false;
-                requests
-                    .cache
-                    .insert(configuration.clone(), (stamp, answer.clone()));
+                requests.cache.insert(key.clone(), (stamp, answer.clone()));
                 requests.waiting.take()
             };
             match next {
-                Some(next) if next != configuration => {
-                    request_model(editor, &QString::from(next.as_str()));
-                }
+                Some(next) if next != key => request_model_for(editor, next),
                 _ => editor.as_mut().php_unit_model_ready(answer),
             }
         });

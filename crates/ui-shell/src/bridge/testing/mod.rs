@@ -69,6 +69,9 @@ pub struct TestServiceRust {
     /// Where the last run executed, so the paths its failures print map
     /// back to local files (ADR-0067). `None` until the first run.
     run_host: RefCell<Option<process_exec::host::ExecHost>>,
+    /// The last run's working directory (a monorepo package's, #424), which
+    /// its relative paths are relative to. `None` until the first run.
+    run_dir: RefCell<Option<PathBuf>>,
     /// The filter a gutter Debug click chose, run once the PHP listener is
     /// up (T3): Xdebug does not retry, so the run starts after it.
     pending_debug: RefCell<Option<RerunSelection>>,
@@ -86,6 +89,8 @@ pub struct TestServiceRust {
     tree_offer: RefCell<Option<tree::TreeOffer>>,
     /// Go to Test's searches: one at a time, the latest answers (E7).
     navigation: RefCell<navigation::NavigationRequests>,
+    /// Which tests cover which class, per project (#426).
+    covers: std::sync::Arc<php_core::test_navigation::CoversCache>,
     store: SharedDiagnostics,
 }
 
@@ -117,11 +122,15 @@ fn contributed_frameworks() -> Vec<(
 /// Reuses `analysis_core::find_program` rather than a second
 /// candidate-search, the same reuse the manifest's own D7 note asks for.
 ///
+/// A run in `work_dir` (a monorepo package, #424) uses the package's own
+/// program and toolchains first, then the project's.
+///
 /// `local_only` probes for the program on this machine only, never inside a
 /// WSL distribution or a container: what a preview can afford on every
 /// keystroke.
 fn detect_framework(
     root: &Path,
+    work_dir: &Path,
     settings: &app_config::Settings,
     local_only: bool,
 ) -> Option<(
@@ -135,10 +144,15 @@ fn detect_framework(
         .iter()
         .map(|(_, framework)| framework.clone())
         .collect();
-    let detected: Vec<String> = run_core::toolchain::detect_toolchains(root)
-        .into_iter()
-        .map(|id| id.as_str().to_string())
-        .collect();
+    let mut detected: Vec<String> = Vec::new();
+    for dir in [work_dir, root] {
+        for id in run_core::toolchain::detect_toolchains(dir) {
+            let id = id.as_str().to_string();
+            if !detected.contains(&id) {
+                detected.push(id);
+            }
+        }
+    }
     let detected_refs: Vec<&str> = detected.iter().map(String::as_str).collect();
 
     let (index, _, program) = test_core::select_framework(
@@ -151,7 +165,12 @@ fn detect_framework(
             } else {
                 framework_host(framework, settings, root)
             };
-            analysis_core::find_program_on(&framework.program_candidates, root, &host)
+            let candidates = &framework.program_candidates;
+            analysis_core::find_program_on(candidates, work_dir, &host).or_else(|| {
+                (work_dir != root)
+                    .then(|| analysis_core::find_program_on(candidates, root, &host))
+                    .flatten()
+            })
         },
     )?;
     let (plugin, framework) = owners.into_iter().nth(index)?;
@@ -180,14 +199,17 @@ struct Framework {
 }
 
 impl Framework {
-    /// The framework the project's run uses, or why there is none.
+    /// The framework a run in `work_dir` of the project uses, or why there
+    /// is none.
     fn detect(
         root: &Path,
+        work_dir: &Path,
         settings: &app_config::Settings,
         local_only: bool,
     ) -> Result<Self, &'static str> {
-        let (plugin, contribution, program, host) = detect_framework(root, settings, local_only)
-            .ok_or("no installed test framework is contributed for this project")?;
+        let (plugin, contribution, program, host) =
+            detect_framework(root, work_dir, settings, local_only)
+                .ok_or("no installed test framework is contributed for this project")?;
         // A test framework's args may name `${asset_dir}` (junit-gradle's
         // `--init-script ${asset_dir}/ide-model.init.gradle`) — the same
         // materialise-on-demand seam A3 built for a sync provider.
@@ -372,6 +394,7 @@ impl ffi::TestService {
         let Some(root) = current_project_root() else {
             return ffi::FfiResolvedLink::default();
         };
+        let (_, work_dir) = self.run_context(&root);
         let id = test_core::TestId(node_id.to_string());
         let details = self
             .tree
@@ -380,7 +403,7 @@ impl ffi::TestService {
             .and_then(|node| node.failure.as_ref())
             .map(|failure| failure.details.clone())
             .unwrap_or_default();
-        match run_core::resolve_link(&details, byte_offset as usize, &root, None) {
+        match run_core::resolve_link(&details, byte_offset as usize, &work_dir, None) {
             Some(link) => ffi::FfiResolvedLink {
                 found: true,
                 path: QString::from(link.path.display().to_string().as_str()),
@@ -409,10 +432,20 @@ impl ffi::TestService {
             .location
             .clone()
             .filter(|location| !location.file.is_empty())?;
+        let (host, work_dir) = self.run_context(&root);
+        Some((location, host, work_dir))
+    }
+
+    /// The last run's host and working directory, which its printed paths
+    /// are relative to: the project's own before any run.
+    fn run_context(&self, root: &Path) -> (process_exec::host::ExecHost, PathBuf) {
         let host = (*self.run_host.borrow())
             .clone()
-            .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&root));
-        Some((location, host, root))
+            .unwrap_or_else(|| process_exec::host::ExecHost::for_path(root));
+        let work_dir = (*self.run_dir.borrow())
+            .clone()
+            .unwrap_or_else(|| root.to_path_buf());
+        (host, work_dir)
     }
 
     /// The node's file on this machine; empty without a location. No I/O.
@@ -457,12 +490,10 @@ impl ffi::TestService {
         let Some(root) = current_project_root() else {
             return QStringList::default();
         };
-        let host = (*self.run_host.borrow())
-            .clone()
-            .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&root));
+        let (host, work_dir) = self.run_context(&root);
         self.tree
             .borrow()
-            .located_files(&host, &root)
+            .located_files(&host, &work_dir)
             .iter()
             .map(|path| QString::from(path.display().to_string().as_str()))
             .collect()
@@ -534,7 +565,13 @@ impl ffi::TestService {
         };
         let settings = configuration::settings_for(config_run.as_ref());
         env.extend(config_run.iter().flat_map(|run| run.env.clone()));
-        let framework = match Framework::detect(&root, &settings, false) {
+        // A monorepo package's configuration runs in the package (#424).
+        let relative_work_dir = config_run
+            .as_ref()
+            .and_then(|run| run.plan.working_directory.clone())
+            .unwrap_or_default();
+        let work_dir = root.join(&relative_work_dir);
+        let framework = match Framework::detect(&root, &work_dir, &settings, false) {
             Ok(framework) => framework,
             Err(reason) => return errors::failure(errors::CODE_REFUSED, reason),
         };
@@ -557,6 +594,7 @@ impl ffi::TestService {
         }
         *self.framework_name.borrow_mut() = framework.contribution.name.clone();
         *self.run_host.borrow_mut() = Some(framework.host.clone());
+        *self.run_dir.borrow_mut() = Some(work_dir.clone());
         // Diagnostics from the framework this run uses are recomputed as
         // events arrive (`republish`); a stale row from a source this
         // project no longer contributes would otherwise never be cleared.
@@ -606,8 +644,9 @@ impl ffi::TestService {
                     "this test framework cannot collect coverage",
                 );
             }
-            args.extend(test_core::coverage::args(
+            args.extend(test_core::coverage::args_in(
                 &framework.contribution.coverage_args,
+                &relative_work_dir,
             ));
             env.extend(test_core::coverage::env());
             // A report from an earlier run must never pass for this one's.
@@ -650,12 +689,12 @@ impl ffi::TestService {
             let mut sink = QtSink {
                 qt_thread: qt_thread.clone(),
                 ansi: run_core::AnsiStripper::default(),
-                psr4_roots: php_core::composer::ComposerJson::read(&root)
+                psr4_roots: php_core::composer::ComposerJson::read(&work_dir)
                     .ok()
                     .flatten()
                     .map(|composer| composer.psr4)
                     .unwrap_or_default(),
-                root: root.clone(),
+                work_dir: work_dir.clone(),
             };
             let program_str = program.to_string_lossy().into_owned();
             let result = test_core::run_on_env(
@@ -664,7 +703,7 @@ impl ffi::TestService {
                 &program_str,
                 &args,
                 &env,
-                &root,
+                &work_dir,
                 output_format,
                 report_glob.as_deref(),
                 &mut sink,
@@ -753,14 +792,10 @@ fn republish(service: &ffi::TestService) {
     // name to a path; with no project open there is nothing to republish
     // against in the first place, so clearing the stale source above is all
     // this call does.
-    let Some(work_dir) = current_project_root() else {
+    let Some(root) = current_project_root() else {
         return;
     };
-    let host = service
-        .run_host
-        .borrow()
-        .clone()
-        .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&work_dir));
+    let (host, work_dir) = service.run_context(&root);
     let grouped =
         test_core::diagnostics_by_file_on(&host, &service.tree.borrow(), &framework, &work_dir);
     for (uri, diagnostics) in grouped {
@@ -778,10 +813,10 @@ struct QtSink {
     /// here rather than in `test-core` since `test-core`'s layering row
     /// carries no adapter-layer crate (`run-core` included).
     ansi: run_core::AnsiStripper,
-    /// A Pest class-based test names its class and no file; the project's
-    /// PSR-4 roots find the file.
+    /// A Pest class-based test names its class and no file; the PSR-4
+    /// roots of the run's package find the file.
     psr4_roots: Vec<php_core::composer::Psr4Root>,
-    root: PathBuf,
+    work_dir: PathBuf,
 }
 
 impl test_core::TestSink for QtSink {
@@ -797,7 +832,7 @@ impl test_core::TestSink for QtSink {
     }
 
     fn event(&mut self, event: test_core::TeamCityEvent) {
-        let event = php_core::tests::locate_event(event, &self.psr4_roots, &self.root);
+        let event = php_core::tests::locate_event(event, &self.psr4_roots, &self.work_dir);
         let _ = self
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {

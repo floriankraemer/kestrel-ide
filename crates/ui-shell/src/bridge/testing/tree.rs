@@ -81,6 +81,33 @@ fn is_excluded(root: &Path, path: &Path, is_dir: bool) -> bool {
 }
 
 impl ffi::TestService {
+    /// The package of `dir` found before, for the project at `root`.
+    fn cached_package(&self, root: &Path, dir: &Path) -> Option<TestPackage> {
+        let mut cache = self.tree_packages.borrow_mut();
+        if cache.root != root {
+            *cache = PackageCache {
+                root: root.to_path_buf(),
+                by_dir: HashMap::new(),
+            };
+        }
+        cache.by_dir.get(dir).cloned()
+    }
+
+    /// The test package `dir` belongs to (#424), cached like the tree's.
+    // ponytail: a few stats on the Qt thread when a run starts in a directory
+    // not seen before; move it behind `within_deadline` if a slow share shows it.
+    pub(super) fn package_of(&self, root: &Path, dir: &Path) -> TestPackage {
+        if let Some(package) = self.cached_package(root, dir) {
+            return package;
+        }
+        let package = TestPackage::containing(root, dir);
+        self.tree_packages
+            .borrow_mut()
+            .by_dir
+            .insert(dir.to_path_buf(), package.clone());
+        package
+    }
+
     /// What the tree's entries for `path` (a directory when `is_dir`) run
     /// and call it; not runnable when it holds nothing to run.
     /// `open_text` is the file's unsaved editor text, when it is open.
@@ -102,16 +129,7 @@ impl ffi::TestService {
         } else {
             row_path.parent().map(Path::to_path_buf).unwrap_or_default()
         };
-        let cached = {
-            let mut cache = self.tree_packages.borrow_mut();
-            if cache.root != root {
-                *cache = PackageCache {
-                    root: root.clone(),
-                    by_dir: HashMap::new(),
-                };
-            }
-            cache.by_dir.get(&dir).cloned()
-        };
+        let cached = self.cached_package(&root, &dir);
         let open = has_open_text.then(|| open_text.to_string());
         let probe_root = root.clone();
         let probe_dir = dir.clone();
@@ -192,10 +210,13 @@ impl ffi::TestService {
     }
 
     /// A watched project file changed: a `composer.json` or PHPUnit
-    /// configuration can change which rows hold tests.
+    /// configuration can change which rows hold tests, and a test file what
+    /// Go to Test lists as covering a class (#426).
     pub fn project_file_changed(&self, path: &QString) {
-        if php_core::tree_run::is_package_file(Path::new(&path.to_string())) {
+        let path = PathBuf::from(path.to_string());
+        if php_core::tree_run::is_package_file(&path) {
             self.tree_packages.borrow_mut().by_dir.clear();
         }
+        self.covers.file_changed(&path);
     }
 }

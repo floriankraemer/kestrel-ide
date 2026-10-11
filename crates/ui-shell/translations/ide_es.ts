@@ -3142,6 +3142,10 @@
         <translation>No se encontró ningún sujeto de prueba para %1.</translation>
     </message>
     <message>
+        <source>Still indexing the tests that cover %1.</source>
+        <translation>Aún se están indexando las pruebas que cubren %1.</translation>
+    </message>
+    <message>
         <source>No test found for %1.</source>
         <translation>No se encontró ninguna prueba para %1.</translation>
     </message>
@@ -3793,6 +3797,14 @@
     <message>
         <source>Relative to the project</source>
         <translation>Relativa al proyecto</translation>
+    </message>
+    <message>
+        <source>Custom working directory:</source>
+        <translation>Directorio de trabajo personalizado:</translation>
+    </message>
+    <message>
+        <source>Project root</source>
+        <translation>Raíz del proyecto</translation>
     </message>
     <message>
         <source>Runner options:</source>

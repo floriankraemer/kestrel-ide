@@ -177,8 +177,12 @@ impl ffi::RunConfigEditor {
         )
     }
 
-    pub fn request_php_unit_model(self: Pin<&mut ffi::RunConfigEditor>, configuration: &QString) {
-        super::phpunit_form::request_model(self, configuration);
+    pub fn request_php_unit_model(
+        self: Pin<&mut ffi::RunConfigEditor>,
+        configuration: &QString,
+        working_directory: &QString,
+    ) {
+        super::phpunit_form::request_model(self, configuration, working_directory);
     }
 
     pub fn php_unit_scope_fields(&self, scope: &QString) -> ffi::FfiPhpUnitScopeFields {

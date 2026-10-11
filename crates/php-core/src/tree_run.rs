@@ -34,15 +34,22 @@ pub struct TestPackage {
 }
 
 impl TestPackage {
-    /// The package `dir` lies in: `dir` or its nearest ancestor inside
-    /// `root` with a PHPUnit configuration or a `composer.json`; the project
-    /// itself when none has one. A few stats per ancestor, then two reads.
+    /// The package whose tests `dir` holds: `dir` or its nearest ancestor
+    /// inside `root` with a test framework (a PHPUnit configuration, or
+    /// PHPUnit or Pest in its `composer.json`); the project itself when none
+    /// has one, so a package that only autoloads runs with the project's
+    /// suite. A few stats per ancestor, and reads only of the package files
+    /// found.
     pub fn containing(root: &Path, dir: &Path) -> Self {
-        let dir = dir
-            .ancestors()
-            .take_while(|ancestor| ancestor.starts_with(root))
-            .find(|ancestor| is_package_dir(ancestor))
-            .unwrap_or(root);
+        dir.ancestors()
+            .take_while(|ancestor| ancestor.starts_with(root) && *ancestor != root)
+            .filter(|ancestor| is_package_dir(ancestor))
+            .map(Self::at)
+            .find(|package| package.has_test_framework)
+            .unwrap_or_else(|| Self::at(root))
+    }
+
+    fn at(dir: &Path) -> Self {
         let configuration = crate::phpunit_xml::discover(dir, "");
         let has_test_framework = configuration.is_some() || requires_test_framework(dir);
         Self {
@@ -50,6 +57,35 @@ impl TestPackage {
             configuration,
             has_test_framework,
         }
+    }
+
+    /// `config` run as PhpStorm runs a package-scoped configuration: in the
+    /// package directory, with the package's PHPUnit configuration. The
+    /// project's own package leaves it unchanged; so does a package outside
+    /// `root`. `ignore_case` is for Windows roots.
+    pub fn scope(
+        &self,
+        config: RunConfigSetting,
+        root: &Path,
+        ignore_case: bool,
+    ) -> RunConfigSetting {
+        let root_text = root.to_string_lossy();
+        let relative =
+            |path: &Path| relative_to_root(&path.to_string_lossy(), &root_text, ignore_case);
+        let Some(working_directory) = relative(&self.dir).filter(|dir| dir != ".") else {
+            return config;
+        };
+        let configuration = self
+            .configuration
+            .as_deref()
+            .and_then(relative)
+            .unwrap_or_default();
+        let setting = PhpUnitRunSetting {
+            configuration,
+            working_directory,
+            ..config.phpunit.unwrap_or_default()
+        };
+        temporary_config(setting, Some(config.name))
     }
 }
 
@@ -142,14 +178,6 @@ pub fn tree_run(
     {
         return None;
     }
-    // A monorepo package runs with its own PHPUnit configuration; the
-    // project's is the one PHPUnit finds by itself.
-    let configuration = package
-        .configuration
-        .as_deref()
-        .filter(|_| package.dir != root)
-        .and_then(|file| relative_to_root(&file.to_string_lossy(), &root_text, ignore_case))
-        .unwrap_or_default();
     let run = match (row.is_dir, relative.as_str()) {
         // The project root is its whole suite, never a directory scope of
         // `.`: one "All tests" entry, not two.
@@ -158,7 +186,7 @@ pub fn tree_run(
         (false, _) => file_run(row.path, &relative, read)?,
     };
     Some(TreeRun {
-        config: with_configuration(run.config, configuration),
+        config: package.scope(run.config, root, ignore_case),
         label: run.label,
     })
 }
@@ -223,19 +251,6 @@ fn file_run(
         label: TreeRunLabel::Named(config.name.clone()),
         config,
     })
-}
-
-/// `config` run with the PHPUnit configuration file `configuration`
-/// (project-relative); unchanged when that is blank.
-fn with_configuration(config: RunConfigSetting, configuration: String) -> RunConfigSetting {
-    if configuration.is_empty() {
-        return config;
-    }
-    let setting = PhpUnitRunSetting {
-        configuration,
-        ..config.phpunit.unwrap_or_default()
-    };
-    temporary_config(setting, Some(config.name))
 }
 
 #[cfg(test)]
@@ -378,6 +393,7 @@ mod tests {
         let setting = tests.config.phpunit.unwrap();
         assert_eq!(setting.path, "packages/mailer/tests");
         assert_eq!(setting.configuration, "packages/mailer/phpunit.xml.dist");
+        assert_eq!(setting.working_directory, "packages/mailer");
         assert_eq!(tests.config.name, "Tests in 'tests'");
 
         let class = run(
@@ -393,6 +409,55 @@ mod tests {
         );
         // The project's own directories still offer nothing.
         assert!(run(root, &root.join("tests"), true, None).is_none());
+    }
+
+    #[test]
+    fn a_package_without_a_test_framework_runs_with_the_project() {
+        let dir = project();
+        let root = dir.path();
+        let package = root.join("packages/util");
+        std::fs::create_dir_all(package.join("tests")).unwrap();
+        std::fs::write(package.join("composer.json"), r#"{"name": "acme/util"}"#).unwrap();
+
+        let found = TestPackage::containing(root, &package.join("tests"));
+        assert_eq!(found.dir, root);
+        let tests = run(root, &package.join("tests"), true, None).unwrap();
+        let setting = tests.config.phpunit.unwrap();
+        assert_eq!(setting.path, "packages/util/tests");
+        assert_eq!(
+            (
+                setting.configuration.as_str(),
+                setting.working_directory.as_str()
+            ),
+            ("", "")
+        );
+    }
+
+    #[test]
+    fn a_package_scopes_editor_runs_to_its_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let package = root.join("packages/mailer");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("composer.json"),
+            r#"{"require-dev": {"phpunit/phpunit": "^11"}}"#,
+        )
+        .unwrap();
+        let marker = crate::tests::markers(CLASS_SOURCE).remove(0);
+        let config = marker_config(&marker, Some("packages/mailer/tests/GreeterTest.php")).unwrap();
+
+        let found = TestPackage::containing(root, &package.join("tests"));
+        assert_eq!(found.configuration, None);
+        let scoped = found.scope(config.clone(), root, false);
+        let setting = scoped.phpunit.clone().unwrap();
+        assert_eq!(setting.working_directory, "packages/mailer");
+        assert_eq!(setting.configuration, "");
+        assert_eq!(scoped.name, config.name);
+        assert_ne!(scoped.id, config.id);
+
+        let project = TestPackage::containing(root, root);
+        assert_eq!(project.scope(config.clone(), root, false), config);
     }
 
     #[test]

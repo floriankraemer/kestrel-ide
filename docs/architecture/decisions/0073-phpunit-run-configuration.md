@@ -15,13 +15,14 @@ PhpStorm has a PHPUnit run configuration with a test scope and options, and its 
 ## Decision
 
 **`kind = "phpunit"` with a `[run_configs.phpunit]` table.**
-`app_config::php::PhpUnitRunSetting` holds `scope`, `path`, `class`, `method`, `data_set`, `filter`, `testsuite`, `configuration`, `groups`, `exclude_groups`, `runner_options` and `interpreter`.
+`app_config::php::PhpUnitRunSetting` holds `scope`, `path`, `class`, `method`, `data_set`, `filter`, `testsuite`, `configuration`, `groups`, `exclude_groups`, `runner_options`, `interpreter` and `working_directory`.
 The environment is the configuration's own `env`.
 - `scope` is a string, like `kind` (ADR-0039): `directory`, `file`, `class`, `method`, `data_set` or `config`.
   Blank and unknown read as `config`, so a newer file loads in an older build.
-- `path`, `configuration` and `runner_options` may use macros.
+- `path`, `configuration`, `working_directory` and `runner_options` may use macros.
   A path is stored project-relative with `/`; an absolute path inside the project is made relative, one outside it is refused.
-  The run's working directory is the project root on every host, so WSL and container hosts see the right path.
+  The run's working directory is `working_directory` (PhpStorm's "Custom working directory"), the project root when it is blank.
+  Paths are passed relative to the working directory (`../b/tests` from `packages/a`), so WSL and container hosts, which map the project root, see the right path.
 - `interpreter` replaces `[php].interpreter` for this configuration.
   The host (local, WSL, container) is still `[php]`'s, so it is not a second target mechanism.
 - `filter` narrows a `file` scope by a PCRE.
@@ -70,6 +71,26 @@ The "defined in the configuration file" scope with a suite is `--testsuite <name
 
 **An editor run selects its temporary configuration (#415).**
 `TestService::configurationRemembered(configId)` makes the view refresh the configuration list and select that entry in the toolbar combo, so the combo, Rerun and `run.rerun` name what just ran.
+
+**A monorepo package runs in the package (#424).**
+`php_core::tree_run::TestPackage::containing` finds the package of a directory: its nearest ancestor below the project root with a test framework (a PHPUnit configuration, or `phpunit/phpunit` or `pestphp/pest` in its `composer.json`), else the project.
+A package that only autoloads (a `composer.json` without either) runs with the project's suite, as PhpStorm runs it.
+`TestPackage::scope` gives a tree run, a gutter run, a caret run and a data-set rerun the package as `working_directory` and its PHPUnit configuration as `configuration`; the project's own package leaves the configuration unchanged.
+The working directory is part of a temporary configuration's id only when it is set, so the ids earlier configurations were stored under hold.
+`TestService` then treats the working directory as the run's root:
+- the framework program is the package's (`vendor/bin/phpunit` there), else the project's, and the toolchains are detected in both;
+- `test_core::run_on_env` starts in it, and its relative test locations, failure links and diagnostics resolve against it;
+- the PSR-4 roots that locate a Pest class come from the package's `composer.json`;
+- the coverage report is still written to `.ide/local/coverage/clover.xml` below the project root, named relative to the working directory (`test_core::coverage::args_in`).
+The editor page shows the field as "Custom working directory", and without an explicit configuration file its test suite and group pickers read the working directory's (`phpunit_xml::model_in`); a package without one runs without one, as PHPUnit does.
+
+**Go to Test lists the convention's tests and every covering test (#426).**
+`php_core::test_navigation::CoversIndex` holds the project's `*Test.php` files below the test directories (every `autoload-dev` root, else `tests/`) with the classes each says it covers (`#[CoversClass]`, `#[CoversMethod]`, `@covers`, Pest's `covers()`), read within the PHPUnit model's budget (2000 files, 20000 entries, 512 KiB a file) and parsed only when a file mentions covering at all.
+`CoversCache` keeps one per project on `TestService`: built on a thread of its own on the first Go to Test, rebuilt when the PSR-4 roots change or more than 1000 changes pile up, and refreshed for each PHP file or directory the project watcher reports (re-read, dropped, or a new directory scanned).
+The watcher's report only queues the path, so the Qt thread never waits on a `\\wsl.localhost` share; the next search applies the queue on its worker thread.
+A search answers the `<Name>Test` convention's matches, then the tests that cover the class, then (only when the convention found none) the test files named after it.
+While the index is still being built a convention match answers at once with a status-bar note that the covering tests are still being indexed; with no convention match the search waits for the index, since it has nothing to show meanwhile.
+`index-core` is not used for this: its text index is language-agnostic, and a covered name only means a class once the test's namespace and imports resolve it, so answering from it would still re-read and parse every candidate file on each request.
 
 ## Consequences
 

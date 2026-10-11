@@ -20,8 +20,8 @@ pub enum ConfigError {
         scope: &'static str,
         field: &'static str,
     },
-    /// A path that leaves the project; the run's working directory is the
-    /// project root on every host, so only project paths can be passed.
+    /// A path that leaves the project: paths are passed relative to the
+    /// run's working directory, which is inside the project on every host.
     PathOutsideProject(String),
 }
 
@@ -47,6 +47,9 @@ pub struct Plan {
     pub options: ScopeOptions,
     /// The `php` program to use instead of `[php]`'s.
     pub interpreter: Option<String>,
+    /// Where the run starts, project-relative; `None` is the project root.
+    /// The scope's and options' paths are relative to it.
+    pub working_directory: Option<String>,
 }
 
 fn non_blank(value: &str) -> Option<String> {
@@ -77,6 +80,14 @@ fn project_path(path: &str, root: &str, ignore_case: bool) -> Result<String, Con
             trimmed => trimmed.to_string(),
         })
         .ok_or(ConfigError::PathOutsideProject(path))
+}
+
+/// The project-relative working directory `dir` (macros expanded) names;
+/// `None` for the project root, blank, or a directory outside the project.
+pub fn working_directory(dir: &str, root: &str, ignore_case: bool) -> Option<String> {
+    non_blank(dir)
+        .and_then(|dir| project_path(&dir, root, ignore_case).ok())
+        .filter(|dir| dir != ".")
 }
 
 /// Which fields of the table a scope reads — what the editor shows. The
@@ -177,7 +188,15 @@ pub fn plan(
     root: &str,
     ignore_case: bool,
 ) -> Result<Plan, ConfigError> {
-    let project = |path: &str| project_path(&expand(path), root, ignore_case);
+    let working_directory = non_blank(&setting.working_directory)
+        .map(|dir| project_path(&expand(&dir), root, ignore_case))
+        .transpose()?
+        .and_then(|dir| working_directory(&dir, root, ignore_case));
+    let work_dir = working_directory.clone().unwrap_or_default();
+    let project = |path: &str| {
+        project_path(&expand(path), root, ignore_case)
+            .map(|path| test_core::filter::relative_to_work_dir(&path, &work_dir))
+    };
     let scope = scope_of(setting, &project)?;
     let words = |list: &[String]| -> Vec<String> {
         list.iter().filter_map(|word| non_blank(word)).collect()
@@ -198,6 +217,7 @@ pub fn plan(
                 .collect(),
         },
         interpreter: non_blank(&setting.interpreter),
+        working_directory,
     })
 }
 
@@ -215,9 +235,10 @@ pub fn problem(setting: &PhpUnitRunSetting, root: &str, ignore_case: bool) -> Op
     };
     scope_of(setting, &check)
         .and_then(|_| {
-            non_blank(&setting.configuration)
-                .map(|c| check(&c))
-                .transpose()
+            [&setting.configuration, &setting.working_directory]
+                .into_iter()
+                .filter_map(|path| non_blank(path))
+                .try_for_each(|path| check(&path).map(drop))
         })
         .err()
         .map(|error| error.to_string())
@@ -283,7 +304,7 @@ fn earlier_default_names(setting: &PhpUnitRunSetting) -> Vec<String> {
 /// A stable id for the scope, so repeated runs of one test reuse one
 /// temporary entry.
 fn id_of(setting: &PhpUnitRunSetting) -> String {
-    format!(
+    let id = format!(
         "phpunit:{}:{}:{}:{}:{}:{}:{}:{}",
         setting.scope,
         setting.path,
@@ -293,7 +314,12 @@ fn id_of(setting: &PhpUnitRunSetting) -> String {
         setting.filter,
         setting.testsuite,
         setting.configuration
-    )
+    );
+    // Appended only when set, so the ids of earlier configurations hold.
+    match setting.working_directory.as_str() {
+        "" => id,
+        dir => format!("{id}:{dir}"),
+    }
 }
 
 /// The temporary configuration for `setting`, named `name` (or its default).
@@ -489,6 +515,72 @@ mod tests {
                 Err(ConfigError::PathOutsideProject(_))
             ));
         }
+    }
+
+    #[test]
+    fn a_working_directory_makes_paths_relative_to_it() {
+        let package = PhpUnitRunSetting {
+            path: "$PROJECT_DIR$/packages/mailer/tests".into(),
+            configuration: "packages/mailer/phpunit.xml.dist".into(),
+            working_directory: "$PROJECT_DIR$/packages/mailer/".into(),
+            ..setting("directory")
+        };
+        let plan = plan_of(&package).unwrap();
+        assert_eq!(plan.working_directory.as_deref(), Some("packages/mailer"));
+        assert_eq!(
+            plan.scope,
+            TestScope::Directory {
+                path: "tests".into()
+            }
+        );
+        assert_eq!(
+            plan.options.configuration.as_deref(),
+            Some("phpunit.xml.dist")
+        );
+
+        // The project root is no working directory of its own.
+        let root = PhpUnitRunSetting {
+            working_directory: ".".into(),
+            ..setting("config")
+        };
+        assert_eq!(plan_of(&root).unwrap().working_directory, None);
+
+        let outside = PhpUnitRunSetting {
+            working_directory: "../elsewhere".into(),
+            ..setting("config")
+        };
+        assert!(matches!(
+            plan_of(&outside),
+            Err(ConfigError::PathOutsideProject(_))
+        ));
+        assert!(problem(&outside, "/p", false).is_some());
+        let with_macro = PhpUnitRunSetting {
+            working_directory: "$PROJECT_DIR$/packages/a".into(),
+            ..setting("config")
+        };
+        assert_eq!(problem(&with_macro, "/p", false), None);
+
+        assert_eq!(
+            working_directory("/p/packages/a/", "/p", false).as_deref(),
+            Some("packages/a")
+        );
+        for none in ["", "/p", ".", "/elsewhere", "../x"] {
+            assert_eq!(working_directory(none, "/p", false), None, "{none}");
+        }
+    }
+
+    #[test]
+    fn the_working_directory_keeps_its_own_temporary_entry() {
+        let root = temporary_config(setting("config"), None);
+        let package = temporary_config(
+            PhpUnitRunSetting {
+                working_directory: "packages/a".into(),
+                ..setting("config")
+            },
+            None,
+        );
+        assert_eq!(root.id, "phpunit:config:::::::");
+        assert_ne!(root.id, package.id);
     }
 
     #[test]

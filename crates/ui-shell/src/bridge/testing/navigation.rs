@@ -1,8 +1,9 @@
 //! Go to Test / Test Subject (PHPUnit editor runs plan, E7): translation
 //! only — which files a class and its tests map to is
 //! `php_core::test_navigation`'s rule, and which answer still counts is its
-//! `NavigationRequests`'; this moves the search off the Qt thread and the
-//! answer back.
+//! `NavigationRequests`', and the covering tests come from its
+//! `CoversCache`; this moves the search off the Qt thread and the answer
+//! back.
 
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -46,14 +47,14 @@ impl ffi::TestService {
             Ok(root) => root,
             Err(status) => {
                 self.navigation.borrow_mut().cancel();
-                let none = QStringList::default;
-                self.as_mut().test_navigation_ready(
+                self.as_mut().test_navigation_ready(ffi::FfiTestNavigation {
                     status,
-                    false,
-                    QString::default(),
-                    none(),
-                    none(),
-                );
+                    from_test: false,
+                    still_indexing: false,
+                    name: QString::default(),
+                    paths: QStringList::default(),
+                    labels: QStringList::default(),
+                });
                 return;
             }
         };
@@ -76,9 +77,14 @@ impl ffi::TestService {
     /// wanted and start the request that waited for it.
     fn search_navigation(self: Pin<&mut Self>, token: u64, request: NavigationRequest) {
         let qt_thread = self.qt_thread();
+        let covers = std::sync::Arc::clone(&self.covers);
         std::thread::spawn(move || {
-            let navigation =
-                php_core::test_navigation::navigate(&request.root, &request.file, &request.text);
+            let navigation = php_core::test_navigation::navigate(
+                &request.root,
+                &request.file,
+                &request.text,
+                &covers,
+            );
             let root = request.root;
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 let (wanted, next) = service.navigation.borrow_mut().finish(token);
@@ -104,8 +110,14 @@ impl ffi::TestService {
                 } else {
                     ffi::FfiTestNavigationStatus::Found
                 };
-                let name = QString::from(navigation.name.as_str());
-                service.test_navigation_ready(status, navigation.from_test, name, paths, labels);
+                service.test_navigation_ready(ffi::FfiTestNavigation {
+                    status,
+                    from_test: navigation.from_test,
+                    still_indexing: navigation.still_indexing,
+                    name: QString::from(navigation.name.as_str()),
+                    paths,
+                    labels,
+                });
             });
         });
     }

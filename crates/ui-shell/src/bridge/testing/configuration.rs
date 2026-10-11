@@ -53,11 +53,9 @@ fn relative(file: &str, root: &Path) -> Option<String> {
     test_core::filter::relative_to_root(file, &root.to_string_lossy(), cfg!(windows))
 }
 
-/// The temporary configuration a gutter or caret run of `selection` stands for.
-pub(super) fn marker_config(
-    selection: &MarkerSelection,
-    root: &Path,
-) -> Result<run_core::RunConfig, String> {
+/// The temporary configuration a gutter or caret run of `selection` stands
+/// for, unscoped to its package.
+fn marker_config(selection: &MarkerSelection, root: &Path) -> Result<run_core::RunConfig, String> {
     php_core::phpunit_run::marker_config(
         &selection.marker,
         relative(&selection.file, root).as_deref(),
@@ -67,11 +65,7 @@ pub(super) fn marker_config(
 
 /// The temporary configuration that reruns the data-set row `id` of `file`;
 /// `None` when `id` is not a data-set row.
-pub(super) fn data_set_config(
-    id: &str,
-    file: Option<&Path>,
-    root: &Path,
-) -> Option<run_core::RunConfig> {
+fn data_set_config(id: &str, file: Option<&Path>, root: &Path) -> Option<run_core::RunConfig> {
     let relative = file.and_then(|file| relative(&file.to_string_lossy(), root));
     php_core::phpunit_run::data_set_config(id, relative.as_deref())
 }
@@ -112,7 +106,8 @@ pub(super) fn settings_for(run: Option<&ConfigRun>) -> app_config::Settings {
 pub(crate) fn preview(config: &run_core::RunConfig, root: &Path) -> String {
     let argv = resolve(config, root).and_then(|run| {
         let settings = settings_for(Some(&run));
-        let framework = super::Framework::detect(root, &settings, true)?;
+        let work_dir = root.join(run.plan.working_directory.as_deref().unwrap_or_default());
+        let framework = super::Framework::detect(root, &work_dir, &settings, true)?;
         let (program, args) = framework.command(&settings, framework.scoped(&run)?);
         Ok([program.display().to_string()]
             .into_iter()
@@ -197,19 +192,30 @@ impl ffi::TestService {
         selection: Option<RerunSelection>,
         root: &Path,
     ) -> Result<Option<RerunSelection>, String> {
+        // Run in the test file's monorepo package, as PhpStorm runs a
+        // package-scoped configuration (#424).
+        let in_package = |config: run_core::RunConfig, file: &Path| {
+            let dir = file.parent().unwrap_or(root);
+            let scoped = self
+                .package_of(root, dir)
+                .scope(config, root, cfg!(windows));
+            RerunSelection::Configuration(Box::new(stored_or(scoped, root)))
+        };
         Ok(match selection {
-            Some(RerunSelection::Marker(marker)) => Some(RerunSelection::Configuration(Box::new(
-                stored_or(marker_config(&marker, root)?, root),
-            ))),
+            Some(RerunSelection::Marker(marker)) => {
+                let config = marker_config(&marker, root)?;
+                Some(in_package(config, Path::new(&marker.file)))
+            }
             Some(RerunSelection::DataSet(id)) => {
                 let file = self
                     .located(&QString::from(id.as_str()))
-                    .map(|(location, host, root)| location.local_path(&host, &root));
-                match data_set_config(id.as_str(), file.as_deref(), root) {
-                    Some(config) => Some(RerunSelection::Configuration(Box::new(stored_or(
-                        config, root,
-                    )))),
-                    None => Some(RerunSelection::Node(id)),
+                    .map(|(location, host, work_dir)| location.local_path(&host, &work_dir));
+                match (data_set_config(id.as_str(), file.as_deref(), root), file) {
+                    (Some(config), Some(file)) => Some(in_package(config, &file)),
+                    (Some(config), None) => Some(RerunSelection::Configuration(Box::new(
+                        stored_or(config, root),
+                    ))),
+                    (None, _) => Some(RerunSelection::Node(id)),
                 }
             }
             other => other,

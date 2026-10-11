@@ -231,6 +231,8 @@ PhpUnitOptionsPage::PhpUnitOptionsPage(RunConfigEditor *editor, QWidget *parent)
     runnerOptionsEdit_->setPlaceholderText(tr("e.g. --stop-on-failure"));
     interpreterEdit_ = addField(tr("Interpreter:"), false, false);
     interpreterEdit_->setPlaceholderText(tr("Project PHP interpreter"));
+    workingDirectoryEdit_ = addField(tr("Custom working directory:"), true, false);
+    workingDirectoryEdit_->setPlaceholderText(tr("Project root"));
     showFieldsForScope();
 
     modelTimer_ = new QTimer(this);
@@ -238,10 +240,13 @@ PhpUnitOptionsPage::PhpUnitOptionsPage(RunConfigEditor *editor, QWidget *parent)
     modelTimer_->setInterval(kModelRequestDelayMs);
     connect(modelTimer_, &QTimer::timeout, this, [this]() {
         if (isVisible()) {
-            editor_->requestPhpUnitModel(configurationEdit_->text());
+            editor_->requestPhpUnitModel(configurationEdit_->text(),
+                                         workingDirectoryEdit_->text());
         }
     });
     connect(configurationEdit_, &QLineEdit::textChanged, this,
+            &PhpUnitOptionsPage::scheduleModelRequest);
+    connect(workingDirectoryEdit_, &QLineEdit::textChanged, this,
             &PhpUnitOptionsPage::scheduleModelRequest);
     connect(editor_, &RunConfigEditor::phpUnitModelReady, this,
             [this](const FfiPhpUnitModel &model) { applyModel(model); });
@@ -260,8 +265,9 @@ void PhpUnitOptionsPage::scheduleModelRequest()
 
 void PhpUnitOptionsPage::applyModel(const FfiPhpUnitModel &model)
 {
-    // An answer for a file name the user has since changed.
-    if (QString(model.configuration) != configurationEdit_->text()) {
+    // An answer for a file name or directory the user has since changed.
+    if (QString(model.configuration) != configurationEdit_->text()
+        || QString(model.working_directory) != workingDirectoryEdit_->text()) {
         return;
     }
     const QString suite = testsuiteCombo_->currentText();
@@ -326,8 +332,8 @@ void PhpUnitOptionsPage::browse(QLineEdit *edit, bool directory)
         return;
     }
     const QString relative = editor_->projectRelativePath(picked);
-    // Outside the project there is nothing the run could pass: its working
-    // directory is the project root on every host.
+    // Outside the project there is nothing the run could pass: paths are
+    // passed relative to a working directory inside the project.
     if (relative.isEmpty()) {
         QMessageBox::warning(this, tr("Outside the Project"),
                              tr("Choose a file or directory inside the project."));
@@ -370,6 +376,7 @@ void PhpUnitOptionsPage::setOptions(const FfiPhpUnitOptions &options)
     excludeGroupsPicker_->setChecked(splitNames(QString(options.exclude_groups)));
     runnerOptionsEdit_->setText(QString(options.runner_options));
     interpreterEdit_->setText(QString(options.interpreter));
+    workingDirectoryEdit_->setText(QString(options.working_directory));
     for (QLineEdit *edit : edits) {
         edit->blockSignals(false);
     }
@@ -392,6 +399,7 @@ FfiPhpUnitOptions PhpUnitOptionsPage::options() const
     options.exclude_groups = excludeGroupsPicker_->checked().join(QStringLiteral(", "));
     options.runner_options = runnerOptionsEdit_->text();
     options.interpreter = interpreterEdit_->text();
+    options.working_directory = workingDirectoryEdit_->text();
     return options;
 }
 

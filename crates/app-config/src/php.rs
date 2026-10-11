@@ -140,6 +140,11 @@ pub struct PhpUnitRunSetting {
     /// The `php` program for this configuration; blank uses `[php]`'s.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub interpreter: String,
+    /// PhpStorm's "Custom working directory": project-relative with `/`,
+    /// macros allowed; blank is the project root. A monorepo package's runs
+    /// start in the package.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub working_directory: String,
 }
 
 fn is_zero(port: &u16) -> bool {
@@ -212,6 +217,7 @@ mod tests {
             exclude_groups: vec!["slow".into()],
             runner_options: "--stop-on-failure".into(),
             interpreter: "php8.3".into(),
+            working_directory: "packages/mailer".into(),
         };
         let text = toml::to_string(&setting).unwrap();
         assert_eq!(toml::from_str::<PhpUnitRunSetting>(&text).unwrap(), setting);

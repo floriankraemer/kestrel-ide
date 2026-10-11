@@ -76,9 +76,11 @@ void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorT
     });
     QObject::connect(
       testService, &TestService::testNavigationReady, window,
-      [window, editorTabs](FfiTestNavigationStatus status, bool fromTest, const QString &name,
-                           const QStringList &paths, const QStringList &labels) {
-          switch (status) {
+      [window, editorTabs](const FfiTestNavigation &answer) {
+          const bool fromTest = answer.fromTest;
+          const QString name = answer.name;
+          const QStringList &paths = answer.paths;
+          switch (answer.status) {
           case FfiTestNavigationStatus::NoProject:
           case FfiTestNavigationStatus::NotPhp:
               window->statusBar()->showMessage(
@@ -94,10 +96,17 @@ void buildGoToTest(QMainWindow *window, QMenu *navigateMenu, EditorTabs *editorT
           case FfiTestNavigationStatus::Found:
               break;
           }
+          // #426: the convention's tests answered at once; the ones that say
+          // they cover the class join once the project's tests are indexed.
+          if (answer.stillIndexing) {
+              window->statusBar()->showMessage(
+                QObject::tr("Still indexing the tests that cover %1.").arg(name),
+                4000);
+          }
           if (paths.size() == 1) {
               editorTabs->openFileAtLine(paths.first(), 1, 0);
           } else {
-              chooseTarget(window, editorTabs, fromTest, name, paths, labels);
+              chooseTarget(window, editorTabs, fromTest, name, paths, answer.labels);
           }
       });
 }

@@ -85,6 +85,55 @@ pub struct PhpBuiltinServerRunSetting {
     pub router: String,
 }
 
+/// The `kind` of a PHPUnit run configuration (ADR-0073).
+pub const PHPUNIT_KIND: &str = "phpunit";
+
+/// The `phpunit` run configuration's own sub-table (PHPUnit editor runs plan,
+/// E4): what to run and how. The scope is a string for the reason
+/// `RunConfigSetting::kind` is one (ADR-0039): persistence stays dumb, and
+/// `php-core` maps it back, so an unknown scope loads as the default
+/// instead of failing the settings file. Environment variables are the
+/// configuration's own `env`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct PhpUnitRunSetting {
+    /// `directory`, `file`, `class`, `method`, `data_set` or `config`;
+    /// blank and unknown mean `config`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub scope: String,
+    /// Directory or file scope: project-relative with `/`, macros allowed.
+    /// Class, method and data-set scopes: the test file, to narrow the run.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub path: String,
+    /// The class's fully qualified name (`App\Tests\GreeterTest`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub class: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub method: String,
+    /// The text after `with data set `: `"name"` (quotes included) or `#0`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub data_set: String,
+    /// A PCRE for `--filter` selecting tests inside a file-scope run (a Pest
+    /// `it()` has no class to name).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub filter: String,
+    /// Config scope: the test suite to run (`--testsuite`); blank runs all.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub testsuite: String,
+    /// An alternative `phpunit.xml` (`--configuration`), macros allowed.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub configuration: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub groups: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_groups: Vec<String>,
+    /// Extra arguments, split like a shell line.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub runner_options: String,
+    /// The `php` program for this configuration; blank uses `[php]`'s.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub interpreter: String,
+}
+
 fn is_zero(port: &u16) -> bool {
     *port == 0
 }
@@ -132,6 +181,32 @@ mod tests {
     fn an_untouched_table_writes_nothing() {
         let text = toml::to_string(&PhpBuiltinServerRunSetting::default()).expect("serialize");
         assert_eq!(text.trim(), "");
+    }
+
+    #[test]
+    fn a_phpunit_table_round_trips_and_an_untouched_one_writes_nothing() {
+        assert_eq!(
+            toml::to_string(&PhpUnitRunSetting::default())
+                .unwrap()
+                .trim(),
+            ""
+        );
+        let setting = PhpUnitRunSetting {
+            scope: "method".into(),
+            path: "tests/GreeterTest.php".into(),
+            class: "App\\GreeterTest".into(),
+            method: "testGreets".into(),
+            data_set: "\"a\"".into(),
+            filter: "x".into(),
+            testsuite: "Unit".into(),
+            configuration: "ci.xml".into(),
+            groups: vec!["fast".into()],
+            exclude_groups: vec!["slow".into()],
+            runner_options: "--stop-on-failure".into(),
+            interpreter: "php8.3".into(),
+        };
+        let text = toml::to_string(&setting).unwrap();
+        assert_eq!(toml::from_str::<PhpUnitRunSetting>(&text).unwrap(), setting);
     }
 
     #[test]

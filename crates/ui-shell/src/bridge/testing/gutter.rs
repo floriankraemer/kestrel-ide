@@ -22,12 +22,7 @@ fn is_php_file(path: &str) -> bool {
 }
 
 fn selection(path: String, marker: php_core::tests::TestMarker) -> MarkerSelection {
-    MarkerSelection {
-        is_class: marker.scope != php_core::tests::MarkerScope::Test,
-        filter: marker.filter,
-        name: marker.name,
-        file: path,
-    }
+    MarkerSelection { marker, file: path }
 }
 
 fn marker_at(path: &QString, text: &QString, line: u32) -> Option<MarkerSelection> {
@@ -182,7 +177,7 @@ impl ffi::TestService {
     /// Run one data set of the last run, by the id `marker_data_sets` gave.
     pub fn run_data_set(self: Pin<&mut Self>, id: &QString) -> ffi::FfiResult {
         self.start(
-            Some(RerunSelection::Node(test_core::TestId(id.to_string()))),
+            Some(RerunSelection::DataSet(test_core::TestId(id.to_string()))),
             Vec::new(),
             false,
         )
@@ -191,7 +186,7 @@ impl ffi::TestService {
     /// Stage one data set for debugging, like [`Self::prepare_debug_marker`].
     pub fn prepare_debug_data_set(self: Pin<&mut Self>, id: &QString) -> ffi::FfiResult {
         *self.pending_debug.borrow_mut() =
-            Some(RerunSelection::Node(test_core::TestId(id.to_string())));
+            Some(RerunSelection::DataSet(test_core::TestId(id.to_string())));
         ffi::FfiResult::default()
     }
 
@@ -213,7 +208,7 @@ impl ffi::TestService {
     /// The name a marker's menu shows, empty when `line` has no marker.
     pub fn marker_name(&self, path: &QString, text: &QString, line: u32) -> QString {
         marker_at(path, text, line)
-            .map(|marker| QString::from(marker.name.as_str()))
+            .map(|marker| QString::from(marker.marker.name.as_str()))
             .unwrap_or_default()
     }
 
@@ -382,11 +377,11 @@ mod tests {
     fn a_test_file_runs_or_stages_the_caret_scope() {
         assert!(matches!(
             plan_caret_run("/p/ATest.php", TEST_FILE, 3, false, true),
-            CaretRun::Run(m) if m.name == "testA"
+            CaretRun::Run(m) if m.marker.name == "testA"
         ));
         assert!(matches!(
             plan_caret_run("/p/ATest.php", TEST_FILE, 3, true, true),
-            CaretRun::Debug(m) if m.name == "testA"
+            CaretRun::Debug(m) if m.marker.name == "testA"
         ));
     }
 

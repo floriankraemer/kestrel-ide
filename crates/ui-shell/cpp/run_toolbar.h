@@ -50,6 +50,8 @@ public:
     // R2-4: stop without the grace period `stopSelected` allows.
     void killSelected();
     void rerunSelected();
+    // Run the selected test configuration collecting coverage.
+    void runSelectedWithCoverage();
     // D3-8: start a debug session for whatever configuration is selected.
     void debugSelected();
 

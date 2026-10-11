@@ -24,6 +24,7 @@
 #include <QDir>
 #include <QMainWindow>
 #include <QMenu>
+#include <QMessageBox>
 #include <QHash>
 #include <QPlainTextEdit>
 #include <QSet>
@@ -121,6 +122,32 @@ void wireTestGutter(TestService *testService, DebugService *debugService, Editor
     // A debugged test starts once `DebugService` has the listener up.
     QObject::connect(debugService, &DebugService::phpTestLaunchRequested, testService,
                       [testService](const QString &envJson) { testService->runPendingWithEnv(envJson); });
+}
+
+void wirePhpUnitConfigurations(RunService *runService, DebugService *debugService,
+                               TestService *testService, QWidget *window)
+{
+    const auto report = [window](const QString &title, const FfiResult &result) {
+        if (result.code != 0) {
+            QMessageBox::warning(window, title, result.message);
+        }
+    };
+    QObject::connect(runService, &RunService::testConfigurationRequested, testService,
+                      [testService, report](const QString &configId, bool withCoverage) {
+                          report(QObject::tr("Run"),
+                                 testService->runConfiguration(configId, withCoverage));
+                      });
+    QObject::connect(debugService, &DebugService::testConfigurationDebugRequested, testService,
+                      [testService, debugService, report](const QString &configId) {
+                          FfiResult result = testService->prepareDebugConfiguration(configId);
+                          if (result.code == 0) {
+                              result = debugService->debugPhpTests();
+                          }
+                          report(QObject::tr("Debug"), result);
+                      });
+    // An editor run just created a temporary configuration.
+    QObject::connect(testService, &TestService::configurationRemembered, runService,
+                      [runService]() { runService->detectConfigurations(); });
 }
 
 void EditorTabs::setRunService(RunService *runService)

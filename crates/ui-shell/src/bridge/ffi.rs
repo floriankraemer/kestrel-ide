@@ -1533,6 +1533,9 @@ mod ffi {
         /// The `php-builtin-server` kind's own sub-table (PHP parity plan,
         /// I6) — meaningless (and left at its default) for any other kind.
         php_server: FfiPhpServerOptions,
+        /// The `phpunit` kind's own sub-table (PHPUnit editor runs plan, E4)
+        /// — meaningless (and left at its default) for any other kind.
+        phpunit: FfiPhpUnitOptions,
         /// Run targets (C8): empty for "Local" (run on this machine, as
         /// always), else `"container:<target-id>"` — the "Run on" combo's
         /// selection. Meaningless for a container-kind configuration
@@ -1563,6 +1566,27 @@ mod ffi {
         port: u32,
         document_root: QString,
         router: QString,
+    }
+
+    /// The `phpunit` run configuration's own page (PHPUnit editor runs plan,
+    /// E4): `app_config::php::PhpUnitRunSetting`'s exact fields. `groups` and
+    /// `exclude_groups` are comma-separated; `scope` is the settings-file
+    /// spelling (`directory`, `file`, `class`, `method`, `data_set`,
+    /// `config`).
+    #[derive(Default)]
+    struct FfiPhpUnitOptions {
+        scope: QString,
+        path: QString,
+        class_name: QString,
+        method: QString,
+        data_set: QString,
+        filter: QString,
+        testsuite: QString,
+        configuration: QString,
+        groups: QString,
+        exclude_groups: QString,
+        runner_options: QString,
+        interpreter: QString,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -7247,6 +7271,32 @@ mod ffi {
         #[cxx_name = "runPendingWithEnv"]
         fn run_pending_with_env(self: Pin<&mut TestService>, env_json: &QString) -> FfiResult;
 
+        /// Run the `phpunit` run configuration `config_id` (E4); results fill
+        /// the Tests dock. `with_coverage` collects coverage as well.
+        #[qinvokable]
+        #[cxx_name = "runConfiguration"]
+        fn run_configuration(
+            self: Pin<&mut TestService>,
+            config_id: &QString,
+            with_coverage: bool,
+        ) -> FfiResult;
+
+        /// Remember the `phpunit` run configuration a Debug click chose;
+        /// like `prepareDebugMarker`, the run starts with
+        /// `runPendingWithEnv`.
+        #[qinvokable]
+        #[cxx_name = "prepareDebugConfiguration"]
+        fn prepare_debug_configuration(
+            self: Pin<&mut TestService>,
+            config_id: &QString,
+        ) -> FfiResult;
+
+        /// A run created (or refreshed) a temporary `phpunit` configuration:
+        /// the configuration list is stale.
+        #[qsignal]
+        #[cxx_name = "configurationRemembered"]
+        fn configuration_remembered(self: Pin<&mut TestService>);
+
         /// Run the whole project's tests collecting coverage (T5).
         #[qinvokable]
         #[cxx_name = "runAllWithCoverage"]
@@ -10157,6 +10207,23 @@ mod ffi {
         #[qinvokable]
         fn run(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
 
+        /// Run `config_id` collecting coverage. Only a test configuration can;
+        /// anything else is refused.
+        #[qinvokable]
+        #[cxx_name = "runWithCoverage"]
+        fn run_with_coverage(self: Pin<&mut RunService>, config_id: &QString) -> FfiResult;
+
+        /// A `phpunit` configuration was asked to run: it never gets a
+        /// console, `TestService` runs it (ADR-0073), so the view hands it
+        /// over.
+        #[qsignal]
+        #[cxx_name = "testConfigurationRequested"]
+        fn test_configuration_requested(
+            self: Pin<&mut RunService>,
+            config_id: QString,
+            with_coverage: bool,
+        );
+
         /// Run `config_id` with extra environment variables (`env_json` is
         /// `[[key, value], ...]`) — how a PHP debug launch carries the Xdebug
         /// settings, including into a container.
@@ -10613,6 +10680,12 @@ mod ffi {
         #[cxx_name = "debugPhpTests"]
         fn debug_php_tests(self: Pin<&mut DebugService>) -> FfiResult;
 
+        /// A `phpunit` configuration was asked to debug: the view stages it in
+        /// `TestService` and calls `debugPhpTests` (ADR-0073).
+        #[qsignal]
+        #[cxx_name = "testConfigurationDebugRequested"]
+        fn test_configuration_debug_requested(self: Pin<&mut DebugService>, config_id: QString);
+
         /// The listener is up for a debugged test: the view hands the
         /// environment (`[[key, value], ...]`) to `TestService`.
         #[qsignal]
@@ -11017,6 +11090,18 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "commandPreview"]
         fn command_preview(self: &RunConfigEditor, form: &FfiRunConfig) -> QString;
+
+        /// `path` relative to the open project with `/` separators, or empty
+        /// when it is outside the project: what a `phpunit` configuration's
+        /// directory and file pickers store.
+        #[qinvokable]
+        #[cxx_name = "projectRelativePath"]
+        fn project_relative_path(self: &RunConfigEditor, path: &QString) -> QString;
+
+        /// The open project's root, where the pickers start; empty without one.
+        #[qinvokable]
+        #[cxx_name = "projectRoot"]
+        fn project_root(self: &RunConfigEditor) -> QString;
 
         /// `compose -f <files>… config --services` against `connection_id`,
         /// for the Compose page's Services picker: runs on a worker thread

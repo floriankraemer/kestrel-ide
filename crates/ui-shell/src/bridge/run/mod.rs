@@ -50,6 +50,8 @@ mod editor;
 mod gutter;
 /// `FfiPhpServerOptions` <-> `RunConfig`'s `php_server` sub-table (I6).
 mod php_server_form;
+/// `FfiPhpUnitOptions` <-> `RunConfig`'s `phpunit` sub-table (E4).
+mod phpunit_form;
 /// `RunConfig` <-> `FfiRunConfig`, split out under the file-size ratchet.
 mod run_config_form;
 mod sql_script; // `sql-script` configs (F3.6) — see that module's own doc comment.
@@ -416,6 +418,29 @@ fn emit_events(
 /// `build_core::runner` does — including a Build task, whose steps come from
 /// the same `BuildSpec` the Build dock uses. There is no second way to run a
 /// build in this codebase (ADR-0040).
+/// The `phpunit` configuration a "run another configuration" task names.
+fn phpunit_task<'a>(
+    task: &run_core::BeforeLaunchTask,
+    configs: &'a [run_core::RunConfig],
+) -> Option<&'a run_core::RunConfig> {
+    let run_core::BeforeLaunchTask::RunConfiguration(id) = task else {
+        return None;
+    };
+    configs
+        .iter()
+        .find(|c| &c.id == id && c.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND))
+}
+
+fn announce_before_launch(qt_thread: &CxxQtThread<ffi::RunService>, config_id: &str, label: &str) {
+    let (config_id, label) = (config_id.to_string(), label.to_string());
+    let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::RunService>| {
+        service.as_mut().before_launch_started(
+            QString::from(config_id.as_str()),
+            QString::from(label.as_str()),
+        );
+    });
+}
+
 fn run_before_launch(
     tasks: &[run_core::BeforeLaunchTask],
     config_id: &str,
@@ -424,6 +449,21 @@ fn run_before_launch(
     qt_thread: &CxxQtThread<ffi::RunService>,
 ) -> bool {
     for task in tasks {
+        // A PHPUnit configuration runs through `test-core`, not a build
+        // step: the same scope and argv as its own run, minus the Tests dock
+        // (`TestService` lives on the Qt thread this task cannot wait on).
+        if let Some(config) = phpunit_task(task, configs) {
+            announce_before_launch(qt_thread, config_id, &config.name);
+            if let Err(reason) = crate::bridge::testing::run_blocking(config, root) {
+                fail_before_launch(
+                    qt_thread,
+                    config_id,
+                    &format!("{} failed: {reason}", config.name),
+                );
+                return false;
+            }
+            continue;
+        }
         let (label, steps, toolchain) = match resolve_task(task, root, configs) {
             Ok(resolved) => resolved,
             Err(message) => {
@@ -432,15 +472,7 @@ fn run_before_launch(
             }
         };
 
-        let started_id = config_id.to_string();
-        let started_label = label.clone();
-        let started_thread = qt_thread.clone();
-        let _ = started_thread.queue(move |mut service: Pin<&mut ffi::RunService>| {
-            service.as_mut().before_launch_started(
-                QString::from(started_id.as_str()),
-                QString::from(started_label.as_str()),
-            );
-        });
+        announce_before_launch(qt_thread, config_id, &label);
 
         let mut sink = BeforeLaunchSink {
             config_id: config_id.to_string(),
@@ -796,6 +828,26 @@ impl ffi::RunService {
         self.as_mut().launch(config, &root, &context)
     }
 
+    /// Run `config_id` collecting coverage: only a test configuration can.
+    pub fn run_with_coverage(mut self: Pin<&mut Self>, config_id: &QString) -> ffi::FfiResult {
+        let Some(root) = current_project_root() else {
+            return no_project();
+        };
+        let id = config_id.to_string();
+        let is_test = effective_run_configs(&root)
+            .iter()
+            .any(|c| c.id == id && c.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND));
+        if !is_test {
+            return ffi::FfiResult {
+                code: errors::CODE_REFUSED,
+                message: QString::from("only a test configuration can run with coverage"),
+            };
+        }
+        self.as_mut()
+            .test_configuration_requested(config_id.clone(), true);
+        ffi::FfiResult::default()
+    }
+
     pub fn run_with_env(
         mut self: Pin<&mut Self>,
         config_id: &QString,
@@ -917,6 +969,13 @@ impl ffi::RunService {
         root: &Path,
         context: &run_core::MacroContext,
     ) -> ffi::FfiResult {
+        // A PHPUnit configuration fills the Tests dock, so `TestService`
+        // runs it, not the PTY supervisor (ADR-0073).
+        if config.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND) {
+            self.as_mut()
+                .test_configuration_requested(QString::from(config.id.as_str()), false);
+            return ffi::FfiResult::default();
+        }
         let config = run_core::php_run::inherit_container_target(
             &config,
             effective_php_container_target().as_deref(),

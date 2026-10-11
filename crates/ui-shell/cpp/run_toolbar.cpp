@@ -313,6 +313,18 @@ void RunToolbar::runSelected()
     }
 }
 
+void RunToolbar::runSelectedWithCoverage()
+{
+    const QString configId = selectedConfigId();
+    if (configId.isEmpty()) {
+        return;
+    }
+    const FfiResult result = runService_->runWithCoverage(configId);
+    if (result.code != 0) {
+        QMessageBox::warning(this, tr("Run with Coverage"), result.message);
+    }
+}
+
 void RunToolbar::stopSelected()
 {
     const QString configId = selectedConfigId();

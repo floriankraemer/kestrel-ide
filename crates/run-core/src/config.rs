@@ -91,7 +91,8 @@ impl RunConfigExt for RunConfig {
         // recognises this kind and never calls `to_launch_spec`/
         // `to_launch_spec_in` for it; reaching `process_launch_spec`'s
         // fallback below with this kind's empty `program` is inert, not a
-        // crash, if some future caller ever forgets that.
+        // crash, if some future caller ever forgets that. A `phpunit`
+        // configuration is the same: `TestService` launches it (ADR-0073).
         #[allow(clippy::match_same_arms)]
         match self.kind.as_deref() {
             Some("container-image") => {
@@ -103,7 +104,7 @@ impl RunConfigExt for RunConfig {
             Some("compose") => {
                 crate::container_run::compose_launch_spec(self, context, &containers)
             }
-            Some("sql-script") => None,
+            Some("sql-script" | app_config::php::PHPUNIT_KIND) => None,
             _ => None,
         }
         .unwrap_or_else(|| {

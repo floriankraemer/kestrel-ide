@@ -257,9 +257,55 @@ pub fn navigate(
     covers: &Arc<CoversCache>,
 ) -> TestNavigation {
     let roots = roots_for(project, file);
+    // Every package's tests up front, as PhpStorm merges every
+    // composer.json: a test in one package covering a class of another is
+    // found before a file of its package was ever jumped from (#436).
+    let mut indexed = roots.clone();
+    for root in covers.package_roots(project, || package_roots(project)) {
+        if !indexed.contains(&root) {
+            indexed.push(root);
+        }
+    }
     navigate_with(&roots, project, file, text, caret_line, |wait| {
-        covers.index(project, &roots, wait)
+        covers.index(project, &indexed, wait)
     })
+}
+
+/// How deep below the project a monorepo package's `composer.json` is
+/// looked for: `packages/<name>/` and `src/<group>/<name>/` are found.
+const MAX_PACKAGE_DEPTH: usize = 3;
+
+/// The PSR-4 roots of every monorepo package below `project`, made
+/// project-relative: each `composer.json` within [`MAX_PACKAGE_DEPTH`]
+/// directories and the scan budget, outside `vendor`/`node_modules`.
+/// Blocking: call it off the GUI thread.
+pub fn package_roots(project: &Path) -> Vec<Psr4Root> {
+    let mut budget = Budget {
+        files: usize::MAX,
+        entries: phpunit_xml::MAX_VISITED_ENTRIES,
+    };
+    let mut roots = Vec::new();
+    let mut pending = vec![(project.to_path_buf(), 0)];
+    while let Some((dir, depth)) = pending.pop() {
+        if budget.spent() {
+            break;
+        }
+        for (path, is_dir, _) in phpunit_xml::entries_of(&dir, &mut budget) {
+            if !is_dir || phpunit_xml::is_skipped(&path) || depth == MAX_PACKAGE_DEPTH {
+                continue;
+            }
+            if let (Some(relative), Ok(Some(composer))) =
+                (relative(project, &path), ComposerJson::read(&path))
+            {
+                roots.extend(composer.psr4.into_iter().map(|root| Psr4Root {
+                    dir: format!("{relative}/{}", root.dir.trim_start_matches("./")),
+                    ..root
+                }));
+            }
+            pending.push((path, depth + 1));
+        }
+    }
+    roots
 }
 
 /// The PSR-4 roots a jump from `file` maps through, as PhpStorm merges
@@ -932,6 +978,64 @@ mod tests {
             covered.files,
             ["packages/mailer/tests/Flow/DeliveryTest.php"]
         );
+    }
+
+    #[test]
+    fn a_test_in_another_package_covering_a_class_is_found_up_front() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(
+            project,
+            "composer.json",
+            r#"{"autoload":{"psr-4":{"App\\":"src/"}}}"#,
+        );
+        write(
+            project,
+            "packages/a/composer.json",
+            r#"{"autoload":{"psr-4":{"A\\":"src/"}}}"#,
+        );
+        write(
+            project,
+            "packages/b/composer.json",
+            r#"{"autoload-dev":{"psr-4":{"B\\Tests\\":"tests/"}}}"#,
+        );
+        // A package inside vendor is a dependency, not the project's.
+        write(
+            project,
+            "vendor/x/y/composer.json",
+            r#"{"autoload":{"psr-4":{"X\\":"src/"}}}"#,
+        );
+        let invoice = "<?php\nnamespace A;\n\nfinal class Invoice {}\n";
+        write(project, "packages/a/src/Invoice.php", invoice);
+        write(
+            project,
+            "packages/b/tests/BillingTest.php",
+            &test_class(
+                "B\\Tests",
+                "BillingTest",
+                "use A\\Invoice;\n#[CoversClass(Invoice::class)]",
+            ),
+        );
+        let roots = package_roots(project);
+        assert!(
+            roots.contains(&root("B\\Tests\\", "packages/b/tests/", true)),
+            "{roots:?}"
+        );
+        assert!(
+            roots.iter().all(|r| !r.dir.starts_with("vendor")),
+            "{roots:?}"
+        );
+
+        // No file of package b was ever jumped from.
+        let cache = Arc::new(CoversCache::default());
+        let covered = navigate(
+            project,
+            &project.join("packages/a/src/Invoice.php"),
+            invoice,
+            None,
+            &cache,
+        );
+        assert_eq!(covered.files, ["packages/b/tests/BillingTest.php"]);
     }
 
     #[test]

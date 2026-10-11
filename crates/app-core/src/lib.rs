@@ -42,7 +42,7 @@ mod project_open; // Swap-in half of an off-thread project open/rebuild (ADR-003
 pub mod text_search;
 mod tree_sort;
 mod virtual_doc; // Read-only virtual documents with no backing file (C12).
-mod watcher_policy; // Own write or external change (US-3).
+pub mod watcher_policy; // Own write or external change (US-3).
 
 pub use error::AppError;
 pub use file_ops::{FileOp, ResourceOpError};
@@ -81,7 +81,7 @@ pub struct OpenedTab {
 /// An open tab whose title changed as a side effect of a tree mutation — a
 /// rename retargeting it, or a delete flagging it "(deleted)" (US-2b). The
 /// adapter relays this as a tab-title-changed signal.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RetitledTab {
     pub id: TabId,
     pub title: String,

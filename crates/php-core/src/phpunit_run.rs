@@ -8,7 +8,8 @@
 
 use app_config::php::{PhpUnitRunSetting, PHPUNIT_KIND};
 use app_config::RunConfigSetting;
-use test_core::scope::{split_data_set_id, ScopeOptions, TestScope};
+use test_core::scope::{data_set_of, ScopeOptions, TestScope};
+use test_core::TestSymbol;
 
 use crate::tests::{MarkerScope, TestMarker};
 
@@ -533,16 +534,29 @@ pub fn marker_config(
     Ok(temporary_config(setting, name))
 }
 
-/// The configuration that reruns one data-set row of the Tests dock (`id` is
-/// the node id), or `None` when `id` is not a data-set row.
-pub fn data_set_config(id: &str, relative_file: Option<&str>) -> Option<RunConfigSetting> {
-    let (class, method, data_set) = split_data_set_id(id)?;
+/// The configuration that reruns one data-set row of the Tests dock: the
+/// row's reported `name` and the method its location names, or `None` when
+/// the row is not a data set of a PHPUnit method.
+///
+/// The symbol, not the node id, names the method: PHPUnit 11 nests a
+/// method's data sets under a suite of their own (`Class::m::m with data
+/// set "x"`). A Pest row has no configuration: Pest's `--filter` matches a
+/// call's description without its data set, so no filter selects one row.
+pub fn data_set_config(
+    symbol: &TestSymbol,
+    name: &str,
+    relative_file: Option<&str>,
+) -> Option<RunConfigSetting> {
+    let data_set = data_set_of(name)?;
+    let TestSymbol::Method { class, method } = symbol else {
+        return None;
+    };
     Some(temporary_config(
         PhpUnitRunSetting {
             scope: "data_set".into(),
             path: relative_file.unwrap_or_default().to_string(),
-            class: class.into(),
-            method: method.into(),
+            class: class.clone(),
+            method: method.clone(),
             data_set: data_set.into(),
             ..PhpUnitRunSetting::default()
         },
@@ -856,15 +870,57 @@ mod tests {
         assert!(marker_config(&marker, None).is_err());
     }
 
+    fn method(class: &str, method: &str) -> TestSymbol {
+        TestSymbol::Method {
+            class: class.into(),
+            method: method.into(),
+        }
+    }
+
     #[test]
     fn a_data_set_row_becomes_a_data_set_configuration() {
-        let config =
-            data_set_config("App\\T::testA with data set \"x\"", Some("tests/T.php")).unwrap();
+        let config = data_set_config(
+            &method("App\\T", "testA"),
+            "testA with data set \"x\"",
+            Some("tests/T.php"),
+        )
+        .unwrap();
         let setting = config.phpunit.unwrap();
         assert_eq!(setting.scope, "data_set");
+        assert_eq!(
+            (setting.class.as_str(), setting.method.as_str()),
+            ("App\\T", "testA")
+        );
         assert_eq!(setting.data_set, "\"x\"");
         assert_eq!(config.name, "T::testA with data set \"x\"");
-        assert!(data_set_config("App\\T::testA", None).is_none());
+        assert!(data_set_config(&method("App\\T", "testA"), "testA", None).is_none());
+    }
+
+    #[test]
+    fn a_phpunit_11_nested_data_set_row_names_the_method_once() {
+        // PHPUnit 11 reports `Class::testNamed::testNamed with data set "x@y"`;
+        // the row's location still names the method alone.
+        let config = data_set_config(
+            &method("Tests\\Unit\\DataSetsTest", "testNamed"),
+            "testNamed with data set \"x@y\"",
+            Some("tests/Unit/DataSetsTest.php"),
+        )
+        .unwrap();
+        let setting = config.phpunit.unwrap();
+        assert_eq!(setting.method, "testNamed");
+        assert_eq!(setting.data_set, "\"x@y\"");
+        assert_eq!(config.name, "DataSetsTest::testNamed with data set \"x@y\"");
+    }
+
+    #[test]
+    fn a_pest_dataset_row_has_no_configuration() {
+        let description = TestSymbol::Description(
+            "`outer` → it squares with data set \"dataset \"three\"\"".into(),
+        );
+        let name = "`outer` → it squares with data set \"dataset \"three\"\"";
+        assert!(
+            data_set_config(&description, name, Some("tests/Feature/NestedTest.php")).is_none()
+        );
     }
 
     #[test]

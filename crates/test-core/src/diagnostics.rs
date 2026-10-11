@@ -72,7 +72,9 @@ pub fn diagnostics_by_file(
     )
 }
 
-/// [`diagnostics_by_file`] for a run that executed on `host`: a path the
+/// [`diagnostics_by_file`] for a run that executed on `host`, each failure's
+/// `source` the framework of the run that reported it (`framework_name` for
+/// a node from no known run): a path the
 /// framework printed under a container's mount opens the local file. A
 /// node from a run the tree knows the place of maps through that run's host
 /// and working directory instead (#433): a relative path Pest printed in an
@@ -106,7 +108,9 @@ pub fn diagnostics_by_file_on(
             },
             severity: Severity::Error,
             message: failure.message.clone(),
-            source: framework_name.to_string(),
+            // Each failure under the framework that reported it: a Pest run
+            // beside PHPUnit's results must not relist PHPUnit's (#447).
+            source: tree.framework_of(node, framework_name).to_string(),
             raw: None,
         });
     }
@@ -210,6 +214,7 @@ mod tests {
             name: "testAdds".into(),
             message: "Failed asserting that 1 matches 2.".into(),
             details: details.into(),
+            comparison: None,
         });
         tree
     }
@@ -263,6 +268,7 @@ mod tests {
         let place = |dir: &str| crate::tree::RunPlace {
             host: process_exec::host::ExecHost::Local,
             work_dir: dir.into(),
+            framework: String::new(),
         };
         tree.begin_run(1, place("/p/packages/a"));
         tree.apply(TeamCityEvent::TestStarted {
@@ -275,12 +281,42 @@ mod tests {
             name: "it adds".into(),
             message: "Failed".into(),
             details: "at tests/AddTest.php:7".into(),
+            comparison: None,
         });
         // A later run elsewhere must not re-point the earlier failure.
         tree.begin_run(2, place("/p/packages/b"));
         let grouped = diagnostics_by_file(&tree, "pest", Path::new("/p/packages/b"));
         let uri = diagnostics_core::uri_from_path("/p/packages/a/tests/AddTest.php");
         assert_eq!(grouped[&uri][0].range.start.line, 6);
+    }
+
+    #[test]
+    fn each_failure_is_listed_under_the_framework_of_its_own_run() {
+        let mut tree = TestTree::new();
+        let place = |framework: &str| crate::tree::RunPlace {
+            host: process_exec::host::ExecHost::Local,
+            work_dir: "/p".into(),
+            framework: framework.into(),
+        };
+        for (run, framework, name) in [(1, "PHPUnit", "testA"), (2, "Pest", "it b")] {
+            tree.begin_run(run, place(framework));
+            tree.apply(TeamCityEvent::TestFailed {
+                parent: None,
+                name: name.into(),
+                message: "Failed".into(),
+                details: format!("at /p/tests/{run}.php:3"),
+                comparison: None,
+            });
+        }
+        let grouped = diagnostics_by_file(&tree, "Pest", Path::new("/p"));
+        let source = |file: &str| {
+            grouped[&diagnostics_core::uri_from_path(file)][0]
+                .source
+                .clone()
+        };
+        assert_eq!(source("/p/tests/1.php"), "PHPUnit");
+        assert_eq!(source("/p/tests/2.php"), "Pest");
+        assert_eq!(tree.frameworks(), ["PHPUnit", "Pest"]);
     }
 
     #[test]
@@ -355,6 +391,7 @@ mod tests {
             name: "deliberatelyFails".into(),
             message: "expected: <Hello, World!> but was: <Hello, Nobody!>".into(),
             details: details.into(),
+            comparison: None,
         });
         tree
     }

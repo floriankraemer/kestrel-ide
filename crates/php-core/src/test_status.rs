@@ -14,7 +14,7 @@
 
 use std::collections::HashSet;
 
-use test_core::{TestId, TestNode, TestStatus, TestTree};
+use test_core::{Comparison, TestId, TestNode, TestStatus, TestSymbol, TestTree};
 
 use crate::tests::{marker_names, MarkerScope, TestMarker};
 
@@ -22,9 +22,6 @@ use crate::tests::{marker_names, MarkerScope, TestMarker};
 const MAX_MENU_DATA_SETS: usize = 15;
 /// Lines of a failure message a tooltip keeps.
 const TOOLTIP_MESSAGE_LINES: usize = 3;
-/// PHPUnit and Pest both name a data-set row `<test> with data set <set>`,
-/// the set being `#0` or quoted.
-const DATA_SET_INFIX: &str = " with data set ";
 
 /// The icon a marker wears. Aggregates follow IntelliJ: running, then
 /// failed, then ignored, then passed.
@@ -34,6 +31,8 @@ pub enum MarkerState {
     Running,
     Passed,
     Failed,
+    /// A test the run ended before it reported (Stop, `exit()`).
+    Terminated,
     Ignored,
 }
 
@@ -52,6 +51,8 @@ pub struct MarkerStatus {
     /// The failure message when exactly one test failed, the first ignore
     /// reason when the marker is ignored; at most three lines, else empty.
     pub message: String,
+    /// That one failure's expected/actual, when its assertion compared two.
+    pub comparison: Option<Comparison>,
 }
 
 /// One data set of a method, to run on its own.
@@ -73,10 +74,11 @@ pub struct DataSetChoices {
 struct Tally {
     running: u32,
     failed: u32,
+    terminated: u32,
     ignored: u32,
     passed: u32,
     duration_ms: u64,
-    first_failure: Option<String>,
+    first_failure: Option<(String, Option<Comparison>)>,
     first_ignore: Option<String>,
 }
 
@@ -93,8 +95,14 @@ impl Tally {
             TestStatus::Running => self.running += 1,
             TestStatus::Failed => {
                 self.failed += 1;
-                self.first_failure = self.first_failure.take().or_else(message);
+                let failure = || {
+                    leaf.failure
+                        .as_ref()
+                        .map(|f| (first_lines(&f.message), f.comparison.clone()))
+                };
+                self.first_failure = self.first_failure.take().or_else(failure);
             }
+            TestStatus::Terminated => self.terminated += 1,
             TestStatus::Skipped => {
                 self.ignored += 1;
                 self.first_ignore = self.first_ignore.take().or_else(message);
@@ -112,6 +120,8 @@ impl Tally {
             MarkerState::Running
         } else if self.failed > 0 {
             MarkerState::Failed
+        } else if self.terminated > 0 {
+            MarkerState::Terminated
         } else if self.ignored > 0 {
             MarkerState::Ignored
         } else if self.passed > 0 {
@@ -123,19 +133,20 @@ impl Tally {
 
     fn status(&self, line: u32) -> MarkerStatus {
         let state = self.state();
-        let message = match state {
-            MarkerState::Failed if self.failed == 1 => self.first_failure.clone(),
-            MarkerState::Ignored => self.first_ignore.clone(),
-            _ => None,
+        let (message, comparison) = match state {
+            MarkerState::Failed if self.failed == 1 => self.first_failure.clone().unzip(),
+            MarkerState::Ignored => (self.first_ignore.clone(), None),
+            _ => (None, None),
         };
         MarkerStatus {
             line,
             state,
-            total: self.running + self.failed + self.ignored + self.passed,
+            total: self.running + self.failed + self.terminated + self.ignored + self.passed,
             failed: self.failed,
             passed: self.passed,
             duration_ms: self.duration_ms,
             message: message.unwrap_or_default(),
+            comparison: comparison.flatten(),
         }
     }
 }
@@ -166,18 +177,15 @@ fn leaves_of(marker: &TestMarker, tree: &TestTree, file_nodes: &[&TestNode]) -> 
         .collect()
 }
 
-/// The status of every marker. `file_nodes` is the tree's nodes located in
-/// this file ([`TestTree::nodes_in_file`]).
-pub fn marker_statuses(
+/// Each marker's distinct leaf tests: its own, and for a class or
+/// `describe()` those of every test marker inside it.
+fn marker_leaves(
     markers: &[TestMarker],
     tree: &TestTree,
     file_nodes: &[&TestNode],
-) -> Vec<MarkerStatus> {
+) -> Vec<Vec<TestId>> {
     if file_nodes.is_empty() {
-        return markers
-            .iter()
-            .map(|marker| Tally::default().status(marker.line))
-            .collect();
+        return vec![Vec::new(); markers.len()];
     }
     let own: Vec<Vec<TestId>> = markers
         .iter()
@@ -200,36 +208,71 @@ pub fn marker_statuses(
                 let mut seen = HashSet::new();
                 ids.retain(|id| seen.insert(id.clone()));
             }
-            let leaves: Vec<&TestNode> = ids.iter().filter_map(|id| tree.node(id)).collect();
+            ids
+        })
+        .collect()
+}
+
+/// One source of results: a tree and its nodes located in the marked file
+/// ([`TestTree::nodes_in_file`]).
+#[derive(Clone, Copy)]
+pub struct Results<'t> {
+    pub tree: &'t TestTree,
+    pub file_nodes: &'t [&'t TestNode],
+}
+
+/// The status of every marker. `file_nodes` is the tree's nodes located in
+/// this file ([`TestTree::nodes_in_file`]).
+pub fn marker_statuses(
+    markers: &[TestMarker],
+    tree: &TestTree,
+    file_nodes: &[&TestNode],
+) -> Vec<MarkerStatus> {
+    let results = Results { tree, file_nodes };
+    marker_statuses_with_history(
+        markers,
+        results,
+        Results {
+            file_nodes: &[],
+            ..results
+        },
+    )
+}
+
+/// [`marker_statuses`] over the live run's results and the recorded ones
+/// (`crate::test_history`), merged per test: a live result supersedes the
+/// recorded result of the same test, and every other recorded test still
+/// counts, so a class one of whose tests ran this session still shows the
+/// recorded failure of another.
+pub fn marker_statuses_with_history(
+    markers: &[TestMarker],
+    live: Results<'_>,
+    recorded: Results<'_>,
+) -> Vec<MarkerStatus> {
+    let live_ids = marker_leaves(markers, live.tree, live.file_nodes);
+    let recorded_ids = marker_leaves(markers, recorded.tree, recorded.file_nodes);
+    markers
+        .iter()
+        .zip(live_ids.iter().zip(&recorded_ids))
+        .map(|(marker, (live_ids, recorded_ids))| {
+            let ran: HashSet<&TestId> = live_ids.iter().collect();
+            let leaves: Vec<&TestNode> = live_ids
+                .iter()
+                .filter_map(|id| live.tree.node(id))
+                .chain(
+                    recorded_ids
+                        .iter()
+                        .filter(|id| !ran.contains(id))
+                        .filter_map(|id| recorded.tree.node(id)),
+                )
+                .collect();
             Tally::of(&leaves).status(marker.line)
         })
         .collect()
 }
 
-/// The live run's statuses with the recorded ones (`crate::test_history`)
-/// in place of every marker the live run has no result for: a live result
-/// always supersedes a recorded one. Both lists are [`marker_statuses`] of
-/// the same markers.
-pub fn with_history(live: Vec<MarkerStatus>, recorded: Vec<MarkerStatus>) -> Vec<MarkerStatus> {
-    live.into_iter()
-        .map(|status| match status.state {
-            MarkerState::NeverRun => recorded
-                .iter()
-                .find(|kept| kept.line == status.line)
-                .cloned()
-                .unwrap_or(status),
-            _ => status,
-        })
-        .collect()
-}
-
-/// Whether `name` is a data-set row: the infix, then `#<n>` or a quoted set.
-fn is_data_set_row(name: &str) -> bool {
-    name.match_indices(DATA_SET_INFIX)
-        .any(|(at, _)| name[at + DATA_SET_INFIX.len()..].starts_with(['#', '"']))
-}
-
-/// The data sets the last run executed for the method marked on `line`;
+/// The data sets the last run executed for the PHPUnit method marked on
+/// `line`;
 /// empty for anything else.
 pub fn data_sets(
     markers: &[TestMarker],
@@ -246,7 +289,14 @@ pub fn data_sets(
     let mut sets: Vec<DataSet> = leaves_of(marker, tree, file_nodes)
         .into_iter()
         .filter_map(|id| tree.node(&id))
-        .filter(|leaf| is_data_set_row(&leaf.name))
+        .filter(|leaf| test_core::scope::data_set_of(&leaf.name).is_some())
+        // Only a PHPUnit method's set runs alone: Pest's `--filter` matches
+        // a call's description without its data set.
+        .filter(|leaf| {
+            leaf.location
+                .as_ref()
+                .is_some_and(|l| matches!(l.symbol, Some(TestSymbol::Method { .. })))
+        })
         .map(|leaf| DataSet {
             id: leaf.id.clone(),
             label: leaf.name.clone(),
@@ -303,6 +353,7 @@ mod tests {
                 name: name.into(),
                 message: fail[5..].into(),
                 details: String::new(),
+                comparison: None,
             }),
             _ => {}
         }
@@ -345,18 +396,110 @@ mod tests {
 
     const CLASS: &str = r"App\GreeterTest";
 
+    fn merged(text: &str, live: &TestTree, recorded: &TestTree) -> Vec<MarkerStatus> {
+        let host = ExecHost::for_path(Path::new("/p"));
+        let live_nodes = live.nodes_in_file(&host, Path::new("/p"), Path::new(FILE));
+        let recorded_nodes = recorded.nodes_in_file(&host, Path::new("/p"), Path::new(FILE));
+        marker_statuses_with_history(
+            &markers(text),
+            Results {
+                tree: live,
+                file_nodes: &live_nodes,
+            },
+            Results {
+                tree: recorded,
+                file_nodes: &recorded_nodes,
+            },
+        )
+    }
+
     #[test]
-    fn a_live_result_supersedes_the_recorded_one_per_marker() {
+    fn a_live_result_supersedes_the_recorded_one_per_test() {
         let mut live = tree_with_class();
         let mut recorded = tree_with_class();
         run(&mut live, CLASS, "testA", "pass", 1);
         run(&mut recorded, CLASS, "testA", "fail:old", 1);
         run(&mut recorded, CLASS, "testB", "fail:kept", 1);
-        let merged = with_history(statuses(&live), statuses(&recorded));
+        let merged = merged(SOURCE, &live, &recorded);
         assert_eq!(state_at(&merged, 4).state, MarkerState::Passed);
         assert_eq!(state_at(&merged, 5).state, MarkerState::Failed);
         assert_eq!(state_at(&merged, 5).message, "kept");
         assert_eq!(state_at(&merged, 6).state, MarkerState::NeverRun);
+        // The class counts testA's live pass and testB's recorded failure.
+        let class = state_at(&merged, 2);
+        assert_eq!(
+            (class.state, class.passed, class.failed),
+            (MarkerState::Failed, 1, 1)
+        );
+    }
+
+    #[test]
+    fn a_data_set_run_this_session_keeps_the_other_recorded_sets() {
+        let mut live = tree_with_class();
+        let mut recorded = tree_with_class();
+        run(
+            &mut live,
+            CLASS,
+            r#"testSets with data set "one""#,
+            "pass",
+            1,
+        );
+        run(
+            &mut recorded,
+            CLASS,
+            r#"testSets with data set "one""#,
+            "fail:old",
+            1,
+        );
+        run(
+            &mut recorded,
+            CLASS,
+            r#"testSets with data set "two""#,
+            "fail:two",
+            1,
+        );
+        let sets = state_at(&merged(SOURCE, &live, &recorded), 6).clone();
+        assert_eq!(
+            (sets.state, sets.total, sets.passed, sets.failed),
+            (MarkerState::Failed, 2, 1, 1)
+        );
+        assert_eq!(sets.message, "two");
+    }
+
+    #[test]
+    fn a_test_the_run_never_finished_is_terminated_not_failed() {
+        let mut tree = tree_with_class();
+        run(&mut tree, CLASS, "testA", "pass", 1);
+        run(&mut tree, CLASS, "testB", "run", 1);
+        tree.finish_run();
+        let statuses = statuses(&tree);
+        assert_eq!(state_at(&statuses, 5).state, MarkerState::Terminated);
+        assert_eq!(state_at(&statuses, 2).state, MarkerState::Terminated);
+    }
+
+    #[test]
+    fn a_single_comparison_failure_carries_expected_and_actual() {
+        let mut tree = tree_with_class();
+        let parent = Some(id(CLASS));
+        tree.apply(TeamCityEvent::TestStarted {
+            parent: parent.clone(),
+            name: "testA".into(),
+            location: hint(r"\App\GreeterTest::testA"),
+        });
+        let comparison = test_core::Comparison {
+            expected: "'expected text'".into(),
+            actual: "'actual text'".into(),
+        };
+        tree.apply(TeamCityEvent::TestFailed {
+            parent,
+            name: "testA".into(),
+            message: "Failed asserting that two strings are identical.".into(),
+            details: String::new(),
+            comparison: Some(comparison.clone()),
+        });
+        let statuses = statuses(&tree);
+        assert_eq!(state_at(&statuses, 4).comparison, Some(comparison));
+        assert_eq!(state_at(&statuses, 5).comparison, None);
     }
 
     #[test]
@@ -572,9 +715,8 @@ mod tests {
         assert_eq!(state_at(&before, 3).state, MarkerState::Running);
         tree.finish_run();
         let after = statuses_for("/p/tests/FatalTest.php", source, &tree);
-        assert_eq!(state_at(&after, 5).state, MarkerState::Failed);
-        assert_eq!(state_at(&after, 5).message, test_core::UNFINISHED_MESSAGE);
-        assert_eq!(state_at(&after, 3).state, MarkerState::Failed);
+        assert_eq!(state_at(&after, 5).state, MarkerState::Terminated);
+        assert_eq!(state_at(&after, 3).state, MarkerState::Terminated);
     }
 
     const PEST_SOURCE: &str = "<?php
@@ -623,25 +765,19 @@ test('has with data set in name', function () {});
     }
 
     #[test]
-    fn pest_data_set_rows_are_listed_and_a_lookalike_name_is_not() {
+    fn pest_data_set_rows_are_not_offered_on_their_own() {
+        // Pest's `--filter` cannot select one row (it matches the call's
+        // description without the set), so the menu offers none.
         let tree = replayed(PEST_FILE_BASED);
         let host = ExecHost::for_path(Path::new("/p"));
         let nodes = tree.nodes_in_file(&host, Path::new("/p"), Path::new(PEST_FILE));
         let all = markers(PEST_SOURCE);
-        let labels = |line| -> Vec<String> {
-            data_sets(&all, line, &tree, &nodes)
-                .shown
-                .into_iter()
-                .map(|d| d.label)
-                .collect()
-        };
-        assert_eq!(
-            labels(1),
-            [r#"adds with data set "(1)""#, r#"adds with data set "(2)""#]
-        );
-        assert_eq!(labels(2).len(), 2);
-        assert!(labels(10).is_empty());
-        assert!(labels(3).is_empty());
+        for line in [1, 2, 3, 10] {
+            assert!(data_sets(&all, line, &tree, &nodes).shown.is_empty());
+        }
+        // The rows still count on the call's marker.
+        let statuses = marker_statuses(&all, &tree, &nodes);
+        assert_eq!(state_at(&statuses, 1).total, 2);
     }
 
     #[test]

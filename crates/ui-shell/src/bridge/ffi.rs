@@ -11322,9 +11322,16 @@ mod ffi {
         #[qinvokable]
         fn validate(self: &RunConfigEditor) -> FfiResult;
 
-        /// Write the draft to `.ide/settings.toml`.
+        /// Write the draft to `.ide/settings.toml`; announces a write
+        /// through `configurationsSaved`.
         #[qinvokable]
-        fn commit(self: &RunConfigEditor) -> FfiResult;
+        fn commit(self: Pin<&mut RunConfigEditor>) -> FfiResult;
+
+        /// `commit` wrote the configurations: whatever lists them (the
+        /// toolbar combo) reads them again (#457).
+        #[qsignal]
+        #[cxx_name = "configurationsSaved"]
+        fn configurations_saved(self: Pin<&mut RunConfigEditor>);
 
         /// Discard the draft, restoring what was last loaded or committed.
         #[qinvokable]

@@ -113,6 +113,10 @@ void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEdi
     // the open editor's gutter is re-asked rather than left stale.
     QObject::connect(runService, &RunService::configurationsChanged, editorTabs,
                       [editorTabs]() { editorTabs->refreshRunMarkers(); });
+    // Saved in the Run Configurations dialog: the toolbar combo lists them
+    // at once, not after the next unrelated refresh (#457).
+    QObject::connect(runConfigEditor, &RunConfigEditor::configurationsSaved, runService,
+                      [runService]() { runService->detectConfigurations(); });
 }
 
 void wireTestGutter(TestService *testService, DebugService *debugService, EditorTabs *editorTabs)

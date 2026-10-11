@@ -453,7 +453,7 @@ impl ffi::RunConfigEditor {
         FfiResult::default()
     }
 
-    pub fn commit(&self) -> FfiResult {
+    pub fn commit(self: Pin<&mut Self>) -> FfiResult {
         let refusal = self.validate();
         if refusal.code != 0 {
             return refusal;
@@ -475,6 +475,7 @@ impl ffi::RunConfigEditor {
         }) {
             Ok(()) => {
                 *self.saved.borrow_mut() = draft;
+                self.configurations_saved();
                 FfiResult::default()
             }
             Err(err) => FfiResult {

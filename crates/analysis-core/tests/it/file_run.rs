@@ -44,12 +44,16 @@ fn seeded(dir: &Path, name: &str) -> std::path::PathBuf {
 }
 
 fn run(program: &Path, argv: &[String], stdin: Option<&str>) -> Vec<CheckstyleFinding> {
-    let mut child = Command::new(program)
-        .args(argv)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap();
+    // The stub was copied a moment ago; a fork in a parallel test can still
+    // hold its write descriptor, which fails the exec with ETXTBSY.
+    let mut child = process_exec::retry_text_busy(|| {
+        Command::new(program)
+            .args(argv)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+    })
+    .unwrap();
     // A saved-only run never reads stdin, so the pipe may already be closed.
     let _ = child
         .stdin

@@ -112,7 +112,7 @@ fn is_text_busy(error: &io::Error) -> bool {
 /// writer's descriptor is open, because the forked child holds a copy of it
 /// until its own exec closes it — a window of microseconds, so a short
 /// retry is the standard answer.
-pub(crate) fn retry_text_busy<T>(mut attempt: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+pub fn retry_text_busy<T>(mut attempt: impl FnMut() -> io::Result<T>) -> io::Result<T> {
     for _ in 0..TEXT_BUSY_RETRIES {
         match attempt() {
             Err(error) if is_text_busy(&error) => thread::sleep(Duration::from_millis(10)),

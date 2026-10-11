@@ -29,7 +29,7 @@ use crate::suppress_console_window;
 static REMOTE_WSL_ENABLED: AtomicBool = AtomicBool::new(true);
 
 /// Turn remote WSL execution on or off for every [`ExecHost::for_path`]
-/// call from here on, in this process. See [`REMOTE_WSL_ENABLED`].
+/// call from here on, in this process. See `REMOTE_WSL_ENABLED`.
 pub fn set_remote_wsl_enabled(enabled: bool) {
     REMOTE_WSL_ENABLED.store(enabled, Ordering::Relaxed);
 }

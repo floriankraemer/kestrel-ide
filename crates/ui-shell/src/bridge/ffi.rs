@@ -1587,6 +1587,7 @@ mod ffi {
         exclude_groups: QString,
         runner_options: QString,
         interpreter: QString,
+        working_directory: QString,
     }
 
     /// What a PHPUnit configuration file offers the `phpunit` run
@@ -1596,6 +1597,8 @@ mod ffi {
     #[derive(Default, Clone)]
     struct FfiPhpUnitModel {
         configuration: QString,
+        /// Echoes the request's working directory, like `configuration`.
+        working_directory: QString,
         /// The file read, project-relative; empty when there is none.
         file: QString,
         suites: QString,
@@ -7081,6 +7084,25 @@ mod ffi {
         Found,
     }
 
+    /// A Go to Test answer (E7).
+    struct FfiTestNavigation {
+        /// Whether it could search and found anything.
+        status: FfiTestNavigationStatus,
+        /// Whether it started from a test, leading to subjects.
+        #[cxx_name = "fromTest"]
+        from_test: bool,
+        /// The tests that cover the class are still being indexed (#426):
+        /// `paths` holds the naming convention's tests alone.
+        #[cxx_name = "stillIndexing"]
+        still_indexing: bool,
+        /// The class (or Pest file) it started from.
+        name: QString,
+        /// The absolute files, most likely first.
+        paths: QStringList,
+        /// Each file's project-relative label for the chooser.
+        labels: QStringList,
+    }
+
     /// What the project tree's test entries call their run (E6):
     /// `php_core::tree_run::TreeRunLabel`, worded and translated by the view.
     enum FfiTreeRunKind {
@@ -7283,20 +7305,10 @@ mod ffi {
         #[cxx_name = "cancelTestNavigation"]
         fn cancel_test_navigation(self: &TestService);
 
-        /// `requestTestNavigation`'s answer: whether it could search and
-        /// found anything, whether it started from a test, the class (or
-        /// Pest file) it started from, and the absolute files, most likely
-        /// first, each with its project-relative label for the chooser.
+        /// `requestTestNavigation`'s answer.
         #[qsignal]
         #[cxx_name = "testNavigationReady"]
-        fn test_navigation_ready(
-            self: Pin<&mut TestService>,
-            status: FfiTestNavigationStatus,
-            from_test: bool,
-            name: QString,
-            paths: QStringList,
-            labels: QStringList,
-        );
+        fn test_navigation_ready(self: Pin<&mut TestService>, answer: FfiTestNavigation);
 
         /// The last run's result for every marker in `text` (E3).
         #[qinvokable]
@@ -11248,11 +11260,15 @@ mod ffi {
         fn project_relative_path(self: &RunConfigEditor, path: &QString) -> QString;
 
         /// Read the PHPUnit configuration `configuration` names (blank: the
-        /// project's own) and its groups on a worker thread; answers through
-        /// `phpUnitModelReady`.
+        /// one in `working_directory`, else the project's own) and its groups
+        /// on a worker thread; answers through `phpUnitModelReady`.
         #[qinvokable]
         #[cxx_name = "requestPhpUnitModel"]
-        fn request_php_unit_model(self: Pin<&mut RunConfigEditor>, configuration: &QString);
+        fn request_php_unit_model(
+            self: Pin<&mut RunConfigEditor>,
+            configuration: &QString,
+            working_directory: &QString,
+        );
 
         /// `requestPhpUnitModel`'s answer.
         #[qsignal]

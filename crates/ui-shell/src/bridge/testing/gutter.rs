@@ -203,10 +203,8 @@ impl ffi::TestService {
         let Some(root) = super::current_project_root() else {
             return Vec::new();
         };
-        let host = (*self.run_host.borrow())
-            .clone()
-            .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&root));
-        tree.nodes_in_file(&host, &root, std::path::Path::new(path))
+        let (host, work_dir) = self.run_context(&root);
+        tree.nodes_in_file(&host, &work_dir, std::path::Path::new(path))
     }
 
     /// The name a marker's menu shows, empty when `line` has no marker.

@@ -3142,6 +3142,10 @@
         <translation>Kein Testsubjekt für %1 gefunden.</translation>
     </message>
     <message>
+        <source>Still indexing the tests that cover %1.</source>
+        <translation>Die Tests, die %1 abdecken, werden noch indiziert.</translation>
+    </message>
+    <message>
         <source>No test found for %1.</source>
         <translation>Kein Test für %1 gefunden.</translation>
     </message>
@@ -3793,6 +3797,14 @@
     <message>
         <source>Relative to the project</source>
         <translation>Relativ zum Projekt</translation>
+    </message>
+    <message>
+        <source>Custom working directory:</source>
+        <translation>Benutzerdefiniertes Arbeitsverzeichnis:</translation>
+    </message>
+    <message>
+        <source>Project root</source>
+        <translation>Projektwurzel</translation>
     </message>
     <message>
         <source>Runner options:</source>

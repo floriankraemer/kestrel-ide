@@ -3142,6 +3142,10 @@
         <translation>Aucun sujet de test trouvé pour %1.</translation>
     </message>
     <message>
+        <source>Still indexing the tests that cover %1.</source>
+        <translation>Indexation des tests qui couvrent %1 en cours.</translation>
+    </message>
+    <message>
         <source>No test found for %1.</source>
         <translation>Aucun test trouvé pour %1.</translation>
     </message>
@@ -3793,6 +3797,14 @@
     <message>
         <source>Relative to the project</source>
         <translation>Relatif au projet</translation>
+    </message>
+    <message>
+        <source>Custom working directory:</source>
+        <translation>Répertoire de travail personnalisé :</translation>
+    </message>
+    <message>
+        <source>Project root</source>
+        <translation>Racine du projet</translation>
     </message>
     <message>
         <source>Runner options:</source>

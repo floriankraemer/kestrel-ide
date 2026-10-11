@@ -549,6 +549,29 @@ pub fn model(root: &Path, explicit: &str) -> PhpUnitModel {
     model_with(root, explicit, MAX_SCANNED_FILES, MAX_VISITED_ENTRIES)
 }
 
+/// The configuration PHPUnit uses for a run in the project-relative
+/// `work_dir` (#424): `explicit` when set, else the one PHPUnit finds in the
+/// working directory. `None` when there is none.
+pub fn discover_in(root: &Path, work_dir: &str, explicit: &str) -> Option<PathBuf> {
+    match explicit.trim() {
+        "" => discover(&root.join(work_dir.trim()), ""),
+        explicit => discover(root, explicit),
+    }
+}
+
+/// [`model`] for a run in the project-relative `work_dir`: without an
+/// explicit file, the working directory's configuration, and none (no
+/// problem either) when it has none, since PHPUnit then runs without one.
+pub fn model_in(root: &Path, work_dir: &str, explicit: &str) -> PhpUnitModel {
+    if !explicit.trim().is_empty() || work_dir.trim().is_empty() {
+        return model(root, explicit);
+    }
+    match discover_in(root, work_dir, "") {
+        Some(file) => model(root, &file.to_string_lossy()),
+        None => PhpUnitModel::default(),
+    }
+}
+
 fn model_with(root: &Path, explicit: &str, max_files: usize, max_entries: usize) -> PhpUnitModel {
     let Some(file) = discover(root, explicit) else {
         return PhpUnitModel {
@@ -946,6 +969,37 @@ final class FooTest extends TestCase {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn a_working_directory_reads_its_own_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("phpunit.xml"), SYMFONY).unwrap();
+        let package = root.join("packages/mailer");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("phpunit.dist.xml"),
+            r#"<phpunit><testsuites><testsuite name="mailer"><directory>tests</directory></testsuite></testsuites></phpunit>"#,
+        )
+        .unwrap();
+
+        let package_model = model_in(root, "packages/mailer", "");
+        assert_eq!(
+            package_model.file.as_deref(),
+            Some("packages/mailer/phpunit.dist.xml")
+        );
+        assert_eq!(package_model.suites, ["mailer"]);
+        assert_eq!(
+            discover_in(root, "packages/mailer", "phpunit.xml"),
+            Some(root.join("phpunit.xml"))
+        );
+        assert_eq!(model_in(root, "", ""), model(root, ""));
+
+        // A package without one runs without one: nothing to offer, no problem.
+        std::fs::create_dir_all(root.join("packages/util")).unwrap();
+        assert_eq!(model_in(root, "packages/util", ""), PhpUnitModel::default());
+        assert_eq!(discover_in(root, "packages/util", ""), None);
+    }
+
     #[test]
     fn a_symlink_cycle_is_not_walked() {
         let dir = tempfile::tempdir().unwrap();

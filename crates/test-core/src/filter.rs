@@ -221,6 +221,33 @@ pub fn relative_to_root(file: &str, root: &str, ignore_case: bool) -> Option<Str
     Some(if rest.is_empty() { "." } else { rest }.to_string())
 }
 
+/// The project-relative `path` as seen from the project-relative
+/// `work_dir` (both `/`-separated, `.` or blank for the project root): what
+/// a run started in a monorepo package passes for a project path. Relative,
+/// so it means the same file on every host (WSL, a container mount).
+pub fn relative_to_work_dir(path: &str, work_dir: &str) -> String {
+    let parts = |p: &str| -> Vec<String> {
+        p.replace('\\', "/")
+            .split('/')
+            .filter(|part| !part.is_empty() && *part != ".")
+            .map(str::to_string)
+            .collect()
+    };
+    let (path, work_dir) = (parts(path), parts(work_dir));
+    let shared = path
+        .iter()
+        .zip(&work_dir)
+        .take_while(|(a, b)| a == b)
+        .count();
+    let climb = std::iter::repeat_n("..".to_string(), work_dir.len() - shared);
+    let rebased: Vec<String> = climb.chain(path[shared..].iter().cloned()).collect();
+    if rebased.is_empty() {
+        ".".to_string()
+    } else {
+        rebased.join("/")
+    }
+}
+
 fn surefire_pattern(id: &TestId) -> String {
     match split_class_method(id) {
         (class, Some(method)) => format!("{class}#{method}"),
@@ -757,6 +784,26 @@ mod tests {
         ] {
             assert_eq!(tree_rerun_block(word), None, "{word:?}");
         }
+    }
+
+    #[test]
+    fn a_project_path_is_rebased_onto_the_work_dir() {
+        assert_eq!(relative_to_work_dir("tests/A.php", "."), "tests/A.php");
+        assert_eq!(relative_to_work_dir("tests/A.php", ""), "tests/A.php");
+        assert_eq!(
+            relative_to_work_dir("packages/a/tests", "packages/a"),
+            "tests"
+        );
+        assert_eq!(relative_to_work_dir("packages/a", "packages/a/"), ".");
+        assert_eq!(
+            relative_to_work_dir("packages/b/tests", "packages/a"),
+            "../b/tests"
+        );
+        assert_eq!(
+            relative_to_work_dir(".ide/local/c.xml", "packages\\a"),
+            "../../.ide/local/c.xml"
+        );
+        assert_eq!(relative_to_work_dir(".", "packages/a"), "../..");
     }
 
     #[test]

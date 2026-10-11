@@ -7,15 +7,21 @@
 //! `Integration\`, `Feature\` or `Functional\`) or in the subject's own
 //! namespace; `#[CoversClass]`, `#[CoversMethod]`, `@covers` and Pest's
 //! `covers()` name a test's subjects explicitly. Pest files, which declare
-//! no class, are found by file name under the test roots.
+//! no class, are found by file name under the test roots. Which tests cover
+//! a class, and which test files carry a name, come from the per-project
+//! [`CoversIndex`] rather than a scan per request.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use tree_sitter::Node;
 
 use crate::composer::{ComposerJson, Psr4Root};
 use crate::phpunit_xml::{self, Budget};
 use crate::psr4;
+
+mod covers;
+pub use covers::{CoversCache, CoversIndex};
 
 /// The suffix a test class or file carries.
 const TEST_SUFFIX: &str = "Test";
@@ -34,6 +40,9 @@ pub struct TestNavigation {
     pub name: String,
     /// Project-relative, `/`-separated files, most likely first.
     pub files: Vec<String>,
+    /// From a class: the covers index was still being built, so `files`
+    /// holds the convention's matches only.
+    pub still_indexing: bool,
 }
 
 /// What a PHP file declares, as far as the mapping needs it.
@@ -233,29 +242,39 @@ pub fn is_named_test(path: &Path) -> bool {
 }
 
 /// Go to Test / Test Subject for `file` (absolute, holding `text`) in the
-/// project at `project`, with the PSR-4 roots read from its `composer.json`.
-/// Blocking filesystem work: call it off the GUI thread.
-pub fn navigate(project: &Path, file: &Path, text: &str) -> TestNavigation {
+/// project at `project`, with the PSR-4 roots read from its `composer.json`
+/// and the covering tests from `covers`. Blocking filesystem work: call it
+/// off the GUI thread.
+pub fn navigate(
+    project: &Path,
+    file: &Path,
+    text: &str,
+    covers: &Arc<CoversCache>,
+) -> TestNavigation {
     let roots = match ComposerJson::read(project) {
         Ok(Some(composer)) => composer.psr4,
         _ => Vec::new(),
     };
-    navigate_with(&roots, project, file, text)
+    navigate_with(&roots, project, file, text, |wait| {
+        covers.index(project, &roots, wait)
+    })
 }
 
-/// [`navigate`] over explicit roots.
+/// [`navigate`] over explicit roots. `covers` answers the covers index,
+/// blocking until it is built when asked to wait, `None` while it builds.
 pub fn navigate_with(
     roots: &[Psr4Root],
     project: &Path,
     file: &Path,
     text: &str,
+    covers: impl FnOnce(bool) -> Option<Arc<CoversIndex>>,
 ) -> TestNavigation {
     let declarations = Declarations::read(text);
     let current = relative(project, file);
     let mut navigation = if is_test_file(file, text) {
         subjects_of(roots, project, file, text, &declarations)
     } else {
-        tests_of(roots, project, file, &declarations)
+        tests_of(roots, project, file, &declarations, covers)
     };
     let mut seen = std::collections::HashSet::new();
     navigation
@@ -330,6 +349,7 @@ fn subjects_of(
         from_test: true,
         name,
         files,
+        still_indexing: false,
     }
 }
 
@@ -363,15 +383,18 @@ fn strip_namespace(namespace: &str, prefix: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// A class's tests: the `<Name>Test` convention under every test root and in
-/// the class's own namespace; only when that finds none, a bounded scan of
-/// the test directories for `<Name>Test.php` files (Pest, or a layout PSR-4
-/// does not mirror) and for tests that say they cover the class.
+/// A class's tests, as PhpStorm lists them: the `<Name>Test` convention
+/// under every test root and in the class's own namespace, then every test
+/// that says it covers the class; only when the convention finds none, the
+/// `<Name>Test.php` files anywhere under the test directories (Pest, or a
+/// layout PSR-4 does not mirror). The covers index is waited for only when
+/// the convention found nothing to show meanwhile.
 fn tests_of(
     roots: &[Psr4Root],
     project: &Path,
     file: &Path,
     declarations: &Declarations,
+    covers: impl FnOnce(bool) -> Option<Arc<CoversIndex>>,
 ) -> TestNavigation {
     let name = declarations
         .class
@@ -394,13 +417,19 @@ fn tests_of(
         .iter()
         .filter_map(|class| psr4::class_file(roots, project, class))
         .collect();
-    if files.is_empty() {
-        files = scan_tests(roots, project, &name, &subject);
+    let by_convention = !files.is_empty();
+    let index = covers(!by_convention);
+    if let Some(index) = &index {
+        files.extend(index.covering(&subject));
+        if !by_convention {
+            files.extend(index.named(&format!("{test_name}.php")));
+        }
     }
     TestNavigation {
         from_test: false,
         name,
         files,
+        still_indexing: index.is_none(),
     }
 }
 
@@ -418,20 +447,6 @@ fn test_dirs(roots: &[Psr4Root], project: &Path) -> Vec<PathBuf> {
     }
 }
 
-/// The `*Test.php` files under the test directories that are named after
-/// `name` or cover `subject`.
-fn scan_tests(roots: &[Psr4Root], project: &Path, name: &str, subject: &str) -> Vec<String> {
-    let wanted = format!("{name}{TEST_SUFFIX}.php");
-    scan(
-        project,
-        test_dirs(roots, project),
-        |path, file_name, budget| {
-            file_name.ends_with("Test.php")
-                && (file_name == wanted || covers(path, name, subject, budget))
-        },
-    )
-}
-
 /// The `<subject>.php` files under the source (`autoload`) directories.
 fn scan_sources(roots: &[Psr4Root], project: &Path, subject: &str) -> Vec<String> {
     let wanted = format!("{subject}.php");
@@ -440,17 +455,13 @@ fn scan_sources(roots: &[Psr4Root], project: &Path, subject: &str) -> Vec<String
         .filter(|root| !root.dev)
         .map(|root| project.join(&root.dir))
         .collect();
-    scan(project, dirs, |_, file_name, _| file_name == wanted)
+    scan(project, dirs, |file_name| file_name == wanted)
 }
 
-/// The project-relative files under `dirs` that `wanted` accepts (given the
-/// path, the file name and the budget left), sorted; within the budget the
+/// The project-relative files under `dirs` whose name `wanted` accepts,
+/// sorted; within the budget the
 /// PHPUnit model's scan uses, so a huge tree cannot stall the worker.
-fn scan(
-    project: &Path,
-    mut dirs: Vec<PathBuf>,
-    mut wanted: impl FnMut(&Path, &str, &mut Budget) -> bool,
-) -> Vec<String> {
+fn scan(project: &Path, mut dirs: Vec<PathBuf>, wanted: impl Fn(&str) -> bool) -> Vec<String> {
     let mut budget = Budget {
         files: phpunit_xml::MAX_SCANNED_FILES,
         entries: phpunit_xml::MAX_VISITED_ENTRIES,
@@ -468,32 +479,13 @@ fn scan(
                 continue;
             }
             let file_name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-            if file_name.is_some_and(|name| is_file && wanted(&path, &name, &mut budget)) {
+            if file_name.is_some_and(|name| is_file && wanted(&name)) {
                 found.extend(relative(project, &path));
             }
         }
     }
     found.sort();
     found
-}
-
-/// Whether the test file at `path` says it covers `subject`. Only files that
-/// mention the class's short `name` at all are parsed.
-fn covers(path: &Path, name: &str, subject: &str, budget: &mut Budget) -> bool {
-    if budget.files == 0 {
-        return false;
-    }
-    budget.files -= 1;
-    let small = std::fs::metadata(path).is_ok_and(|meta| meta.len() <= phpunit_xml::MAX_FILE_BYTES);
-    let Some(text) = small.then(|| std::fs::read_to_string(path).ok()).flatten() else {
-        return false;
-    };
-    if !text.contains(name) {
-        return false;
-    }
-    covered_classes(&text, &Declarations::read(&text))
-        .iter()
-        .any(|covered| covered == subject)
 }
 
 /// Go to Test's requests: one search runs at a time and only the latest
@@ -581,9 +573,20 @@ mod tests {
         )
     }
 
+    /// [`navigate_with`] with the covers index built up front.
+    fn navigate_indexed(
+        roots: &[Psr4Root],
+        project: &Path,
+        file: &Path,
+        text: &str,
+    ) -> TestNavigation {
+        let index = Arc::new(CoversIndex::build(project, roots));
+        navigate_with(roots, project, file, text, |_| Some(index))
+    }
+
     fn navigate_from(project: &Path, file: &str) -> TestNavigation {
         let text = std::fs::read_to_string(project.join(file)).unwrap();
-        navigate_with(&roots(), project, &project.join(file), &text)
+        navigate_indexed(&roots(), project, &project.join(file), &text)
     }
 
     #[test]
@@ -769,7 +772,7 @@ mod tests {
         let text = std::fs::read_to_string(project.join("src/Foo/Bar.php")).unwrap();
 
         let roots = [root("App\\", "src/", false)];
-        let navigation = navigate_with(&roots, project, &project.join("src/Foo/Bar.php"), &text);
+        let navigation = navigate_indexed(&roots, project, &project.join("src/Foo/Bar.php"), &text);
 
         assert_eq!(navigation.files, ["tests/BarTest.php"]);
     }
@@ -800,7 +803,8 @@ mod tests {
             &test_class("Tests\\Foo", "BarTest", ""),
         );
 
-        let navigation = navigate(project, &project.join("src/Foo/Bar.php"), SUBJECT);
+        let cache = Arc::new(CoversCache::default());
+        let navigation = navigate(project, &project.join("src/Foo/Bar.php"), SUBJECT, &cache);
 
         assert_eq!(navigation.files, ["tests/Foo/BarTest.php"]);
     }
@@ -885,7 +889,7 @@ mod tests {
         write(project, "tests/Feature/UserControllerTest.php", &test);
 
         let file = project.join("tests/Feature/UserControllerTest.php");
-        let navigation = navigate_with(&roots, project, &file, &test);
+        let navigation = navigate_indexed(&roots, project, &file, &test);
 
         assert_eq!(
             navigation.files,
@@ -906,9 +910,9 @@ mod tests {
         write(project, "tests/Foo/BarTest.php", &test);
 
         let subject = project.join("src/Foo/Bar.php");
-        let to_test = navigate_with(&roots, project, &subject, SUBJECT);
+        let to_test = navigate_indexed(&roots, project, &subject, SUBJECT);
         assert_eq!(to_test.files, ["tests/Foo/BarTest.php"]);
-        let back = navigate_with(
+        let back = navigate_indexed(
             &roots,
             project,
             &project.join("tests/Foo/BarTest.php"),
@@ -932,10 +936,10 @@ mod tests {
 
         let subject = project.join("lib/Foo/Bar.php");
         assert_eq!(
-            navigate_with(&roots, project, &subject, SUBJECT).files,
+            navigate_indexed(&roots, project, &subject, SUBJECT).files,
             ["tests/Foo/BarTest.php"]
         );
-        let back = navigate_with(
+        let back = navigate_indexed(
             &roots,
             project,
             &project.join("tests/Foo/BarTest.php"),
@@ -967,13 +971,13 @@ mod tests {
             &test_class("Tests\\Legacy", "FooTest", ""),
         );
 
-        let navigation = navigate_with(&roots, project, &project.join("src/old/Foo.php"), legacy);
+        let navigation =
+            navigate_indexed(&roots, project, &project.join("src/old/Foo.php"), legacy);
 
         assert_eq!(navigation.files, ["tests/FooTest.php"]);
     }
 
-    #[test]
-    fn a_convention_match_skips_the_scan_of_the_test_directories() {
+    fn convention_and_covering_tests() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let project = dir.path();
         write(project, "src/Foo/Bar.php", SUBJECT);
@@ -991,10 +995,83 @@ mod tests {
                 "/** @covers \\App\\Foo\\Bar */",
             ),
         );
+        // Named like the class's test, in a namespace the convention does
+        // not reach: listed only when the convention finds nothing.
+        write(
+            project,
+            "tests/Legacy/BarTest.php",
+            &test_class("Tests\\Legacy", "BarTest", ""),
+        );
+        dir
+    }
 
+    #[test]
+    fn a_convention_match_is_listed_with_every_covering_test() {
+        let dir = convention_and_covering_tests();
+        let navigation = navigate_from(dir.path(), "src/Foo/Bar.php");
         assert_eq!(
-            navigate_from(project, "src/Foo/Bar.php").files,
-            ["tests/Foo/BarTest.php"]
+            navigation.files,
+            ["tests/Foo/BarTest.php", "tests/Acceptance/CheckoutTest.php"]
+        );
+        assert!(!navigation.still_indexing);
+    }
+
+    #[test]
+    fn while_the_index_builds_a_convention_match_answers_at_once() {
+        let dir = convention_and_covering_tests();
+        let project = dir.path();
+        let mut waited = None;
+        let navigation = navigate_with(
+            &roots(),
+            project,
+            &project.join("src/Foo/Bar.php"),
+            SUBJECT,
+            |wait| {
+                waited = Some(wait);
+                None
+            },
+        );
+        assert_eq!(waited, Some(false));
+        assert_eq!(navigation.files, ["tests/Foo/BarTest.php"]);
+        assert!(navigation.still_indexing);
+
+        // Nothing by convention: the search waits for the index.
+        std::fs::remove_file(project.join("tests/Foo/BarTest.php")).unwrap();
+        let mut waited = None;
+        navigate_with(
+            &roots(),
+            project,
+            &project.join("src/Foo/Bar.php"),
+            SUBJECT,
+            |wait| {
+                waited = Some(wait);
+                None
+            },
+        );
+        assert_eq!(waited, Some(true));
+    }
+
+    #[test]
+    fn navigate_keeps_one_covers_index_per_project() {
+        let dir = convention_and_covering_tests();
+        let project = dir.path();
+        write(
+            project,
+            "composer.json",
+            r#"{"autoload":{"psr-4":{"App\\":"src/"}},"autoload-dev":{"psr-4":{"Tests\\":"tests/"}}}"#,
+        );
+        let cache = Arc::new(CoversCache::default());
+        let file = project.join("src/Foo/Bar.php");
+        // The convention answers at once; the index may still be building.
+        let first = navigate(project, &file, SUBJECT, &cache);
+        assert_eq!(first.files[0], "tests/Foo/BarTest.php");
+        let roots = ComposerJson::read(project).unwrap().unwrap().psr4;
+        cache.index(project, &roots, true).unwrap();
+        let built = navigate(project, &file, SUBJECT, &cache);
+        assert!(!built.still_indexing);
+        assert_eq!(
+            built.files,
+            ["tests/Foo/BarTest.php", "tests/Acceptance/CheckoutTest.php"]
         );
     }
 

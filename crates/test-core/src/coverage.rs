@@ -34,9 +34,16 @@ pub fn env() -> Vec<(String, String)> {
 
 /// `coverage_args` with `$COVERAGE_FILE$` replaced by [`REPORT_PATH`].
 pub fn args(coverage_args: &[String]) -> Vec<String> {
+    args_in(coverage_args, ".")
+}
+
+/// [`args`] for a run started in the project-relative `work_dir`: the
+/// report still lands at [`REPORT_PATH`] below the project root.
+pub fn args_in(coverage_args: &[String], work_dir: &str) -> Vec<String> {
+    let report = crate::filter::relative_to_work_dir(REPORT_PATH, work_dir);
     coverage_args
         .iter()
-        .map(|arg| arg.replace("$COVERAGE_FILE$", REPORT_PATH))
+        .map(|arg| arg.replace("$COVERAGE_FILE$", &report))
         .collect()
 }
 
@@ -313,5 +320,11 @@ mod tests {
         let args = args(&["--coverage-clover".into(), "$COVERAGE_FILE$".into()]);
         assert_eq!(args, ["--coverage-clover", REPORT_PATH]);
         assert_eq!(env(), [("XDEBUG_MODE".to_string(), "coverage".to_string())]);
+    }
+
+    #[test]
+    fn a_package_run_writes_the_report_below_the_project_root() {
+        let args = args_in(&["--coverage-clover=$COVERAGE_FILE$".into()], "packages/a");
+        assert_eq!(args, [format!("--coverage-clover=../../{REPORT_PATH}")]);
     }
 }

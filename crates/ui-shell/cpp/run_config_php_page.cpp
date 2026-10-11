@@ -1,5 +1,7 @@
 #include "run_config_php_page.h"
 
+#include "e2e_mark.h"
+
 #include <QComboBox>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -287,6 +289,19 @@ void PhpUnitOptionsPage::applyModel(const FfiPhpUnitModel &model)
     const bool hasProblem = model.problem.code != 0;
     configurationProblem_->setText(hasProblem ? QString(model.problem.message) : QString());
     configurationProblem_->setVisible(hasProblem);
+    // What the pickers now offer, as `phpunit.xml` declares it.
+    QStringList suites;
+    for (int i = 0; i < testsuiteCombo_->count(); ++i) {
+        suites << e2eJson(testsuiteCombo_->itemText(i));
+    }
+    QStringList offered;
+    for (const QString &group : groups) {
+        offered << e2eJson(group);
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"phpunit_page_model\",\"file\":%1,\"suites\":[%2],"
+                           "\"groups\":[%3],\"problem\":%4}")
+              .arg(e2eJson(file), suites.join(QLatin1Char(',')), offered.join(QLatin1Char(',')),
+                   e2eJson(configurationProblem_->text())));
 }
 
 void PhpUnitOptionsPage::addRow(const QString &label, QWidget *field)

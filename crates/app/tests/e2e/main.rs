@@ -20,6 +20,7 @@ mod live_buffer;
 mod minimap;
 mod panes;
 mod php_real;
+mod php_runs;
 mod preview;
 mod run;
 mod scope;

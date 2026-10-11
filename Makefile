@@ -123,7 +123,7 @@ jvm-ci: ## Inner half of `test-jvm` — run inside the image
 linux-php-image: ## Build the linux-php image (linux-builder + PHP 8.3, Composer, Intelephense, Phpactor, vscode-php-debug)
 	$(DOCKER) build --target linux-php -t $(PHP_IMAGE) -f $(DOCKERFILE) .
 
-test-php: linux-php-image sweep ## Run the real-toolchain PHP E2E flows (a-c) in the linux-php image
+test-php: linux-php-image sweep ## Run the real-toolchain PHP E2E flows (php_real a-c, php_runs) in the linux-php image
 	$(RUN_PHP) $(PHP_IMAGE) $(MAKE) php-ci
 
 php-ci: ## Inner half of `test-php` — run inside the linux-php image
@@ -132,7 +132,7 @@ php-ci: ## Inner half of `test-php` — run inside the linux-php image
 	cargo build --bin stub_analyzer -p analysis-core
 	cargo build --bin stub_engine -p container-core
 	cargo build --bin stub_adapter -p dap-core
-	IDE_E2E_PHP=1 $(E2E_XVFB) cargo test -p app --test e2e php_real:: -- --ignored --test-threads=1 --nocapture
+	IDE_E2E_PHP=1 $(E2E_XVFB) cargo test -p app --test e2e -- --ignored --test-threads=1 --nocapture php_real:: php_runs::
 
 # Flow d (the container interpreter): the test container drives the host's
 # Docker through its socket, so the project must sit at the *same* path on the

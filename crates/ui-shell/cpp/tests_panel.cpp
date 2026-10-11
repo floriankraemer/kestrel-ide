@@ -28,7 +28,9 @@
 #include <QKeyEvent>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QTextBlock>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
@@ -262,6 +264,17 @@ TestsPanel::TestsPanel(TestService *testService, AppSettings *appSettings, OpenA
     connect(tree_, &QTreeWidget::itemActivated, this,
             [this](QTreeWidgetItem *item) { jumpToSource(item->data(0, kIdRole).toString()); });
     tree_->installEventFilter(this);
+    if (e2eMarksEnabled()) {
+        // Rows move when a suite folds: report where they went, once per
+        // turn of the event loop (a rebuild expands every suite).
+        auto *remark = new QTimer(this);
+        remark->setSingleShot(true);
+        remark->setInterval(0);
+        connect(remark, &QTimer::timeout, this, [this]() { markE2eRows(); });
+        const auto start = [remark]() { remark->start(); };
+        connect(tree_, &QTreeWidget::itemCollapsed, remark, start);
+        connect(tree_, &QTreeWidget::itemExpanded, remark, start);
+    }
     connect(testService_, &TestService::testRunPreparing, this, &TestsPanel::onTestRunPreparing);
     connect(testService_, &TestService::testRunStarted, this, &TestsPanel::onTestRunStarted);
     connect(testService_, &TestService::testRunStopped, this, &TestsPanel::onTestRunStopped);
@@ -350,9 +363,12 @@ void TestsPanel::onTestTreeChanged()
         item->setData(0, kKindRole, static_cast<int>(node.kind));
         item->setExpanded(expandedById.value(id, true));
         itemsById_.insert(id, item);
-        e2eMark(QStringLiteral("{\"ev\":\"test_tree_row\",\"id\":%1,\"name\":%2,\"status\":%3}")
+        e2eMark(QStringLiteral("{\"ev\":\"test_tree_row\",\"id\":%1,\"name\":%2,\"status\":%3,"
+                               "\"suite\":%4}")
                   .arg(e2eJson(id), e2eJson(QString(node.name)),
-                        e2eJson(QString::fromUtf8(statusName(node.status)))));
+                        e2eJson(QString::fromUtf8(statusName(node.status))),
+                        node.kind == FfiTestNodeKind::Suite ? QStringLiteral("true")
+                                                            : QStringLiteral("false")));
     }
 
     if (!selectedNodeId_.isEmpty()) {
@@ -373,14 +389,20 @@ void TestsPanel::markE2eRows() const
     for (auto it = itemsById_.constBegin(); it != itemsById_.constEnd(); ++it) {
         const QRect rect = tree_->visualItemRect(it.value());
         const QPoint origin = tree_->viewport()->mapToGlobal(rect.topLeft());
-        rows << QStringLiteral("{\"id\":%1,\"name\":%2,\"rect\":[%3,%4,%5,%6]}")
+        // Visible: inside the scrolled viewport, where a click lands on it.
+        const bool visible = tree_->viewport()->rect().contains(rect.center());
+        rows << QStringLiteral("{\"id\":%1,\"name\":%2,\"rect\":[%3,%4,%5,%6],\"visible\":%7}")
                   .arg(e2eJson(it.key()), e2eJson(it.value()->text(0)))
                   .arg(origin.x())
                   .arg(origin.y())
                   .arg(rect.width())
-                  .arg(rect.height());
+                  .arg(rect.height())
+                  .arg(visible ? QStringLiteral("true") : QStringLiteral("false"));
     }
-    e2eMark(QStringLiteral("{\"ev\":\"test_tree_rects\",\"rows\":[%1]}")
+    // Shown: the dock is the current tab of its area, so the rects are on
+    // screen rather than where a hidden tab would be.
+    e2eMark(QStringLiteral("{\"ev\":\"test_tree_rects\",\"shown\":%1,\"rows\":[%2]}")
+              .arg(tree_->isVisible() ? QStringLiteral("true") : QStringLiteral("false"))
               .arg(rows.join(QLatin1Char(','))));
 }
 
@@ -413,6 +435,7 @@ void TestsPanel::markE2eToolbar() const
 
 void TestsPanel::onTestOutputAppended(const QString &text)
 {
+    e2eMark(QStringLiteral("{\"ev\":\"test_output\",\"text\":%1}").arg(e2eJson(text)));
     QTextCursor cursor = output_->textCursor();
     cursor.movePosition(QTextCursor::End);
     cursor.insertText(text);
@@ -424,6 +447,11 @@ void TestsPanel::onTestRunFinished(bool ok, bool matchedNothing, const QString &
 {
     stopButton_->setEnabled(false);
     statusLabel_->setText(!ok ? message : matchedNothing ? tr("No tests matched.") : tr("Run finished."));
+    // The rows' rects once the finished tree is laid out, for a flow that
+    // clicks a row the run just reported.
+    if (e2eMarksEnabled()) {
+        QTimer::singleShot(0, this, [this]() { markE2eRows(); });
+    }
     e2eMark(QStringLiteral("{\"ev\":\"test_run_finished\",\"ok\":%1,\"matched_nothing\":%2,\"message\":%3}")
               .arg(ok ? "true" : "false")
               .arg(matchedNothing ? "true" : "false")
@@ -452,6 +480,38 @@ void TestsPanel::onSelectionChanged()
     const QString details = testService_->failureDetails(selectedNodeId_);
     failureHeader_->setText(message);
     failureDetails_->setPlainText(details);
+    if (e2eMarksEnabled()) {
+        markE2eFailureLink();
+        // A keyboard move scrolls the tree: report where the rows are now.
+        QTimer::singleShot(0, this, [this]() { markE2eRows(); });
+    }
+}
+
+void TestsPanel::markE2eFailureLink() const
+{
+    // The first line of the details that is a link, where a Ctrl+Click on it
+    // lands: the failure pane has no other handle an E2E flow could click.
+    QString rect = QStringLiteral("[]");
+    for (QTextBlock block = failureDetails_->document()->begin(); block.isValid();
+         block = block.next()) {
+        const int position = block.position() + block.length() / 2;
+        if (testService_->resolveFailureLink(selectedNodeId_, static_cast<quint32>(position)).found) {
+            QTextCursor cursor(failureDetails_->document());
+            cursor.setPosition(position);
+            const QRect local = failureDetails_->cursorRect(cursor);
+            const QPoint origin = failureDetails_->viewport()->mapToGlobal(local.topLeft());
+            rect = QStringLiteral("[%1,%2,%3,%4]")
+                     .arg(origin.x())
+                     .arg(origin.y())
+                     .arg(qMax(local.width(), 2))
+                     .arg(local.height());
+            break;
+        }
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"test_failure_details\",\"id\":%1,\"message\":%2,"
+                           "\"details\":%3,\"link_rect\":%4}")
+              .arg(e2eJson(selectedNodeId_), e2eJson(failureHeader_->text()),
+                   e2eJson(failureDetails_->toPlainText()), rect));
 }
 
 void TestsPanel::onFailureLinkActivated(int textPosition)

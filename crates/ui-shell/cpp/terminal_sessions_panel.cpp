@@ -1,5 +1,6 @@
 #include "terminal_sessions_panel.h"
 
+#include "e2e_mark.h"
 #include "keymap_page.h"
 #include "terminal_widget.h"
 #include "theme.h"
@@ -112,6 +113,7 @@ void TerminalSessionsPanel::addSession(const QString &shellId, const QString &la
     const int index = tabs_->addTab(widget, title);
     tabs_->setCurrentIndex(index);
     widget->setFocus();
+    e2eMark(QStringLiteral("{\"ev\":\"terminal_session_added\",\"tabs\":%1}").arg(tabs_->count()));
 }
 
 void TerminalSessionsPanel::focusCurrent()

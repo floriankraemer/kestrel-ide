@@ -354,6 +354,30 @@ void RunToolbar::refreshButtons()
     runButton_->setEnabled(hasConfig);
     stopButton_->setEnabled(running);
     rerunButton_->setEnabled(running);
+    markE2eSelection();
+}
+
+void RunToolbar::markE2eSelection() const
+{
+    if (!e2eMarksEnabled()) {
+        return;
+    }
+    // What the combo selects and lists, temporaries flagged: whether an
+    // editor run selected its configuration, and what the cap kept.
+    QStringList configs;
+    for (int i = 0; i < configCombo_->count(); ++i) {
+        const QString id = configCombo_->itemData(i).toString();
+        if (id.isEmpty() || id == kSaveRowData) {
+            continue;
+        }
+        configs << QStringLiteral("{\"id\":%1,\"name\":%2,\"temporary\":%3}")
+                     .arg(e2eJson(id), e2eJson(configCombo_->itemText(i)),
+                          configCombo_->itemData(i, kTemporaryRole).toBool() ? QStringLiteral("true")
+                                                                             : QStringLiteral("false"));
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"run_config_selected\",\"id\":%1,\"name\":%2,\"configs\":[%3]}")
+              .arg(e2eJson(selectedConfigId()), e2eJson(configCombo_->currentText()),
+                   configs.join(QLatin1Char(','))));
 }
 
 QString RunToolbar::selectedConfigId() const

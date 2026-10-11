@@ -2,7 +2,7 @@
 //! containers and labels need no new parsing — [`crate::model::Network`]
 //! already carries both out of `network inspect`.
 
-/// Everything "Create Network..." collects, argv-ready.
+/// Everything "Create Network…" collects, argv-ready.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct NetworkSpec {
     pub name: String,

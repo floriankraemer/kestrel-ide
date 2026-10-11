@@ -43,7 +43,7 @@ RUN_JVM = $(DOCKER) run --rm --init $(DOCKER_USER) $(DOCKER_MOUNTS) $(JVM_IMAGE)
 # and its cache live under the fixed /opt/php-cache the stage sets.
 RUN_PHP = $(DOCKER) run --rm --init $(DOCKER_USER) -e HOME=/opt/vscode-home $(DOCKER_MOUNTS)
 
-.PHONY: help all sweep test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell clean \
+.PHONY: help all sweep test lint coverage coverage-ci e2e e2e-ci e2e-repeat build build-linux build-windows linux-image shell check-translations update-translations clean \
 	lsp-image lsp-conformance lsp-conformance-ci linux-jvm-image test-jvm jvm-ci linux-php-image test-php php-ci test-php-container php-container-ci test-db db-ci
 
 .DEFAULT_GOAL := help
@@ -270,6 +270,12 @@ build-windows: ## Export dist/windows/ (first run builds the MXE toolchain, hour
 
 shell: linux-image ## Open a bash shell in the builder image
 	$(DOCKER) run --rm -it $(DOCKER_MOUNTS) $(LINUX_IMAGE) bash
+
+check-translations: linux-image ## Fail on stale/unfinished ui-shell .ts files or a tr() class without its own context (ADR-0049)
+	$(RUN_LINUX) scripts/check-translations.sh
+
+update-translations: linux-image ## Re-extract tr() strings into the ui-shell .ts files (then translate the new entries)
+	$(RUN_LINUX) scripts/update-translations.sh
 
 clean: ## cargo clean + remove dist/
 	$(RUN_LINUX) cargo clean

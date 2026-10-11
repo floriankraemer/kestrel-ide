@@ -430,17 +430,17 @@ void RefactorController::buildCodeActions(QMenu *refactorMenu, AppSettings *appS
 
     // ADR-0072: Alt+Insert.
     QAction *generateAction = registerAction(refactorMenu, QStringLiteral("code.generate"),
-                                             tr("Generate..."), appSettings, actions);
+                                             tr("Generate…"), appSettings, actions);
     connect(generateAction, &QAction::triggered, this, [this]() { editorTabs_->showGenerateNow(); });
     // ADR-0072: Ctrl+J and Ctrl+Alt+T. Which templates fit, and what each
     // expands to, is Rust's; this only opens the pickers.
     QAction *insertTemplateAction =
       registerAction(refactorMenu, QStringLiteral("code.insertLiveTemplate"),
-                      tr("Insert Live Template..."), appSettings, actions);
+                      tr("Insert Live Template…"), appSettings, actions);
     connect(insertTemplateAction, &QAction::triggered, this,
             [this]() { editorTabs_->insertLiveTemplateNow(); });
     QAction *surroundWithAction =
-      registerAction(refactorMenu, QStringLiteral("code.surroundWith"), tr("Surround With..."),
+      registerAction(refactorMenu, QStringLiteral("code.surroundWith"), tr("Surround With…"),
                       appSettings, actions);
     connect(surroundWithAction, &QAction::triggered, this,
             [this]() { editorTabs_->surroundWithTemplateNow(); });

@@ -1,6 +1,6 @@
 //! Finding connections the user has not typed in by hand yet: the CLI's own
 //! contexts/connections/machines, plus a couple of well-known socket
-//! presets. Feeds the Settings page's "Add from contexts..." menu (C1) and,
+//! presets. Feeds the Settings page's "Add from contexts…" menu (C1) and,
 //! later, the Containers dock's "+ Add" menu.
 //!
 //! Every parser here is pure — takes the CLI's already-captured stdout and

@@ -97,7 +97,7 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
             const auto choice = QMessageBox::information(
               window, QObject::tr("Push"),
               error.message + QStringLiteral("\n\n")
-                + QObject::tr("Open Branches... to push it to a chosen remote?"),
+                + QObject::tr("Open Branches… to push it to a chosen remote?"),
               QMessageBox::Open | QMessageBox::Cancel, QMessageBox::Open);
             if (choice == QMessageBox::Open) {
                 showBranchMenu(vcsService, window, QCursor::pos());
@@ -149,7 +149,7 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     e2eMarkMenuActions(vcsMenu, "vcs_menu_action");
 
     QAction *commitAction = registerAction(vcsMenu, QStringLiteral("vcs.commit"),
-                                            QObject::tr("Commit..."), appSettings, actions);
+                                            QObject::tr("Commit…"), appSettings, actions);
     QObject::connect(commitAction, &QAction::triggered, window,
                       [docks]() { docks->show(QStringLiteral("changes")); });
 
@@ -183,7 +183,7 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     });
 
     QAction *branchesAction = registerAction(vcsMenu, QStringLiteral("vcs.branches"),
-                                              QObject::tr("Branches..."), appSettings, actions);
+                                              QObject::tr("Branches…"), appSettings, actions);
     QObject::connect(branchesAction, &QAction::triggered, window, [vcsService, window]() {
         showBranchMenu(vcsService, window, QCursor::pos());
     });
@@ -196,7 +196,7 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     // entry can exist at once, unlike the always-singular staged/unstaged
     // split the rest of this menu works with.
     QAction *stashAction = registerAction(vcsMenu, QStringLiteral("vcs.stash"),
-                                           QObject::tr("Stash Changes..."), appSettings, actions);
+                                           QObject::tr("Stash Changes…"), appSettings, actions);
     QObject::connect(stashAction, &QAction::triggered, vcsService, [vcsService, window]() {
         bool ok = false;
         const QString message = QInputDialog::getText(
@@ -208,7 +208,7 @@ void buildVcsMenu(QMainWindow *window, VcsService *vcsService, AppSettings *appS
     });
 
     QAction *unstashAction = registerAction(vcsMenu, QStringLiteral("vcs.unstash"),
-                                             QObject::tr("Unstash..."), appSettings, actions);
+                                             QObject::tr("Unstash…"), appSettings, actions);
     QObject::connect(unstashAction, &QAction::triggered, vcsService, [vcsService, window]() {
         auto connection = std::make_shared<QMetaObject::Connection>();
         *connection = QObject::connect(

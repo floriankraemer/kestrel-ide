@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QPoint>
 #include <QString>
 #include <QWidget>
@@ -41,6 +42,10 @@ class ChangesToolbar;
 // and does not need a live buffer the way a hunk diff does.
 class ChangesPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ChangesPanel)
+
 public:
     // `showDiff` is F3-14's entry point into `EditorTabs`' editable diff
     // window, reached by callback rather than a dependency on

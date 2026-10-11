@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -26,6 +27,10 @@ class SearchPreviewPane;
 // `SearchPreviewPane` Find in Files uses.
 class FindUsagesPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(FindUsagesPanel)
+
 public:
     FindUsagesPanel(SearchModel *searchModel, EditorTabs *editorTabs, QWidget *parent);
 

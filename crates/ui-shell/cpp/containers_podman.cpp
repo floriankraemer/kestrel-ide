@@ -40,7 +40,7 @@ void ContainersPanel::showPodContextMenu(QTreeWidgetItem *item, const QPoint &gl
     stop->setEnabled(actions.canStop);
     QAction *restart = menu.addAction(tr("Restart"));
     restart->setEnabled(actions.canRestart);
-    QAction *remove = menu.addAction(tr("Remove..."));
+    QAction *remove = menu.addAction(tr("Remove…"));
     remove->setEnabled(actions.canRemove);
     menu.addSeparator();
     QAction *inspect = menu.addAction(tr("Inspect"));

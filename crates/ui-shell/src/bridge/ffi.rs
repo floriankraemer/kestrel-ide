@@ -1272,7 +1272,7 @@ mod ffi {
     /// One candidate `discoverContainerConnections()` offers: a docker
     /// context, a podman connection/machine, or a socket preset (Colima,
     /// Rancher Desktop, the default rootless podman socket) — the source
-    /// for the Containers settings page's "Add from contexts..." menu.
+    /// for the Containers settings page's "Add from contexts…" menu.
     /// Never saved on its own; the view turns a chosen entry into an
     /// `FfiContainerConnection` it appends to the draft list itself.
     struct FfiDiscoveredConnection {
@@ -3814,7 +3814,7 @@ mod ffi {
         /// `settingsScope()` names (the same scope `saveRegistries` writes)
         /// and deletes its keychain entry — never one without the other,
         /// so a removed registry leaves nothing behind either the tree or
-        /// the tree's own "Edit..." can bring back by surprise.
+        /// the tree's own "Edit…" can bring back by surprise.
         #[qinvokable]
         #[cxx_name = "removeRegistry"]
         fn remove_registry(self: &AppSettings, id: &QString) -> FfiResult;
@@ -8131,7 +8131,7 @@ mod ffi {
             path: &QString,
         ) -> FfiResult;
 
-        /// "Download..." for a layer entry — no size cap, written to
+        /// "Download…" for a layer entry — no size cap, written to
         /// `dest_path` (the view's own `QFileDialog` choice).
         #[qinvokable]
         #[cxx_name = "downloadLayerEntry"]
@@ -8334,7 +8334,7 @@ mod ffi {
         fn image_labels(self: &ContainerService, node_id: &QString) -> Vec<FfiKeyValue>;
 
         /// `save`\|`load` through a temp file, on a worker thread —
-        /// "Copy Image to...". `actionFinished`'s message carries a
+        /// "Copy Image to…". `actionFinished`'s message carries a
         /// progress-ish summary ("Copied to <connection>" / the failure).
         #[qinvokable]
         #[cxx_name = "copyImageTo"]
@@ -10668,7 +10668,7 @@ mod ffi {
             project_name: &QString,
         ) -> FfiResult;
 
-        /// The compose service node's "Scale...": `compose up -d --scale
+        /// The compose service node's "Scale…": `compose up -d --scale
         /// service=n --no-recreate`, tracked.
         #[qinvokable]
         #[cxx_name = "scaleComposeService"]

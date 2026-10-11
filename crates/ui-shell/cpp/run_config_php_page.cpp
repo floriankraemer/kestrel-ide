@@ -394,12 +394,12 @@ QLineEdit *PhpUnitOptionsPage::addField(const QString &label, bool browseDirecto
     auto *rowLayout = static_cast<QHBoxLayout *>(row->layout());
     connect(edit, &QLineEdit::textChanged, this, &PhpUnitOptionsPage::changed);
     if (browseDirectory) {
-        auto *button = new QPushButton(tr("Directory..."), row);
+        auto *button = new QPushButton(tr("Directory…"), row);
         connect(button, &QPushButton::clicked, this, [this, edit]() { browse(edit, true); });
         rowLayout->addWidget(button);
     }
     if (browseFile) {
-        auto *button = new QPushButton(tr("File..."), row);
+        auto *button = new QPushButton(tr("File…"), row);
         connect(button, &QPushButton::clicked, this, [this, edit]() { browse(edit, false); });
         rowLayout->addWidget(button);
     }

@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QWidget>
 
 #include <functional>
@@ -33,6 +34,10 @@ class TransposeTableModel;
 // came back and lays it out.
 class ResultGridView : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ResultGridView)
+
 public:
     // `onResultAdopted`, if given, fires every time this grid starts
     // showing a *different* result id — including one this widget itself

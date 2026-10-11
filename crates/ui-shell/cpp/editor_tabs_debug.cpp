@@ -153,7 +153,7 @@ void EditorTabs::showBreakpointContextMenu(CodeEditor *editor, int blockNumber,
       blocksFromLines(debugService_->breakpointLines(path)).contains(blockNumber);
 
     QMenu menu(editor);
-    QAction *edit = menu.addAction(hasBreakpoint ? tr("Edit Breakpoint...")
+    QAction *edit = menu.addAction(hasBreakpoint ? tr("Edit Breakpoint…")
                                                   : tr("Add Breakpoint"));
     QAction *remove = hasBreakpoint ? menu.addAction(tr("Remove Breakpoint")) : nullptr;
     menu.addSeparator();

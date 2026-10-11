@@ -174,7 +174,7 @@ ProblemsPanel::ProblemsPanel(LanguageService *languageService, BuildService *bui
                    const QString &detail, quint32 retryMs) {
                 switch (state) {
                 case FfiServerState::Starting:
-                    serverStatus_ = tr("Waiting for %1...").arg(name);
+                    serverStatus_ = tr("Waiting for %1…").arg(name);
                     break;
                 case FfiServerState::Ready:
                     serverStatus_.clear();
@@ -466,7 +466,7 @@ void ProblemsPanel::showRowContextMenu(const QPoint &pos)
     }
 
     QMenu menu(this);
-    QAction *quickFixAction = menu.addAction(tr("Quick Fixes..."));
+    QAction *quickFixAction = menu.addAction(tr("Quick Fixes…"));
     connect(quickFixAction, &QAction::triggered, this, [this, item]() {
         if (showQuickFixesAt_) {
             showQuickFixesAt_(item->data(0, kPathRole).toString(),

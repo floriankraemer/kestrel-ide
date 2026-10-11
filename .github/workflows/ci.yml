@@ -72,6 +72,10 @@ jobs:
       - name: Test-layout gate
         run: scripts/check-test-layout.sh
 
+      # lupdate ships in the builder image (qt6-l10n-tools).
+      - name: Translations gate
+        run: scripts/check-translations.sh
+
       # R2 (database-tools-plan.md §13/§7): rustls/ring only, aws-lc-rs must
       # never enter the tree — a per-driver-crate feature audit, not a
       # passive assumption.

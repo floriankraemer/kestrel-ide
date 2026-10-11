@@ -77,7 +77,7 @@ void showDriversListDialog(QWidget *parent, AppSettings *appSettings,
     };
     reload();
 
-    auto *actionButton = new QPushButton(QObject::tr("Install / Re-enable..."), &dialog);
+    auto *actionButton = new QPushButton(QObject::tr("Install / Re-enable…"), &dialog);
     layout->addWidget(actionButton);
 
     QObject::connect(actionButton, &QPushButton::clicked, &dialog,
@@ -121,10 +121,10 @@ QWidget *buildDatabaseSettingsPage(QWidget *parent, AppSettings *appSettings,
 
     auto *buttonsRow = new QHBoxLayout();
     auto *addButton = new QPushButton(QObject::tr("Add"), page);
-    auto *editButton = new QPushButton(QObject::tr("Edit..."), page);
+    auto *editButton = new QPushButton(QObject::tr("Edit…"), page);
     auto *duplicateButton = new QPushButton(QObject::tr("Duplicate"), page);
     auto *removeButton = new QPushButton(QObject::tr("Remove"), page);
-    auto *driversButton = new QPushButton(QObject::tr("Drivers..."), page);
+    auto *driversButton = new QPushButton(QObject::tr("Drivers…"), page);
     buttonsRow->addWidget(addButton);
     buttonsRow->addWidget(editButton);
     buttonsRow->addWidget(duplicateButton);

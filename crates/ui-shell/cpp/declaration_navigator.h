@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QList>
 #include <QObject>
 #include <QString>
@@ -26,6 +27,10 @@ class EditorTabs;
 // reports why nothing happened.
 class DeclarationNavigator : public QObject
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(DeclarationNavigator)
+
 public:
     DeclarationNavigator(LanguageService *languageService, SearchModel *searchModel,
                           EditorTabs *editorTabs, QMainWindow *window);

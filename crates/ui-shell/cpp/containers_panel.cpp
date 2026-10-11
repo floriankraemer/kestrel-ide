@@ -110,7 +110,7 @@ QString kindLabel(const QString &kind)
     // repositories or a repository's tags — carries no name for the same
     // reason a group row doesn't.
     if (kind == QStringLiteral("registry-more")) {
-        return QObject::tr("Load more...");
+        return QObject::tr("Load more…");
     }
     return QString();
 }
@@ -147,7 +147,7 @@ QString statusWord(const FfiContainerNode &node)
     case FfiContainerNodeStatus::Disconnected:
         return QObject::tr("disconnected");
     case FfiContainerNodeStatus::Connecting:
-        return QObject::tr("connecting...");
+        return QObject::tr("connecting…");
     case FfiContainerNodeStatus::Connected:
         // `detail` is the engine's product name, `statusText` its version.
         return QObject::tr("%1 Engine %2").arg(QString(node.detail), QString(node.statusText));
@@ -233,9 +233,9 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
     addButton_ = iconButton(":/ui/icons/containers/add.a8", tr("Add"), this);
     addButton_->setPopupMode(QToolButton::InstantPopup);
     auto *addMenu = new QMenu(addButton_);
-    QAction *newConnection = addMenu->addAction(tr("New connection..."));
-    QAction *addFromContexts = addMenu->addAction(tr("Add from contexts..."));
-    QAction *newRegistry = addMenu->addAction(tr("Registry..."));
+    QAction *newConnection = addMenu->addAction(tr("New connection…"));
+    QAction *addFromContexts = addMenu->addAction(tr("Add from contexts…"));
+    QAction *newRegistry = addMenu->addAction(tr("Registry…"));
     addButton_->setMenu(addMenu);
     connect(newConnection, &QAction::triggered, this, [this]() {
         if (openSettings_) {
@@ -276,13 +276,13 @@ ContainersPanel::ContainersPanel(ContainerService *containerService,
         }
     });
 
-    pullButton_ = iconButton(":/ui/icons/containers/registry.a8", tr("Pull Image..."), this);
+    pullButton_ = iconButton(":/ui/icons/containers/registry.a8", tr("Pull Image…"), this);
     connect(pullButton_, &QToolButton::clicked, this, &ContainersPanel::triggerPullImage);
 
     // C4: every "Clean Up" kind on the selected connection, gated per
     // engine by `nodeActions`'s answer for whichever group is selected —
     // unavailable kinds (build cache on Podman) just aren't offered.
-    cleanUpButton_ = iconButton(":/ui/icons/containers/cleanup.a8", tr("Clean Up..."), this);
+    cleanUpButton_ = iconButton(":/ui/icons/containers/cleanup.a8", tr("Clean Up…"), this);
     cleanUpButton_->setPopupMode(QToolButton::InstantPopup);
     auto *cleanUpMenu = new QMenu(cleanUpButton_);
     const auto cleanUp = [this](const QString &kind, const QString &confirmText) {
@@ -872,7 +872,7 @@ void ContainersPanel::showContextMenu(const QPoint &pos)
         QAction *stopMachine = nullptr;
         addMachineActions(menu, id, startMachine, stopMachine);
         menu.addSeparator();
-        QAction *editAction = menu.addAction(tr("Edit configuration..."));
+        QAction *editAction = menu.addAction(tr("Edit configuration…"));
         QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
         if (chosen == connectAction) {
             report(containerService_->connectEngine(id));

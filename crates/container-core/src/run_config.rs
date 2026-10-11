@@ -264,7 +264,7 @@ pub fn containerfile_run_argv(
 /// `build -f <context_dir>/<dockerfile> -t <image_tag> [--build-arg k=v]…
 /// Whether `path`'s own file name names it a Containerfile rather than a
 /// Dockerfile (C9) — Podman's convention, `docker build`/`podman build`
-/// both accept either name. The gutter popup and "New Configuration..."
+/// both accept either name. The gutter popup and "New Configuration…"
 /// wording pick between the two words with this (`is_named_containerfile
 /// (path) -> "Containerfile" : "Dockerfile"` at the call site), never
 /// hard-coding "Dockerfile" the way JetBrains' own Docker plugin does.

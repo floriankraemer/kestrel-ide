@@ -44,7 +44,7 @@ void showProjectOpening(QMainWindow *window)
     }
     projectOpeningBusy = true;
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    window->statusBar()->showMessage(QObject::tr("Opening project..."));
+    window->statusBar()->showMessage(QObject::tr("Opening project…"));
 }
 
 namespace {
@@ -146,14 +146,14 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
     QObject::connect(searchModel, &SearchModel::indexProgress, window,
                       [indexLabel, indexBar](quint32 done, quint32 total) {
                           const QString text =
-                              QObject::tr("Indexing... %1/%2").arg(done).arg(total);
+                              QObject::tr("Indexing… %1/%2").arg(done).arg(total);
                           // Reserve the width of the widest reading this run
                           // will ever show — `total/total`. Without it the
                           // label is sized for "565/2223" one frame and
                           // "1204/2223" the next, and clips while it catches
                           // up.
                           indexLabel->setMinimumWidth(indexLabel->fontMetrics().horizontalAdvance(
-                              QObject::tr("Indexing... %1/%2").arg(total).arg(total)));
+                              QObject::tr("Indexing… %1/%2").arg(total).arg(total)));
                           indexLabel->setStyleSheet(QString());
                           indexLabel->setText(text);
                           indexBar->setRange(0, static_cast<int>(total));
@@ -204,7 +204,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
                           // bar joining `UiFontTargets` — it is only ever
                           // visible for a few seconds at a time.
                           serverBar->setFixedHeight(serverBar->fontMetrics().height());
-                          serverLabel->setText(QObject::tr("%1: %2...").arg(name, activity));
+                          serverLabel->setText(QObject::tr("%1: %2…").arg(name, activity));
                           // No percentage is not 0%: an indeterminate bar
                           // says "working, length unknown" where an empty
                           // one would claim no progress has been made.
@@ -240,7 +240,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
         }
         if (analysisService->isInspecting()) {
             analysisLabel->setStyleSheet(QString());
-            analysisLabel->setText(QObject::tr("Analysis: running..."));
+            analysisLabel->setText(QObject::tr("Analysis: running…"));
             analysisLabel->setVisible(true);
             return;
         }
@@ -335,7 +335,7 @@ UiFontTargets buildStatusBar(QMainWindow *window, AppSettings *appSettings,
         switch (state) {
         case FfiSyncStateKind::Syncing:
             buildToolsButton->setStyleSheet(QString());
-            buildToolsButton->setText(QObject::tr("%1: syncing...").arg(tool));
+            buildToolsButton->setText(QObject::tr("%1: syncing…").arg(tool));
             break;
         case FfiSyncStateKind::Failed:
             buildToolsButton->setStyleSheet(

@@ -196,7 +196,7 @@ fn select_config(ide: &Ide, name: &str) {
     ide.focus_main();
     ide.key("alt+r");
     let item = ide.wait_for_event(mark, "Select Run Configuration…", |e| {
-        e["ev"] == "run_menu_action" && e["label"] == "Select Run Configuration..."
+        e["ev"] == "run_menu_action" && e["label"] == "Select Run Configuration…"
     });
     let (x, y) = rect_centre(&item["rect"]);
     ide.click_at(x, y, 1);

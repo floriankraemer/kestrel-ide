@@ -216,7 +216,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         for (const FfiContainerTarget &target : editor->containerTargets()) {
             runOnCombo->addItem(QString(target.name), QStringLiteral("container:%1").arg(target.id));
         }
-        runOnCombo->addItem(QObject::tr("New target..."), kRunOnNewTarget);
+        runOnCombo->addItem(QObject::tr("New target…"), kRunOnNewTarget);
         const int index = runOnCombo->findData(keepData);
         runOnCombo->setCurrentIndex(index >= 0 ? index : 0);
     };

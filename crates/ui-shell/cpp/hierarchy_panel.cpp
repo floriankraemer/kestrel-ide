@@ -107,7 +107,7 @@ void HierarchyPanel::restartFromRoot()
     if (rootPath_.isEmpty()) {
         return;
     }
-    statusLabel_->setText(tr("Loading..."));
+    statusLabel_->setText(tr("Loading…"));
     if (isCallMode()) {
         languageService_->requestCallHierarchy(rootPath_, rootLine_, rootCharacter_);
     } else {
@@ -268,7 +268,7 @@ QTreeWidgetItem *HierarchyPanel::addNode(QTreeWidgetItem *parent, const FfiHiera
     node->setData(0, kColumnRole, item.column);
     // Loading placeholder: gives the node an expand arrow before its own
     // edges are known, replaced by onItemExpanded/expandNode's round trip.
-    auto *placeholder = new QTreeWidgetItem(node, QStringList{ tr("Loading...") });
+    auto *placeholder = new QTreeWidgetItem(node, QStringList{ tr("Loading…") });
     placeholder->setData(0, kPlaceholderRole, true);
     placeholder->setFlags(Qt::NoItemFlags);
     return node;

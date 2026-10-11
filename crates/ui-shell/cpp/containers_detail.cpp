@@ -795,7 +795,7 @@ void ContainerDetailArea::ensureFilesTab()
             return;
         }
         QMenu menu(filesTree_);
-        QAction *download = menu.addAction(tr("Download..."));
+        QAction *download = menu.addAction(tr("Download…"));
         if (menu.exec(filesTree_->viewport()->mapToGlobal(pos)) == download) {
             downloadPrompt(item->data(0, kFilesPathRole).toString(), filesTree_);
         }
@@ -893,7 +893,7 @@ void ContainerDetailArea::showLayers()
                         return;
                     }
                     QMenu menu(layerFsTree_);
-                    QAction *download = menu.addAction(tr("Download..."));
+                    QAction *download = menu.addAction(tr("Download…"));
                     if (menu.exec(layerFsTree_->viewport()->mapToGlobal(pos)) != download) {
                         return;
                     }

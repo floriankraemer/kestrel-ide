@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QHash>
 #include <QString>
 #include <QWidget>
@@ -42,6 +43,10 @@ class RunToolbar;
 // cache did, by exactly as much.
 class RunConsolePanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(RunConsolePanel)
+
 public:
     // No Q_OBJECT: this widget declares no signals or slots of its own —
     // it connects to `RunService`'s with member-function pointers, which

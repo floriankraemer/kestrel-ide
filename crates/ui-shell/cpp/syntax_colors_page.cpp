@@ -182,7 +182,7 @@ QWidget *buildSyntaxColorsPage(QWidget *parent,
     auto *hexEdit = new QLineEdit(page);
     hexEdit->setPlaceholderText(QStringLiteral("#rrggbb"));
     hexEdit->setMaximumWidth(100);
-    auto *chooseButton = new QPushButton(QObject::tr("Choose..."), page);
+    auto *chooseButton = new QPushButton(QObject::tr("Choose…"), page);
     auto *boldCheck = new QCheckBox(QObject::tr("Bold"), page);
     auto *italicCheck = new QCheckBox(QObject::tr("Italic"), page);
     auto *underlineCheck = new QCheckBox(QObject::tr("Underline"), page);
@@ -219,8 +219,8 @@ QWidget *buildSyntaxColorsPage(QWidget *parent,
 
     auto syncLevelButton = [editor, languageCombo, resetLevelButton]() {
         const QString languageId = selectedLanguage(languageCombo);
-        resetLevelButton->setText(languageId.isEmpty() ? QObject::tr("Reset Base...")
-                                                       : QObject::tr("Reset Language..."));
+        resetLevelButton->setText(languageId.isEmpty() ? QObject::tr("Reset Base…")
+                                                       : QObject::tr("Reset Language…"));
         resetLevelButton->setEnabled(editor->canResetLevel(languageId));
     };
 

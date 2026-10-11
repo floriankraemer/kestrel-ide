@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QDialog>
 #include <QHash>
 #include <QString>
@@ -35,6 +36,10 @@ class DiffView;
 // learn.
 class RefactorPreviewDialog : public QDialog
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(RefactorPreviewDialog)
+
 public:
     // One line of the preview. `line` is 0-based (the protocol's own
     // numbering) and shown 1-based, matching every other line number in the

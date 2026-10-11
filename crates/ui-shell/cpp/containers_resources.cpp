@@ -69,14 +69,14 @@ void ContainersPanel::showImageContextMenu(QTreeWidgetItem *item, const QPoint &
     const FfiNodeActions actions = containerService_->nodeActions(id);
 
     QMenu menu(tree_);
-    QAction *createContainer = menu.addAction(tr("Create Container..."));
+    QAction *createContainer = menu.addAction(tr("Create Container…"));
     createContainer->setEnabled(actions.canCreateContainer);
     QAction *pull = menu.addAction(tr("Pull"));
     pull->setEnabled(actions.canPull);
-    QAction *push = menu.addAction(tr("Push Image..."));
-    QAction *copyTo = menu.addAction(tr("Copy Image to..."));
+    QAction *push = menu.addAction(tr("Push Image…"));
+    QAction *copyTo = menu.addAction(tr("Copy Image to…"));
     copyTo->setEnabled(actions.canCopy);
-    QAction *tag = menu.addAction(tr("Tag..."));
+    QAction *tag = menu.addAction(tr("Tag…"));
     tag->setEnabled(actions.canTag);
     menu.addSeparator();
     QAction *showLayers = menu.addAction(tr("Show Layers"));
@@ -84,7 +84,7 @@ void ContainersPanel::showImageContextMenu(QTreeWidgetItem *item, const QPoint &
     QAction *inspect = menu.addAction(tr("Inspect"));
     menu.addSeparator();
     QAction *copyImageId = menu.addAction(tr("Copy Image ID"));
-    QAction *remove = menu.addAction(tr("Remove..."));
+    QAction *remove = menu.addAction(tr("Remove…"));
     remove->setEnabled(actions.canRemove);
 
     QAction *chosen = menu.exec(globalPos);
@@ -134,7 +134,7 @@ void ContainersPanel::showNetworkContextMenu(QTreeWidgetItem *item, const QPoint
     QAction *showLabels = menu.addAction(tr("Show Labels"));
     QAction *copyId = menu.addAction(tr("Copy ID"));
     menu.addSeparator();
-    QAction *remove = menu.addAction(tr("Remove..."));
+    QAction *remove = menu.addAction(tr("Remove…"));
     remove->setEnabled(actions.canRemove);
 
     QAction *chosen = menu.exec(globalPos);
@@ -163,7 +163,7 @@ void ContainersPanel::showVolumeContextMenu(QTreeWidgetItem *item, const QPoint 
     QAction *showLabels = menu.addAction(tr("Show Labels"));
     QAction *copyId = menu.addAction(tr("Copy ID"));
     menu.addSeparator();
-    QAction *remove = menu.addAction(tr("Remove..."));
+    QAction *remove = menu.addAction(tr("Remove…"));
     remove->setEnabled(actions.canRemove);
 
     QAction *chosen = menu.exec(globalPos);
@@ -193,7 +193,7 @@ void ContainersPanel::showImagesGroupContextMenu(QTreeWidgetItem *item, const QP
 {
     const QString connectionId = item->data(0, kConnectionRole).toString();
     QMenu menu(tree_);
-    QAction *pull = menu.addAction(tr("Pull Image..."));
+    QAction *pull = menu.addAction(tr("Pull Image…"));
     QAction *cleanDangling = menu.addAction(tr("Clean Up: Dangling Images"));
     QAction *cleanAllUnused = menu.addAction(tr("Clean Up: All Unused Images"));
     QAction *chosen = menu.exec(globalPos);
@@ -213,7 +213,7 @@ void ContainersPanel::showNetworksGroupContextMenu(QTreeWidgetItem *item, const 
 {
     const QString connectionId = item->data(0, kConnectionRole).toString();
     QMenu menu(tree_);
-    QAction *create = menu.addAction(tr("Create Network..."));
+    QAction *create = menu.addAction(tr("Create Network…"));
     QAction *prune = menu.addAction(tr("Clean Up"));
     QAction *chosen = menu.exec(globalPos);
     if (chosen == create) {
@@ -230,7 +230,7 @@ void ContainersPanel::showVolumesGroupContextMenu(QTreeWidgetItem *item, const Q
 {
     const QString connectionId = item->data(0, kConnectionRole).toString();
     QMenu menu(tree_);
-    QAction *create = menu.addAction(tr("Create Volume..."));
+    QAction *create = menu.addAction(tr("Create Volume…"));
     QAction *prune = menu.addAction(tr("Clean Up"));
     QAction *chosen = menu.exec(globalPos);
     if (chosen == create) {

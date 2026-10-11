@@ -122,7 +122,7 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
 
     QAction *selectConfigAction =
       registerAction(runMenu, QStringLiteral("run.selectConfiguration"),
-                      QObject::tr("Select Run Configuration..."), appSettings, actions);
+                      QObject::tr("Select Run Configuration…"), appSettings, actions);
     QObject::connect(selectConfigAction, &QAction::triggered, runConsolePanel, [docks,
                                                                                 runConsolePanel]() {
         docks->show(QStringLiteral("runConsole"));
@@ -159,7 +159,7 @@ void buildRunMenu(QMainWindow *window, RunService *runService, RunConfigEditor *
 
     QAction *editConfigsAction =
       registerAction(runMenu, QStringLiteral("run.editConfigurations"),
-                      QObject::tr("Edit Configurations..."), appSettings, actions);
+                      QObject::tr("Edit Configurations…"), appSettings, actions);
     QObject::connect(editConfigsAction, &QAction::triggered, window,
                       [window, runConfigEditor, containerService, consoleService]() {
                           showRunConfigDialog(window, runConfigEditor, containerService,

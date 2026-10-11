@@ -992,7 +992,7 @@ fn e2e_create_branch_commit_and_merge_through_the_branch_popup() {
 
     let base_branch = current_branch(&repo_root);
 
-    // Open the VCS menu and click "Branches..." by label — the same
+    // Open the VCS menu and click "Branches…" by label — the same
     // reach `diff.rs` uses for "Show Diff", rather than counting
     // arrow-key presses the way `e2e_stage_hunk_touches_only_that_hunks_
     // index_entry` does (Stash/Unstash's arrival between Branches and the
@@ -1002,7 +1002,7 @@ fn e2e_create_branch_commit_and_merge_through_the_branch_popup() {
     ide.wait_for_event(mark, "the VCS menu to open", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "vcs_menu"
     });
-    click_labelled_action(&ide, mark, "vcs_menu_action", "Branches...");
+    click_labelled_action(&ide, mark, "vcs_menu_action", "Branches…");
     ide.wait_for_event(mark, "the branch popup to open", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "branch_popup"
     });
@@ -1081,7 +1081,7 @@ fn e2e_create_branch_commit_and_merge_through_the_branch_popup() {
     ide.wait_for_event(merge_mark, "the VCS menu to open", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "vcs_menu"
     });
-    click_labelled_action(&ide, merge_mark, "vcs_menu_action", "Branches...");
+    click_labelled_action(&ide, merge_mark, "vcs_menu_action", "Branches…");
     ide.wait_for_event(merge_mark, "the branch popup to open", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "branch_popup"
     });

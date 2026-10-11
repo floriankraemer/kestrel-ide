@@ -3,6 +3,7 @@
 #include "e2e_mark.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QLibraryInfo>
 #include <QLocale>
 #include <QTranslator>
@@ -18,6 +19,32 @@ static void initTranslationResources()
 {
     Q_INIT_RESOURCE(translations);
 }
+
+// Qt resolves standard-button text (QDialogButtonBox, QMessageBox) through the
+// "QPlatformTheme" context. qtbase_<locale>.qm is not shipped everywhere (a
+// Windows install has none), so the app's own .ts carries these entries.
+// Nothing in the sources calls tr() for them, so without this table lupdate
+// would drop them as obsolete; the table is never read at run time.
+[[maybe_unused]] static const char *const kStandardButtonTexts[] = {
+    QT_TRANSLATE_NOOP("QPlatformTheme", "OK"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Save"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Save All"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Open"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "&Yes"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Yes to &All"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "&No"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "N&o to All"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Abort"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Retry"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Ignore"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Close"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Cancel"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Discard"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Help"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Apply"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Reset"),
+    QT_TRANSLATE_NOOP("QPlatformTheme", "Restore Defaults"),
+};
 
 namespace ui_shell {
 

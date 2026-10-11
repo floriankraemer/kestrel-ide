@@ -4,6 +4,7 @@
 #include "ui_tokens.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -65,6 +66,10 @@ QRect globalRect(QWidget *widget)
 // a successful commit or the next project open recomputing it.
 class ScopeReviewDialog : public QDialog
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ScopeReviewDialog)
+
 public:
     ScopeReviewDialog(ProjectTreeModel *treeModel, QWidget *parent)
       : QDialog(parent)
@@ -154,6 +159,10 @@ private:
 // parent's resize" shape `FindBar` uses for its own floating chrome.
 class ScopeNoticeBar : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ScopeNoticeBar)
+
 public:
     ScopeNoticeBar(ProjectTreeModel *treeModel, QWidget *parent)
       : QWidget(parent)

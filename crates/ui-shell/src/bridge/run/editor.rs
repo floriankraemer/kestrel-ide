@@ -104,7 +104,7 @@ impl ffi::RunConfigEditor {
 
     /// Add a configuration of `kind` (`"container-image"`/`"containerfile"`/
     /// `"compose"`) prefilled with `options`, for the run-config dialog's
-    /// Add ▸ Containers submenu and "Create Container..." (replacing C4's
+    /// Add ▸ Containers submenu and "Create Container…" (replacing C4's
     /// `createContainerQuick`, ADR-0056 §6). Returns the new entry's index.
     pub fn add_container_configuration(
         &self,

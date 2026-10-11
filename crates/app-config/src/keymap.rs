@@ -32,7 +32,7 @@ pub struct ActionDef {
 pub const ACTIONS: &[ActionDef] = &[
     ActionDef {
         id: "file.openFolder",
-        label: "Open Folder...",
+        label: "Open Folder…",
         category: "File",
         default_shortcut: "",
     },
@@ -44,19 +44,19 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "file.saveAs",
-        label: "Save As...",
+        label: "Save As…",
         category: "File",
         default_shortcut: "Ctrl+Shift+S",
     },
     ActionDef {
         id: "file.preferences",
-        label: "Preferences...",
+        label: "Preferences…",
         category: "File",
         default_shortcut: "Ctrl+,",
     },
     ActionDef {
         id: "file.projectSettings",
-        label: "Project Settings...",
+        label: "Project Settings…",
         category: "File",
         // No default: `Ctrl+,` belongs to the settings dialog itself, and a
         // second shortcut for the same dialog opened on a different tab is
@@ -101,13 +101,13 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "edit.find",
-        label: "Find...",
+        label: "Find…",
         category: "Edit",
         default_shortcut: "Ctrl+F",
     },
     ActionDef {
         id: "edit.replace",
-        label: "Replace...",
+        label: "Replace…",
         category: "Edit",
         default_shortcut: "Ctrl+R",
     },
@@ -125,7 +125,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "edit.findInFiles",
-        label: "Find in Files...",
+        label: "Find in Files…",
         category: "Edit",
         default_shortcut: "Ctrl+Shift+F",
     },
@@ -245,19 +245,19 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "code.generate",
-        label: "Generate...",
+        label: "Generate…",
         category: "Code",
         default_shortcut: "Alt+Insert",
     },
     ActionDef {
         id: "code.insertLiveTemplate",
-        label: "Insert Live Template...",
+        label: "Insert Live Template…",
         category: "Code",
         default_shortcut: "Ctrl+J",
     },
     ActionDef {
         id: "code.surroundWith",
-        label: "Surround With...",
+        label: "Surround With…",
         category: "Code",
         default_shortcut: "Ctrl+Alt+T",
     },
@@ -358,7 +358,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "view.saveLayout",
-        label: "Save Current Layout...",
+        label: "Save Current Layout…",
         category: "View",
         // Unbound by default: keeping a layout is a deliberate, occasional
         // act, and the View category's obvious keys are spoken for.
@@ -366,25 +366,25 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "view.deleteLayout",
-        label: "Delete Layout...",
+        label: "Delete Layout…",
         category: "View",
         default_shortcut: "",
     },
     ActionDef {
         id: "view.searchEverywhere",
-        label: "Search Everywhere...",
+        label: "Search Everywhere…",
         category: "View",
         default_shortcut: "Ctrl+Shift+E",
     },
     ActionDef {
         id: "view.goToClass",
-        label: "Go to Class...",
+        label: "Go to Class…",
         category: "View",
         default_shortcut: "Ctrl+N",
     },
     ActionDef {
         id: "view.goToFile",
-        label: "Go to File...",
+        label: "Go to File…",
         category: "View",
         default_shortcut: "Ctrl+Shift+N",
     },
@@ -458,19 +458,19 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "view.findAction",
-        label: "Find Action...",
+        label: "Find Action…",
         category: "View",
         default_shortcut: "Ctrl+Shift+A",
     },
     ActionDef {
         id: "view.goToSymbol",
-        label: "Go to Symbol...",
+        label: "Go to Symbol…",
         category: "View",
         default_shortcut: "Ctrl+Shift+O",
     },
     ActionDef {
         id: "view.goToLine",
-        label: "Go to Line...",
+        label: "Go to Line…",
         category: "View",
         default_shortcut: "Ctrl+G",
     },
@@ -481,25 +481,25 @@ pub const ACTIONS: &[ActionDef] = &[
     // and inventing one risks colliding with a binding a user already has.
     ActionDef {
         id: "refactor.rename",
-        label: "Rename...",
+        label: "Rename…",
         category: "Refactor",
         default_shortcut: "Shift+F6",
     },
     ActionDef {
         id: "refactor.extractMethod",
-        label: "Extract Method...",
+        label: "Extract Method…",
         category: "Refactor",
         default_shortcut: "Ctrl+Alt+M",
     },
     ActionDef {
         id: "refactor.extractClass",
-        label: "Extract Class...",
+        label: "Extract Class…",
         category: "Refactor",
         default_shortcut: "",
     },
     ActionDef {
         id: "refactor.refactorThis",
-        label: "Refactor This...",
+        label: "Refactor This…",
         category: "Refactor",
         default_shortcut: "Ctrl+Alt+Shift+T",
     },
@@ -597,14 +597,14 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "terminal.selectShell",
-        label: "Select Shell...",
+        label: "Select Shell…",
         category: "Terminal",
         default_shortcut: "",
     },
     // F3-19: Git v1's action set.
     ActionDef {
         id: "vcs.commit",
-        label: "Commit...",
+        label: "Commit…",
         category: "Git",
         default_shortcut: "Ctrl+K",
     },
@@ -628,7 +628,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "vcs.branches",
-        label: "Branches...",
+        label: "Branches…",
         category: "Git",
         default_shortcut: "Ctrl+Shift+`",
     },
@@ -677,13 +677,13 @@ pub const ACTIONS: &[ActionDef] = &[
     // Unbound like `vcs.pull`/`vcs.fetch`.
     ActionDef {
         id: "vcs.stash",
-        label: "Stash Changes...",
+        label: "Stash Changes…",
         category: "Git",
         default_shortcut: "",
     },
     ActionDef {
         id: "vcs.unstash",
-        label: "Unstash...",
+        label: "Unstash…",
         category: "Git",
         default_shortcut: "",
     },
@@ -749,7 +749,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "debug.attach",
-        label: "Attach to Process...",
+        label: "Attach to Process…",
         category: "Debug",
         default_shortcut: "",
     },
@@ -761,7 +761,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "debug.attachRemote",
-        label: "Attach to Remote...",
+        label: "Attach to Remote…",
         category: "Debug",
         default_shortcut: "",
     },
@@ -791,7 +791,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "debug.editBreakpoint",
-        label: "Edit Breakpoint...",
+        label: "Edit Breakpoint…",
         category: "Debug",
         default_shortcut: "",
     },
@@ -945,7 +945,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "run.selectConfiguration",
-        label: "Select Run Configuration...",
+        label: "Select Run Configuration…",
         category: "Run",
         default_shortcut: "Alt+Shift+F10",
     },
@@ -963,7 +963,7 @@ pub const ACTIONS: &[ActionDef] = &[
     },
     ActionDef {
         id: "run.editConfigurations",
-        label: "Edit Configurations...",
+        label: "Edit Configurations…",
         category: "Run",
         default_shortcut: "",
     },

@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 #include <functional>
@@ -32,6 +33,10 @@ class HistoryListView;
 // with the current filter/page and re-renders what comes back.
 class CommitLogPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(CommitLogPanel)
+
 public:
     // `openCommit` opens the commit-detail dock for one commit id —
     // double-click on a row, or Enter.

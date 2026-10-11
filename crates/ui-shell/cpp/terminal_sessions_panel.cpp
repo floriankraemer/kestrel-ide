@@ -69,7 +69,7 @@ TerminalSessionsPanel::TerminalSessionsPanel(TerminalSupervisor *supervisor,
                                       ShortcutReach::OwnerAndChildren);
     connect(newSessionAction_, &QAction::triggered, this, [this]() { addSession(); });
 
-    selectShellAction_ = scopeShortcut(new QAction(tr("Select Shell..."), this), this,
+    selectShellAction_ = scopeShortcut(new QAction(tr("Select Shell…"), this), this,
                                        QStringLiteral("terminal.selectShell"), appSettings_,
                                        ShortcutReach::OwnerAndChildren);
     connect(selectShellAction_, &QAction::triggered, newTabButton_, &QToolButton::showMenu);

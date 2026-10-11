@@ -535,7 +535,7 @@ void AiChatPanel::showHistoryMenu(const QPoint &pos)
     const QString title = item->text();
 
     QMenu menu(this);
-    QAction *rename = menu.addAction(tr("Rename..."));
+    QAction *rename = menu.addAction(tr("Rename…"));
     QAction *remove = menu.addAction(tr("Delete"));
     QAction *chosen = menu.exec(historyList_->viewport()->mapToGlobal(pos));
     if (chosen == rename) {

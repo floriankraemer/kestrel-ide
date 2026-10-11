@@ -646,7 +646,7 @@ void buildMainWindow(AppSettings *appSettings,
                       const std::function<void(int, const QString &)> &progress,
                       const std::function<void(QMainWindow *)> &whenReady)
 {
-    progress(1, QObject::tr("Loading settings..."));
+    progress(1, QObject::tr("Loading settings…"));
 
     auto *window = new IdeMainWindow();
     window->setWindowTitle(QStringLiteral("Kestrel"));
@@ -675,7 +675,7 @@ void buildMainWindow(AppSettings *appSettings,
 
     placeRestored(window, appSettings);
 
-    progress(2, QObject::tr("Starting services..."));
+    progress(2, QObject::tr("Starting services…"));
 
     auto *treeModel = new ProjectTreeModel(window);
     auto *docManager = new DocumentManager(window);
@@ -722,7 +722,7 @@ void buildMainWindow(AppSettings *appSettings,
     // from settings; this call only says "make it match".
     auto mcpStatus = wireMcpStatus(docManager, window);
     docManager->applyMcpSettings();
-    progress(3, QObject::tr("Building workspace..."));
+    progress(3, QObject::tr("Building workspace…"));
     const CentralWidgets central =
       buildCentralWidget(window, treeModel, docManager, appSettings, searchModel,
                           terminalSupervisor, languageService, aiChat, vcsService, runService,
@@ -783,7 +783,7 @@ void buildMainWindow(AppSettings *appSettings,
     // below it) shares one instance instead of capturing a dangling
     // reference — the same std::make_shared trick the settings dialog's
     // colour pickers use.
-    progress(4, QObject::tr("Preparing menus..."));
+    progress(4, QObject::tr("Preparing menus…"));
     auto actions = std::make_shared<QHash<QString, QAction *>>();
 
     // The terminal's Copy/Paste are per-tab QActions (widget-scoped, so
@@ -800,20 +800,20 @@ void buildMainWindow(AppSettings *appSettings,
     // Each entry's rect (as `viewMenu` below): an E2E flow needs them on screen.
     e2eMarkMenuActions(fileMenu, "file_menu_action");
     QAction *openFolderAction = registerAction(fileMenu, QStringLiteral("file.openFolder"),
-                                                QObject::tr("Open Folder..."), appSettings, *actions);
+                                                QObject::tr("Open Folder…"), appSettings, *actions);
     QMenu *recentProjectsMenu = fileMenu->addMenu(QObject::tr("Recent Projects"));
     populateRecentProjectsMenu(recentProjectsMenu, appSettings, treeModel, window);
     fileMenu->addSeparator();
     QAction *saveAction = registerAction(fileMenu, QStringLiteral("file.save"),
                                           QObject::tr("Save"), appSettings, *actions);
     QAction *saveAsAction = registerAction(fileMenu, QStringLiteral("file.saveAs"),
-                                            QObject::tr("Save As..."), appSettings, *actions);
+                                            QObject::tr("Save As…"), appSettings, *actions);
     fileMenu->addSeparator();
     QAction *preferencesAction = registerAction(fileMenu, QStringLiteral("file.preferences"),
-                                                 QObject::tr("Preferences..."), appSettings, *actions);
+                                                 QObject::tr("Preferences…"), appSettings, *actions);
     QAction *projectSettingsAction =
       registerAction(fileMenu, QStringLiteral("file.projectSettings"),
-                     QObject::tr("Project Settings..."), appSettings, *actions);
+                     QObject::tr("Project Settings…"), appSettings, *actions);
     fileMenu->addSeparator();
     QAction *exitAction = registerAction(fileMenu, QStringLiteral("file.exit"),
                                           QObject::tr("Exit"), appSettings, *actions);
@@ -909,11 +909,11 @@ void buildMainWindow(AppSettings *appSettings,
                                            QObject::tr("Paste"), appSettings, *actions);
     editMenu->addSeparator();
     QAction *findAction = registerAction(editMenu, QStringLiteral("edit.find"),
-                                         QObject::tr("Find..."), appSettings, *actions);
+                                         QObject::tr("Find…"), appSettings, *actions);
     QObject::connect(findAction, &QAction::triggered, window,
                      [editorTabs]() { editorTabs->showFindBar(); });
     QAction *replaceAction = registerAction(editMenu, QStringLiteral("edit.replace"),
-                                            QObject::tr("Replace..."), appSettings, *actions);
+                                            QObject::tr("Replace…"), appSettings, *actions);
     QObject::connect(replaceAction, &QAction::triggered, window,
                      [editorTabs]() { editorTabs->showReplaceBar(); });
     QAction *findNextAction = registerAction(editMenu, QStringLiteral("edit.findNext"),
@@ -926,7 +926,7 @@ void buildMainWindow(AppSettings *appSettings,
     QObject::connect(findPreviousAction, &QAction::triggered, window,
                      [editorTabs]() { editorTabs->findPrevious(); });
     QAction *findInFilesAction = registerAction(editMenu, QStringLiteral("edit.findInFiles"),
-                                                 QObject::tr("Find in Files..."), appSettings,
+                                                 QObject::tr("Find in Files…"), appSettings,
                                                  *actions);
 
     // F1-16: multi-caret, comment toggling, the line operations,
@@ -959,14 +959,14 @@ void buildMainWindow(AppSettings *appSettings,
     auto *refactorer = new RefactorController(languageService, searchModel, editorTabs, window);
     QMenu *refactorMenu = window->menuBar()->addMenu(QObject::tr("Re&factor"));
     QAction *renameAction = registerAction(refactorMenu, QStringLiteral("refactor.rename"),
-                                            QObject::tr("Rename..."), appSettings, *actions);
+                                            QObject::tr("Rename…"), appSettings, *actions);
     QObject::connect(renameAction, &QAction::triggered, window,
                       [refactorer]() { refactorer->renameSymbol(); });
 
     refactorMenu->addSeparator();
     QAction *extractMethodAction =
       registerAction(refactorMenu, QStringLiteral("refactor.extractMethod"),
-                      QObject::tr("Extract Method..."), appSettings, *actions);
+                      QObject::tr("Extract Method…"), appSettings, *actions);
     QObject::connect(extractMethodAction, &QAction::triggered, window, [refactorer]() {
         refactorer->extract(
           QStringLiteral("refactor.extract"),
@@ -975,7 +975,7 @@ void buildMainWindow(AppSettings *appSettings,
 
     QAction *extractClassAction =
       registerAction(refactorMenu, QStringLiteral("refactor.extractClass"),
-                      QObject::tr("Extract Class..."), appSettings, *actions);
+                      QObject::tr("Extract Class…"), appSettings, *actions);
     QObject::connect(extractClassAction, &QAction::triggered, window, [refactorer]() {
         refactorer->extract(
           QStringLiteral("refactor.extract.class"),
@@ -984,7 +984,7 @@ void buildMainWindow(AppSettings *appSettings,
 
     QAction *refactorThisAction =
       registerAction(refactorMenu, QStringLiteral("refactor.refactorThis"),
-                      QObject::tr("Refactor This..."), appSettings, *actions);
+                      QObject::tr("Refactor This…"), appSettings, *actions);
     QObject::connect(refactorThisAction, &QAction::triggered, window, [refactorer]() {
         refactorer->extract(QString(),
                             QObject::tr("The language server offers no refactorings here."));
@@ -1038,13 +1038,13 @@ void buildMainWindow(AppSettings *appSettings,
         QObject::connect(action, &QAction::triggered, window,
                          [central, tier]() { central.searchEverywhereDialog->popup(tier); });
     };
-    addSearchAction("view.searchEverywhere", QObject::tr("Search Everywhere..."), Tier::All);
-    addSearchAction("view.goToFile", QObject::tr("Go to File..."), Tier::Files);
-    addSearchAction("view.goToClass", QObject::tr("Go to Class..."), Tier::Classes);
-    addSearchAction("view.findAction", QObject::tr("Find Action..."), Tier::Actions);
-    addSearchAction("view.goToSymbol", QObject::tr("Go to Symbol..."), Tier::Symbols);
+    addSearchAction("view.searchEverywhere", QObject::tr("Search Everywhere…"), Tier::All);
+    addSearchAction("view.goToFile", QObject::tr("Go to File…"), Tier::Files);
+    addSearchAction("view.goToClass", QObject::tr("Go to Class…"), Tier::Classes);
+    addSearchAction("view.findAction", QObject::tr("Find Action…"), Tier::Actions);
+    addSearchAction("view.goToSymbol", QObject::tr("Go to Symbol…"), Tier::Symbols);
     QAction *goToLineAction = registerAction(viewMenu, QStringLiteral("view.goToLine"),
-                                             QObject::tr("Go to Line..."), appSettings, *actions);
+                                             QObject::tr("Go to Line…"), appSettings, *actions);
     QObject::connect(goToLineAction, &QAction::triggered, window, [editorTabs]() {
         editorTabs->goToLine();
     });
@@ -1132,14 +1132,14 @@ void buildMainWindow(AppSettings *appSettings,
     // and every other consumer (status bar detection, VCS, run
     // configurations) is already wired to those signals rather than to
     // startup order.
-    progress(5, QObject::tr("Restoring project..."));
+    progress(5, QObject::tr("Restoring project…"));
     treeModel->reopenLastProject();
 
     // Reopens the persisted editor split layout and shows the window.
     // Files are addressed by absolute path, so this does not need the
     // project (if any) to have opened first — it reopens them under a live
     // tree if one lands, or a plain path if it doesn't.
-    progress(6, QObject::tr("Restoring editors..."));
+    progress(6, QObject::tr("Restoring editors…"));
     editorTabs->restoreLayout(appSettings->editorLayout());
     whenReady(window);
 }

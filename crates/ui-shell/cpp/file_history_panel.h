@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 #include <functional>
@@ -30,6 +31,10 @@ class HistoryListView;
 // title.
 class FileHistoryPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(FileHistoryPanel)
+
 public:
     // F3-14's entry point into `EditorTabs`, reached by callback rather than
     // a dependency on editor_tabs.h (the same shape

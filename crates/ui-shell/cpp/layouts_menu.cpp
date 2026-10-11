@@ -128,10 +128,10 @@ void buildLayoutsMenu(QMenu *viewMenu, QMainWindow *window, AppSettings *appSett
     QMenu *layoutsMenu = viewMenu->addMenu(QObject::tr("Layouts"));
 
     QAction *saveAction = registerAction(layoutsMenu, QStringLiteral("view.saveLayout"),
-                                          QObject::tr("Save Current Layout..."), appSettings,
+                                          QObject::tr("Save Current Layout…"), appSettings,
                                           actions);
     QAction *deleteAction = registerAction(layoutsMenu, QStringLiteral("view.deleteLayout"),
-                                            QObject::tr("Delete Layout..."), appSettings, actions);
+                                            QObject::tr("Delete Layout…"), appSettings, actions);
 
     QObject::connect(saveAction, &QAction::triggered, window,
                       [window, appSettings, dockManager, editorTabs]() {

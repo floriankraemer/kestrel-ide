@@ -1229,7 +1229,7 @@ impl ffi::RunService {
         ffi::FfiResult::default()
     }
 
-    /// The compose service node's "Scale...": `compose up -d --scale
+    /// The compose service node's "Scale…": `compose up -d --scale
     /// service=n --no-recreate`, tracked.
     pub fn scale_compose_service(
         mut self: Pin<&mut Self>,

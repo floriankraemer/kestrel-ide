@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QCoreApplication>
 #include <QWidget>
 
 class QEvent;
@@ -25,6 +26,10 @@ class CodeEditor;
 // than a tick, so it reads as a corner badge, not one more line's mark.
 class ErrorStripe : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ErrorStripe)
+
 public:
     explicit ErrorStripe(CodeEditor *editor);
 

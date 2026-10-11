@@ -61,27 +61,27 @@ FindUsagesPanel::FindUsagesPanel(SearchModel *searchModel, EditorTabs *editorTab
 
 void FindUsagesPanel::findUsages(const QString &name)
 {
-    beginQuery(tr("Searching usages of \"%1\"...").arg(name));
+    beginQuery(tr("Searching usages of \"%1\"…").arg(name));
     searchModel_->findUsages(name);
 }
 
 void FindUsagesPanel::findUsagesAt(const QString &name, const QString &path, quint32 line,
                                     quint32 character)
 {
-    beginQuery(tr("Searching usages of \"%1\"...").arg(name));
+    beginQuery(tr("Searching usages of \"%1\"…").arg(name));
     searchModel_->usagesAt(name, path, line, character);
 }
 
 void FindUsagesPanel::findImplementationsAt(const QString &name, const QString &path,
                                              quint32 line, quint32 character)
 {
-    beginQuery(tr("Searching implementations of \"%1\"...").arg(name));
+    beginQuery(tr("Searching implementations of \"%1\"…").arg(name));
     searchModel_->implementationsAt(name, path, line, character);
 }
 
 void FindUsagesPanel::findSupertypes(const QString &name)
 {
-    beginQuery(tr("Searching supertypes of \"%1\"...").arg(name));
+    beginQuery(tr("Searching supertypes of \"%1\"…").arg(name));
     searchModel_->findSupertypes(name);
 }
 

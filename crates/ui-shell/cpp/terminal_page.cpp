@@ -50,7 +50,7 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
     for (const FfiShellCandidate &shell : appSettings->availableShells()) {
         shellBox->addItem(shell.label, shell.id);
     }
-    shellBox->addItem(QObject::tr("Custom..."), QString::fromLatin1(kCustomShell));
+    shellBox->addItem(QObject::tr("Custom…"), QString::fromLatin1(kCustomShell));
     form->addRow(QObject::tr("Shell:"), shellBox);
 
     auto *pathEdit = new QLineEdit(current.shell_path, page);
@@ -87,7 +87,7 @@ TerminalPage buildTerminalPage(QWidget *parent, AppSettings *appSettings)
 
     auto *directoryEdit = new QLineEdit(current.start_directory, page);
     directoryEdit->setPlaceholderText(QObject::tr("Project root"));
-    auto *browseButton = new QPushButton(QObject::tr("Browse..."), page);
+    auto *browseButton = new QPushButton(QObject::tr("Browse…"), page);
     QObject::connect(browseButton, &QPushButton::clicked, page, [page, directoryEdit]() {
         const QString chosen = QFileDialog::getExistingDirectory(
           page, QObject::tr("Terminal Start Directory"), directoryEdit->text());

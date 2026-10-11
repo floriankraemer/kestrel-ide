@@ -98,7 +98,7 @@ QWidget *buildProjectScopeSettingsPage(QWidget *parent, ProjectTreeModel *treeMo
     }
 
     auto *excludedButtons = new QHBoxLayout();
-    auto *addExcludedButton = new QPushButton(QObject::tr("Add..."), excludedGroup);
+    auto *addExcludedButton = new QPushButton(QObject::tr("Add…"), excludedGroup);
     auto *removeExcludedButton = new QPushButton(QObject::tr("Remove"), excludedGroup);
     excludedButtons->addWidget(addExcludedButton);
     excludedButtons->addWidget(removeExcludedButton);

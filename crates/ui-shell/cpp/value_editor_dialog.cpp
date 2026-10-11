@@ -67,11 +67,11 @@ ValueEditorDialog::ValueEditorDialog(ResultProvider *provider, quint64 resultId,
     connect(prettyButton, &QPushButton::clicked, this, &ValueEditorDialog::togglePrettyJson);
     buttonRow->addWidget(prettyButton);
 
-    auto *loadButton = new QPushButton(tr("Load from File..."), this);
+    auto *loadButton = new QPushButton(tr("Load from File…"), this);
     connect(loadButton, &QPushButton::clicked, this, &ValueEditorDialog::loadFromFile);
     buttonRow->addWidget(loadButton);
 
-    auto *saveToFileButton = new QPushButton(tr("Save to File..."), this);
+    auto *saveToFileButton = new QPushButton(tr("Save to File…"), this);
     connect(saveToFileButton, &QPushButton::clicked, this, &ValueEditorDialog::saveToFile);
     buttonRow->addWidget(saveToFileButton);
 

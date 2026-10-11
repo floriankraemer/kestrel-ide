@@ -50,12 +50,12 @@ SearchResultsPanel::SearchResultsPanel(SearchModel *searchModel, ui_shell::Edito
   , openAt_(std::move(openAt))
 {
     queryEdit_ = new QLineEdit(this);
-    queryEdit_->setPlaceholderText(tr("Find in files..."));
+    queryEdit_->setPlaceholderText(tr("Find in files…"));
     regexCheck_ = new QCheckBox(tr("Regex"), this);
     caseCheck_ = new QCheckBox(tr("Match case"), this);
     wholeWordCheck_ = new QCheckBox(tr("Whole word"), this);
     replaceEdit_ = new QLineEdit(this);
-    replaceEdit_->setPlaceholderText(tr("Replace with..."));
+    replaceEdit_->setPlaceholderText(tr("Replace with…"));
     auto *replaceAllButton = new QPushButton(tr("Replace All"), this);
     statusLabel_ = new QLabel(this);
 
@@ -216,7 +216,7 @@ void SearchResultsPanel::runSearch()
     preview_->clearPreview();
     matchCount_ = 0;
     ++generation_;
-    statusLabel_->setText(tr("Searching..."));
+    statusLabel_->setText(tr("Searching…"));
     FfiSearchOptions options;
     options.is_regex = regexCheck_->isChecked();
     options.case_sensitive = caseCheck_->isChecked();
@@ -303,7 +303,7 @@ void SearchResultsPanel::appendHits(quint64 generation, const ::rust::Vec<FfiSea
         ++matchCount_;
     }
     results_->setUpdatesEnabled(true);
-    statusLabel_->setText(tr("Searching... %1 match(es)").arg(matchCount_));
+    statusLabel_->setText(tr("Searching… %1 match(es)").arg(matchCount_));
 }
 
 void SearchResultsPanel::replaceAll()
@@ -333,7 +333,7 @@ void SearchResultsPanel::replaceAll()
     pendingIsRegex_ = regexCheck_->isChecked();
     pendingCaseSensitive_ = caseCheck_->isChecked();
 
-    statusLabel_->setText(tr("Preparing preview..."));
+    statusLabel_->setText(tr("Preparing preview…"));
     searchModel_->previewReplacements(toFfiEdits(pendingEdits_),
                                       pendingPattern_,
                                       pendingReplacement_,
@@ -414,7 +414,7 @@ void SearchResultsPanel::onReplacePreviewReady(const QStringList &paths)
         return;
     }
 
-    statusLabel_->setText(tr("Replacing..."));
+    statusLabel_->setText(tr("Replacing…"));
     searchModel_->replaceInFiles(toFfiEdits(finalEdits),
                                  pendingPattern_,
                                  pendingReplacement_,

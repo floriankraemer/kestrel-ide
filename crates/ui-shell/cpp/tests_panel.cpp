@@ -1,8 +1,10 @@
 #include "tests_panel.h"
 
+#include "code_editor.h"
 #include "coverage_panel.h"
 #include "dock_layout.h"
 #include "e2e_mark.h"
+#include "editor_tabs.h"
 #include "theme.h"
 
 #include "DockAreaWidget.h"
@@ -512,9 +514,13 @@ void TestsPanel::showContextMenu(const QPoint &pos)
 TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            ads::CDockAreaWidget *relativeTo, TestService *testService,
                            AppSettings *appSettings, TestsPanel::OpenAt openAt,
-                           TestsPanel::OpenText openText)
+                           EditorTabs *editorTabs)
 {
-    auto *panel = new TestsPanel(testService, appSettings, openAt, std::move(openText), dockManager);
+    const auto openText = [editorTabs](const QString &path) -> std::optional<QString> {
+        const CodeEditor *editor = editorTabs->editorForPath(path);
+        return editor != nullptr ? std::optional<QString>(editor->toPlainText()) : std::nullopt;
+    };
+    auto *panel = new TestsPanel(testService, appSettings, openAt, openText, dockManager);
     auto *dock = new ads::CDockWidget(dockManager, QObject::tr("Tests"));
     dock->setWidget(panel);
     docks->registerDock(QStringLiteral("tests"), dock, ads::CenterDockWidgetArea, relativeTo);

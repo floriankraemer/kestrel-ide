@@ -91,9 +91,12 @@ QString comparablePath(const QString &path)
 }  // namespace
 
 void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEditor *runConfigEditor,
-                    ContainerService *containerService)
+                    ContainerService *containerService, RunConsolePanel *runConsolePanel,
+                    DebugService *debugService, TestService *testService)
 {
     editorTabs->setRunService(runService);
+    wirePhpUnitConfigurations(runService, runConsolePanel, debugService, testService,
+                              runConsolePanel->window()); // E4
     editorTabs->setContainerRunContext(runConfigEditor, containerService); // C5
     // A configuration list that just changed can make a file runnable that
     // was not — the first `cargo run` entry a detection scan adds, say — so

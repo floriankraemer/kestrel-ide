@@ -44,9 +44,10 @@ class ImageViewer;
 class EditorTabs;
 void wireVcsService(VcsService *vcsService, ProjectTreeModel *treeModel, EditorTabs *editorTabs);
 // R1-7: gives EditorTabs the RunService its gutter Run icon asks and acts
-// through (editor_tabs_run.cpp).
+// through (editor_tabs_run.cpp), then calls `wirePhpUnitConfigurations`.
 void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEditor *runConfigEditor,
-                    ContainerService *containerService);
+                    ContainerService *containerService, RunConsolePanel *runConsolePanel,
+                    DebugService *debugService, TestService *testService);
 // D2-5/D3: gives EditorTabs the DebugService whose breakpoints its gutter
 // shows and toggles (editor_tabs_debug.cpp).
 void wireDebugService(DebugService *debugService, EditorTabs *editorTabs, TestService *testService);

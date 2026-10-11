@@ -25,6 +25,7 @@ class CDockManager;
 namespace ui_shell {
 
 class DockRegistry;
+class EditorTabs;
 
 // The Tests dock (the PHP tooling plan's D5): a run's suite/class/method
 // tree, filling in live as `TestService` streams TeamCity messages, with a
@@ -108,9 +109,10 @@ private:
 
 // Builds the panel, wraps it in a dock widget and registers it with `docks`
 // under id `"tests"` — the same one-call pattern `buildBuildDock` uses.
+// `editorTabs` supplies an open file's unsaved text for Jump to Source.
 TestsPanel *buildTestsDock(ads::CDockManager *dockManager, DockRegistry *docks,
                            ads::CDockAreaWidget *relativeTo, TestService *testService,
                            AppSettings *appSettings, TestsPanel::OpenAt openAt,
-                           TestsPanel::OpenText openText);
+                           EditorTabs *editorTabs);
 
 } // namespace ui_shell

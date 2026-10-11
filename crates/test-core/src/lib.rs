@@ -19,6 +19,8 @@
 //! - [`tree`] — [`tree::TestTree`], [`tree::TestId`], [`tree::TestStatus`]:
 //!   the suite/class/method hierarchy, filled incrementally.
 //! - [`teamcity`] — the primary streaming format, PHPUnit's `--teamcity`.
+//! - [`location`] — the TeamCity `locationHint`: which file (and class or
+//!   method) a node lives in.
 //! - [`junit`] — the batch fallback format, `--log-junit`.
 //! - [`coverage`] — Clover reports: per-file line hits and per-directory
 //!   summaries (PHP parity plan T4).
@@ -33,6 +35,7 @@ pub mod coverage;
 mod diagnostics;
 pub mod filter;
 mod junit;
+mod location;
 mod runner;
 mod selection;
 mod teamcity;
@@ -40,6 +43,7 @@ mod tree;
 
 pub use diagnostics::{diagnostics_by_file, diagnostics_by_file_on};
 pub use junit::{parse as parse_junit_xml, JUnitTestCase, ParseError as JUnitParseError};
+pub use location::{parse_location_hint, TestLocation, TestSymbol};
 pub use runner::{
     parse_output_format, run, run_on, run_on_env, OutputFormat, RunFailure, TestRunHandle,
     TestSink, UnknownOutputFormat,

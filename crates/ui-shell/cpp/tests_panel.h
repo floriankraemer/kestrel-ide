@@ -68,6 +68,7 @@ private:
     void onTestRunFinished(bool ok, bool matchedNothing, const QString &message);
     void onSelectionChanged();
     void onFailureLinkActivated(int textPosition);
+    void jumpToSource(const QString &nodeId);
     void showContextMenu(const QPoint &pos);
     void report(const FfiResult &result);
     void updateToolbarEnablement();

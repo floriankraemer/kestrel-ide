@@ -273,6 +273,38 @@ impl ffi::TestService {
         }
     }
 
+    /// Where `node_id` lives in source. The hint names the file, and at most
+    /// a class or method; its line comes from the file's current text.
+    pub fn node_source(&self, node_id: &QString) -> ffi::FfiResolvedLink {
+        let Some(root) = current_project_root() else {
+            return ffi::FfiResolvedLink::default();
+        };
+        let id = test_core::TestId(node_id.to_string());
+        let tree = self.tree.borrow();
+        let Some(location) = tree.node(&id).and_then(|node| node.location.as_ref()) else {
+            return ffi::FfiResolvedLink::default();
+        };
+        let host = (*self.run_host.borrow())
+            .clone()
+            .unwrap_or_else(|| process_exec::host::ExecHost::for_path(&root));
+        let path = location.local_path(&host, &root);
+        let line = location.line.unwrap_or_else(|| {
+            let symbol = location.symbol.as_ref();
+            let text = std::fs::read_to_string(&path).ok();
+            symbol
+                .zip(text)
+                .and_then(|(symbol, text)| php_core::tests::symbol_line(&text, symbol))
+                .map_or(1, |zero_based| zero_based + 1)
+        });
+        ffi::FfiResolvedLink {
+            found: true,
+            path: QString::from(path.display().to_string().as_str()),
+            line,
+            has_column: false,
+            column: 0,
+        }
+    }
+
     pub fn is_running(&self) -> bool {
         !self.runs.borrow().is_empty()
     }

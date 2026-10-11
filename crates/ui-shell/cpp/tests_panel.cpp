@@ -10,6 +10,7 @@
 #include "DockWidget.h"
 
 #include <QAction>
+#include <QKeySequence>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
@@ -20,6 +21,7 @@
 #include <QPlainTextEdit>
 #include <QPoint>
 #include <QScrollBar>
+#include <QShortcut>
 #include <QSplitter>
 #include <QTextCursor>
 #include <QTimer>
@@ -249,6 +251,14 @@ TestsPanel::TestsPanel(TestService *testService, OpenAt openAt, QWidget *parent)
     connect(stopButton_, &QToolButton::clicked, this, &TestsPanel::stopTests);
     connect(tree_, &QTreeWidget::itemSelectionChanged, this, &TestsPanel::onSelectionChanged);
     connect(tree_, &QTreeWidget::customContextMenuRequested, this, &TestsPanel::showContextMenu);
+    connect(tree_, &QTreeWidget::itemActivated, this,
+            [this](QTreeWidgetItem *item) { jumpToSource(item->data(0, kIdRole).toString()); });
+    // Widget-scoped, so it neither collides with the data editor's F4 nor
+    // fires from another dock.
+    auto *jumpShortcut = new QShortcut(QKeySequence(Qt::Key_F4), tree_);
+    jumpShortcut->setContext(Qt::WidgetShortcut);
+    connect(jumpShortcut, &QShortcut::activated, this,
+            [this] { jumpToSource(selectedNodeId_); });
     connect(testService_, &TestService::testRunStarted, this, &TestsPanel::onTestRunStarted);
     connect(testService_, &TestService::testTreeChanged, this, &TestsPanel::onTestTreeChanged);
     connect(testService_, &TestService::testOutputAppended, this,
@@ -428,6 +438,17 @@ void TestsPanel::onFailureLinkActivated(int textPosition)
     }
 }
 
+void TestsPanel::jumpToSource(const QString &nodeId)
+{
+    if (nodeId.isEmpty() || !openAt_) {
+        return;
+    }
+    const FfiResolvedLink source = testService_->nodeSource(nodeId);
+    if (source.found) {
+        openAt_(source.path, static_cast<int>(source.line), 0);
+    }
+}
+
 void TestsPanel::showContextMenu(const QPoint &pos)
 {
     QTreeWidgetItem *item = tree_->itemAt(pos);
@@ -441,6 +462,9 @@ void TestsPanel::showContextMenu(const QPoint &pos)
 
     QMenu menu(tree_);
     menu.setToolTipsVisible(true);
+    QAction *jump = menu.addAction(tr("Jump to Source"));
+    jump->setShortcut(QKeySequence(Qt::Key_F4));
+    jump->setEnabled(testService_->nodeSource(id).found);
     QAction *rerun = menu.addAction(label);
     // The framework cannot narrow a rerun to a tree node (decided in Rust):
     // show the action greyed out with the reason rather than refuse a click.
@@ -449,7 +473,9 @@ void TestsPanel::showContextMenu(const QPoint &pos)
     rerun->setToolTip(block);
     e2eMarkMenuActions(&menu, "tests_menu_action");
     QAction *chosen = menu.exec(tree_->viewport()->mapToGlobal(pos));
-    if (chosen == rerun) {
+    if (chosen == jump) {
+        jumpToSource(id);
+    } else if (chosen == rerun) {
         report(testService_->runNode(id));
     }
 }

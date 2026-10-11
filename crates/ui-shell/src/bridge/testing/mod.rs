@@ -845,6 +845,10 @@ impl ffi::TestService {
             let matched_nothing = result
                 .as_ref()
                 .is_ok_and(|code| handle.matched_nothing(*code));
+            let start_failure = result
+                .as_ref()
+                .ok()
+                .and_then(|code| handle.start_failure(*code));
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
                 // Whatever never reported (Stop, a fatal error, a killed
@@ -862,7 +866,10 @@ impl ffi::TestService {
                     service.as_mut().coverage_changed();
                 }
                 let (ok, message) = match &result {
-                    Ok(_) => (true, String::new()),
+                    Ok(_) => match start_failure {
+                        Some(failure) => (false, failure),
+                        None => (true, String::new()),
+                    },
                     Err(test_core::RunFailure::NotFound) => {
                         (false, "test framework program not found".to_string())
                     }

@@ -7555,8 +7555,9 @@ mod ffi {
         fn test_output_appended(self: Pin<&mut TestService>, text: QString);
 
         /// The run finished. `ok` is false for a run failure (not found,
-        /// an I/O error) — a nonzero *test* exit code (failures found) is
-        /// still `ok`, the same distinction `AnalysisService::
+        /// an I/O error, a non-zero exit before any test reported:
+        /// `TestRunHandle::start_failure`) — a nonzero *test* exit code
+        /// (failures found) is still `ok`, the same distinction `AnalysisService::
         /// analyzerFinished` draws. `matched_nothing` is a clean exit that
         /// reported no test (a `--filter` that matched nothing).
         #[qsignal]

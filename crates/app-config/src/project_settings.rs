@@ -572,14 +572,36 @@ impl ProjectSettings {
 /// `.ide/settings.toml` is meant to be committed, but it sits next to the
 /// index cache at `.ide-index/`, which is not. Without this file the obvious
 /// reflex — `echo .ide >> .gitignore` — silently un-commits the settings the
-/// project is trying to share. An existing file is never touched: it is the
-/// user's.
+/// project is trying to share. An existing file is the user's: it is only
+/// ever given the `local/` line it lacks.
 pub(crate) fn ensure_gitignore(dir: &Path) -> Result<(), ConfigError> {
     let path = dir.join(PROJECT_GITIGNORE);
-    if path.exists() {
+    if !path.exists() {
+        fs::write(&path, PROJECT_GITIGNORE_BODY)?;
         return Ok(());
     }
-    fs::write(&path, PROJECT_GITIGNORE_BODY)?;
+    // A user's own file is kept, but it must still keep `local/` (test
+    // history, breakpoints: absolute paths and failure text) out of commits.
+    append_missing_line(&path, LOCAL_IGNORE_PATTERN)
+}
+
+/// The `.ide/.gitignore` line that keeps machine-local state uncommitted.
+const LOCAL_IGNORE_PATTERN: &str = "local/";
+
+/// Append `line` to the file at `path` unless it already has it.
+fn append_missing_line(path: &Path, line: &str) -> Result<(), ConfigError> {
+    let existing = fs::read_to_string(path).unwrap_or_default();
+    if existing.lines().any(|kept| kept.trim() == line) {
+        return Ok(());
+    }
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        writeln!(file)?;
+    }
+    writeln!(file, "{line}")?;
     Ok(())
 }
 
@@ -594,36 +616,35 @@ pub(crate) fn ensure_gitignore(dir: &Path) -> Result<(), ConfigError> {
 /// only the project's own root ignore file can cover every location one
 /// might appear at.
 ///
-/// Unlike [`ensure_gitignore`], an *existing* file is not left untouched:
-/// a fresh checkout almost always already has a `.gitignore`, and skipping
-/// it the way the `.ide/` seeding does would mean this pattern is never
-/// added to any real project. Appending one missing line is still narrow
-/// enough to respect the same spirit — nothing here rewrites or reorders
-/// content a user wrote, it only adds the one line this feature needs and
-/// only when that exact line is not present yet.
+/// An *existing* file is not left untouched: a fresh checkout almost always
+/// already has a `.gitignore`, and skipping it would mean this pattern is
+/// never added to any real project. Appending one missing line is still
+/// narrow enough — nothing here rewrites or reorders content a user wrote,
+/// it only adds the one line this feature needs and only when that exact
+/// line is not present yet.
 pub fn ensure_root_gitignore_pattern(
     project_root: &Path,
     pattern: &str,
 ) -> Result<(), ConfigError> {
-    let path = project_root.join(PROJECT_GITIGNORE);
-    let existing = fs::read_to_string(&path).unwrap_or_default();
-    if existing.lines().any(|line| line == pattern) {
-        return Ok(());
-    }
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
-    if !existing.is_empty() && !existing.ends_with('\n') {
-        writeln!(file)?;
-    }
-    writeln!(file, "{pattern}")?;
-    Ok(())
+    append_missing_line(&project_root.join(PROJECT_GITIGNORE), pattern)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_existing_ide_gitignore_gains_the_local_line_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(PROJECT_GITIGNORE);
+        fs::write(&path, "*.log").unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "*.log\nlocal/\n");
+        fs::remove_file(&path).unwrap();
+        ensure_gitignore(dir.path()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), PROJECT_GITIGNORE_BODY);
+    }
 
     fn project() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
@@ -1098,7 +1119,7 @@ mod tests {
     }
 
     #[test]
-    fn saving_seeds_a_gitignore_but_never_replaces_one() {
+    fn saving_seeds_a_gitignore_and_only_adds_local_to_ones_own() {
         let root = project();
         save(root.path(), &ProjectSettings::default()).unwrap();
         let gitignore = root.path().join(PROJECT_DIR).join(PROJECT_GITIGNORE);
@@ -1107,7 +1128,7 @@ mod tests {
 
         fs::write(&gitignore, "# mine\n").unwrap();
         save(root.path(), &ProjectSettings::default()).unwrap();
-        assert_eq!(fs::read_to_string(&gitignore).unwrap(), "# mine\n");
+        assert_eq!(fs::read_to_string(&gitignore).unwrap(), "# mine\nlocal/\n");
     }
 
     #[test]

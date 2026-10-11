@@ -39,6 +39,7 @@ pub(super) fn resolve(config: &run_core::RunConfig, root: &Path) -> Result<Confi
         &root.to_string_lossy(),
         cfg!(windows),
     )
+    .and_then(|plan| php_core::phpunit_run::check_working_directory(&plan, root).map(|()| plan))
     .map_err(|error| format!("\"{}\" {error}", config.name))?;
     let env = config
         .env
@@ -78,6 +79,7 @@ pub(super) fn remember(config: &run_core::RunConfig, root: &Path) -> Result<(), 
     let config = config.clone();
     app_config::project_settings::update(root, move |settings| {
         let mut configs = settings.run_configs.clone().unwrap_or_default();
+        php_core::phpunit_run::forget_earlier(&mut configs, &config);
         run_core::remember_temporary(&mut configs, config.clone());
         if let Some(stored) = configs.iter_mut().find(|stored| stored.id == config.id) {
             if let Some(name) = php_core::phpunit_run::refreshed_name(stored) {
@@ -149,18 +151,15 @@ pub(crate) fn run_for_before_launch(config: run_core::RunConfig) -> Result<(), S
         .unwrap_or_else(|_| Err("the test run ended without a result".to_string()))
 }
 
-/// The project's stored configuration with `config`'s id, if any: an editor
-/// run reuses the temporary configuration the dialog may have edited.
+/// The project's stored configuration for `config`, if any
+/// (`php_core::phpunit_run::stored_for`): an editor run reuses the
+/// temporary configuration the dialog may have edited.
 pub(super) fn stored_or(config: run_core::RunConfig, root: &Path) -> run_core::RunConfig {
-    app_config::project_settings::load(root)
+    let stored = app_config::project_settings::load(root)
         .ok()
         .and_then(|settings| settings.run_configs)
-        .and_then(|configs| {
-            configs
-                .into_iter()
-                .find(|stored| stored.id == config.id && is_phpunit(stored))
-        })
-        .unwrap_or(config)
+        .unwrap_or_default();
+    php_core::phpunit_run::stored_for(&stored, config)
 }
 
 fn saved_config(id: &str) -> Result<run_core::RunConfig, ffi::FfiResult> {

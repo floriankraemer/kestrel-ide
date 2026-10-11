@@ -63,6 +63,7 @@ A test reported by Run All reruns ad hoc, as before.
 **A run is prepared off the Qt thread.**
 `TestService::start` reads only what needs the Qt thread (the tree, the runs that filled it), then a worker finds the editor run's monorepo package, the stored configuration, the settings and the framework's program, which under WSL or in a container is a process start.
 The run then starts on the Qt thread; a refusal found on the worker arrives as `testRunRefused`, shown in the Tests dock and the status bar.
+A configuration whose working directory does not exist is refused with a sentence naming it, before any program is looked for.
 
 **Editor runs create temporary configurations.**
 A caret run, a gutter run and a data-set run resolve to a temporary `phpunit` configuration when the run starts, persisted with `remember_temporary`.
@@ -89,6 +90,7 @@ The "defined in the configuration file" scope with a suite is `--testsuite <name
 A package that only autoloads (a `composer.json` without either) runs with the project's suite, as PhpStorm runs it.
 `TestPackage::scope` gives a tree run, a gutter run, a caret run and a data-set rerun the package as `working_directory` and its PHPUnit configuration as `configuration`; the project's own package leaves the configuration unchanged.
 The working directory is part of a temporary configuration's id only when it is set, so the ids earlier configurations were stored under hold.
+A package's temporary configuration an earlier build stored without the working directory and configuration file (`phpunit_run::earlier_id`) is taken over by the next editor run of the same test, its edits kept, and dropped from the list, so the run is not listed twice.
 `TestService` then treats the working directory as the run's root:
 - the framework program is the package's (`vendor/bin/phpunit` there), else the project's, and the toolchains are detected in both;
 - `test_core::run_on_env` starts in it, and its failure links and diagnostics resolve against it;

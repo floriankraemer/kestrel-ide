@@ -89,7 +89,10 @@ The editor page shows the field as "Custom working directory", and without an ex
 
 **Go to Test lists the convention's tests and every covering test (#426).**
 `php_core::test_navigation::CoversIndex` holds the project's `*Test.php` files below the test directories (every `autoload-dev` root, else `tests/`) with the classes each says it covers (`#[CoversClass]`, `#[CoversMethod]`, `@covers`, Pest's `covers()`), read within the PHPUnit model's budget (2000 files, 20000 entries, 512 KiB a file) and parsed only when a file mentions covering at all.
-`CoversCache` keeps one per project on `TestService`: built on a thread of its own on the first Go to Test, rebuilt when the PSR-4 roots change or more than 1000 changes pile up, and refreshed for each PHP file or directory the project watcher reports (re-read, dropped, or a new directory scanned).
+`CoversCache` keeps one per project on `TestService`: built on a thread of its own on the first Go to Test, rebuilt when the PSR-4 roots change or more than 1000 changes pile up, and refreshed for each PHP file or directory the project watcher reports (re-read, dropped, or a new directory scanned for the files it does not hold yet).
+Roots that change while the first build runs mark it stale, so the old roots' index is never published, and the queued changes are kept.
+A search waiting for one project's index gives up when another project is opened rather than answering with that project's index.
+A refresh never grows the index past the scan budget's 2000 files, a renamed or deleted ancestor of a test directory takes its tests along, and a file deleted before its report arrives is not listed.
 The watcher's report only queues the path, so the Qt thread never waits on a `\\wsl.localhost` share; the next search applies the queue on its worker thread.
 A search answers the `<Name>Test` convention's matches, then the tests that cover the class, then (only when the convention found none) the test files named after it.
 While the index is still being built a convention match answers at once with a status-bar note that the covering tests are still being indexed; with no convention match the search waits for the index, since it has nothing to show meanwhile.

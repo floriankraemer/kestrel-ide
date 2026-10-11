@@ -83,7 +83,8 @@ impl CoversIndex {
         index
     }
 
-    /// Read every test file below `dir` into the index.
+    /// Read every test file below `dir` the index does not hold yet: one it
+    /// holds is re-read on its own watcher report.
     fn scan(&mut self, dir: PathBuf, budget: &mut Budget) {
         let mut pending = vec![dir];
         while let Some(dir) = pending.pop() {
@@ -93,7 +94,11 @@ impl CoversIndex {
             for (path, is_dir, is_file) in phpunit_xml::entries_of(&dir, budget) {
                 if is_dir && !phpunit_xml::is_skipped(&path) {
                     pending.push(path);
-                } else if is_file && is_test_file_name(&path) && budget.files > 0 {
+                } else if is_file
+                    && is_test_file_name(&path)
+                    && budget.files > 0
+                    && !self.files.contains_key(&path)
+                {
                     budget.files -= 1;
                     if let Some(covered) = read_covered(&path) {
                         self.files.insert(path, covered);
@@ -104,35 +109,57 @@ impl CoversIndex {
     }
 
     /// Whether `path` lies in a scanned test directory, outside the
-    /// dependency directories the scan never enters.
+    /// dependency directories the scan never enters, or is a test
+    /// directory's ancestor (a package renamed or deleted with its tests).
     fn holds(&self, path: &Path) -> bool {
         self.dirs.iter().any(|dir| {
-            path.strip_prefix(dir).is_ok_and(|rest| {
-                rest.parent()
-                    .is_none_or(|parent| !parent.ancestors().any(phpunit_xml::is_skipped))
-            })
+            dir.starts_with(path)
+                || path.strip_prefix(dir).is_ok_and(|rest| {
+                    rest.parent()
+                        .is_none_or(|parent| !parent.ancestors().any(phpunit_xml::is_skipped))
+                })
         })
     }
 
     /// Bring `path` up to date after the watcher reported it: a test file is
     /// re-read or dropped, a new directory scanned, a removed one dropped.
+    /// The index never grows past the scan budget's file count.
     pub fn refresh(&mut self, path: &Path) {
         if !self.holds(path) {
             return;
         }
         if path.is_dir() {
-            if !phpunit_xml::is_skipped(path) {
-                let mut budget = Budget {
-                    files: phpunit_xml::MAX_SCANNED_FILES,
-                    entries: phpunit_xml::MAX_VISITED_ENTRIES,
-                };
-                self.scan(path.to_path_buf(), &mut budget);
+            let mut budget = Budget {
+                files: phpunit_xml::MAX_SCANNED_FILES.saturating_sub(self.files.len()),
+                entries: phpunit_xml::MAX_VISITED_ENTRIES,
+            };
+            let below: Vec<PathBuf> = self
+                .dirs
+                .iter()
+                .filter(|dir| dir.starts_with(path))
+                .cloned()
+                .collect();
+            let targets = if below.is_empty() {
+                vec![path.to_path_buf()]
+            } else {
+                below
+            };
+            for dir in targets {
+                if !phpunit_xml::is_skipped(&dir) {
+                    self.scan(dir, &mut budget);
+                }
             }
             return;
         }
-        match read_covered(path).filter(|_| is_test_file_name(path)) {
+        let covered = is_test_file_name(path)
+            .then(|| read_covered(path))
+            .flatten();
+        match covered {
             Some(covered) => {
-                self.files.insert(path.to_path_buf(), covered);
+                let room = self.files.len() < phpunit_xml::MAX_SCANNED_FILES;
+                if room || self.files.contains_key(path) {
+                    self.files.insert(path.to_path_buf(), covered);
+                }
             }
             // Gone: the file, or a directory and everything indexed below it.
             None => self.files.retain(|file, _| !file.starts_with(path)),
@@ -147,6 +174,8 @@ impl CoversIndex {
         self.files
             .iter()
             .filter(|(_, covered)| covered.iter().any(|class| class == subject))
+            // A file deleted since the last watcher report is not offered.
+            .filter(|(file, _)| file.is_file())
             .filter_map(|(file, _)| relative(&self.project, file))
             .collect()
     }
@@ -156,6 +185,7 @@ impl CoversIndex {
         self.files
             .keys()
             .filter(|file| file.file_name().is_some_and(|name| name == file_name))
+            .filter(|file| file.is_file())
             .filter_map(|file| relative(&self.project, file))
             .collect()
     }
@@ -234,11 +264,13 @@ impl CoversCache {
                 generation: state.generation + 1,
                 ..CacheState::default()
             };
+            // A search still waiting for the old project's index gives up.
+            self.published.notify_all();
         }
         if state.roots != roots {
             state.roots = roots.to_vec();
-            state.stale = state.index.is_some();
-            state.pending.clear();
+            // Even while the first build runs: it reads the old roots.
+            state.stale = true;
         }
         let current = |state: &CacheState| {
             let settled = !state.stale && state.pending.is_empty() && !state.worker_running;
@@ -258,11 +290,16 @@ impl CoversCache {
         if !wait && (state.index.is_none() || state.stale || state.rebuilding) {
             return None;
         }
-        while state.worker_running {
+        let generation = state.generation;
+        while state.worker_running && state.generation == generation {
             state = self
                 .published
                 .wait(state)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        // Another project's index is no answer for this one.
+        if state.generation != generation {
+            return None;
         }
         current(&state).or_else(|| state.index.clone())
     }
@@ -487,5 +524,137 @@ mod tests {
         write(other.path(), "tests/OtherTest.php", COVERS_BAR);
         let index = cache.index(other.path(), &roots(), true).unwrap();
         assert_eq!(index.covering("App\\Bar"), ["tests/OtherTest.php"]);
+    }
+
+    fn spec_roots() -> Vec<Psr4Root> {
+        vec![Psr4Root {
+            prefix: "Spec\\".into(),
+            dir: "spec/".into(),
+            dev: true,
+        }]
+    }
+
+    #[test]
+    fn roots_that_change_during_the_first_build_rebuild_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(project, "tests/CheckoutTest.php", COVERS_BAR);
+        write(project, "spec/CartTest.php", COVERS_BAR);
+        let cache = Arc::new(CoversCache::default());
+        // A first build with the old roots is under way.
+        let generation = {
+            let mut state = cache.lock();
+            state.project = project.to_path_buf();
+            state.roots = roots();
+            state.worker_running = true;
+            state.pending.push(project.join("tests/CheckoutTest.php"));
+            state.generation
+        };
+
+        assert!(cache.index(project, &spec_roots(), false).is_none());
+        assert!(
+            cache.lock().stale,
+            "the old roots' build is never published"
+        );
+        assert_eq!(cache.lock().pending.len(), 1, "queued changes are kept");
+
+        cache.keep_current(generation);
+        let index = cache.index(project, &spec_roots(), true).unwrap();
+        assert_eq!(index.covering("App\\Bar"), ["spec/CartTest.php"]);
+    }
+
+    #[test]
+    fn a_search_waiting_on_one_project_never_gets_the_next_ones_index() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        write(first.path(), "tests/CheckoutTest.php", COVERS_BAR);
+        write(second.path(), "tests/OtherTest.php", COVERS_BAR);
+        let cache = Arc::new(CoversCache::default());
+        {
+            // A build of the first project that only a project switch ends.
+            let mut state = cache.lock();
+            state.project = first.path().to_path_buf();
+            state.roots = roots();
+            state.worker_running = true;
+        }
+        let waiter = {
+            let cache = Arc::clone(&cache);
+            let project = first.path().to_path_buf();
+            std::thread::spawn(move || cache.index(&project, &roots(), true))
+        };
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let _ = cache.index(second.path(), &roots(), true);
+
+        let answer = waiter.join().unwrap();
+        assert!(
+            answer.is_none_or(|index| index.covering("App\\Bar") == ["tests/CheckoutTest.php"]),
+            "the first project's search got the second project's index"
+        );
+    }
+
+    #[test]
+    fn a_refresh_never_grows_the_index_past_the_scan_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        for n in 0..phpunit_xml::MAX_SCANNED_FILES {
+            write(project, &format!("tests/a/F{n}Test.php"), "<?php");
+        }
+        let mut index = CoversIndex::build(project, &roots());
+        assert_eq!(index.files.len(), phpunit_xml::MAX_SCANNED_FILES);
+
+        write(project, "tests/b/NewTest.php", COVERS_BAR);
+        index.refresh(&project.join("tests/b"));
+        index.refresh(&project.join("tests/b/NewTest.php"));
+        assert_eq!(index.files.len(), phpunit_xml::MAX_SCANNED_FILES);
+        assert!(index.covering("App\\Bar").is_empty());
+    }
+
+    #[test]
+    fn a_directory_report_reads_only_the_files_not_indexed_yet() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(project, "tests/CheckoutTest.php", COVERS_BAR);
+        let mut index = CoversIndex::build(project, &roots());
+        // Changed, but its own report has not arrived.
+        write(project, "tests/CheckoutTest.php", "<?php\n");
+        write(project, "tests/Unit/BarTest.php", COVERS_BAR);
+        index.refresh(&project.join("tests"));
+        assert_eq!(
+            index.covering("App\\Bar"),
+            ["tests/CheckoutTest.php", "tests/Unit/BarTest.php"]
+        );
+    }
+
+    #[test]
+    fn a_removed_or_restored_package_takes_its_tests_along() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(project, "packages/a/tests/BarTest.php", COVERS_BAR);
+        let package_roots = vec![Psr4Root {
+            prefix: "A\\Tests\\".into(),
+            dir: "packages/a/tests/".into(),
+            dev: true,
+        }];
+        let mut index = CoversIndex::build(project, &package_roots);
+        assert_eq!(index.named("BarTest.php"), ["packages/a/tests/BarTest.php"]);
+
+        std::fs::rename(project.join("packages"), project.join("moved")).unwrap();
+        index.refresh(&project.join("packages"));
+        assert!(index.files.is_empty());
+
+        std::fs::rename(project.join("moved"), project.join("packages")).unwrap();
+        index.refresh(&project.join("packages"));
+        assert_eq!(index.named("BarTest.php"), ["packages/a/tests/BarTest.php"]);
+    }
+
+    #[test]
+    fn a_file_deleted_before_its_report_is_not_listed() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path();
+        write(project, "tests/CheckoutTest.php", COVERS_BAR);
+        let index = CoversIndex::build(project, &roots());
+        std::fs::remove_file(project.join("tests/CheckoutTest.php")).unwrap();
+        assert!(index.covering("App\\Bar").is_empty());
+        assert!(index.named("CheckoutTest.php").is_empty());
     }
 }

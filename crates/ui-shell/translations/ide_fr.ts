@@ -753,6 +753,13 @@
         <source>Select None</source>
         <translation>Tout désélectionner</translation>
     </message>
+    <message numerus="yes">
+        <source>… (%n more)</source>
+        <translation>
+            <numerusform>… (%n de plus)</numerusform>
+            <numerusform>… (%n de plus)</numerusform>
+        </translation>
+    </message>
 </context>
 <context>
     <name>FileHistoryPanel</name>
@@ -1024,6 +1031,13 @@
     <message>
         <source>%1 ms</source>
         <translation>%1 ms</translation>
+    </message>
+    <message numerus="yes">
+        <source>%1 of %n tests failed</source>
+        <translation>
+            <numerusform>%1 test sur %n en échec</numerusform>
+            <numerusform>%1 tests sur %n en échec</numerusform>
+        </translation>
     </message>
     <message>
         <source>%1 s</source>
@@ -1419,6 +1433,37 @@
     <message>
         <source>Choose...</source>
         <translation>Choisir…</translation>
+    </message>
+    <message>
+        <source>Ignored</source>
+        <translation>Ignoré</translation>
+    </message>
+    <message>
+        <source>Ignored: %1</source>
+        <translation>Ignoré : %1</translation>
+    </message>
+    <message>
+        <source>PHPUnit</source>
+        <translation>PHPUnit</translation>
+    </message>
+    <message>
+        <source>Passed (%1 ms)</source>
+        <translation>Réussi (%1 ms)</translation>
+    </message>
+    <message numerus="yes">
+        <source>Passed (%n tests, %1 ms)</source>
+        <translation>
+            <numerusform>Réussi (%n test, %1 ms)</numerusform>
+            <numerusform>Réussis (%n tests, %1 ms)</numerusform>
+        </translation>
+    </message>
+    <message>
+        <source>Run with Coverage</source>
+        <translation>Exécuter avec couverture</translation>
+    </message>
+    <message>
+        <source>Running…</source>
+        <translation>En cours…</translation>
     </message>
     <message>
         <source>Structure</source>
@@ -3315,6 +3360,10 @@
         <translation>Exécuter</translation>
     </message>
     <message>
+        <source>Run with Coverage</source>
+        <translation>Exécuter avec couverture</translation>
+    </message>
+    <message>
         <source>Stop</source>
         <translation>Arrêter</translation>
     </message>
@@ -3516,6 +3565,10 @@
         <translation>Durée</translation>
     </message>
     <message>
+        <source>Jump to Source</source>
+        <translation>Aller à la source</translation>
+    </message>
+    <message>
         <source>No tests have run yet.</source>
         <translation>Aucun test n'a encore été exécuté.</translation>
     </message>
@@ -3593,6 +3646,179 @@
     <message>
         <source>No executable lines</source>
         <translation>Aucune ligne exécutable</translation>
+    </message>
+</context>
+<context>
+    <name>ui_shell::PhpUnitOptionsPage</name>
+    <message>
+        <source>"name" or #0</source>
+        <translation>"nom" ou #0</translation>
+    </message>
+    <message>
+        <source>All test suites</source>
+        <translation>Toutes les suites de tests</translation>
+    </message>
+    <message>
+        <source>Choose a file or directory inside the project.</source>
+        <translation>Choisissez un fichier ou un répertoire à l’intérieur du projet.</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Classe</translation>
+    </message>
+    <message>
+        <source>Class:</source>
+        <translation>Classe :</translation>
+    </message>
+    <message>
+        <source>Configuration file:</source>
+        <translation>Fichier de configuration :</translation>
+    </message>
+    <message>
+        <source>Data set</source>
+        <translation>Jeu de données</translation>
+    </message>
+    <message>
+        <source>Data set:</source>
+        <translation>Jeu de données :</translation>
+    </message>
+    <message>
+        <source>Defined in the configuration file</source>
+        <translation>Défini dans le fichier de configuration</translation>
+    </message>
+    <message>
+        <source>Directory</source>
+        <translation>Répertoire</translation>
+    </message>
+    <message>
+        <source>Directory...</source>
+        <translation>Répertoire...</translation>
+    </message>
+    <message>
+        <source>Exclude groups:</source>
+        <translation>Exclure les groupes :</translation>
+    </message>
+    <message>
+        <source>File</source>
+        <translation>Fichier</translation>
+    </message>
+    <message>
+        <source>File...</source>
+        <translation>Fichier...</translation>
+    </message>
+    <message>
+        <source>Filter:</source>
+        <translation>Filtre :</translation>
+    </message>
+    <message>
+        <source>Fully qualified, e.g. App\Tests\GreeterTest</source>
+        <translation>Nom complet, p. ex. App\Tests\GreeterTest</translation>
+    </message>
+    <message>
+        <source>Groups:</source>
+        <translation>Groupes :</translation>
+    </message>
+    <message>
+        <source>Interpreter:</source>
+        <translation>Interpréteur :</translation>
+    </message>
+    <message>
+        <source>Method</source>
+        <translation>Méthode</translation>
+    </message>
+    <message>
+        <source>Method:</source>
+        <translation>Méthode :</translation>
+    </message>
+    <message>
+        <source>Outside the Project</source>
+        <translation>Hors du projet</translation>
+    </message>
+    <message>
+        <source>Path:</source>
+        <translation>Chemin :</translation>
+    </message>
+    <message>
+        <source>Project PHP interpreter</source>
+        <translation>Interpréteur PHP du projet</translation>
+    </message>
+    <message>
+        <source>Regular expression for --filter</source>
+        <translation>Expression régulière pour --filter</translation>
+    </message>
+    <message>
+        <source>Relative to the project</source>
+        <translation>Relatif au projet</translation>
+    </message>
+    <message>
+        <source>Runner options:</source>
+        <translation>Options du lanceur :</translation>
+    </message>
+    <message>
+        <source>Select Directory</source>
+        <translation>Sélectionner un répertoire</translation>
+    </message>
+    <message>
+        <source>Select File</source>
+        <translation>Sélectionner un fichier</translation>
+    </message>
+    <message>
+        <source>Test scope:</source>
+        <translation>Portée des tests :</translation>
+    </message>
+    <message>
+        <source>Test suite:</source>
+        <translation>Suite de tests :</translation>
+    </message>
+    <message>
+        <source>e.g. --stop-on-failure</source>
+        <translation>p. ex. --stop-on-failure</translation>
+    </message>
+    <message>
+        <source>phpunit.xml</source>
+        <translation>phpunit.xml</translation>
+    </message>
+</context>
+<context>
+    <name>ui_shell::GroupPicker</name>
+    <message>
+        <source>Add a group and press Enter</source>
+        <translation>Saisissez un groupe et appuyez sur Entrée</translation>
+    </message>
+</context>
+<context>
+    <name>ui_shell::PhpServerOptionsPage</name>
+    <message>
+        <source>Default (8000)</source>
+        <translation>Par défaut (8000)</translation>
+    </message>
+    <message>
+        <source>Document root:</source>
+        <translation>Racine des documents :</translation>
+    </message>
+    <message>
+        <source>Host:</source>
+        <translation>Hôte :</translation>
+    </message>
+    <message>
+        <source>None (serve files directly)</source>
+        <translation>Aucun (servir les fichiers directement)</translation>
+    </message>
+    <message>
+        <source>Port:</source>
+        <translation>Port :</translation>
+    </message>
+    <message>
+        <source>Project root</source>
+        <translation>Racine du projet</translation>
+    </message>
+    <message>
+        <source>Router script:</source>
+        <translation>Script de routage :</translation>
+    </message>
+    <message>
+        <source>localhost</source>
+        <translation>localhost</translation>
     </message>
 </context>
 </TS>

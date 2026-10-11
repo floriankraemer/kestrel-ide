@@ -45,7 +45,8 @@ The environment is the configuration's own `env`.
 | Any scope | `--configuration <file>`, `--group a,b`, `--exclude-group c`, the runner options, then the path last |
 
 **`TestService` launches it, never the PTY supervisor.**
-`RunService::launch` recognises the kind and emits `testConfigurationRequested`, as it already special-cases `sql-script`; `DebugService::debug` emits `testConfigurationDebugRequested`; the view connects both to `TestService`.
+`RunService::launch` recognises the kind, runs the configuration's own before-launch tasks as for any kind, and then emits `testConfigurationRequested`, as it already special-cases `sql-script`; `DebugService::debug` emits `testConfigurationDebugRequested`; the view connects both to `TestService`.
+Unless the configuration allows parallel runs, a run in progress is stopped and the new one starts once it has finished; the Tests dock shows one run, so one that allows them is refused while another runs.
 The Run menu gains `run.runWithCoverage`.
 So the toolbar, the configuration list, Rerun (`run.rerun`) and Debug fill the Tests dock and use the framework selection, interpreter host, filters, coverage and the Xdebug staging that Run All already has.
 Run All and the Tests dock's reruns stay ad hoc.
@@ -54,16 +55,17 @@ Run All and the Tests dock's reruns stay ad hoc.
 A caret run, a gutter run and a data-set run resolve to a temporary `phpunit` configuration when the run starts, persisted with `remember_temporary`.
 Its id derives from the scope, so repeated runs reuse one entry and the cap evicts the oldest.
 Names follow PhpStorm: `GreeterTest`, `GreeterTest::testGreets`, `tests in 'Unit'`, `Unit (phpunit.xml)`.
-Editing a temporary configuration in the dialog saves it, as for every kind.
+Editing a temporary configuration in the dialog saves it, as for every kind, and the next editor run of the same test runs the edited one: the stored configuration with the derived id wins over the freshly derived one.
 
-**A `phpunit` configuration as a before-launch task** runs to completion on the task's worker thread through the same plan and `test_core::run_on_env`, and fails the launch on a non-zero exit.
-Its results do not reach the Tests dock, because `TestService` lives on the Qt thread the task cannot wait on.
+**A `phpunit` configuration as a before-launch task** runs on `TestService`, so its results fill the Tests dock and its Stop cancels it, and a non-zero exit fails the launch.
+Before-launch tasks run on a thread of their own, never on the worker that owns the PTY supervisor, so a long suite freezes no console's output; that thread hands the run to `TestService` on the Qt thread and waits on a channel for its end.
 
 **The configuration editor offers what `phpunit.xml` declares (E5).**
 `php_core::phpunit_xml::parse` reads the test suites (`<directory suffix>`, `<file>`, `<exclude>`), `<groups>` include/exclude and `bootstrap` of a PHPUnit 9 to 12 configuration over `quick-xml`.
-`discover` finds the file the way PHPUnit does (`phpunit.xml`, `phpunit.dist.xml`, `phpunit.xml.dist` from `analysis-core`'s single list, or the configuration field's path) and `model` joins it with a bounded scan (2000 files, 512 KiB each) of the suites' test files for `#[Group('x')]` attributes and `@group x` tags.
+`discover` finds the file the way PHPUnit does (`phpunit.xml`, `phpunit.dist.xml`, `phpunit.xml.dist` from `app-config::php`'s single list, or the configuration field's path) and `model` joins it with a bounded scan of the suites' test files for the groups PHPUnit knows: `#[Group]`, `#[Ticket]` and the `#[Small]`/`#[Medium]`/`#[Large]` sizes, and below PHPUnit 12 (by `composer.lock`) their `@group`, `@ticket`, `@author` and size annotations.
+The scan shares one budget across suites (2000 test files, 20000 directory entries, 512 KiB a file), walks breadth first in name order, never enters `vendor`, `node_modules` or `.git` below a suite's own directory, does not follow symlinked directories, and reads a file two suites share once.
 `RunConfigEditor::requestPhpUnitModel` runs that on a worker thread and answers through `phpUnitModelReady`; the page shows the test suite as an editable combo and the groups as checkable lists, and asks again when the configuration file field changes.
-A glob in a suite path is not expanded.
+A glob in a suite's `<directory>` or `<file>` is expanded as PHPUnit does (`*` and `?` within a segment, `**` across segments).
 The "defined in the configuration file" scope with a suite is `--testsuite <name>`, unit-tested end to end through `plan` and `scope_args`.
 
 **An editor run selects its temporary configuration (#415).**

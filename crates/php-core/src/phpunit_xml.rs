@@ -10,7 +10,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use analysis_core::PHPUNIT_CONFIG_CANDIDATES;
+use app_config::php::PHPUNIT_CONFIG_CANDIDATES;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::Reader;
 
@@ -110,6 +110,20 @@ fn element_of(tag: &BytesStart<'_>) -> Result<Element, ParseError> {
     })
 }
 
+/// The text an entity or character reference stands for. An entity a
+/// configuration cannot declare (no DTD) stays as written.
+fn resolve_reference(reference: &quick_xml::events::BytesRef<'_>) -> Result<String, ParseError> {
+    if let Some(c) = reference
+        .resolve_char_ref()
+        .map_err(|e| ParseError(e.to_string()))?
+    {
+        return Ok(c.to_string());
+    }
+    let name = reference.decode().map_err(|e| ParseError(e.to_string()))?;
+    Ok(quick_xml::escape::resolve_predefined_entity(&name)
+        .map_or_else(|| format!("&{name};"), str::to_string))
+}
+
 fn read_tree(text: &str) -> Result<Element, ParseError> {
     let mut reader = Reader::from_str(text);
     let mut stack: Vec<Element> = Vec::new();
@@ -132,6 +146,19 @@ fn read_tree(text: &str) -> Result<Element, ParseError> {
                         Ok(text) => top.text.push_str(&text),
                         Err(_) => top.text.push_str(&raw),
                     }
+                }
+            }
+            // quick-xml reports `&amp;` and `&#38;` between text events, and
+            // CDATA as its own event: both are part of the element's text.
+            Ok(Event::GeneralRef(reference)) => {
+                if let Some(top) = stack.last_mut() {
+                    top.text.push_str(&resolve_reference(&reference)?);
+                }
+            }
+            Ok(Event::CData(data)) => {
+                if let Some(top) = stack.last_mut() {
+                    let data = data.decode().map_err(|e| ParseError(e.to_string()))?;
+                    top.text.push_str(&data);
                 }
             }
             Ok(Event::End(_)) => {
@@ -220,82 +247,283 @@ pub fn discover(root: &Path, explicit: &str) -> Option<PathBuf> {
     None
 }
 
-/// Every group name a test file declares, through `#[Group('x')]`
-/// attributes (any namespace qualification) and `@group x` docblock tags.
-pub fn groups_in(source: &str) -> BTreeSet<String> {
-    let mut groups = BTreeSet::new();
+/// The quoted string at the start of `text`, on one line; `None` when the
+/// quote is not closed there.
+fn quoted(text: &str) -> Option<&str> {
+    let quote = text.chars().next().filter(|c| matches!(c, '\'' | '"'))?;
+    let body = &text[1..];
+    let end = body.find([quote, '\n'])?;
+    (body[end..].starts_with(quote) && end > 0).then(|| &body[..end])
+}
+
+/// The quoted first argument of an attribute call, `after_paren` starting
+/// just after its `(`, with or without the `name:` label.
+fn attribute_argument(after_paren: &str) -> Option<&str> {
+    let rest = after_paren.trim_start();
+    let rest = rest
+        .strip_prefix("name")
+        .map(str::trim_start)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .map_or(rest, str::trim_start);
+    quoted(rest)
+}
+
+/// The groups PHPUnit derives from attributes: `#[Group('x')]` and
+/// `#[Ticket('x')]` name one, `#[Small]`/`#[Medium]`/`#[Large]` are the
+/// size groups (any namespace qualification).
+fn attribute_groups(source: &str, groups: &mut BTreeSet<String>) {
     let bytes = source.as_bytes();
     let is_name_byte = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
-    for (at, _) in source.match_indices("Group(") {
-        // `Group(`, not `DataGroup(`; a namespace separator before it is fine.
-        if at > 0 && is_name_byte(bytes[at - 1]) {
-            continue;
-        }
-        let rest = source[at + "Group(".len()..].trim_start();
-        let Some(quote) = rest.chars().next().filter(|c| matches!(c, '\'' | '"')) else {
-            continue;
-        };
-        if let Some(name) = rest[1..].split(quote).next().filter(|n| !n.is_empty()) {
-            groups.insert(name.to_string());
+    let starts_word = |at: usize| at == 0 || !is_name_byte(bytes[at - 1]);
+    for name in ["Group(", "Ticket("] {
+        for (at, _) in source.match_indices(name) {
+            // `Group(`, not `DataGroup(`; a namespace separator before it is fine.
+            if !starts_word(at) {
+                continue;
+            }
+            if let Some(group) = attribute_argument(&source[at + name.len()..]) {
+                groups.insert(group.to_string());
+            }
         }
     }
-    for (at, _) in source.match_indices("@group") {
-        let rest = &source[at + "@group".len()..];
-        if !rest.starts_with(char::is_whitespace) {
-            continue;
+    for size in ["Small", "Medium", "Large"] {
+        let found = source.match_indices(size).any(|(at, _)| {
+            let after = bytes.get(at + size.len()).copied();
+            starts_word(at)
+                && matches!(after, Some(b']' | b',' | b'(' | b' '))
+                && source[..at]
+                    .trim_end_matches(|c: char| c == '\\' || c == '_' || c.is_ascii_alphanumeric())
+                    .trim_end()
+                    .ends_with(['[', ','])
+        });
+        if found {
+            groups.insert(size.to_lowercase());
         }
-        if let Some(name) = rest.split_whitespace().next().filter(|n| *n != "*/") {
-            groups.insert(name.to_string());
+    }
+}
+
+/// The groups docblock annotations name: `@group x`, `@ticket x`,
+/// `@author x` and the `@small`/`@medium`/`@large` sizes.
+fn annotation_groups(source: &str, groups: &mut BTreeSet<String>) {
+    for (at, _) in source.match_indices('@') {
+        let rest = &source[at + 1..];
+        let tag_len = rest
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(rest.len());
+        let (tag, rest) = rest.split_at(tag_len);
+        match tag {
+            "group" | "ticket" | "author" if rest.starts_with([' ', '\t']) => {
+                let name = rest
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .trim_end_matches("*/");
+                if !name.is_empty() {
+                    groups.insert(name.to_string());
+                }
+            }
+            "small" | "medium" | "large"
+                if rest.is_empty()
+                    || rest.starts_with(char::is_whitespace)
+                    || rest.starts_with('*') =>
+            {
+                groups.insert(tag.to_string());
+            }
+            _ => {}
         }
+    }
+}
+
+/// Every group name a test file declares. `annotations` is whether the
+/// project's PHPUnit still reads docblock annotations (it stopped in 12).
+pub fn groups_in(source: &str, annotations: bool) -> BTreeSet<String> {
+    let mut groups = BTreeSet::new();
+    attribute_groups(source, &mut groups);
+    if annotations {
+        annotation_groups(source, &mut groups);
     }
     groups
 }
 
-fn glob_free(path: &str) -> bool {
-    !path.contains(['*', '?', '['])
+/// Whether the project's PHPUnit reads docblock annotations: below 12, or
+/// when `composer.lock` does not say which PHPUnit is installed.
+pub fn reads_annotations(lock: Option<&crate::composer::ComposerLock>) -> bool {
+    let major = lock
+        .and_then(|lock| lock.version_of("phpunit/phpunit"))
+        .and_then(|version| {
+            version
+                .trim_start_matches('v')
+                .split('.')
+                .next()?
+                .parse::<u32>()
+                .ok()
+        });
+    major.is_none_or(|major| major < 12)
 }
 
-/// The test files of `suite` under `config_dir`, at most `limit`.
-// ponytail: a glob in a suite path (`tests/*/Unit`) is skipped, not expanded;
-// add a glob walk when a real configuration needs it.
-fn suite_files(config_dir: &Path, suite: &TestSuite, limit: usize) -> Vec<PathBuf> {
+/// The scan's shared limits: test files read, directory entries visited.
+struct Budget {
+    files: usize,
+    entries: usize,
+}
+
+impl Budget {
+    fn spent(&self) -> bool {
+        self.files == 0 || self.entries == 0
+    }
+}
+
+/// Directories a suite's walk does not enter below the directory the suite
+/// names: dependencies, never the project's own tests.
+const SKIPPED_DIRECTORIES: &[&str] = &["vendor", "node_modules", ".git"];
+
+fn is_skipped(dir: &Path) -> bool {
+    dir.file_name()
+        .is_some_and(|name| SKIPPED_DIRECTORIES.iter().any(|skipped| name == *skipped))
+}
+
+fn has_glob(path: &str) -> bool {
+    path.contains(['*', '?', '['])
+}
+
+/// `path` with `.` components dropped, so `./tests` and `tests` compare equal.
+fn clean(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .collect()
+}
+
+/// A directory's entries, sorted, each with whether it is a directory and
+/// whether it is a file. A symlinked directory is neither, so a link cycle
+/// is never walked; a symlinked file still counts. Uses the entry's own
+/// type, which `read_dir` already has, rather than a stat per entry.
+fn entries_of(dir: &Path, budget: &mut Budget) -> Vec<(PathBuf, bool, bool)> {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut entries: Vec<_> = read
+        .flatten()
+        .take(budget.entries)
+        .filter_map(|entry| {
+            let kind = entry.file_type().ok()?;
+            let is_file = kind.is_file() || (kind.is_symlink() && entry.path().is_file());
+            Some((entry.path(), kind.is_dir(), is_file))
+        })
+        .collect();
+    budget.entries = budget.entries.saturating_sub(entries.len());
+    entries.sort();
+    entries
+}
+
+/// The directories (`want_dirs`) or files `pattern` matches under `base`.
+/// `*` and `?` stay within one path segment, `**` spans any number.
+fn expand_glob(base: &Path, pattern: &str, want_dirs: bool, budget: &mut Budget) -> Vec<PathBuf> {
+    let pattern = pattern.replace('\\', "/");
+    let pattern = pattern.trim_start_matches("./").trim_end_matches('/');
+    let Ok(glob) = globset::GlobBuilder::new(pattern)
+        .literal_separator(true)
+        .build()
+    else {
+        return Vec::new();
+    };
+    let matcher = glob.compile_matcher();
+    // Walk from the last directory before the first wildcard segment.
+    let literal: Vec<&str> = pattern
+        .split('/')
+        .take_while(|segment| !has_glob(segment))
+        .collect();
+    let deepest = (!pattern.contains("**")).then(|| pattern.split('/').count());
+    let mut found = Vec::new();
+    let mut pending =
+        std::collections::VecDeque::from([(base.join(literal.join("/")), literal.len())]);
+    while let Some((dir, depth)) = pending.pop_front() {
+        if budget.spent() || deepest.is_some_and(|deepest| depth >= deepest) {
+            continue;
+        }
+        for (path, is_dir, is_file) in entries_of(&dir, budget) {
+            let relative = path.strip_prefix(base).unwrap_or(&path);
+            if (if want_dirs { is_dir } else { is_file }) && matcher.is_match(relative) {
+                found.push(path.clone());
+            }
+            if is_dir && !is_skipped(&path) {
+                pending.push_back((path, depth + 1));
+            }
+        }
+    }
+    found
+}
+
+/// The test files of `suite` under `config_dir`, added to `found` until the
+/// budget runs out. Walks breadth first in name order, so a suite rooted at
+/// `.` reaches `tests/` long before a deep dependency tree.
+fn suite_files(
+    config_dir: &Path,
+    suite: &TestSuite,
+    budget: &mut Budget,
+    found: &mut BTreeSet<PathBuf>,
+) {
     let excluded: Vec<PathBuf> = suite
         .excludes
         .iter()
-        .map(|exclude| config_dir.join(exclude))
+        .map(|exclude| clean(&config_dir.join(exclude)))
         .collect();
-    let mut found: Vec<PathBuf> = suite
-        .files
-        .iter()
-        .filter(|file| glob_free(file))
-        .map(|file| config_dir.join(file))
-        .filter(|file| file.is_file())
-        .collect();
-    for directory in suite.directories.iter().filter(|d| glob_free(&d.path)) {
-        let mut pending = vec![config_dir.join(&directory.path)];
-        while let Some(dir) = pending.pop() {
-            if found.len() >= limit || excluded.iter().any(|ex| dir.starts_with(ex)) {
+    let is_excluded = |path: &Path| excluded.iter().any(|ex| path.starts_with(ex));
+    let add = |path: PathBuf, found: &mut BTreeSet<PathBuf>, budget: &mut Budget| {
+        let path = clean(&path);
+        if budget.files > 0 && !is_excluded(&path) && found.insert(path) {
+            budget.files -= 1;
+        }
+    };
+    for file in &suite.files {
+        if has_glob(file) {
+            for path in expand_glob(config_dir, file, false, budget) {
+                add(path, found, budget);
+            }
+        } else if config_dir.join(file).is_file() {
+            add(config_dir.join(file), found, budget);
+        }
+    }
+    for directory in &suite.directories {
+        let roots = if has_glob(&directory.path) {
+            expand_glob(config_dir, &directory.path, true, budget)
+        } else {
+            vec![config_dir.join(&directory.path)]
+        };
+        let mut pending: std::collections::VecDeque<PathBuf> =
+            roots.into_iter().map(|r| clean(&r)).collect();
+        while let Some(dir) = pending.pop_front() {
+            if budget.spent() || is_excluded(&dir) {
                 continue;
             }
-            let Ok(entries) = std::fs::read_dir(&dir) else {
-                continue;
-            };
-            let mut entries: Vec<_> = entries.flatten().collect();
-            entries.sort_by_key(|entry| entry.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path.is_dir() {
-                    pending.push(path);
-                } else if path.to_string_lossy().ends_with(&directory.suffix)
-                    && !excluded.iter().any(|ex| path.starts_with(ex))
-                {
-                    found.push(path);
+            for (path, is_dir, is_file) in entries_of(&dir, budget) {
+                if is_dir && !is_skipped(&path) {
+                    pending.push_back(path);
+                } else if is_file && path.to_string_lossy().ends_with(&directory.suffix) {
+                    add(path, found, budget);
                 }
             }
         }
     }
-    found.truncate(limit);
-    found
+}
+
+/// Why a configuration file could not be offered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelProblem {
+    /// The configuration field names a file that does not exist.
+    NotFound(String),
+    /// The file exists but cannot be read.
+    Unreadable(String),
+    Malformed(ParseError),
+}
+
+impl std::fmt::Display for ModelProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(name) => write!(f, "{name} was not found"),
+            Self::Unreadable(reason) => write!(f, "cannot be read: {reason}"),
+            Self::Malformed(error) => error.fmt(f),
+        }
+    }
 }
 
 /// What the run configuration editor offers for a project.
@@ -306,18 +534,26 @@ pub struct PhpUnitModel {
     pub suites: Vec<String>,
     /// Every group the configuration or its test files declare, sorted.
     pub groups: Vec<String>,
-    /// Why the configuration could not be read, as a sentence.
-    pub problem: Option<String>,
+    /// Why the configuration could not be read.
+    pub problem: Option<ModelProblem>,
 }
+
+/// The scan reads at most this many directory entries in all, so a suite
+/// rooted at a huge tree cannot stall the editor even when few files match.
+const MAX_VISITED_ENTRIES: usize = 20_000;
 
 /// Read the configuration `explicit` names (default: the project's own) and
 /// scan its suites' test files for groups. Blocking filesystem work: call it
 /// off the GUI thread.
 pub fn model(root: &Path, explicit: &str) -> PhpUnitModel {
+    model_with(root, explicit, MAX_SCANNED_FILES, MAX_VISITED_ENTRIES)
+}
+
+fn model_with(root: &Path, explicit: &str, max_files: usize, max_entries: usize) -> PhpUnitModel {
     let Some(file) = discover(root, explicit) else {
         return PhpUnitModel {
             problem: (!explicit.trim().is_empty())
-                .then(|| format!("{} was not found", explicit.trim())),
+                .then(|| ModelProblem::NotFound(explicit.trim().to_string())),
             ..PhpUnitModel::default()
         };
     };
@@ -331,12 +567,12 @@ pub fn model(root: &Path, explicit: &str) -> PhpUnitModel {
         ..PhpUnitModel::default()
     };
     let config = match std::fs::read_to_string(&file)
-        .map_err(|error| error.to_string())
-        .and_then(|text| parse(&text).map_err(|error| error.to_string()))
+        .map_err(|error| ModelProblem::Unreadable(error.to_string()))
+        .and_then(|text| parse(&text).map_err(ModelProblem::Malformed))
     {
         Ok(config) => config,
-        Err(error) => {
-            model.problem = Some(error);
+        Err(problem) => {
+            model.problem = Some(problem);
             return model;
         }
     };
@@ -347,14 +583,21 @@ pub fn model(root: &Path, explicit: &str) -> PhpUnitModel {
         .chain(&config.exclude_groups)
         .cloned()
         .collect();
-    let mut budget = MAX_SCANNED_FILES;
+    let mut budget = Budget {
+        files: max_files,
+        entries: max_entries,
+    };
+    // Overlapping suites name the same file once.
+    let mut files = BTreeSet::new();
     for suite in &config.suites {
-        for path in suite_files(config_dir, suite, budget) {
-            budget = budget.saturating_sub(1);
-            let small = std::fs::metadata(&path).is_ok_and(|meta| meta.len() <= MAX_FILE_BYTES);
-            if let Some(source) = small.then(|| std::fs::read_to_string(&path).ok()).flatten() {
-                groups.extend(groups_in(&source));
-            }
+        suite_files(config_dir, suite, &mut budget, &mut files);
+    }
+    let lock = crate::composer::ComposerLock::read(root).ok().flatten();
+    let annotations = reads_annotations(lock.as_ref());
+    for path in files {
+        let small = std::fs::metadata(&path).is_ok_and(|meta| meta.len() <= MAX_FILE_BYTES);
+        if let Some(source) = small.then(|| std::fs::read_to_string(&path).ok()).flatten() {
+            groups.extend(groups_in(&source, annotations));
         }
     }
     model.suites = config.suites.into_iter().map(|suite| suite.name).collect();
@@ -461,8 +704,11 @@ final class FooTest extends TestCase {
     #[DataGroup('not-a-group')]
     public function testY(): void {}
 }"#;
-        let groups: Vec<_> = groups_in(source).into_iter().collect();
+        let groups: Vec<_> = groups_in(source, true).into_iter().collect();
         assert_eq!(groups, ["api", "db", "legacy", "multi"]);
+        // PHPUnit 12 reads attributes only.
+        let groups: Vec<_> = groups_in(source, false).into_iter().collect();
+        assert_eq!(groups, ["api", "db", "multi"]);
     }
 
     fn write(root: &Path, name: &str, text: &str) {
@@ -543,13 +789,180 @@ final class FooTest extends TestCase {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         assert_eq!(model(root, ""), PhpUnitModel::default());
-        assert_eq!(
-            model(root, "nope.xml").problem.as_deref(),
-            Some("nope.xml was not found")
-        );
+        let missing = model(root, "nope.xml").problem.unwrap();
+        assert_eq!(missing, ModelProblem::NotFound("nope.xml".into()));
+        assert_eq!(missing.to_string(), "nope.xml was not found");
         write(root, "phpunit.xml", "<phpunit><testsuites></phpunit>");
         let broken = model(root, "");
         assert_eq!(broken.file.as_deref(), Some("phpunit.xml"));
-        assert!(broken.problem.unwrap().starts_with("malformed XML"));
+        let problem = broken.problem.unwrap();
+        assert!(matches!(problem, ModelProblem::Malformed(_)));
+        assert!(problem.to_string().starts_with("malformed XML"));
+    }
+
+    #[test]
+    fn entities_and_cdata_are_part_of_a_path() {
+        let config = parse(
+            r#"<phpunit><testsuites><testsuite name="a&amp;b">
+                 <directory>tests/A&amp;B&#47;x</directory>
+                 <file><![CDATA[tests/<odd>.php]]></file>
+               </testsuite></testsuites></phpunit>"#,
+        )
+        .unwrap();
+        assert_eq!(config.suites[0].name, "a&b");
+        assert_eq!(config.suites[0].directories[0].path, "tests/A&B/x");
+        assert_eq!(config.suites[0].files, ["tests/<odd>.php"]);
+    }
+
+    #[test]
+    fn implicit_and_named_groups_are_offered() {
+        let source = r#"<?php
+#[Group(name: 'named'), Ticket('T-1')]
+#[\PHPUnit\Framework\Attributes\Small]
+final class FooTest extends TestCase {
+    /** @group db*/
+    public function testA(): void {}
+    /**
+     * @ticket 42
+     * @author jane
+     * @large
+     */
+    public function testB(): void {}
+    #[Group('unterminated
+    public function testC(): void {}
+}"#;
+        let groups: Vec<_> = groups_in(source, true).into_iter().collect();
+        assert_eq!(
+            groups,
+            ["42", "T-1", "db", "jane", "large", "named", "small"]
+        );
+        // `SmallTest` or a `$small` variable is no size attribute.
+        assert!(groups_in("<?php class SmallTest { #[Group('x')] }", true)
+            .iter()
+            .all(|g| g != "small"));
+    }
+
+    #[test]
+    fn annotations_count_below_phpunit_12_or_when_unknown() {
+        let lock = |version: &str| {
+            crate::composer::ComposerLock::parse(&format!(
+                r#"{{"packages-dev":[{{"name":"phpunit/phpunit","version":"{version}"}}]}}"#
+            ))
+            .unwrap()
+        };
+        assert!(reads_annotations(None));
+        assert!(reads_annotations(Some(&lock("9.6.1"))));
+        assert!(reads_annotations(Some(&lock("v11.5.0"))));
+        assert!(!reads_annotations(Some(&lock("12.0.9"))));
+    }
+
+    fn suite_config(body: &str) -> String {
+        format!(r#"<phpunit><testsuites>{body}</testsuites></phpunit>"#)
+    }
+
+    #[test]
+    fn globbed_suite_directories_and_files_are_expanded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            "phpunit.xml",
+            &suite_config(
+                r#"<testsuite name="unit">
+                     <directory>tests/*/Unit</directory>
+                     <directory>modules/**/Spec</directory>
+                     <file>extra/*Check.php</file>
+                   </testsuite>"#,
+            ),
+        );
+        write(root, "tests/A/Unit/ATest.php", "<?php #[Group('a')]");
+        write(root, "tests/B/Unit/deep/BTest.php", "<?php #[Group('b')]");
+        write(root, "tests/C/Other/CTest.php", "<?php #[Group('no-c')]");
+        write(root, "tests/A/X/Unit/DTest.php", "<?php #[Group('no-d')]");
+        write(root, "modules/m/n/Spec/ETest.php", "<?php #[Group('e')]");
+        write(root, "extra/OneCheck.php", "<?php #[Group('f')]");
+        assert_eq!(model(root, "").groups, ["a", "b", "e", "f"]);
+    }
+
+    #[test]
+    fn files_dot_prefixes_overlaps_and_dependencies() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            "phpunit.xml",
+            &suite_config(
+                r#"<testsuite name="all">
+                     <directory>./</directory>
+                     <exclude>./tests/Slow</exclude>
+                   </testsuite>
+                   <testsuite name="again"><directory>tests</directory></testsuite>
+                   <testsuite name="one"><file>./lone/Only.php</file></testsuite>
+                   <testsuite name="deps"><directory>vendor/acme</directory></testsuite>"#,
+            ),
+        );
+        write(root, "tests/ATest.php", "<?php #[Group('a')]");
+        write(root, "tests/Slow/STest.php", "<?php #[Group('slow-only')]");
+        write(root, "lone/Only.php", "<?php #[Group('only')]");
+        write(root, "vendor/other/XTest.php", "<?php #[Group('vendor')]");
+        write(
+            root,
+            "vendor/acme/YTest.php",
+            "<?php #[Group('named-vendor')]",
+        );
+        write(root, "node_modules/p/ZTest.php", "<?php #[Group('npm')]");
+        // `again` reaches tests/Slow, which only `all` excludes.
+        assert_eq!(
+            model(root, "").groups,
+            ["a", "named-vendor", "only", "slow-only"]
+        );
+    }
+
+    #[test]
+    fn the_scan_shares_one_budget_and_skips_big_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            "phpunit.xml",
+            &suite_config(
+                r#"<testsuite name="a"><directory>a</directory></testsuite>
+                   <testsuite name="b"><directory>b</directory></testsuite>"#,
+            ),
+        );
+        write(root, "a/OneTest.php", "<?php #[Group('one')]");
+        write(root, "a/TwoTest.php", "<?php #[Group('two')]");
+        write(root, "b/ThreeTest.php", "<?php #[Group('three')]");
+        let big = format!(
+            "<?php #[Group('big')] /*{}*/",
+            "x".repeat(MAX_FILE_BYTES as usize)
+        );
+        write(root, "a/BigTest.php", &big);
+        assert_eq!(model(root, "").groups, ["one", "three", "two"]);
+        // Three files in all, across both suites: suite `b` gets none.
+        assert_eq!(model_with(root, "", 3, 1000).groups, ["one", "two"]);
+        // The entry cap stops a walk even when nothing matches.
+        assert!(model_with(root, "", 100, 1).groups.len() <= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_cycle_is_not_walked() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write(
+            root,
+            "phpunit.xml",
+            &suite_config(r#"<testsuite name="t"><directory>tests</directory></testsuite>"#),
+        );
+        write(root, "tests/ATest.php", "<?php #[Group('a')]");
+        std::os::unix::fs::symlink(root.join("tests"), root.join("tests/loop")).unwrap();
+        std::os::unix::fs::symlink(
+            root.join("tests/ATest.php"),
+            root.join("tests/LinkTest.php"),
+        )
+        .unwrap();
+        let model = model(root, "");
+        assert_eq!(model.groups, ["a"]);
     }
 }

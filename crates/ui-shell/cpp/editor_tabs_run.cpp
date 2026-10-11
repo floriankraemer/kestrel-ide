@@ -91,9 +91,12 @@ QString comparablePath(const QString &path)
 }  // namespace
 
 void wireRunService(RunService *runService, EditorTabs *editorTabs, RunConfigEditor *runConfigEditor,
-                    ContainerService *containerService)
+                    ContainerService *containerService, RunConsolePanel *runConsolePanel,
+                    DebugService *debugService, TestService *testService)
 {
     editorTabs->setRunService(runService);
+    wirePhpUnitConfigurations(runService, runConsolePanel, debugService, testService,
+                              runConsolePanel->window()); // E4
     editorTabs->setContainerRunContext(runConfigEditor, containerService); // C5
     // A configuration list that just changed can make a file runnable that
     // was not — the first `cargo run` entry a detection scan adds, say — so
@@ -129,6 +132,7 @@ void wirePhpUnitConfigurations(RunService *runService, RunConsolePanel *runConso
                                DebugService *debugService, TestService *testService,
                                QWidget *window)
 {
+    testService->registerBeforeLaunchRunner();
     const auto report = [window](const QString &title, const FfiResult &result) {
         if (result.code != 0) {
             QMessageBox::warning(window, title, result.message);

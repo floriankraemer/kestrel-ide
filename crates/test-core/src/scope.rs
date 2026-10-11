@@ -344,6 +344,26 @@ mod tests {
     }
 
     #[test]
+    fn a_data_set_name_with_a_slash_or_an_at_survives_phpunits_wrapping() {
+        // PHPUnit 12 escapes `/` itself and reads `@` as data-set shorthand
+        // (`escape_regex`'s doc comment); both runs were checked for real.
+        let scope = TestScope::DataSet {
+            class: "App\\SlashTest".into(),
+            method: "testIt".into(),
+            data_set: "\"a/b@c\"".into(),
+            path: None,
+        };
+        assert_eq!(
+            phpunit(&scope, &ScopeOptions::default()),
+            words(&[
+                "--teamcity",
+                "--filter",
+                r#"^App\\SlashTest::testIt with data set "a/b\x40c"$"#,
+            ])
+        );
+    }
+
+    #[test]
     fn a_data_set_is_matched_exactly() {
         let scope = TestScope::DataSet {
             class: "App\\GreeterTest".into(),

@@ -31,13 +31,9 @@ pub const PHPCS_CONFIG_CANDIDATES: &[&str] = &[
     "phpcs.xml.dist",
 ];
 
-/// PHPUnit's own automatic config-file discovery order (no `-c` given,
-/// PHPUnit's `Configuration::locateConfigurationFile`): the bare filename
-/// before its `.dist` counterparts, since a tracked default should not
-/// shadow a developer's own untracked override. `phpunit.dist.xml` is the
-/// PHPUnit 10+ spelling of `phpunit.xml.dist`.
-pub const PHPUNIT_CONFIG_CANDIDATES: &[&str] =
-    &["phpunit.xml", "phpunit.dist.xml", "phpunit.xml.dist"];
+/// PHPUnit's own discovery order; the list lives in `app-config` so
+/// `php-core` reads the same one without depending on this crate.
+pub use app_config::php::PHPUNIT_CONFIG_CANDIDATES;
 
 /// Does `program` need to be run through a PHP binary rather than executed
 /// directly?

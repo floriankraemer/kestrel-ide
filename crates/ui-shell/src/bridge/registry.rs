@@ -352,3 +352,22 @@ impl std::ops::Deref for SharedDiagnostics {
         &self.0
     }
 }
+
+/// The Tests dock's `TestService`, so a before-launch task on a worker
+/// thread can run a `phpunit` configuration there and wait for it (#416).
+/// Set when the view wires the PHPUnit configurations; one per process.
+static TEST_SERVICE: Mutex<Option<cxx_qt::CxxQtThread<crate::bridge::ffi::TestService>>> =
+    Mutex::new(None);
+
+pub(crate) fn set_test_service(thread: cxx_qt::CxxQtThread<crate::bridge::ffi::TestService>) {
+    *TEST_SERVICE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(thread);
+}
+
+pub(crate) fn test_service() -> Option<cxx_qt::CxxQtThread<crate::bridge::ffi::TestService>> {
+    TEST_SERVICE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+}

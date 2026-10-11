@@ -71,7 +71,66 @@ fn project_path(path: &str, root: &str, ignore_case: bool) -> Result<String, Con
     };
     relative
         .filter(|relative| !relative.split('/').any(|part| part == ".."))
+        // The project root itself: PHPUnit takes `.` for the working directory.
+        .map(|relative| match relative.trim_end_matches('/') {
+            "" => ".".to_string(),
+            trimmed => trimmed.to_string(),
+        })
         .ok_or(ConfigError::PathOutsideProject(path))
+}
+
+/// Which fields of the table a scope reads — what the editor shows. The
+/// same spellings [`scope_of`] matches; an unknown scope is the
+/// configuration file's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ScopeFields {
+    pub path: bool,
+    pub class: bool,
+    pub method: bool,
+    pub data_set: bool,
+    pub filter: bool,
+    pub testsuite: bool,
+}
+
+pub fn fields_of(scope: &str) -> ScopeFields {
+    let none = ScopeFields::default();
+    match scope {
+        "directory" => ScopeFields { path: true, ..none },
+        "file" => ScopeFields {
+            path: true,
+            filter: true,
+            ..none
+        },
+        "class" => ScopeFields {
+            path: true,
+            class: true,
+            ..none
+        },
+        "method" => ScopeFields {
+            path: true,
+            class: true,
+            method: true,
+            ..none
+        },
+        "data_set" => ScopeFields {
+            path: true,
+            class: true,
+            method: true,
+            data_set: true,
+            ..none
+        },
+        _ => ScopeFields {
+            testsuite: true,
+            ..none
+        },
+    }
+}
+
+/// The `phpunit` table of a `phpunit` configuration, the default
+/// (configuration-file scope) when it has none; `None` for any other kind.
+pub fn setting_of(config: &RunConfigSetting) -> Option<PhpUnitRunSetting> {
+    (config.kind.as_deref() == Some(PHPUNIT_KIND))
+        .then(|| config.phpunit.clone().unwrap_or_default())
 }
 
 /// The scope a table names, with only the fields that scope needs checked.
@@ -131,19 +190,35 @@ pub fn plan(
                 .transpose()?,
             groups: words(&setting.groups),
             exclude_groups: words(&setting.exclude_groups),
-            runner_options: container_core::run_config::split_shell_words(&expand(
-                &setting.runner_options,
-            )),
+            // Split before expanding: a macro's value (a Windows project
+            // directory with backslashes or spaces) is one literal word.
+            runner_options: container_core::run_config::split_shell_words(&setting.runner_options)
+                .iter()
+                .map(|word| expand(word))
+                .collect(),
         },
         interpreter: non_blank(&setting.interpreter),
     })
 }
 
 /// What is wrong with `setting`, worded to follow a quoted configuration
-/// name, or `None`: the editor's refusal to save. Macros are not expanded,
-/// so a path is only checked for being present.
-pub fn problem(setting: &PhpUnitRunSetting) -> Option<String> {
-    scope_of(setting, &|path| Ok(path.to_string()))
+/// name, or `None`: the editor's refusal to save. A path with a macro is
+/// only checked for being present (its value is known at run time); any
+/// other path must stay inside `root`.
+pub fn problem(setting: &PhpUnitRunSetting, root: &str, ignore_case: bool) -> Option<String> {
+    let check = |path: &str| {
+        if path.contains('$') {
+            Ok(path.to_string())
+        } else {
+            project_path(path, root, ignore_case)
+        }
+    };
+    scope_of(setting, &check)
+        .and_then(|_| {
+            non_blank(&setting.configuration)
+                .map(|c| check(&c))
+                .transpose()
+        })
         .err()
         .map(|error| error.to_string())
 }
@@ -343,9 +418,9 @@ mod tests {
             class: "A".into(),
             ..setting("method")
         };
-        assert!(problem(&no_method).unwrap().contains("method"));
-        assert!(problem(&setting("data_set")).is_some());
-        assert_eq!(problem(&setting("config")), None);
+        assert!(problem(&no_method, "/p", false).unwrap().contains("method"));
+        assert!(problem(&setting("data_set"), "/p", false).is_some());
+        assert_eq!(problem(&setting("config"), "/p", false), None);
     }
 
     #[test]
@@ -512,5 +587,98 @@ mod tests {
         assert_eq!(setting.data_set, "\"x\"");
         assert_eq!(config.name, "T::testA with data set \"x\"");
         assert!(data_set_config("App\\T::testA", None).is_none());
+    }
+
+    #[test]
+    fn saving_refuses_a_macro_free_path_outside_the_project() {
+        for path in ["/elsewhere/tests", "../tests"] {
+            let outside = PhpUnitRunSetting {
+                path: path.into(),
+                ..setting("directory")
+            };
+            assert!(problem(&outside, "/p", false)
+                .unwrap()
+                .contains("outside the project"));
+        }
+        let config_outside = PhpUnitRunSetting {
+            configuration: "/etc/phpunit.xml".into(),
+            ..setting("config")
+        };
+        assert!(problem(&config_outside, "/p", false).is_some());
+        for path in ["/p/tests", "tests", "$PROJECT_DIR$/../x"] {
+            let fine = PhpUnitRunSetting {
+                path: path.into(),
+                ..setting("directory")
+            };
+            assert_eq!(problem(&fine, "/p", false), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn the_project_root_is_a_directory_scope_of_dot() {
+        for path in ["/p", "/p/", ".", "./", "$PROJECT_DIR$"] {
+            let root = PhpUnitRunSetting {
+                path: path.into(),
+                ..setting("directory")
+            };
+            assert_eq!(
+                plan_of(&root).unwrap().scope,
+                TestScope::Directory { path: ".".into() },
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn runner_options_are_split_before_macros_expand() {
+        let setting = PhpUnitRunSetting {
+            runner_options: "--log-junit $PROJECT_DIR$/out.xml --cache-directory=$PROJECT_DIR$"
+                .into(),
+            ..setting("config")
+        };
+        let plan = plan(
+            &setting,
+            |text| text.replace("$PROJECT_DIR$", r"C:\My Proj"),
+            r"C:\My Proj",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            plan.options.runner_options,
+            [
+                "--log-junit",
+                r"C:\My Proj/out.xml",
+                r"--cache-directory=C:\My Proj"
+            ]
+        );
+    }
+
+    #[test]
+    fn scope_fields_match_what_each_scope_reads() {
+        assert_eq!(
+            fields_of("config"),
+            ScopeFields {
+                testsuite: true,
+                ..ScopeFields::default()
+            }
+        );
+        assert_eq!(fields_of("nonsense"), fields_of("config"));
+        let file = fields_of("file");
+        assert!(file.path && file.filter && !file.class);
+        let data_set = fields_of("data_set");
+        assert!(data_set.path && data_set.class && data_set.method && data_set.data_set);
+        assert!(!fields_of("method").data_set);
+        assert!(fields_of("class").class && !fields_of("class").method);
+        assert!(fields_of("directory").path && !fields_of("directory").filter);
+    }
+
+    #[test]
+    fn a_phpunit_kind_without_a_table_is_the_default_table() {
+        let bare = RunConfigSetting {
+            kind: Some(PHPUNIT_KIND.into()),
+            ..RunConfigSetting::default()
+        };
+        assert_eq!(setting_of(&bare), Some(PhpUnitRunSetting::default()));
+        assert_eq!(setting_of(&RunConfigSetting::default()), None);
     }
 }

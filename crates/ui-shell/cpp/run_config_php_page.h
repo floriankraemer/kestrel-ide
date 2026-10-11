@@ -59,9 +59,13 @@ public:
 signals:
     void changed();
 
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+
 private:
     void addChecked(const QString &name, bool checked);
     QListWidget *list_;
+    QLineEdit *addEdit_;
 };
 
 // The `phpunit` run configuration's own page (PHPUnit editor runs plan, E4):

@@ -55,7 +55,7 @@ mod ffi {
     /// user-facing text shown verbatim. The UI branches on `code`, never on
     /// the message — the `QString`-sentinel convention ("" = success) is
     /// banned.
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct FfiResult {
         code: i32,
         message: QString,
@@ -1593,15 +1593,28 @@ mod ffi {
     /// configuration's pickers (PHPUnit editor runs plan, E5). `suites` and
     /// `groups` are `\n`-separated (no bare `Vec<QString>` on the seam);
     /// `configuration` echoes the request so a stale answer can be dropped.
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct FfiPhpUnitModel {
         configuration: QString,
         /// The file read, project-relative; empty when there is none.
         file: QString,
         suites: QString,
         groups: QString,
-        /// Why the file could not be read; empty when it could.
-        problem: QString,
+        /// Why the file could not be offered: `CODE_PHPUNIT_CONFIG_NOT_FOUND`
+        /// or `CODE_PHPUNIT_CONFIG_UNREADABLE`, `CODE_OK` when it could.
+        problem: FfiResult,
+    }
+
+    /// Which fields of the `phpunit` page a scope reads
+    /// (`php_core::phpunit_run::fields_of`).
+    #[derive(Default)]
+    struct FfiPhpUnitScopeFields {
+        path: bool,
+        class_name: bool,
+        method: bool,
+        data_set: bool,
+        filter: bool,
+        testsuite: bool,
     }
 
     /// One frame of a stopped thread's stack (D3-3), 1:1 with
@@ -7357,6 +7370,12 @@ mod ffi {
         #[qinvokable]
         fn stop(self: Pin<&mut TestService>);
 
+        /// Make this the service a `phpunit` before-launch task runs on, so
+        /// its results fill this Tests dock (#416).
+        #[qinvokable]
+        #[cxx_name = "registerBeforeLaunchRunner"]
+        fn register_before_launch_runner(self: Pin<&mut TestService>);
+
         /// A run began.
         #[qsignal]
         #[cxx_name = "testRunStarted"]
@@ -11130,6 +11149,11 @@ mod ffi {
         #[qinvokable]
         #[cxx_name = "projectRoot"]
         fn project_root(self: &RunConfigEditor) -> QString;
+
+        /// The `phpunit` page's fields `scope` reads.
+        #[qinvokable]
+        #[cxx_name = "phpUnitScopeFields"]
+        fn php_unit_scope_fields(self: &RunConfigEditor, scope: &QString) -> FfiPhpUnitScopeFields;
 
         /// `compose -f <files>… config --services` against `connection_id`,
         /// for the Compose page's Services picker: runs on a worker thread

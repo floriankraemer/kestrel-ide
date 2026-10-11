@@ -384,12 +384,7 @@ CentralWidgets buildCentralWidget(QMainWindow *window, ProjectTreeModel *treeMod
     auto *runConsolePanel = buildRunConsoleDock(dockManager, docks, bottomArea, runToolbar, openAt);
     auto *buildPanel = buildBuildDock(dockManager, docks, bottomArea, buildService);
     auto *debugPanel = buildDebugDock(dockManager, docks, bottomArea, debugService, openAt);
-    buildTestsDock(dockManager, docks, bottomArea, testService, appSettings, openAt,
-                   [editorTabs](const QString &path) -> std::optional<QString> {
-                       const CodeEditor *editor = editorTabs->editorForPath(path);
-                       return editor != nullptr ? std::optional<QString>(editor->toPlainText())
-                                                : std::nullopt;
-                   });
+    buildTestsDock(dockManager, docks, bottomArea, testService, appSettings, openAt, editorTabs);
     auto [buildToolsPanel, containersPanel, databasePanel] = buildContributedToolWindows(
       appSettings, dockManager, docks, rightArea, bottomArea, editorDock, buildToolsService, runService, treeModel, editorTabs, containerService, terminalSupervisor, openAt, databaseService, exchangeService, consoleService, resultProvider);
 
@@ -743,9 +738,8 @@ void buildMainWindow(AppSettings *appSettings,
                           analysisService, containerService, buildToolsService, databaseService, exchangeService, consoleService, resultProvider);
     EditorTabs *editorTabs = central.editorTabs;
     wireVcsService(vcsService, treeModel, editorTabs); // F3-12a/F3-16
-    wireRunService(runService, editorTabs, runConfigEditor, containerService); // R1-7/C5
+    wireRunService(runService, editorTabs, runConfigEditor, containerService, central.runConsolePanel, debugService, testService); // R1-7/C5/E4
     wireDebugService(debugService, editorTabs, testService); // D2-5, PHP parity T3
-    wirePhpUnitConfigurations(runService, central.runConsolePanel, debugService, testService, window); // E4
     // Breakpoints live under the project's `.ide/local/`, so they can only
     // be read once a project is open — the same lifecycle hook run
     // configuration detection uses.

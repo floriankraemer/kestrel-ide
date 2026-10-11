@@ -89,13 +89,24 @@ pub fn parse_filter_dialect(value: Option<&str>) -> Result<FilterDialect, Unknow
 /// ("unrecognized character follows \"), so `App\Tests\Foo` must go out as
 /// `App\\Tests\\Foo`. The one helper behind both the tree's reruns and
 /// `php-core`'s editor test markers.
+///
+/// Two characters follow PHPUnit's own handling of `--filter` (checked
+/// against PHPUnit 12's `NameFilterIterator`): it wraps the pattern in
+/// `/.../i` after replacing every `/` with `\/`, so a `/` stays bare (an
+/// escaped one would become `\\/` and end the pattern early); and it reads a
+/// filter containing `@` as `test@dataSetName` shorthand, so `@` goes out as
+/// `\x40`, which PCRE matches the same and PHPUnit does not see.
 pub fn escape_regex(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for c in value.chars() {
-        if r"\.+*?()[]{}^$|/#".contains(c) {
-            escaped.push('\\');
+        match c {
+            '@' => escaped.push_str(r"\x40"),
+            _ if r"\.+*?()[]{}^$|#".contains(c) => {
+                escaped.push('\\');
+                escaped.push(c);
+            }
+            _ => escaped.push(c),
         }
-        escaped.push(c);
     }
     escaped
 }
@@ -148,7 +159,11 @@ fn split_suite_title(id: &TestId) -> (&str, &str) {
 /// title is only anchored at the start, because an outline's examples are
 /// reported as `Title #1`, `Title #2`, ….
 fn behat_pattern(titles: &[&str], exact: bool) -> String {
-    let alternatives: Vec<String> = titles.iter().map(|t| escape_regex(t)).collect();
+    // Behat takes the `/.../` delimiters as given, so `/` is escaped here.
+    let alternatives: Vec<String> = titles
+        .iter()
+        .map(|t| escape_regex(t).replace('/', r"\/"))
+        .collect();
     let end = if exact { "$" } else { "" };
     match alternatives.as_slice() {
         [only] => format!("/^{only}{end}/"),
@@ -184,71 +199,9 @@ pub fn tree_rerun_block(dialect: Option<&str>) -> Option<String> {
     }
 }
 
-/// A test the editor can name: what a gutter marker run is built from.
-#[derive(Debug, Clone, Copy)]
-pub struct MarkerRun<'a> {
-    /// The marker's PHPUnit-regex `--filter` pattern; empty runs the whole
-    /// file.
-    pub filter: &'a str,
-    /// The method (or class) name, for dialects that select by name.
-    pub name: &'a str,
-    /// A class marker selects the whole file's class, not one method.
-    pub is_class: bool,
-    /// The test file, relative to the run's working directory.
-    pub file: Option<&'a str>,
-}
-
-/// The full argv for running one gutter-marker test.
-///
-/// PHPUnit-style frameworks get `--filter <pattern>` and, when the file is
-/// known, the file as the path argument so PHPUnit does not scan the whole
-/// suite for a match. Codeception takes `file:^method$`. Every other dialect
-/// cannot run a single test from the editor, which is an `Err` sentence.
-pub fn marker_args(
-    base: &[String],
-    dialect: FilterDialect,
-    filter_flag: Option<&str>,
-    filter_template: Option<&str>,
-    marker: &MarkerRun<'_>,
-) -> Result<Vec<String>, &'static str> {
-    match dialect {
-        FilterDialect::PhpUnitRegex | FilterDialect::PestRegex => {
-            let mut args = if marker.filter.is_empty() {
-                base.to_vec()
-            } else {
-                apply_filter(
-                    base,
-                    filter_flag,
-                    filter_template,
-                    &[marker.filter.to_string()],
-                )
-            };
-            // A file run with no filter and no path would be the whole suite.
-            if marker.filter.is_empty() && marker.file.is_none() {
-                return Err("The test's file is outside the project, so it cannot be run alone.");
-            }
-            args.extend(marker.file.map(str::to_string));
-            Ok(args)
-        }
-        FilterDialect::Codeception => {
-            let file = marker
-                .file
-                .ok_or("Codeception needs the test's file to run a single test.")?;
-            let mut args = base.to_vec();
-            args.push(if marker.is_class {
-                file.to_string()
-            } else {
-                format!("{file}:^{}$", escape_regex(marker.name))
-            });
-            Ok(args)
-        }
-        _ => Err("This test framework cannot run a single test from the editor."),
-    }
-}
-
-/// `file` relative to `root` with `/` separators; `None` when it is not
-/// inside. Windows paths differ in drive-letter case and separators, so
-/// `ignore_case` compares them folded.
+/// `file` relative to `root` with `/` separators, `.` for the root itself;
+/// `None` when it is not inside. Windows paths differ in drive-letter case
+/// and separators, so `ignore_case` compares them folded.
 pub fn relative_to_root(file: &str, root: &str, ignore_case: bool) -> Option<String> {
     let norm = |p: &str| p.replace('\\', "/");
     let (file, root) = (norm(file), norm(root));
@@ -261,8 +214,11 @@ pub fn relative_to_root(file: &str, root: &str, ignore_case: bool) -> Option<Str
     } else {
         file.strip_prefix(root)?
     };
-    let rest = rest.strip_prefix('/')?;
-    (!rest.is_empty()).then(|| rest.to_string())
+    if rest.is_empty() {
+        return Some(".".to_string());
+    }
+    let rest = rest.strip_prefix('/')?.trim_end_matches('/');
+    Some(if rest.is_empty() { "." } else { rest }.to_string())
 }
 
 fn surefire_pattern(id: &TestId) -> String {
@@ -516,33 +472,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn pest_markers_are_filtered_like_phpunits() {
-        let marker = MarkerRun {
-            filter: "Tests\\\\GreeterTest::testGreets",
-            name: "testGreets",
-            is_class: false,
-            file: Some("tests/GreeterTest.php"),
-        };
-        let args = marker_args(
-            &["--teamcity".to_string()],
-            FilterDialect::PestRegex,
-            Some("--filter"),
-            None,
-            &marker,
-        )
-        .unwrap();
-        assert_eq!(
-            args,
-            [
-                "--teamcity",
-                "--filter",
-                marker.filter,
-                "tests/GreeterTest.php"
-            ]
-        );
-    }
-
     // --- phpunit-regex dialect --------------------------------------------
 
     #[test]
@@ -596,6 +525,27 @@ mod tests {
         assert_eq!(
             pattern,
             vec!["^(?:A::testX with data set \\#1 \\(a, b\\))$"]
+        );
+    }
+
+    #[test]
+    fn slash_and_at_follow_phpunits_own_filter_wrapping() {
+        // Checked against PHPUnit 12.0: `"a\/b"` matched nothing, `"a/b"`
+        // ran the data set; `"x@y"` matched nothing, `"x\x40y"` ran it.
+        let pattern = for_many(
+            &[TestId("A::t with data set \"a/b\"".into())],
+            FilterDialect::PhpUnitRegex,
+        );
+        assert_eq!(pattern, vec![r#"^(?:A::t with data set "a/b")$"#]);
+        assert_eq!(escape_regex("x@y"), r"x\x40y");
+    }
+
+    #[test]
+    fn behat_still_escapes_its_own_slash_delimiter() {
+        let leaf = TestId("F::a/b".into());
+        assert_eq!(
+            for_many(&[leaf], FilterDialect::BehatName),
+            vec![r"/^a\/b/"]
         );
     }
 
@@ -809,59 +759,6 @@ mod tests {
         }
     }
 
-    fn marker(file: Option<&str>) -> MarkerRun<'_> {
-        MarkerRun {
-            filter: r"^App\\FooTest::testBar( with data set .+)?$",
-            name: "testBar",
-            is_class: false,
-            file,
-        }
-    }
-
-    #[test]
-    fn a_phpunit_marker_run_also_passes_the_test_file() {
-        let base = vec!["--teamcity".to_string()];
-        let args = marker_args(
-            &base,
-            FilterDialect::PhpUnitRegex,
-            Some("--filter"),
-            None,
-            &marker(Some("tests/FooTest.php")),
-        )
-        .unwrap();
-        assert_eq!(
-            args,
-            vec![
-                "--teamcity",
-                "--filter",
-                r"^App\\FooTest::testBar( with data set .+)?$",
-                "tests/FooTest.php"
-            ]
-        );
-        let without_file = marker_args(
-            &base,
-            FilterDialect::PhpUnitRegex,
-            Some("--filter"),
-            None,
-            &marker(None),
-        )
-        .unwrap();
-        assert_eq!(without_file.len(), 3);
-    }
-
-    #[test]
-    fn a_file_run_without_a_known_file_is_refused_not_the_whole_suite() {
-        let run = MarkerRun {
-            filter: "",
-            name: "",
-            is_class: true,
-            file: None,
-        };
-        for dialect in [FilterDialect::PhpUnitRegex, FilterDialect::PestRegex] {
-            assert!(marker_args(&[], dialect, Some("--filter"), None, &run).is_err());
-        }
-    }
-
     #[test]
     fn relative_to_root_handles_separators_and_windows_case() {
         assert_eq!(
@@ -875,58 +772,11 @@ mod tests {
             Some("tests/A.php")
         );
         assert_eq!(relative_to_root(r"c:\Proj\A.php", r"C:\proj", false), None);
-    }
-
-    #[test]
-    fn a_file_marker_run_is_the_file_without_a_filter() {
-        let base = vec!["--teamcity".to_string()];
-        let file = MarkerRun {
-            filter: "",
-            name: "",
-            is_class: true,
-            file: Some("tests/FooTest.php"),
-        };
-        for dialect in [FilterDialect::PhpUnitRegex, FilterDialect::PestRegex] {
-            let args = marker_args(&base, dialect, Some("--filter"), None, &file).unwrap();
-            assert_eq!(args, vec!["--teamcity", "tests/FooTest.php"]);
-        }
-    }
-
-    #[test]
-    fn a_codeception_marker_run_is_file_colon_method() {
-        let base = vec!["run".to_string(), "--xml".to_string()];
-        let args = marker_args(
-            &base,
-            FilterDialect::Codeception,
-            Some("--filter"),
-            None,
-            &marker(Some("tests/unit/FooTest.php")),
-        )
-        .unwrap();
-        assert_eq!(
-            args,
-            vec!["run", "--xml", "tests/unit/FooTest.php:^testBar$"]
-        );
-        let class = MarkerRun {
-            is_class: true,
-            ..marker(Some("tests/unit/FooTest.php"))
-        };
-        let args = marker_args(&base, FilterDialect::Codeception, None, None, &class).unwrap();
-        assert_eq!(
-            args.last().map(String::as_str),
-            Some("tests/unit/FooTest.php")
-        );
-        assert!(marker_args(&base, FilterDialect::Codeception, None, None, &marker(None)).is_err());
-    }
-
-    #[test]
-    fn dialects_without_a_per_test_selector_refuse_a_marker_run() {
-        for dialect in [
-            FilterDialect::None,
-            FilterDialect::BehatName,
-            FilterDialect::Gradle,
-        ] {
-            assert!(marker_args(&[], dialect, Some("--x"), None, &marker(Some("f"))).is_err());
+        for root_itself in ["/p", "/p/"] {
+            assert_eq!(
+                relative_to_root(root_itself, "/p", false).as_deref(),
+                Some(".")
+            );
         }
     }
 }

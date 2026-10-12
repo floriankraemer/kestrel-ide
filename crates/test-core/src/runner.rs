@@ -258,6 +258,13 @@ impl TestRunHandle {
             .map(|code| format!("Process finished with exit code {code}"))
     }
 
+    /// Count results a sink produced on its own, which the process never
+    /// printed as events (a framework's text-only failure report): a run
+    /// that produced them did start.
+    pub fn note_reported(&self, count: usize) {
+        self.reported.fetch_add(count, Ordering::Relaxed);
+    }
+
     /// Kill the running process, if any. Stopping a run that has already
     /// finished (or never started) is not an error.
     pub fn stop(&self) {
@@ -509,6 +516,13 @@ mod tests {
         );
         assert_eq!(handle.start_failure(Some(0)), None, "a clean exit");
         assert_eq!(handle.start_failure(None), None, "a stopped run");
+    }
+
+    #[test]
+    fn results_a_sink_synthesised_make_the_run_a_started_one() {
+        let handle = TestRunHandle::new();
+        handle.note_reported(1);
+        assert_eq!(handle.start_failure(Some(2)), None);
     }
 
     #[test]

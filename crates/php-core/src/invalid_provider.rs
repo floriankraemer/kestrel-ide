@@ -34,13 +34,21 @@ pub struct InvalidProviderScanner {
     class_files: HashMap<String, String>,
     /// Tests the reporter did report, which need no synthesising.
     reported: HashSet<TestId>,
+    /// Suites this run's tree has seen start, the reporter's and our own: a
+    /// class whose tests all have invalid providers never gets one (#412).
+    started_suites: HashSet<TestId>,
 }
 
 impl InvalidProviderScanner {
     /// Note an event the run reported, for the files and tests it names.
     pub fn observe(&mut self, event: &TeamCityEvent) {
         match event {
-            TeamCityEvent::SuiteStarted { name, location, .. } => {
+            TeamCityEvent::SuiteStarted {
+                parent,
+                name,
+                location,
+            } => {
+                self.started_suites.insert(child_id(parent.as_ref(), name));
                 if let Some(location) = location.as_ref().filter(|l| !l.file.is_empty()) {
                     self.class_files.insert(name.clone(), location.file.clone());
                 }
@@ -61,8 +69,20 @@ impl InvalidProviderScanner {
             let line: String = self.partial.drain(..=end).collect();
             let line = line.trim_end_matches(['\r', '\n']);
             if line.trim().is_empty() {
+                // PHPUnit puts a blank line between the explanation and the
+                // `file:line` that ends the entry, so only the blank after
+                // that line (or a second one) closes it.
+                match self.entry.last() {
+                    Some(last) if last.is_empty() || is_file_line(last) => {
+                        events.extend(self.close_entry(locator));
+                    }
+                    Some(_) => self.entry.push(String::new()),
+                    None => {}
+                }
+            } else if is_entry_header(line) {
                 events.extend(self.close_entry(locator));
-            } else if !self.entry.is_empty() || is_entry_header(line) {
+                self.entry.push(line.to_string());
+            } else if !self.entry.is_empty() {
                 self.entry.push(line.to_string());
             }
         }
@@ -82,11 +102,26 @@ impl InvalidProviderScanner {
             .class_files
             .get(&class)
             .cloned()
-            .or_else(|| locator.class_file(&class));
+            .or_else(|| locator.class_file(&class))
+            // The summary names the file too: all that is known of a class
+            // whose tests the reporter never started.
+            .or_else(|| details.rsplit_once(':').map(|(file, _)| file.to_string()))
+            .filter(|file| !file.is_empty());
         let location = file
+            .as_ref()
             .and_then(|file| parse_location_hint(&format!("php_qn://{file}::\\{class}::{method}")));
+        let mut events = Vec::new();
+        if self.started_suites.insert(parent.clone()) {
+            events.push(TeamCityEvent::SuiteStarted {
+                parent: None,
+                name: class.clone(),
+                location: file
+                    .as_ref()
+                    .and_then(|file| parse_location_hint(&format!("php_qn://{file}::\\{class}"))),
+            });
+        }
         let parent = Some(parent);
-        vec![
+        events.extend([
             TeamCityEvent::TestStarted {
                 parent: parent.clone(),
                 name: method.clone(),
@@ -104,7 +139,8 @@ impl InvalidProviderScanner {
                 name: method,
                 duration_ms: None,
             },
-        ]
+        ]);
+        events
     }
 }
 
@@ -146,6 +182,12 @@ fn invalid_provider_entry(entry: &[String]) -> Option<(String, String, String, S
         Some((last, rest)) if !rest.is_empty() && is_file_line(last) => (last.clone(), rest),
         _ => (String::new(), body),
     };
+    let blanks = explanation
+        .iter()
+        .rev()
+        .take_while(|l| l.is_empty())
+        .count();
+    let explanation = &explanation[..explanation.len() - blanks];
     Some((
         class.to_string(),
         method.to_string(),
@@ -238,6 +280,41 @@ mod tests {
                 method: "testBad".into()
             })
         );
+    }
+
+    #[test]
+    fn a_class_whose_tests_all_have_invalid_providers_gets_its_suite_synthesised() {
+        // Real PHPUnit 12.5 output: no ##teamcity line at all, exit code 2.
+        let events = replay(
+            include_str!("fixtures/phpunit12_invalid_provider_no_class_suite.txt"),
+            usize::MAX,
+        );
+        let class = "App\\Tests\\OnlyBadTest";
+        let suites: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                TeamCityEvent::SuiteStarted {
+                    parent,
+                    name,
+                    location,
+                } => Some((parent.clone(), name.as_str(), location.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(suites.len(), 1, "one suite for both tests");
+        assert_eq!((suites[0].0.clone(), suites[0].1), (None, class));
+        assert_eq!(
+            suites[0].2.as_ref().map(|l| l.file.as_str()),
+            Some("/w/tests/OnlyBadTest.php")
+        );
+        assert!(matches!(events[0], TeamCityEvent::SuiteStarted { .. }));
+
+        let mut tree = test_core::TestTree::new();
+        for event in events {
+            tree.apply(event);
+        }
+        assert_eq!(tree.roots(), &[TestId(class.into())], "no orphan nodes");
+        assert_eq!(tree.failed_leaf_ids().len(), 2);
     }
 
     #[test]

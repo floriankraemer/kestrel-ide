@@ -820,6 +820,7 @@ impl ffi::TestService {
                 pending: Default::default(),
                 locator: php_core::tests::EventLocator::for_run(&root, &work_dir, host.clone()),
                 invalid_providers: Default::default(),
+                run: handle.clone(),
             };
             let program_str = program.to_string_lossy().into_owned();
             let result = test_core::run_on_env(
@@ -1107,12 +1108,17 @@ struct QtSink {
     locator: php_core::tests::EventLocator,
     /// PHPUnit 12 reports an invalid data provider only in its text summary.
     invalid_providers: php_core::invalid_provider::InvalidProviderScanner,
+    /// Told about the events the scanner synthesises, so a run whose only
+    /// results are those is not mistaken for one that never started.
+    run: test_core::TestRunHandle,
 }
 
 impl test_core::TestSink for QtSink {
     fn output(&mut self, text: &str) {
         let text = self.ansi.feed(text);
-        for event in self.invalid_providers.feed(&text, &self.locator) {
+        let synthesised = self.invalid_providers.feed(&text, &self.locator);
+        self.run.note_reported(synthesised.len());
+        for event in synthesised {
             self.event(event);
         }
         let _ = self

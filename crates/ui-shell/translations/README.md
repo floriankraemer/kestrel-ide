@@ -41,6 +41,7 @@ Sources that no longer exist are dropped, so a reworded string loses its old tra
 
 Strings Qt itself looks up with no `tr()` in our sources (the standard-button texts under `QPlatformTheme`) are kept alive by `QT_TRANSLATE_NOOP` in `i18n_startup.cpp`.
 Spell the ellipsis as the single character `…`, never three dots.
+In `ide_de.ts` a trailing ellipsis follows a space (`Öffnen …`), as the German entries always did.
 
 ## Which context a string belongs to
 

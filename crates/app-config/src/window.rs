@@ -30,8 +30,10 @@ impl WindowGeometry {
     /// pixels, primary first).
     ///
     /// A usable saved rect whose title strip is still reachable on some screen
-    /// is kept, shrunk and nudged to fit that screen (monitors left of or above
-    /// the primary have negative coordinates and are legitimate). Anything else
+    /// is kept: shrunk and nudged to fit the screen showing most of the strip
+    /// (monitors left of or above the primary have negative coordinates and are
+    /// legitimate), or untouched when all four corners lie on screens, as for a
+    /// window spanning two monitors. Anything else
     /// — nothing saved, a rect from a monitor that is gone, a stale off-screen
     /// position — opens at the default size centred on the primary screen.
     ///
@@ -46,8 +48,22 @@ impl WindowGeometry {
             return self.clone();
         };
         if self.is_usable() {
-            if let Some(screen) = screens.iter().find(|s| s.shows_title_strip_of(self)) {
-                return self.fitted_into(screen);
+            let best = screens
+                .iter()
+                .map(|s| (s.title_strip_width_of(self), s))
+                .filter(|(width, _)| *width >= i64::from(self.width.min(MIN_GRABBABLE_WIDTH)))
+                .max_by_key(|(width, _)| *width);
+            if let Some((_, screen)) = best {
+                // A window spanning monitors stays where the user put it.
+                let spans_screens = self
+                    .corners()
+                    .iter()
+                    .all(|(x, y)| screens.iter().any(|s| s.contains(*x, *y)));
+                return if spans_screens {
+                    self.clone()
+                } else {
+                    self.fitted_into(screen)
+                };
             }
         }
         primary.default_window_centred()
@@ -71,14 +87,28 @@ impl WindowGeometry {
         i64::from(self.y) + i64::from(self.height)
     }
 
-    /// Whether enough of `window`'s title bar lies on this screen to grab it.
-    fn shows_title_strip_of(&self, window: &WindowGeometry) -> bool {
+    /// How much of `window`'s title bar lies on this screen: its overlap
+    /// width, or 0 when the strip is not vertically inside the screen.
+    fn title_strip_width_of(&self, window: &WindowGeometry) -> i64 {
         let visible_width = window.right().min(self.right()) - i64::from(window.x.max(self.x));
         let strip_top = i64::from(window.y);
-        let min_width = i64::from(window.width.min(MIN_GRABBABLE_WIDTH));
-        visible_width >= min_width
-            && strip_top >= i64::from(self.y)
-            && strip_top + TITLE_STRIP_HEIGHT <= self.bottom()
+        if strip_top >= i64::from(self.y) && strip_top + TITLE_STRIP_HEIGHT <= self.bottom() {
+            visible_width.max(0)
+        } else {
+            0
+        }
+    }
+
+    fn contains(&self, x: i64, y: i64) -> bool {
+        (i64::from(self.x)..self.right()).contains(&x)
+            && (i64::from(self.y)..self.bottom()).contains(&y)
+    }
+
+    /// The four outermost pixels of the rect.
+    fn corners(&self) -> [(i64, i64); 4] {
+        let (left, top) = (i64::from(self.x), i64::from(self.y));
+        let (right, bottom) = (self.right() - 1, self.bottom() - 1);
+        [(left, top), (right, top), (left, bottom), (right, bottom)]
     }
 
     fn fitted_into(&self, screen: &WindowGeometry) -> WindowGeometry {
@@ -198,6 +228,25 @@ mod tests {
         let saved = rect(-1800, 100, 1200, 700);
         let screens = [rect(0, 0, 1920, 1040), rect(-1920, 0, 1920, 1040)];
         assert_eq!(saved.placed_within(&screens, 0), saved);
+    }
+
+    #[test]
+    fn a_window_spanning_two_monitors_stays_put() {
+        let screens = [rect(0, 0, 1920, 1040), rect(1920, 0, 1920, 1040)];
+        let saved = rect(1800, 100, 1200, 700);
+        assert_eq!(saved.placed_within(&screens, 0), saved);
+    }
+
+    #[test]
+    fn a_window_hanging_off_the_edge_of_two_monitors_fits_the_one_showing_most_of_it() {
+        let screens = [rect(0, 0, 1920, 1040), rect(1920, 0, 1920, 1040)];
+        let saved = rect(1800, 900, 1200, 700);
+        assert_eq!(saved.placed_within(&screens, 0), rect(1920, 340, 1200, 700));
+        let mostly_left = rect(1000, 900, 1200, 700);
+        assert_eq!(
+            mostly_left.placed_within(&screens, 0),
+            rect(720, 340, 1200, 700)
+        );
     }
 
     #[test]

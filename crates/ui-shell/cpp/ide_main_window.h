@@ -63,10 +63,6 @@ private:
     DocumentManager *docManager_ = nullptr;
 };
 
-// Windows 11's DWM rounds a top-level window's corners and casts its drop
-// shadow on its own — but only once the window has a native handle, so this
-// has to run after show(), not during construction. No-op elsewhere (DWM
-// setting, not app-drawn chrome, per ADR-0001's native-chrome constraint).
 // Applies the saved window geometry, moved onto a visible screen by the
 // Qt-free placement rule. Call before `showRestored`.
 void placeRestored(QMainWindow *window, AppSettings *appSettings);
@@ -77,6 +73,10 @@ void placeRestored(QMainWindow *window, AppSettings *appSettings);
 // halves of that decision stay in one file.
 void showRestored(QMainWindow *window, AppSettings *appSettings);
 
+// Windows 11's DWM rounds a top-level window's corners and casts its drop
+// shadow on its own — but only once the window has a native handle, so this
+// has to run after show(), not during construction. No-op elsewhere (DWM
+// setting, not app-drawn chrome, per ADR-0001's native-chrome constraint).
 void applyNativeWindowChrome(QMainWindow *window);
 
 } // namespace ui_shell

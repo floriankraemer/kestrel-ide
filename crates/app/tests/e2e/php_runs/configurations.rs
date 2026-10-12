@@ -542,6 +542,18 @@ fn e2e_phpunit_saved_configurations() {
     );
     std::fs::remove_file(&junit).ok();
 
+    // #468's exact sequence: Run File leaves green rows, then the saved
+    // configuration whose interpreter exits before the runner starts.
+    open(&ide, "MailerTest.php");
+    caret_to(&ide, 1);
+    let scoped = ide.mark();
+    ide.key("ctrl+shift+F10");
+    let (_, tests) = run_and_collect(&ide, scoped);
+    findings.check(
+        tests.get("testSend").map(String::as_str) == Some("passed"),
+        format!("#468: Run File on MailerTest.php ran {tests:?}"),
+    );
+
     // #456: a run whose runner never starts ends as a failure with its exit
     // code, and what php wrote to stderr is in the Tests dock's output.
     select_config(&ide, "E8 cannot start");

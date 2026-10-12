@@ -117,6 +117,8 @@ void paintTreeBranch(const QStyleOption &option, QPainter &painter)
 // the swap), and widens that button so the glyph is not flush against the
 // tab's edge.
 //
+// Dialog buttons: no standard icons (styleHint below).
+//
 // Tree branches: paints every QTreeView's branch column (paintTreeBranch
 // above) so all trees — project, structure, search results, changes, ... —
 // share one themed look on every platform instead of Fusion's arrows on
@@ -155,6 +157,12 @@ public:
                   QStyleHintReturn *returnData) const override
     {
         if (hint == QStyle::SH_Menu_AllowActiveAndDisabled) {
+            return 0;
+        }
+        // Dialog buttons are text-only on every platform: Fusion on Linux
+        // paints floppy/red-X/green-arrow fallbacks on Save/Cancel/OK that
+        // clash with the flat theme, and the Windows style shows none.
+        if (hint == QStyle::SH_DialogButtonBox_ButtonsHaveIcons) {
             return 0;
         }
         return QProxyStyle::styleHint(hint, option, widget, returnData);

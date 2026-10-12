@@ -393,6 +393,13 @@ void ProblemsPanel::applyFilter()
               .arg(total));
 }
 
+void ProblemsPanel::showEvent(QShowEvent *event)
+{
+    QWidget::showEvent(event);
+    // After the layout pass this show triggers, so `visualItemRect` is real.
+    QTimer::singleShot(0, this, [this]() { markVisibleRows(); });
+}
+
 void ProblemsPanel::markVisibleRows()
 {
     if (!e2eMarksEnabled()) {

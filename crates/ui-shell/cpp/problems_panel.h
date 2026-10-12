@@ -5,6 +5,7 @@
 #include <QColor>
 #include <QVector>
 #include <QCoreApplication>
+#include <QShowEvent>
 #include <QString>
 #include <QWidget>
 
@@ -74,6 +75,12 @@ public:
 
     // Focused when the dock is shown from the View menu or the status bar.
     void focusTree();
+
+protected:
+    // The rows' E2E rects are only real once the tab is on screen: the dock
+    // opens behind the current tab (#446), so the marks written at refresh
+    // time describe a hidden tree.
+    void showEvent(QShowEvent *event) override;
 
 private:
     // A burst of `diagnosticsChanged` (each analyzer and server publishes

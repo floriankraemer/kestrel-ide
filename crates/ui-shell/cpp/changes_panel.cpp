@@ -18,6 +18,7 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QPlainTextEdit>
+#include <QSplitter>
 #include <QToolButton>
 #include <QPushButton>
 #include <QShowEvent>
@@ -245,6 +246,27 @@ QTreeWidgetItem *findFileRow(QTreeWidget *tree, VcsService *vcsService, const QS
     return target;
 }
 
+// A commit message box that asks for two lines of height, not
+// QPlainTextEdit's ~190px hint (and ~76px minimum): inside the Changes splitter that hint
+// would hand the commit area most of the dock. The user drags the handle
+// to see more lines.
+class CommitMessageEdit : public QPlainTextEdit
+{
+public:
+    using QPlainTextEdit::QPlainTextEdit;
+
+    QSize sizeHint() const override { return {QPlainTextEdit::sizeHint().width(), kHeight}; }
+    // QWidgetItem folds minimumSizeHint() into the layout's hint, so the
+    // base class's ~76px would win over both setMinimumHeight and sizeHint.
+    QSize minimumSizeHint() const override
+    {
+        return {QPlainTextEdit::minimumSizeHint().width(), kHeight};
+    }
+
+private:
+    static constexpr int kHeight = 48;
+};
+
 } // namespace
 
 ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QString &)> showDiff,
@@ -330,9 +352,8 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
         messageHistory_->setCurrentIndex(-1);
     });
 
-    messageEdit_ = new QPlainTextEdit(this);
+    messageEdit_ = new CommitMessageEdit(this);
     messageEdit_->setPlaceholderText(tr("Commit message"));
-    messageEdit_->setMaximumHeight(80);
     // Two lines is enough of a floor: `QPlainTextEdit`'s own minimum hint
     // (~76px) made this panel's minimum height a near miss for the right
     // column above a 30% bottom area, at which point ADS wraps the panel in
@@ -383,13 +404,36 @@ ChangesPanel::ChangesPanel(VcsService *vcsService, std::function<void(const QStr
     repoWidgets_ = new QWidget(this);
     auto *repoLayout = new QVBoxLayout(repoWidgets_);
     repoLayout->setContentsMargins(0, 0, 0, 0);
-    repoLayout->addWidget(toolbar_);
-    repoLayout->addWidget(tree_, 1);
-    repoLayout->addWidget(messageHistory_);
-    repoLayout->addWidget(messageEdit_);
-    repoLayout->addLayout(optionsRow);
-    repoLayout->addWidget(commitOptions_);
-    repoLayout->addLayout(buttonRow);
+
+    // The tree takes whatever height the dock has; the commit area keeps
+    // its natural compact height (stretch 0) and the user can drag the
+    // handle between them. The handle must not collapse either half (#321's
+    // minimum-height budget).
+    auto *treePane = new QWidget(this);
+    // Ignored: the tree's own ~190px hint must not compete with the commit
+    // area's in the splitter's shrink pass; the tree takes what is left.
+    treePane->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Ignored);
+    auto *treeLayout = new QVBoxLayout(treePane);
+    treeLayout->setContentsMargins(0, 0, 0, 0);
+    treeLayout->addWidget(toolbar_);
+    treeLayout->addWidget(tree_, 1);
+
+    auto *commitArea = new QWidget(this);
+    auto *commitLayout = new QVBoxLayout(commitArea);
+    commitLayout->setContentsMargins(0, 0, 0, 0);
+    commitLayout->addWidget(messageHistory_);
+    commitLayout->addWidget(messageEdit_);
+    commitLayout->addLayout(optionsRow);
+    commitLayout->addWidget(commitOptions_);
+    commitLayout->addLayout(buttonRow);
+
+    auto *split = new QSplitter(Qt::Vertical, repoWidgets_);
+    split->setChildrenCollapsible(false);
+    split->addWidget(treePane);
+    split->addWidget(commitArea);
+    split->setStretchFactor(0, 1);
+    split->setStretchFactor(1, 0);
+    repoLayout->addWidget(split);
 
     // Shown instead of `repoWidgets_` for a project that isn't a Git
     // repository at all (F3-2's "not a repository" outcome) — `refresh()`

@@ -200,7 +200,7 @@ bool showContainerTargetWizard(QWidget *parent, ContainerService *containerServi
     }
     composeLayout->addWidget(composeFilesList);
     auto *composeFilesButtons = new QHBoxLayout();
-    auto *addComposeFileButton = new QPushButton(QObject::tr("Add..."), composePane);
+    auto *addComposeFileButton = new QPushButton(QObject::tr("Add…"), composePane);
     auto *removeComposeFileButton = new QPushButton(QObject::tr("Remove"), composePane);
     composeFilesButtons->addWidget(addComposeFileButton);
     composeFilesButtons->addWidget(removeComposeFileButton);
@@ -259,7 +259,7 @@ bool showContainerTargetWizard(QWidget *parent, ContainerService *containerServi
         for (int row = 0; row < composeFilesList->count(); ++row) {
             files << composeFilesList->item(row)->text();
         }
-        needsBuildLabel->setText(QObject::tr("Build step: checking..."));
+        needsBuildLabel->setText(QObject::tr("Build step: checking…"));
         editor->requestComposeNeedsBuild(serverCombo->currentData().toString(),
                                          files.join(QLatin1Char('\n')),
                                          serviceCombo->currentText());

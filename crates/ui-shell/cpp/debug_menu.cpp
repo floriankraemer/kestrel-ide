@@ -70,7 +70,7 @@ void buildDebugMenu(QMainWindow *window, DebugService *debugService, DebugPanel 
     }
 
     QAction *attachAction = registerAction(debugMenu, QStringLiteral("debug.attach"),
-                                           QObject::tr("Attach to Process..."), appSettings,
+                                           QObject::tr("Attach to Process…"), appSettings,
                                            actions);
     QObject::connect(attachAction, &QAction::triggered, window, [window, debugService, showDock]() {
         bool accepted = false;
@@ -88,7 +88,7 @@ void buildDebugMenu(QMainWindow *window, DebugService *debugService, DebugPanel 
 
     QAction *attachRemoteAction =
       registerAction(debugMenu, QStringLiteral("debug.attachRemote"),
-                      QObject::tr("Attach to Remote..."), appSettings, actions);
+                      QObject::tr("Attach to Remote…"), appSettings, actions);
     QObject::connect(attachRemoteAction, &QAction::triggered, window,
                       [window, debugService, showDock]() {
                           bool accepted = false;
@@ -144,7 +144,7 @@ void buildDebugMenu(QMainWindow *window, DebugService *debugService, DebugPanel 
     // R5: the Edit Breakpoint dialog for whatever is on the caret's line —
     // adding one there if there is none yet, the same as the gutter menu.
     QAction *editBreakpoint = registerAction(debugMenu, QStringLiteral("debug.editBreakpoint"),
-                                              QObject::tr("Edit Breakpoint..."), appSettings,
+                                              QObject::tr("Edit Breakpoint…"), appSettings,
                                               actions);
     QObject::connect(editBreakpoint, &QAction::triggered, editorTabs,
                       [debugService, editorTabs, window]() {
@@ -165,7 +165,7 @@ void buildDebugMenu(QMainWindow *window, DebugService *debugService, DebugPanel 
 
     // R5: every breakpoint in the project, editable in place.
     QAction *viewBreakpoints = registerAction(debugMenu, QStringLiteral("debug.viewBreakpoints"),
-                                               QObject::tr("View Breakpoints..."), appSettings,
+                                               QObject::tr("View Breakpoints…"), appSettings,
                                                actions);
     QObject::connect(viewBreakpoints, &QAction::triggered, window, [debugService, editorTabs,
                                                                       window]() {

@@ -5,6 +5,7 @@
 #include "run_config_container_pages.h"
 #include "run_config_php_page.h"
 #include "run_config_sql_page.h"
+#include "theme.h"
 #include "ui_tokens.h"
 
 #include <QAction>
@@ -20,6 +21,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPoint>
 #include <QPushButton>
@@ -109,15 +111,47 @@ public:
     }
 };
 
+// A configuration that cannot run is still saved (#467); its row says so,
+// with the reason as the tooltip. Every row is reset first so a fixed
+// configuration loses its marker. Every row carries an icon (a blank one when
+// fine) so the names stay aligned whether or not a marker is showing.
+constexpr int kRowIconPx = 16;
+
+void markProblems(QListWidget *list, RunConfigEditor *editor)
+{
+    QPixmap blank(kRowIconPx, kRowIconPx);
+    blank.fill(Qt::transparent);
+    const QIcon blankIcon(blank);
+    const QIcon problemIcon = maskIcon(":/ui/icons/buildtools/warning.a8", semanticColors().error);
+    for (int row = 0; row < list->count(); ++row) {
+        QListWidgetItem *item = list->item(row);
+        item->setIcon(blankIcon);
+        item->setToolTip(item->text());
+    }
+    QStringList marked;
+    for (const FfiRunConfigProblem &problem : editor->problems()) {
+        QListWidgetItem *item = list->item(static_cast<int>(problem.index));
+        if (item == nullptr) {
+            continue;
+        }
+        item->setIcon(problemIcon);
+        item->setToolTip(QString(problem.sentence));
+        marked << QStringLiteral("{\"index\":%1,\"sentence\":%2}")
+                    .arg(problem.index)
+                    .arg(e2eJson(QString(problem.sentence)));
+    }
+    e2eMark(QStringLiteral("{\"ev\":\"run_config_problems\",\"rows\":[%1]}")
+              .arg(marked.join(QLatin1Char(','))));
+}
+
 void repaintList(QListWidget *list, RunConfigEditor *editor, int keepIndex)
 {
     const QSignalBlocker blocker(list);
     list->clear();
     for (const FfiRunConfig &config : editor->configurations()) {
-        auto *item =
-          new QListWidgetItem(config.name.isEmpty() ? QObject::tr("(unnamed)") : config.name, list);
-        item->setToolTip(item->text());
+        new QListWidgetItem(config.name.isEmpty() ? QObject::tr("(unnamed)") : config.name, list);
     }
+    markProblems(list, editor);
     if (keepIndex >= 0 && keepIndex < list->count()) {
         list->setCurrentRow(keepIndex);
     }
@@ -136,6 +170,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
 
     auto *list = new QListWidget(&dialog);
     list->setMaximumWidth(200);
+    list->setIconSize(QSize(kRowIconPx, kRowIconPx));
     list->setItemDelegate(new ConfigRowDelegate(list));
     list->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     list->setTextElideMode(Qt::ElideRight);
@@ -191,7 +226,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
         for (const FfiContainerTarget &target : editor->containerTargets()) {
             runOnCombo->addItem(QString(target.name), QStringLiteral("container:%1").arg(target.id));
         }
-        runOnCombo->addItem(QObject::tr("New target..."), kRunOnNewTarget);
+        runOnCombo->addItem(QObject::tr("New target…"), kRunOnNewTarget);
         const int index = runOnCombo->findData(keepData);
         runOnCombo->setCurrentIndex(index >= 0 ? index : 0);
     };
@@ -397,6 +432,7 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
 
     QObject::connect(list, &QListWidget::currentRowChanged, &dialog, [=](int row) {
         commitForm();
+        markProblems(list, editor);
         *previousIndex = row;
         loadForm(row);
     });
@@ -463,11 +499,6 @@ void showRunConfigDialog(QWidget *parent, RunConfigEditor *editor,
 
     QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [=, &dialog]() {
         commitForm();
-        const FfiResult refusal = editor->validate();
-        if (refusal.code != 0) {
-            QMessageBox::warning(&dialog, QObject::tr("Run Configurations"), refusal.message);
-            return;
-        }
         const FfiResult result = editor->commit();
         if (result.code != 0) {
             QMessageBox::warning(&dialog, QObject::tr("Run Configurations"), result.message);

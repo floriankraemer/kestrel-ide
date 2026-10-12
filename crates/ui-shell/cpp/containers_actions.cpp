@@ -60,7 +60,7 @@ void ContainersPanel::buildLifecycleToolbar()
     pauseButton_ = lifecycleButton(":/ui/icons/containers/cleanup.a8", tr("Pause"), this);
     connect(pauseButton_, &QToolButton::clicked, this, &ContainersPanel::triggerPauseOrUnpause);
 
-    removeButton_ = lifecycleButton(":/ui/icons/containers/disconnect.a8", tr("Remove..."), this);
+    removeButton_ = lifecycleButton(":/ui/icons/containers/disconnect.a8", tr("Remove…"), this);
     connect(removeButton_, &QToolButton::clicked, this, &ContainersPanel::triggerRemove);
 }
 
@@ -185,13 +185,13 @@ void ContainersPanel::showContainerContextMenu(QTreeWidgetItem *item, const QPoi
     restart->setEnabled(actions.canRestart);
     QAction *pauseOrUnpause = menu.addAction(actions.canUnpause ? tr("Unpause") : tr("Pause"));
     pauseOrUnpause->setEnabled(actions.canPause || actions.canUnpause);
-    QAction *remove = menu.addAction(tr("Remove..."));
+    QAction *remove = menu.addAction(tr("Remove…"));
     remove->setEnabled(actions.canRemove);
     menu.addSeparator();
     QMenu *terminalMenu = menu.addMenu(tr("Terminal"));
     QAction *terminalUser = terminalMenu->addAction(tr("As current user"));
     QAction *terminalRoot = terminalMenu->addAction(tr("As root"));
-    QAction *exec = menu.addAction(tr("Exec..."));
+    QAction *exec = menu.addAction(tr("Exec…"));
     QAction *attach = menu.addAction(tr("Attach"));
     QAction *log = menu.addAction(tr("Log"));
     menu.addSeparator();
@@ -246,7 +246,7 @@ void ContainersPanel::showContainersGroupContextMenu(QTreeWidgetItem *item, cons
 {
     Q_UNUSED(item);
     QMenu menu(tree_);
-    QAction *cleanUp = menu.addAction(tr("Clean Up..."));
+    QAction *cleanUp = menu.addAction(tr("Clean Up…"));
     if (menu.exec(globalPos) == cleanUp) {
         triggerCleanUp();
     }

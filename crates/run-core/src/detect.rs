@@ -420,7 +420,7 @@ pub fn is_compose_file_name(path: &Path) -> bool {
 }
 
 /// Whether `path`'s own name marks it a Containerfile rather than a
-/// Dockerfile (C9) — the gutter popup and "New Configuration..." wording
+/// Dockerfile (C9) — the gutter popup and "New Configuration…" wording
 /// pick between the two words with this, one rule shared with
 /// `container_core::run_config::is_named_containerfile`.
 pub fn is_named_containerfile(path: &Path) -> bool {

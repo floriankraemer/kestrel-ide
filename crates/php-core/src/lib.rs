@@ -10,6 +10,7 @@ pub mod composer;
 pub mod composer_view;
 pub mod generate;
 pub mod host;
+pub mod invalid_provider;
 pub mod level;
 pub mod licence;
 pub mod lsp;

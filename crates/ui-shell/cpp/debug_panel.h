@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -35,6 +36,10 @@ class DockRegistry;
 // widget deciding what a debugger can do (ADR-0041).
 class DebugPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(DebugPanel)
+
 public:
     // Opens `path:line` in the editor — the same `EditorTabs::openFileAtLine`
     // every other dock's "jump to source" goes through (R5: double-click on

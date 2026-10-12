@@ -70,7 +70,7 @@ McpPage buildMcpPage(QWidget *parent, AppSettings *appSettings, DocumentManager 
 
 std::shared_ptr<QString> wireMcpStatus(DocumentManager *docManager, QObject *context)
 {
-    auto status = std::make_shared<QString>(QObject::tr("Starting..."));
+    auto status = std::make_shared<QString>(QObject::tr("Starting…"));
     QObject::connect(docManager, &DocumentManager::mcpStarted, context,
                       [status](std::uint16_t port) {
                           *status = QObject::tr("Listening on 127.0.0.1:%1").arg(port);

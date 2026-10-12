@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QHash>
 #include <QPoint>
 #include <QString>
@@ -39,6 +40,10 @@ class EditorTabs;
 // re-syncs it.
 class StructurePanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(StructurePanel)
+
 public:
     // Task J: `onFindUsagesRequested` is called with a symbol's exact name
     // when the user picks "Find Usages" from a leaf item's context menu —

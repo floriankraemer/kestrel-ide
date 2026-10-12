@@ -54,6 +54,17 @@ pub fn problem(config: &RunConfig, containers: &ContainerSettings) -> Option<Str
     }
 }
 
+/// `problem`, as the sentence the dialog and a refused launch show: the
+/// quoted name first, so it reads the same wherever it appears.
+pub fn sentence(config: &RunConfig, problem: &str) -> String {
+    let label = if config.name.trim().is_empty() {
+        "one configuration"
+    } else {
+        config.name.as_str()
+    };
+    format!("\"{label}\" {problem}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,6 +77,21 @@ mod tests {
             kind: kind.map(str::to_string),
             ..RunConfig::default()
         }
+    }
+
+    #[test]
+    fn the_sentence_quotes_the_name_or_falls_back() {
+        let mut named = config(None, "");
+        named.name = "Build".into();
+        assert_eq!(
+            sentence(&named, "has no program to run"),
+            "\"Build\" has no program to run"
+        );
+        named.name = "  ".into();
+        assert_eq!(
+            sentence(&named, "has no program to run"),
+            "\"one configuration\" has no program to run"
+        );
     }
 
     #[test]

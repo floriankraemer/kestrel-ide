@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QHash>
 #include <QString>
 #include <QStringList>
@@ -42,6 +43,10 @@ class EditorTabs;
 // context-menu input into calls back into `ContainerService`.
 class ContainersPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(ContainersPanel)
+
 public:
     // Opens Settings on the Containers page — "New connection...", "Edit
     // configuration...", "Registry...", and a registry node's "Edit...".

@@ -322,7 +322,7 @@ void TestsPanel::onTestRunPreparing()
 {
     // Finding the framework may wait on WSL or a container: Stop ends it.
     stopButton_->setEnabled(true);
-    statusLabel_->setText(tr("Preparing..."));
+    statusLabel_->setText(tr("Preparing…"));
     e2eMark(QStringLiteral("{\"ev\":\"test_run_preparing\"}"));
 }
 
@@ -337,7 +337,7 @@ void TestsPanel::onTestRunStarted()
 {
     stopButton_->setEnabled(true);
     output_->clear();
-    statusLabel_->setText(tr("Running..."));
+    statusLabel_->setText(tr("Running…"));
     e2eMark(QStringLiteral("{\"ev\":\"test_run_started\"}"));
 }
 

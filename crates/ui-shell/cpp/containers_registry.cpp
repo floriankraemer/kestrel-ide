@@ -42,9 +42,9 @@ void ContainersPanel::showRegistryContextMenu(QTreeWidgetItem *item, const QPoin
 
     QMenu menu(tree_);
     QAction *refresh = menu.addAction(tr("Refresh"));
-    QAction *edit = menu.addAction(tr("Edit..."));
+    QAction *edit = menu.addAction(tr("Edit…"));
     menu.addSeparator();
-    QAction *remove = menu.addAction(tr("Remove..."));
+    QAction *remove = menu.addAction(tr("Remove…"));
     remove->setEnabled(actions.canRemove);
     QAction *chosen = menu.exec(globalPos);
     if (chosen == refresh) {
@@ -85,7 +85,7 @@ void ContainersPanel::showRegistryTagContextMenu(QTreeWidgetItem *item, const QP
     const QString reference = item->data(0, kDetailRole).toString();
 
     QMenu menu(tree_);
-    QAction *pull = menu.addAction(tr("Pull Image..."));
+    QAction *pull = menu.addAction(tr("Pull Image…"));
     QAction *copyReference = menu.addAction(tr("Copy reference"));
     QAction *chosen = menu.exec(globalPos);
     if (chosen == copyReference) {

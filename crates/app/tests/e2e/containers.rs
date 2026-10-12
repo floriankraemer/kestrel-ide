@@ -475,7 +475,7 @@ fn e2e_containers_settings_test_connection() {
     let mark = ide.mark();
     ide.key("alt+f"); // "&File"
     let preferences = ide.wait_for_event(mark, "Preferences... in the File menu", |e| {
-        e["ev"] == "file_menu_action" && e["label"] == "Preferences..."
+        e["ev"] == "file_menu_action" && e["label"] == "Preferences…"
     });
     let (px, py) = rect_centre(&preferences["rect"]);
     ide.click_at(px, py, 1);

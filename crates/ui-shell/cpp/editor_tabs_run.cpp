@@ -402,7 +402,7 @@ void EditorTabs::runPlainFile(CodeEditor *editor, const QString &path, int line)
         QMenu menu(editor);
         QAction *build = menu.addAction(tr("Build Image from %1").arg(word));
         QAction *run = menu.addAction(tr("Run Container"));
-        QAction *newConfig = menu.addAction(tr("New Configuration..."));
+        QAction *newConfig = menu.addAction(tr("New Configuration…"));
         e2eMarkMenuActions(&menu, "run_gutter_menu_action");
         QAction *chosen = menu.exec(QCursor::pos());
         if (chosen == build) {
@@ -425,7 +425,7 @@ void EditorTabs::runPlainFile(CodeEditor *editor, const QString &path, int line)
         QMenu menu(editor);
         QAction *run = menu.addAction(service.isEmpty() ? tr("Run Compose Project")
                                                         : tr("Run Service '%1'").arg(service));
-        QAction *newConfig = menu.addAction(tr("New Configuration..."));
+        QAction *newConfig = menu.addAction(tr("New Configuration…"));
         e2eMarkMenuActions(&menu, "run_gutter_menu_action");
         QAction *chosen = menu.exec(QCursor::pos());
         if (chosen == run) {

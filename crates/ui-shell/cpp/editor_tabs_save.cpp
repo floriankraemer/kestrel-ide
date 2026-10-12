@@ -71,7 +71,7 @@ void EditorTabs::beginSave(quint64 tabId, CodeEditor *codeEditor, QPlainTextEdit
     const FfiSaveEdits start = editorOps_->beginSave(
       tabId, static_cast<qint64>(editor->document()->revision()), editor->toPlainText());
     if (start.pending) {
-        showStatusNotice(tr("Formatting before saving..."));
+        showStatusNotice(tr("Formatting before saving…"));
         return;
     }
     writeSave(tabId, codeEditor, editor, start);

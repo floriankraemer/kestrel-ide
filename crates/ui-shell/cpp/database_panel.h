@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QColor>
 #include <QHash>
 #include <QString>
@@ -41,6 +42,10 @@ class DockRegistry;
 // touches tabs itself.
 class DatabasePanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(DatabasePanel)
+
 public:
     using OpenSettings = std::function<void()>;
 

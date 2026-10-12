@@ -36,7 +36,7 @@ fn settings_dialog_open_latency() {
     let opened = ide.mark();
     ide.key("alt+f"); // "&File"
     let preferences = ide.wait_for_event(opened, "Preferences... in the File menu", |e| {
-        e["ev"] == "file_menu_action" && e["label"] == "Preferences..."
+        e["ev"] == "file_menu_action" && e["label"] == "Preferences…"
     });
     let (x, y) = rect_centre(&preferences["rect"]);
 

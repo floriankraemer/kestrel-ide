@@ -31,8 +31,8 @@ pub const CODE_NO_PROJECT: i32 = 1000;
 pub const CODE_UNKNOWN_RUN_CONFIG: i32 = 1001;
 /// A console id the adapter does not know.
 pub const CODE_UNKNOWN_CONSOLE: i32 = 1002;
-/// A run configuration with nothing to run.
-pub const CODE_EMPTY_PROGRAM: i32 = 1003;
+/// A run configuration that cannot run as configured (#467).
+pub const CODE_INVALID_RUN_CONFIG: i32 = 1003;
 /// Reading or writing a settings file failed.
 pub const CODE_SETTINGS_IO: i32 = 1004;
 /// A terminal session id the adapter does not know, or a terminal operation
@@ -108,7 +108,7 @@ mod tests {
             CODE_NO_PROJECT,
             CODE_UNKNOWN_RUN_CONFIG,
             CODE_UNKNOWN_CONSOLE,
-            CODE_EMPTY_PROGRAM,
+            CODE_INVALID_RUN_CONFIG,
             CODE_SETTINGS_IO,
             CODE_TERMINAL,
             CODE_ATTACHMENT_IO,

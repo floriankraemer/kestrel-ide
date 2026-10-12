@@ -46,7 +46,7 @@ SearchEverywhereDialog::SearchEverywhereDialog(SearchModel *searchModel,
     resize(720, 460);
 
     queryEdit_ = new QLineEdit(this);
-    queryEdit_->setPlaceholderText(tr("Search for files, symbols, text or actions..."));
+    queryEdit_->setPlaceholderText(tr("Search for files, symbols, text or actions…"));
     queryEdit_->setClearButtonEnabled(true);
 
     tabs_ = new QTabBar(this);

@@ -781,6 +781,10 @@ impl ffi::TestService {
         // Diagnostics are recomputed as events arrive (`republish`), each
         // failure under the framework of the run that reported it.
         republish(&self);
+        if whole_run {
+            // The dock drops the old rows now, not at the first event.
+            self.as_mut().test_tree_changed();
+        }
         // Surefire's `-Dtest=` and Gradle's `--tests` each need their own
         // pattern shape built from the node being rerun, not a PHPUnit-
         // shaped one that would compile fine and match nothing.
@@ -815,6 +819,8 @@ impl ffi::TestService {
                 ansi: run_core::AnsiStripper::default(),
                 pending: Default::default(),
                 locator: php_core::tests::EventLocator::for_run(&root, &work_dir, host.clone()),
+                invalid_providers: Default::default(),
+                run: handle.clone(),
             };
             let program_str = program.to_string_lossy().into_owned();
             let result = test_core::run_on_env(
@@ -841,11 +847,18 @@ impl ffi::TestService {
                 .as_ref()
                 .ok()
                 .and_then(|code| handle.start_failure(*code));
+            let never_started = handle.never_started(&result);
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
                 // Whatever never reported (Stop, a fatal error, a killed
                 // container) must not stay "running" on a gutter icon.
                 service.tree.borrow_mut().finish_run();
+                if never_started {
+                    service.tree.borrow_mut().discard_after_failed_start();
+                    // The run's placeholders are gone; so must be the
+                    // diagnostics earlier runs published from them.
+                    republish(&service);
+                }
                 service.record_history(&run_root);
                 service.as_mut().test_tree_changed();
                 if let Some(coverage) = coverage {
@@ -1097,11 +1110,21 @@ struct QtSink {
     /// Anchors each node's file to this run's work dir, and finds the file
     /// of a Pest class-based test, which names only its class.
     locator: php_core::tests::EventLocator,
+    /// PHPUnit 12 reports an invalid data provider only in its text summary.
+    invalid_providers: php_core::invalid_provider::InvalidProviderScanner,
+    /// Told about the events the scanner synthesises, so a run whose only
+    /// results are those is not mistaken for one that never started.
+    run: test_core::TestRunHandle,
 }
 
 impl test_core::TestSink for QtSink {
     fn output(&mut self, text: &str) {
         let text = self.ansi.feed(text);
+        let synthesised = self.invalid_providers.feed(&text, &self.locator);
+        self.run.note_reported(synthesised.len());
+        for event in synthesised {
+            self.event(event);
+        }
         let _ = self
             .qt_thread
             .queue(move |mut service: Pin<&mut ffi::TestService>| {
@@ -1112,6 +1135,7 @@ impl test_core::TestSink for QtSink {
     }
 
     fn event(&mut self, event: test_core::TeamCityEvent) {
+        self.invalid_providers.observe(&event);
         let event = self.locator.locate_event(event);
         // Coalesced (#462): events pile up here while the Qt thread is busy,
         // and the one flush queued for the first of them applies them all,

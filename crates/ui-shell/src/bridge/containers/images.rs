@@ -484,7 +484,7 @@ impl ffi::ContainerService {
         FfiResult::default()
     }
 
-    /// "Download..." for a layer entry (C9): the full bytes, no size cap,
+    /// "Download…" for a layer entry (C9): the full bytes, no size cap,
     /// written to `dest_path` (chosen by the view's own `QFileDialog`).
     pub fn download_layer_entry(
         &self,
@@ -546,7 +546,7 @@ impl ffi::ContainerService {
         }
     }
 
-    /// "Create Container..." from an image node's own reference — the
+    /// "Create Container…" from an image node's own reference — the
     /// run-config dialog's prefill (C5, ADR-0056 §6, replacing C4's
     /// `createContainerQuick`): a container-image configuration with
     /// `connection_id`/`image` already set, everything else left at its

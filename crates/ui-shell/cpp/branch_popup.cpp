@@ -86,7 +86,7 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*gl
     auto *layout = new QVBoxLayout(dialog);
 
     auto *search = new QLineEdit(dialog);
-    search->setPlaceholderText(QObject::tr("Search branches..."));
+    search->setPlaceholderText(QObject::tr("Search branches…"));
     layout->addWidget(search);
 
     auto *localGroup = new QGroupBox(QObject::tr("Local"), dialog);
@@ -213,8 +213,8 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*gl
         QAction *rebaseAction = menu->addAction(QObject::tr("Rebase Current onto %1").arg(name));
         rebaseAction->setEnabled(!isCurrent);
         menu->addSeparator();
-        QAction *renameAction = menu->addAction(QObject::tr("Rename..."));
-        QAction *deleteAction = menu->addAction(QObject::tr("Delete..."));
+        QAction *renameAction = menu->addAction(QObject::tr("Rename…"));
+        QAction *deleteAction = menu->addAction(QObject::tr("Delete…"));
         deleteAction->setEnabled(!isCurrent);
         menu->addSeparator();
         QAction *pushAction = menu->addAction(QObject::tr("Push"));
@@ -301,7 +301,7 @@ void showBranchMenu(VcsService *vcsService, QWidget *anchor, const QPoint & /*gl
     QObject::connect(remoteList, &QListWidget::customContextMenuRequested, dialog,
                       showRemoteContextMenu);
 
-    auto *newBranchButton = new QPushButton(QObject::tr("New Branch..."), dialog);
+    auto *newBranchButton = new QPushButton(QObject::tr("New Branch…"), dialog);
     QObject::connect(newBranchButton, &QPushButton::clicked, dialog, [=]() {
         const QString name =
           QInputDialog::getText(dialog, QObject::tr("New Branch"), QObject::tr("Branch name:"));

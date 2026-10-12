@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QWidget>
 
@@ -31,6 +32,10 @@ class EditorTabs;
 // `executionFinished`, never re-decided here.
 class DatabaseConsoleBar : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(DatabaseConsoleBar)
+
 public:
     DatabaseConsoleBar(EditorTabs *editorTabs, ConsoleService *consoleService,
                        AppSettings *appSettings, QWidget *parent);

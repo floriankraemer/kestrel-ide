@@ -307,7 +307,7 @@ pub fn compose_project_down_command(
 }
 
 /// `compose -f <files>… up -d --no-recreate --scale <service>=<n>` — a
-/// compose service node's "Scale...".
+/// compose service node's "Scale…".
 pub fn compose_project_scale_command(
     containers: &ContainerSettings,
     connection_id: &str,

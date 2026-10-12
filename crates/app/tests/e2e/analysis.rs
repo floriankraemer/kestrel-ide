@@ -184,7 +184,7 @@ fn e2e_analyzer_findings_appear_inline_and_in_problems() {
     );
 
     // The Problems dock: one row, named after the analyzer.
-    let row = ide.wait_for_event(mark, "the finding to reach the Problems dock", |e| {
+    ide.wait_for_event(mark, "the finding to reach the Problems dock", |e| {
         e["ev"] == "problem_row"
             && e["path"]
                 .as_str()
@@ -193,6 +193,22 @@ fn e2e_analyzer_findings_appear_inline_and_in_problems() {
     });
     ide.wait_for_event(mark, "the Problems dock to report a total", |e| {
         e["ev"] == "problems_refreshed" && e["total"].as_u64().unwrap_or(0) > 0
+    });
+
+    // The Problems tab opens behind the one in front (#446): bring it up
+    // through View > Problems and take the row's rect once it is on screen.
+    let shown = ide.mark();
+    ide.key("alt+v"); // "&View"
+    let problems_item = ide.wait_for_event(shown, "the Problems item in the View menu", |e| {
+        e["ev"] == "view_menu_action" && e["label"] == "Problems"
+    });
+    let (px, py) = rect_centre(&problems_item["rect"]);
+    ide.click_at(px, py, 1);
+    let row = ide.wait_for_event(shown, "the Problems row to be laid out on screen", |e| {
+        e["ev"] == "problem_row"
+            && e["path"]
+                .as_str()
+                .is_some_and(|p| p.ends_with("Greeter.php"))
     });
 
     // Double-clicking the row navigates the already-open tab to line 10

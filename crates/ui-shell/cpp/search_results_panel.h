@@ -2,6 +2,7 @@
 
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QString>
 #include <QVector>
 #include <QWidget>
@@ -32,6 +33,10 @@ class EditorTabs;
 // which `index_core::SearchScope` needs to be handed as plain paths (R8).
 class SearchResultsPanel : public QWidget
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(SearchResultsPanel)
+
 public:
     // `openAt(path, line, column)` jumps the editor to a match.
     using OpenAt = std::function<void(const QString &, int, int)>;

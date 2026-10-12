@@ -55,7 +55,7 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
         editorTabs->setEditorColors(*backgroundColor, *foregroundColor, *currentLineColor);
     };
 
-    auto *backgroundButton = new QPushButton(QObject::tr("Background Color..."), editorPage);
+    auto *backgroundButton = new QPushButton(QObject::tr("Background Color…"), editorPage);
     QObject::connect(backgroundButton, &QPushButton::clicked, editorPage,
                       [parent, backgroundColor, applyColorsLive]() {
                           const QColor initial = backgroundColor->isEmpty()
@@ -70,7 +70,7 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
                       });
     editorForm->addRow(backgroundButton);
 
-    auto *foregroundButton = new QPushButton(QObject::tr("Text Color..."), editorPage);
+    auto *foregroundButton = new QPushButton(QObject::tr("Text Color…"), editorPage);
     QObject::connect(foregroundButton, &QPushButton::clicked, editorPage,
                       [parent, foregroundColor, applyColorsLive]() {
                           const QColor initial = foregroundColor->isEmpty()
@@ -85,7 +85,7 @@ EditorPage buildEditorPage(QWidget *parent, AppSettings *appSettings, EditorTabs
                       });
     editorForm->addRow(foregroundButton);
 
-    auto *currentLineButton = new QPushButton(QObject::tr("Current Line Color..."), editorPage);
+    auto *currentLineButton = new QPushButton(QObject::tr("Current Line Color…"), editorPage);
     QObject::connect(currentLineButton, &QPushButton::clicked, editorPage,
                       [parent, currentLineColor, applyColorsLive]() {
                           // Empty means "derived from the theme", which has no

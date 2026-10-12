@@ -1272,7 +1272,7 @@ mod ffi {
     /// One candidate `discoverContainerConnections()` offers: a docker
     /// context, a podman connection/machine, or a socket preset (Colima,
     /// Rancher Desktop, the default rootless podman socket) — the source
-    /// for the Containers settings page's "Add from contexts..." menu.
+    /// for the Containers settings page's "Add from contexts…" menu.
     /// Never saved on its own; the view turns a chosen entry into an
     /// `FfiContainerConnection` it appends to the draft list itself.
     struct FfiDiscoveredConnection {
@@ -3347,11 +3347,18 @@ mod ffi {
         #[cxx_name = "recentProjects"]
         fn recent_projects(self: &AppSettings) -> QStringList;
 
-        /// Last-persisted main window geometry, or all-zero if none was
-        /// ever saved (L1).
+        /// Where the main window opens: the saved geometry kept on a screen
+        /// that shows its title bar, else the default size centred on the
+        /// primary screen. `screens` are the available rects in logical
+        /// pixels, primary first; `title_inset` is the native frame's top
+        /// margin (0 while unknown).
         #[qinvokable]
-        #[cxx_name = "windowGeometry"]
-        fn window_geometry(self: &AppSettings) -> FfiWindowGeometry;
+        #[cxx_name = "placedWindowGeometry"]
+        fn placed_window_geometry(
+            self: &AppSettings,
+            screens: Vec<FfiWindowGeometry>,
+            title_inset: u32,
+        ) -> FfiWindowGeometry;
 
         /// Persist the main window's geometry (L1's `closeEvent`).
         #[qinvokable]
@@ -3807,7 +3814,7 @@ mod ffi {
         /// `settingsScope()` names (the same scope `saveRegistries` writes)
         /// and deletes its keychain entry — never one without the other,
         /// so a removed registry leaves nothing behind either the tree or
-        /// the tree's own "Edit..." can bring back by surprise.
+        /// the tree's own "Edit…" can bring back by surprise.
         #[qinvokable]
         #[cxx_name = "removeRegistry"]
         fn remove_registry(self: &AppSettings, id: &QString) -> FfiResult;
@@ -8124,7 +8131,7 @@ mod ffi {
             path: &QString,
         ) -> FfiResult;
 
-        /// "Download..." for a layer entry — no size cap, written to
+        /// "Download…" for a layer entry — no size cap, written to
         /// `dest_path` (the view's own `QFileDialog` choice).
         #[qinvokable]
         #[cxx_name = "downloadLayerEntry"]
@@ -8327,7 +8334,7 @@ mod ffi {
         fn image_labels(self: &ContainerService, node_id: &QString) -> Vec<FfiKeyValue>;
 
         /// `save`\|`load` through a temp file, on a worker thread —
-        /// "Copy Image to...". `actionFinished`'s message carries a
+        /// "Copy Image to…". `actionFinished`'s message carries a
         /// progress-ish summary ("Copied to <connection>" / the failure).
         #[qinvokable]
         #[cxx_name = "copyImageTo"]
@@ -10661,7 +10668,7 @@ mod ffi {
             project_name: &QString,
         ) -> FfiResult;
 
-        /// The compose service node's "Scale...": `compose up -d --scale
+        /// The compose service node's "Scale…": `compose up -d --scale
         /// service=n --no-recreate`, tracked.
         #[qinvokable]
         #[cxx_name = "scaleComposeService"]
@@ -11314,13 +11321,10 @@ mod ffi {
             options: &FfiContainerOptions,
         ) -> u32;
 
-        /// The first problem that would stop the dialog closing — an empty
-        /// `program` (`run_core::RunError::InvalidConfig`'s own rule,
-        /// mirrored here since validation this shallow does not warrant a
-        /// second entry point into `run-core`). Code `0` means the draft is
-        /// savable.
+        /// One sentence per draft configuration that cannot run as it
+        /// stands. Informational: `commit` saves them all regardless.
         #[qinvokable]
-        fn validate(self: &RunConfigEditor) -> FfiResult;
+        fn problems(self: &RunConfigEditor) -> Vec<FfiRunConfigProblem>;
 
         /// Write the draft to `.ide/settings.toml`; announces a write
         /// through `configurationsSaved`.
@@ -11564,6 +11568,13 @@ mod ffi {
         Color,
         SshUser,
         FileSourcePath,
+    }
+
+    /// One draft run configuration that cannot run: its list position and
+    /// the sentence the row's tooltip shows.
+    struct FfiRunConfigProblem {
+        index: u32,
+        sentence: QString,
     }
 
     struct FfiDataSourceProblem {

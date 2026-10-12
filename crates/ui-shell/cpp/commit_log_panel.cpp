@@ -72,15 +72,15 @@ CommitLogPanel::CommitLogPanel(VcsService *vcsService, std::function<void(const 
     filterLayout->setContentsMargins(4, 4, 4, 4);
 
     textFilter_ = new QLineEdit(filterBar);
-    textFilter_->setPlaceholderText(tr("Message contains..."));
+    textFilter_->setPlaceholderText(tr("Message contains…"));
     filterLayout->addWidget(textFilter_, 2);
 
     authorFilter_ = new QLineEdit(filterBar);
-    authorFilter_->setPlaceholderText(tr("Author..."));
+    authorFilter_->setPlaceholderText(tr("Author…"));
     filterLayout->addWidget(authorFilter_, 1);
 
     pathFilter_ = new QLineEdit(filterBar);
-    pathFilter_->setPlaceholderText(tr("Path..."));
+    pathFilter_->setPlaceholderText(tr("Path…"));
     filterLayout->addWidget(pathFilter_, 1);
 
     sinceEnabled_ = new QCheckBox(tr("Since"), filterBar);
@@ -200,7 +200,7 @@ void CommitLogPanel::showRowContextMenu(const QPoint &globalPos, const QStringLi
     menu->setAttribute(Qt::WA_DeleteOnClose);
 
     QAction *checkoutAction = menu->addAction(tr("Checkout Revision"));
-    QAction *newBranchAction = menu->addAction(tr("New Branch Here..."));
+    QAction *newBranchAction = menu->addAction(tr("New Branch Here…"));
     menu->addSeparator();
     QAction *cherryPickAction = menu->addAction(tr("Cherry-pick"));
     QAction *revertAction = menu->addAction(tr("Revert Commit"));
@@ -208,7 +208,7 @@ void CommitLogPanel::showRowContextMenu(const QPoint &globalPos, const QStringLi
     QMenu *resetMenu = menu->addMenu(tr("Reset Current Branch Here"));
     QAction *resetSoftAction = resetMenu->addAction(tr("Soft"));
     QAction *resetMixedAction = resetMenu->addAction(tr("Mixed"));
-    QAction *resetHardAction = resetMenu->addAction(tr("Hard..."));
+    QAction *resetHardAction = resetMenu->addAction(tr("Hard…"));
     menu->addSeparator();
     QAction *copyHashAction = menu->addAction(tr("Copy Hash"));
 

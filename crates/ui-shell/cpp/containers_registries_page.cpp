@@ -279,7 +279,7 @@ RegistriesPage buildRegistriesPage(QWidget *parent, AppSettings *appSettings)
 
     QObject::connect(fields.testButton, &QPushButton::clicked, formPane, [fields, appSettings]() {
         fields.testResult->setStyleSheet(QString());
-        fields.testResult->setText(QObject::tr("Testing..."));
+        fields.testResult->setText(QObject::tr("Testing…"));
         appSettings->testRegistryConnection(rowFromFields(fields, QString(), false), fields.password->text());
     });
     QObject::connect(appSettings, &AppSettings::registryTested, formPane,

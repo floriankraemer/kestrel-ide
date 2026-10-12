@@ -263,7 +263,7 @@ void ContainerOptionsPage::buildUi()
     composeFilesList_->setMaximumHeight(90);
     composeLayout->addWidget(composeFilesList_);
     auto *filesButtons = new QHBoxLayout();
-    auto *addFileButton = new QPushButton(tr("Add..."), composeSection_);
+    auto *addFileButton = new QPushButton(tr("Add…"), composeSection_);
     auto *removeFileButton = new QPushButton(tr("Remove"), composeSection_);
     auto *upFileButton = new QPushButton(tr("Up"), composeSection_);
     auto *downFileButton = new QPushButton(tr("Down"), composeSection_);

@@ -384,7 +384,7 @@ fn analyze_tar_file(tmp_path: &Path, image_id: &str) -> Result<Vec<LayerFs>, OpE
 /// The one entry's bytes at `entry_path` inside `layer_id`'s own tar,
 /// reopening `tar_path` (an [`AnalyzeResult::tar_path`]) rather than
 /// re-running `save` — a double-clicked file in the Layers tab's tree, or
-/// its "Download..." action. `max_bytes`, when set, refuses an entry
+/// its "Download…" action. `max_bytes`, when set, refuses an entry
 /// larger than it (the Inspect-tab-style read-only open's own 8 MiB cap;
 /// `None` for Download, which has none — JetBrains' own doesn't either).
 pub fn read_entry(

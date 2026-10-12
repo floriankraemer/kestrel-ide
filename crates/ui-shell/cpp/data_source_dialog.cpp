@@ -309,7 +309,7 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
         driverActionButton->setVisible(status.installable || status.canReenable);
         driverActionButton->setProperty("reenable", status.canReenable);
         driverActionButton->setText(status.canReenable ? QObject::tr("Re-enable")
-                                                        : QObject::tr("Install..."));
+                                                        : QObject::tr("Install…"));
     };
 
     QObject::connect(name, &QLineEdit::textChanged, editor, [editor, refreshProblems](const QString &text) {
@@ -402,7 +402,7 @@ void showDataSourceDialog(QWidget *parent, AppSettings *appSettings, DataSourceE
 
     QObject::connect(testButton, &QPushButton::clicked, editor, [editor, testResult]() {
         testResult->setStyleSheet(QString());
-        testResult->setText(QObject::tr("Testing..."));
+        testResult->setText(QObject::tr("Testing…"));
         editor->testConnection();
     });
     QObject::connect(editor, &DataSourceEditor::testConnectionFinished, &dialog,

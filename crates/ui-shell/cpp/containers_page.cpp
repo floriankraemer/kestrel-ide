@@ -317,8 +317,8 @@ QWidget *buildRunTargetsTab(QWidget *parent, AppSettings *appSettings,
     layout->addWidget(list, 1);
 
     auto *buttons = new QHBoxLayout();
-    auto *addButton = new QPushButton(QObject::tr("Add..."), tab);
-    auto *editButton = new QPushButton(QObject::tr("Edit..."), tab);
+    auto *addButton = new QPushButton(QObject::tr("Add…"), tab);
+    auto *editButton = new QPushButton(QObject::tr("Edit…"), tab);
     auto *removeButton = new QPushButton(QObject::tr("Remove"), tab);
     buttons->addWidget(addButton);
     buttons->addWidget(editButton);
@@ -411,7 +411,7 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings,
 
     auto *listButtons = new QHBoxLayout();
     auto *addButton = new QPushButton(QObject::tr("Add"), listPane);
-    auto *addFromContextsButton = new QPushButton(QObject::tr("Add from contexts..."), listPane);
+    auto *addFromContextsButton = new QPushButton(QObject::tr("Add from contexts…"), listPane);
     auto *removeButton = new QPushButton(QObject::tr("Remove"), listPane);
     listButtons->addWidget(addButton);
     listButtons->addWidget(addFromContextsButton);
@@ -557,7 +557,7 @@ ContainersPage buildContainersPage(QWidget *parent, AppSettings *appSettings,
 
     QObject::connect(fields.testButton, &QPushButton::clicked, formPane, [fields, appSettings]() {
         fields.testResult->setStyleSheet(QString());
-        fields.testResult->setText(QObject::tr("Testing..."));
+        fields.testResult->setText(QObject::tr("Testing…"));
         appSettings->testContainerConnection(rowFromFields(fields, QString()));
     });
     QObject::connect(appSettings, &AppSettings::containerConnectionTested, formPane,

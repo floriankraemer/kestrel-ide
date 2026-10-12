@@ -481,7 +481,7 @@ fn gutter_run_then_dock(ide: &Ide, tab_id: u64, line: u64, prefix: &str) -> Mark
 /// the one taken before the dialog opened.
 fn open_config_dialog(ide: &Ide) -> Mark {
     let mark = ide.mark();
-    click_run_menu_item(ide, "Edit Configurations...");
+    click_run_menu_item(ide, "Edit Configurations…");
     let shown = ide.wait_for_event(mark, "the run configuration dialog", |e| {
         e["ev"] == "dialog_shown" && e["name"] == "run_config_dialog"
     });

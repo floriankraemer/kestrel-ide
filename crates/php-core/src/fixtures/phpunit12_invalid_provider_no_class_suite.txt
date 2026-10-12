@@ -1,0 +1,27 @@
+PHPUnit 12.5.38 by Sebastian Bergmann and contributors.
+
+Runtime:       PHP 8.3.35
+Configuration: /w/phpunit.xml
+
+There were 2 PHPUnit errors:
+
+1) App\Tests\OnlyBadTest::testBad
+The data provider App\Tests\OnlyBadTest::missing specified for App\Tests\OnlyBadTest::testBad is invalid
+Method App\Tests\OnlyBadTest::missing() does not exist
+
+/w/tests/OnlyBadTest.php:6
+
+2) App\Tests\OnlyBadTest::testBad2
+The data provider App\Tests\OnlyBadTest::missing specified for App\Tests\OnlyBadTest::testBad2 is invalid
+Method App\Tests\OnlyBadTest::missing() does not exist
+
+/w/tests/OnlyBadTest.php:7
+
+--
+
+There was 1 PHPUnit test runner warning:
+
+1) No tests found in class "App\Tests\OnlyBadTest".
+
+No tests executed!
+exit 2

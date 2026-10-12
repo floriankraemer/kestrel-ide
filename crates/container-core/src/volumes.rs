@@ -5,7 +5,7 @@
 
 use crate::model::Container;
 
-/// Everything "Create Volume..." collects, argv-ready.
+/// Everything "Create Volume…" collects, argv-ready.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct VolumeSpec {
     pub name: String,

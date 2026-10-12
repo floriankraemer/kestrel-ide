@@ -838,4 +838,37 @@ test('has with data set in name', function () {});
         assert_eq!(state(8), MarkerState::Passed, "#[Test] attributeOne");
         assert_eq!(state(9), MarkerState::Failed, "testFails");
     }
+
+    #[test]
+    fn an_invalid_data_provider_marks_its_test_failed_and_leaves_the_others() {
+        use crate::invalid_provider::InvalidProviderScanner;
+        const OUTPUT: &str = include_str!("fixtures/phpunit12_invalid_data_provider.txt");
+        const SOURCE: &str = "<?php\nnamespace App\\Tests;\nuse PHPUnit\\Framework\\TestCase;\nfinal class ProviderTest extends TestCase\n{\n    public function testGood(): void {}\n    public function testBad(): void {}\n}\n";
+        let locator = crate::tests::EventLocator::new(
+            Vec::new(),
+            ExecHost::Local,
+            std::path::PathBuf::from("/w"),
+        );
+        let (mut tree, mut scanner) = (TestTree::new(), InvalidProviderScanner::default());
+        let mut parser = test_core::TeamCityParser::new();
+        for event in parser.feed(OUTPUT) {
+            scanner.observe(&event);
+            tree.apply(event);
+        }
+        for event in scanner.feed(OUTPUT, &locator) {
+            tree.apply(event);
+        }
+        let host = ExecHost::for_path(Path::new("/w"));
+        let nodes = tree.nodes_in_file(
+            &host,
+            Path::new("/w"),
+            Path::new("/w/tests/ProviderTest.php"),
+        );
+        let got = marker_statuses(&markers(SOURCE), &tree, &nodes);
+        assert_eq!(state_at(&got, 5).state, MarkerState::Passed, "testGood");
+        let bad = state_at(&got, 6);
+        assert_eq!((bad.state, bad.failed), (MarkerState::Failed, 1), "testBad");
+        assert!(bad.message.contains("does not exist"), "{}", bad.message);
+        assert_eq!(state_at(&got, 3).state, MarkerState::Failed, "class");
+    }
 }

@@ -98,7 +98,7 @@ pub struct ContainerServiceRust {
     pub(crate) registry_tag_next: RefCell<BTreeMap<String, Option<String>>>,
     /// C9: the last "Analyze image" result's own temp tar
     /// (`container_core::layer_fs::AnalyzeResult::tar_path`), kept around
-    /// so a double-clicked entry or "Download..." can reopen it without a
+    /// so a double-clicked entry or "Download…" can reopen it without a
     /// second `save` — one at a time (the Layers tab only ever analyzes
     /// one image), replaced (and the old file removed) by the next
     /// `analyzeImage` call, and removed on `Drop` as a last resort if

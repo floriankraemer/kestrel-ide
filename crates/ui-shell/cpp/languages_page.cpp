@@ -134,14 +134,14 @@ QString runAddDialog(QWidget *parent, LanguageCatalog *catalog)
     auto *folderHint = new QLabel(
       QObject::tr("A folder containing language.toml and one or more .scm files."), &dialog);
     auto *folderEdit = new QLineEdit(&dialog);
-    auto *folderBrowse = new QPushButton(QObject::tr("Browse..."), &dialog);
+    auto *folderBrowse = new QPushButton(QObject::tr("Browse…"), &dialog);
 
     auto *libraryRadio =
       new QRadioButton(QObject::tr("From a compiled grammar library"), &dialog);
     auto *libraryHint =
       new QLabel(QObject::tr("A shared library exporting tree_sitter_<name>."), &dialog);
     auto *libraryEdit = new QLineEdit(&dialog);
-    auto *libraryBrowse = new QPushButton(QObject::tr("Browse..."), &dialog);
+    auto *libraryBrowse = new QPushButton(QObject::tr("Browse…"), &dialog);
     // Plain text in the default foreground, not a red box: it states a fact
     // the user needs before choosing, and shouting it gets it tuned out.
     auto *libraryWarning = new QLabel(
@@ -231,7 +231,7 @@ QWidget *buildLanguagesPage(QWidget *parent,
     auto *layout = new QVBoxLayout(page);
 
     auto *problemsOnly = new QCheckBox(QObject::tr("Show only languages with problems"), page);
-    auto *addButton = new QPushButton(QObject::tr("Add Language..."), page);
+    auto *addButton = new QPushButton(QObject::tr("Add Language…"), page);
     // Rescans the config directory and re-renders. Live reload of the
     // *running* registry is plan task G2's `Arc` swap; until that lands this
     // shows what a restart would pick up, which is what the page is for.

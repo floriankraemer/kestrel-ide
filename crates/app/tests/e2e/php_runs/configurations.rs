@@ -196,7 +196,7 @@ fn select_config(ide: &Ide, name: &str) {
     ide.focus_main();
     ide.key("alt+r");
     let item = ide.wait_for_event(mark, "Select Run Configuration…", |e| {
-        e["ev"] == "run_menu_action" && e["label"] == "Select Run Configuration..."
+        e["ev"] == "run_menu_action" && e["label"] == "Select Run Configuration…"
     });
     let (x, y) = rect_centre(&item["rect"]);
     ide.click_at(x, y, 1);
@@ -327,8 +327,8 @@ fn check_page_pickers(ide: &Ide, findings: &mut Findings) {
 }
 
 /// #457: a configuration edited and saved in the dialog reaches the toolbar
-/// combo at once. The flow's last step: it removes "E8 broken", which the
-/// dialog would refuse to save.
+/// combo at once, and #467: "E8 broken" (a method scope without a method) is
+/// flagged in the list yet no longer blocks saving the other edit.
 fn check_save_refreshes_combo(ide: &Ide, findings: &mut Findings) {
     let opened = open_config_dialog(ide);
     let shown = ide.wait_for_event(opened, "the run configuration dialog", |e| {
@@ -339,8 +339,19 @@ fn check_save_refreshes_combo(ide: &Ide, findings: &mut Findings) {
         close_config_dialog(ide, opened);
         return;
     }
-    let (x, y) = rect_centre(&shown["remove_rect"]);
-    ide.click_at(x, y, 1);
+    let flagged = answer(ide, opened, |e| e["ev"] == "run_config_problems");
+    findings.check(
+        flagged.as_ref().is_some_and(|e| {
+            e["rows"].as_array().is_some_and(|rows| {
+                rows.iter().any(|r| {
+                    r["sentence"]
+                        .as_str()
+                        .is_some_and(|t| t.starts_with("\"E8 broken\""))
+                }) && rows.len() == 1
+            })
+        }),
+        format!("#467: only \"E8 broken\" should be flagged, got {flagged:?}"),
+    );
     // Back to the list's first row, so the keyboard walks the list again.
     let removed = ide.mark();
     let list = &shown["list_rect"];
@@ -372,6 +383,12 @@ fn check_save_refreshes_combo(ide: &Ide, findings: &mut Findings) {
     findings.check(
         answer(ide, saving, |e| e["ev"] == "run_configurations_changed").is_some(),
         "#457: saving the dialog did not refresh the toolbar's configurations",
+    );
+    let stored =
+        std::fs::read_to_string(ide.project_root().join(".ide/settings.toml")).expect("settings");
+    findings.check(
+        stored.contains("extra") && stored.contains("e8-broken"),
+        "#467: saving with an invalid configuration lost the edit or the configuration",
     );
 }
 
@@ -525,6 +542,18 @@ fn e2e_phpunit_saved_configurations() {
     );
     std::fs::remove_file(&junit).ok();
 
+    // #468's exact sequence: Run File leaves green rows, then the saved
+    // configuration whose interpreter exits before the runner starts.
+    open(&ide, "MailerTest.php");
+    caret_to(&ide, 1);
+    let scoped = ide.mark();
+    ide.key("ctrl+shift+F10");
+    let (_, tests) = run_and_collect(&ide, scoped);
+    findings.check(
+        tests.get("testSend").map(String::as_str) == Some("passed"),
+        format!("#468: Run File on MailerTest.php ran {tests:?}"),
+    );
+
     // #456: a run whose runner never starts ends as a failure with its exit
     // code, and what php wrote to stderr is in the Tests dock's output.
     select_config(&ide, "E8 cannot start");
@@ -545,6 +574,13 @@ fn e2e_phpunit_saved_configurations() {
                 .is_some_and(|t| t.contains("e8 cannot start"))
         }),
         "#456: php's stderr is not in the Tests dock's output",
+    );
+    // #468: the earlier run's rows are not presented as this run's result.
+    findings.check(
+        ide.events_since_of(mark, "test_tree_changed")
+            .last()
+            .is_some_and(|e| e["nodes"] == 0),
+        "#468: a run that never started left the previous run's rows in the Tests dock",
     );
 
     // AC4.10: Debug and Run with Coverage on a saved configuration.
@@ -598,9 +634,9 @@ fn e2e_phpunit_saved_configurations() {
             e["text"]
                 .as_str()
                 .or(e["message"].as_str())
-                .is_some_and(|t| t.contains("method"))
+                .is_some_and(|t| t.contains("\"E8 broken\"") && t.contains("method"))
         }),
-        format!("AC4.9: no refusal naming the method: {refusal:?}"),
+        format!("AC4.9: no refusal with the row's sentence naming the method: {refusal:?}"),
     );
     findings.check(
         ide.events_since_of(mark, "test_run_started").is_empty(),

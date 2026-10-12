@@ -77,7 +77,7 @@ void ContainersPanel::showComposeServiceContextMenu(QTreeWidgetItem *item, const
     QTreeWidgetItem *projectItem = item->parent();
 
     QMenu menu(tree_);
-    QAction *scale = menu.addAction(tr("Scale..."));
+    QAction *scale = menu.addAction(tr("Scale…"));
     QAction *jumpToSource = menu.addAction(tr("Jump to Source"));
     jumpToSource->setEnabled(projectItem != nullptr && !composeFilesOf(projectItem).isEmpty());
     menu.addSeparator();

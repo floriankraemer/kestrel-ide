@@ -42,7 +42,7 @@ SqlScriptOptionsPage::SqlScriptOptionsPage(ConsoleService *consoleService, QWidg
     connect(fileEdit_, &QLineEdit::textChanged, this, &SqlScriptOptionsPage::changed);
     fileRowLayout->addWidget(fileEdit_, 1);
     browseButton_ = new QToolButton(fileRow);
-    browseButton_->setText(tr("..."));
+    browseButton_->setText(tr("…"));
     connect(browseButton_, &QToolButton::clicked, this, &SqlScriptOptionsPage::browseForFile);
     fileRowLayout->addWidget(browseButton_);
     addRow(tr("SQL file:"), fileRow);

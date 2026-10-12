@@ -87,7 +87,7 @@ It supports ustar name/prefix splitting, GNU `@LongLink` and PAX extended-header
 `manifest.json`'s `Layers` list maps each layer id onto its own byte region inside the outer tar (the classic `docker save`/`podman save` layout both engines still write); added/modified/deleted classification tracks a running set of paths seen so far, bottom layer to top, the same order `manifest.json` already gives them.
 Every test builds its tar bytes by hand (`Cursor<Vec<u8>>` implements `Read + Seek`) — no fixture binaries needed for a from-scratch binary format reader.
 
-`analyze` keeps its temp `save` tar on success rather than deleting it immediately (`AnalyzeResult::tar_path`) so a double-clicked entry or "Download..." can reopen it (`layer_fs::read_entry`, re-walking the manifest and the one layer's own tar region) without a second, full `save`.
+`analyze` keeps its temp `save` tar on success rather than deleting it immediately (`AnalyzeResult::tar_path`) so a double-clicked entry or "Download…" can reopen it (`layer_fs::read_entry`, re-walking the manifest and the one layer's own tar region) without a second, full `save`.
 `read_entry` takes an optional byte cap — `Some(8 MiB)` for the read-only preview (the same ceiling `files::read_single_tar_entry` already uses for a `cp` stream), `None` for Download, matching JetBrains' own no-cap download.
 `ContainerServiceRust` keeps at most one analyzed image's tar path at a time (`analyzed_image: Option<(node_id, PathBuf)>`), replaced — and the old file removed — by the next `analyzeImage` call, and removed on `Drop` as a last resort if the session ends first.
 

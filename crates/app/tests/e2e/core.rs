@@ -787,7 +787,7 @@ fn e2e_hunk_revert_is_one_undo_never_touches_disk() {
     // `vcs.rollbackHunk` (`app-config/src/keymap.rs`), so this drives the
     // same QAction through the menu bar instead. Opened with the keyboard,
     // then clicked by its own `vcs_menu_action` label/rect rather than a
-    // fixed arrow-key count: R7 inserted "Stash Changes..."/"Unstash..."
+    // fixed arrow-key count: R7 inserted "Stash Changes…"/"Unstash…"
     // ahead of "Rollback Hunk", which is exactly the "counting arrow
     // presses would break the moment the menu gains an entry" trap
     // `e2e_diff_window_jetbrains_controls`'s own "Show Diff" click already

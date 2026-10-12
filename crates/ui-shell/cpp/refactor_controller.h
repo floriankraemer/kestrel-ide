@@ -3,6 +3,7 @@
 #include "refactor_preview_dialog.h"
 #include "ui-shell/src/bridge/ffi.cxxqt.h"
 
+#include <QCoreApplication>
 #include <QHash>
 #include <QList>
 #include <QObject>
@@ -35,6 +36,10 @@ QString previewText(const QString &newText);
 // judgement made here.
 class RefactorController : public QObject
 {
+    // Not a `Q_OBJECT` (no moc target), so `tr()` would resolve in a Qt base
+    // class's context; this keeps it in this class's own, where the .ts entries live.
+    Q_DECLARE_TR_FUNCTIONS(RefactorController)
+
 public:
     RefactorController(LanguageService *languageService, SearchModel *searchModel,
                         EditorTabs *editorTabs, QMainWindow *window);

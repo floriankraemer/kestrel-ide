@@ -258,6 +258,17 @@ impl TestRunHandle {
             .map(|code| format!("Process finished with exit code {code}"))
     }
 
+    /// Whether the run never really started: the program could not be
+    /// launched, or it died without reporting a test. Such a run leaves the
+    /// previous results standing, so the view discards the placeholders it
+    /// seeded (#468).
+    pub fn never_started(&self, result: &Result<Option<i32>, RunFailure>) -> bool {
+        match result {
+            Ok(code) => self.start_failure(*code).is_some(),
+            Err(_) => self.reported.load(Ordering::Relaxed) == 0,
+        }
+    }
+
     /// Count results a sink produced on its own, which the process never
     /// printed as events (a framework's text-only failure report): a run
     /// that produced them did start.
@@ -521,8 +532,20 @@ mod tests {
     #[test]
     fn results_a_sink_synthesised_make_the_run_a_started_one() {
         let handle = TestRunHandle::new();
+        assert!(handle.never_started(&Ok(Some(2))));
         handle.note_reported(1);
+        assert!(!handle.never_started(&Ok(Some(2))));
         assert_eq!(handle.start_failure(Some(2)), None);
+    }
+
+    #[test]
+    fn a_program_that_could_not_be_launched_never_started() {
+        let handle = TestRunHandle::new();
+        assert!(handle.never_started(&Err(RunFailure::NotFound)));
+        assert!(handle.never_started(&Err(RunFailure::Io("boom".into()))));
+        assert!(handle.never_started(&Ok(Some(127))));
+        assert!(!handle.never_started(&Ok(Some(0))), "a clean exit");
+        assert!(!handle.never_started(&Ok(None)), "a stopped run");
     }
 
     #[test]

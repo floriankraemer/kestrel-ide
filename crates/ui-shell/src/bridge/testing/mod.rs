@@ -847,12 +847,13 @@ impl ffi::TestService {
                 .as_ref()
                 .ok()
                 .and_then(|code| handle.start_failure(*code));
+            let never_started = handle.never_started(&result);
             let _ = qt_thread.queue(move |mut service: Pin<&mut ffi::TestService>| {
                 service.runs.borrow_mut().remove(&run_id);
                 // Whatever never reported (Stop, a fatal error, a killed
                 // container) must not stay "running" on a gutter icon.
                 service.tree.borrow_mut().finish_run();
-                if start_failure.is_some() {
+                if never_started {
                     service.tree.borrow_mut().discard_after_failed_start();
                     // The run's placeholders are gone; so must be the
                     // diagnostics earlier runs published from them.

@@ -854,6 +854,9 @@ impl ffi::TestService {
                 service.tree.borrow_mut().finish_run();
                 if start_failure.is_some() {
                     service.tree.borrow_mut().discard_after_failed_start();
+                    // The run's placeholders are gone; so must be the
+                    // diagnostics earlier runs published from them.
+                    republish(&service);
                 }
                 service.record_history(&run_root);
                 service.as_mut().test_tree_changed();

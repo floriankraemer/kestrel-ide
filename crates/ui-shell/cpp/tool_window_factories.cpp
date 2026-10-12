@@ -121,19 +121,19 @@ void wireContributedToolWindowMenus(AppSettings *appSettings, QHash<QString, QAc
         // an id this table does not know yet is logged rather than guessed at.
         QAction *action = nullptr;
         if (row.id == QStringLiteral("buildTools")) {
-            action = registerAction(viewMenu, QStringLiteral("view.buildTools"), row.title,
+            action = registerAction(viewMenu, QStringLiteral("view.buildTools"), QObject::tr("Build Tools"),
                                     appSettings, actions);
         } else if (row.id == QStringLiteral("composer")) {
-            action = registerAction(viewMenu, QStringLiteral("view.composer"), row.title,
+            action = registerAction(viewMenu, QStringLiteral("view.composer"), QObject::tr("Composer"),
                                     appSettings, actions);
         } else if (row.id == QStringLiteral("containers")) {
-            action = registerAction(viewMenu, QStringLiteral("view.containers"), row.title,
+            action = registerAction(viewMenu, QStringLiteral("view.containers"), QObject::tr("Containers"),
                                     appSettings, actions);
         } else if (row.id == QStringLiteral("database")) {
-            action = registerAction(viewMenu, QStringLiteral("view.database"), row.title,
+            action = registerAction(viewMenu, QStringLiteral("view.database"), QObject::tr("Database"),
                                     appSettings, actions);
         } else if (row.id == QStringLiteral("databaseResults")) {
-            action = registerAction(viewMenu, QStringLiteral("view.databaseResults"), row.title,
+            action = registerAction(viewMenu, QStringLiteral("view.databaseResults"), QObject::tr("Database Results"),
                                     appSettings, actions);
         } else {
             qWarning().noquote() << QStringLiteral("tool window %1 from %2 has no View-menu action registered")

@@ -184,7 +184,7 @@ fn e2e_analyzer_findings_appear_inline_and_in_problems() {
     );
 
     // The Problems dock: one row, named after the analyzer.
-    let row = ide.wait_for_event(mark, "the finding to reach the Problems dock", |e| {
+    ide.wait_for_event(mark, "the finding to reach the Problems dock", |e| {
         e["ev"] == "problem_row"
             && e["path"]
                 .as_str()

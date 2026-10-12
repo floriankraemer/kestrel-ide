@@ -283,6 +283,22 @@ pub(super) fn effective_container_settings() -> app_config::ContainerSettings {
     crate::bridge::convert::load_resolved_settings().containers
 }
 
+/// Why `config` cannot run, as the sentence its row tooltip and a refused
+/// launch both show (#467): the one place the two kinds of check (`run-core`'s
+/// and `php-core`'s `phpunit` table, which `run-core` cannot depend on) meet.
+pub(super) fn config_problem(config: &run_core::RunConfig) -> Option<String> {
+    let problem = run_core::validate::problem(config, &effective_container_settings())
+        .or_else(|| phpunit_form::problem(config))?;
+    Some(run_core::validate::sentence(config, &problem))
+}
+
+/// The dialog saves a configuration that cannot run (#467); every launch
+/// refuses it loudly, with the sentence its row was marked with.
+fn refuse_unrunnable(config: &run_core::RunConfig) -> Option<ffi::FfiResult> {
+    config_problem(config)
+        .map(|sentence| errors::failure(errors::CODE_INVALID_RUN_CONFIG, sentence))
+}
+
 /// The `[php]` interpreter, effective settings — what a PHP-toolchain
 /// configuration launches under.
 pub(super) fn effective_php_interpreter() -> String {
@@ -880,20 +896,13 @@ impl ffi::RunService {
         if config.kind.as_deref() == Some(app_config::php::PHPUNIT_KIND) {
             return self.launch_tests(&config, root, TestLaunch::Run);
         }
+        if let Some(refusal) = refuse_unrunnable(&config) {
+            return refusal;
+        }
         let config = run_core::php_run::inherit_container_target(
             &config,
             effective_php_container_target().as_deref(),
         );
-        // The dialog saves a configuration that cannot run (#467); refuse it
-        // here, loudly, with the sentence it was marked with. The containers
-        // kinds have no other launch-time check.
-        if let Some(problem) = run_core::validate::problem(&config, &effective_container_settings())
-        {
-            return errors::failure(
-                errors::CODE_INVALID_RUN_CONFIG,
-                run_core::validate::sentence(&config, &problem),
-            );
-        }
         let config_id = config.id.clone();
         if config.kind.as_deref() == Some("sql-script") {
             return sql_script::launch(self, &config, root);
@@ -966,6 +975,9 @@ impl ffi::RunService {
         root: &Path,
         mode: TestLaunch,
     ) -> ffi::FfiResult {
+        if let Some(refusal) = refuse_unrunnable(config) {
+            return refusal;
+        }
         if !self.tests_starting.borrow_mut().insert(config.id.clone()) {
             return errors::failure(
                 errors::CODE_REFUSED,

@@ -435,19 +435,14 @@ impl ffi::RunConfigEditor {
     /// one, in list order. Saving never waits on these (#467): the view marks
     /// the rows and the launch refuses with the same sentence.
     pub fn problems(&self) -> Vec<ffi::FfiRunConfigProblem> {
-        let containers = effective_container_settings();
         self.draft
             .borrow()
             .iter()
             .enumerate()
             .filter_map(|(index, config)| {
-                let problem = run_core::validate::problem(config, &containers)
-                    .or_else(|| super::phpunit_form::problem(config))?;
                 Some(ffi::FfiRunConfigProblem {
                     index: index as u32,
-                    sentence: QString::from(
-                        run_core::validate::sentence(config, &problem).as_str(),
-                    ),
+                    sentence: QString::from(super::config_problem(config)?.as_str()),
                 })
             })
             .collect()

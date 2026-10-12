@@ -8,10 +8,12 @@
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QMainWindow>
 #include <QMessageBox>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
+#include <QStatusBar>
 #include <QToolButton>
 
 #include <functional>
@@ -433,8 +435,19 @@ QString RunToolbar::selectedConfigId() const
 void RunToolbar::runSelected()
 {
     const QString configId = selectedConfigId();
-    if (!configId.isEmpty()) {
-        runService_->run(configId);
+    if (configId.isEmpty()) {
+        return;
+    }
+    // A configuration refused before any console exists (it cannot run,
+    // #467) says why on the status bar, where a refused test run does too.
+    const FfiResult result = runService_->run(configId);
+    if (result.code == 0) {
+        return;
+    }
+    if (auto *mainWindow = qobject_cast<QMainWindow *>(window())) {
+        mainWindow->statusBar()->showMessage(QString(result.message), 6000);
+    } else {
+        QMessageBox::warning(this, tr("Run"), result.message);
     }
 }
 

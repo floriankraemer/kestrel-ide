@@ -634,9 +634,9 @@ fn e2e_phpunit_saved_configurations() {
             e["text"]
                 .as_str()
                 .or(e["message"].as_str())
-                .is_some_and(|t| t.contains("method"))
+                .is_some_and(|t| t.contains("\"E8 broken\"") && t.contains("method"))
         }),
-        format!("AC4.9: no refusal naming the method: {refusal:?}"),
+        format!("AC4.9: no refusal with the row's sentence naming the method: {refusal:?}"),
     );
     findings.check(
         ide.events_since_of(mark, "test_run_started").is_empty(),

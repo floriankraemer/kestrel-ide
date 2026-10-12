@@ -88,7 +88,7 @@
     </message>
     <message>
         <source>Recent commit messages…</source>
-        <translation>Letzte Commit-Nachrichten …</translation>
+        <translation>Letzte Commit-Nachrichten…</translation>
     </message>
     <message>
         <source>Author / Sign-off</source>
@@ -136,7 +136,7 @@
     </message>
     <message>
         <source>Discard Changes…</source>
-        <translation>Änderungen verwerfen …</translation>
+        <translation>Änderungen verwerfen…</translation>
     </message>
     <message>
         <source>Show File History</source>
@@ -159,15 +159,15 @@
     </message>
     <message>
         <source>Message contains…</source>
-        <translation>Nachricht enthält …</translation>
+        <translation>Nachricht enthält…</translation>
     </message>
     <message>
         <source>Author…</source>
-        <translation>Autor …</translation>
+        <translation>Autor…</translation>
     </message>
     <message>
         <source>Path…</source>
-        <translation>Pfad …</translation>
+        <translation>Pfad…</translation>
     </message>
     <message>
         <source>Since</source>
@@ -183,7 +183,7 @@
     </message>
     <message>
         <source>New Branch Here…</source>
-        <translation>Neuer Branch hier …</translation>
+        <translation>Neuer Branch hier…</translation>
     </message>
     <message>
         <source>Cherry-pick</source>
@@ -207,7 +207,7 @@
     </message>
     <message>
         <source>Hard…</source>
-        <translation>Hard …</translation>
+        <translation>Hard…</translation>
     </message>
     <message>
         <source>Copy Hash</source>
@@ -250,7 +250,7 @@
     </message>
     <message>
         <source>Remove…</source>
-        <translation>Entfernen …</translation>
+        <translation>Entfernen…</translation>
     </message>
     <message>
         <source>Unpause</source>
@@ -294,7 +294,7 @@
     </message>
     <message>
         <source>Exec…</source>
-        <translation>Exec …</translation>
+        <translation>Exec…</translation>
     </message>
     <message>
         <source>Attach</source>
@@ -326,7 +326,7 @@
     </message>
     <message>
         <source>Clean Up…</source>
-        <translation>Aufräumen …</translation>
+        <translation>Aufräumen…</translation>
     </message>
     <message>
         <source>Start All</source>
@@ -346,7 +346,7 @@
     </message>
     <message>
         <source>Scale…</source>
-        <translation>Skalieren …</translation>
+        <translation>Skalieren…</translation>
     </message>
     <message>
         <source>Scale</source>
@@ -362,15 +362,15 @@
     </message>
     <message>
         <source>New connection…</source>
-        <translation>Neue Verbindung …</translation>
+        <translation>Neue Verbindung…</translation>
     </message>
     <message>
         <source>Add from contexts…</source>
-        <translation>Aus Kontexten hinzufügen …</translation>
+        <translation>Aus Kontexten hinzufügen…</translation>
     </message>
     <message>
         <source>Registry…</source>
-        <translation>Registry …</translation>
+        <translation>Registry…</translation>
     </message>
     <message>
         <source>Registries</source>
@@ -390,7 +390,7 @@
     </message>
     <message>
         <source>Pull Image…</source>
-        <translation>Image pullen …</translation>
+        <translation>Image pullen…</translation>
     </message>
     <message>
         <source>All (stopped containers, unused networks/volumes, dangling images)</source>
@@ -506,7 +506,7 @@
     </message>
     <message>
         <source>Edit configuration…</source>
-        <translation>Konfiguration bearbeiten …</translation>
+        <translation>Konfiguration bearbeiten…</translation>
     </message>
     <message>
         <source>Copy Pod ID</source>
@@ -530,7 +530,7 @@
     </message>
     <message>
         <source>Edit…</source>
-        <translation>Bearbeiten …</translation>
+        <translation>Bearbeiten…</translation>
     </message>
     <message>
         <source>Remove Registry</source>
@@ -622,19 +622,19 @@
     </message>
     <message>
         <source>Create Container…</source>
-        <translation>Container erstellen …</translation>
+        <translation>Container erstellen…</translation>
     </message>
     <message>
         <source>Push Image…</source>
-        <translation>Image pushen …</translation>
+        <translation>Image pushen…</translation>
     </message>
     <message>
         <source>Copy Image to…</source>
-        <translation>Image kopieren nach …</translation>
+        <translation>Image kopieren nach…</translation>
     </message>
     <message>
         <source>Tag…</source>
-        <translation>Tag …</translation>
+        <translation>Tag…</translation>
     </message>
     <message>
         <source>Show Layers</source>
@@ -686,11 +686,11 @@
     </message>
     <message>
         <source>Create Network…</source>
-        <translation>Netzwerk erstellen …</translation>
+        <translation>Netzwerk erstellen…</translation>
     </message>
     <message>
         <source>Create Volume…</source>
-        <translation>Volume erstellen …</translation>
+        <translation>Volume erstellen…</translation>
     </message>
     <message>
         <source>Create Network</source>
@@ -835,7 +835,7 @@
     <name>DatabasePanel</name>
     <message>
         <source>New data source…</source>
-        <translation>Neue Datenquelle …</translation>
+        <translation>Neue Datenquelle…</translation>
     </message>
     <message>
         <source>Refresh</source>
@@ -891,7 +891,7 @@
     </message>
     <message>
         <source>Edit Data…</source>
-        <translation>Daten bearbeiten …</translation>
+        <translation>Daten bearbeiten…</translation>
     </message>
     <message>
         <source>Copy Name</source>
@@ -899,31 +899,31 @@
     </message>
     <message>
         <source>Rename…</source>
-        <translation>Umbenennen …</translation>
+        <translation>Umbenennen…</translation>
     </message>
     <message>
         <source>Drop…</source>
-        <translation>Löschen (Drop) …</translation>
+        <translation>Löschen (Drop)…</translation>
     </message>
     <message>
         <source>Truncate…</source>
-        <translation>Truncate …</translation>
+        <translation>Truncate…</translation>
     </message>
     <message>
         <source>Comment…</source>
-        <translation>Kommentar …</translation>
+        <translation>Kommentar…</translation>
     </message>
     <message>
         <source>Export Data…</source>
-        <translation>Daten exportieren …</translation>
+        <translation>Daten exportieren…</translation>
     </message>
     <message>
         <source>Import Data…</source>
-        <translation>Daten importieren …</translation>
+        <translation>Daten importieren…</translation>
     </message>
     <message>
         <source>Copy Table to…</source>
-        <translation>Tabelle kopieren nach …</translation>
+        <translation>Tabelle kopieren nach…</translation>
     </message>
     <message>
         <source>ER Diagram</source>
@@ -931,51 +931,51 @@
     </message>
     <message>
         <source>Compare Data with…</source>
-        <translation>Daten vergleichen mit …</translation>
+        <translation>Daten vergleichen mit…</translation>
     </message>
     <message>
         <source>Dump…</source>
-        <translation>Dump …</translation>
+        <translation>Dump…</translation>
     </message>
     <message>
         <source>Restore…</source>
-        <translation>Wiederherstellen …</translation>
+        <translation>Wiederherstellen…</translation>
     </message>
     <message>
         <source>Compare Structure with…</source>
-        <translation>Struktur vergleichen mit …</translation>
+        <translation>Struktur vergleichen mit…</translation>
     </message>
     <message>
         <source>Delete Key…</source>
-        <translation>Schlüssel löschen …</translation>
+        <translation>Schlüssel löschen…</translation>
     </message>
     <message>
         <source>Set TTL…</source>
-        <translation>TTL festlegen …</translation>
+        <translation>TTL festlegen…</translation>
     </message>
     <message>
         <source>Create Table…</source>
-        <translation>Tabelle erstellen …</translation>
+        <translation>Tabelle erstellen…</translation>
     </message>
     <message>
         <source>Create User…</source>
-        <translation>Benutzer erstellen …</translation>
+        <translation>Benutzer erstellen…</translation>
     </message>
     <message>
         <source>Modify Column…</source>
-        <translation>Spalte ändern …</translation>
+        <translation>Spalte ändern…</translation>
     </message>
     <message>
         <source>Add Column…</source>
-        <translation>Spalte hinzufügen …</translation>
+        <translation>Spalte hinzufügen…</translation>
     </message>
     <message>
         <source>Drop Column…</source>
-        <translation>Spalte löschen …</translation>
+        <translation>Spalte löschen…</translation>
     </message>
     <message>
         <source>Create Index…</source>
-        <translation>Index erstellen …</translation>
+        <translation>Index erstellen…</translation>
     </message>
     <message>
         <source>Rename</source>
@@ -1030,7 +1030,7 @@
     <name>DatabaseResultsPanel</name>
     <message>
         <source>Export / Copy As…</source>
-        <translation>Exportieren / Kopieren als …</translation>
+        <translation>Exportieren / Kopieren als…</translation>
     </message>
     <message>
         <source>Output</source>
@@ -1338,7 +1338,7 @@
     </message>
     <message>
         <source>Edit Breakpoint…</source>
-        <translation>Breakpoint bearbeiten …</translation>
+        <translation>Breakpoint bearbeiten…</translation>
     </message>
     <message>
         <source>Add Breakpoint</source>
@@ -1394,7 +1394,7 @@
     </message>
     <message>
         <source>New Configuration…</source>
-        <translation>Neue Konfiguration …</translation>
+        <translation>Neue Konfiguration…</translation>
     </message>
     <message>
         <source>Run Compose Project</source>
@@ -1467,15 +1467,15 @@
     </message>
     <message>
         <source>Searching usages of &quot;%1&quot;…</source>
-        <translation>Verwendungen von „%1“ werden gesucht …</translation>
+        <translation>Verwendungen von „%1“ werden gesucht…</translation>
     </message>
     <message>
         <source>Searching implementations of &quot;%1&quot;…</source>
-        <translation>Implementierungen von „%1“ werden gesucht …</translation>
+        <translation>Implementierungen von „%1“ werden gesucht…</translation>
     </message>
     <message>
         <source>Searching supertypes of &quot;%1&quot;…</source>
-        <translation>Übertypen von „%1“ werden gesucht …</translation>
+        <translation>Übertypen von „%1“ werden gesucht…</translation>
     </message>
     <message>
         <source>%1 [%2]</source>
@@ -1518,7 +1518,7 @@
     </message>
     <message>
         <source>Loading…</source>
-        <translation>Wird geladen …</translation>
+        <translation>Wird geladen…</translation>
     </message>
 </context>
 <context>
@@ -1597,11 +1597,11 @@
     </message>
     <message>
         <source>Waiting for %1…</source>
-        <translation>Warte auf %1 …</translation>
+        <translation>Warte auf %1…</translation>
     </message>
     <message>
         <source>Quick Fixes…</source>
-        <translation>Schnellkorrekturen …</translation>
+        <translation>Schnellkorrekturen…</translation>
     </message>
 </context>
 <context>
@@ -1706,11 +1706,11 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>&amp;Build</source>
-        <translation>Erste&amp;llen</translation>
+        <translation>Er&amp;stellen</translation>
     </message>
     <message>
         <source>&amp;Debug</source>
-        <translation>&amp;Debuggen</translation>
+        <translation>De&amp;buggen</translation>
     </message>
     <message>
         <source>&amp;Edit</source>
@@ -1730,7 +1730,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>&amp;Run</source>
-        <translation>&amp;Ausführen</translation>
+        <translation>A&amp;usführen</translation>
     </message>
     <message>
         <source>&amp;View</source>
@@ -2097,7 +2097,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Compare with…</source>
-        <translation>Vergleichen mit …</translation>
+        <translation>Vergleichen mit…</translation>
     </message>
     <message>
         <source>Confirm delete</source>
@@ -2777,7 +2777,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Revert File Changes…</source>
-        <translation>Dateiänderungen zurücksetzen …</translation>
+        <translation>Dateiänderungen zurücksetzen…</translation>
     </message>
     <message>
         <source>Revert Hunk</source>
@@ -3177,11 +3177,11 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Looking for fixes…</source>
-        <translation>Suche nach Korrekturen …</translation>
+        <translation>Suche nach Korrekturen…</translation>
     </message>
     <message>
         <source>More actions…</source>
-        <translation>Weitere Aktionen …</translation>
+        <translation>Weitere Aktionen…</translation>
     </message>
     <message>
         <source>Source:</source>
@@ -3553,7 +3553,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Search branches…</source>
-        <translation>Branches suchen …</translation>
+        <translation>Branches suchen…</translation>
     </message>
     <message>
         <source>Local</source>
@@ -3597,11 +3597,11 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Rename…</source>
-        <translation>Umbenennen …</translation>
+        <translation>Umbenennen…</translation>
     </message>
     <message>
         <source>Delete…</source>
-        <translation>Löschen …</translation>
+        <translation>Löschen…</translation>
     </message>
     <message>
         <source>Merge</source>
@@ -3617,7 +3617,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>New Branch…</source>
-        <translation>Neuer Branch …</translation>
+        <translation>Neuer Branch…</translation>
     </message>
     <message>
         <source>Edit Breakpoint</source>
@@ -3689,7 +3689,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>%1 — syncing…</source>
-        <translation>%1 – wird synchronisiert …</translation>
+        <translation>%1 – wird synchronisiert…</translation>
     </message>
     <message>
         <source>%1 — sync failed</source>
@@ -3876,7 +3876,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Add…</source>
-        <translation>Hinzufügen …</translation>
+        <translation>Hinzufügen…</translation>
     </message>
     <message>
         <source>Add Compose File</source>
@@ -3892,7 +3892,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Build step: checking…</source>
-        <translation>Build-Schritt: wird geprüft …</translation>
+        <translation>Build-Schritt: wird geprüft…</translation>
     </message>
     <message>
         <source>Build step: this service builds before it runs</source>
@@ -4076,11 +4076,11 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Edit…</source>
-        <translation>Bearbeiten …</translation>
+        <translation>Bearbeiten…</translation>
     </message>
     <message>
         <source>Add from contexts…</source>
-        <translation>Aus Kontexten hinzufügen …</translation>
+        <translation>Aus Kontexten hinzufügen…</translation>
     </message>
     <message>
         <source>Containers dock</source>
@@ -4120,7 +4120,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Testing…</source>
-        <translation>Test läuft …</translation>
+        <translation>Test läuft…</translation>
     </message>
     <message>
         <source>Containers</source>
@@ -4148,7 +4148,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Load more…</source>
-        <translation>Mehr laden …</translation>
+        <translation>Mehr laden…</translation>
     </message>
     <message numerus="yes">
         <source>%n s</source>
@@ -4204,7 +4204,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>connecting…</source>
-        <translation>Verbindung wird hergestellt …</translation>
+        <translation>Verbindung wird hergestellt…</translation>
     </message>
     <message>
         <source>%1 Engine %2</source>
@@ -4491,7 +4491,7 @@ Befehl korrigieren und dann auf „Server neu starten“ klicken.</translation>
     </message>
     <message>
         <source>Install…</source>
-        <translation>Installieren …</translation>
+        <translation>Installieren…</translation>
     </message>
     <message>
         <source>Unknown host key</source>
@@ -4625,7 +4625,7 @@ Akzeptieren und zu known_hosts hinzufügen?</translation>
     </message>
     <message>
         <source>Browse…</source>
-        <translation>Durchsuchen …</translation>
+        <translation>Durchsuchen…</translation>
     </message>
     <message>
         <source>Destination file:</source>
@@ -4873,7 +4873,7 @@ Akzeptieren und zu known_hosts hinzufügen?</translation>
     </message>
     <message>
         <source>Install / Re-enable…</source>
-        <translation>Installieren / Wieder aktivieren …</translation>
+        <translation>Installieren / Wieder aktivieren…</translation>
     </message>
     <message>
         <source>Duplicate</source>
@@ -4881,7 +4881,7 @@ Akzeptieren und zu known_hosts hinzufügen?</translation>
     </message>
     <message>
         <source>Drivers…</source>
-        <translation>Treiber …</translation>
+        <translation>Treiber…</translation>
     </message>
     <message>
         <source>Allow installing drivers contributed by third-party plugins</source>
@@ -4981,11 +4981,11 @@ Akzeptieren und zu known_hosts hinzufügen?</translation>
     </message>
     <message>
         <source>Attach to Process…</source>
-        <translation>An Prozess anhängen …</translation>
+        <translation>An Prozess anhängen…</translation>
     </message>
     <message>
         <source>Attach to Remote…</source>
-        <translation>An Remote anhängen …</translation>
+        <translation>An Remote anhängen…</translation>
     </message>
     <message>
         <source>Run to Cursor</source>
@@ -4993,11 +4993,11 @@ Akzeptieren und zu known_hosts hinzufügen?</translation>
     </message>
     <message>
         <source>Edit Breakpoint…</source>
-        <translation>Breakpoint bearbeiten …</translation>
+        <translation>Breakpoint bearbeiten…</translation>
     </message>
     <message>
         <source>View Breakpoints…</source>
-        <translation>Breakpoints anzeigen …</translation>
+        <translation>Breakpoints anzeigen…</translation>
     </message>
     <message>
         <source>Diff</source>
@@ -5035,15 +5035,15 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Background Color…</source>
-        <translation>Hintergrundfarbe …</translation>
+        <translation>Hintergrundfarbe…</translation>
     </message>
     <message>
         <source>Text Color…</source>
-        <translation>Textfarbe …</translation>
+        <translation>Textfarbe…</translation>
     </message>
     <message>
         <source>Current Line Color…</source>
-        <translation>Farbe der aktuellen Zeile …</translation>
+        <translation>Farbe der aktuellen Zeile…</translation>
     </message>
     <message>
         <source>Pattern</source>
@@ -5081,79 +5081,79 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Add Language…</source>
-        <translation>Sprache hinzufügen …</translation>
+        <translation>Sprache hinzufügen…</translation>
     </message>
     <message>
         <source>Save Current Layout…</source>
-        <translation>Aktuelles Layout speichern …</translation>
+        <translation>Aktuelles Layout speichern…</translation>
     </message>
     <message>
         <source>Delete Layout…</source>
-        <translation>Layout löschen …</translation>
+        <translation>Layout löschen…</translation>
     </message>
     <message>
         <source>Loading settings…</source>
-        <translation>Einstellungen werden geladen …</translation>
+        <translation>Einstellungen werden geladen…</translation>
     </message>
     <message>
         <source>Starting services…</source>
-        <translation>Dienste werden gestartet …</translation>
+        <translation>Dienste werden gestartet…</translation>
     </message>
     <message>
         <source>Building workspace…</source>
-        <translation>Arbeitsbereich wird erstellt …</translation>
+        <translation>Arbeitsbereich wird erstellt…</translation>
     </message>
     <message>
         <source>Preparing menus…</source>
-        <translation>Menüs werden vorbereitet …</translation>
+        <translation>Menüs werden vorbereitet…</translation>
     </message>
     <message>
         <source>Open Folder…</source>
-        <translation>Ordner öffnen …</translation>
+        <translation>Ordner öffnen…</translation>
     </message>
     <message>
         <source>Save As…</source>
-        <translation>Speichern unter …</translation>
+        <translation>Speichern unter…</translation>
     </message>
     <message>
         <source>Preferences…</source>
-        <translation>Einstellungen …</translation>
+        <translation>Einstellungen…</translation>
     </message>
     <message>
         <source>Project Settings…</source>
-        <translation>Projekteinstellungen …</translation>
+        <translation>Projekteinstellungen…</translation>
     </message>
     <message>
         <source>Find…</source>
-        <translation>Suchen …</translation>
+        <translation>Suchen…</translation>
     </message>
     <message>
         <source>Replace…</source>
-        <translation>Ersetzen …</translation>
+        <translation>Ersetzen…</translation>
     </message>
     <message>
         <source>Find in Files…</source>
-        <translation>In Dateien suchen …</translation>
+        <translation>In Dateien suchen…</translation>
     </message>
     <message>
         <source>Extract Method…</source>
-        <translation>Methode extrahieren …</translation>
+        <translation>Methode extrahieren…</translation>
     </message>
     <message>
         <source>Extract Class…</source>
-        <translation>Klasse extrahieren …</translation>
+        <translation>Klasse extrahieren…</translation>
     </message>
     <message>
         <source>Refactor This…</source>
-        <translation>Dies refaktorisieren …</translation>
+        <translation>Dies refaktorisieren…</translation>
     </message>
     <message>
         <source>Search Everywhere…</source>
-        <translation>Überall suchen …</translation>
+        <translation>Überall suchen…</translation>
     </message>
     <message>
         <source>Go to File…</source>
-        <translation>Zu Datei springen …</translation>
+        <translation>Zu Datei springen…</translation>
     </message>
     <message>
         <source>Go to Class…</source>
@@ -5161,27 +5161,27 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Find Action…</source>
-        <translation>Aktion suchen …</translation>
+        <translation>Aktion suchen…</translation>
     </message>
     <message>
         <source>Go to Symbol…</source>
-        <translation>Zu Symbol springen …</translation>
+        <translation>Zu Symbol springen…</translation>
     </message>
     <message>
         <source>Go to Line…</source>
-        <translation>Zu Zeile springen …</translation>
+        <translation>Zu Zeile springen…</translation>
     </message>
     <message>
         <source>Restoring project…</source>
-        <translation>Projekt wird wiederhergestellt …</translation>
+        <translation>Projekt wird wiederhergestellt…</translation>
     </message>
     <message>
         <source>Restoring editors…</source>
-        <translation>Editoren werden wiederhergestellt …</translation>
+        <translation>Editoren werden wiederhergestellt…</translation>
     </message>
     <message>
         <source>Starting…</source>
-        <translation>Wird gestartet …</translation>
+        <translation>Wird gestartet…</translation>
     </message>
     <message>
         <source>Next Highlighted Error</source>
@@ -5201,7 +5201,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>No excluded folders. Use Add… or right-click a folder in the Project tree → Mark Directory as Excluded.</source>
-        <translation>Keine ausgeschlossenen Ordner. Verwenden Sie „Hinzufügen …“ oder klicken Sie im Projektbaum mit der rechten Maustaste auf einen Ordner → Verzeichnis als ausgeschlossen markieren.</translation>
+        <translation>Keine ausgeschlossenen Ordner. Verwenden Sie „Hinzufügen…“ oder klicken Sie im Projektbaum mit der rechten Maustaste auf einen Ordner → Verzeichnis als ausgeschlossen markieren.</translation>
     </message>
     <message>
         <source>Open a project to edit its excluded folders.</source>
@@ -5253,7 +5253,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Compare &quot;%1&quot; With…</source>
-        <translation>Vergleiche „%1“ mit …</translation>
+        <translation>Vergleiche „%1“ mit…</translation>
     </message>
     <message>
         <source>Cannot change exclusion</source>
@@ -5269,7 +5269,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Compare Project with Branch, Tag or Revision…</source>
-        <translation>Projekt mit Branch, Tag oder Revision vergleichen …</translation>
+        <translation>Projekt mit Branch, Tag oder Revision vergleichen…</translation>
     </message>
     <message>
         <source>Compare Project with %1</source>
@@ -5289,7 +5289,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Compare with Branch, Tag or Revision…</source>
-        <translation>Mit Branch, Tag oder Revision vergleichen …</translation>
+        <translation>Mit Branch, Tag oder Revision vergleichen…</translation>
     </message>
     <message>
         <source>Process</source>
@@ -5309,7 +5309,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>New target…</source>
-        <translation>Neues Ziel …</translation>
+        <translation>Neues Ziel…</translation>
     </message>
     <message>
         <source>New Configuration</source>
@@ -5317,11 +5317,11 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Select Run Configuration…</source>
-        <translation>Ausführungskonfiguration auswählen …</translation>
+        <translation>Ausführungskonfiguration auswählen…</translation>
     </message>
     <message>
         <source>Edit Configurations…</source>
-        <translation>Konfigurationen bearbeiten …</translation>
+        <translation>Konfigurationen bearbeiten…</translation>
     </message>
     <message>
         <source>File Associations</source>
@@ -5337,19 +5337,19 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Opening project…</source>
-        <translation>Projekt wird geöffnet …</translation>
+        <translation>Projekt wird geöffnet…</translation>
     </message>
     <message>
         <source>Indexing… %1/%2</source>
-        <translation>Indexierung … %1/%2</translation>
+        <translation>Indexierung… %1/%2</translation>
     </message>
     <message>
         <source>%1: %2…</source>
-        <translation>%1: %2 …</translation>
+        <translation>%1: %2…</translation>
     </message>
     <message>
         <source>Analysis: running…</source>
-        <translation>Analyse: läuft …</translation>
+        <translation>Analyse: läuft…</translation>
     </message>
     <message>
         <source>Gradle/Maven</source>
@@ -5357,7 +5357,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>%1: syncing…</source>
-        <translation>%1: wird synchronisiert …</translation>
+        <translation>%1: wird synchronisiert…</translation>
     </message>
     <message>
         <source>%1: sync failed</source>
@@ -5377,15 +5377,15 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Choose…</source>
-        <translation>Auswählen …</translation>
+        <translation>Auswählen…</translation>
     </message>
     <message>
         <source>Reset Base…</source>
-        <translation>Basis zurücksetzen …</translation>
+        <translation>Basis zurücksetzen…</translation>
     </message>
     <message>
         <source>Reset Language…</source>
-        <translation>Sprache zurücksetzen …</translation>
+        <translation>Sprache zurücksetzen…</translation>
     </message>
     <message>
         <source>Top:</source>
@@ -5409,7 +5409,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Custom…</source>
-        <translation>Benutzerdefiniert …</translation>
+        <translation>Benutzerdefiniert…</translation>
     </message>
     <message>
         <source>Not staged</source>
@@ -5433,19 +5433,19 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Open Branches… to push it to a chosen remote?</source>
-        <translation>Öffnen Sie „Branches …“, um ihn auf einen gewählten Remote zu pushen?</translation>
+        <translation>Öffnen Sie „Branches…“, um ihn auf einen gewählten Remote zu pushen?</translation>
     </message>
     <message>
         <source>Commit…</source>
-        <translation>Commit …</translation>
+        <translation>Commit…</translation>
     </message>
     <message>
         <source>Branches…</source>
-        <translation>Branches …</translation>
+        <translation>Branches…</translation>
     </message>
     <message>
         <source>Stash Changes…</source>
-        <translation>Änderungen stashen …</translation>
+        <translation>Änderungen stashen…</translation>
     </message>
     <message>
         <source>Stash Changes</source>
@@ -5457,7 +5457,7 @@ Der Download wird anhand dieser Prüfsumme verifiziert, bevor er entpackt oder v
     </message>
     <message>
         <source>Unstash…</source>
-        <translation>Stash anwenden …</translation>
+        <translation>Stash anwenden…</translation>
     </message>
     <message>
         <source>Unstash</source>
@@ -5799,7 +5799,7 @@ Alle Dateien speichern und jetzt umbenennen?</translation>
     </message>
     <message>
         <source>Columns…</source>
-        <translation>Spalten …</translation>
+        <translation>Spalten…</translation>
     </message>
     <message>
         <source>Sum</source>
@@ -5843,11 +5843,11 @@ Alle Dateien speichern und jetzt umbenennen?</translation>
     </message>
     <message>
         <source>Show Referencing Rows…</source>
-        <translation>Referenzierende Zeilen anzeigen …</translation>
+        <translation>Referenzierende Zeilen anzeigen…</translation>
     </message>
     <message>
         <source>computing…</source>
-        <translation>wird berechnet …</translation>
+        <translation>wird berechnet…</translation>
     </message>
 </context>
 <context>
@@ -5986,7 +5986,7 @@ Prozess gestoppt
     <name>ScopeNoticeBar</name>
     <message>
         <source>Review…</source>
-        <translation>Überprüfen …</translation>
+        <translation>Überprüfen…</translation>
     </message>
     <message>
         <source>Dismiss</source>
@@ -6047,7 +6047,7 @@ Prozess gestoppt
     </message>
     <message>
         <source>Search for files, symbols, text or actions…</source>
-        <translation>Nach Dateien, Symbolen, Text oder Aktionen suchen …</translation>
+        <translation>Nach Dateien, Symbolen, Text oder Aktionen suchen…</translation>
     </message>
 </context>
 <context>
@@ -6114,7 +6114,7 @@ Prozess gestoppt
     </message>
     <message>
         <source>Find in files…</source>
-        <translation>In Dateien suchen …</translation>
+        <translation>In Dateien suchen…</translation>
     </message>
     <message>
         <source>Whole word</source>
@@ -6122,7 +6122,7 @@ Prozess gestoppt
     </message>
     <message>
         <source>Replace with…</source>
-        <translation>Ersetzen durch …</translation>
+        <translation>Ersetzen durch…</translation>
     </message>
     <message>
         <source>File mask (*.rs, !*_test.rs)</source>
@@ -6146,15 +6146,15 @@ Prozess gestoppt
     </message>
     <message>
         <source>Searching…</source>
-        <translation>Suche läuft …</translation>
+        <translation>Suche läuft…</translation>
     </message>
     <message>
         <source>Searching… %1 match(es)</source>
-        <translation>Suche läuft … %1 Treffer</translation>
+        <translation>Suche läuft… %1 Treffer</translation>
     </message>
     <message>
         <source>Preparing preview…</source>
-        <translation>Vorschau wird vorbereitet …</translation>
+        <translation>Vorschau wird vorbereitet…</translation>
     </message>
     <message numerus="yes">
         <source>%n change(s) — replace with &quot;%1&quot;</source>
@@ -6169,7 +6169,7 @@ Prozess gestoppt
     </message>
     <message>
         <source>Replacing…</source>
-        <translation>Wird ersetzt …</translation>
+        <translation>Wird ersetzt…</translation>
     </message>
 </context>
 <context>
@@ -6350,11 +6350,11 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Preparing…</source>
-        <translation>Wird vorbereitet …</translation>
+        <translation>Wird vorbereitet…</translation>
     </message>
     <message>
         <source>Running…</source>
-        <translation>Läuft …</translation>
+        <translation>Läuft…</translation>
     </message>
 </context>
 <context>
@@ -6417,7 +6417,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Rename…</source>
-        <translation>Umbenennen …</translation>
+        <translation>Umbenennen…</translation>
     </message>
     <message>
         <source>Delete</source>
@@ -6520,7 +6520,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Execute…</source>
-        <translation>Ausführen …</translation>
+        <translation>Ausführen…</translation>
     </message>
     <message>
         <source>Run</source>
@@ -6536,7 +6536,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Settings…</source>
-        <translation>Einstellungen …</translation>
+        <translation>Einstellungen…</translation>
     </message>
     <message>
         <source>All Scopes</source>
@@ -6548,7 +6548,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Run with Arguments…</source>
-        <translation>Mit Argumenten ausführen …</translation>
+        <translation>Mit Argumenten ausführen…</translation>
     </message>
     <message>
         <source>Open Build File</source>
@@ -6629,7 +6629,7 @@ Tatsächlich: %2
     <name>ui_shell::CommitDetailView</name>
     <message>
         <source>Loading…</source>
-        <translation>Wird geladen …</translation>
+        <translation>Wird geladen…</translation>
     </message>
     <message>
         <source>&lt;b&gt;%1&lt;/b&gt;&lt;br&gt;Commit %2&lt;br&gt;Author: %3 &amp;lt;%4&amp;gt;, %5</source>
@@ -6645,7 +6645,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Loading diff…</source>
-        <translation>Diff wird geladen …</translation>
+        <translation>Diff wird geladen…</translation>
     </message>
 </context>
 <context>
@@ -6868,7 +6868,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Download…</source>
-        <translation>Herunterladen …</translation>
+        <translation>Herunterladen…</translation>
     </message>
     <message>
         <source>Download</source>
@@ -7039,7 +7039,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Add…</source>
-        <translation>Hinzufügen …</translation>
+        <translation>Hinzufügen…</translation>
     </message>
     <message>
         <source>Remove</source>
@@ -7368,7 +7368,7 @@ Tatsächlich: %2
     <name>ui_shell::HistoryListView</name>
     <message>
         <source>Loading…</source>
-        <translation>Wird geladen …</translation>
+        <translation>Wird geladen…</translation>
     </message>
     <message>
         <source>(no further description)</source>
@@ -7618,7 +7618,7 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Select Shell…</source>
-        <translation>Shell auswählen …</translation>
+        <translation>Shell auswählen…</translation>
     </message>
     <message>
         <source>Select Shell</source>
@@ -7672,11 +7672,11 @@ Tatsächlich: %2
     </message>
     <message>
         <source>Load from File…</source>
-        <translation>Aus Datei laden …</translation>
+        <translation>Aus Datei laden…</translation>
     </message>
     <message>
         <source>Save to File…</source>
-        <translation>In Datei speichern …</translation>
+        <translation>In Datei speichern…</translation>
     </message>
     <message>
         <source>Load Value From File</source>

@@ -2685,7 +2685,7 @@ Corrigez la commande, puis cliquez sur Redémarrer le serveur.</translation>
     </message>
     <message>
         <source>Re&amp;factor</source>
-        <translation>Re&amp;factoriser</translation>
+        <translation>Refac&amp;toriser</translation>
     </message>
     <message>
         <source>Reads the project</source>

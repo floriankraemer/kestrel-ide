@@ -1730,7 +1730,7 @@ Corrija el comando y pulse Reiniciar servidor.</translation>
     </message>
     <message>
         <source>&amp;Run</source>
-        <translation>&amp;Ejecutar</translation>
+        <translation>E&amp;jecutar</translation>
     </message>
     <message>
         <source>&amp;View</source>
